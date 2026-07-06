@@ -128,6 +128,24 @@ describe('ClustersOverview — whose-connection labels (V2-cleanup-55.3)', () =>
   });
 
   it('attributes the connection-status filter to ArgoCD', async () => {
+    // The filter bar (and its "ArgoCD Connection" button) is hidden below
+    // the 5-cluster collapse threshold (V2-cleanup-61.3, B3) — use a
+    // fixture at the threshold so the filter bar renders for this check.
+    mockGetClusters.mockResolvedValue({
+      clusters: [
+        ...clustersResponse.clusters,
+        { name: 'c3', labels: {}, server_version: '1.28', connection_status: 'connected' },
+        { name: 'c4', labels: {}, server_version: '1.28', connection_status: 'connected' },
+        { name: 'c5', labels: {}, server_version: '1.28', connection_status: 'connected' },
+      ],
+      health_stats: {
+        total_in_git: 5,
+        connected: 4,
+        failed: 1,
+        missing_from_argocd: 0,
+        not_in_git: 0,
+      },
+    });
     renderView();
     await waitForClusters();
 

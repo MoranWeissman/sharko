@@ -55,6 +55,7 @@ import {
 } from '@/components/WhoseConnectionLabel';
 import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
 import { ClusterStatusLegend } from '@/components/ClusterStatusLegend';
+import { PRModelExplainer } from '@/components/PRFeedback';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
 import { AdoptClustersDialog } from '@/components/AdoptClustersDialog';
@@ -166,6 +167,9 @@ export function ClustersOverview() {
     connectionTypes: [],
   });
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+  // V2-cleanup-61.3 (B3): below the collapse threshold the legend is
+  // on-demand — this tracks whether the user has opened it.
+  const [legendOpen, setLegendOpen] = useState(false);
   const [versionDropdownOpen, setVersionDropdownOpen] = useState(false);
   const [connectionDropdownOpen, setConnectionDropdownOpen] = useState(false);
   const navigate = useNavigate();
@@ -897,6 +901,14 @@ export function ClustersOverview() {
     ? healthStats.total_in_git + healthStats.not_in_git
     : allClusters.length;
 
+  // V2-cleanup-61.3 (B3): at n=1 (or any small fleet) the 5 stat cards + the
+  // full filter bar + view toggle are ~5 rows of controls for 1 row of data.
+  // Below the locked threshold of 5 clusters, hide the stat-card row and the
+  // filter bar entirely, and make the legend on-demand. At >= 5 everything
+  // appears automatically, as before. The register/add-cluster button stays
+  // prominent regardless of cluster count.
+  const showFullControls = totalClusters >= 5;
+
   const statItems: Array<{
     key: StatusFilter;
     title: string;
@@ -978,8 +990,29 @@ export function ClustersOverview() {
       {/* ArgoCD Status Banner */}
       <ArgoCDStatusBanner visible={argoCDUnreachable} />
 
-      {/* Cluster Status Legend */}
-      <ClusterStatusLegend />
+      {/* Cluster Status Legend — automatic at >= 5 clusters (locked
+          threshold); below it, an on-demand "what do these mean?" toggle
+          instead of a permanently-visible legend (V2-cleanup-61.3, B3). */}
+      {showFullControls ? (
+        <ClusterStatusLegend />
+      ) : (
+        <div>
+          <button
+            type="button"
+            onClick={() => setLegendOpen((o) => !o)}
+            aria-expanded={legendOpen}
+            className="inline-flex items-center gap-1.5 text-xs text-[#3a6a8a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200"
+          >
+            <HelpCircle className="h-3.5 w-3.5" />
+            What do these mean?
+          </button>
+          {legendOpen && (
+            <div className="mt-2">
+              <ClusterStatusLegend />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Diagnose Modal */}
       <DiagnoseModal
@@ -1460,15 +1493,33 @@ export function ClustersOverview() {
             ? addClusterResultMsg.slice('__pending__|'.length)
             : '';
         const isPartial = addClusterResult?.partial;
-        // "Pending" gets an amber/info treatment — the action isn't done
-        // yet, it's just queued behind a merge.
-        const tone: 'success' | 'warn' = isPartial || isPendingTag ? 'warn' : 'success';
-        return (
-        <div className={`flex items-center justify-between rounded-md px-4 py-2 text-sm ${
+        // Three tones (V2-cleanup-61.3, F1a):
+        //   - "warn" (amber)   — a genuine partial failure, needs attention.
+        //   - "pending" (blue) — the expected "PR opened, not merged yet"
+        //     state. This used to share the amber "warn" treatment, which
+        //     reads as a problem even though it's the normal, in-progress
+        //     outcome of a PR-only write. Per the status-vocabulary color
+        //     law, "a change is in progress" is blue, not amber.
+        //   - "success" (green) — the PR already merged.
+        const tone: 'success' | 'warn' | 'pending' = isPartial
+          ? 'warn'
+          : isPendingTag
+            ? 'pending'
+            : 'success';
+        const toneClasses =
           tone === 'warn'
             ? 'border border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-            : 'border border-green-300 bg-green-50 text-green-800 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300'
-        }`}>
+            : tone === 'pending'
+              ? 'border border-blue-300 bg-blue-50 text-blue-800 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+              : 'border border-green-300 bg-green-50 text-green-800 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300';
+        const dismissHoverClasses =
+          tone === 'warn'
+            ? 'hover:bg-amber-100 dark:hover:bg-amber-800'
+            : tone === 'pending'
+              ? 'hover:bg-blue-100 dark:hover:bg-blue-800'
+              : 'hover:bg-green-100 dark:hover:bg-green-800';
+        return (
+        <div className={`flex items-center justify-between rounded-md px-4 py-2 text-sm ${toneClasses}`}>
           <span>
             {isPartial
               ? addClusterResultMsg
@@ -1496,7 +1547,7 @@ export function ClustersOverview() {
           <button
             type="button"
             onClick={() => { setAddClusterResultMsg(null); setAddClusterResult(null); }}
-            className={`ml-4 rounded p-0.5 ${tone === 'warn' ? 'hover:bg-amber-100 dark:hover:bg-amber-800' : 'hover:bg-green-100 dark:hover:bg-green-800'}`}
+            className={`ml-4 rounded p-0.5 ${dismissHoverClasses}`}
             aria-label="Dismiss"
           >
             <X className="h-4 w-4" />
@@ -1505,7 +1556,17 @@ export function ClustersOverview() {
         );
       })()}
 
-      {/* Health stat cards */}
+      {/* One-time PR-model explainer (V2-cleanup-61.3, F1b) — shown the
+          first time a cluster-registration PR completes; dismissing it here
+          also hides it on the Addons page (shared localStorage flag). */}
+      {addClusterResultMsg && <PRModelExplainer />}
+
+      {/* Health stat cards + advanced filter bar — both hidden below the
+          collapse threshold (V2-cleanup-61.3, B3): 5 stat cards + a full
+          filter bar + view toggle is control overload for 1-4 clusters.
+          They reappear automatically once the fleet reaches 5. */}
+      {showFullControls && (
+        <>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         {statItems.map((item) => (
           <StatCard
@@ -1688,6 +1749,8 @@ export function ClustersOverview() {
           </div>
         )}
       </div>
+        </>
+      )}
 
       {/* Pending registration PRs. The wizard closes after submitting
           and the values-file PR is opened in Git but NOT merged; this

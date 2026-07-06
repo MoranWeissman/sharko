@@ -6,6 +6,7 @@ import {
   GitMerge,
   GitPullRequest,
   Loader2,
+  X,
 } from 'lucide-react'
 import { refreshPR } from '@/services/api'
 
@@ -412,6 +413,73 @@ export function PRLifecycleProgress({
           )}
         </div>
       ))}
+    </div>
+  )
+}
+
+// ─── One-time PR-model explainer (V2-cleanup-61.3, finding F1b) ─────────────
+
+/**
+ * localStorage key gating the one-time PR-model explainer. Exported so tests
+ * can seed/clear it directly instead of guessing the string.
+ */
+export const PR_MODEL_EXPLAINER_DISMISSED_KEY = 'sharko-pr-model-explainer-dismissed'
+
+/**
+ * PRModelExplainer — a one-time, dismissible callout explaining WHY Sharko
+ * opens a pull request instead of changing the cluster/repo directly. Meant
+ * to be mounted next to the first PR-result banner a user sees.
+ *
+ * Deliberately flow-agnostic and stateless beyond the dismiss flag so it can
+ * be mounted next to BOTH the addon-add outcome (AddonCatalog.tsx) and the
+ * cluster-registration outcome (ClustersOverview.tsx) — whichever the user
+ * hits first shows it, and dismissing it anywhere hides it everywhere (the
+ * flag is a single shared localStorage key, not per-page state).
+ *
+ * Neutral/informational (blue) styling per the status-vocabulary color law —
+ * this is a normal, expected part of the flow, not a warning.
+ */
+export function PRModelExplainer() {
+  const [dismissed, setDismissed] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      window.localStorage.getItem(PR_MODEL_EXPLAINER_DISMISSED_KEY) === '1',
+  )
+
+  if (dismissed) return null
+
+  const dismiss = () => {
+    try {
+      window.localStorage.setItem(PR_MODEL_EXPLAINER_DISMISSED_KEY, '1')
+    } catch {
+      // Storage unavailable (private mode, quota) — still hide for this
+      // render; it may reappear next load, which is an acceptable fallback.
+    }
+    setDismissed(true)
+  }
+
+  return (
+    <div
+      role="status"
+      className="flex items-start gap-3 rounded-lg border border-blue-300 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-700 dark:bg-blue-950/30 dark:text-blue-200"
+    >
+      <GitPullRequest className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+      <div className="flex-1">
+        <p className="font-medium">Why a pull request?</p>
+        <p className="mt-1 text-blue-800 dark:text-blue-300">
+          Sharko never changes your cluster or Git repo directly — it opens a pull request
+          instead. Git stays the source of truth, and the PR is your chance to review the change
+          before it goes live. Merge it, and the change takes effect.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={dismiss}
+        className="shrink-0 rounded p-0.5 text-blue-600 hover:bg-blue-100 dark:text-blue-400 dark:hover:bg-blue-900/40"
+        aria-label="Dismiss"
+      >
+        <X className="h-4 w-4" />
+      </button>
     </div>
   )
 }

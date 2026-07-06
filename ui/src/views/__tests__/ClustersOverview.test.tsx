@@ -56,6 +56,35 @@ const clustersResponse = {
   },
 };
 
+// V2-cleanup-61.3 (B3): the stat-card row + advanced filter bar are now
+// hidden below 5 total clusters. `clustersResponse` above has only 3 —
+// tests that specifically exercise the stat cards / filter bar need a
+// fixture at or above the collapse threshold.
+const clustersResponseAtThreshold = {
+  clusters: [
+    ...clustersResponse.clusters,
+    {
+      name: 'qa-cluster',
+      labels: { env: 'qa' },
+      server_version: '1.28',
+      connection_status: 'connected',
+    },
+    {
+      name: 'dev-cluster',
+      labels: { env: 'dev' },
+      server_version: '1.28',
+      connection_status: 'connected',
+    },
+  ],
+  health_stats: {
+    total_in_git: 4,
+    connected: 4,
+    failed: 1,
+    missing_from_argocd: 0,
+    not_in_git: 1,
+  },
+};
+
 function renderView() {
   return render(
     <MemoryRouter>
@@ -139,6 +168,9 @@ describe('ClustersOverview', () => {
   });
 
   it('renders clusters data with stat cards and table', async () => {
+    // Stat cards only render at/above the 5-cluster collapse threshold
+    // (V2-cleanup-61.3, B3) — use the at-threshold fixture.
+    mockGetClusters.mockResolvedValue(clustersResponseAtThreshold);
     renderView();
 
     await waitFor(() => {
@@ -158,9 +190,9 @@ describe('ClustersOverview', () => {
     expect(screen.queryByText('Not Deployed')).not.toBeInTheDocument();
     expect(screen.queryByText('Unmanaged')).not.toBeInTheDocument();
 
-    // Stat values - total = total_in_git + not_in_git = 3
-    // Use getAllByText because '3' may appear in both the stat card and a count badge
-    expect(screen.getAllByText('3').length).toBeGreaterThanOrEqual(1);
+    // Stat values - total = total_in_git + not_in_git = 5
+    // Use getAllByText because '5' may appear in both the stat card and a count badge
+    expect(screen.getAllByText('5').length).toBeGreaterThanOrEqual(1);
 
     // Table rows
     expect(screen.getByText('prod-eu')).toBeInTheDocument();
@@ -169,6 +201,9 @@ describe('ClustersOverview', () => {
   });
 
   it('filters clusters by name search', async () => {
+    // The name-search input lives in the filter bar, hidden below the
+    // 5-cluster collapse threshold (V2-cleanup-61.3, B3).
+    mockGetClusters.mockResolvedValue(clustersResponseAtThreshold);
     renderView();
 
     await waitFor(() => {
@@ -424,6 +459,9 @@ describe('ClustersOverview', () => {
   });
 
   it('toggles status filter on stat card click', async () => {
+    // Stat cards only render at/above the 5-cluster collapse threshold
+    // (V2-cleanup-61.3, B3).
+    mockGetClusters.mockResolvedValue(clustersResponseAtThreshold);
     renderView();
 
     await waitFor(() => {

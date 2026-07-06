@@ -53,17 +53,25 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    label: 'Manage',
+    // V2-cleanup-61.3 (A3): this section is all read-only pages (System /
+    // Observability / External Dashboards / Audit) — "Manage" implied real
+    // management actions that actually live under "Overview".
+    label: 'Monitor',
     items: [
       { to: '/system', label: 'System', icon: Network },
       { to: '/observability', label: 'Observability', icon: Activity },
-      { to: '/dashboards', label: 'Dashboards', icon: BarChart3 },
+      // A4: "Dashboards" read as a sibling/typo of "Dashboard" above.
+      { to: '/dashboards', label: 'External Dashboards', icon: BarChart3 },
       { to: '/audit', label: 'Audit Log', icon: ClipboardList },
     ],
   },
   {
+    // V2-cleanup-61.3 (A6): non-admins have 5 sections allowlisted inside
+    // Settings (Settings.tsx ALLOWED_NON_ADMIN) and SystemView links every
+    // role there — but this section was adminOnly, so non-admins had NO nav
+    // path to reach it at all. Show it for every role; Settings.tsx already
+    // gates individual sections per role.
     label: 'Configure',
-    adminOnly: true,
     items: [
       { to: '/settings', label: 'Settings', icon: Settings },
     ],
@@ -76,7 +84,7 @@ const routeLabels: Record<string, string> = {
   addons: 'Addons Catalog',
   system: 'System',
   observability: 'Observability',
-  dashboards: 'Dashboards',
+  dashboards: 'External Dashboards',
   audit: 'Audit Log',
   settings: 'Settings',
   users: 'User Management',
@@ -122,7 +130,7 @@ function getAIPageContext(pathname: string): string | undefined {
     '/addons': 'the Addons Catalog',
     '/system': 'the System page (Sharko/ArgoCD → repo/clusters chain)',
     '/observability': 'the Observability page',
-    '/dashboards': 'the Dashboards page (external dashboard links)',
+    '/dashboards': 'the External Dashboards page (external dashboard links)',
     '/audit': 'the Audit Log page',
     '/settings': 'the Settings page',
   }

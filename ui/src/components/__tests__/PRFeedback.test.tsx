@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, fireEvent, cleanup } from '@testing-library/react'
 import {
   PRLink,
   PRResultBanner,
   PRProgressBanner,
   PRLifecycleProgress,
+  PRModelExplainer,
+  PR_MODEL_EXPLAINER_DISMISSED_KEY,
   extractPR,
 } from '@/components/PRFeedback'
 
@@ -227,5 +229,38 @@ describe('PRLifecycleProgress', () => {
     expect(screen.getByText('Closed')).toBeInTheDocument()
     expect(mockRefreshPR).toHaveBeenCalledTimes(1)
     vi.useRealTimers()
+  })
+})
+
+// V2-cleanup-61.3 (F1b) — the one-time PR-model explainer shared by the
+// addon-add flow (AddonCatalog.tsx) and the cluster-registration flow
+// (ClustersOverview.tsx). Persistence is a single shared localStorage flag
+// so dismissing it on either page hides it on both.
+describe('PRModelExplainer', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+
+  it('appears the first time it is mounted', () => {
+    render(<PRModelExplainer />)
+    expect(screen.getByText('Why a pull request?')).toBeInTheDocument()
+  })
+
+  it('does not appear once dismissed', () => {
+    render(<PRModelExplainer />)
+    fireEvent.click(screen.getByRole('button', { name: /dismiss/i }))
+    expect(screen.queryByText('Why a pull request?')).not.toBeInTheDocument()
+
+    // Simulate remounting on a fresh page (e.g. navigating from Addons to
+    // Clusters) — the shared localStorage flag keeps it hidden.
+    cleanup()
+    render(<PRModelExplainer />)
+    expect(screen.queryByText('Why a pull request?')).not.toBeInTheDocument()
+  })
+
+  it('stays hidden across mounts once the shared flag is set directly', () => {
+    window.localStorage.setItem(PR_MODEL_EXPLAINER_DISMISSED_KEY, '1')
+    render(<PRModelExplainer />)
+    expect(screen.queryByText('Why a pull request?')).not.toBeInTheDocument()
   })
 })
