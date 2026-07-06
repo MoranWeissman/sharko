@@ -8,9 +8,11 @@ import { MarketplaceAddonDetail } from '@/components/MarketplaceAddonDetail'
 //   - an admin-gated auto-merge toggle that sends auto_merge
 //   - a Preview step (dry_run) that renders the files it would write
 //   - a clickable PR link
-//   - post-submit navigation: merged → /addons/<name>; opened →
-//     /dashboard?prs_state=pending
+//   - post-submit navigation via explicit terminal-state buttons
+//     (V2-cleanup-66.1): merged → "View addon" (/addons/<name>); opened →
+//     "Track on Dashboard" (/dashboard?prs_state=pending) — no automatic jump
 //
+
 // These tests assert each surface. The component fires several read-only
 // api calls on mount (metadata, README, versions, catalog, getMe, sources);
 // they're stubbed with minimal happy-path shapes so the action panel renders.
@@ -147,35 +149,47 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
     expect(mockAddAddon.mock.calls[0][0].dry_run).toBe(true)
   })
 
-  it('navigates to the addon page and toasts when the PR auto-merged', async () => {
+  // V2-cleanup-66.1 — a merged PR used to navigate away the instant the POST
+  // resolved, so the PR lifecycle window never got any screen time. Now the
+  // page STAYS PUT showing the terminal "Merged" state, and the user leaves
+  // via an explicit "View addon" button.
+  it('keeps the page open on merge, toasts, and only navigates when "View addon" is clicked', async () => {
     mockAddAddon.mockResolvedValue({ pr_id: 9, pr_url: 'https://gh/pr/9', merged: true })
     renderDetail()
     await waitForActionPanel()
 
     fireEvent.click(screen.getByRole('button', { name: /add to catalog/i }))
 
-    await waitFor(() =>
-      expect(mockNavigate).toHaveBeenCalledWith('/addons/prometheus'),
-    )
+    const viewAddonBtn = await screen.findByRole('button', { name: /view addon/i })
     expect(mockShowToast).toHaveBeenCalledWith(
       expect.stringContaining('added to your catalog'),
       'success',
     )
+    // No automatic navigation happened yet.
+    expect(mockNavigate).not.toHaveBeenCalled()
+
+    fireEvent.click(viewAddonBtn)
+    expect(mockNavigate).toHaveBeenCalledWith('/addons/prometheus')
   })
 
-  it('navigates to the pending-PR dashboard when a PR is opened for review', async () => {
+  // Auto-merge OFF: the PR is open for review, so the addon isn't really in
+  // the catalog yet. The page stays put; the user opts into the Dashboard's
+  // pending-PR view via an explicit button instead of an automatic jump.
+  it('keeps the page open when a PR is opened for review, and only navigates when "Track on Dashboard" is clicked', async () => {
     mockAddAddon.mockResolvedValue({ pr_id: 10, pr_url: 'https://gh/pr/10', merged: false })
     renderDetail()
     await waitForActionPanel()
 
     fireEvent.click(screen.getByRole('button', { name: /add to catalog/i }))
 
-    await waitFor(() =>
-      expect(mockNavigate).toHaveBeenCalledWith('/dashboard?prs_state=pending'),
-    )
+    const trackBtn = await screen.findByRole('button', { name: /track on dashboard/i })
     expect(mockShowToast).toHaveBeenCalledWith(
       expect.stringContaining('PR #10 opened'),
       'success',
     )
+    expect(mockNavigate).not.toHaveBeenCalled()
+
+    fireEvent.click(trackBtn)
+    expect(mockNavigate).toHaveBeenCalledWith('/dashboard?prs_state=pending')
   })
 })

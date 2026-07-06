@@ -608,6 +608,9 @@ export function AddonCatalog() {
   const [addAddonPhase, setAddAddonPhase] = useState<SubmitPhase>('idle')
   const [addAddonResult, setAddAddonResult] =
     useState<AddAddonResponse | null>(null)
+  // Captured at submit time so the "View addon" terminal button still knows
+  // the name after the form is reset (V2-cleanup-66.1).
+  const [addAddonSubmittedName, setAddAddonSubmittedName] = useState('')
 
   // Repo URL validation lifecycle. Debounced auto-fire on blur or after
   // 500ms of typing pause. We only set validRepo=true after a successful
@@ -676,6 +679,7 @@ export function AddonCatalog() {
     setAddAddonPreviewing(false)
     setAddAddonPhase('idle')
     setAddAddonResult(null)
+    setAddAddonSubmittedName('')
   }, [])
 
   const openAddAddon = useCallback(() => {
@@ -855,10 +859,11 @@ export function AddonCatalog() {
     setAddAddonSubmitting(true)
     setAddAddonPhase('submitting')
     setAddAddonError(null)
+    const addonName = addonForm.name.trim()
+    setAddAddonSubmittedName(addonName)
     try {
       const result = await addAddon(buildAddRequest(false))
       setAddAddonResult(result)
-      const addonName = addonForm.name.trim()
       const prUrl = result.pr_url || result.result?.pr_url || result.pull_request_url
       const prId = result.pr_id ?? result.result?.pr_id
       const wasMerged = result.merged ?? result.result?.merged ?? false
@@ -866,15 +871,16 @@ export function AddonCatalog() {
 
       // Branch STRICTLY on `merged` so an open PR is never presented as
       // already-cataloged ("not really in git" was the v2.0.2 smoke-test bug):
-      //   - merged === true  → the addon really landed → refresh the catalog
-      //     and confirm "added to your catalog".
+      //   - merged === true  → the addon really landed. KEEP the dialog open
+      //     (V2-cleanup-66.1) showing the lifecycle window's terminal
+      //     "Merged ✓" state instead of closing instantly — the user moves
+      //     on via the explicit "View addon" button. Refresh the catalog in
+      //     the background now so it's ready when they do.
       //   - merged === false → a PR is awaiting review → DO NOT refresh the
       //     catalog (it isn't in git yet). Keep the dialog open showing the
       //     honest "PR open — merge to apply" banner with the clickable PR.
       if (wasMerged) {
         setAddAddonPhase('merged')
-        setAddAddonOpen(false)
-        resetAddonFormState()
         setToast({
           message: `\`${addonName}\` added to your catalog.`,
           prUrl: prUrl || undefined,
@@ -898,13 +904,7 @@ export function AddonCatalog() {
     } finally {
       setAddAddonSubmitting(false)
     }
-  }, [
-    addAddonFormValid,
-    buildAddRequest,
-    addonForm,
-    fetchCatalog,
-    resetAddonFormState,
-  ])
+  }, [addAddonFormValid, buildAddRequest, addonForm, fetchCatalog])
 
   // Reset page on filter/search/sort/pageSize change
   useEffect(() => {
@@ -1367,33 +1367,69 @@ export function AddonCatalog() {
           </div>
           <DialogFooter>
             {addAddonResult ? (
-              // Terminal state. The PR opened for review (merged results close
-              // the dialog and refresh the catalog instead). Offer a jump to
-              // the pending-PR dashboard plus a Close button.
-              <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddAddonOpen(false)
-                    resetAddonFormState()
-                  }}
-                  className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-                >
-                  Close
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddAddonOpen(false)
-                    resetAddonFormState()
-                    navigate('/dashboard?prs_state=pending')
-                  }}
-                  className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
-                >
-                  <GitPullRequest className="h-4 w-4" />
-                  View pending PRs
-                </button>
-              </>
+              // Terminal state (V2-cleanup-66.1) — keep the dialog open
+              // through both outcomes and hand the user an explicit button
+              // instead of an automatic jump.
+              addAddonPhase === 'merged' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddAddonOpen(false)
+                      resetAddonFormState()
+                    }}
+                    className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => resetAddonFormState()}
+                    className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    Add another
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddAddonOpen(false)
+                      resetAddonFormState()
+                      navigate(`/addons/${encodeURIComponent(addAddonSubmittedName)}`)
+                    }}
+                    className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    View addon
+                  </button>
+                </>
+              ) : (
+                // PR opened for review, auto-merge off (or timed out). The
+                // catalog is NOT refreshed — the addon isn't in git yet.
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddAddonOpen(false)
+                      resetAddonFormState()
+                    }}
+                    className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddAddonOpen(false)
+                      resetAddonFormState()
+                      navigate('/dashboard?prs_state=pending')
+                    }}
+                    className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                  >
+                    <GitPullRequest className="h-4 w-4" />
+                    Track on Dashboard
+                  </button>
+                </>
+              )
             ) : (
               <>
                 <button
