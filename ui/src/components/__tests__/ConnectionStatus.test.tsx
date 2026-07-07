@@ -22,12 +22,29 @@ describe('ConnectionStatus', () => {
     expect(wrapper.className).toContain('text-red-700');
   });
 
-  it('"missing" shows the neutral "Connecting…" state — the normal post-registration window', () => {
-    const { container } = render(<ConnectionStatus status="missing" />);
+  it('"" (empty) shows the neutral "Connecting…" state — the normal post-registration window', () => {
+    const { container } = render(<ConnectionStatus status="" />);
     expect(screen.getByText('Connecting…')).toBeInTheDocument();
 
     const wrapper = container.firstChild as HTMLElement;
     expect(wrapper.className).toContain('text-[#1a4a6a]');
+  });
+
+  it('"missing" shows the amber "Not connected" state — NOT the pending "Connecting…" state (V2-cleanup-75.1)', () => {
+    const { container } = render(<ConnectionStatus status="missing" />);
+    expect(screen.getByText('Not connected')).toBeInTheDocument();
+    expect(screen.queryByText('Connecting…')).not.toBeInTheDocument();
+
+    const wrapper = container.firstChild as HTMLElement;
+    expect(wrapper.className).toContain('text-amber-700');
+  });
+
+  it('"missing_from_argocd" also shows the amber "Not connected" state', () => {
+    const { container } = render(<ConnectionStatus status="missing_from_argocd" />);
+    expect(screen.getByText('Not connected')).toBeInTheDocument();
+
+    const wrapper = container.firstChild as HTMLElement;
+    expect(wrapper.className).toContain('text-amber-700');
   });
 
   it('"not_in_git" shows "Not managed" with amber attention color', () => {

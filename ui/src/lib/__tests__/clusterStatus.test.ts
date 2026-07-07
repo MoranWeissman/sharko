@@ -3,15 +3,21 @@ import {
   classifyClusterConnection,
   isClusterConnected,
   isClusterFailed,
+  isClusterNeedsAttention,
 } from '@/lib/clusterStatus';
 
 // BUG-033 regression coverage. The previous UI logic treated ANY value
 // other than "Successful" / "Connected" as a hard "Disconnected"
 // failure, which mis-classified the transient post-registration window
 // (ArgoCD has the cluster Secret but has not yet run a connection
-// probe → empty/Unknown/missing status). These tests pin the new
-// three-state classification so a future refactor can't quietly
-// regress the registration UX.
+// probe → empty/Unknown status). These tests pin the classification so a
+// future refactor can't quietly regress the registration UX.
+//
+// V2-cleanup-75.1 split "missing"/"missing_from_argocd" out of 'pending'
+// into their own 'missing' state: a cluster ArgoCD has NO connection
+// secret for at all was being shown as the calm "Connecting…" pending
+// state forever, with no explanation. See the 'missing' describe block
+// below for the new contract.
 describe('classifyClusterConnection (BUG-033)', () => {
   describe('connected', () => {
     it('maps "Successful" to connected', () => {
@@ -39,14 +45,21 @@ describe('classifyClusterConnection (BUG-033)', () => {
     it('maps "Unknown" to pending', () => {
       expect(classifyClusterConnection('Unknown')).toBe('pending');
     });
-    it('maps "missing" to pending — backend value when cluster is in Git but not yet in ArgoCD', () => {
-      expect(classifyClusterConnection('missing')).toBe('pending');
-    });
-    it('maps "missing_from_argocd" to pending', () => {
-      expect(classifyClusterConnection('missing_from_argocd')).toBe('pending');
-    });
     it('treats leading/trailing whitespace as pending — defensive parse', () => {
       expect(classifyClusterConnection('   ')).toBe('pending');
+    });
+  });
+
+  describe('missing (V2-cleanup-75.1 — ArgoCD has no connection at all)', () => {
+    it('maps "missing" to missing — distinct from the transient pending window', () => {
+      expect(classifyClusterConnection('missing')).toBe('missing');
+    });
+    it('maps "missing_from_argocd" to missing', () => {
+      expect(classifyClusterConnection('missing_from_argocd')).toBe('missing');
+    });
+    it('is case-insensitive', () => {
+      expect(classifyClusterConnection('MISSING')).toBe('missing');
+      expect(classifyClusterConnection('Missing_From_ArgoCD')).toBe('missing');
     });
   });
 
@@ -70,7 +83,10 @@ describe('isClusterConnected (BUG-033)', () => {
   it('returns false for pending states — no premature green', () => {
     expect(isClusterConnected('')).toBe(false);
     expect(isClusterConnected('Unknown')).toBe(false);
+  });
+  it('returns false for missing states', () => {
     expect(isClusterConnected('missing')).toBe(false);
+    expect(isClusterConnected('missing_from_argocd')).toBe(false);
   });
   it('returns false for failed states', () => {
     expect(isClusterConnected('Failed')).toBe(false);
@@ -86,13 +102,36 @@ describe('isClusterFailed (BUG-033)', () => {
     // NOT a failure, even though it isn't yet "Successful".
     expect(isClusterFailed('')).toBe(false);
     expect(isClusterFailed('Unknown')).toBe(false);
-    expect(isClusterFailed('missing')).toBe(false);
-    expect(isClusterFailed('missing_from_argocd')).toBe(false);
     expect(isClusterFailed(null)).toBe(false);
     expect(isClusterFailed(undefined)).toBe(false);
+  });
+  it('returns false for missing states (V2-cleanup-75.1 — "missing" is its own amber state, not "failed" red)', () => {
+    expect(isClusterFailed('missing')).toBe(false);
+    expect(isClusterFailed('missing_from_argocd')).toBe(false);
   });
   it('returns false for connected states', () => {
     expect(isClusterFailed('Successful')).toBe(false);
     expect(isClusterFailed('Connected')).toBe(false);
+  });
+});
+
+describe('isClusterNeedsAttention (V2-cleanup-75.1)', () => {
+  it('returns true for failed states', () => {
+    expect(isClusterNeedsAttention('Failed')).toBe(true);
+  });
+  it('returns true for missing states — ArgoCD has no connection at all', () => {
+    expect(isClusterNeedsAttention('missing')).toBe(true);
+    expect(isClusterNeedsAttention('missing_from_argocd')).toBe(true);
+  });
+  it('returns false for pending states — the normal post-registration wait', () => {
+    expect(isClusterNeedsAttention('')).toBe(false);
+    expect(isClusterNeedsAttention('Unknown')).toBe(false);
+  });
+  it('returns false for connected states', () => {
+    expect(isClusterNeedsAttention('Successful')).toBe(false);
+    expect(isClusterNeedsAttention('Connected')).toBe(false);
+  });
+  it('returns false for unmanaged states — not broken, just not adopted', () => {
+    expect(isClusterNeedsAttention('not_in_git')).toBe(false);
   });
 });

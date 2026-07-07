@@ -1,4 +1,4 @@
-import { CheckCircle, XCircle, Clock, GitMerge } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, GitMerge, WifiOff } from 'lucide-react';
 import {
   classifyClusterConnection,
   CLUSTER_CONNECTION_STATES,
@@ -17,6 +17,7 @@ interface ConnectionStatusProps {
 const KIND_ICONS: Record<ClusterConnectionKind, React.ElementType> = {
   connected: CheckCircle,
   pending: Clock,
+  missing: WifiOff,
   unmanaged: GitMerge,
   failed: XCircle,
 };

@@ -64,10 +64,24 @@ describe('ClusterCard connection pill', () => {
     expect(screen.queryByText('Disconnected')).not.toBeInTheDocument();
   });
 
-  it('renders neutral "Connecting…" for status "missing" — cluster registered, ArgoCD not yet aware (BUG-033)', () => {
-    renderCard('missing');
-    expect(screen.getByText('Connecting…')).toBeInTheDocument();
+  // V2-cleanup-75.1: "missing" (ArgoCD has NO connection for this cluster
+  // at all) is its own amber "Not connected" state — distinct from the
+  // neutral "Connecting…" pending window above. Showing it as "Connecting…"
+  // left a cluster ArgoCD can't reach (e.g. a local/kind cluster an EKS hub
+  // can't see) looking like it was about to work, forever.
+  it('renders amber "Not connected" — NOT "Connecting…" — for status "missing"', () => {
+    const { container } = renderCard('missing');
+    expect(screen.getByText('Not connected')).toBeInTheDocument();
+    expect(screen.queryByText('Connecting…')).not.toBeInTheDocument();
     expect(screen.queryByText('Disconnected')).not.toBeInTheDocument();
+
+    const dot = container.querySelector('div.h-2.w-2.rounded-full');
+    expect(dot!.className).toContain('bg-amber-500');
+  });
+
+  it('renders amber "Not connected" for status "missing_from_argocd" too', () => {
+    renderCard('missing_from_argocd');
+    expect(screen.getByText('Not connected')).toBeInTheDocument();
   });
 });
 

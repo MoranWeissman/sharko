@@ -22,7 +22,7 @@ import {
   useAddonStates,
   deepLinkToAddonOnCluster,
 } from '@/hooks/useAddonStates';
-import { isClusterFailed } from '@/lib/clusterStatus';
+import { isClusterNeedsAttention } from '@/lib/clusterStatus';
 
 // --- Health Bar with totals ---
 
@@ -260,10 +260,13 @@ export function Dashboard() {
         // for ~10-60s (until ArgoCD's cluster-info refresher produces a
         // probe result) — that's a normal part of the registration
         // lifecycle, not an issue. Surface a cluster in "Needs Attention"
-        // only when ArgoCD reports an explicit failure OR the cluster has
-        // unhealthy addons.
+        // when ArgoCD reports an explicit failure OR has NO connection for
+        // the cluster at all (V2-cleanup-75.1 — a "missing" cluster often
+        // has zero addon rows to compare health against, so it would
+        // otherwise never trip `healthy < total` and would silently never
+        // appear here) OR the cluster has unhealthy addons.
         const problemClusters = cards.filter(c =>
-          isClusterFailed(c.connectionStatus) || c.healthy < c.total
+          isClusterNeedsAttention(c.connectionStatus) || c.healthy < c.total
         )
         setClusters(problemClusters)
       }
