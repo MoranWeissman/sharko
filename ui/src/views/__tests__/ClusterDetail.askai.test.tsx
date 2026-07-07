@@ -6,7 +6,7 @@
  * but set `api.getAIStatus` to the value each case needs.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
@@ -28,7 +28,6 @@ const adminAuth = {
 const mockGetClusterComparison = vi.fn();
 const mockGetAIStatus = vi.fn();
 const mockFetchTrackedPRs = vi.fn();
-const mockGetNodeInfo = vi.fn();
 const mockRestartAddonSync = vi.fn();
 
 vi.mock('react-router-dom', async () => {
@@ -50,7 +49,6 @@ vi.mock('@/services/api', async () => {
     api: {
       getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
       getConnections: vi.fn().mockResolvedValue({ connections: [], active_connection: '' }),
-      getNodeInfo: (...args: unknown[]) => mockGetNodeInfo(...args),
       enableAddonOnCluster: vi.fn().mockResolvedValue({}),
       getAddonCatalog: vi.fn().mockResolvedValue({ addons: [] }),
       restartAddonSync: (...args: unknown[]) => mockRestartAddonSync(...args),
@@ -130,7 +128,6 @@ describe('V2-cleanup-39: Ask AI button on sync_failing rows', () => {
     vi.clearAllMocks();
     mockGetClusterComparison.mockResolvedValue(syncFailingResponse);
     mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
-    mockGetNodeInfo.mockResolvedValue(null);
     mockRestartAddonSync.mockResolvedValue({ terminated: true, synced: true });
   });
 
@@ -215,7 +212,6 @@ describe('V2-cleanup-55.4: Ask AI on connection banners is opt-in', () => {
     vi.clearAllMocks();
     mockGetClusterComparison.mockResolvedValue(argoFailedResponse);
     mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
-    mockGetNodeInfo.mockResolvedValue(null);
   });
 
   it('renders Ask AI on the ArgoCD Connection Failed banner when AI is enabled', async () => {
@@ -227,8 +223,14 @@ describe('V2-cleanup-55.4: Ask AI on connection banners is opt-in', () => {
     await waitFor(() => {
       expect(screen.getByText('ArgoCD Connection Failed')).toBeInTheDocument();
     });
+    // V2-cleanup-78.1: the banner now renders above the default (addons)
+    // section, where the sync_failing keda row ALSO has its own "Ask AI"
+    // button — scope the assertion to the banner itself instead of a
+    // page-wide text match so the two don't collide.
+    const banner = screen.getByText('ArgoCD Connection Failed').closest('.rounded-xl');
+    expect(banner).toBeTruthy();
     await waitFor(() => {
-      expect(screen.getByText('Ask AI')).toBeInTheDocument();
+      expect(within(banner as HTMLElement).getByText('Ask AI')).toBeInTheDocument();
     });
   });
 

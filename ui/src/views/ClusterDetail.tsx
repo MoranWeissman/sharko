@@ -11,13 +11,10 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
-  Server,
-  Cpu,
   WifiOff,
   MessageSquare,
   Tag,
   Loader2,
-  LayoutGrid,
   Package,
   FileCode,
   Clock,
@@ -32,6 +29,7 @@ import {
   X,
   ShieldCheck,
   Sparkles,
+  Settings,
 } from 'lucide-react';
 import {
   Dialog,
@@ -209,7 +207,7 @@ export function ClusterDetail() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeSection = searchParams.get('section') || 'overview';
+  const activeSection = searchParams.get('section') || 'addons';
   // When switching section, preserve other query params (notably ?addon=…
   // which drives the deep-link scroll + highlight for the addons section).
   const setActiveSection = (s: string) => {
@@ -250,7 +248,6 @@ export function ClusterDetail() {
   const [configDiffError, setConfigDiffError] = useState<string | null>(null);
   const [clusterValuesYaml, setClusterValuesYaml] = useState<string | null>(null);
   const [configFetched, setConfigFetched] = useState(false);
-  const [nodeInfo, setNodeInfo] = useState<{ total: number; ready: number; not_ready: number } | null>(null);
   const [argocdBaseURL, setArgocdBaseURL] = useState<string>('');
   // Values editor — derive a GitHub deep-link from the active
   // connection so users can pop into github.com to see the file in context.
@@ -347,9 +344,8 @@ export function ClusterDetail() {
       // Fetch cluster-scoped open PRs alongside the comparison so the
       // addons table can render per-row pending-PR badges. The .catch
       // keeps the page rendering when the PR-tracker is disabled.
-      const [result, nodes, connections, prsResp] = await Promise.all([
+      const [result, connections, prsResp] = await Promise.all([
         api.getClusterComparison(name),
-        api.getNodeInfo().catch(() => null),
         api.getConnections().catch(() => null),
         fetchTrackedPRs({ status: 'open', cluster: name }).catch(() => null),
       ]);
@@ -385,9 +381,6 @@ export function ClusterDetail() {
       });
       setAddonToggles(toggleMap);
       setOriginalToggles(toggleMap);
-      if (nodes && typeof nodes === 'object' && 'total' in nodes) {
-        setNodeInfo(nodes as { total: number; ready: number; not_ready: number });
-      }
       if (connections) {
         const active = (connections as ConnectionsListResponse).connections.find(
           (c) => c.name === (connections as ConnectionsListResponse).active_connection || c.is_active
@@ -806,11 +799,11 @@ export function ClusterDetail() {
   const navSections = [
     {
       items: [
-        { key: 'overview', label: 'Overview', icon: LayoutGrid },
         { key: 'addons', label: 'Addons', badge: data ? data.addon_comparisons.length : undefined, icon: Package },
         { key: 'prs', label: 'Pull Requests', icon: GitPullRequest },
         { key: 'config', label: 'Config', icon: FileCode },
         { key: 'history', label: 'History', icon: Clock },
+        { key: 'settings', label: 'Settings', icon: Settings },
       ],
     },
     {
@@ -832,16 +825,13 @@ export function ClusterDetail() {
         Back to Clusters Overview
       </button>
 
-      {/* Heading + cluster meta + actions */}
+      {/* Heading + actions. Cluster name, type, version, and connection
+        * status live in the vitals ribbon below (V2-cleanup-78.1) so they
+        * appear once, consistently, on every section instead of duplicated
+        * here and again in the old Overview stat cards. */}
       <div className="flex items-start justify-between">
         <div>
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{data.cluster.name}</h2>
-            <StatusBadge status={computedStatus} size="sm" />
-            {/* Cosmetic type pill derived from server hostname. */}
-            <ClusterTypeBadge server={data.cluster.server_url} />
-          </div>
-          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
+          <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
             Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
           </p>
           {testResult && testResult !== 'testing' && isTestClusterUnavailable(testResult) && (
@@ -1002,6 +992,154 @@ export function ClusterDetail() {
         <p className="text-sm text-red-600 dark:text-red-400">{removeError}</p>
       )}
 
+      {/* Vitals ribbon — persistent across every section (V2-cleanup-78.1).
+        * Opening a cluster now leads with its addons, so the identity +
+        * connection info that used to live in the Overview tab's stat cards
+        * is condensed into a slim strip that stays visible no matter which
+        * tab is active. */}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-2.5 dark:ring-gray-700 dark:bg-gray-800">
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{data.cluster.name}</h2>
+          <ClusterTypeBadge server={data.cluster.server_url} />
+        </div>
+        {data.cluster.server_version && (
+          <div className="flex items-center gap-1.5 text-xs text-[#2a5a7a] dark:text-gray-400">
+            <Tag className="h-3.5 w-3.5 text-teal-500" />
+            <span className="text-[10px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Cluster Version</span>
+            <span className="font-mono font-medium text-[#0a2a4a] dark:text-gray-200">{data.cluster.server_version}</span>
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <StatusBadge status={computedStatus} size="sm" />
+          <ConnectivityBadge
+            connectivityStatus={data.cluster.connectivity_status}
+            connectivityDetail={data.cluster.connectivity_detail}
+            sharkoStatus={data.cluster.sharko_status}
+            lastTestAt={data.cluster.last_test_at}
+            testFailing={data.cluster.test_failing}
+            testErrorCode={data.cluster.test_error_code}
+          />
+        </div>
+      </div>
+
+      {/* Connection health banners — relocated from the old Overview tab so
+        * a stale-data warning stays visible on every section, especially the
+        * new default (Addons). The redundant green "Cluster connected"
+        * banner was dropped here since the ribbon above already shows
+        * connection status at a glance. */}
+      {computedStatus === 'unreachable' && (() => {
+        const hasArgoCDError = data.argocd_connection_status && data.argocd_connection_status !== 'Successful';
+        if (hasArgoCDError) {
+          // Consolidated banner: ArgoCD error IS the root cause
+          return (
+            <div className="flex items-start justify-between gap-3 rounded-xl border-2 border-red-300 bg-red-50 px-5 py-4 dark:border-red-700 dark:bg-red-900/20">
+              <div className="flex items-start gap-3 text-red-700 dark:text-red-400">
+                <WifiOff className="h-5 w-5 shrink-0 mt-0.5" />
+                <div>
+                  <span className="text-sm font-semibold">Cluster Unreachable — ArgoCD Connection Failed</span>
+                  {data.argocd_connection_message && (
+                    <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
+                  )}
+                  <p className="mt-1 text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
+                </div>
+              </div>
+              {/* Ask AI — hidden unless an AI provider is configured (opt-in, V2-cleanup-55.4) */}
+              {aiEnabled && (
+                <button
+                  onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?`, nonce: crypto.randomUUID() } }))}
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
+                >
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  Ask AI
+                </button>
+              )}
+            </div>
+          );
+        }
+        // Generic unreachable banner (no ArgoCD-specific error)
+        return (
+          <div className="flex items-center justify-between rounded-xl border-2 border-red-300 bg-red-50 px-5 py-3 dark:border-red-700 dark:bg-red-900/20">
+            <div className="flex items-center gap-2 text-red-700 dark:text-red-400">
+              <WifiOff className="h-5 w-5 shrink-0" />
+              <div>
+                <span className="text-sm font-semibold">Cluster unreachable</span>
+                {data.cluster_connection_state && (
+                  <span className="ml-2 text-xs text-red-600 dark:text-red-400">({data.cluster_connection_state})</span>
+                )}
+                <p className="text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
+              </div>
+            </div>
+            {/* Ask AI — hidden unless an AI provider is configured (opt-in, V2-cleanup-55.4) */}
+            {aiEnabled && (
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `Cluster ${name} is unreachable (${data.cluster_connection_state}). What could be wrong and how can I fix it?`, nonce: crypto.randomUUID() } }))}
+                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                Ask AI
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ArgoCD connection banner — distinguishes three states so a
+        * cluster Sharko hasn't yet probed isn't mis-labelled as
+        * "Connection Failed":
+        *
+        *   - argocd_connection_status missing / "Unknown" → neutral banner below
+        *   - argocd_connection_status === "Successful"    → no banner (happy path)
+        *   - anything else                                 → red "Connection Failed" banner
+        *
+        * The !== 'unreachable' guard prevents double-rendering when
+        * the consolidated "Cluster Unreachable" banner is already
+        * shown.
+        */}
+      {(() => {
+        if (computedStatus === 'unreachable') return null;
+        const argoStatus = data.argocd_connection_status;
+        if (!argoStatus) return null;
+        if (argoStatus === 'Successful') return null;
+        const lowered = argoStatus.toLowerCase();
+        // "Unknown" is not a failure — it's the absence of an
+        // observation. Render a neutral "status unknown" banner
+        // instead of the red Connection Failed copy.
+        if (lowered === 'unknown' || lowered === '') {
+          return (
+            <div className="flex items-start gap-3 rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] px-5 py-3 dark:ring-gray-700 dark:bg-gray-800">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-[#3a6a8a] dark:text-gray-300 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Status unknown</p>
+                <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">Sharko has not yet observed an ArgoCD response for this cluster.</p>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div className="flex items-start justify-between gap-3 rounded-xl ring-2 ring-red-300 bg-red-50 px-5 py-4 dark:ring-red-700 dark:bg-red-950/30">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-red-700 dark:text-red-400">ArgoCD Connection Failed</p>
+                {data.argocd_connection_message && (
+                  <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
+                )}
+              </div>
+            </div>
+            {/* Ask AI — hidden unless an AI provider is configured (opt-in, V2-cleanup-55.4) */}
+            {aiEnabled && (
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?`, nonce: crypto.randomUUID() } }))}
+                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                Ask AI
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Main layout: nav panel + content */}
       <div className="flex gap-6">
         <RoleGuard
@@ -1031,270 +1169,6 @@ export function ClusterDetail() {
         </RoleGuard>
 
         <div className="flex-1 space-y-6">
-          {/* Overview section */}
-          {activeSection === 'overview' && (
-            <>
-              {/* Cluster info stat cards */}
-              <div className="flex flex-wrap gap-3">
-                {data.cluster.server_version && (
-                  <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
-                    <Tag className="h-4 w-4 text-teal-500" />
-                    <div>
-                      <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Cluster Version</p>
-                      <p className="font-mono text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{data.cluster.server_version}</p>
-                    </div>
-                  </div>
-                )}
-                {nodeInfo && nodeInfo.total > 0 && (
-                  <div
-                    title="Nodes of the cluster Sharko runs in — not this target cluster."
-                    className={`flex items-center gap-2 rounded-lg border px-4 py-3 shadow-sm ${
-                    nodeInfo.not_ready > 0
-                      ? 'border-red-200 bg-red-50 dark:border-red-700 dark:bg-red-900/20'
-                      : 'border-green-200 bg-green-50 dark:border-green-700 dark:bg-green-900/20'
-                  }`}>
-                    <Cpu className={`h-4 w-4 ${nodeInfo.not_ready > 0 ? 'text-red-500' : 'text-green-500'}`} />
-                    <div>
-                      <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Host Cluster Nodes</p>
-                      <p className={`text-sm font-semibold ${nodeInfo.not_ready > 0 ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`}>
-                        {nodeInfo.ready} / {nodeInfo.total}
-                        {nodeInfo.not_ready > 0 && (
-                          <span className="ml-1.5 text-xs font-normal">({nodeInfo.not_ready} not ready)</span>
-                        )}
-                      </p>
-                      <p className="text-xs text-[#2a5a7a]/70 dark:text-gray-500">Sharko's own cluster, not this target</p>
-                    </div>
-                  </div>
-                )}
-                <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
-                  <Server className="h-4 w-4 text-teal-500" />
-                  <div>
-                    <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Connection</p>
-                    <div className="flex flex-col gap-1">
-                      <StatusBadge status={computedStatus} size="sm" />
-                      <ConnectivityBadge
-                        connectivityStatus={data.cluster.connectivity_status}
-                        connectivityDetail={data.cluster.connectivity_detail}
-                        sharkoStatus={data.cluster.sharko_status}
-                        lastTestAt={data.cluster.last_test_at}
-                        testFailing={data.cluster.test_failing}
-                        testErrorCode={data.cluster.test_error_code}
-                      />
-                    </div>
-                  </div>
-                </div>
-                {/* Secret Path */}
-                <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
-                  <KeyRound className="h-4 w-4 text-teal-500" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Secret Path</p>
-                    {editingSecretPath ? (
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <input
-                          type="text"
-                          value={secretPathValue}
-                          onChange={(e) => setSecretPathValue(e.target.value)}
-                          placeholder="e.g. k8s-my-cluster"
-                          className="w-40 rounded border border-[#5a9dd0] bg-white px-2 py-0.5 text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
-                        />
-                        <button
-                          type="button"
-                          disabled={secretPathSaving}
-                          onClick={async () => {
-                            if (!name) return;
-                            setSecretPathSaving(true);
-                            setSecretPathResult(null);
-                            try {
-                              const result = await updateClusterSettings(name, { secret_path: secretPathValue });
-                              const { prUrl } = extractPR(result);
-                              setSecretPathResult(
-                                prUrl
-                                  ? { pr: result }
-                                  : { message: result?.message || 'Secret path updated' },
-                              );
-                              setEditingSecretPath(false);
-                            } catch (e: unknown) {
-                              setSecretPathResult({ message: e instanceof Error ? e.message : 'Failed to update' });
-                            } finally {
-                              setSecretPathSaving(false);
-                            }
-                          }}
-                          className="rounded bg-teal-600 px-2 py-0.5 text-xs text-white hover:bg-teal-700 disabled:opacity-50"
-                        >
-                          {secretPathSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditingSecretPath(false)}
-                          className="text-xs text-[#3a6a8a] hover:text-[#0a2a4a] dark:text-gray-400"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1.5">
-                        <p className="font-mono text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
-                          {data.cluster.secret_path || '(cluster name)'}
-                        </p>
-                        <RoleGuard adminOnly>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSecretPathValue(data.cluster.secret_path || '');
-                              setEditingSecretPath(true);
-                              setSecretPathResult(null);
-                            }}
-                            className="text-[#5a8aaa] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:text-white"
-                            aria-label="Edit secret path"
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </button>
-                        </RoleGuard>
-                      </div>
-                    )}
-                    {secretPathResult?.pr && (
-                      <div className="mt-1">
-                        <PRResultBanner
-                          result={secretPathResult.pr}
-                          mergedMessage="PR merged — secret path updated"
-                          openMessage="PR opened — secret path updates once it merges"
-                        />
-                      </div>
-                    )}
-                    {secretPathResult?.message && (
-                      <p className="mt-0.5 text-xs text-teal-600 dark:text-teal-400">{secretPathResult.message}</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Connection status banner */}
-              {computedStatus === 'unreachable' && (() => {
-                const hasArgoCDError = data.argocd_connection_status && data.argocd_connection_status !== 'Successful';
-                if (hasArgoCDError) {
-                  // Consolidated banner: ArgoCD error IS the root cause
-                  return (
-                    <div className="flex items-start justify-between gap-3 rounded-xl border-2 border-red-300 bg-red-50 px-5 py-4 dark:border-red-700 dark:bg-red-900/20">
-                      <div className="flex items-start gap-3 text-red-700 dark:text-red-400">
-                        <WifiOff className="h-5 w-5 shrink-0 mt-0.5" />
-                        <div>
-                          <span className="text-sm font-semibold">Cluster Unreachable — ArgoCD Connection Failed</span>
-                          {data.argocd_connection_message && (
-                            <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
-                          )}
-                          <p className="mt-1 text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
-                        </div>
-                      </div>
-                      {/* Ask AI — hidden unless an AI provider is configured (opt-in, V2-cleanup-55.4) */}
-                      {aiEnabled && (
-                        <button
-                          onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?`, nonce: crypto.randomUUID() } }))}
-                          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
-                        >
-                          <MessageSquare className="h-3.5 w-3.5" />
-                          Ask AI
-                        </button>
-                      )}
-                    </div>
-                  );
-                }
-                // Generic unreachable banner (no ArgoCD-specific error)
-                return (
-                  <div className="flex items-center justify-between rounded-xl border-2 border-red-300 bg-red-50 px-5 py-3 dark:border-red-700 dark:bg-red-900/20">
-                    <div className="flex items-center gap-2 text-red-700 dark:text-red-400">
-                      <WifiOff className="h-5 w-5 shrink-0" />
-                      <div>
-                        <span className="text-sm font-semibold">Cluster unreachable</span>
-                        {data.cluster_connection_state && (
-                          <span className="ml-2 text-xs text-red-600 dark:text-red-400">({data.cluster_connection_state})</span>
-                        )}
-                        <p className="text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
-                      </div>
-                    </div>
-                    {/* Ask AI — hidden unless an AI provider is configured (opt-in, V2-cleanup-55.4) */}
-                    {aiEnabled && (
-                      <button
-                        onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `Cluster ${name} is unreachable (${data.cluster_connection_state}). What could be wrong and how can I fix it?`, nonce: crypto.randomUUID() } }))}
-                        className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
-                      >
-                        <MessageSquare className="h-3.5 w-3.5" />
-                        Ask AI
-                      </button>
-                    )}
-                  </div>
-                );
-              })()}
-              {computedStatus === 'connected' && (
-                <div className="flex items-center gap-2 rounded-xl border-2 border-green-300 bg-green-50 px-5 py-3 dark:border-green-700 dark:bg-green-900/20">
-                  <Wifi className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
-                  <div>
-                    <span className="text-sm font-semibold text-green-700 dark:text-green-400">Cluster connected</span>
-                    {testResult && testResult !== 'testing' && !isTestClusterUnavailable(testResult) && testResult.server_version && (
-                      <span className="ml-2 text-xs text-green-600 dark:text-green-400">({testResult.server_version})</span>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* ArgoCD connection banner — distinguishes three states so a
-                * cluster Sharko hasn't yet probed isn't mis-labelled as
-                * "Connection Failed":
-                *
-                *   - argocd_connection_status missing / "Unknown" → neutral banner below
-                *   - argocd_connection_status === "Successful"    → no banner (happy path)
-                *   - anything else                                 → red "Connection Failed" banner
-                *
-                * The !== 'unreachable' guard prevents double-rendering when
-                * the consolidated "Cluster Unreachable" banner is already
-                * shown.
-                */}
-              {(() => {
-                if (computedStatus === 'unreachable') return null;
-                const argoStatus = data.argocd_connection_status;
-                if (!argoStatus) return null;
-                if (argoStatus === 'Successful') return null;
-                const lowered = argoStatus.toLowerCase();
-                // "Unknown" is not a failure — it's the absence of an
-                // observation. Render a neutral "status unknown" banner
-                // instead of the red Connection Failed copy.
-                if (lowered === 'unknown' || lowered === '') {
-                  return (
-                    <div className="flex items-start gap-3 rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] px-5 py-3 dark:ring-gray-700 dark:bg-gray-800">
-                      <AlertTriangle className="h-5 w-5 shrink-0 text-[#3a6a8a] dark:text-gray-300 mt-0.5" />
-                      <div>
-                        <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Status unknown</p>
-                        <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">Sharko has not yet observed an ArgoCD response for this cluster.</p>
-                      </div>
-                    </div>
-                  );
-                }
-                return (
-                  <div className="flex items-start justify-between gap-3 rounded-xl ring-2 ring-red-300 bg-red-50 px-5 py-4 dark:ring-red-700 dark:bg-red-950/30">
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400 mt-0.5" />
-                      <div>
-                        <p className="text-sm font-semibold text-red-700 dark:text-red-400">ArgoCD Connection Failed</p>
-                        {data.argocd_connection_message && (
-                          <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
-                        )}
-                      </div>
-                    </div>
-                    {/* Ask AI — hidden unless an AI provider is configured (opt-in, V2-cleanup-55.4) */}
-                    {aiEnabled && (
-                      <button
-                        onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?`, nonce: crypto.randomUUID() } }))}
-                        className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
-                      >
-                        <MessageSquare className="h-3.5 w-3.5" />
-                        Ask AI
-                      </button>
-                    )}
-                  </div>
-                );
-              })()}
-            </>
-          )}
-
           {/* Addons section */}
           {activeSection === 'addons' && (
             <>
@@ -1792,6 +1666,99 @@ export function ClusterDetail() {
           {/* History section */}
           {activeSection === 'history' && (
             <ClusterHistorySection clusterName={name!} />
+          )}
+
+          {/* Settings section — houses admin troubleshooting controls that
+            * used to sit among the Overview stat cards (V2-cleanup-78.1).
+            * Secret Path is viewable by everyone (it's not sensitive — it's
+            * the lookup key into the secrets backend) but only admins can
+            * edit it, same as before the move. */}
+          {activeSection === 'settings' && (
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Cluster Settings</h3>
+              <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
+                <KeyRound className="h-4 w-4 text-teal-500" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Secret Path</p>
+                  {editingSecretPath ? (
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <input
+                        type="text"
+                        value={secretPathValue}
+                        onChange={(e) => setSecretPathValue(e.target.value)}
+                        placeholder="e.g. k8s-my-cluster"
+                        className="w-40 rounded border border-[#5a9dd0] bg-white px-2 py-0.5 text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                      />
+                      <button
+                        type="button"
+                        disabled={secretPathSaving}
+                        onClick={async () => {
+                          if (!name) return;
+                          setSecretPathSaving(true);
+                          setSecretPathResult(null);
+                          try {
+                            const result = await updateClusterSettings(name, { secret_path: secretPathValue });
+                            const { prUrl } = extractPR(result);
+                            setSecretPathResult(
+                              prUrl
+                                ? { pr: result }
+                                : { message: result?.message || 'Secret path updated' },
+                            );
+                            setEditingSecretPath(false);
+                          } catch (e: unknown) {
+                            setSecretPathResult({ message: e instanceof Error ? e.message : 'Failed to update' });
+                          } finally {
+                            setSecretPathSaving(false);
+                          }
+                        }}
+                        className="rounded bg-teal-600 px-2 py-0.5 text-xs text-white hover:bg-teal-700 disabled:opacity-50"
+                      >
+                        {secretPathSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingSecretPath(false)}
+                        className="text-xs text-[#3a6a8a] hover:text-[#0a2a4a] dark:text-gray-400"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-mono text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+                        {data.cluster.secret_path || '(cluster name)'}
+                      </p>
+                      <RoleGuard adminOnly>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSecretPathValue(data.cluster.secret_path || '');
+                            setEditingSecretPath(true);
+                            setSecretPathResult(null);
+                          }}
+                          className="text-[#5a8aaa] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:text-white"
+                          aria-label="Edit secret path"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                      </RoleGuard>
+                    </div>
+                  )}
+                  {secretPathResult?.pr && (
+                    <div className="mt-1">
+                      <PRResultBanner
+                        result={secretPathResult.pr}
+                        mergedMessage="PR merged — secret path updated"
+                        openMessage="PR opened — secret path updates once it merges"
+                      />
+                    </div>
+                  )}
+                  {secretPathResult?.message && (
+                    <p className="mt-0.5 text-xs text-teal-600 dark:text-teal-400">{secretPathResult.message}</p>
+                  )}
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </div>
