@@ -14,17 +14,30 @@
  * | `*.gke.io` OR `*.googleapis.com`          | `GKE`         | red           |
  * | `kind-*` OR `localhost` OR `127.0.0.1`    | `kind`        | neutral       |
  * | `*.minikube.io`                           | `minikube`    | neutral       |
- * | anything else (incl. malformed / empty)   | `Self-hosted` | neutral       |
+ * | malformed / non-empty but unrecognized    | `Self-hosted` | neutral       |
+ * | empty / missing (no address at all)       | `Unknown`     | muted gray    |
  *
- * Empty / malformed input still renders `Self-hosted` so the column is never
- * visually empty. `new URL()` failures are caught — we never throw.
+ * A malformed but non-empty input still renders `Self-hosted` — we have an
+ * address, it just doesn't match a known cloud/dev pattern, which is a
+ * legitimate deduction. An empty/missing address renders `Unknown` instead —
+ * we have no address at all (e.g. ArgoCD has no connection to the cluster),
+ * so asserting any type would be misleading. The badge is never blank.
+ * `new URL()` failures are caught — we never throw.
  */
 
-type ClusterType = 'EKS' | 'AKS' | 'GKE' | 'kind' | 'minikube' | 'Self-hosted'
+type ClusterType =
+  | 'EKS'
+  | 'AKS'
+  | 'GKE'
+  | 'kind'
+  | 'minikube'
+  | 'Self-hosted'
+  | 'Unknown'
 
 type ClusterTypeBadgeProps = {
   /** The cluster's API server URL, e.g. `"https://kind-test-1:6443"`.
-   *  Optional / empty / malformed inputs all fall through to `Self-hosted`. */
+   *  Empty / missing inputs render `Unknown`; malformed-but-non-empty inputs
+   *  fall through to `Self-hosted`. */
   server: string | undefined
   /** Smaller chip for table rows / cards; default sizing for headers. */
   compact?: boolean
@@ -32,9 +45,9 @@ type ClusterTypeBadgeProps = {
 
 /**
  * Extracts the lower-cased hostname from a server URL. Returns the empty
- * string for malformed inputs so the caller can fall through to the
- * Self-hosted default without a try/catch. The browser `URL` constructor
- * already strips port, path, query, fragment.
+ * string for empty/missing/malformed inputs so the caller can fall through
+ * to `Unknown` without a try/catch. The browser `URL` constructor already
+ * strips port, path, query, fragment.
  */
 function extractHostname(server: string | undefined): string {
   if (!server || server.trim() === '') return ''
@@ -46,13 +59,14 @@ function extractHostname(server: string | undefined): string {
 }
 
 /**
- * Maps a hostname to a `ClusterType`. Order matters: more-specific
+ * Maps a hostname to a `ClusterType`. An empty hostname (no address at all)
+ * returns `Unknown` immediately. Otherwise, order matters: more-specific
  * cloud-provider patterns are checked first, then dev-flavour heuristics,
- * then fall through to `Self-hosted`.
+ * then fall through to `Self-hosted` for any real-but-unrecognized address.
  */
 export function classifyClusterType(server: string | undefined): ClusterType {
   const host = extractHostname(server)
-  if (host === '') return 'Self-hosted'
+  if (host === '') return 'Unknown'
 
   if (host.endsWith('.eks.amazonaws.com')) return 'EKS'
   if (host.endsWith('.azmk8s.io')) return 'AKS'
@@ -98,6 +112,14 @@ const TYPE_TONE: Record<ClusterType, ToneClasses> = {
     base: 'bg-[#eaf4fc] text-[#2a5a7a] dark:bg-[#123044] dark:text-[#b4dcf5]',
     ring: 'ring-[#c0ddf0] dark:ring-[#2a5a7a]',
   },
+  Unknown: {
+    // Muted/desaturated variant of the neutral palette above — visually
+    // quieter than every other pill, and deliberately not the same as
+    // Self-hosted so "we don't know" reads differently from "we deduced a
+    // type". Neutral (not red/error, not green/positive) on purpose.
+    base: 'bg-[#e4e9ee] text-[#5c6b7a] dark:bg-[#262b31] dark:text-[#9aa7b4]',
+    ring: 'ring-[#c7d0d9] dark:ring-[#3a424c]',
+  },
 }
 
 /**
@@ -115,6 +137,8 @@ const TYPE_TOOLTIP: Record<ClusterType, string> = {
     'minikube cluster (local development) — detected from API server hostname',
   'Self-hosted':
     'Self-hosted or unrecognized cluster — hostname did not match a known cloud or dev pattern',
+  Unknown:
+    "No API server address is available, so Sharko can't tell this cluster's type — often because the cluster isn't connected yet.",
 }
 
 export function ClusterTypeBadge({

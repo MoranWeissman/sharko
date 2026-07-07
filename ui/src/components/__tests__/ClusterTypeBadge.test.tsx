@@ -11,8 +11,9 @@ import {
  * cases (empty / malformed / port / IPv6 / custom DNS).
  *
  * Implementation choice: the badge always renders something (never returns
- * `null`) — empty / malformed / unrecognized hostnames all fall through to
- * `Self-hosted` so the column is never visually empty.
+ * `null`) — a real-but-unrecognized hostname falls through to `Self-hosted`,
+ * while an empty/missing/malformed (no address at all) input renders
+ * `Unknown` (V2-cleanup-77.1) — so the column is never visually empty.
  */
 describe('ClusterTypeBadge — hostname → pill mapping (design §2.3)', () => {
   it('1. *.eks.amazonaws.com → "EKS" with orange variant', () => {
@@ -75,16 +76,26 @@ describe('ClusterTypeBadge — hostname → pill mapping (design §2.3)', () => 
     expect(screen.getByText('Self-hosted')).toBeInTheDocument()
   })
 
-  it('10. empty string → "Self-hosted" (no crash)', () => {
-    render(<ClusterTypeBadge server="" />)
+  it('9b. real non-cloud IP address (10.0.0.1) → "Self-hosted" (catch-all intact, V2-cleanup-77.1)', () => {
+    render(<ClusterTypeBadge server="https://10.0.0.1:6443" />)
     expect(screen.getByText('Self-hosted')).toBeInTheDocument()
   })
 
-  it('11. malformed URL → "Self-hosted" (no crash, no thrown exception)', () => {
+  it('9c. real non-cloud on-prem hostname → "Self-hosted" (catch-all intact, V2-cleanup-77.1)', () => {
+    render(<ClusterTypeBadge server="https://onprem.example.com:6443" />)
+    expect(screen.getByText('Self-hosted')).toBeInTheDocument()
+  })
+
+  it('10. empty string → "Unknown" (no crash) [V2-cleanup-77.1]', () => {
+    render(<ClusterTypeBadge server="" />)
+    expect(screen.getByText('Unknown')).toBeInTheDocument()
+  })
+
+  it('11. malformed URL → "Unknown" (no crash, no thrown exception) [V2-cleanup-77.1]', () => {
     expect(() =>
       render(<ClusterTypeBadge server="not-a-url" />),
     ).not.toThrow()
-    expect(screen.getByText('Self-hosted')).toBeInTheDocument()
+    expect(screen.getByText('Unknown')).toBeInTheDocument()
   })
 
   it('12. URL with port stripped — "https://kind-test-1:6443" → "kind"', () => {
@@ -99,9 +110,14 @@ describe('ClusterTypeBadge — additional edge cases', () => {
     expect(screen.getByText('Self-hosted')).toBeInTheDocument()
   })
 
-  it('undefined server → "Self-hosted"', () => {
+  it('undefined server → "Unknown" [V2-cleanup-77.1]', () => {
     render(<ClusterTypeBadge server={undefined} />)
-    expect(screen.getByText('Self-hosted')).toBeInTheDocument()
+    expect(screen.getByText('Unknown')).toBeInTheDocument()
+  })
+
+  it('whitespace-only server → "Unknown" [V2-cleanup-77.1]', () => {
+    render(<ClusterTypeBadge server="   " />)
+    expect(screen.getByText('Unknown')).toBeInTheDocument()
   })
 
   it('hostname matching is case-insensitive (EKS uppercase)', () => {
@@ -140,17 +156,52 @@ describe('ClusterTypeBadge — additional edge cases', () => {
     expect(badge.getAttribute('title')).toMatch(/Self-hosted|unrecognized/)
   })
 
-  it('palette guard — neutral pills do NOT use bg-gray-* in light mode', () => {
+  it('palette guard — neutral pills do NOT use bg-gray-* / text-gray-* Tailwind utilities in light mode', () => {
     const { container: kindC } = render(
       <ClusterTypeBadge server="https://kind-foo" />,
     )
     const { container: selfC } = render(
       <ClusterTypeBadge server="https://k8s.example.com" />,
     )
+    const { container: unknownC } = render(<ClusterTypeBadge server="" />)
     expect(kindC.innerHTML).not.toMatch(/\bbg-gray-/)
     expect(kindC.innerHTML).not.toMatch(/\btext-gray-/)
     expect(selfC.innerHTML).not.toMatch(/\bbg-gray-/)
     expect(selfC.innerHTML).not.toMatch(/\btext-gray-/)
+    expect(unknownC.innerHTML).not.toMatch(/\bbg-gray-/)
+    expect(unknownC.innerHTML).not.toMatch(/\btext-gray-/)
+  })
+})
+
+describe('ClusterTypeBadge — "Unknown" (no API server address, V2-cleanup-77.1)', () => {
+  it('renders visible "Unknown" text — never blank', () => {
+    render(<ClusterTypeBadge server="" />)
+    expect(screen.getByText('Unknown')).toBeInTheDocument()
+  })
+
+  it('renders visible "Unknown" text in compact mode — never blank', () => {
+    render(<ClusterTypeBadge server={undefined} compact />)
+    expect(screen.getByText('Unknown')).toBeInTheDocument()
+  })
+
+  it('uses muted/neutral styling distinct from Self-hosted — not red, not green', () => {
+    const { container } = render(<ClusterTypeBadge server="" />)
+    expect(container.innerHTML).not.toMatch(/\b(?:bg|text|ring)-red-/)
+    expect(container.innerHTML).not.toMatch(/\b(?:bg|text|ring)-green-/)
+    expect(container.innerHTML).not.toMatch(/\b(?:bg|text|ring)-emerald-/)
+  })
+
+  it('has an aria-label of "Cluster type: Unknown"', () => {
+    render(<ClusterTypeBadge server="" />)
+    expect(screen.getByLabelText('Cluster type: Unknown')).toBeInTheDocument()
+  })
+
+  it('tooltip explains no address is available, not a mis-detection', () => {
+    render(<ClusterTypeBadge server="" />)
+    const badge = screen.getByLabelText('Cluster type: Unknown')
+    expect(badge.getAttribute('title')).toMatch(
+      /No API server address is available/,
+    )
   })
 })
 
@@ -162,8 +213,11 @@ describe('classifyClusterType — pure helper (no DOM)', () => {
     expect(classifyClusterType('https://kind-y')).toBe('kind')
     expect(classifyClusterType('https://x.minikube.io')).toBe('minikube')
     expect(classifyClusterType('https://k8s.example.com')).toBe('Self-hosted')
-    expect(classifyClusterType(undefined)).toBe('Self-hosted')
-    expect(classifyClusterType('')).toBe('Self-hosted')
-    expect(classifyClusterType('garbage')).toBe('Self-hosted')
+    expect(classifyClusterType('https://10.0.0.1:6443')).toBe('Self-hosted')
+    // No address at all → 'Unknown' (V2-cleanup-77.1), not 'Self-hosted'.
+    expect(classifyClusterType(undefined)).toBe('Unknown')
+    expect(classifyClusterType('')).toBe('Unknown')
+    expect(classifyClusterType('   ')).toBe('Unknown')
+    expect(classifyClusterType('garbage')).toBe('Unknown')
   })
 })
