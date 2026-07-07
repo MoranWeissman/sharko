@@ -79,7 +79,7 @@ Full design spec: `docs/design/2026-04-07-sharko-v1-design-decisions.md`
 - [x] **Audit log for manual changes** — `GET /api/v1/audit` implemented in v1.8.0. In-memory ring buffer recording all write operations with actor, action, target, result, and timestamp.
 - [x] **E2E tests** — E2E framework added in v1.8.0 (`e2e/` package). `make e2e-setup`, `make e2e`, `make e2e-teardown`. Tests against real ArgoCD in Kind cluster.
 - [x] **AI-parsed release notes** — AI SimplePrompt used to summarize chart changelogs. `POST /api/v1/addons/{name}/ai-summary` endpoint. Summary shown in AddonDetail overview tab.
-- [x] **Addon dependency ordering** — `dependsOn` field added to `AddonCatalogEntry` in v1.8.0. `--depends-on` CLI flag on `add-addon`. Cycle detection via topological sort. Generates ArgoCD sync waves.
+- [x] **Addon dependency ordering** — `dependsOn` field added to `AddonCatalogEntry` in v1.8.0. `--depends-on` CLI flag on `add-addon`. Cycle detection via topological sort. Generates ArgoCD sync waves. **REMOVED in v3.0.0 (V2-cleanup-67.1):** the per-addon ApplicationSet model can't order addon-vs-addon, so sync waves never actually worked — both `syncWave` and `dependsOn` were dropped from the struct. See `docs/TODO.md` for the re-opened item.
 - [x] **Separate managed vs discovered clusters in dashboard** — ClustersOverview now shows two sections: Managed (full Sharko features) and Discovered (ArgoCD-only, with Adopt button).
 - [x] **Adopt existing ArgoCD cluster secrets** — `POST /api/v1/clusters/{name}/adopt` implemented. UI shows "Adopt" button on discovered cluster cards.
 - [x] **Cluster connectivity check** — `POST /api/v1/clusters/{name}/test` implemented. CLI: `sharko test-cluster`. UI: Test Connectivity button on cluster detail page.

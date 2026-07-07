@@ -921,7 +921,6 @@ Add a new addon to the addons catalog configuration.
 | repo_url | string | yes | Helm repo URL |
 | version | string | yes | Chart version |
 | namespace | string | no | Target namespace. Defaults to addon name. |
-| sync_wave | int | no | ArgoCD sync wave (0 = default, negative = earlier). |
 
 **Orchestration Steps:**
 1. Validate input (name format)

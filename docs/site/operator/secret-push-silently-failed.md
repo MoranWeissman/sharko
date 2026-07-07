@@ -19,7 +19,7 @@ the addon secrets (Datadog API key, Grafana token, ESO credentials,
 etc.) that were supposed to be pushed to the remote cluster's namespace
 **were not actually pushed**. The user thinks the credential is in
 place; the addon will deploy and fail with `MissingSecret` /
-`Forbidden` / `401` once ArgoCD's sync wave reaches it.
+`Forbidden` / `401` once ArgoCD syncs it.
 
 This is a P0 because the failure is **silent data loss from the
 operator's perspective**. The HTTP response is success, no exception

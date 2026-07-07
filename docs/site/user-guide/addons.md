@@ -42,56 +42,10 @@ Flags:
 | `--version` | Yes | Helm chart version to track |
 | `--namespace` | No | Target namespace (defaults to addon name) |
 | `--values` | No | Path to a values YAML file to use as the base |
-| `--depends-on` | No | Comma-separated list of addons that must be deployed before this one |
 
 Via UI: **Addons → Add Addon**, fill in the form.
 
 The command creates a PR that adds the addon's directory structure to your Git repo.
-
-## Addon Dependency Ordering
-
-Use `dependsOn` to declare that one addon must be fully deployed before another starts. This maps directly to ArgoCD sync waves under the hood.
-
-### Declaring dependencies in the catalog
-
-```yaml
-addons:
-  - name: cert-manager
-    chart: cert-manager
-    repo: https://charts.jetstack.io
-    version: 1.14.5
-
-  - name: ingress-nginx
-    chart: ingress-nginx
-    repo: https://kubernetes.github.io/ingress-nginx
-    version: 4.9.0
-    dependsOn:
-      - cert-manager
-```
-
-In this example, `ingress-nginx` will not begin syncing until `cert-manager` is in a `Healthy` state across all clusters.
-
-### Via CLI
-
-```bash
-sharko add-addon ingress-nginx \
-  --chart ingress-nginx \
-  --repo https://kubernetes.github.io/ingress-nginx \
-  --version 4.9.0 \
-  --depends-on cert-manager
-```
-
-Multiple dependencies are comma-separated: `--depends-on cert-manager,metrics-server`.
-
-### Cycle detection
-
-Sharko validates the dependency graph when an addon is added or updated. Cycles (e.g., A depends on B, B depends on A) are rejected with a `400 Bad Request` and a descriptive error identifying the cycle.
-
-### Constraints
-
-- `dependsOn` references must be existing addons in the catalog
-- Circular dependencies are not allowed
-- Self-references are rejected
 
 ## Configuring an Addon
 
