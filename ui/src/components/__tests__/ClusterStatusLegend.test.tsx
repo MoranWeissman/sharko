@@ -16,10 +16,14 @@ describe('ClusterStatusLegend', () => {
     expect(screen.getByText('Cluster Status:')).toBeInTheDocument();
   });
 
-  it('renders the four canonical connection states', () => {
+  it('renders the five canonical connection states', () => {
     render(<ClusterStatusLegend />);
     expect(screen.getByText('Connected')).toBeInTheDocument();
     expect(screen.getByText('Connecting…')).toBeInTheDocument();
+    // V2-cleanup-75.1: "Not connected" (amber) is distinct from
+    // "Connecting…" (neutral) — ArgoCD has no connection at all vs. the
+    // normal post-registration wait.
+    expect(screen.getByText('Not connected')).toBeInTheDocument();
     expect(screen.getByText('Not managed')).toBeInTheDocument();
     expect(screen.getByText('Disconnected')).toBeInTheDocument();
   });

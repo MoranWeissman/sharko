@@ -31,8 +31,17 @@ cluster.
 |------|-------|---------|
 | **Connected** | Green | ArgoCD is connected to this cluster. |
 | **Connecting…** | Neutral | Waiting for ArgoCD's first connection result — normal for about a minute after registering. |
+| **Not connected** | Amber | ArgoCD has no connection for this cluster at all. It may be unreachable from the hub (common for local or kind clusters), or its registration didn't finish. Check the cluster is reachable, then re-run Test connection. |
 | **Not managed** | Amber | In ArgoCD but not in Sharko's Git catalog — adopt it to let Sharko manage its addons. |
 | **Disconnected** | Red | ArgoCD tried to reach this cluster and failed. |
+
+"Not connected" and "Connecting…" look similar but mean different things:
+**Connecting…** is the normal first-minute wait for ArgoCD's first probe result on
+a cluster it does have a connection for — it resolves on its own. **Not connected**
+means ArgoCD never got a connection for the cluster in the first place, so nothing
+is going to resolve it on its own — go check reachability and re-test. **Disconnected**
+(red) is one step further still: ArgoCD had a connection and *tried* to reach the
+cluster, and that attempt failed.
 
 Each cluster row shows **one composite status pill**. The pill shows the
 worst of the cluster's status parts (ArgoCD connection, deploy check,

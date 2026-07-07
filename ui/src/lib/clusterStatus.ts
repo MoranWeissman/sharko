@@ -7,13 +7,21 @@
 // The written contract lives in docs/site/user-guide/status-vocabulary.md —
 // keep the two in sync.
 //
-// Four states:
+// Five states:
 //   - "connected": ArgoCD has probed the cluster and reports it healthy
 //                  (status "Successful" or "Connected").
-//   - "pending":   ArgoCD has not yet observed a probe result (status "",
-//                  "Unknown", "missing" or "missing_from_argocd"). This is
-//                  the transient post-registration window (~10-60s on real
-//                  installs) — surface a neutral state, not a failure.
+//   - "pending":   ArgoCD has not yet observed a probe result (status "" or
+//                  "Unknown"). This is the transient post-registration
+//                  window (~10-60s on real installs) — surface a neutral
+//                  state, not a failure.
+//   - "missing":   (V2-cleanup-75.1) ArgoCD has NO connection secret for
+//                  this cluster at all (status "missing" or
+//                  "missing_from_argocd") — distinct from "pending". A
+//                  cluster in this state is not mid-registration; it's
+//                  either unreachable from the hub (common for local/kind
+//                  clusters) or its registration never finished. Surfacing
+//                  it as "pending" used to leave it stuck on a calm
+//                  "Connecting…" forever with no explanation.
 //   - "unmanaged": the cluster exists in ArgoCD but has no entry in
 //                  Sharko's Git catalog (status "not_in_git"). Not broken —
 //                  it just isn't Sharko-managed yet (adopt it to manage it).
@@ -22,7 +30,7 @@
 //                  through is intentional so a future ArgoCD status we
 //                  don't know about renders as a (red) attention item
 //                  rather than a silent green.
-export type ClusterConnectionKind = 'connected' | 'pending' | 'unmanaged' | 'failed';
+export type ClusterConnectionKind = 'connected' | 'pending' | 'missing' | 'unmanaged' | 'failed';
 
 // Severity scale shared by every status surface (finding D3):
 //   problem   → red     — something is broken, act now
@@ -80,6 +88,14 @@ export const CLUSTER_CONNECTION_STATES: Record<ClusterConnectionKind, ClusterCon
     dot: 'bg-[#3a6a8a] dark:bg-gray-400',
     text: 'text-[#1a4a6a] dark:text-gray-300',
   },
+  missing: {
+    label: 'Not connected',
+    meaning:
+      "ArgoCD has no connection for this cluster. It may be unreachable from the hub (common for local or kind clusters), or its registration didn't finish. Check the cluster is reachable, then re-run Test connection.",
+    severity: 'attention',
+    dot: 'bg-amber-500',
+    text: 'text-amber-700 dark:text-amber-400',
+  },
   unmanaged: {
     label: 'Not managed',
     meaning:
@@ -101,6 +117,7 @@ export const CLUSTER_CONNECTION_STATES: Record<ClusterConnectionKind, ClusterCon
 export const CLUSTER_CONNECTION_KINDS: readonly ClusterConnectionKind[] = [
   'connected',
   'pending',
+  'missing',
   'unmanaged',
   'failed',
 ] as const;
@@ -108,9 +125,8 @@ export const CLUSTER_CONNECTION_KINDS: readonly ClusterConnectionKind[] = [
 export function classifyClusterConnection(status: string | null | undefined): ClusterConnectionKind {
   const s = (status ?? '').toLowerCase().trim();
   if (s === 'successful' || s === 'connected') return 'connected';
-  if (s === '' || s === 'unknown' || s === 'missing' || s === 'missing_from_argocd') {
-    return 'pending';
-  }
+  if (s === '' || s === 'unknown') return 'pending';
+  if (s === 'missing' || s === 'missing_from_argocd') return 'missing';
   if (s === 'not_in_git') return 'unmanaged';
   return 'failed';
 }
@@ -133,4 +149,16 @@ export function isClusterConnected(status: string | null | undefined): boolean {
 // lands in "needs attention" lists just for being unadopted.
 export function isClusterFailed(status: string | null | undefined): boolean {
   return classifyClusterConnection(status) === 'failed';
+}
+
+// True for any state that should surface in "needs attention" style lists
+// without being a hard "failed" (red) problem — 'missing' (V2-cleanup-75.1)
+// and 'unmanaged' both qualify. Callers that build their own attention
+// lists (e.g. Dashboard's "Needs Attention" panel) should OR this in
+// alongside isClusterFailed so a 'missing' cluster (ArgoCD has no
+// connection for it at all) doesn't silently disappear just because it
+// also has no addon rows to compare health against.
+export function isClusterNeedsAttention(status: string | null | undefined): boolean {
+  const kind = classifyClusterConnection(status);
+  return kind === 'failed' || kind === 'missing';
 }
