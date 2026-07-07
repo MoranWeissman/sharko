@@ -137,6 +137,10 @@ For migration state storage:
 | `persistence.storageClassName` | `""` | StorageClass (empty = cluster default) |
 | `persistence.size` | `1Gi` | PVC size |
 
+Notification read-state (e.g. a dismissed "newer version available" alert) is stored under this
+same `/app/data` volume. Without `persistence.enabled: true`, that state lives in an `emptyDir` and
+resets on every pod restart, so cleared notifications come back as unread.
+
 ## Scheduling
 
 | Value | Description |

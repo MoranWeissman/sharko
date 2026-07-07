@@ -265,7 +265,12 @@ ingress:
   #      - sharko.example.com
 
 # ---------------------------------------------------------------------------
-# Data Persistence (for migration state)
+# Data Persistence (migration state, notification read-state, and any other
+# on-disk state under /app/data). With this disabled (default), that state
+# lives in an emptyDir and is wiped on every pod restart — e.g. a cleared
+# notification (like "newer version available") will come back as unread
+# after the pod restarts. Set enabled: true to back /app/data with a PVC so
+# it survives restarts.
 # ---------------------------------------------------------------------------
 persistence:
   enabled: false
