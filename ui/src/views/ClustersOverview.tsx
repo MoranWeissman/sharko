@@ -59,8 +59,6 @@ import { InfoHint } from '@/components/InfoHint';
 import {
   TEST_CONNECTION_LABEL,
   TEST_CONNECTION_HINT,
-  CHECK_PERMISSIONS_LABEL,
-  CHECK_PERMISSIONS_HINT,
 } from '@/components/ClusterActionHints';
 import { PRModelExplainer } from '@/components/PRFeedback';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
@@ -2018,16 +2016,6 @@ export function ClustersOverview() {
                             text={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_HINT}
                             label={!clusterTestAvailable ? 'Why is Test connection disabled?' : 'What does Test connection do?'}
                           />
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); setDiagnoseCluster(cluster.name); }}
-                            aria-label={CHECK_PERMISSIONS_LABEL}
-                            className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-                          >
-                            <HelpCircle className="h-3 w-3" />
-                            {CHECK_PERMISSIONS_LABEL}
-                          </button>
-                          <InfoHint text={CHECK_PERMISSIONS_HINT} label="What does Check permissions do?" />
                           {cluster.adopted && (
                             <RoleGuard adminOnly>
                               <button
@@ -2095,16 +2083,6 @@ export function ClustersOverview() {
                         text={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_HINT}
                         label={!clusterTestAvailable ? 'Why is Test connection disabled?' : 'What does Test connection do?'}
                       />
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setDiagnoseCluster(cluster.name); }}
-                        aria-label={CHECK_PERMISSIONS_LABEL}
-                        title={CHECK_PERMISSIONS_LABEL}
-                        className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-                      >
-                        <HelpCircle className="h-3 w-3" />
-                      </button>
-                      <InfoHint text={CHECK_PERMISSIONS_HINT} label="What does Check permissions do?" />
                     </div>
                   </div>
                   {testResult && testResult !== 'testing' && (
