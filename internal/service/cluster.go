@@ -110,6 +110,7 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 		if ac, ok := argocdMap[clusters[i].Name]; ok {
 			clusters[i].ConnectionStatus = ac.ConnectionState
 			clusters[i].ServerVersion = ac.ServerVersion
+			clusters[i].ServerURL = ac.Server
 			delete(argocdMap, clusters[i].Name)
 		} else {
 			clusters[i].ConnectionStatus = "missing"
@@ -128,6 +129,7 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 			Labels:           map[string]string{},
 			ConnectionStatus: "not_in_git",
 			ServerVersion:    ac.ServerVersion,
+			ServerURL:        ac.Server,
 		})
 	}
 
@@ -217,6 +219,25 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 	// Get connection state
 	connState, _ := argocdSvc.GetClusterConnectionState(ctx, clusterName)
 	cluster.ConnectionStatus = connState
+
+	// Surface the ArgoCD-registered API-server URL so the UI's
+	// ClusterTypeBadge can classify EKS/AKS/GKE/kind/minikube instead of
+	// always falling back to "Self-hosted" (V2-cleanup-74.1). Left unset
+	// for the hub-local in-cluster entry, mirroring ListClusters.
+	if argocdClusters, err := ac.ListClusters(ctx); err != nil {
+		log.Warn("could not fetch argocd clusters for server url", "cluster", clusterName, "error", err)
+	} else {
+		for _, argoCluster := range argocdClusters {
+			if argoCluster.Name != clusterName {
+				continue
+			}
+			if argoCluster.Name == "in-cluster" || strings.HasPrefix(argoCluster.Server, "https://kubernetes.default") {
+				break
+			}
+			cluster.ServerURL = argoCluster.Server
+			break
+		}
+	}
 
 	return &models.ClusterDetailResponse{
 		Cluster: *cluster,

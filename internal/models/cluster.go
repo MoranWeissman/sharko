@@ -310,6 +310,12 @@ type Cluster struct {
 	Labels           map[string]string `json:"labels" yaml:"labels"`
 	Region           string            `json:"region,omitempty" yaml:"region,omitempty"`
 	ServerVersion    string            `json:"server_version,omitempty"`
+	// ServerURL is the cluster's ArgoCD-registered API-server URL (V2-cleanup-74.1).
+	// Sourced from the matching models.ArgocdCluster.Server — never stored in Git,
+	// always populated at read time. The UI's ClusterTypeBadge parses this hostname
+	// to classify EKS/AKS/GKE/kind/minikube/self-hosted. Left empty for the
+	// hub-local "in-cluster" entry (see ListClusters/GetClusterDetail skip logic).
+	ServerURL        string            `json:"server_url,omitempty" yaml:"serverUrl,omitempty"`
 	ConnectionStatus string            `json:"connection_status,omitempty"`
 	Managed          bool              `json:"managed"` // true if in cluster-addons.yaml
 
