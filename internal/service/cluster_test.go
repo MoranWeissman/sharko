@@ -279,6 +279,101 @@ func TestClusterService_ListClusters_OrphanAndPendingDefaultNonNil(t *testing.T)
 	})
 }
 
+// TestClusterService_ListClusters_PopulatesServerURL is the V2-cleanup-74.1
+// regression test: models.Cluster.ServerURL must be copied from the
+// matching ArgoCD cluster's Server field for BOTH a git-managed cluster
+// (the argocdMap-match branch) and an ArgoCD-only "not in git" cluster
+// (the notInGitClusters branch). Without this, the UI's ClusterTypeBadge
+// always fell back to "Self-hosted" because server_url was always null.
+//
+// It also locks down that the hub-local "in-cluster" entry (matched here
+// by both name and the https://kubernetes.default server prefix) never
+// leaks a server URL into the response — ListClusters skips it entirely.
+func TestClusterService_ListClusters_PopulatesServerURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[
+			{"name":"prod-eks","server":"https://EXAMPLE.gr7.eu-west-1.eks.amazonaws.com","serverVersion":"v1.29.3"},
+			{"name":"orphan-eks","server":"https://ORPHAN.gr7.eu-west-1.eks.amazonaws.com","serverVersion":"v1.28.1"},
+			{"name":"in-cluster","server":"https://kubernetes.default.svc"}
+		]}`))
+	}))
+	t.Cleanup(srv.Close)
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+
+	svc := NewClusterService("")
+	gp := &fakeGP{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": []byte(
+				"clusters:\n  - name: prod-eks\n    labels: {}\n",
+			),
+		},
+	}
+
+	resp, err := svc.ListClusters(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	byName := map[string]string{}
+	for _, c := range resp.Clusters {
+		byName[c.Name] = c.ServerURL
+		if c.Name == "in-cluster" {
+			t.Errorf("hub-local in-cluster entry must not appear in ListClusters output, got %+v", c)
+		}
+	}
+
+	if got := byName["prod-eks"]; got != "https://EXAMPLE.gr7.eu-west-1.eks.amazonaws.com" {
+		t.Errorf("git-managed cluster prod-eks: ServerURL = %q, want the EKS API-server URL", got)
+	}
+	if got := byName["orphan-eks"]; got != "https://ORPHAN.gr7.eu-west-1.eks.amazonaws.com" {
+		t.Errorf("ArgoCD-only cluster orphan-eks: ServerURL = %q, want the EKS API-server URL", got)
+	}
+}
+
+// TestClusterService_GetClusterDetail_PopulatesServerURL locks down the
+// GetClusterDetail half of V2-cleanup-74.1: the single-cluster detail
+// response must also carry ServerURL, sourced by looking up the requested
+// cluster name in ac.ListClusters (GetClusterDetail does not already fetch
+// per-cluster ArgoCD data the way ListClusters does).
+func TestClusterService_GetClusterDetail_PopulatesServerURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			_, _ = w.Write([]byte(`{"items":[
+				{"name":"prod-eks","server":"https://EXAMPLE.gr7.eu-west-1.eks.amazonaws.com","serverVersion":"v1.29.3","info":{"connectionState":{"status":"Successful"}}}
+			]}`))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/applications") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+
+	svc := NewClusterService("")
+	gp := &fakeGP{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": []byte(
+				"clusters:\n  - name: prod-eks\n    labels: {}\n",
+			),
+			"configuration/addons-catalog.yaml": []byte("applicationsets: []"),
+		},
+	}
+
+	resp, err := svc.GetClusterDetail(context.Background(), "prod-eks", gp, ac)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response for known cluster")
+	}
+	if got := resp.Cluster.ServerURL; got != "https://EXAMPLE.gr7.eu-west-1.eks.amazonaws.com" {
+		t.Errorf("GetClusterDetail: ServerURL = %q, want the EKS API-server URL", got)
+	}
+}
+
 // TestClusterService_GetClusterDetail_UnknownClusterReturnsNil ensures the
 // happy path still works — an empty managed-clusters.yaml plus a known
 // catalog yields a clean nil response (cluster not found) rather than a
