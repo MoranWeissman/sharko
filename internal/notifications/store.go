@@ -40,8 +40,9 @@ type Store struct {
 }
 
 // DefaultNotificationsPath is the file used when persistence is enabled.
-// The Sharko PVC mounts at /data.
-const DefaultNotificationsPath = "/data/notifications.json"
+// The Sharko chart mounts the data volume at /app/data (see
+// charts/sharko/templates/deployment.yaml).
+const DefaultNotificationsPath = "/app/data/notifications.json"
 
 // NewStore creates a Store that retains at most maxItems notifications.
 // filePath controls persistence: pass an empty string for in-memory only,
