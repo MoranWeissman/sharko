@@ -34,7 +34,6 @@ vi.mock('react-router-dom', async () => {
 const mockGetClusterComparison = vi.fn();
 const mockTestClusterConnection = vi.fn();
 const mockFetchTrackedPRs = vi.fn();
-const mockGetNodeInfo = vi.fn();
 const mockDeregisterCluster = vi.fn();
 const mockUpdateClusterAddons = vi.fn();
 const mockGetAddonCatalog = vi.fn();
@@ -60,7 +59,6 @@ vi.mock('@/services/api', async () => {
     api: {
       getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
       getConnections: vi.fn().mockResolvedValue({ connections: [], active_connection: '' }),
-      getNodeInfo: (...args: unknown[]) => mockGetNodeInfo(...args),
       enableAddonOnCluster: vi.fn().mockResolvedValue({}),
       getAddonCatalog: (...args: unknown[]) => mockGetAddonCatalog(...args),
       restartAddonSync: (...args: unknown[]) => mockRestartAddonSync(...args),
@@ -175,9 +173,6 @@ describe('ClusterDetail', () => {
     // BUG-042: default to "no pending PRs" so existing assertions don't
     // accidentally find a badge. Per-test overrides drive the badge cases.
     mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
-    // Default to "no node info" so the host-node card is hidden in the
-    // baseline; the V2-cleanup-8.3 test below overrides this.
-    mockGetNodeInfo.mockResolvedValue(null);
     // V2-cleanup-13: default removal returns an opened-but-not-merged PR.
     mockDeregisterCluster.mockResolvedValue({});
     // V2-cleanup-31: default apply-addons returns an empty result (no PR).
@@ -188,31 +183,10 @@ describe('ClusterDetail', () => {
     mockGetAddonCatalog.mockResolvedValue({ addons: [] });
   });
 
-  // V2-cleanup-8.3: the node-count card always reflects the Sharko HOST
-  // cluster's nodes (the API only lists in-cluster nodes), yet it renders on
-  // every target's detail page. The old "Nodes Ready" label made a green host
-  // count look like the target's health, contradicting an Unreachable target.
-  // The card is now labelled "Host Cluster Nodes" with clarifying subtext.
-  describe('V2-cleanup-8.3: host-node card labelling', () => {
-    it('labels the node card "Host Cluster Nodes" (not "Nodes Ready") with clarifying subtext', async () => {
-      mockGetNodeInfo.mockResolvedValue({ ready: 1, total: 1, not_ready: 0 });
-      renderView();
-
-      await waitFor(() => {
-        expect(screen.getByText('prod-eu')).toBeInTheDocument();
-      });
-
-      await waitFor(() => {
-        expect(screen.getByText('Host Cluster Nodes')).toBeInTheDocument();
-      });
-      // The misleading old label must be gone.
-      expect(screen.queryByText('Nodes Ready')).not.toBeInTheDocument();
-      // Clarifying subtext distinguishes host from target.
-      expect(screen.getByText(/Sharko's own cluster, not this target/i)).toBeInTheDocument();
-      // The count itself still renders.
-      expect(screen.getByText('1 / 1')).toBeInTheDocument();
-    });
-  });
+  // V2-cleanup-8.3 introduced "Host Cluster Nodes" labelling; V2-cleanup-78.1
+  // removed the card entirely — it reported the Sharko HOST cluster's node
+  // count, not this target cluster's, which was misleading on a per-cluster
+  // page. The fetch, state, and card are gone; nothing to assert here anymore.
 
   it('renders loading state initially', () => {
     mockGetClusterComparison.mockReturnValue(new Promise(() => {}));
@@ -237,16 +211,25 @@ describe('ClusterDetail', () => {
     });
   });
 
-  it('shows overview section by default with cluster info', async () => {
+  // V2-cleanup-78.1: opening a cluster now leads with its addons, not a
+  // dissolved Overview tab. Cluster identity + version + connection live in
+  // the persistent vitals ribbon, which renders on every section — including
+  // the new default.
+  it('shows the addons section by default, with the vitals ribbon showing cluster info', async () => {
     renderView();
 
     await waitFor(() => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    // Overview section shows cluster version and connection info
+    // Vitals ribbon shows cluster version.
     expect(screen.getByText('Cluster Version')).toBeInTheDocument();
     expect(screen.getByText('1.28')).toBeInTheDocument();
+
+    // Addons is the default section — the addons table renders without
+    // clicking anything in the nav.
+    expect(screen.getByText('All Addons')).toBeInTheDocument();
+    expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThan(0);
   });
 
   it('renders cluster detail with stat cards and comparison table on addons section', async () => {
@@ -334,36 +317,48 @@ describe('ClusterDetail', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows nav panel with section items', async () => {
+  // V2-cleanup-78.1: the Overview tab is dissolved — Addons, Config, History,
+  // and the new admin-relevant Settings section remain.
+  it('shows nav panel with section items (no Overview — dissolved)', async () => {
     renderView();
 
     await waitFor(() => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    // Nav panel items should be visible
-    expect(screen.getByText('Overview')).toBeInTheDocument();
-    expect(screen.getByText('Addons')).toBeInTheDocument();
+    // Nav panel items should be visible. "Addons" also appears as the
+    // section heading since it's the default section now — assert at
+    // least one match rather than a single unique one.
+    expect(screen.getAllByText('Addons').length).toBeGreaterThan(0);
     expect(screen.getByText('Config')).toBeInTheDocument();
+    expect(screen.getByText('Settings')).toBeInTheDocument();
+    expect(screen.queryByText('Overview')).not.toBeInTheDocument();
   });
 
-  it('switches to addons section when clicking Addons in nav', async () => {
+  it('switches away from and back to the addons section via nav', async () => {
     renderView();
 
     await waitFor(() => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    // Initially on overview — cluster info cards visible, not addons table
-    expect(screen.queryByText('All Addons')).not.toBeInTheDocument();
+    // Addons is the default — the table is already visible with no clicks.
+    expect(screen.getByText('All Addons')).toBeInTheDocument();
+    expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThan(0);
 
-    // Click Addons in nav panel
+    // Click Settings in nav panel — addons table goes away.
+    fireEvent.click(screen.getByText('Settings'));
+
+    await waitFor(() => {
+      expect(screen.queryByText('All Addons')).not.toBeInTheDocument();
+    });
+
+    // Click back to Addons — the table returns.
     fireEvent.click(screen.getByText('Addons'));
 
     await waitFor(() => {
       expect(screen.getByText('All Addons')).toBeInTheDocument();
     });
-
     expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThan(0);
   });
 
@@ -631,7 +626,8 @@ describe('ClusterDetail', () => {
     }
 
     async function clickTestAndWaitForBanner(testid?: string) {
-      // Switch to Overview (default) and click Test.
+      // Render the default (addons) section and click Test — the header
+      // action buttons and test-result rendering are section-agnostic.
       renderView();
       await waitFor(() => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
