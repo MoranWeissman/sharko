@@ -7,7 +7,7 @@ Every change Sharko makes lands as a Git commit in your GitOps repo. Sharko surf
 Sharko classifies every mutating action into one of two tiers:
 
 - **Tier 1 — operational actions:** cluster register/remove, addon enable/disable on a cluster, addon upgrades, connection CRUD, AI config, dashboards, PR refresh/delete, reconcile triggers.
-- **Tier 2 — configuration changes:** editing an addon's catalog metadata (sync wave, sync options, ignore differences, additional sources) or its Helm values.
+- **Tier 2 — configuration changes:** editing an addon's catalog metadata (sync options, ignore differences, additional sources) or its Helm values.
 
 | Tier | Token used | Commit author | Co-authored-by trailer |
 |------|------------|---------------|------------------------|

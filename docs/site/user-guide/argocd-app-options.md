@@ -6,9 +6,8 @@ The Addon Detail page has a dedicated **Deployment Options** tab for editing the
 
 | Lives in Deployment Options tab | Lives in Values tab |
 |---------------------------------|---------------------|
-| Sync wave (deploy order) | Helm `values.yaml` contents |
-| Self-heal on/off | Per-cluster value overrides |
-| Sync options (e.g. `ServerSideApply=true`) | — |
+| Self-heal on/off | Helm `values.yaml` contents |
+| Sync options (e.g. `ServerSideApply=true`) | Per-cluster value overrides |
 | Ignore differences | — |
 | Additional sources | — |
 
@@ -20,7 +19,6 @@ A small header on each tab cross-links to the other — so if you open Deploymen
 2. Click the **Deployment Options** tab in the left rail.
 3. Click **Edit** in the Deployment Options card header.
 4. Change the fields you want:
-   - **Sync Wave** — integer. Negative values deploy earlier (useful for CRDs); positive values deploy later. Zero is the default.
    - **Self-Heal** — toggle. When on, ArgoCD reverts manual cluster-side changes to match Git.
    - **Sync Options** — comma-separated ArgoCD sync options (`CreateNamespace=true, ServerSideApply=true`, etc.).
    - **Ignore Differences** — YAML list of fields ArgoCD should ignore during diff. Example:
@@ -39,7 +37,7 @@ As with every Tier 2 mutation, if you haven't configured a personal GitHub PAT, 
 
 Deployment options and Helm values live in different files in Git (`addons-catalog.yaml` vs. `addons-global-values/<addon>.yaml`) and affect different layers of the deploy pipeline:
 
-- **Deployment Options** change the ArgoCD Application generated for the addon — sync wave, sync options, ignoreDifferences.
+- **Deployment Options** change the ArgoCD Application generated for the addon — sync options, ignoreDifferences.
 - **Values** changes the inputs to the Helm chart the ArgoCD Application renders.
 
 Splitting them keeps each tab's diff focused and makes PR reviews easier — Deployment Options PRs touch the catalog file; values PRs touch the values file.

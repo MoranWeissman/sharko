@@ -145,7 +145,7 @@ sharko validate-config /tmp/failing-catalog.yaml
 
 # Manual path (for older versions):
 # Check for: required fields (name, description, chart, repo,
-# default_namespace, default_sync_wave), allowed categories
+# default_namespace, category, curated_by, license, maintainers), allowed categories
 # (security, observability, networking, autoscaling, gitops, storage,
 # database, backup, chaos, developer-tools), allowed curated_by
 # values (cncf-graduated, cncf-incubating, cncf-sandbox,

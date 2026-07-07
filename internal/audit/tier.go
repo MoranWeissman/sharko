@@ -8,7 +8,7 @@
 //     → Service token is acceptable; commit gets a Co-authored-by trailer for the user.
 //
 //   - Tier 2 (configuration): edit global Helm values, edit per-cluster value
-//     overrides, edit catalog metadata (sync wave, sync options, ignore differences,
+//     overrides, edit catalog metadata (sync options, ignore differences,
 //     additional sources). Anything that defines WHAT will be deployed.
 //     → Per-user PAT preferred; falls back to service token with a UX nudge.
 //

@@ -129,7 +129,7 @@ sharko add-addon keda \
   --version 2.16.1
 ```
 
-Optional flags: `--namespace <ns>`, `--sync-wave <int>`.
+Optional flags: `--namespace <ns>`.
 
 Expected: prints "done" and a PR URL.
 
@@ -186,12 +186,11 @@ sharko describe-addon keda
 sharko describe-addon argo-rollouts
 ```
 
-Expected: prints chart, repo, version, namespace, sync wave, self-heal, sync options, ignore-differences, extra Helm values. Fields show `(default)` when they match the system default.
+Expected: prints chart, repo, version, namespace, self-heal, sync options, ignore-differences, extra Helm values. Fields show `(default)` when they match the system default.
 
 ### 3.7 Configure Addon (CLI)
 
 ```bash
-sharko configure-addon keda --sync-wave 1
 sharko configure-addon argo-rollouts --self-heal=false
 sharko configure-addon keda --sync-option ServerSideApply=true
 sharko configure-addon keda --version 2.16.2
@@ -205,7 +204,7 @@ Each flag is applied independently — only changed flags are sent.
 curl -s -X PATCH "http://localhost:8080/api/v1/addons/keda" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"sync_wave": 2}' | jq .
+  -d '{"self_heal": true}' | jq .
 ```
 
 Expected: 200 with optional `git.pr_url`.
@@ -214,7 +213,7 @@ Expected: 200 with optional `git.pr_url`.
 
 - Addons Catalog — both addons should appear as cards.
 - Click an addon → Detail page with left nav (Overview / Clusters / Upgrade / Config).
-- Overview → Advanced Configuration accordion shows sync wave, self-heal settings.
+- Overview → Advanced Configuration accordion shows self-heal settings.
 
 ---
 

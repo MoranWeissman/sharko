@@ -38,7 +38,7 @@
 - [ ] **arm64 Docker image** — re-enable multi-platform build when needed for Graviton clusters
 - [ ] **CLI binary distribution** — goreleaser for macOS/Linux/Windows binaries
 - [ ] **Dark mode refinements** — dark mode exists but hasn't been tested with the sky-blue palette
-- [ ] **Addon dependency ordering** — declare that addon B depends on addon A (beyond sync waves)
+- [ ] **Addon dependency ordering** — declare that addon B depends on addon A (the earlier `dependsOn` + sync-wave attempt was removed in v3.0.0 — see TODO-v2.md; a fresh design is needed since the per-addon ApplicationSet model can't order addon-vs-addon)
 
 ### Developer Experience
 - [ ] **E2E tests** — test against real ArgoCD (Kind + ArgoCD in CI)

@@ -414,8 +414,8 @@ curl -s "${auth[@]}" "$SH/catalog/sources" | jq
 ### Add an addon to the catalog
 
 Adds a new addon by creating its configuration in your GitOps repo via a PR.
-**Required fields: `name`, `chart`, `repo_url`, `version`.** Common optional
-fields are `namespace` and `sync_wave`.
+**Required fields: `name`, `chart`, `repo_url`, `version`.** A common optional
+field is `namespace`.
 
 ```bash
 curl -s "${auth[@]}" -X POST "$SH/addons" \
@@ -436,14 +436,14 @@ and a `dry_run` preview flag) — see `docs/swagger/swagger.json` for the full
 
 ### Configure an addon
 
-Updates an existing catalog addon's settings (for example its pinned `version`,
-`sync_wave`, or `self_heal`), opening a PR. All fields except the path name are
+Updates an existing catalog addon's settings (for example its pinned `version`
+or `self_heal`), opening a PR. All fields except the path name are
 optional — send only what you want to change.
 
 ```bash
 curl -s "${auth[@]}" -X PATCH "$SH/addons/keda" \
   -H "Content-Type: application/json" \
-  -d '{ "sync_wave": 2 }' | jq
+  -d '{ "self_heal": true }' | jq
 ```
 
 An unknown addon name comes back as 404. See swagger for the full

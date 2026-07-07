@@ -1937,9 +1937,9 @@ export function AddonDetail() {
               <div className="rounded-lg bg-[#e8f4ff] p-4 text-sm text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
                 <p className="flex flex-wrap items-center gap-1">
                   <span className="font-medium text-[#0a2a4a] dark:text-gray-100">
-                    Advanced deployment options
+                    ApplicationSet options
                   </span>
-                  <span>(sync wave, sync options, ignore differences, additional sources) live in the</span>
+                  <span>(sync options, ignore differences, additional sources) live in the</span>
                   <button
                     type="button"
                     onClick={() => setActiveSection('catalog')}
@@ -2197,7 +2197,7 @@ export function AddonDetail() {
           {activeSection === 'values' && (
             <>
               <p className="text-xs italic text-[#3a6a8a] dark:text-gray-400">
-                Looking for sync wave, sync options, or ignore-differences?{' '}
+                Looking for sync options or ignore-differences?{' '}
                 <button
                   type="button"
                   onClick={() => setActiveSection('catalog')}
@@ -2354,7 +2354,7 @@ export function AddonDetail() {
               <div className="rounded-lg bg-[#e0f0ff] p-3 text-xs text-[#0a3a5a] dark:bg-gray-700 dark:text-gray-300">
                 <p>
                   ApplicationSet settings for <span className="font-mono">{addon.addon_name}</span> —
-                  sync wave, sync options, ignore differences, and additional sources. These map to the
+                  sync options, ignore differences, and additional sources. These map to the
                   addon&rsquo;s ArgoCD Application settings and control how it deploys. Editing opens a PR against{' '}
                   <span className="font-mono">addons-catalog.yaml</span>. Looking for Helm values?{' '}
                   <button
