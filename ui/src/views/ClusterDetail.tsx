@@ -35,7 +35,7 @@ import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, tes
 import type { TestClusterUnavailable, PRWriteResult } from '@/services/api';
 import { PRResultBanner, extractPR } from '@/components/PRFeedback';
 import { EnableAddonPicker } from '@/components/EnableAddonPicker';
-import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry, VerifyStep } from '@/services/models';
+import type { ClusterChange, ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, VerifyStep } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ConnectivityBadge } from '@/components/ConnectivityBadge';
@@ -57,6 +57,7 @@ import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { PendingPRsPanel } from '@/components/PendingPRsPanel';
+import { CompletedChangesPanel } from '@/components/CompletedChangesPanel';
 import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOverridesEditor';
 import { showToast } from '@/components/ToastNotification';
 import { prettyOperation } from '@/lib/utils';
@@ -70,49 +71,64 @@ type StatusFilter =
   | 'untracked'
   | 'disabled_in_git';
 
-function ClusterHistorySection({ clusterName }: { clusterName: string }) {
-  const [history, setHistory] = useState<SyncActivityEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+// ClusterChangesSection — the unified "Changes" tab content (V2-cleanup-84.2).
+// Pending changes (open PRs, via PendingPRsPanel) render on top; completed
+// changes (GET /clusters/{name}/changes, via CompletedChangesPanel) render
+// below. This wrapper tracks whether each half has loaded and whether it's
+// empty, purely so it can collapse both into a single friendly empty state
+// when the cluster genuinely has no changes at all — otherwise each panel
+// shows its own loading/error/empty state independently.
+function ClusterChangesSection({
+  clusterName,
+  onMergeDetected,
+}: {
+  clusterName: string;
+  onMergeDetected: (pr: TrackedPR) => void;
+}) {
+  const [pendingPRs, setPendingPRs] = useState<TrackedPR[] | null>(null);
+  const [completedChanges, setCompletedChanges] = useState<ClusterChange[] | null>(null);
+  const [completedRefreshKey, setCompletedRefreshKey] = useState(0);
 
-  useEffect(() => {
-    api.getClusterHistory(clusterName)
-      .then(data => setHistory(data.history ?? []))
-      .catch(e => setError(e instanceof Error ? e.message : 'Failed to load history'))
-      .finally(() => setLoading(false));
-  }, [clusterName]);
+  const handlePendingData = useCallback((prs: TrackedPR[]) => setPendingPRs(prs), []);
+  const handleCompletedData = useCallback((changes: ClusterChange[]) => setCompletedChanges(changes), []);
 
-  if (loading) return <LoadingState message="Loading history..." />;
-  if (error) return <ErrorState message={error} />;
+  const handleMergeDetected = useCallback(
+    (pr: TrackedPR) => {
+      onMergeDetected(pr);
+      // A pending change just became a completed one — refetch the
+      // completed-changes list so it shows up without a manual reload.
+      setCompletedRefreshKey((n) => n + 1);
+    },
+    [onMergeDetected],
+  );
 
-  if (history.length === 0) {
+  const bothLoaded = pendingPRs !== null && completedChanges !== null;
+  const bothEmpty = bothLoaded && pendingPRs.length === 0 && completedChanges.length === 0;
+
+  if (bothEmpty) {
     return (
       <EmptyState
-        title="No history yet"
-        description="Sync activity for this cluster will appear here."
+        title="No changes yet"
+        description="Cluster changes will appear here as pull requests."
       />
     );
   }
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-lg font-semibold text-[#0a2a4a]">Change History</h3>
-      <div className="space-y-2">
-        {history.map((entry, i) => (
-          <div key={i} className="flex items-center gap-3 rounded-lg bg-[#f0f7ff] ring-2 ring-[#6aade0] px-4 py-3">
-            <div className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-              entry.status === 'Synced' || entry.status === 'Succeeded' ? 'bg-green-500' : 'bg-amber-500'
-            }`} />
-            <div className="min-w-0 flex-1">
-              <span className="font-medium text-[#0a2a4a]">{entry.addon_name}</span>
-              <span className="text-[#3a6a8a]"> — {entry.status}</span>
-            </div>
-            <span className="shrink-0 text-xs text-[#3a6a8a]">
-              {new Date(entry.timestamp).toLocaleDateString()} {new Date(entry.timestamp).toLocaleTimeString()}
-            </span>
-          </div>
-        ))}
+    <div className="space-y-6">
+      <div className="space-y-3">
+        <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Pending changes</h3>
+        <PendingPRsPanel
+          cluster={clusterName}
+          onMergeDetected={handleMergeDetected}
+          onDataChange={handlePendingData}
+        />
       </div>
+      <CompletedChangesPanel
+        cluster={clusterName}
+        refreshKey={completedRefreshKey}
+        onDataChange={handleCompletedData}
+      />
     </div>
   );
 }
@@ -733,7 +749,7 @@ export function ClusterDetail() {
       items: [
         { key: 'addons', label: 'Addons', badge: data ? data.addon_comparisons.length : undefined, icon: Package },
         { key: 'config', label: 'Config', icon: FileCode },
-        { key: 'history', label: 'History', icon: Clock },
+        { key: 'history', label: 'Changes', icon: Clock },
         { key: 'settings', label: 'Settings', icon: Settings },
       ],
     },
@@ -1443,24 +1459,20 @@ export function ClusterDetail() {
             </div>
           )}
 
-          {/* History section — every cluster change is a PR, so the old
-            * standalone "Pull Requests" tab was just a duplicate log
-            * (V2-cleanup-81.1). Open PRs now lead History as a "pending"
-            * group, with the change timeline underneath. */}
+          {/* Changes section — every cluster change is a PR, so this is one
+            * unified change story: pending changes (open PRs) on top,
+            * completed changes (GET /clusters/{name}/changes) below. The
+            * ArgoCD sync-activity timeline that used to render here was
+            * replaced by the durable PR-based change log (V2-cleanup-84.2).
+            * Section key stays 'history' to preserve existing deep links. */}
           {activeSection === 'history' && (
-            <div className="space-y-6">
-              <div className="space-y-3">
-                <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Open pull requests</h3>
-                <PendingPRsPanel
-                  cluster={name}
-                  onMergeDetected={(pr: TrackedPR) => {
-                    showToast(`Merged PR #${pr.pr_id}: ${prettyOperation(pr.operation)}${pr.cluster ? ` on ${pr.cluster}` : ''}.`)
-                    void fetchData()
-                  }}
-                />
-              </div>
-              <ClusterHistorySection clusterName={name!} />
-            </div>
+            <ClusterChangesSection
+              clusterName={name!}
+              onMergeDetected={(pr: TrackedPR) => {
+                showToast(`Merged PR #${pr.pr_id}: ${prettyOperation(pr.operation)}${pr.cluster ? ` on ${pr.cluster}` : ''}.`)
+                void fetchData()
+              }}
+            />
           )}
 
           {/* Settings section — houses admin troubleshooting controls that

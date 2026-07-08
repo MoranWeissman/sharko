@@ -39,6 +39,7 @@ const mockUpdateClusterAddons = vi.fn();
 const mockGetAddonCatalog = vi.fn();
 const mockRestartAddonSync = vi.fn();
 const mockGetClusterHistory = vi.fn();
+const mockGetClusterChanges = vi.fn();
 
 // V2-cleanup-13: capture toast calls so the removal-feedback assertions can
 // distinguish "cluster removed" (auto-merged) from "removal PR opened".
@@ -67,9 +68,13 @@ vi.mock('@/services/api', async () => {
       // button rendering. Default to disabled so existing tests don't need
       // to assert on AI-specific elements.
       getAIStatus: vi.fn().mockResolvedValue({ enabled: false }),
-      // V2-cleanup-81.1: History section fetches the change timeline via
-      // ClusterHistorySection, which calls api.getClusterHistory directly.
+      // getClusterHistory (the old ArgoCD sync-activity feed) is no longer
+      // called from the Changes tab as of V2-cleanup-84.2, but the mock is
+      // kept here in case other code paths still reach it.
       getClusterHistory: (...args: unknown[]) => mockGetClusterHistory(...args),
+      // V2-cleanup-84.2: the Changes tab's "Completed changes" half is
+      // CompletedChangesPanel, which calls api.getClusterChanges directly.
+      getClusterChanges: (...args: unknown[]) => mockGetClusterChanges(...args),
     },
     testClusterConnection: (...args: unknown[]) => mockTestClusterConnection(...args),
     deregisterCluster: (...args: unknown[]) => mockDeregisterCluster(...args),
@@ -188,6 +193,9 @@ describe('ClusterDetail', () => {
     // V2-cleanup-81.1: default to an empty change timeline so History-section
     // tests don't need to stub this unless they exercise the timeline itself.
     mockGetClusterHistory.mockResolvedValue({ history: [] });
+    // V2-cleanup-84.2: default to an empty completed-changes list so Changes-
+    // tab tests don't need to stub this unless they exercise that list.
+    mockGetClusterChanges.mockResolvedValue({ changes: [] });
   });
 
   // V2-cleanup-8.3 introduced "Host Cluster Nodes" labelling; V2-cleanup-78.1
@@ -338,7 +346,9 @@ describe('ClusterDetail', () => {
     // least one match rather than a single unique one.
     expect(screen.getAllByText('Addons').length).toBeGreaterThan(0);
     expect(screen.getByText('Config')).toBeInTheDocument();
-    expect(screen.getByText('History')).toBeInTheDocument();
+    // V2-cleanup-84.2: nav label renamed History -> Changes (the section
+    // key stays 'history' to preserve deep links).
+    expect(screen.getByText('Changes')).toBeInTheDocument();
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.queryByText('Overview')).not.toBeInTheDocument();
   });
@@ -1863,10 +1873,11 @@ describe('ClusterDetail', () => {
     }, 15_000);
   });
 
-  // V2-cleanup-81.1: every cluster change is a PR, so the standalone
-  // "Pull Requests" tab duplicated History. Open PRs now render at the top
-  // of History as a "pending" group, with the change timeline below.
-  describe('V2-cleanup-81.1: History section leads with open PRs', () => {
+  // V2-cleanup-81.1 / V2-cleanup-84.2: every cluster change is a PR, so the
+  // standalone "Pull Requests" tab was folded into the unified "Changes"
+  // tab. Open PRs render at the top as "Pending changes"; completed
+  // (merged/closed) PRs render below as "Completed changes".
+  describe('V2-cleanup-84.2: Changes tab unifies pending + completed PRs', () => {
     const openPR = {
       pr_id: 555,
       pr_url: 'https://github.com/example/repo/pull/555',
@@ -1882,7 +1893,19 @@ describe('ClusterDetail', () => {
       last_polled_at: '2026-05-20T10:01:00Z',
     };
 
-    it('shows an "Open pull requests" group above the change timeline', async () => {
+    const completedChange = {
+      operation: 'addon enable',
+      addon: 'cert-manager',
+      cluster: 'prod-eu',
+      pr_id: 42,
+      pr_url: 'https://github.com/example/repo/pull/42',
+      opened_at: '2026-07-08T10:00:00Z',
+      completed_at: '2026-07-08T10:05:00Z',
+      status: 'merged',
+      deploy_outcome: 'healthy',
+    };
+
+    it('shows a "Pending changes" group above the completed changes list', async () => {
       mockFetchTrackedPRs.mockResolvedValue({ prs: [openPR] });
 
       renderView('history');
@@ -1891,17 +1914,80 @@ describe('ClusterDetail', () => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
 
-      // Open-PR group heading + the PendingPRsPanel content (cluster-scoped
-      // panel renders "Cluster PRs" as its own internal heading).
+      // Pending-changes group heading + the PendingPRsPanel content
+      // (cluster-scoped panel renders "Cluster PRs" as its own internal
+      // heading).
       await waitFor(() => {
-        expect(screen.getByText('Open pull requests')).toBeInTheDocument();
+        expect(screen.getByText('Pending changes')).toBeInTheDocument();
       });
       expect(screen.getByText('Cluster PRs')).toBeInTheDocument();
       expect(screen.getByText(/Upgrade ingress-nginx to 4\.8\.0 on prod-eu/)).toBeInTheDocument();
 
-      // Change timeline still renders below (empty here — default mock).
+      // Completed changes list still renders below (empty here — default mock).
       await waitFor(() => {
-        expect(screen.getByText('No history yet')).toBeInTheDocument();
+        expect(screen.getByText('No completed changes yet')).toBeInTheDocument();
+      });
+    });
+
+    it('shows a single friendly empty state when there are no pending or completed changes', async () => {
+      mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
+      mockGetClusterChanges.mockResolvedValue({ changes: [] });
+
+      renderView('history');
+
+      await waitFor(() => {
+        expect(screen.getByText('No changes yet')).toBeInTheDocument();
+      });
+      expect(
+        screen.getByText('Cluster changes will appear here as pull requests.'),
+      ).toBeInTheDocument();
+
+      // The individual per-panel empty states are collapsed away in favor
+      // of the combined message.
+      expect(screen.queryByText('No tracked PRs')).not.toBeInTheDocument();
+      expect(screen.queryByText('No completed changes yet')).not.toBeInTheDocument();
+    });
+
+    it('renders completed changes with a status pill and deploy-outcome badge', async () => {
+      mockGetClusterChanges.mockResolvedValue({ changes: [completedChange] });
+
+      renderView('history');
+
+      await waitFor(() => {
+        expect(screen.getByText('addon enable')).toBeInTheDocument();
+      });
+      expect(screen.getByText('— cert-manager')).toBeInTheDocument();
+      expect(screen.getByText('Merged')).toBeInTheDocument();
+      expect(screen.getByText('Deployed & healthy')).toBeInTheDocument();
+    });
+
+    it('expands a completed change row to show details and a link to the PR', async () => {
+      mockGetClusterChanges.mockResolvedValue({ changes: [completedChange] });
+
+      renderView('history');
+
+      await waitFor(() => {
+        expect(screen.getByText('addon enable')).toBeInTheDocument();
+      });
+
+      // Details aren't shown until the row is expanded.
+      expect(screen.queryByText('View pull request on GitHub')).not.toBeInTheDocument();
+
+      const rowToggle = screen.getByRole('button', { name: /addon enable/i });
+      fireEvent.click(rowToggle);
+
+      await waitFor(() => {
+        expect(screen.getByText('View pull request on GitHub')).toBeInTheDocument();
+      });
+      const link = screen.getByText('View pull request on GitHub').closest('a');
+      expect(link).toHaveAttribute('href', 'https://github.com/example/repo/pull/42');
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+
+      // Collapsing hides the details again.
+      fireEvent.click(rowToggle);
+      await waitFor(() => {
+        expect(screen.queryByText('View pull request on GitHub')).not.toBeInTheDocument();
       });
     });
 
@@ -1917,10 +2003,10 @@ describe('ClusterDetail', () => {
       // never matches, so nothing PR-specific renders. Confirm the page
       // doesn't blow up and simply shows no section content tied to 'prs'.
       expect(screen.queryByText('Cluster PRs')).not.toBeInTheDocument();
-      expect(screen.queryByText('Open pull requests')).not.toBeInTheDocument();
+      expect(screen.queryByText('Pending changes')).not.toBeInTheDocument();
     });
 
-    it('surfaces the merge toast and refetches cluster data when an open PR merges', async () => {
+    it('surfaces the merge toast, refetches cluster data, and refetches completed changes when an open PR merges', async () => {
       mockFetchTrackedPRs.mockResolvedValue({ prs: [openPR] });
 
       renderView('history');
@@ -1930,6 +2016,7 @@ describe('ClusterDetail', () => {
       });
 
       const callsBeforeMerge = mockGetClusterComparison.mock.calls.length;
+      const changesCallsBeforeMerge = mockGetClusterChanges.mock.calls.length;
 
       // Next PR fetch reports the same PR as merged — PendingPRsPanel's
       // own open→merged transition detection should fire onMergeDetected.
@@ -1948,6 +2035,12 @@ describe('ClusterDetail', () => {
       // cluster comparison (and thus addon state) is refreshed.
       await waitFor(() => {
         expect(mockGetClusterComparison.mock.calls.length).toBeGreaterThan(callsBeforeMerge);
+      });
+
+      // ...and it bumps CompletedChangesPanel's refreshKey so the
+      // just-merged change shows up without a manual reload.
+      await waitFor(() => {
+        expect(mockGetClusterChanges.mock.calls.length).toBeGreaterThan(changesCallsBeforeMerge);
       });
     });
   });

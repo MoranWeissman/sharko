@@ -6,6 +6,7 @@ import type {
   APIToken,
   AuditEntry,
   AvailableVersionsResponse,
+  ClusterChange,
   ClusterComparisonResponse,
   ClusterDetailResponse,
   ClusterProvider,
@@ -798,6 +799,7 @@ export const api = {
   getClusterValues: (name: string) => fetchJSON<{ cluster_name: string; values_yaml: string }>(`/clusters/${name}/values`),
   getConfigDiff: (name: string) => fetchJSON<ConfigDiffResponse>(`/clusters/${name}/config-diff`),
   getClusterHistory: (name: string) => fetchJSON<{ cluster_name: string; history: SyncActivityEntry[] }>(`/clusters/${name}/history`),
+  getClusterChanges: (name: string) => fetchJSON<{ cluster_name: string; changes: ClusterChange[] }>(`/clusters/${name}/changes`),
 
   // Addons
   getAddonCatalog: () => fetchJSON<AddonCatalogResponse>('/addons/catalog'),

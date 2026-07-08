@@ -316,6 +316,24 @@ export interface SyncActivityEntry {
   status: string
 }
 
+// ClusterChange — one entry in the durable per-cluster change log
+// (GET /clusters/{name}/changes, V2-cleanup-84.1/84.2). One row per
+// completed (merged or closed) pull request touching this cluster, newest
+// first. `deploy_outcome` is computed fresh at read time from the addon's
+// current ArgoCD health — it is never persisted, so it always reflects the
+// live state, not the state at merge time.
+export interface ClusterChange {
+  operation: string
+  addon?: string
+  cluster: string
+  pr_id: number
+  pr_url: string
+  opened_at: string
+  completed_at: string
+  status: string // 'merged' | 'closed'
+  deploy_outcome: string // 'healthy' | 'failed' | 'unknown'
+}
+
 export interface AddonClusterHealth {
   cluster_name: string
   health: string
