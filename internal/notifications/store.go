@@ -1,12 +1,13 @@
 package notifications
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/MoranWeissman/sharko/internal/cmstore"
 )
 
 // NotificationType categorises what a notification is about.
@@ -29,46 +30,95 @@ type Notification struct {
 	Read        bool             `json:"read"`
 }
 
-// Store is a thread-safe in-memory ring buffer for notifications.
-// When filePath is non-empty and the parent directory exists, notifications
-// are persisted to disk so they survive pod restarts.
+// notificationsKey is the field name under which the notifications slice is
+// stored inside the ConfigMap's JSON state (see internal/cmstore).
+const notificationsKey = "notifications"
+
+// Store is a thread-safe in-memory ring buffer for notifications. When
+// cmStore is non-nil, every mutation is also persisted into a Kubernetes
+// ConfigMap via cmstore so notifications survive pod restarts — the
+// in-memory slice remains the working copy that handlers read. When
+// cmStore is nil (no k8s client available — local/dev mode, or a unit test
+// without a fake clientset), the store runs in-memory only, matching the
+// old file-absent fallback.
 type Store struct {
 	mu            sync.RWMutex
 	notifications []Notification
 	maxItems      int
-	filePath      string // empty = in-memory only
+	cmStore       *cmstore.Store // nil = in-memory only
 }
 
-// DefaultNotificationsPath is the file used when persistence is enabled.
-// The Sharko chart mounts the data volume at /app/data (see
-// charts/sharko/templates/deployment.yaml).
-const DefaultNotificationsPath = "/app/data/notifications.json"
-
 // NewStore creates a Store that retains at most maxItems notifications.
-// filePath controls persistence: pass an empty string for in-memory only,
-// or a path (e.g. defaultNotificationsPath) to enable disk persistence.
-// If the parent directory of filePath does not exist (no PVC mounted),
-// the store silently falls back to in-memory mode.
-func NewStore(maxItems int, filePath string) *Store {
-	if filePath != "" {
-		dir := filepath.Dir(filePath)
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			slog.Info("persistence directory not available, running in-memory only", "dir", dir, "component", "notifications")
-			filePath = ""
-		}
-	}
-
+// cmStore controls persistence: pass nil for in-memory only, or a
+// cmstore.Store (conventionally backed by a "sharko-notifications"
+// ConfigMap — see cmd/sharko/serve.go) to persist across pod restarts. When
+// cmStore is non-nil, any previously-persisted notifications are loaded
+// immediately so a restart restores prior read/cleared state.
+func NewStore(maxItems int, cmStore *cmstore.Store) *Store {
 	s := &Store{
 		notifications: make([]Notification, 0),
 		maxItems:      maxItems,
-		filePath:      filePath,
+		cmStore:       cmStore,
 	}
 
-	if err := s.Load(); err != nil {
-		slog.Warn("could not load persisted notifications", "error", err, "component", "notifications")
+	if cmStore != nil {
+		if err := s.loadFromCMStore(context.Background()); err != nil {
+			slog.Warn("could not load persisted notifications", "error", err, "component", "notifications")
+		}
 	}
 
 	return s
+}
+
+// AttachCMStore wires ConfigMap-backed persistence onto a Store that was
+// constructed before the in-cluster k8s client was available. serve.go
+// builds the Server (and its notification Store) well before it builds the
+// in-cluster clientset used for the PR tracker's cmstore, so the notification
+// store starts in-memory-only and this method upgrades it once the same
+// clientset is ready — mirroring SetPRTracker/SetObservationsStore.
+//
+// It loads any state already persisted in the ConfigMap and merges it with
+// whatever accumulated in memory since construction (e.g. an early
+// notification-checker tick that ran before this call), deduplicated by
+// title. The persisted copy wins on a title collision so read/cleared flags
+// are never clobbered by an in-memory duplicate. The merged result is
+// persisted immediately so all future mutations flow through cmStore.
+// No-op if cmStore is nil.
+func (s *Store) AttachCMStore(ctx context.Context, cmStore *cmstore.Store) error {
+	if cmStore == nil {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.cmStore = cmStore
+
+	data, err := cmStore.Read(ctx)
+	if err != nil {
+		return err
+	}
+	persisted := extractNotifications(data)
+
+	merged := persisted
+	for _, n := range s.notifications {
+		exists := false
+		for _, p := range persisted {
+			if p.Title == n.Title {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			merged = append(merged, n)
+		}
+	}
+	if len(merged) > s.maxItems {
+		merged = merged[:s.maxItems]
+	}
+	s.notifications = merged
+
+	return s.persistLocked(ctx)
 }
 
 // Add inserts a notification at the front. If a notification with the same
@@ -99,7 +149,7 @@ func (s *Store) Add(n Notification) {
 	if len(s.notifications) > s.maxItems {
 		s.notifications = s.notifications[:s.maxItems]
 	}
-	if err := s.saveLocked(); err != nil {
+	if err := s.persistLocked(context.Background()); err != nil {
 		slog.Warn("could not persist after add", "error", err, "component", "notifications")
 	}
 }
@@ -120,7 +170,7 @@ func (s *Store) MarkAllRead() {
 	for i := range s.notifications {
 		s.notifications[i].Read = true
 	}
-	if err := s.saveLocked(); err != nil {
+	if err := s.persistLocked(context.Background()); err != nil {
 		slog.Warn("could not persist after mark all read", "error", err, "component", "notifications")
 	}
 }
@@ -139,7 +189,7 @@ func (s *Store) Resolve(title string) {
 		}
 	}
 	s.notifications = kept
-	if err := s.saveLocked(); err != nil {
+	if err := s.persistLocked(context.Background()); err != nil {
 		slog.Warn("could not persist after resolve", "error", err, "component", "notifications")
 	}
 }
@@ -157,72 +207,71 @@ func (s *Store) UnreadCount() int {
 	return count
 }
 
-// Save persists the current notifications to disk. It is a no-op when
-// filePath is empty. Callers that hold the write lock should use saveLocked.
-func (s *Store) Save() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.saveLocked()
-}
-
-// saveLocked writes notifications to disk. Must be called with at least a
-// read lock held (or a write lock — both are fine because JSON marshal does
-// not mutate state). We accept a write lock here from Add/MarkAllRead.
-func (s *Store) saveLocked() error {
-	if s.filePath == "" {
+// persistLocked writes the current in-memory notifications slice into the
+// ConfigMap. Must be called with s.mu held (read or write — JSON marshal
+// does not mutate state, but every current caller holds the write lock).
+// It is a no-op when cmStore is nil (in-memory only).
+func (s *Store) persistLocked(ctx context.Context) error {
+	if s.cmStore == nil {
 		return nil
 	}
-
-	data, err := json.Marshal(s.notifications)
-	if err != nil {
-		return err
-	}
-
-	// Write atomically via a temp file in the same directory.
-	dir := filepath.Dir(s.filePath)
-	tmp, err := os.CreateTemp(dir, ".notifications-*.json.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-
-	return os.Rename(tmpName, s.filePath)
+	snapshot := s.notifications
+	return s.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
+		return encodeNotifications(data, snapshot)
+	})
 }
 
-// Load reads persisted notifications from disk into the store. It is a no-op
-// when filePath is empty or the file does not yet exist.
-func (s *Store) Load() error {
-	if s.filePath == "" {
-		return nil
-	}
-
-	data, err := os.ReadFile(s.filePath)
-	if os.IsNotExist(err) {
-		return nil // first run — no file yet
-	}
+// loadFromCMStore reads persisted notifications from the ConfigMap into the
+// store. Called once from NewStore when cmStore is supplied at construction
+// time (no lock needed — the store is not yet visible to other goroutines).
+func (s *Store) loadFromCMStore(ctx context.Context) error {
+	data, err := s.cmStore.Read(ctx)
 	if err != nil {
 		return err
 	}
-
-	var loaded []Notification
-	if err := json.Unmarshal(data, &loaded); err != nil {
-		return err
-	}
-
-	// Enforce maxItems on load.
+	loaded := extractNotifications(data)
 	if len(loaded) > s.maxItems {
 		loaded = loaded[:s.maxItems]
 	}
 	s.notifications = loaded
+	return nil
+}
+
+// extractNotifications reads the notifications slice out of the ConfigMap's
+// generic JSON state map. Mirrors internal/prtracker's extractPRs pattern.
+func extractNotifications(data map[string]interface{}) []Notification {
+	raw, ok := data[notificationsKey]
+	if !ok {
+		return nil
+	}
+
+	// data comes from a generic JSON unmarshal into map[string]interface{},
+	// so re-marshal and unmarshal into the typed slice.
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+
+	var result []Notification
+	if err := json.Unmarshal(b, &result); err != nil {
+		slog.Warn("failed to unmarshal notifications from state", "error", err, "component", "notifications")
+		return nil
+	}
+	return result
+}
+
+// encodeNotifications writes the notifications slice back into the
+// ConfigMap's generic JSON state map. Mirrors internal/prtracker's
+// encodePRs pattern.
+func encodeNotifications(data map[string]interface{}, notifications []Notification) error {
+	b, err := json.Marshal(notifications)
+	if err != nil {
+		return err
+	}
+	var raw interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	data[notificationsKey] = raw
 	return nil
 }

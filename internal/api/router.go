@@ -30,6 +30,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/auth"
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
+	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
 	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
 	"github.com/MoranWeissman/sharko/internal/logging"
@@ -175,7 +176,9 @@ type Server struct {
 	// Audit log for external-change events (always available — initialised in NewServer).
 	auditLog *audit.Log
 
-	// Notification store (always available — initialised in NewServer).
+	// Notification store (always available — initialised in NewServer as
+	// in-memory only; upgraded to ConfigMap-backed persistence via
+	// SetNotificationCMStore once the in-cluster k8s client is ready).
 	notificationStore *notifications.Store
 
 	// Operation store for async long-running operations (always available — initialised in NewServer).
@@ -283,7 +286,7 @@ func NewServer(
 		aiConfigStore:     nil, // set via SetAIConfigStore
 		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
 		auditLog:          audit.NewLog(1000),
-		notificationStore: notifications.NewStore(100, notifications.DefaultNotificationsPath),
+		notificationStore: notifications.NewStore(100, nil),
 		opsStore:          operations.NewStore(),
 		startTime:         time.Now(),
 	}
@@ -602,6 +605,16 @@ func (s *Server) ReinitializeFromConnection() {
 // components (e.g. the background Checker) can push notifications into it.
 func (s *Server) NotificationStore() *notifications.Store {
 	return s.notificationStore
+}
+
+// SetNotificationCMStore upgrades the notification store from in-memory-only
+// to ConfigMap-backed persistence. Call this once at startup, after the
+// in-cluster k8s client used for the PR tracker's cmstore is available (see
+// cmd/sharko/serve.go) — the notification store itself is always constructed
+// eagerly in NewServer, before that client exists. No-op if cmStore is nil
+// (e.g. out-of-cluster/local dev, where the store stays in-memory only).
+func (s *Server) SetNotificationCMStore(ctx context.Context, cmStore *cmstore.Store) error {
+	return s.notificationStore.AttachCMStore(ctx, cmStore)
 }
 
 // AuditLog returns the server's audit log so external components can record
