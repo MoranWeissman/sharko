@@ -278,6 +278,14 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 			if errors.Is(err, gitprovider.ErrPullRequestNotFound) {
 				log.Info("[prtracker] PR no longer exists on provider — dropping stale entry",
 					"pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation)
+				// Result is "failure", not "warn" — "warn" is a log level, not
+				// one of the four valid audit result words
+				// (success/partial/rejected/failure), and had no UI badge.
+				// The PR vanishing out from under the tracker (deleted, or the
+				// repo was recreated) means the tracked operation never
+				// reached its intended end state — that's a failure outcome,
+				// even though we log it at "warn" level since the tracker
+				// self-heals by dropping the stale entry (V2-cleanup-85.2).
 				t.auditFn(audit.Entry{
 					Level:     "warn",
 					Event:     "pr_gone",
@@ -285,7 +293,7 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 					Action:    pr.Operation,
 					Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
 					Source:    "prtracker",
-					Result:    "warn",
+					Result:    "failure",
 					RequestID: logging.RequestID(ctx),
 				})
 				toRemove = append(toRemove, id)

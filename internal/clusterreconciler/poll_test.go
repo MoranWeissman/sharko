@@ -447,6 +447,46 @@ func TestPollOnce_NoChanges_Idempotent(t *testing.T) {
 	}
 }
 
+// Test 4.1 — V2-cleanup-85.2: a no-op tick (Created/Deleted/SkippedAdopted/
+// Errors all zero) must NOT emit a cluster_secret_reconcile_tick audit
+// entry. Before this fix, emitSummaryAudit fired unconditionally on every
+// 30s tick — ~120 rows/hr of pure heartbeat noise that evicted real events
+// from the 1000-entry audit ring in under 8 hours. A tick that DOES change
+// something (the create on tick #1 here) must still audit.
+func TestPollOnce_NoOpTick_NoSummaryAudit(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	body := envelopedManagedClusters("c1")
+	vault := &fakeVault{
+		creds: map[string]*providers.Kubeconfig{
+			"c1": {Server: "https://c1.example.com", CAData: []byte("ca"), Token: "tk"},
+		},
+	}
+	k8sClient := fake.NewSimpleClientset()
+	audits := &auditCollector{}
+
+	r := newReconcilerForTest(t, nil, k8sClient, vault, audits, body)
+
+	// Tick #1: bootstrap from empty — Created:1, so the summary MUST fire.
+	r.pollOnce(ctx)
+	if !hasEvent(audits.Snapshot(), "cluster_secret_reconcile_tick", "success") {
+		t.Fatalf("expected a summary audit entry for a tick that created a Secret; got %v", audits.Snapshot())
+	}
+
+	// Tick #2: state matches desired (no-op) — the summary must be absent
+	// from THIS tick's entries. Track the audit count before/after so a
+	// stray leftover entry from tick #1 can't hide a regression.
+	before := len(audits.Snapshot())
+	r.pollOnce(ctx)
+	after := audits.Snapshot()
+	for _, e := range after[before:] {
+		if e.Event == "cluster_secret_reconcile_tick" {
+			t.Fatalf("no-op tick must not emit cluster_secret_reconcile_tick, got %+v", e)
+		}
+	}
+}
+
 // Test 5 — git fetch fails: the reconciler MUST NOT touch any K8s state
 // when it cannot read the desired state. State preservation + audit
 // signal are the contract; the next tick retries.

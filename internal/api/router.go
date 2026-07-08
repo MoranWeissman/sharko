@@ -1339,23 +1339,21 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 		authHeader := r.Header.Get("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			token := strings.TrimPrefix(authHeader, "Bearer ")
-			if isValidSession(token) {
-				username := getSessionUser(token)
-				r.Header.Set("X-Sharko-User", username)
-				// Look up user role from the store so authz middleware can enforce RBAC
-				if user := s.authStore.GetUser(username); user != nil {
-					r.Header.Set("X-Sharko-Role", user.Role)
-				}
+			if s.tryAuthenticateToken(r, token) {
 				next.ServeHTTP(w, r)
 				return
 			}
+		}
 
-			// Check if Bearer token is an API key
-			if strings.HasPrefix(token, "sharko_") {
-				username, role, ok := s.authStore.ValidateToken(token)
-				if ok {
-					r.Header.Set("X-Sharko-User", username)
-					r.Header.Set("X-Sharko-Role", role)
+		// EventSource (used by the audit Live Tail SSE stream in the UI)
+		// cannot set an Authorization header, so it passes the session
+		// token as a ?token= query param instead. This fallback is scoped
+		// tightly to GET /api/v1/audit/stream ONLY — every other route
+		// still requires a real Bearer header. Do not widen this check
+		// (V2-cleanup-85.2).
+		if isAuditStreamRequest(r) && !strings.HasPrefix(authHeader, "Bearer ") {
+			if token := r.URL.Query().Get("token"); token != "" {
+				if s.tryAuthenticateToken(r, token) {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -1364,6 +1362,43 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 	})
+}
+
+// isAuditStreamRequest reports whether r targets the audit Live Tail SSE
+// endpoint — the ONLY route where basicAuthMiddleware accepts a ?token=
+// query-param fallback (see tryAuthenticateToken).
+func isAuditStreamRequest(r *http.Request) bool {
+	return r.Method == http.MethodGet && r.URL.Path == "/api/v1/audit/stream"
+}
+
+// tryAuthenticateToken validates token as either a session token or a
+// sharko_-prefixed API key — the SAME validation the Authorization: Bearer
+// path uses — and, on success, stamps X-Sharko-User / X-Sharko-Role on r.
+// Returns true iff authentication succeeded.
+func (s *Server) tryAuthenticateToken(r *http.Request, token string) bool {
+	if token == "" {
+		return false
+	}
+	if isValidSession(token) {
+		username := getSessionUser(token)
+		r.Header.Set("X-Sharko-User", username)
+		// Look up user role from the store so authz middleware can enforce RBAC
+		if user := s.authStore.GetUser(username); user != nil {
+			r.Header.Set("X-Sharko-Role", user.Role)
+		}
+		return true
+	}
+
+	// Check if the token is an API key
+	if strings.HasPrefix(token, "sharko_") {
+		username, role, ok := s.authStore.ValidateToken(token)
+		if ok {
+			r.Header.Set("X-Sharko-User", username)
+			r.Header.Set("X-Sharko-Role", role)
+			return true
+		}
+	}
+	return false
 }
 
 // handleUpdatePassword godoc

@@ -128,12 +128,17 @@ func detectSource(r *http.Request) string {
 }
 
 // resultFromStatus maps HTTP status codes to audit result strings.
+//
+// 207 MUST be tested before the 2xx catch-all — 207 falls inside
+// [200,300) so a naive range check swallows it as "success" and mislabels
+// every partial-success response (PR created but not merged, ArgoCD
+// registered but Git failed) as a full success (V2-cleanup-85.2).
 func resultFromStatus(code int) string {
 	switch {
-	case code >= 200 && code < 300:
-		return "success"
 	case code == 207:
 		return "partial"
+	case code >= 200 && code < 300:
+		return "success"
 	case code >= 400 && code < 500:
 		return "rejected"
 	default:

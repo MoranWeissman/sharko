@@ -1120,10 +1120,27 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 }
 
 // emitSummaryAudit fires one audit entry per tick describing the net
-// effect (counts of created / deleted / skipped / errors). Operationally
-// critical per design doc §10 — the operator's only signal that the
-// reconciler is alive AND making (or refusing to make) decisions.
+// effect (counts of created / deleted / skipped / errors) — but ONLY when
+// the tick actually changed something (Created, Deleted, SkippedAdopted, or
+// Errors > 0). A no-op tick (the common case, every 30s) does NOT go into
+// the audit log: the audit ring is a fixed 1000-entry buffer, and a
+// heartbeat entry on every tick evicted real events (registrations,
+// removals, adoptions) in under 8 hours — which is also why the UI's "last
+// 24h/7d" filters returned almost nothing (V2-cleanup-85.2). The "reconciler
+// is alive" signal for a no-op tick is a slog line instead; add a metrics
+// counter here if/when a metrics surface exists for this package.
 func (r *Reconciler) emitSummaryAudit(ctx context.Context, stats reconcileStats) {
+	if stats.Created == 0 && stats.Deleted == 0 && stats.SkippedAdopted == 0 && stats.Errors == 0 {
+		log := logging.LoggerFromContext(ctx)
+		log.Debug("[clusterreconciler] tick complete, no changes",
+			"created", stats.Created, "deleted", stats.Deleted,
+			"skipped_unlabeled", stats.SkippedUnlabeled, "skipped_pending", stats.SkippedPending,
+			"skipped_adopted", stats.SkippedAdopted, "cleared_pending", stats.ClearedPending,
+			"user_label_synced", stats.UserLabelSynced, "user_pending", stats.UserPending,
+		)
+		return
+	}
+
 	level := "info"
 	result := "success"
 	if stats.Errors > 0 {

@@ -647,8 +647,12 @@ func TestPollOnce_GonePR_Dropped(t *testing.T) {
 	if (*events)[0].Event != "pr_gone" {
 		t.Errorf("expected event pr_gone, got %s", (*events)[0].Event)
 	}
-	if (*events)[0].Result != "warn" {
-		t.Errorf("expected result warn, got %s", (*events)[0].Result)
+	// Result is "failure", not "warn" — "warn" is a log level, not one of
+	// the four valid audit result words (success/partial/rejected/failure),
+	// and it had no UI badge (V2-cleanup-85.2). The tracked PR vanishing
+	// out from under the tracker never reached its intended end state.
+	if (*events)[0].Result != "failure" {
+		t.Errorf("expected result failure, got %s", (*events)[0].Result)
 	}
 }
 
