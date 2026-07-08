@@ -222,3 +222,62 @@ func TestMergeAddonSection_NeverEmitsNullClusterGlobalValues(t *testing.T) {
 		t.Errorf("expected no literal 'null' in output, got:\n%s", out)
 	}
 }
+
+// TestMergeAddonSection_PreservesGitAuthoredAnchors — V2-cleanup-83.4 pin.
+//
+// A GitOps user may hand-write a YAML anchor under clusterGlobalValues and
+// reference it (as an alias) from one or more addon sections in the same
+// file — that's the whole point of the clusterGlobalValues convention.
+// Editing a completely unrelated addon through the per-addon values editor
+// (mergeAddonSection, rewritten on yaml.Node in #498) must not expand,
+// drop, or otherwise corrupt that anchor/alias pair: the file-level
+// yaml.Node tree is only supposed to be touched at the edited addon's
+// key/value pair.
+func TestMergeAddonSection_PreservesGitAuthoredAnchors(t *testing.T) {
+	existing := `# Cluster values for prod-eu
+clusterGlobalValues:
+  region: &region eu-west-1
+
+someaddon:
+  location: *region
+`
+	// Edit a DIFFERENT addon (podinfo) — someaddon and clusterGlobalValues
+	// are untouched by this call.
+	out, err := mergeAddonSection([]byte(existing), "podinfo", "replicaCount: 2\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := string(out)
+
+	if !strings.Contains(got, "&region") {
+		t.Errorf("anchor definition (&region) was dropped or expanded; got:\n%s", got)
+	}
+	if !strings.Contains(got, "*region") {
+		t.Errorf("anchor alias (*region) was dropped or expanded to a literal value; got:\n%s", got)
+	}
+	if !strings.Contains(got, "# Cluster values for prod-eu") {
+		t.Errorf("header comment was dropped; got:\n%s", got)
+	}
+
+	// The output must still be valid, and someaddon's aliased value must
+	// still resolve to the anchor's value (i.e. the alias wasn't merely
+	// left as dead text that no longer parses as a real YAML alias).
+	var doc map[string]interface{}
+	if err := yaml.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("merged output with anchors is not valid YAML: %v", err)
+	}
+	section, ok := doc["someaddon"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("someaddon section missing or wrong type: %T", doc["someaddon"])
+	}
+	if section["location"] != "eu-west-1" {
+		t.Errorf("expected someaddon.location to resolve the *region alias to eu-west-1, got %v", section["location"])
+	}
+	podinfoSection, ok := doc["podinfo"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("podinfo section missing or wrong type: %T", doc["podinfo"])
+	}
+	if podinfoSection["replicaCount"] != 2 {
+		t.Errorf("expected podinfo.replicaCount=2, got %v", podinfoSection["replicaCount"])
+	}
+}

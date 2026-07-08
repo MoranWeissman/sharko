@@ -28,6 +28,14 @@ func generateClusterValues(clusterName string, region string, addons map[string]
 
 	b.WriteString("# Cluster values for " + clusterName + "\n")
 	b.WriteString("clusterGlobalValues:\n")
+	b.WriteString("  # Optional. Define a value once here and reuse it in the addon sections below\n")
+	b.WriteString("  # with a YAML anchor, so you don't repeat yourself. Delete this block if you\n")
+	b.WriteString("  # don't need it — nothing depends on it.\n")
+	b.WriteString("  # Example — define an anchor here:\n")
+	b.WriteString("  #   region: &region eu-west-1\n")
+	b.WriteString("  # then reference it from an addon section further down:\n")
+	b.WriteString("  #   podinfo:\n")
+	b.WriteString("  #     location: *region\n")
 	if region != "" {
 		b.WriteString(fmt.Sprintf("  region: %s\n", region))
 	}
