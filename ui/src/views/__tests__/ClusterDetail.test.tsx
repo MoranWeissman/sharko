@@ -38,6 +38,7 @@ const mockDeregisterCluster = vi.fn();
 const mockUpdateClusterAddons = vi.fn();
 const mockGetAddonCatalog = vi.fn();
 const mockRestartAddonSync = vi.fn();
+const mockGetClusterHistory = vi.fn();
 
 // V2-cleanup-13: capture toast calls so the removal-feedback assertions can
 // distinguish "cluster removed" (auto-merged) from "removal PR opened".
@@ -66,6 +67,9 @@ vi.mock('@/services/api', async () => {
       // button rendering. Default to disabled so existing tests don't need
       // to assert on AI-specific elements.
       getAIStatus: vi.fn().mockResolvedValue({ enabled: false }),
+      // V2-cleanup-81.1: History section fetches the change timeline via
+      // ClusterHistorySection, which calls api.getClusterHistory directly.
+      getClusterHistory: (...args: unknown[]) => mockGetClusterHistory(...args),
     },
     testClusterConnection: (...args: unknown[]) => mockTestClusterConnection(...args),
     deregisterCluster: (...args: unknown[]) => mockDeregisterCluster(...args),
@@ -181,6 +185,9 @@ describe('ClusterDetail', () => {
     // the picker's catalog fetch; per-test overrides in the 32 suite set up
     // real catalog data).
     mockGetAddonCatalog.mockResolvedValue({ addons: [] });
+    // V2-cleanup-81.1: default to an empty change timeline so History-section
+    // tests don't need to stub this unless they exercise the timeline itself.
+    mockGetClusterHistory.mockResolvedValue({ history: [] });
   });
 
   // V2-cleanup-8.3 introduced "Host Cluster Nodes" labelling; V2-cleanup-78.1
@@ -331,8 +338,22 @@ describe('ClusterDetail', () => {
     // least one match rather than a single unique one.
     expect(screen.getAllByText('Addons').length).toBeGreaterThan(0);
     expect(screen.getByText('Config')).toBeInTheDocument();
+    expect(screen.getByText('History')).toBeInTheDocument();
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.queryByText('Overview')).not.toBeInTheDocument();
+  });
+
+  // V2-cleanup-81.1: every cluster change is a PR, so the standalone
+  // "Pull Requests" tab duplicated History — it's gone. Open PRs now show
+  // at the top of History instead.
+  it('does not show a standalone Pull Requests nav tab', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('Pull Requests')).not.toBeInTheDocument();
   });
 
   it('switches away from and back to the addons section via nav', async () => {
@@ -1265,7 +1286,7 @@ describe('ClusterDetail', () => {
 
     // --- 7. RoleGuard behavior unchanged ---
 
-    it('Manage Addons card is hidden for non-admin users', async () => {
+    it('enabled-addons list and "+ Enable addon" button are hidden for non-admin users', async () => {
       const viewerAuth = {
         token: 'viewer-token',
         username: 'viewer',
@@ -1293,7 +1314,8 @@ describe('ClusterDetail', () => {
       );
 
       await w(() => expect(s.getByText('prod-eu')).toBeInTheDocument());
-      expect(s.queryByText('Manage Addons')).not.toBeInTheDocument();
+      expect(s.queryByTestId('manage-addons-enable-btn')).not.toBeInTheDocument();
+      expect(s.queryByTestId('manage-addon-row-cert-manager')).not.toBeInTheDocument();
     });
   });
 
@@ -1839,5 +1861,94 @@ describe('ClusterDetail', () => {
         vi.useRealTimers();
       }
     }, 15_000);
+  });
+
+  // V2-cleanup-81.1: every cluster change is a PR, so the standalone
+  // "Pull Requests" tab duplicated History. Open PRs now render at the top
+  // of History as a "pending" group, with the change timeline below.
+  describe('V2-cleanup-81.1: History section leads with open PRs', () => {
+    const openPR = {
+      pr_id: 555,
+      pr_url: 'https://github.com/example/repo/pull/555',
+      pr_branch: 'sharko/addon-upgrade-ingress-nginx-prod-eu',
+      pr_title: 'Upgrade ingress-nginx to 4.8.0 on prod-eu',
+      cluster: 'prod-eu',
+      addon: 'ingress-nginx',
+      operation: 'addon-upgrade',
+      user: 'admin',
+      source: 'sharko',
+      created_at: '2026-05-20T10:00:00Z',
+      last_status: 'open',
+      last_polled_at: '2026-05-20T10:01:00Z',
+    };
+
+    it('shows an "Open pull requests" group above the change timeline', async () => {
+      mockFetchTrackedPRs.mockResolvedValue({ prs: [openPR] });
+
+      renderView('history');
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      // Open-PR group heading + the PendingPRsPanel content (cluster-scoped
+      // panel renders "Cluster PRs" as its own internal heading).
+      await waitFor(() => {
+        expect(screen.getByText('Open pull requests')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Cluster PRs')).toBeInTheDocument();
+      expect(screen.getByText(/Upgrade ingress-nginx to 4\.8\.0 on prod-eu/)).toBeInTheDocument();
+
+      // Change timeline still renders below (empty here — default mock).
+      await waitFor(() => {
+        expect(screen.getByText('No history yet')).toBeInTheDocument();
+      });
+    });
+
+    it('does not render the old standalone Pull Requests tab or route', async () => {
+      renderView('prs');
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      // ?section=prs is no longer a recognized section — the addons/config/
+      // history/settings sections all check activeSection === 'prs', which
+      // never matches, so nothing PR-specific renders. Confirm the page
+      // doesn't blow up and simply shows no section content tied to 'prs'.
+      expect(screen.queryByText('Cluster PRs')).not.toBeInTheDocument();
+      expect(screen.queryByText('Open pull requests')).not.toBeInTheDocument();
+    });
+
+    it('surfaces the merge toast and refetches cluster data when an open PR merges', async () => {
+      mockFetchTrackedPRs.mockResolvedValue({ prs: [openPR] });
+
+      renderView('history');
+
+      await waitFor(() => {
+        expect(screen.getByText(/Upgrade ingress-nginx to 4\.8\.0 on prod-eu/)).toBeInTheDocument();
+      });
+
+      const callsBeforeMerge = mockGetClusterComparison.mock.calls.length;
+
+      // Next PR fetch reports the same PR as merged — PendingPRsPanel's
+      // own open→merged transition detection should fire onMergeDetected.
+      mockFetchTrackedPRs.mockResolvedValueOnce({
+        prs: [{ ...openPR, last_status: 'merged' }],
+      });
+      fireEvent.click(screen.getByRole('button', { name: /refresh prs/i }));
+
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith(
+          expect.stringContaining('Merged PR #555: addon upgrade on prod-eu'),
+        );
+      });
+
+      // The merge-detected callback also triggers fetchData() so the
+      // cluster comparison (and thus addon state) is refreshed.
+      await waitFor(() => {
+        expect(mockGetClusterComparison.mock.calls.length).toBeGreaterThan(callsBeforeMerge);
+      });
+    });
   });
 });

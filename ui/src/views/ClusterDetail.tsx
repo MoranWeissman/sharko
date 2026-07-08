@@ -31,18 +31,9 @@ import {
   Sparkles,
   Settings,
 } from 'lucide-react';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from '@/components/ui/dialog';
-import type { AddonCatalogItem } from '@/services/models';
 import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs } from '@/services/api';
 import type { TestClusterUnavailable, PRWriteResult } from '@/services/api';
-import { PRResultBanner, PRLink, extractPR } from '@/components/PRFeedback';
+import { PRResultBanner, extractPR } from '@/components/PRFeedback';
 import { EnableAddonPicker } from '@/components/EnableAddonPicker';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry, VerifyStep } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
@@ -297,19 +288,6 @@ export function ClusterDetail() {
   const [pickerCatalogLoading, setPickerCatalogLoading] = useState(false);
   const [pickerCatalogError, setPickerCatalogError] = useState<string | null>(null);
 
-  // Deploy Addon dialog
-  const [deployDialogOpen, setDeployDialogOpen] = useState(false);
-  const [catalogAddons, setCatalogAddons] = useState<AddonCatalogItem[]>([]);
-  const [catalogLoading, setCatalogLoading] = useState(false);
-  const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [selectedAddon, setSelectedAddon] = useState<AddonCatalogItem | null>(null);
-  const [deploying, setDeploying] = useState(false);
-  // Track whether the PR auto-merged so the success toast can accurately
-  // describe what happened (PR opened → still requires merge; PR merged →
-  // ArgoCD reconcile pending) instead of claiming "deploy requested
-  // successfully" regardless of merge state.
-  const [deployResult, setDeployResult] = useState<{ prUrl?: string; prId?: number; merged?: boolean; error?: string } | null>(null);
-
   // Compute display status from test result + server state
   const computedStatus = useMemo((): string => {
     if (testResult && testResult !== 'testing') {
@@ -527,52 +505,6 @@ export function ClusterDetail() {
       setPickerCatalogLoading(false);
     }
   }, [pickerCatalogNames]);
-
-  const handleOpenDeployDialog = useCallback(async () => {
-    setDeployDialogOpen(true);
-    setSelectedAddon(null);
-    setDeployResult(null);
-    setCatalogError(null);
-    setCatalogLoading(true);
-    try {
-      const catalog = await api.getAddonCatalog();
-      // Only show addons that are NOT currently enabled (git_enabled = true) on this cluster
-      const enabledNames = new Set(
-        (data?.addon_comparisons ?? [])
-          .filter((a) => a.git_enabled)
-          .map((a) => a.addon_name),
-      );
-      setCatalogAddons(catalog.addons.filter((a) => !enabledNames.has(a.addon_name)));
-    } catch (e: unknown) {
-      setCatalogError(e instanceof Error ? e.message : 'Failed to load addon catalog');
-    } finally {
-      setCatalogLoading(false);
-    }
-  }, [data]);
-
-  const handleDeployAddon = useCallback(async () => {
-    if (!name || !selectedAddon) return;
-    setDeploying(true);
-    setDeployResult(null);
-    try {
-      const result = await api.enableAddonOnCluster(name, selectedAddon.addon_name);
-      // Capture pr_url, pr_id, AND merged from `git` so the toast can
-      // branch on auto-merge state. Response shape is EnableAddonResult:
-      // `{ status, git: { pr_url, pr_id, merged, ... } }`. Defensive ?.
-      // chains because the wire shape might not include `git` on legacy
-      // or partial-failure responses; the UI falls back to the generic
-      // "Request submitted" copy.
-      const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
-      const prId = result?.git?.pr_id || result?.pr_id;
-      const merged = result?.git?.merged ?? result?.merged;
-      setDeployResult({ prUrl, prId, merged });
-      void fetchData();
-    } catch (e: unknown) {
-      setDeployResult({ error: e instanceof Error ? e.message : 'Failed to deploy addon' });
-    } finally {
-      setDeploying(false);
-    }
-  }, [name, selectedAddon, fetchData]);
 
   const handleSelectSuggestion = useCallback(async (suggestion: string) => {
     if (!name) return;
@@ -800,7 +732,6 @@ export function ClusterDetail() {
     {
       items: [
         { key: 'addons', label: 'Addons', badge: data ? data.addon_comparisons.length : undefined, icon: Package },
-        { key: 'prs', label: 'Pull Requests', icon: GitPullRequest },
         { key: 'config', label: 'Config', icon: FileCode },
         { key: 'history', label: 'History', icon: Clock },
         { key: 'settings', label: 'Settings', icon: Settings },
@@ -812,6 +743,43 @@ export function ClusterDetail() {
       ],
     },
   ];
+
+  // Manage-Addons list state (V2-cleanup-81.1) — computed once here so both
+  // the "+ Enable addon" button in the Addons section header and the
+  // enabled-list body below can share it without duplicating the logic.
+  // Visible-row source: only catalog rows (git_configured=true) — junk
+  // (untracked/sharko_system) was filtered out at toggle-map seeding time.
+  const allCatalogNames = Object.keys(addonToggles).sort();
+  // noCatalog: true when addonToggles has no entries AND no catalog was
+  // fetched for the picker yet. After the picker fetch we have
+  // pickerCatalogNames, which is the authoritative source for what's
+  // available to enable. If even that is empty, there's nothing in the catalog.
+  const noCatalog = allCatalogNames.length === 0 && pickerCatalogNames.length === 0;
+  // Which addons are currently desired-true (original + staged enables)?
+  // Excludes addons staged for removal (still in list, but they retain
+  // their row with a pending-removal mark).
+  const enabledRows = allCatalogNames.filter((n) => addonToggles[n]);
+  const removedRows = allCatalogNames.filter(
+    (n) => originalToggles[n] && !addonToggles[n],
+  );
+  // Rows to show: currently enabled OR staged for removal.
+  const visibleRows = Array.from(
+    new Set([...enabledRows, ...removedRows]),
+  ).sort();
+  // The picker must not show addons that are already enabled OR staged for
+  // enable (i.e. addonToggles[n] === true).
+  const pickerEnabledNames = new Set(
+    Object.entries(addonToggles)
+      .filter(([, v]) => v)
+      .map(([k]) => k),
+  );
+  // Connectivity-check system row visibility.
+  // Values: 'verified_check' | 'check_pending' | 'check_failed'
+  const connStatus = data?.cluster?.connectivity_status ?? '';
+  const showCheckRow =
+    connStatus === 'verified_check' ||
+    connStatus === 'check_pending' ||
+    connStatus === 'check_failed';
 
   return (
     <div className="space-y-6">
@@ -1172,381 +1140,204 @@ export function ClusterDetail() {
           {/* Addons section */}
           {activeSection === 'addons' && (
             <>
-              {/* Section header with Deploy Addon button */}
+              {/* Section header with the single add-addon entry point
+                * (V2-cleanup-81.1). "Deploy Addon" and the nested "Manage
+                * Addons > Enable addon" both enabled a catalog addon on this
+                * cluster — redundant, and a box-in-a-box under a section
+                * already titled "Addons". Collapsed to this one button; the
+                * enabled-addons list (still admin-only) sits directly below,
+                * no card chrome. */}
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Addons</h3>
-                <RoleGuard roles={['admin', 'operator']}>
-                  <button
-                    type="button"
-                    onClick={handleOpenDeployDialog}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Deploy Addon
-                  </button>
+                <RoleGuard adminOnly>
+                  {!noCatalog && (
+                    <button
+                      type="button"
+                      data-testid="manage-addons-enable-btn"
+                      onClick={() => { void handleOpenPicker(); }}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Enable addon
+                    </button>
+                  )}
                 </RoleGuard>
               </div>
 
-              {/* Deploy Addon Dialog */}
-              <Dialog open={deployDialogOpen} onOpenChange={(open) => { setDeployDialogOpen(open); if (!open) { setSelectedAddon(null); setDeployResult(null); } }}>
-                <DialogContent className="max-w-lg bg-[#f0f7ff] dark:bg-gray-800">
-                  <DialogHeader>
-                    <DialogTitle className="text-[#0a2a4a] dark:text-gray-100">Deploy Addon to {name}</DialogTitle>
-                    <DialogDescription className="text-[#3a6a8a] dark:text-gray-400">
-                      Select an addon from the catalog to enable on this cluster. A pull request will be created.
-                    </DialogDescription>
-                  </DialogHeader>
-
-                  {catalogLoading && (
-                    <div className="flex items-center justify-center py-8">
-                      <Loader2 className="h-6 w-6 animate-spin text-teal-600" />
-                      <span className="ml-2 text-sm text-[#3a6a8a] dark:text-gray-400">Loading catalog...</span>
-                    </div>
-                  )}
-
-                  {catalogError && (
-                    <p className="text-sm text-red-600 dark:text-red-400">{catalogError}</p>
-                  )}
-
-                  {!catalogLoading && !catalogError && catalogAddons.length === 0 && (
-                    <p className="py-4 text-center text-sm text-[#3a6a8a] dark:text-gray-400">
-                      All catalog addons are already enabled on this cluster.
-                    </p>
-                  )}
-
-                  {!catalogLoading && !catalogError && catalogAddons.length > 0 && !deployResult && (
-                    <div className="max-h-64 space-y-1.5 overflow-y-auto">
-                      {catalogAddons.map((addon) => (
-                        <button
-                          key={addon.addon_name}
-                          type="button"
-                          onClick={() => setSelectedAddon(addon)}
-                          className={`w-full rounded-lg px-3 py-2.5 text-left text-sm ring-2 transition-colors ${
-                            selectedAddon?.addon_name === addon.addon_name
-                              ? 'bg-teal-50 ring-teal-500 dark:bg-teal-900/20 dark:ring-teal-400'
-                              : 'bg-[#f0f7ff] ring-[#6aade0] hover:bg-[#d6eeff] dark:bg-gray-700 dark:ring-gray-600 dark:hover:bg-gray-600'
-                          }`}
-                        >
-                          <span className="font-medium text-[#0a2a4a] dark:text-gray-100">{addon.addon_name}</span>
-                          <span className="ml-2 text-xs text-[#5a8aaa] dark:text-gray-400">v{addon.version}</span>
-                          {addon.namespace && (
-                            <span className="ml-2 text-xs text-[#5a8aaa] dark:text-gray-400">({addon.namespace})</span>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {deployResult && (
-                    <div className={`rounded-lg p-3 text-sm ${deployResult.error ? 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400' : 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'}`}>
-                      {deployResult.error ? (
-                        <p>{deployResult.error}</p>
-                      ) : (
-                        // Describe what happened based on git.merged so
-                        // operators know whether to wait for ArgoCD
-                        // reconcile or to merge the PR first.
-                        <div>
-                          {deployResult.merged === true && (
-                            <>
-                              <p className="font-medium">
-                                {deployResult.prId ? `PR #${deployResult.prId} merged.` : 'PR merged.'} The addon will appear on the cluster within ~1 minute as ArgoCD picks up the change.
-                              </p>
-                            </>
-                          )}
-                          {deployResult.merged === false && (
-                            <>
-                              <p className="font-medium">
-                                {deployResult.prId ? `PR #${deployResult.prId} opened.` : 'PR opened.'} Addon will deploy after the PR is merged.
-                              </p>
-                              <p className="mt-0.5 text-xs">Merge the PR to start the rollout.</p>
-                            </>
-                          )}
-                          {deployResult.merged === undefined && (
-                            // Defensive fallback: legacy shape without `git`,
-                            // or a response that doesn't carry the merged
-                            // flag. Tell the operator the request was
-                            // submitted but stop short of claiming success.
-                            <p className="font-medium">Addon deploy request submitted.</p>
-                          )}
-                          {deployResult.prUrl && (
-                            <PRLink
-                              url={deployResult.prUrl}
-                              id={deployResult.prId}
-                              className="mt-1"
-                            />
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <DialogFooter>
-                    {!deployResult ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => setDeployDialogOpen(false)}
-                          className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          disabled={!selectedAddon || deploying}
-                          onClick={handleDeployAddon}
-                          className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-                        >
-                          {deploying && <Loader2 className="h-4 w-4 animate-spin" />}
-                          Deploy
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => { setDeployDialogOpen(false); setDeployResult(null); setSelectedAddon(null); }}
-                        className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-                      >
-                        Close
-                      </button>
-                    )}
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-
-              {/* Admin: Manage Addons — enabled list + searchable enable picker */}
+              {/* Admin: enabled-addons list + searchable enable picker —
+                * sits directly under the Addons header, no separate card. */}
               <RoleGuard adminOnly>
-                {(() => {
-                  // Visible-row source: only catalog rows (git_configured=true) — junk
-                  // (untracked/sharko_system) was filtered out at toggle-map seeding time.
-                  const allCatalogNames = Object.keys(addonToggles).sort();
-                  // noCatalog: true when addonToggles has no entries AND no catalog was
-                  // fetched for the picker yet. After the picker fetch we have
-                  // pickerCatalogNames, which is the authoritative source for what's
-                  // available to enable. If even that is empty, there's nothing in the catalog.
-                  const noCatalog = allCatalogNames.length === 0 && pickerCatalogNames.length === 0;
+                {/* Empty catalog */}
+                {noCatalog && (
+                  <p className="text-sm text-[#3a6a8a] dark:text-gray-500">
+                    No addons in catalog.
+                  </p>
+                )}
 
-                  // Which addons are currently desired-true (original + staged enables)?
-                  // Excludes addons staged for removal (still in list, but they retain
-                  // their row with a pending-removal mark).
-                  const enabledRows = allCatalogNames.filter((n) => addonToggles[n]);
-                  const removedRows = allCatalogNames.filter(
-                    (n) => originalToggles[n] && !addonToggles[n],
-                  );
-                  // Rows to show: currently enabled OR staged for removal.
-                  const visibleRows = Array.from(
-                    new Set([...enabledRows, ...removedRows]),
-                  ).sort();
-
-                  // The picker must not show addons that are already enabled OR
-                  // staged for enable (i.e. addonToggles[n] === true).
-                  const pickerEnabledNames = new Set(
-                    Object.entries(addonToggles)
-                      .filter(([, v]) => v)
-                      .map(([k]) => k),
-                  );
-
-                  // Connectivity-check system row visibility.
-                  // Values: 'verified_check' | 'check_pending' | 'check_failed'
-                  const connStatus = data?.cluster?.connectivity_status ?? '';
-                  const showCheckRow =
-                    connStatus === 'verified_check' ||
-                    connStatus === 'check_pending' ||
-                    connStatus === 'check_failed';
-
-                  return (
-                    <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
-                      {/* Card header */}
-                      <div className="mb-3 flex items-center justify-between gap-2">
-                        <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-                          Manage Addons
-                        </h3>
-                        {!noCatalog && (
-                          <button
-                            type="button"
-                            data-testid="manage-addons-enable-btn"
-                            onClick={() => { void handleOpenPicker(); }}
-                            className="inline-flex items-center gap-1.5 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
-                          >
-                            <Plus className="h-3.5 w-3.5" />
-                            Enable addon
-                          </button>
-                        )}
+                {/* Row list */}
+                {!noCatalog && (
+                  <div className="space-y-1">
+                    {/* Connectivity-check system row */}
+                    {showCheckRow && (
+                      <div
+                        data-testid="connectivity-check-row"
+                        className="flex items-start gap-3 rounded-md bg-[#e8f4ff] px-3 py-2.5 opacity-80 dark:bg-gray-700/60"
+                      >
+                        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#5a8aaa] dark:text-gray-400" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium text-[#3a6a8a] dark:text-gray-300">
+                              Connectivity check
+                            </span>
+                            <span className="rounded-full bg-[#c0ddf0] px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-[#2a5a7a] dark:bg-gray-600 dark:text-gray-300">
+                              Sharko system — automatic
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-400">
+                            A tiny test app Sharko deploys through ArgoCD to prove this cluster can receive deployments. It removes itself when the first addon is enabled.
+                          </p>
+                        </div>
                       </div>
+                    )}
 
-                      {/* Empty catalog */}
-                      {noCatalog && (
-                        <p className="text-sm text-[#3a6a8a] dark:text-gray-500">
-                          No addons in catalog.
+                    {/* Enabled / pending addon rows */}
+                    {visibleRows.length === 0 ? (
+                      <div className="py-2">
+                        <p className="text-sm text-[#3a6a8a] dark:text-gray-400">
+                          No addons enabled on this cluster yet.
                         </p>
-                      )}
+                      </div>
+                    ) : (
+                      visibleRows.map((addonName) => {
+                        const isPendingEnable =
+                          !originalToggles[addonName] && addonToggles[addonName];
+                        const isPendingRemove =
+                          originalToggles[addonName] && !addonToggles[addonName];
 
-                      {/* Row list */}
-                      {!noCatalog && (
-                        <div className="space-y-1">
-                          {/* Connectivity-check system row */}
-                          {showCheckRow && (
-                            <div
-                              data-testid="connectivity-check-row"
-                              className="flex items-start gap-3 rounded-md bg-[#e8f4ff] px-3 py-2.5 opacity-80 dark:bg-gray-700/60"
-                            >
-                              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#5a8aaa] dark:text-gray-400" />
-                              <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="text-sm font-medium text-[#3a6a8a] dark:text-gray-300">
-                                    Connectivity check
-                                  </span>
-                                  <span className="rounded-full bg-[#c0ddf0] px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-[#2a5a7a] dark:bg-gray-600 dark:text-gray-300">
-                                    Sharko system — automatic
-                                  </span>
-                                </div>
-                                <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-400">
-                                  A tiny test app Sharko deploys through ArgoCD to prove this cluster can receive deployments. It removes itself when the first addon is enabled.
-                                </p>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Enabled / pending addon rows */}
-                          {visibleRows.length === 0 ? (
-                            <div className="py-2">
-                              <p className="text-sm text-[#3a6a8a] dark:text-gray-400">
-                                No addons enabled on this cluster yet.
-                              </p>
-                            </div>
-                          ) : (
-                            visibleRows.map((addonName) => {
-                              const isPendingEnable =
-                                !originalToggles[addonName] && addonToggles[addonName];
-                              const isPendingRemove =
-                                originalToggles[addonName] && !addonToggles[addonName];
-
-                              return (
-                                <div
-                                  key={addonName}
-                                  data-testid={`manage-addon-row-${addonName}`}
-                                  className={`flex items-center justify-between gap-3 rounded-md px-3 py-2 ${
-                                    isPendingEnable
-                                      ? 'bg-teal-50 ring-1 ring-teal-300 dark:bg-teal-900/20 dark:ring-teal-700'
-                                      : isPendingRemove
-                                      ? 'bg-[#e8f4ff] opacity-60 ring-1 ring-[#6aade0] dark:bg-gray-700/40'
-                                      : 'bg-[#e8f4ff] dark:bg-gray-700/40'
-                                  }`}
-                                >
-                                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                                    <span
-                                      className={`truncate text-sm font-medium ${
-                                        isPendingRemove
-                                          ? 'line-through text-[#5a8aaa] dark:text-gray-500'
-                                          : 'text-[#0a2a4a] dark:text-gray-200'
-                                      }`}
-                                    >
-                                      {addonName}
-                                    </span>
-                                    {(isPendingEnable || isPendingRemove) && (
-                                      <span className="shrink-0 rounded-full bg-teal-600 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white dark:bg-teal-700">
-                                        {isPendingEnable ? 'pending' : 'removing'}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {/* Remove button — not available when already pending-remove */}
-                                  {!isPendingRemove && (
-                                    <button
-                                      type="button"
-                                      data-testid={`manage-addon-remove-${addonName}`}
-                                      aria-label={`Remove ${addonName}`}
-                                      onClick={() =>
-                                        setAddonToggles((prev) => ({ ...prev, [addonName]: false }))
-                                      }
-                                      className="shrink-0 rounded p-0.5 text-[#5a8aaa] hover:bg-[#c0ddf0] hover:text-[#0a2a4a] dark:hover:bg-gray-600 dark:hover:text-gray-200"
-                                    >
-                                      <X className="h-4 w-4" />
-                                    </button>
-                                  )}
-                                  {/* Undo-remove button when pending-remove */}
-                                  {isPendingRemove && (
-                                    <button
-                                      type="button"
-                                      data-testid={`manage-addon-undo-${addonName}`}
-                                      aria-label={`Undo remove ${addonName}`}
-                                      onClick={() =>
-                                        setAddonToggles((prev) => ({ ...prev, [addonName]: true }))
-                                      }
-                                      className="shrink-0 rounded p-0.5 text-teal-600 hover:bg-teal-100 dark:hover:bg-teal-900/30"
-                                    >
-                                      Undo
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            })
-                          )}
-                        </div>
-                      )}
-
-                      {/* Apply / Discard footer */}
-                      {hasToggleChanges && (
-                        <div className="mt-4 flex items-center gap-3">
-                          <button
-                            type="button"
-                            onClick={handleApplyToggles}
-                            disabled={applyingToggles}
-                            className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                        return (
+                          <div
+                            key={addonName}
+                            data-testid={`manage-addon-row-${addonName}`}
+                            className={`flex items-center justify-between gap-3 rounded-md px-3 py-2 ${
+                              isPendingEnable
+                                ? 'bg-teal-50 ring-1 ring-teal-300 dark:bg-teal-900/20 dark:ring-teal-700'
+                                : isPendingRemove
+                                ? 'bg-[#e8f4ff] opacity-60 ring-1 ring-[#6aade0] dark:bg-gray-700/40'
+                                : 'bg-[#e8f4ff] dark:bg-gray-700/40'
+                            }`}
                           >
-                            {applyingToggles && <Loader2 className="h-4 w-4 animate-spin" />}
-                            Apply Changes
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAddonToggles({ ...originalToggles });
-                              setToggleError(null);
-                              setToggleResult(null);
-                            }}
-                            disabled={applyingToggles}
-                            className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-                          >
-                            Discard
-                          </button>
-                        </div>
-                      )}
-                      {toggleError && (
-                        <p className="mt-2 text-sm text-red-600 dark:text-red-400">{toggleError}</p>
-                      )}
-                      {toggleResult?.pr && (
-                        <div className="mt-2">
-                          <PRResultBanner
-                            result={toggleResult.pr}
-                            mergedMessage="PR merged — addon changes applied"
-                            openMessage="PR opened — addon changes apply once it merges"
-                          />
-                        </div>
-                      )}
-                      {toggleResult?.message && (
-                        <p className="mt-2 text-sm text-green-600 dark:text-green-400">
-                          {toggleResult.message}
-                        </p>
-                      )}
+                            <div className="flex min-w-0 flex-1 items-center gap-2">
+                              <span
+                                className={`truncate text-sm font-medium ${
+                                  isPendingRemove
+                                    ? 'line-through text-[#5a8aaa] dark:text-gray-500'
+                                    : 'text-[#0a2a4a] dark:text-gray-200'
+                                }`}
+                              >
+                                {addonName}
+                              </span>
+                              {(isPendingEnable || isPendingRemove) && (
+                                <span className="shrink-0 rounded-full bg-teal-600 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white dark:bg-teal-700">
+                                  {isPendingEnable ? 'pending' : 'removing'}
+                                </span>
+                              )}
+                            </div>
+                            {/* Remove button — not available when already pending-remove */}
+                            {!isPendingRemove && (
+                              <button
+                                type="button"
+                                data-testid={`manage-addon-remove-${addonName}`}
+                                aria-label={`Remove ${addonName}`}
+                                onClick={() =>
+                                  setAddonToggles((prev) => ({ ...prev, [addonName]: false }))
+                                }
+                                className="shrink-0 rounded p-0.5 text-[#5a8aaa] hover:bg-[#c0ddf0] hover:text-[#0a2a4a] dark:hover:bg-gray-600 dark:hover:text-gray-200"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            )}
+                            {/* Undo-remove button when pending-remove */}
+                            {isPendingRemove && (
+                              <button
+                                type="button"
+                                data-testid={`manage-addon-undo-${addonName}`}
+                                aria-label={`Undo remove ${addonName}`}
+                                onClick={() =>
+                                  setAddonToggles((prev) => ({ ...prev, [addonName]: true }))
+                                }
+                                className="shrink-0 rounded p-0.5 text-teal-600 hover:bg-teal-100 dark:hover:bg-teal-900/30"
+                              >
+                                Undo
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
 
-                      {/* Enable-addon picker dialog */}
-                      <EnableAddonPicker
-                        open={pickerOpen}
-                        allAddonNames={pickerCatalogNames.length > 0 ? pickerCatalogNames : allCatalogNames}
-                        enabledNames={pickerEnabledNames}
-                        loading={pickerCatalogLoading}
-                        error={pickerCatalogError}
-                        onEnable={(addonName) =>
-                          setAddonToggles((prev) => ({ ...prev, [addonName]: true }))
-                        }
-                        onClose={() => setPickerOpen(false)}
-                        onRetry={() => {
-                          setPickerCatalogError(null);
-                          setPickerCatalogNames([]);
-                          void handleOpenPicker();
-                        }}
-                      />
-                    </div>
-                  );
-                })()}
+                {/* Apply / Discard footer */}
+                {hasToggleChanges && (
+                  <div className="mt-4 flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleApplyToggles}
+                      disabled={applyingToggles}
+                      className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                    >
+                      {applyingToggles && <Loader2 className="h-4 w-4 animate-spin" />}
+                      Apply Changes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddonToggles({ ...originalToggles });
+                        setToggleError(null);
+                        setToggleResult(null);
+                      }}
+                      disabled={applyingToggles}
+                      className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                    >
+                      Discard
+                    </button>
+                  </div>
+                )}
+                {toggleError && (
+                  <p className="mt-2 text-sm text-red-600 dark:text-red-400">{toggleError}</p>
+                )}
+                {toggleResult?.pr && (
+                  <div className="mt-2">
+                    <PRResultBanner
+                      result={toggleResult.pr}
+                      mergedMessage="PR merged — addon changes applied"
+                      openMessage="PR opened — addon changes apply once it merges"
+                    />
+                  </div>
+                )}
+                {toggleResult?.message && (
+                  <p className="mt-2 text-sm text-green-600 dark:text-green-400">
+                    {toggleResult.message}
+                  </p>
+                )}
+
+                {/* Enable-addon picker dialog */}
+                <EnableAddonPicker
+                  open={pickerOpen}
+                  allAddonNames={pickerCatalogNames.length > 0 ? pickerCatalogNames : allCatalogNames}
+                  enabledNames={pickerEnabledNames}
+                  loading={pickerCatalogLoading}
+                  error={pickerCatalogError}
+                  onEnable={(addonName) =>
+                    setAddonToggles((prev) => ({ ...prev, [addonName]: true }))
+                  }
+                  onClose={() => setPickerOpen(false)}
+                  onRetry={() => {
+                    setPickerCatalogError(null);
+                    setPickerCatalogNames([]);
+                    void handleOpenPicker();
+                  }}
+                />
               </RoleGuard>
 
               {/* Status filter cards — hide zero-count categories */}
@@ -1652,20 +1443,24 @@ export function ClusterDetail() {
             </div>
           )}
 
-          {/* Pull Requests section */}
-          {activeSection === 'prs' && (
-            <PendingPRsPanel
-              cluster={name}
-              onMergeDetected={(pr: TrackedPR) => {
-                showToast(`Merged PR #${pr.pr_id}: ${prettyOperation(pr.operation)}${pr.cluster ? ` on ${pr.cluster}` : ''}.`)
-                void fetchData()
-              }}
-            />
-          )}
-
-          {/* History section */}
+          {/* History section — every cluster change is a PR, so the old
+            * standalone "Pull Requests" tab was just a duplicate log
+            * (V2-cleanup-81.1). Open PRs now lead History as a "pending"
+            * group, with the change timeline underneath. */}
           {activeSection === 'history' && (
-            <ClusterHistorySection clusterName={name!} />
+            <div className="space-y-6">
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Open pull requests</h3>
+                <PendingPRsPanel
+                  cluster={name}
+                  onMergeDetected={(pr: TrackedPR) => {
+                    showToast(`Merged PR #${pr.pr_id}: ${prettyOperation(pr.operation)}${pr.cluster ? ` on ${pr.cluster}` : ''}.`)
+                    void fetchData()
+                  }}
+                />
+              </div>
+              <ClusterHistorySection clusterName={name!} />
+            </div>
           )}
 
           {/* Settings section — houses admin troubleshooting controls that
