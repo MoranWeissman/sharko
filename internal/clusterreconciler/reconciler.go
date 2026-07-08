@@ -181,7 +181,22 @@ type Deps struct {
 	// newly-created cluster Secrets for zero-addon clusters. When false
 	// (the zero value, i.e. the default), the feature is ON. Set to true
 	// to disable (wired from SHARKO_CONNECTIVITY_CHECK=false/0 in serve.go).
+	//
+	// This is the static escape hatch. ProbeModeFn (below) is the live,
+	// server-wide toggle (V2-cleanup-85.4) — either signal disabling the
+	// check wins; see effectiveDisableConnectivityCheck.
 	DisableConnectivityCheck bool
+
+	// ProbeModeFn, when non-nil, is consulted on every createOne call to
+	// decide whether the connectivity-check label should be applied
+	// (V2-cleanup-85.4's probe_mode server setting: "check-app" vs
+	// "api-test"). Returns true when probe_mode is "api-test" (no
+	// connectivity-check app should ever be deployed). nil means "no
+	// settings store wired" — DisableConnectivityCheck alone decides.
+	// Wired from settings.Store.IsAPITest in cmd/sharko/serve.go, which
+	// already swallows read errors and defaults to false (check-app) —
+	// this reconciler never blocks on a settings-store outage.
+	ProbeModeFn func(ctx context.Context) bool
 }
 
 // Reconciler is a background reconciler that converges ArgoCD cluster Secret
@@ -772,6 +787,23 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 	}
 }
 
+// effectiveDisableConnectivityCheck resolves whether the connectivity-check
+// label should be suppressed for the cluster Secret about to be built,
+// combining the static Deps.DisableConnectivityCheck escape hatch
+// (SHARKO_CONNECTIVITY_CHECK env var) with the live, server-wide probe_mode
+// setting (V2-cleanup-85.4, api-test mode). Either signal disabling the
+// check wins (OR) — conservative by design: an operator with EITHER knob
+// set to "no app" gets no app, regardless of the other knob's state.
+func (r *Reconciler) effectiveDisableConnectivityCheck(ctx context.Context) bool {
+	if r.deps.DisableConnectivityCheck {
+		return true
+	}
+	if r.deps.ProbeModeFn != nil {
+		return r.deps.ProbeModeFn(ctx)
+	}
+	return false
+}
+
 // now returns the current time via the per-instance clock seam. Defaulted to
 // time.Now in New(); overridable in tests for deterministic grace-window
 // evaluation.
@@ -964,9 +996,11 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	}
 	// Apply the connectivity-check label (V2-cleanup-29). The label is DERIVED
 	// here — never stored in managed-clusters.yaml — so no schema regen needed.
-	// DisableConnectivityCheck is the zero-value-safe inverted sentinel: false
-	// (zero value = default) means "feature on"; true means "feature off".
-	models.ApplyConnectivityCheckLabel(clusterLabels, !r.deps.DisableConnectivityCheck)
+	// effectiveDisableConnectivityCheck combines the static
+	// Deps.DisableConnectivityCheck escape hatch with the live probe_mode
+	// server setting (V2-cleanup-85.4) — either signal disabling the check
+	// wins.
+	models.ApplyConnectivityCheckLabel(clusterLabels, !r.effectiveDisableConnectivityCheck(ctx))
 	// Per-cluster roleArn from the entry wins over the connection-level
 	// default (V2-cleanup-62.2) — the same identity ArgoCD's argocd-k8s-auth
 	// exec shape must assume for a cross-account cluster. Matches the

@@ -140,6 +140,80 @@ func buildCheckFailDetail(app *models.ArgocdApplication) string {
 	return "connectivity-check application sync or health error — inspect in ArgoCD"
 }
 
+// Derived health status values (V2-cleanup-85.4). See models.Cluster.DerivedHealthStatus.
+const (
+	derivedHealthHealthy   = "healthy"
+	derivedHealthReachable = "reachable"
+	derivedHealthUnknown   = "unknown"
+)
+
+// computeDerivedHealth applies the V2-cleanup-85.4 auto-derivation order for
+// cluster health — independent of any manual "Test connection" click
+// (models.Cluster.SharkoStatus). First match wins:
+//
+//  1. hasHealthyAddon (any addon on the cluster is Synced+Healthy in ArgoCD)
+//     -> "healthy"
+//  2. verdict.Status == "verified_check" (the connectivity-check application
+//     is itself Synced+Healthy) -> "reachable"
+//  3. verdict.Status == "verified_argocd" OR connectionStatus == "Successful"
+//     (ArgoCD's own connection to the cluster is fine) -> "reachable"
+//  4. none of the above -> "unknown"
+//
+// probe_mode (check-app vs api-test, V2-cleanup-85.4) is not threaded
+// through explicitly: in api-test mode no connectivity-check application is
+// ever deployed to the cluster (see the register/reconcile path), so
+// verdict.Status can never be "verified_check" and step 2 falls through to
+// step 3 on its own — exactly the "step 2 is simply skipped" behavior the
+// design calls for.
+func computeDerivedHealth(hasHealthyAddon bool, verdict connectivityVerdict, connectionStatus string) string {
+	if hasHealthyAddon {
+		return derivedHealthHealthy
+	}
+	if verdict.Status == "verified_check" {
+		return derivedHealthReachable
+	}
+	if verdict.Status == "verified_argocd" || connectionStatus == "Successful" {
+		return derivedHealthReachable
+	}
+	return derivedHealthUnknown
+}
+
+// clusterHasHealthyAddon reports whether any non-system ArgoCD Application
+// destined for this cluster is currently Synced+Healthy. This is step 1 of
+// the V2-cleanup-85.4 derivation order — the signal that was previously
+// invisible to the cluster LIST response (it lives only in the per-cluster
+// comparison endpoint's TotalHealthy field).
+//
+// Matching mirrors internal/argocd.Service.GetClusterApplications' three
+// strategies (destination server URL, destination name, "-<clusterName>"
+// name suffix) so the same app is recognized as belonging to the same
+// cluster everywhere in Sharko — but without GetClusterApplications' extra
+// ArgoCD ListClusters call: serverURL is the cluster's already-registered
+// ArgoCD server URL (models.Cluster.ServerURL), populated at read time by
+// the caller.
+//
+// System apps (the bootstrap root app, any connectivity-check app) are
+// excluded — they are not catalog addons and must never make a cluster
+// look "healthy" via this path (that is step 2's job).
+func clusterHasHealthyAddon(clusterName, serverURL string, apps []models.ArgocdApplication) bool {
+	for i := range apps {
+		app := &apps[i]
+		if orchestrator.IsSharkoSystemApp(app.Name) {
+			continue
+		}
+		matches := (serverURL != "" && app.DestinationServer == serverURL) ||
+			(app.DestinationName != "" && app.DestinationName == clusterName) ||
+			strings.HasSuffix(app.Name, "-"+clusterName)
+		if !matches {
+			continue
+		}
+		if app.SyncStatus == "Synced" && app.HealthStatus == "Healthy" {
+			return true
+		}
+	}
+	return false
+}
+
 // applyObsFields fills the Sharko observability fields on cluster from obs.
 // obs may be nil (obsStore unavailable); in that case the fields are left
 // at their zero values (all omitempty, so they are absent from JSON).

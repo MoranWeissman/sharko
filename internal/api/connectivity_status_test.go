@@ -221,3 +221,169 @@ func TestComputeConnectivityVerdict(t *testing.T) {
 		})
 	}
 }
+
+// TestClusterHasHealthyAddon covers the V2-cleanup-85.4 addon-matching
+// helper: destination server URL match, destination name match, name-suffix
+// fallback, and the exclusion of Sharko system apps (bootstrap +
+// connectivity-check) from counting as "an addon".
+func TestClusterHasHealthyAddon(t *testing.T) {
+	t.Parallel()
+
+	const cluster = "prod-eu"
+	const serverURL = "https://prod-eu.example.com"
+
+	tests := []struct {
+		name string
+		apps []models.ArgocdApplication
+		want bool
+	}{
+		{
+			name: "matched by destination server, Synced+Healthy",
+			apps: []models.ArgocdApplication{
+				{Name: "datadog-prod-eu", DestinationServer: serverURL, SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			want: true,
+		},
+		{
+			name: "matched by destination name, Synced+Healthy",
+			apps: []models.ArgocdApplication{
+				{Name: "karpenter", DestinationName: cluster, SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			want: true,
+		},
+		{
+			name: "matched by name suffix, Synced+Healthy",
+			apps: []models.ArgocdApplication{
+				{Name: "keda-" + cluster, SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			want: true,
+		},
+		{
+			name: "matched but OutOfSync — not healthy",
+			apps: []models.ArgocdApplication{
+				{Name: "datadog-prod-eu", DestinationServer: serverURL, SyncStatus: "OutOfSync", HealthStatus: "Healthy"},
+			},
+			want: false,
+		},
+		{
+			name: "matched but Degraded — not healthy",
+			apps: []models.ArgocdApplication{
+				{Name: "datadog-prod-eu", DestinationServer: serverURL, SyncStatus: "Synced", HealthStatus: "Degraded"},
+			},
+			want: false,
+		},
+		{
+			name: "connectivity-check app is not an addon, even if Synced+Healthy",
+			apps: []models.ArgocdApplication{
+				{Name: "connectivity-check-" + cluster, DestinationServer: serverURL, SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			want: false,
+		},
+		{
+			name: "bootstrap root app is not an addon, even if Synced+Healthy",
+			apps: []models.ArgocdApplication{
+				{Name: "cluster-addons-bootstrap", DestinationServer: serverURL, SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			want: false,
+		},
+		{
+			name: "app for a different cluster is not matched",
+			apps: []models.ArgocdApplication{
+				{Name: "datadog-other-cluster", DestinationServer: "https://other.example.com", SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			want: false,
+		},
+		{
+			name: "no apps at all",
+			apps: nil,
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := clusterHasHealthyAddon(cluster, serverURL, tc.apps)
+			if got != tc.want {
+				t.Errorf("clusterHasHealthyAddon() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestComputeDerivedHealth covers the V2-cleanup-85.4 auto-derivation order:
+// addon health first, then check-app verdict, then ArgoCD's own connection —
+// with NO dependency on any manual "Test connection" result.
+func TestComputeDerivedHealth(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		hasHealthyAddon  bool
+		verdict          connectivityVerdict
+		connectionStatus string
+		want             string
+	}{
+		{
+			name:            "step 1: healthy addon wins outright, even with no other signal",
+			hasHealthyAddon: true,
+			verdict:         connectivityVerdict{},
+			want:            derivedHealthHealthy,
+		},
+		{
+			name:            "step 1: healthy addon wins even when ArgoCD connection looks bad",
+			hasHealthyAddon: true,
+			verdict:         connectivityVerdict{Status: "check_failed"},
+			want:            derivedHealthHealthy,
+		},
+		{
+			name:            "step 2: check app healthy, no addon yet",
+			hasHealthyAddon: false,
+			verdict:         connectivityVerdict{Status: "verified_check"},
+			want:            derivedHealthReachable,
+		},
+		{
+			name:             "step 3: ArgoCD connection verdict Successful (api-test mode — no check app ever exists)",
+			hasHealthyAddon:  false,
+			verdict:          connectivityVerdict{}, // no check app in ArgoCD at all
+			connectionStatus: "Successful",
+			want:             derivedHealthReachable,
+		},
+		{
+			name:            "step 3: verified_argocd verdict also counts",
+			hasHealthyAddon: false,
+			verdict:         connectivityVerdict{Status: "verified_argocd"},
+			want:            derivedHealthReachable,
+		},
+		{
+			name:            "step 4: nothing known",
+			hasHealthyAddon: false,
+			verdict:         connectivityVerdict{},
+			want:            derivedHealthUnknown,
+		},
+		{
+			name:            "step 4: check_pending is not reachable",
+			hasHealthyAddon: false,
+			verdict:         connectivityVerdict{Status: "check_pending"},
+			want:            derivedHealthUnknown,
+		},
+		{
+			name:            "step 4: check_failed is not reachable",
+			hasHealthyAddon: false,
+			verdict:         connectivityVerdict{Status: "check_failed"},
+			want:            derivedHealthUnknown,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := computeDerivedHealth(tc.hasHealthyAddon, tc.verdict, tc.connectionStatus)
+			if got != tc.want {
+				t.Errorf("computeDerivedHealth() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

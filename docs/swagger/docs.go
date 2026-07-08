@@ -5898,6 +5898,96 @@ const docTemplate = `{
                 }
             }
         },
+        "/settings/probe-mode": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the server-wide connectivity probe mode (check-app | api-test, V2-cleanup-85.4)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Get probe mode",
+                "responses": {
+                    "200": {
+                        "description": "Current probe mode",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.probeModeResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Settings store not available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets the server-wide connectivity probe mode (check-app | api-test, V2-cleanup-85.4). Admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Set probe mode",
+                "parameters": [
+                    {
+                        "description": "Desired probe mode",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.probeModeResponse"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Probe mode saved",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.probeModeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid probe_mode value",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Settings store not available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/tokens": {
             "get": {
                 "security": [
@@ -8824,6 +8914,15 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "internal_api.probeModeResponse": {
+            "type": "object",
+            "properties": {
+                "probe_mode": {
+                    "description": "ProbeMode is one of \"check-app\" (default — Sharko auto-deploys a\ntransient connectivity-check application to new zero-addon clusters)\nor \"api-test\" (no app is ever auto-deployed; reachability comes\npurely from ArgoCD's own connection state).",
+                    "type": "string"
                 }
             }
         },

@@ -123,6 +123,10 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		verdict := computeConnectivityVerdict(c.Name, c.ConnectionStatus, allApps)
 		c.ConnectivityStatus = verdict.Status
 		c.ConnectivityDetail = verdict.Detail
+		// V2-cleanup-85.4: auto-derived health, independent of any manual
+		// "Test connection" click — see computeDerivedHealth.
+		hasHealthyAddon := clusterHasHealthyAddon(c.Name, c.ServerURL, allApps)
+		c.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, c.ConnectionStatus)
 		if obsMap != nil {
 			applyObsFields(c, obsMap[c.Name])
 		}
@@ -250,6 +254,10 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 		verdict := computeConnectivityVerdict(resp.Cluster.Name, resp.Cluster.ConnectionStatus, detailApps)
 		resp.Cluster.ConnectivityStatus = verdict.Status
 		resp.Cluster.ConnectivityDetail = verdict.Detail
+		// V2-cleanup-85.4: auto-derived health, independent of any manual
+		// "Test connection" click — see computeDerivedHealth.
+		hasHealthyAddon := clusterHasHealthyAddon(resp.Cluster.Name, resp.Cluster.ServerURL, detailApps)
+		resp.Cluster.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, resp.Cluster.ConnectionStatus)
 	}
 	if s.obsStore != nil {
 		obsMap, _ := s.obsStore.ListObservations(r.Context())
@@ -384,6 +392,10 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 		verdict := computeConnectivityVerdict(resp.Cluster.Name, resp.Cluster.ConnectionStatus, compApps)
 		resp.Cluster.ConnectivityStatus = verdict.Status
 		resp.Cluster.ConnectivityDetail = verdict.Detail
+		// V2-cleanup-85.4: auto-derived health, independent of any manual
+		// "Test connection" click — see computeDerivedHealth.
+		hasHealthyAddon := clusterHasHealthyAddon(resp.Cluster.Name, resp.Cluster.ServerURL, compApps)
+		resp.Cluster.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, resp.Cluster.ConnectionStatus)
 	}
 	if s.obsStore != nil {
 		obsMap, _ := s.obsStore.ListObservations(r.Context())

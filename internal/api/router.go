@@ -43,6 +43,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/service"
+	"github.com/MoranWeissman/sharko/internal/settings"
 )
 
 // ArgoReconcilerCfg holds the stable parameters needed to (re)create the
@@ -221,6 +222,12 @@ type Server struct {
 	// obsStore persists cluster connectivity observations (optional — set via SetObservationsStore).
 	obsStore *observations.Store
 
+	// settingsStore persists server-wide settings such as probe_mode
+	// (optional — set via SetSettingsStore once the in-cluster K8s client
+	// is ready; nil in out-of-cluster / dev mode, in which case probe_mode
+	// reads as its default "check-app" and writes are rejected with 503).
+	settingsStore *settings.Store
+
 	// startTime records when the server was created (used for uptime reporting).
 	startTime time.Time
 
@@ -397,6 +404,13 @@ func (s *Server) SetDefaultAddons(defaults map[string]bool) {
 // Call this after NewServer, before starting the HTTP listener.
 func (s *Server) SetObservationsStore(store *observations.Store) {
 	s.obsStore = store
+}
+
+// SetSettingsStore wires in the server-wide settings store (probe_mode,
+// V2-cleanup-85.4). Call this after NewServer, before starting the HTTP
+// listener.
+func (s *Server) SetSettingsStore(store *settings.Store) {
+	s.settingsStore = store
 }
 
 // SetPRTracker wires in the PR tracker for polling and API access.
@@ -801,6 +815,8 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/providers/test", srv.handleTestProvider)
 	mux.HandleFunc("POST /api/v1/providers/test-config", srv.handleTestProviderConfig)
 	mux.HandleFunc("GET /api/v1/config", srv.handleGetConfig)
+	mux.HandleFunc("GET /api/v1/settings/probe-mode", srv.handleGetProbeMode)
+	mux.HandleFunc("PUT /api/v1/settings/probe-mode", srv.handleSetProbeMode)
 
 	// Curated catalog (v1.21) — embedded marketplace metadata, read-only.
 	// Scope: the Sharko-native curated addon list (catalog/addons.yaml)
