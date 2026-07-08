@@ -13,6 +13,7 @@ import SystemView, {
   aggregateStatuses,
   deriveArgoClusterStatus,
   deriveArgoRepoArrow,
+  deriveSharkoClusterLabel,
   deriveSharkoClusterStatus,
   deriveSharkoRepoArrow,
   parseMajorMinor,
@@ -146,6 +147,41 @@ describe('deriveSharkoClusterStatus', () => {
   it('is unknown otherwise', () => {
     expect(deriveSharkoClusterStatus(base)).toBe('unknown')
     expect(deriveSharkoClusterStatus({ ...base, sharko_status: 'Unknown' })).toBe('unknown')
+  })
+
+  // V2-cleanup-85.4: the auto-derived verdict — no manual Test click
+  // required — must count a reachable/healthy cluster even when
+  // sharko_status was never set (the exact bug this story fixes).
+  it('is healthy when derived_health_status is "healthy", with no manual test ever run', () => {
+    expect(deriveSharkoClusterStatus({ ...base, derived_health_status: 'healthy' })).toBe('healthy')
+  })
+  it('is healthy when derived_health_status is "reachable", with no manual test ever run', () => {
+    expect(deriveSharkoClusterStatus({ ...base, derived_health_status: 'reachable' })).toBe('healthy')
+  })
+  it('stays unknown when derived_health_status is "unknown"', () => {
+    expect(deriveSharkoClusterStatus({ ...base, derived_health_status: 'unknown' })).toBe('unknown')
+  })
+  it('a failed manual test still wins over a stale healthy derivation', () => {
+    expect(
+      deriveSharkoClusterStatus({ ...base, derived_health_status: 'healthy', test_failing: true }),
+    ).toBe('degraded')
+  })
+})
+
+describe('deriveSharkoClusterLabel', () => {
+  const base: Cluster = { name: 'c1', labels: {} }
+  it('labels "Healthy" when an addon is actually up', () => {
+    expect(deriveSharkoClusterLabel({ ...base, derived_health_status: 'healthy' })).toBe('Healthy')
+  })
+  it('labels "Reachable" — honest distinction — when Sharko can reach it but no addon is up yet', () => {
+    expect(deriveSharkoClusterLabel({ ...base, derived_health_status: 'reachable' })).toBe('Reachable')
+  })
+  it('falls back to the default pill label for the legacy manual-status-only path', () => {
+    expect(deriveSharkoClusterLabel({ ...base, sharko_status: 'Connected' })).toBeUndefined()
+  })
+  it('is undefined for degraded/unknown clusters (no override needed)', () => {
+    expect(deriveSharkoClusterLabel({ ...base, test_failing: true })).toBeUndefined()
+    expect(deriveSharkoClusterLabel(base)).toBeUndefined()
   })
 })
 
@@ -326,6 +362,33 @@ describe('SystemView', () => {
 
     await waitFor(() => expect(screen.getByText('ArgoCD version unknown')).toBeInTheDocument())
     expect(screen.queryByTestId('argocd-version-badge')).not.toBeInTheDocument()
+  })
+
+  it('counts a cluster as healthy via derived_health_status alone — no Test click required (V2-cleanup-85.4)', async () => {
+    mockAll({
+      clusters: [
+        // Never manually tested (no sharko_status at all) — this is
+        // exactly the cluster that used to read "unknown" and drag the
+        // System page tally down to "0 of 2 healthy" incorrectly.
+        { name: 'prod-1', labels: {}, connection_status: 'Successful', derived_health_status: 'healthy' },
+        { name: 'prod-2', labels: {}, connection_status: 'Successful', derived_health_status: 'reachable' },
+      ],
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
+    expect(screen.getAllByText('2 of 2 healthy')).toHaveLength(2)
+
+    // Expand the Sharko → Clusters list and confirm the honest label split
+    // (scoped to each row — the repo arrows above also render a default
+    // "Healthy" pill, so we check per-cluster-row text, not page-wide).
+    fireEvent.click(screen.getByRole('button', { name: /Per-cluster status \(Sharko → cluster\)/ }))
+    const prod1Row = screen.getByText('prod-1').closest('li')
+    const prod2Row = screen.getByText('prod-2').closest('li')
+    expect(prod1Row).not.toBeNull()
+    expect(prod2Row).not.toBeNull()
+    expect(prod1Row!.textContent).toContain('Healthy')
+    expect(prod2Row!.textContent).toContain('Reachable')
   })
 
   it('links every arrow to the page where you would act (read-only page)', async () => {

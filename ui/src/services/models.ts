@@ -24,11 +24,25 @@ export interface Cluster {
   // connectivity_status values: 'verified_argocd' | 'verified_check' | 'check_pending' | 'check_failed' | ''
   connectivity_status?: string
   connectivity_detail?: string
+  // Auto-derived reachability verdict (V2-cleanup-85.4) — computed fresh on
+  // every read from live ArgoCD state, with NO manual "Test connection"
+  // click required. Values: 'healthy' | 'reachable' | 'unknown'. Prefer
+  // this over sharko_status below when answering "is this cluster OK".
+  derived_health_status?: string
   // Sharko observability fields (V2-cleanup-27 folded in)
   sharko_status?: string
   last_test_at?: string   // RFC3339
   test_failing?: boolean
   test_error_code?: string
+}
+
+// Server-wide connectivity probe mode (V2-cleanup-85.4). Controls whether
+// Sharko deploys a transient connectivity-check ArgoCD app to newly
+// registered, zero-addon clusters.
+export type ProbeMode = 'check-app' | 'api-test'
+
+export interface ProbeModeResponse {
+  probe_mode: ProbeMode
 }
 
 export interface ClusterHealthStats {

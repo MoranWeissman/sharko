@@ -133,11 +133,26 @@ export function deriveArgoRepoArrow(repo: RepoStatus | null): ArrowVerdict {
   }
 }
 
-/** Arrow 3 (per cluster) — Sharko's own direct connection / test state. */
+/**
+ * Arrow 3 (per cluster) — Sharko's own direct connection / test state.
+ *
+ * V2-cleanup-85.4: reads the auto-derived `derived_health_status` first —
+ * computed fresh server-side on every read, with NO manual "Test
+ * connection" click required — instead of depending solely on
+ * `sharko_status`, which stays empty forever until someone clicks Test.
+ * That gap used to make a perfectly reachable, actively-synced cluster
+ * read as "unknown" here even though its own detail page already showed
+ * it green. Both `derived_health_status` values that mean "Sharko can
+ * reach it" — "healthy" (an addon is Synced+Healthy) and "reachable"
+ * (connectivity confirmed but no addon yet) — count as healthy for this
+ * tally; only "unknown" stays uncounted.
+ */
 export function deriveSharkoClusterStatus(c: Cluster): ArrowStatus {
   if (c.test_failing) return 'degraded'
   if (c.sharko_status === 'Unreachable') return 'degraded'
   if (
+    c.derived_health_status === 'healthy' ||
+    c.derived_health_status === 'reachable' ||
     c.sharko_status === 'Connected' ||
     c.sharko_status === 'Verified' ||
     c.sharko_status === 'Operational'
@@ -145,6 +160,21 @@ export function deriveSharkoClusterStatus(c: Cluster): ArrowStatus {
     return 'healthy'
   }
   return 'unknown'
+}
+
+/**
+ * Honest per-cluster label for arrow 3's expandable list — the ArrowStatus
+ * enum only has one "good" state (healthy), but `derived_health_status`
+ * distinguishes "healthy" (an addon is up) from "reachable" (Sharko can
+ * reach it, no addon deployed yet). Returns undefined to fall back to the
+ * StatusPill's default label ("Healthy") when there's nothing extra to say
+ * (degraded/unknown, or the older manual sharko_status-only signal).
+ */
+export function deriveSharkoClusterLabel(c: Cluster): string | undefined {
+  if (deriveSharkoClusterStatus(c) !== 'healthy') return undefined
+  if (c.derived_health_status === 'healthy') return 'Healthy'
+  if (c.derived_health_status === 'reachable') return 'Reachable'
+  return undefined
 }
 
 /** Arrow 4 (per cluster) — ArgoCD's own connection (connection_status + check verdict). */
@@ -307,10 +337,13 @@ function ArrowCard({
 function ClusterList({
   clusters,
   derive,
+  deriveLabel,
   toggleLabel,
 }: {
   clusters: Cluster[]
   derive: (c: Cluster) => ArrowStatus
+  /** Optional honest label override (e.g. "Reachable" vs "Healthy") — falls back to the StatusPill default. */
+  deriveLabel?: (c: Cluster) => string | undefined
   toggleLabel: string
 }) {
   const [open, setOpen] = useState(false)
@@ -335,7 +368,7 @@ function ClusterList({
               >
                 {c.name}
               </Link>
-              <StatusPill status={derive(c)} />
+              <StatusPill status={derive(c)} label={deriveLabel?.(c)} />
             </li>
           ))}
         </ul>
@@ -503,6 +536,7 @@ export function SystemView() {
             <ClusterList
               clusters={clusters}
               derive={deriveSharkoClusterStatus}
+              deriveLabel={deriveSharkoClusterLabel}
               toggleLabel={`Per-cluster status (${SHARKO_CONN_LABEL})`}
             />
           </ArrowCard>

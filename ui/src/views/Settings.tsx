@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Plug, Users, Key, Bot, Shield, GitMerge, UserCog, Library } from 'lucide-react'
+import { Plug, Users, Key, Bot, Shield, GitMerge, UserCog, Library, Radar } from 'lucide-react'
 import { DetailNavPanel } from '@/components/DetailNavPanel'
 import { ConnectionSection } from '@/views/settings/ConnectionSection'
 import { SecretsProviderSection } from '@/views/settings/SecretsProviderSection'
@@ -10,6 +10,7 @@ import { UserManagement } from '@/views/UserManagement'
 import { ApiKeys } from '@/views/ApiKeys'
 import { AIConfigSection } from '@/views/settings/AIConfigSection'
 import { CatalogSourcesSection } from '@/views/settings/CatalogSourcesSection'
+import { ProbeModeSection } from '@/views/settings/ProbeModeSection'
 import { useAuth } from '@/hooks/useAuth'
 
 const ALLOWED_NON_ADMIN = new Set([
@@ -60,6 +61,12 @@ export function Settings() {
               { key: 'catalog-sources', label: 'Catalog Sources', icon: Library },
             ],
           },
+          {
+            label: 'System',
+            items: [
+              { key: 'probe-mode', label: 'Connectivity Probe', icon: Radar },
+            ],
+          },
         ]
       : []),
     {
@@ -91,6 +98,7 @@ export function Settings() {
           {section === 'users' && isAdmin && <UserManagement embedded />}
           {section === 'api-keys' && isAdmin && <ApiKeys embedded />}
           {section === 'catalog-sources' && isAdmin && <CatalogSourcesSection />}
+          {section === 'probe-mode' && isAdmin && <ProbeModeSection />}
           {section === 'ai' && <AIConfigSection />}
         </div>
       </div>
