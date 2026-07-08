@@ -116,6 +116,27 @@ function PerClusterAddonOverridesEditorImpl({
 
   return (
     <div className="space-y-4">
+      {/* V2-cleanup-83.3: a short, plain-English intro above the addon
+        * picker. This panel edits one file in Git
+        * (configuration/addons-clusters-values/<cluster>.yaml) — it's easy
+        * to mistake for something secret-ish or global. Say what it is,
+        * that changes ship as a PR, and link to the full guide. */}
+      <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
+        Customize an addon's settings for just this cluster. Pick an addon below and any values you
+        set here override its global defaults — everyone else keeps the defaults until they do the
+        same. This is plain configuration, not a secret, and every change here goes out as a pull
+        request for you to review before it merges.{' '}
+        <a
+          href="https://sharko.readthedocs.io/en/latest/user-guide/values-editing/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-teal-600 underline hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
+        >
+          Learn more
+        </a>
+        .
+      </p>
+
       <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
         <label htmlFor="cluster-addon-picker" className="block text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
           Addon
