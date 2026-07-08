@@ -39,6 +39,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 	"github.com/MoranWeissman/sharko/internal/secrets"
 	"github.com/MoranWeissman/sharko/internal/service"
+	"github.com/MoranWeissman/sharko/internal/settings"
 	"github.com/MoranWeissman/sharko/templates"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
@@ -876,6 +877,39 @@ var serveCmd = &cobra.Command{
 				slog.Info("change log running in-memory only (no in-cluster k8s client)")
 			}
 
+			// Server-wide settings store (probe_mode, V2-cleanup-85.4) — same
+			// in-cluster clientset + namespace as the stores above. probeModeFn
+			// is the live reader both reconcilers (legacy argosecrets AND the
+			// canonical clusterreconciler below) consult on every tick to
+			// decide whether the connectivity-check app should be deployed.
+			// nil when there is no in-cluster client (local/dev mode) — both
+			// reconcilers already treat a nil ProbeModeFn/SetProbeModeFn as
+			// "no live override", falling back to their static
+			// SHARKO_CONNECTIVITY_CHECK-derived behavior, so probe_mode
+			// effectively stays at its "check-app" default out of cluster.
+			var settingsStore *settings.Store
+			var probeModeFn func(ctx context.Context) bool
+			if inClusterK8sClient != nil {
+				settingsStore = settings.NewStore(inClusterK8sClient, prNamespace)
+				srv.SetSettingsStore(settingsStore)
+				probeModeFn = settingsStore.IsAPITest
+				slog.Info("server settings persisted via configmap", "namespace", prNamespace, "name", "sharko-server-settings")
+			} else {
+				slog.Info("server settings running at defaults only (no in-cluster k8s client) — probe_mode reads as check-app")
+			}
+
+			// Wire the live probe_mode reader into the legacy argosecrets
+			// reconciler (started earlier in this function, before prCMStore
+			// existed) so BOTH writers honor api-test mode — otherwise the
+			// legacy reconciler would keep applying the connectivity-check
+			// label even after an operator flips probe_mode to api-test via
+			// the canonical reconciler alone.
+			if probeModeFn != nil {
+				if legacyRecon := srv.ArgoSecretReconciler(); legacyRecon != nil {
+					legacyRecon.SetProbeModeFn(probeModeFn)
+				}
+			}
+
 			// Construct + start the cluster Secret reconciler alongside the
 			// prtracker so its post-merge fan-out can nudge the reconciler
 			// immediately. The reconciler requires the same preconditions
@@ -925,6 +959,7 @@ var serveCmd = &cobra.Command{
 					Branch:                   clusterReconBranch,
 					DefaultRoleARN:           clusterReconRoleARN,
 					DisableConnectivityCheck: connectivityCheckDisabled(getEnvDefault("SHARKO_CONNECTIVITY_CHECK", "true")),
+					ProbeModeFn:              probeModeFn,
 				})
 				// Wire the trigger onto the Server BEFORE Start() so the
 				// first request to the per-request orchestrator helper

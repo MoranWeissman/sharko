@@ -95,6 +95,15 @@ type Reconciler struct {
 	// Protected by mu.
 	connectivityCheckEnabled bool
 
+	// probeModeFn, when non-nil, is consulted once per ReconcileOnce call
+	// (V2-cleanup-85.4) to combine the live, server-wide probe_mode setting
+	// with connectivityCheckEnabled — returning true means probe_mode is
+	// "api-test" (no connectivity-check app should ever be deployed). nil
+	// means "no settings store wired" — connectivityCheckEnabled alone
+	// decides, matching pre-85.4 behavior. Wired via SetProbeModeFn.
+	// Protected by mu, matching auditFn/entryAuditFn.
+	probeModeFn func(ctx context.Context) bool
+
 	// Optional audit callback — set via SetAuditFunc.
 	// Protected by mu.
 	auditFn AuditFunc
@@ -170,6 +179,19 @@ func NewReconciler(
 func (r *Reconciler) SetConnectivityCheck(enabled bool) {
 	r.mu.Lock()
 	r.connectivityCheckEnabled = enabled
+	r.mu.Unlock()
+}
+
+// SetProbeModeFn registers the live, server-wide probe_mode reader
+// (V2-cleanup-85.4). fn should return true when probe_mode is "api-test"
+// (settings.Store.IsAPITest already has this shape and swallows its own
+// read errors, defaulting to false/check-app). Pass nil to clear — the
+// static connectivityCheckEnabled toggle then decides alone, matching
+// pre-85.4 behavior. Thread-safe; the next ReconcileOnce call picks up the
+// new function.
+func (r *Reconciler) SetProbeModeFn(fn func(ctx context.Context) bool) {
+	r.mu.Lock()
+	r.probeModeFn = fn
 	r.mu.Unlock()
 }
 
@@ -458,15 +480,23 @@ func (r *Reconciler) reconcileCluster(ctx context.Context, cluster models.Cluste
 
 	// 3. Build ClusterSecretSpec.
 	// Derive the connectivity-check label before building the spec so it is
-	// included in the payload sent to Manager.Ensure. The feature flag is read
-	// under the lock to be consistent with SetConnectivityCheck calls.
+	// included in the payload sent to Manager.Ensure. The feature flag and
+	// the live probe_mode reader are both read under the lock to be
+	// consistent with SetConnectivityCheck / SetProbeModeFn calls.
 	clusterLabels := make(map[string]string, len(cluster.Labels))
 	for k, v := range cluster.Labels {
 		clusterLabels[k] = v
 	}
 	r.mu.RLock()
 	checkEnabled := r.connectivityCheckEnabled
+	probeModeFn := r.probeModeFn
 	r.mu.RUnlock()
+	// V2-cleanup-85.4: the live, server-wide probe_mode setting can turn the
+	// check OFF even when connectivityCheckEnabled is true — either signal
+	// disabling the check wins.
+	if probeModeFn != nil && probeModeFn(ctx) {
+		checkEnabled = false
+	}
 	models.ApplyConnectivityCheckLabel(clusterLabels, checkEnabled)
 
 	// Per-cluster roleArn from the cluster record wins over the

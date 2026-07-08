@@ -355,6 +355,19 @@ type Cluster struct {
 	ConnectivityStatus string `json:"connectivity_status,omitempty"`
 	ConnectivityDetail string `json:"connectivity_detail,omitempty"` // detail for check_pending or check_failed
 
+	// DerivedHealthStatus is the auto-derived Sharko reachability verdict
+	// (V2-cleanup-85.4). Unlike SharkoStatus below — which stays empty
+	// forever until someone clicks "Test connection" — this field is
+	// computed fresh on every read from live ArgoCD state, with NO manual
+	// step required. Priority order (first match wins):
+	//   1. any addon on this cluster is Synced+Healthy in ArgoCD -> "healthy"
+	//   2. the connectivity-check application is Synced+Healthy  -> "reachable"
+	//   3. ArgoCD's own connection to the cluster is "Successful" -> "reachable"
+	//   4. none of the above                                      -> "unknown"
+	// The frontend should read this field (not SharkoStatus) to answer
+	// "is this cluster healthy" without requiring a manual test click.
+	DerivedHealthStatus string `json:"derived_health_status,omitempty"`
+
 	// Sharko observability fields (V2-cleanup-27 folded into V2-cleanup-29).
 	// Populated when obsStore is available; absent otherwise (omitempty).
 	SharkoStatus  string `json:"sharko_status,omitempty"`
