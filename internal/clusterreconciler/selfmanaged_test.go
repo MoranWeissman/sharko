@@ -117,18 +117,16 @@ func TestSelfManaged_MissingUserSecret_PendingNotError(t *testing.T) {
 			t.Fatalf("pending user Secret must not audit as failure: %+v", e)
 		}
 	}
-	// Summary must report user_pending, not errors.
-	found := false
+	// The per-cluster cluster_secret_user_pending event above is the visible
+	// signal for this case. The tick-level summary is intentionally
+	// suppressed here (V2-cleanup-85.2): it only fires when
+	// Created/Deleted/SkippedAdopted/Errors are nonzero, which a lone
+	// user_pending observation is not — the ring buffer stays reserved for
+	// real changes and errors instead of every self-managed no-op tick.
 	for _, e := range entries {
 		if e.Event == "cluster_secret_reconcile_tick" {
-			found = true
-			if !strings.Contains(e.Resource, "user_pending:1") || !strings.Contains(e.Resource, "errors:0") {
-				t.Fatalf("summary should count user_pending:1 errors:0, got %q", e.Resource)
-			}
+			t.Fatalf("did not expect a summary audit entry for a user_pending-only tick, got %+v", e)
 		}
-	}
-	if !found {
-		t.Fatal("expected summary audit entry")
 	}
 }
 
