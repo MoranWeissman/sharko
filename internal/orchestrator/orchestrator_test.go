@@ -933,6 +933,18 @@ func TestGenerateClusterValues(t *testing.T) {
 	if !strings.Contains(s, "logging:\n  enabled: false") {
 		t.Error("expected logging disabled")
 	}
+	// The _sharko block (enabledAddonNamespaces / enabledAddons) is dead
+	// output — nothing reads it back (V2-cleanup-83.1). It must not be
+	// emitted anymore.
+	if strings.Contains(s, "_sharko") {
+		t.Error("unexpected _sharko block in output")
+	}
+	if strings.Contains(s, "enabledAddonNamespaces") {
+		t.Error("unexpected enabledAddonNamespaces in output")
+	}
+	if strings.Contains(s, "enabledAddons:") {
+		t.Error("unexpected enabledAddons in output")
+	}
 }
 
 func TestGenerateClusterValues_NoAddons(t *testing.T) {
@@ -945,6 +957,9 @@ func TestGenerateClusterValues_NoAddons(t *testing.T) {
 	// Should not contain addon sections.
 	if strings.Contains(s, "enabled:") {
 		t.Error("unexpected addon section in output with nil addons")
+	}
+	if strings.Contains(s, "_sharko") {
+		t.Error("unexpected _sharko block in output")
 	}
 }
 
