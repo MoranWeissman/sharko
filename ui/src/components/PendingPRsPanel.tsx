@@ -13,11 +13,20 @@ import { EmptyState } from '@/components/EmptyState'
 interface PendingPRsPanelProps {
   cluster?: string
   onMergeDetected?: (pr: TrackedPR) => void
+  /**
+   * Fired every time the tracked-PR list is (re)loaded. Lets a parent (e.g.
+   * the cluster "Changes" tab, V2-cleanup-84.2) know whether there are any
+   * pending changes, so it can show one combined empty state instead of two.
+   */
+  onDataChange?: (prs: TrackedPR[]) => void
 }
 
 const PR_POLL_INTERVAL = 30_000
 
-function timeAgo(timestamp: string): string {
+// Exported so CompletedChangesPanel (the "Completed changes" half of the
+// unified cluster Changes tab, V2-cleanup-84.2) renders timestamps in the
+// same plain-English relative format as this panel.
+export function timeAgo(timestamp: string): string {
   const secs = Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000)
   if (secs < 60) return 'just now'
   if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
@@ -25,7 +34,9 @@ function timeAgo(timestamp: string): string {
   return `${Math.floor(secs / 86400)}d ago`
 }
 
-function prStatusBadge(status: string) {
+// Exported so CompletedChangesPanel (V2-cleanup-84.2) can render the same
+// status pill for 'merged' / 'closed' entries in the completed-changes list.
+export function prStatusBadge(status: string) {
   const s = status.toLowerCase()
   if (s === 'open') {
     return (
@@ -59,7 +70,7 @@ function prStatusBadge(status: string) {
   )
 }
 
-export function PendingPRsPanel({ cluster, onMergeDetected }: PendingPRsPanelProps) {
+export function PendingPRsPanel({ cluster, onMergeDetected, onDataChange }: PendingPRsPanelProps) {
   const [prs, setPrs] = useState<TrackedPR[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -92,12 +103,13 @@ export function PendingPRsPanel({ cluster, onMergeDetected }: PendingPRsPanelPro
       previousStatusRef.current = newStatuses
 
       setPrs(newPrs)
+      onDataChange?.(newPrs)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load tracked PRs')
     } finally {
       setLoading(false)
     }
-  }, [cluster, onMergeDetected])
+  }, [cluster, onMergeDetected, onDataChange])
 
   useEffect(() => {
     void fetchPRs(true)
