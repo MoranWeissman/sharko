@@ -1197,4 +1197,20 @@ export const api = {
   reprobeArtifactHub: () =>
     postJSON<import('./models').CatalogReprobeResponse>(`/catalog/reprobe`),
 
+  // ─── Server-wide settings (V2-cleanup-85.4) ────────────────────────────
+
+  /**
+   * Current server-wide connectivity probe mode ('check-app' | 'api-test').
+   * Powers the Settings → Connectivity Probe toggle.
+   */
+  getProbeMode: () =>
+    fetchJSON<import('./models').ProbeModeResponse>('/settings/probe-mode'),
+
+  /**
+   * Set the server-wide connectivity probe mode. Admin-only on the backend
+   * (403 for non-admins) — gate the control with isAdmin before calling.
+   */
+  setProbeMode: (probe_mode: import('./models').ProbeMode) =>
+    putJSON<import('./models').ProbeModeResponse>('/settings/probe-mode', { probe_mode }),
+
 }
