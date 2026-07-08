@@ -176,13 +176,31 @@ export function actionSentence(opts: {
 
 export type AuditResult = 'success' | 'partial' | 'rejected' | 'failure';
 
+/**
+ * Plain-English words for each result value the backend records
+ * (internal/api/audit_middleware.go's resultFromStatus, V2-cleanup-85.2):
+ *   - 2xx           -> "success"  -> "Succeeded"
+ *   - 207 (partial) -> "partial"  -> "Partly done"
+ *   - 4xx           -> "rejected" -> "Rejected" (the caller's request was refused)
+ *   - 5xx / other   -> "failure"  -> "Failed"
+ * "error" is kept as a synonym for "failure" — a legacy value that may still
+ * sit in an already-buffered entry.
+ */
+const RESULT_LABELS: Record<string, string> = {
+  success: 'Succeeded',
+  partial: 'Partly done',
+  rejected: 'Rejected',
+  failure: 'Failed',
+  error: 'Failed',
+};
+
 /** The REAL result values the backend records (resultFromStatus). */
 export const RESULT_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'All results' },
-  { value: 'success', label: 'Success' },
-  { value: 'partial', label: 'Partial' },
+  { value: 'success', label: 'Succeeded' },
+  { value: 'partial', label: 'Partly done' },
   { value: 'rejected', label: 'Rejected' },
-  { value: 'failure', label: 'Failure' },
+  { value: 'failure', label: 'Failed' },
 ];
 
 /** Tailwind classes for the result badge, keyed by result value. */
@@ -202,8 +220,8 @@ export function resultBadgeClass(result: string | undefined): string {
   }
 }
 
-/** Human label for a result value (capitalized, never blank). */
+/** Human label for a result value — one of the plain words in RESULT_LABELS, never blank. */
 export function resultLabel(result: string | undefined): string {
   if (!result) return '—';
-  return result.charAt(0).toUpperCase() + result.slice(1);
+  return RESULT_LABELS[result] ?? result.charAt(0).toUpperCase() + result.slice(1);
 }

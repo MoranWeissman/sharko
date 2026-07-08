@@ -51,6 +51,25 @@ describe('auditLabels', () => {
     expect(resultLabel(undefined)).toBe('—');
   });
 
+  it('maps each result to a plain-English word (V2-cleanup-85.3)', () => {
+    expect(resultLabel('success')).toBe('Succeeded');
+    expect(resultLabel('partial')).toBe('Partly done');
+    expect(resultLabel('failure')).toBe('Failed');
+    expect(resultLabel('rejected')).toBe('Rejected');
+    // Legacy value still buffered from before 85.2 — grouped with Failed.
+    expect(resultLabel('error')).toBe('Failed');
+  });
+
+  it('matches the plain-English words in the Result filter options', () => {
+    expect(RESULT_OPTIONS.map((o) => o.label)).toEqual([
+      'All results',
+      'Succeeded',
+      'Partly done',
+      'Rejected',
+      'Failed',
+    ]);
+  });
+
   it('maps a meaningful number of event codes', () => {
     expect(MAPPED_EVENT_COUNT).toBeGreaterThanOrEqual(50);
   });

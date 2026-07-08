@@ -55,7 +55,14 @@ function AttributionBadge({ mode }: { mode?: AuditEntry['attribution_mode'] }) {
   }
 }
 
-const ACTION_OPTIONS = ['', 'create', 'update', 'patch', 'delete', 'test', 'diagnose', 'sync', 'init'];
+// The REAL action values the backend records. Every mutating HTTP request
+// gets one of create/update/patch/delete from methodToAction
+// (internal/api/audit_middleware.go). A handful of routes emit their own
+// entry outside that middleware with a fixed Action word: login (also
+// login_failed), logout, init, sync (cluster secret reconcile), push
+// (Git webhook), block (secret-leak guard). "test" and "diagnose" were
+// never written by any of these paths — removed (V2-cleanup-85.3).
+const ACTION_OPTIONS = ['', 'create', 'update', 'patch', 'delete', 'login', 'logout', 'init', 'sync', 'push', 'block'];
 const SOURCE_OPTIONS = ['', 'ui', 'api', 'cli', 'webhook'];
 
 // Quick presets for the "Since" filter — value is the lookback in milliseconds.
