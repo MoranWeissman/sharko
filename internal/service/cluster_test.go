@@ -374,6 +374,94 @@ func TestClusterService_GetClusterDetail_PopulatesServerURL(t *testing.T) {
 	}
 }
 
+// TestClusterService_GetClusterComparison_PopulatesServerURL is the
+// V2-cleanup-80.1 regression test: the comparison endpoint's cluster object
+// must also carry ServerURL. #487 (V2-cleanup-74.1) populated ServerURL in
+// ListClusters and GetClusterDetail but missed GetClusterComparison, so the
+// detail page's ClusterTypeBadge (which reads data.cluster.server_url off
+// the comparison response) rendered "Unknown" for a connected EKS cluster.
+func TestClusterService_GetClusterComparison_PopulatesServerURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			_, _ = w.Write([]byte(`{"items":[
+				{"name":"prod-eks","server":"https://EXAMPLE.gr7.eu-west-1.eks.amazonaws.com","serverVersion":"v1.29.3","info":{"connectionState":{"status":"Successful"}}}
+			]}`))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/applications") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+
+	svc := NewClusterService("")
+	gp := &fakeGP{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": []byte(
+				"clusters:\n  - name: prod-eks\n    labels: {}\n",
+			),
+			"configuration/addons-catalog.yaml": []byte("applicationsets: []"),
+		},
+	}
+
+	resp, err := svc.GetClusterComparison(context.Background(), "prod-eks", gp, ac)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response for known cluster")
+	}
+	if got := resp.Cluster.ServerURL; got != "https://EXAMPLE.gr7.eu-west-1.eks.amazonaws.com" {
+		t.Errorf("GetClusterComparison: ServerURL = %q, want the EKS API-server URL", got)
+	}
+}
+
+// TestClusterService_GetClusterComparison_InClusterServerURLStaysUnset locks
+// down that the hub-local "in-cluster" entry never leaks a server URL into
+// the comparison response, mirroring the ListClusters/GetClusterDetail
+// behavior for the same special case.
+func TestClusterService_GetClusterComparison_InClusterServerURLStaysUnset(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			_, _ = w.Write([]byte(`{"items":[
+				{"name":"in-cluster","server":"https://kubernetes.default.svc","info":{"connectionState":{"status":"Successful"}}}
+			]}`))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/applications") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+
+	svc := NewClusterService("")
+	gp := &fakeGP{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": []byte(
+				"clusters:\n  - name: in-cluster\n    labels: {}\n",
+			),
+			"configuration/addons-catalog.yaml": []byte("applicationsets: []"),
+		},
+	}
+
+	resp, err := svc.GetClusterComparison(context.Background(), "in-cluster", gp, ac)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response for known cluster")
+	}
+	if got := resp.Cluster.ServerURL; got != "" {
+		t.Errorf("GetClusterComparison: in-cluster ServerURL = %q, want empty", got)
+	}
+}
+
 // TestClusterService_GetClusterDetail_UnknownClusterReturnsNil ensures the
 // happy path still works — an empty managed-clusters.yaml plus a known
 // catalog yields a clean nil response (cluster not found) rather than a
