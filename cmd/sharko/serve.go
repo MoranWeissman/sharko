@@ -836,6 +836,26 @@ var serveCmd = &cobra.Command{
 				}
 			}
 
+			// Notifications — upgrade the in-memory-only store built in
+			// api.NewServer to ConfigMap-backed persistence (V2-cleanup-82.1),
+			// reusing the SAME in-cluster clientset + namespace as the PR
+			// tracker above. Without this, notifications live only in the pod's
+			// memory and are wiped on every restart (an emptyDir-backed
+			// /app/data volume, or no persistence at all, loses the file the
+			// old implementation wrote). Falls back to in-memory when there is
+			// no in-cluster client (local/dev, or the clientset build above
+			// failed) — the server still boots fine either way.
+			if inClusterK8sClient != nil {
+				notifCMStore := cmstore.NewStore(inClusterK8sClient, prNamespace, "sharko-notifications")
+				if err := srv.SetNotificationCMStore(context.Background(), notifCMStore); err != nil {
+					slog.Warn("could not attach configmap store to notifications, continuing in-memory only", "error", err)
+				} else {
+					slog.Info("notifications persisted via configmap", "namespace", prNamespace, "name", "sharko-notifications")
+				}
+			} else {
+				slog.Info("notifications running in-memory only (no in-cluster k8s client)")
+			}
+
 			// Construct + start the cluster Secret reconciler alongside the
 			// prtracker so its post-merge fan-out can nudge the reconciler
 			// immediately. The reconciler requires the same preconditions

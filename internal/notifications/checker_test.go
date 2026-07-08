@@ -137,7 +137,7 @@ func (f *fakeProvider) GetVersionInfo(_ context.Context) ([]VersionInfo, error) 
 }
 
 func TestChecker_ProducesUpgradeNotification(t *testing.T) {
-	store := NewStore(50, "")
+	store := NewStore(50, nil)
 	provider := &fakeProvider{
 		infos: []VersionInfo{
 			{
@@ -171,7 +171,7 @@ func TestChecker_ProducesUpgradeNotification(t *testing.T) {
 }
 
 func TestChecker_ProducesDriftNotification(t *testing.T) {
-	store := NewStore(50, "")
+	store := NewStore(50, nil)
 	provider := &fakeProvider{
 		infos: []VersionInfo{
 			{
@@ -198,7 +198,7 @@ func TestChecker_ProducesDriftNotification(t *testing.T) {
 }
 
 func TestChecker_SkipsMinorPatchNotification(t *testing.T) {
-	store := NewStore(50, "")
+	store := NewStore(50, nil)
 	provider := &fakeProvider{
 		infos: []VersionInfo{
 			{
@@ -220,7 +220,7 @@ func TestChecker_SkipsMinorPatchNotification(t *testing.T) {
 }
 
 func TestChecker_SkipsSameVersions(t *testing.T) {
-	store := NewStore(50, "")
+	store := NewStore(50, nil)
 	provider := &fakeProvider{
 		infos: []VersionInfo{
 			{
@@ -241,7 +241,7 @@ func TestChecker_SkipsSameVersions(t *testing.T) {
 }
 
 func TestChecker_StopIsIdempotent(t *testing.T) {
-	store := NewStore(50, "")
+	store := NewStore(50, nil)
 	provider := &fakeProvider{}
 	checker := NewChecker(store, provider, time.Hour)
 
@@ -272,7 +272,7 @@ func TestChecker_StopIsIdempotent(t *testing.T) {
 // here we lock down the contract that an empty/no-error VersionInfo from
 // the provider produces zero notifications and zero error logs.
 func TestChecker_EmptyProviderShortCircuitsCleanly(t *testing.T) {
-	store := NewStore(50, "")
+	store := NewStore(50, nil)
 	provider := &fakeProvider{
 		// Empty infos + nil err is the post-fix shape: GetVersionMatrix
 		// returned an empty matrix because managed-clusters.yaml was missing,

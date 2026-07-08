@@ -17,7 +17,7 @@ func (f *fakeProbe) fn(_ context.Context) HealthResult { return f.result }
 // newTestPoller builds a poller wired to two fake probes. It does NOT start the
 // background goroutine — tests drive ticks deterministically via p.check().
 func newTestPoller() (*ConnectionPoller, *fakeProbe, *fakeProbe, *Store) {
-	store := NewStore(50, "")
+	store := NewStore(50, nil)
 	git := &fakeProbe{result: HealthyResult()}
 	argo := &fakeProbe{result: HealthyResult()}
 	p := NewConnectionPoller(store, DefaultConnectionCheckInterval, git.fn, argo.fn)
