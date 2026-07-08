@@ -204,6 +204,134 @@ func TestPollOnce_ClosedPR(t *testing.T) {
 	}
 }
 
+// TestPollOnce_MergedPR_FiresOnCompleteFn covers the V2-cleanup-84.1 seam:
+// the change-log store hooks SetOnCompleteFn so it can record a durable
+// entry BEFORE prtracker drops the PR from tracking. Assert the callback
+// fires with status "merged" and the PR is still gone from tracking
+// afterward (the record hook must not change prtracker's own removal
+// behavior).
+func TestPollOnce_MergedPR_FiresOnCompleteFn(t *testing.T) {
+	gp := &mockGitProvider{statuses: map[int]string{11: "merged"}}
+	tracker, _ := newTestTracker(gp)
+	ctx := context.Background()
+
+	var completedPR *PRInfo
+	var completedStatus string
+	tracker.SetOnCompleteFn(func(pr PRInfo, status string) {
+		completedPR = &pr
+		completedStatus = status
+	})
+
+	err := tracker.TrackPR(ctx, PRInfo{
+		PRID:       11,
+		PRBranch:   "sharko/test-complete",
+		Cluster:    "staging",
+		Addon:      "cert-manager",
+		Operation:  "addon-enable",
+		User:       "admin",
+		LastStatus: "open",
+	})
+	if err != nil {
+		t.Fatalf("TrackPR: %v", err)
+	}
+
+	tracker.PollOnce(ctx)
+
+	if completedPR == nil {
+		t.Fatal("expected onCompleteFn to fire on merge")
+	}
+	if completedPR.PRID != 11 {
+		t.Errorf("expected PR 11 in onCompleteFn, got %d", completedPR.PRID)
+	}
+	if completedStatus != "merged" {
+		t.Errorf("expected status merged, got %s", completedStatus)
+	}
+
+	// prtracker's own removal behavior must be unchanged.
+	prs, _ := tracker.ListPRs(ctx, "", "", "", "")
+	if len(prs) != 0 {
+		t.Errorf("expected 0 tracked PRs after merge, got %d", len(prs))
+	}
+}
+
+// TestPollOnce_ClosedPR_FiresOnCompleteFn mirrors the merge case above but
+// for close-without-merge — onCompleteFn must fire for BOTH terminal
+// states, unlike onMergeFn which only fires on merge.
+func TestPollOnce_ClosedPR_FiresOnCompleteFn(t *testing.T) {
+	gp := &mockGitProvider{statuses: map[int]string{21: "closed"}}
+	tracker, _ := newTestTracker(gp)
+	ctx := context.Background()
+
+	var completedPR *PRInfo
+	var completedStatus string
+	tracker.SetOnCompleteFn(func(pr PRInfo, status string) {
+		completedPR = &pr
+		completedStatus = status
+	})
+
+	err := tracker.TrackPR(ctx, PRInfo{
+		PRID:       21,
+		PRBranch:   "sharko/remove-complete",
+		Cluster:    "dev",
+		Operation:  "remove-cluster",
+		User:       "admin",
+		LastStatus: "open",
+	})
+	if err != nil {
+		t.Fatalf("TrackPR: %v", err)
+	}
+
+	tracker.PollOnce(ctx)
+
+	if completedPR == nil {
+		t.Fatal("expected onCompleteFn to fire on close")
+	}
+	if completedPR.PRID != 21 {
+		t.Errorf("expected PR 21 in onCompleteFn, got %d", completedPR.PRID)
+	}
+	if completedStatus != "closed" {
+		t.Errorf("expected status closed, got %s", completedStatus)
+	}
+
+	prs, _ := tracker.ListPRs(ctx, "", "", "", "")
+	if len(prs) != 0 {
+		t.Errorf("expected 0 tracked PRs after close, got %d", len(prs))
+	}
+}
+
+// TestPollSinglePR_FiresOnCompleteFn covers the other polling path
+// (single-PR poll, used by the manual poll endpoint) to make sure the
+// completion hook is wired there too, not just in the batch PollOnce loop.
+func TestPollSinglePR_FiresOnCompleteFn(t *testing.T) {
+	gp := &mockGitProvider{statuses: map[int]string{31: "merged"}}
+	tracker, _ := newTestTracker(gp)
+	ctx := context.Background()
+
+	var completedStatus string
+	tracker.SetOnCompleteFn(func(pr PRInfo, status string) {
+		completedStatus = status
+	})
+
+	err := tracker.TrackPR(ctx, PRInfo{
+		PRID:       31,
+		Cluster:    "prod",
+		Operation:  "register-cluster",
+		User:       "admin",
+		LastStatus: "open",
+	})
+	if err != nil {
+		t.Fatalf("TrackPR: %v", err)
+	}
+
+	if _, err := tracker.PollSinglePR(ctx, 31); err != nil {
+		t.Fatalf("PollSinglePR: %v", err)
+	}
+
+	if completedStatus != "merged" {
+		t.Errorf("expected onCompleteFn to fire with status merged, got %q", completedStatus)
+	}
+}
+
 func TestPollOnce_NoProviderSkips(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	store := cmstore.NewStore(client, "default", "sharko-pending-prs")
@@ -645,4 +773,3 @@ func TestPollSinglePR_TransientError_Kept(t *testing.T) {
 		t.Errorf("expected 0 audit events on transient error, got %d", len(*events))
 	}
 }
-
