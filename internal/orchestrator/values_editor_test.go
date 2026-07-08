@@ -115,3 +115,110 @@ func TestValidateYAML(t *testing.T) {
 		t.Error("malformed YAML should fail validation")
 	}
 }
+
+// ── V2-cleanup-83.2: format-preserving edits ──────────────────────────────
+//
+// mergeAddonSection used to round-trip the whole file through
+// map[string]interface{}, which stripped comments and blank lines,
+// alphabetized keys, re-indented to 4 spaces, and rendered an empty
+// clusterGlobalValues as `null`. These fixtures pin the fix: editing a
+// generator-written file must produce a byte-identical shape everywhere
+// except the addon section actually being edited.
+
+// generatorShapedFixture is byte-for-byte what generateClusterValues writes
+// for a cluster with a single enabled addon ("podinfo") and no region set.
+const generatorShapedFixture = `# Cluster values for prod-eu
+clusterGlobalValues:
+
+podinfo:
+  enabled: true
+`
+
+// TestMergeAddonSection_PreservesShape_FixtureA — editing podinfo's section
+// on the generator-shaped fixture keeps the header comment, the blank line
+// between clusterGlobalValues and podinfo, key order, 2-space indent, and
+// renders clusterGlobalValues with no value (never `null`) — while still
+// reflecting the new podinfo values.
+func TestMergeAddonSection_PreservesShape_FixtureA(t *testing.T) {
+	out, err := mergeAddonSection([]byte(generatorShapedFixture), "podinfo", "replicaCount: 2\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := `# Cluster values for prod-eu
+clusterGlobalValues:
+
+podinfo:
+  replicaCount: 2
+`
+	if string(out) != want {
+		t.Errorf("shape not preserved.\n--- got ---\n%s\n--- want ---\n%s", out, want)
+	}
+}
+
+// TestMergeAddonSection_PreservesShape_FixtureB — a second top-level addon
+// with its own head comment stays intact (comment, blank line, order) when a
+// *different* addon's section is the one being edited.
+func TestMergeAddonSection_PreservesShape_FixtureB(t *testing.T) {
+	existing := `# Cluster values for prod-eu
+clusterGlobalValues:
+
+podinfo:
+  enabled: true
+
+# cert-manager needs extra CPU
+cert-manager:
+  replicaCount: 1
+`
+	out, err := mergeAddonSection([]byte(existing), "podinfo", "replicaCount: 3\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := `# Cluster values for prod-eu
+clusterGlobalValues:
+
+podinfo:
+  replicaCount: 3
+
+# cert-manager needs extra CPU
+cert-manager:
+  replicaCount: 1
+`
+	if string(out) != want {
+		t.Errorf("second addon's comment/order not preserved.\n--- got ---\n%s\n--- want ---\n%s", out, want)
+	}
+}
+
+// TestMergeAddonSection_PreservesShape_FixtureC — the delete path (empty
+// overridesYAML) removes only the target addon's key, keeping the header
+// comment and clusterGlobalValues (still rendered with no value) intact.
+func TestMergeAddonSection_PreservesShape_FixtureC(t *testing.T) {
+	out, err := mergeAddonSection([]byte(generatorShapedFixture), "podinfo", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := `# Cluster values for prod-eu
+clusterGlobalValues:
+`
+	if string(out) != want {
+		t.Errorf("delete path did not preserve header/clusterGlobalValues.\n--- got ---\n%s\n--- want ---\n%s", out, want)
+	}
+	if strings.Contains(string(out), "podinfo") {
+		t.Errorf("podinfo key should have been removed, got:\n%s", out)
+	}
+}
+
+// TestMergeAddonSection_NeverEmitsNullClusterGlobalValues — a direct
+// regression test for the specific bug: an empty clusterGlobalValues block
+// must never round-trip to the literal text "null".
+func TestMergeAddonSection_NeverEmitsNullClusterGlobalValues(t *testing.T) {
+	out, err := mergeAddonSection([]byte(generatorShapedFixture), "podinfo", "replicaCount: 2\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(string(out), "null") {
+		t.Errorf("expected no literal 'null' in output, got:\n%s", out)
+	}
+}

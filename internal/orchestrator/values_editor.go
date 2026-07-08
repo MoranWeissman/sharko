@@ -12,6 +12,7 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path"
@@ -169,33 +170,131 @@ func validateYAML(s string) error {
 // mergeAddonSection takes an existing cluster-overrides file, replaces (or
 // removes) the section for the named addon, and returns the new YAML bytes.
 // It preserves any other top-level keys — `clusterGlobalValues`, other
-// addons — by round-tripping through map[string]interface{}.
+// addons — AND the file's shape: comments, blank lines, key order, and
+// indent. It does this by editing a yaml.Node document in place instead of
+// round-tripping through map[string]interface{}, which would flatten all of
+// that (V2-cleanup-83.2).
 //
 // If overridesYAML is empty (or whitespace), the addon's section is deleted.
 func mergeAddonSection(existing []byte, addonName, overridesYAML string) ([]byte, error) {
-	root := map[string]interface{}{}
-	if len(existing) > 0 {
-		if err := yaml.Unmarshal(existing, &root); err != nil {
-			return nil, fmt.Errorf("parsing existing cluster file: %w", err)
-		}
-		if root == nil {
-			root = map[string]interface{}{}
-		}
+	root, rawLines, err := parseClusterValuesDoc(existing)
+	if err != nil {
+		return nil, err
 	}
+	restoreBlankLinePredecessors(root, rawLines)
+
+	idx := findMappingKey(root, addonName)
 
 	if strings.TrimSpace(overridesYAML) == "" {
-		delete(root, addonName)
+		// Delete path: drop the key/value pair entirely, leaving every other
+		// key, its comments, and its blank-line spacing untouched.
+		if idx != -1 {
+			root.Content = append(root.Content[:idx], root.Content[idx+2:]...)
+		}
 	} else {
-		var section interface{}
-		if err := yaml.Unmarshal([]byte(overridesYAML), &section); err != nil {
+		var sectionDoc yaml.Node
+		if err := yaml.Unmarshal([]byte(overridesYAML), &sectionDoc); err != nil {
 			return nil, fmt.Errorf("parsing addon overrides: %w", err)
 		}
-		root[addonName] = section
+		if len(sectionDoc.Content) == 0 {
+			return nil, fmt.Errorf("parsing addon overrides: empty document")
+		}
+		valueNode := sectionDoc.Content[0]
+
+		if idx != -1 {
+			// Replace only the value node; the key node (and any comment or
+			// blank-line spacing attached to it) is left exactly as parsed.
+			root.Content[idx+1] = valueNode
+		} else {
+			keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: addonName}
+			root.Content = append(root.Content, keyNode, valueNode)
+		}
 	}
 
-	out, err := yaml.Marshal(root)
-	if err != nil {
+	doc := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{root}}
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(doc); err != nil {
 		return nil, fmt.Errorf("serializing merged cluster file: %w", err)
 	}
-	return out, nil
+	if err := enc.Close(); err != nil {
+		return nil, fmt.Errorf("serializing merged cluster file: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// parseClusterValuesDoc unmarshals existing into a mapping node, tolerating
+// an empty or absent file (fresh document, same as today's empty-map
+// behavior). It also returns the raw source split into lines, needed by
+// restoreBlankLinePredecessors.
+func parseClusterValuesDoc(existing []byte) (root *yaml.Node, rawLines []string, err error) {
+	if len(bytes.TrimSpace(existing)) == 0 {
+		return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}, nil, nil
+	}
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(existing, &doc); err != nil {
+		return nil, nil, fmt.Errorf("parsing existing cluster file: %w", err)
+	}
+	if len(doc.Content) == 0 {
+		return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}, nil, nil
+	}
+
+	root = doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		// Existing file wasn't a mapping (e.g. a bare scalar or list) —
+		// start a fresh mapping rather than fail; any stray top-of-file
+		// comment on the old root is preserved on the new one.
+		root = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", HeadComment: root.HeadComment}
+	}
+	return root, strings.Split(string(existing), "\n"), nil
+}
+
+// findMappingKey returns the Content index of the key node matching name in
+// a mapping node's Content (which alternates key, value, key, value, ...),
+// or -1 if not present.
+func findMappingKey(root *yaml.Node, name string) int {
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// restoreBlankLinePredecessors re-attaches the "there was a blank line right
+// above this key" information that yaml.v3 silently drops on decode (it only
+// tracks comment text, not bare blank lines). Without this, every blank line
+// separating sections in a hand-written or generator-written values file
+// would vanish the first time the file went through an edit.
+//
+// It works by finding, for each top-level key, the source line the key's
+// block (comment + key) started on, and checking whether the line directly
+// above that was blank. If so, the key's HeadComment gets a leading "\n" —
+// which yaml.v3's encoder renders back out as a blank line before the key.
+func restoreBlankLinePredecessors(root *yaml.Node, rawLines []string) {
+	if len(rawLines) == 0 {
+		return
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		key := root.Content[i]
+		startLine := key.Line - headCommentLineCount(key.HeadComment)
+		precedingIdx := startLine - 2 // 0-indexed line directly above startLine
+		if precedingIdx < 0 || precedingIdx >= len(rawLines) {
+			continue
+		}
+		if strings.TrimSpace(rawLines[precedingIdx]) == "" && !strings.HasPrefix(key.HeadComment, "\n") {
+			key.HeadComment = "\n" + key.HeadComment
+		}
+	}
+}
+
+// headCommentLineCount returns how many source lines a HeadComment spans.
+func headCommentLineCount(s string) int {
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
 }
