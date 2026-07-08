@@ -945,6 +945,27 @@ func TestGenerateClusterValues(t *testing.T) {
 	if strings.Contains(s, "enabledAddons:") {
 		t.Error("unexpected enabledAddons in output")
 	}
+	// V2-cleanup-83.4: clusterGlobalValues gets a commented, self-teaching
+	// example of the YAML-anchor reuse pattern. It must be a comment (so it
+	// doesn't affect parsed YAML) and must appear right after the
+	// clusterGlobalValues: key, before the real region: line.
+	if !strings.Contains(s, "clusterGlobalValues:\n  # Optional. Define a value once here") {
+		t.Error("expected commented clusterGlobalValues guidance directly under the key")
+	}
+	if !strings.Contains(s, "#   region: &region eu-west-1") {
+		t.Error("expected commented anchor-definition example in output")
+	}
+	if !strings.Contains(s, "#     location: *region") {
+		t.Error("expected commented anchor-reference example in output")
+	}
+	// The example must not leak into real (uncommented) YAML content.
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, "&region") || strings.Contains(line, "*region") {
+			if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+				t.Errorf("anchor example line must stay commented out: %q", line)
+			}
+		}
+	}
 }
 
 func TestGenerateClusterValues_NoAddons(t *testing.T) {
@@ -960,6 +981,10 @@ func TestGenerateClusterValues_NoAddons(t *testing.T) {
 	}
 	if strings.Contains(s, "_sharko") {
 		t.Error("unexpected _sharko block in output")
+	}
+	// V2-cleanup-83.4: the commented example ships even with no addons.
+	if !strings.Contains(s, "clusterGlobalValues:\n  # Optional. Define a value once here") {
+		t.Error("expected commented clusterGlobalValues guidance directly under the key")
 	}
 }
 

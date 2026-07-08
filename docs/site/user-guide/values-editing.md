@@ -43,6 +43,29 @@ If you'd rather use GitHub's web editor, click **Edit in GitHub** in the editor 
 
 Below the editor you'll find the existing **Cluster Override** diff panel — once your PR merges, refresh the page and the diff updates to show the new overrides applied.
 
+## Cluster-wide values (optional)
+
+Every generated cluster file starts with a `clusterGlobalValues:` block. It's a place to define a value once and reuse it in the addon sections further down the same file, using a plain YAML anchor — instead of typing the same value into three different addons.
+
+This is a Git-editing convenience, not a Sharko feature: `clusterGlobalValues:` is just a regular YAML key, and anchors/aliases are YAML syntax, not something Sharko interprets. It's meant for people editing the file directly in Git (or via **Edit in GitHub**). The in-app per-addon editor above only ever manages one addon's section at a time, so it doesn't read from or write to `clusterGlobalValues:`.
+
+It's entirely optional. If you don't need it, delete the block — nothing in Sharko depends on it.
+
+**Example** — define an anchor once under `clusterGlobalValues`, then reference it (`*name`) from any addon section in the same file:
+
+```yaml
+clusterGlobalValues:
+  region: &region eu-west-1
+
+podinfo:
+  location: *region
+
+cert-manager:
+  location: *region
+```
+
+`&region` defines the anchor when you write it; `*region` reuses it. If you edit one addon's values through the in-app editor afterward, the anchor and every place that references it are left untouched — only that one addon's section changes.
+
 ## Refreshing values from upstream
 
 A contextual banner appears when there's a real version mismatch between the catalog-pinned chart version and the version stamped in your values file. The banner is the only place Sharko prompts you to pull upstream defaults — there's no always-visible button, so the editor stays quiet when there's nothing to do.
