@@ -3570,6 +3570,48 @@ const docTemplate = `{
                 }
             }
         },
+        "/clusters/{name}/changes": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the durable, capped (100 entries/cluster) change log for a cluster — one\nentry per completed (merged or closed) pull request, newest first. Each entry is\njoined at read time with the addon's current ArgoCD deploy outcome. If ArgoCD is\nunreachable the entries still return, with deploy_outcome \"unknown\" for every\nentry — this endpoint never fails just because ArgoCD is unavailable.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Get cluster change log",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/clusters/{name}/comparison": {
             "get": {
                 "security": [

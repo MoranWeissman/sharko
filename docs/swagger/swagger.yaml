@@ -4096,6 +4096,38 @@ paths:
       summary: Restart addon sync on cluster
       tags:
       - clusters
+  /clusters/{name}/changes:
+    get:
+      description: |-
+        Returns the durable, capped (100 entries/cluster) change log for a cluster — one
+        entry per completed (merged or closed) pull request, newest first. Each entry is
+        joined at read time with the addon's current ArgoCD deploy outcome. If ArgoCD is
+        unreachable the entries still return, with deploy_outcome "unknown" for every
+        entry — this endpoint never fails just because ArgoCD is unavailable.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get cluster change log
+      tags:
+      - clusters
   /clusters/{name}/comparison:
     get:
       description: Compares the cluster's Git state against ArgoCD live state

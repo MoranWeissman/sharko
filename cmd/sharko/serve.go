@@ -21,6 +21,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/catalog/signing"
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
+	"github.com/MoranWeissman/sharko/internal/changelog"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
@@ -856,6 +857,25 @@ var serveCmd = &cobra.Command{
 				slog.Info("notifications running in-memory only (no in-cluster k8s client)")
 			}
 
+			// Change log — upgrade the in-memory-only store built in
+			// api.NewServer to ConfigMap-backed persistence (V2-cleanup-84.1),
+			// reusing the SAME in-cluster clientset + namespace as the PR
+			// tracker and notifications above. Without this, Sharko's record
+			// of completed cluster changes lives only in the pod's memory and
+			// is wiped on every restart. Falls back to in-memory when there
+			// is no in-cluster client (local/dev, or the clientset build
+			// above failed) — the server still boots fine either way.
+			if inClusterK8sClient != nil {
+				changeLogCMStore := cmstore.NewStore(inClusterK8sClient, prNamespace, "sharko-cluster-changes")
+				if err := srv.SetChangeLogCMStore(context.Background(), changeLogCMStore); err != nil {
+					slog.Warn("could not attach configmap store to change log, continuing in-memory only", "error", err)
+				} else {
+					slog.Info("change log persisted via configmap", "namespace", prNamespace, "name", "sharko-cluster-changes")
+				}
+			} else {
+				slog.Info("change log running in-memory only (no in-cluster k8s client)")
+			}
+
 			// Construct + start the cluster Secret reconciler alongside the
 			// prtracker so its post-merge fan-out can nudge the reconciler
 			// immediately. The reconciler requires the same preconditions
@@ -986,6 +1006,24 @@ var serveCmd = &cobra.Command{
 						// the new config without waiting for its git-poll cycle.
 						go remediator.OnMergeRefresh(context.Background(), pr)
 					}
+				})
+
+				// Record every completed change (merged OR closed) into the
+				// durable change-log store BEFORE prtracker drops the PR from
+				// tracking (V2-cleanup-84.1). This fires for both terminal
+				// states, unlike SetOnMergeFn above which only fires on
+				// merge — a rejected/abandoned change belongs in the log too.
+				prTracker.SetOnCompleteFn(func(pr prtracker.PRInfo, status string) {
+					srv.ChangeLogStore().Record(changelog.Entry{
+						Operation:   changelog.PrettyOperation(pr.Operation),
+						Addon:       pr.Addon,
+						Cluster:     pr.Cluster,
+						PRID:        pr.PRID,
+						PRUrl:       pr.PRUrl,
+						OpenedAt:    pr.CreatedAt,
+						CompletedAt: time.Now(),
+						Status:      status,
+					})
 				})
 
 				srv.SetPRTracker(prTracker)

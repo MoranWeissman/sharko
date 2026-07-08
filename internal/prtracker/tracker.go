@@ -44,14 +44,15 @@ type GitProvider interface {
 // Tracker polls the Git provider for PR status changes and persists
 // tracking state in a ConfigMap.
 type Tracker struct {
-	cmStore     *cmstore.Store
-	gitProvider func() GitProvider // lazy — returns nil when no connection is active
-	auditFn     func(audit.Entry)
-	onMergeFn   func(PRInfo) // callback when a PR is merged (e.g. trigger reconciler)
-	interval    time.Duration
-	triggerCh   chan struct{}
-	stopCh      chan struct{}
-	stopOnce    sync.Once
+	cmStore      *cmstore.Store
+	gitProvider  func() GitProvider // lazy — returns nil when no connection is active
+	auditFn      func(audit.Entry)
+	onMergeFn    func(PRInfo)         // callback when a PR is merged (e.g. trigger reconciler)
+	onCompleteFn func(PRInfo, string) // callback when a PR reaches ANY terminal state (merged OR closed); string is "merged" | "closed"
+	interval     time.Duration
+	triggerCh    chan struct{}
+	stopCh       chan struct{}
+	stopOnce     sync.Once
 }
 
 // NewTracker creates a PR tracker.
@@ -84,6 +85,18 @@ func NewTracker(
 // Typically used to trigger the argosecrets reconciler.
 func (t *Tracker) SetOnMergeFn(fn func(PRInfo)) {
 	t.onMergeFn = fn
+}
+
+// SetOnCompleteFn registers a callback invoked when a tracked PR reaches
+// ANY terminal state — merged OR closed-without-merge — right before it is
+// dropped from tracking. The second argument is the terminal status
+// ("merged" or "closed"). Used by the durable change-log store
+// (internal/changelog) to record a completed change before prtracker
+// forgets the PR entirely (V2-cleanup-84.1). Unlike SetOnMergeFn, this
+// fires on both outcomes so the change log captures rejected/abandoned
+// changes too, not just successful ones.
+func (t *Tracker) SetOnCompleteFn(fn func(PRInfo, string)) {
+	t.onCompleteFn = fn
 }
 
 // Start launches the background poll loop. Runs one reconcile immediately,
@@ -318,6 +331,9 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 			if t.onMergeFn != nil {
 				t.onMergeFn(pr)
 			}
+			if t.onCompleteFn != nil {
+				t.onCompleteFn(pr, "merged")
+			}
 			toRemove = append(toRemove, id)
 		} else if status == "closed" {
 			log.Info("[prtracker] PR closed without merge", "pr_id", pr.PRID, "cluster", pr.Cluster)
@@ -331,6 +347,9 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 				Result:    "failure",
 				RequestID: logging.RequestID(ctx),
 			})
+			if t.onCompleteFn != nil {
+				t.onCompleteFn(pr, "closed")
+			}
 			toRemove = append(toRemove, id)
 		}
 	}
@@ -436,6 +455,9 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 			if t.onMergeFn != nil {
 				t.onMergeFn(pr)
 			}
+			if t.onCompleteFn != nil {
+				t.onCompleteFn(pr, "merged")
+			}
 			delete(prs, key)
 		} else if status == "closed" {
 			t.auditFn(audit.Entry{
@@ -448,6 +470,9 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 				Result:    "failure",
 				RequestID: logging.RequestID(ctx),
 			})
+			if t.onCompleteFn != nil {
+				t.onCompleteFn(pr, "closed")
+			}
 			delete(prs, key)
 		}
 
