@@ -283,6 +283,25 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 		return nil, nil
 	}
 
+	// Surface the ArgoCD-registered API-server URL so the UI's
+	// ClusterTypeBadge can classify EKS/AKS/GKE/kind/minikube instead of
+	// always falling back to "Unknown" (V2-cleanup-80.1). Left unset for
+	// the hub-local in-cluster entry, mirroring ListClusters/GetClusterDetail.
+	if argocdClusters, err := ac.ListClusters(ctx); err != nil {
+		log.Warn("could not fetch argocd clusters for server url", "cluster", clusterName, "error", err)
+	} else {
+		for _, argoCluster := range argocdClusters {
+			if argoCluster.Name != clusterName {
+				continue
+			}
+			if argoCluster.Name == "in-cluster" || strings.HasPrefix(argoCluster.Server, "https://kubernetes.default") {
+				break
+			}
+			cluster.ServerURL = argoCluster.Server
+			break
+		}
+	}
+
 	gitAddons := s.parser.GetEnabledAddons(*cluster, repoCfg.Addons)
 
 	// Fetch ArgoCD apps
