@@ -581,7 +581,13 @@ describe('ClusterDetail', () => {
   // anything other than "Successful" — including "Unknown", which is
   // simply the absence of an observation.
   describe('BUG-034: cluster status banner copy', () => {
-    it('renders "Status unknown" banner (not "Connection Failed") when argocd_connection_status is Unknown', async () => {
+    // V2-cleanup-85.1: argocd_connection_status: 'Unknown' + no server_url
+    // (comparisonResponse.cluster has none) is exactly the "not connected
+    // yet" case — the type badge, status badge, and this banner used to all
+    // say "Unknown" independently. They now collapse into one banner and
+    // the two badges are hidden, instead of the old standalone "Status
+    // unknown" copy.
+    it('renders "Not connected yet" banner (not "Connection Failed", not "Status unknown", no type/status badges) when argocd_connection_status is Unknown and there is no server URL', async () => {
       mockGetClusterComparison.mockResolvedValueOnce({
         ...comparisonResponse,
         argocd_connection_status: 'Unknown',
@@ -593,10 +599,33 @@ describe('ClusterDetail', () => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
 
-      // The neutral copy must appear …
+      // The single collapsed banner must appear …
+      expect(screen.getByText('Not connected yet')).toBeInTheDocument();
+      // … and none of the redundant "Unknown" signals may appear alongside it.
+      expect(screen.queryByText('Status unknown')).not.toBeInTheDocument();
+      expect(screen.queryByText('ArgoCD Connection Failed')).not.toBeInTheDocument();
+      expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
+    });
+
+    // The neutral "Status unknown" banner is still used for the narrower,
+    // non-redundant case: ArgoCD hasn't reported a status yet, but Sharko
+    // does have a server URL for the cluster (so the type badge resolves
+    // to something other than "Unknown" and isn't hidden).
+    it('renders "Status unknown" banner when argocd_connection_status is Unknown but a server URL is known', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        cluster: { ...comparisonResponse.cluster, server_url: 'https://prod-eu.eks.amazonaws.com' },
+        argocd_connection_status: 'Unknown',
+        cluster_connection_state: '',
+      });
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
       expect(screen.getByText('Status unknown')).toBeInTheDocument();
-      // … and the misleading "Connection Failed" copy must NOT appear when
-      // the only signal is "Unknown".
+      expect(screen.queryByText('Not connected yet')).not.toBeInTheDocument();
       expect(screen.queryByText('ArgoCD Connection Failed')).not.toBeInTheDocument();
     });
 
@@ -1938,8 +1967,13 @@ describe('ClusterDetail', () => {
       await waitFor(() => {
         expect(screen.getByText('No changes yet')).toBeInTheDocument();
       });
+      // V2-cleanup-85.1: the empty state now says concretely what a
+      // "change" is (enabling/disabling an addon, editing its values) and
+      // that each one is a pull request, instead of the vaguer original copy.
       expect(
-        screen.getByText('Cluster changes will appear here as pull requests.'),
+        screen.getByText(
+          "A change is something you do to this cluster — enabling or disabling an addon, or editing an addon's values. Each one goes out as a pull request for you to review, and shows up here once it's merged.",
+        ),
       ).toBeInTheDocument();
 
       // The individual per-panel empty states are collapsed away in favor

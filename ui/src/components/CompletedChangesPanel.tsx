@@ -96,7 +96,7 @@ export function CompletedChangesPanel({ cluster, refreshKey = 0, onDataChange }:
         </div>
         <EmptyState
           title="No completed changes yet"
-          description="Merged and closed pull requests for this cluster will show up here."
+          description="Once a pull request for this cluster — like enabling or disabling an addon, or editing its values — merges or closes, it'll show up here with its result."
         />
       </div>
     )

@@ -109,7 +109,7 @@ function ClusterChangesSection({
     return (
       <EmptyState
         title="No changes yet"
-        description="Cluster changes will appear here as pull requests."
+        description="A change is something you do to this cluster — enabling or disabling an addon, or editing an addon's values. Each one goes out as a pull request for you to review, and shows up here once it's merged."
       />
     );
   }
@@ -325,6 +325,22 @@ export function ClusterDetail() {
     if (data && data.total_healthy > 0) return 'operational';
     return 'unknown';
   }, [testResult, data]);
+
+  // "Not connected yet" (V2-cleanup-85.1): before this fix, an un-probed
+  // cluster showed the same "Unknown" fact three separate times — the type
+  // badge, the status badge, and a banner — because each one independently
+  // falls back to "no information" when Sharko has never heard from ArgoCD
+  // about this cluster. Collapse them into a single signal: no ArgoCD
+  // connection status has been observed AND there's no server URL to derive
+  // a type from. Deliberately narrow (both conditions, not either) so a
+  // cluster that resolves a type from its server URL, or has a real
+  // argocd_connection_status, keeps its normal badges — this only touches
+  // the case where every signal is simultaneously empty.
+  const notConnected = useMemo((): boolean => {
+    const argoStatus = (data?.argocd_connection_status ?? '').trim().toLowerCase();
+    const serverUrl = (data?.cluster?.server_url ?? '').trim();
+    return (argoStatus === '' || argoStatus === 'unknown') && serverUrl === '';
+  }, [data]);
 
   const fetchData = useCallback(async (background = false) => {
     if (!name) return;
@@ -984,7 +1000,9 @@ export function ClusterDetail() {
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-2.5 dark:ring-gray-700 dark:bg-gray-800">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{data.cluster.name}</h2>
-          <ClusterTypeBadge server={data.cluster.server_url} />
+          {/* Type badge is suppressed in the "not connected yet" state — the
+            * banner below already says so once, in plain words (V2-cleanup-85.1). */}
+          {!notConnected && <ClusterTypeBadge server={data.cluster.server_url} />}
         </div>
         {data.cluster.server_version && (
           <div className="flex items-center gap-1.5 text-xs text-[#2a5a7a] dark:text-gray-400">
@@ -994,7 +1012,9 @@ export function ClusterDetail() {
           </div>
         )}
         <div className="flex items-center gap-2">
-          <StatusBadge status={computedStatus} size="sm" />
+          {/* Status badge is suppressed in the "not connected yet" state —
+            * same reason as the type badge above (V2-cleanup-85.1). */}
+          {!notConnected && <StatusBadge status={computedStatus} size="sm" />}
           <ConnectivityBadge
             connectivityStatus={data.cluster.connectivity_status}
             connectivityDetail={data.cluster.connectivity_detail}
@@ -1067,11 +1087,18 @@ export function ClusterDetail() {
         );
       })()}
 
-      {/* ArgoCD connection banner — distinguishes three states so a
-        * cluster Sharko hasn't yet probed isn't mis-labelled as
-        * "Connection Failed":
+      {/* ArgoCD connection banner — distinguishes the states so a cluster
+        * Sharko hasn't yet probed isn't mis-labelled as "Connection Failed":
         *
-        *   - argocd_connection_status missing / "Unknown" → neutral banner below
+        *   - not connected at all (see `notConnected` above) → single
+        *     "Not connected yet" banner (V2-cleanup-85.1); this also
+        *     replaces the old "Status unknown" copy for this case, since
+        *     the type + status badges are hidden here too and this banner
+        *     is now the one place that says so.
+        *   - argocd_connection_status missing / "Unknown", but the cluster
+        *     otherwise has a server URL → neutral "Status unknown" banner
+        *     (rare: e.g. server URL known from Git but ArgoCD hasn't
+        *     reported back yet)
         *   - argocd_connection_status === "Successful"    → no banner (happy path)
         *   - anything else                                 → red "Connection Failed" banner
         *
@@ -1081,6 +1108,17 @@ export function ClusterDetail() {
         */}
       {(() => {
         if (computedStatus === 'unreachable') return null;
+        if (notConnected) {
+          return (
+            <div className="flex items-start gap-3 rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] px-5 py-3 dark:ring-gray-700 dark:bg-gray-800">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-[#3a6a8a] dark:text-gray-300 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Not connected yet</p>
+                <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">Sharko hasn't reached this cluster through ArgoCD. Once it connects, its type, status and health will appear here.</p>
+              </div>
+            </div>
+          );
+        }
         const argoStatus = data.argocd_connection_status;
         if (!argoStatus) return null;
         if (argoStatus === 'Successful') return null;
