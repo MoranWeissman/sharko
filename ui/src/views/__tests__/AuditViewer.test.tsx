@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { AuditViewer } from '@/views/AuditViewer';
 import type { AuditEntry } from '@/services/models';
 
@@ -123,6 +123,36 @@ describe('AuditViewer', () => {
     const values = Array.from(select.options).map((o) => o.value);
     expect(values).toEqual(['', 'success', 'partial', 'rejected', 'failure']);
     expect(values).not.toContain('error');
+  });
+
+  it('shows plain-English words (not raw codes) in the Result filter and badges', async () => {
+    render(<AuditViewer />);
+    await waitFor(() => expect(screen.getByText(/alice enabled an addon/i)).toBeInTheDocument());
+
+    const select = screen.getByLabelText('Result') as HTMLSelectElement;
+    const labels = Array.from(select.options).map((o) => o.textContent);
+    expect(labels).toEqual(['All results', 'Succeeded', 'Partly done', 'Rejected', 'Failed']);
+
+    // sampleEntries carry success / failure / rejected — badges render the word, not the
+    // code. Each word also appears as a <select> option, so scope to the table body.
+    const tableBody = document.querySelector('tbody')!;
+    expect(within(tableBody).getByText('Succeeded')).toBeInTheDocument();
+    expect(within(tableBody).getByText('Failed')).toBeInTheDocument();
+    expect(within(tableBody).getByText('Rejected')).toBeInTheDocument();
+  });
+
+  it('offers only the action values the backend actually records — no dead options', async () => {
+    render(<AuditViewer />);
+    await waitFor(() => expect(screen.getByText(/alice enabled an addon/i)).toBeInTheDocument());
+
+    const select = screen.getByLabelText('Action') as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual([
+      '', 'create', 'update', 'patch', 'delete', 'login', 'logout', 'init', 'sync', 'push', 'block',
+    ]);
+    // methodToAction never produces these — the middleware/handlers never write them.
+    expect(values).not.toContain('test');
+    expect(values).not.toContain('diagnose');
   });
 
   it('debounces filter typing into a single fetch, not one per keystroke', async () => {
