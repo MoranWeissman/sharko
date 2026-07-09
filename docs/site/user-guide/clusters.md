@@ -71,20 +71,6 @@ Flags:
 !!! info "Planned — finer-grained credentials"
     Today the stored-kubeconfig source points at a *whole* kubeconfig. A future release plans to let you point at individual pieces (server URL, CA data, token) separately. This is **not available yet**.
 
-### Discovery Mode and Role ARNs
-
-The Register Cluster dialog opens with a **Direct / Discovery** choice at the top. Direct is what the rest of this page describes — you name one cluster and hand Sharko its credentials. **Discovery** is different: instead of telling Sharko about one cluster, you give it one or more AWS IAM Role ARNs and Sharko scans each one for EKS clusters it can see, then lets you pick which ones to register.
-
-To use Discovery mode:
-
-1. Switch the toggle to **Discovery**.
-2. Enter one or more comma-separated Role ARNs, e.g. `arn:aws:iam::111122223333:role/sharko-discovery`. Each ARN is tried in turn — Sharko assumes the role and calls `eks:ListClusters` / `eks:DescribeCluster` to see what's reachable from that identity, so an ARN that can't be assumed or that has no EKS permissions simply turns up no clusters, not an error for the whole scan.
-3. Optionally narrow the scan to one AWS region.
-4. Click **Scan** — matching clusters appear in a list below, already-managed ones are marked so you don't double-register them.
-5. Select the clusters you want and click **Register**.
-
-The role behind each ARN needs, at minimum, `eks:ListClusters` and `eks:DescribeCluster`, and a trust policy that lets Sharko's own AWS identity assume it. That's the same shape of role used by the **Amazon EKS token** credentials source in Direct mode — if you've already set one up for direct registration, you can reuse it here instead of creating a second role.
-
 ### Batch Registration
 
 Register multiple clusters at once:

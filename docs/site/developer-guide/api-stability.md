@@ -186,7 +186,6 @@ Surface default: **`stable`**. The core production flow.
 | POST | `/clusters/{name}/diagnose` | `stable` | Surface default. |
 | POST | `/clusters/batch` | `stable` | Surface default. |
 | GET | `/clusters/available` | `stable` | Surface default. |
-| POST | `/clusters/discover` | `stable` | EKS discovery; well-exercised shape. |
 | POST | `/clusters/adopt` | `stable` | V125-1-8 label-gate flow; shape settled. |
 | POST | `/clusters/{name}/unadopt` | `stable` | Mirrors adopt. |
 | DELETE | `/clusters/{name}/orphan` | `stable` | V125-1-7/8 ownership-label gate; settled. |

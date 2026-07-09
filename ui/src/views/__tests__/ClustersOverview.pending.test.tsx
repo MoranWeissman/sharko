@@ -33,7 +33,6 @@ vi.mock('@/services/api', () => ({
   registerCluster: (...args: unknown[]) => mockRegisterCluster(...args),
   // Other named exports used by the view module — stubbed to no-ops so
   // the test only exercises the surfaces under test.
-  discoverEKSClusters: vi.fn(),
   testClusterConnection: vi.fn(),
   unadoptCluster: vi.fn(),
 }));

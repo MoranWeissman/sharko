@@ -387,7 +387,7 @@ HTTP handlers. Each handler is a method on the `Server` struct. Handlers are thi
 |------|-----------|
 | `clusters_write.go` | POST, DELETE, PATCH `/clusters`, POST `/clusters/{name}/refresh`, POST `/clusters/{name}/test` |
 | `clusters_batch.go` | POST `/clusters/batch` |
-| `clusters_discover.go` | GET `/clusters/available`, POST `/clusters/discover` |
+| `clusters_discover.go` | GET `/clusters/available` |
 | `clusters_adopt.go` | POST `/clusters/adopt`, POST `/clusters/{name}/unadopt` |
 | `cluster_secrets.go` | GET, POST `/clusters/{name}/secrets*` |
 | `diagnose.go` | POST `/clusters/{name}/diagnose` |

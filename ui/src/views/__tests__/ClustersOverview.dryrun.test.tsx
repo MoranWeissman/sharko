@@ -30,7 +30,6 @@ vi.mock('@/services/api', () => ({
     health: () => Promise.resolve({ status: 'healthy', cluster_test_available: true }),
   },
   registerCluster: (...args: unknown[]) => mockRegisterCluster(...args),
-  discoverEKSClusters: vi.fn(),
   testClusterConnection: vi.fn(),
   unadoptCluster: vi.fn(),
 }));
@@ -200,21 +199,6 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     expect(screen.queryByRole('checkbox', { name: /merge pr automatically/i })).not.toBeInTheDocument();
     // Muted hint is visible.
     expect(screen.getByText(/global GitOps setting/i)).toBeInTheDocument();
-  });
-
-  it('Scan button (discovery mode) carries a tooltip explaining what it does', async () => {
-    renderView();
-    await openAddDialog();
-
-    // Switch to Discovery mode.
-    const discoveryToggle = screen.getByRole('button', { name: /discovery/i });
-    fireEvent.click(discoveryToggle);
-
-    const scanBtn = screen.getByRole('button', { name: /^scan$/i });
-    const title = scanBtn.getAttribute('title');
-    expect(title).toBeTruthy();
-    expect(title!.toLowerCase()).toContain('aws');
-    expect(title!.toLowerCase()).toContain('eks');
   });
 
   // Sanity: the dialog as a whole doesn't blow up after the dry-run renders;

@@ -343,20 +343,6 @@ func TestClusterLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("DiscoverEKS", func(t *testing.T) {
-		status, body := admin.DiscoverEKSClusters(t, "us-east-1")
-		switch status {
-		case http.StatusOK:
-			t.Logf("discover ok: %v", body)
-		case http.StatusServiceUnavailable:
-			t.Skipf("DiscoverEKS: 503 (no credentials provider) — EKS-only handler")
-		case http.StatusBadGateway:
-			t.Logf("DiscoverEKS: 502 (provider configured but discovery failed) — route reachable")
-		default:
-			t.Fatalf("unexpected status=%d body=%v", status, body)
-		}
-	})
-
 	t.Run("AdoptClusters", func(t *testing.T) {
 		autoMerge := false
 		req := orchestrator.AdoptClustersRequest{

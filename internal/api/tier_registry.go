@@ -33,7 +33,6 @@ var HandlerTier = map[string]audit.Tier{
 	"handleRestartAddonSync":           audit.Tier1,
 	"handleBatchRegisterClusters":      audit.Tier1,
 	"handleAdoptClusters":              audit.Tier1,
-	"handleDiscoverEKS":                audit.Tier1,
 
 	// Addon ops on existing addons (upgrade is operational; the version is the catalog)
 	"handleUpgradeAddon":               audit.Tier1,

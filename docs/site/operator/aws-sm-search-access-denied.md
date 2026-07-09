@@ -23,19 +23,18 @@ which needs only `secretsmanager:GetSecretValue`) is **unaffected** —
 clusters that ARE at the expected secret path continue to work
 normally.
 
-What the operator loses: the cluster-discover endpoint
-(`POST /api/v1/clusters/discover`) can't enumerate clusters in
-AWS-SM because `ListSecrets` is the underlying call. And when a
-`POST /clusters/{name}/test` fails on a not-found, the response is
-missing the "similar secrets" suggestions field that would otherwise
-help the operator diagnose. This is the canonical "degraded
-discovery" failure — registration of named clusters works; discovery
-of cluster inventory doesn't.
+What the operator loses: `GET /api/v1/clusters/available` (which
+cross-references the configured secrets backend against ArgoCD) still
+enumerates clusters using the primary `GetSecretValue`/list-by-prefix
+path, but when a `POST /clusters/{name}/test` fails on a not-found,
+the response is missing the "similar secrets" suggestions field that
+would otherwise help the operator diagnose. This is a degraded
+diagnostics failure — registration and testing of named clusters
+works; the "did you mean X?" hint on a not-found test doesn't.
 
 This is **not** an outage — fleet operations continue. But operators
-notice it sharply: the discovery UI looks broken, the
-not-found error responses lose their suggestions field, and the
-cluster onboarding flow that previously surfaced "did you mean X?"
+notice it: not-found error responses lose their suggestions field, and
+the cluster onboarding flow that previously surfaced "did you mean X?"
 hints is silent. The fix is an IAM policy change to add
 `secretsmanager:ListSecrets`. This runbook walks operators through
 confirming AccessDenied is the cause and applying the policy update
@@ -59,20 +58,6 @@ What an operator sees when this fires:
   on every SearchSecrets invocation; if many GetCredentials calls
   fail in a window, this log line repeats frequently.
 
-- **`POST /api/v1/clusters/discover` returns an empty cluster list
-  or 500**:
-
-  ```sh
-  curl -sS -X POST http://sharko/api/v1/clusters/discover \
-    -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d '{"provider":"aws-sm","region":"us-east-1"}'
-  ```
-
-  Returns `{"clusters":[]}` (when discovery falls back gracefully) or
-  500 with the AccessDenied error (when discovery requires
-  ListSecrets to enumerate).
-
 - **`POST /api/v1/clusters/{name}/test`** for a not-found cluster
   returns the not-found error but WITHOUT the "Similar secrets:"
   field — the suggestion enrichment is silently empty:
@@ -88,18 +73,14 @@ What an operator sees when this fires:
   shows what the suggestions look like when ListSecrets is
   permitted.)
 
-- **The Marketplace / discover UI** shows an empty cluster list when
-  the operator clicks "Discover existing clusters in AWS-SM" with
-  no actionable error — the empty result and the
-  graceful-degradation pattern hide the IAM gap from the UI.
-
 - **Cluster registration of a NAMED cluster continues to work** as
   long as the cluster's secret IS at the configured path. Operators
-  who only ever do `sharko add-cluster <name>` (not discovery) may
-  not notice the gap until they try discovery for the first time.
+  who only ever do `sharko add-cluster <name>` may not notice the gap
+  until a test against a mistyped/missing cluster name comes back
+  without suggestions.
 
-- **No specific Prometheus alert fires.** This degrades the
-  discovery UX, not the registration / addon-cycle SLOs.
+- **No specific Prometheus alert fires.** This degrades a diagnostic
+  hint, not the registration / addon-cycle SLOs.
 
 If the symptom is "GetCredentials itself fails with AccessDenied"
 (NOT SearchSecrets), this is a different failure — IAM is missing
@@ -119,10 +100,11 @@ the missing action.
 ### 1. Confirm AccessDenied fires on SearchSecrets but GetCredentials works
 
 ```sh
-# Trigger a discover and watch the log:
-curl -sS -X POST http://sharko/api/v1/clusters/discover \
-  -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  -d '{"provider":"aws-sm","region":"us-east-1"}' &
+# Trigger a test against a cluster name that doesn't exist at the
+# configured secret path — this is what makes the handler call
+# SearchSecrets to look for suggestions:
+curl -sS -X POST http://sharko/api/v1/clusters/typo-cluster-name/test \
+  -H "Authorization: Bearer ${SHARKO_TOKEN}" &
 
 # In another shell:
 kubectl -n <sharko-ns> logs -l app=sharko --since=2m \
@@ -215,8 +197,7 @@ that excludes the broader ListSecrets call (which operates on `*`).
          "Action": [
            "secretsmanager:GetSecretValue",
            "secretsmanager:DescribeSecret",
-           "secretsmanager:ListSecrets",
-           "eks:DescribeCluster"
+           "secretsmanager:ListSecrets"
          ],
          "Resource": "*"
        }
@@ -230,8 +211,8 @@ that excludes the broader ListSecrets call (which operates on `*`).
    ```
 
    IAM changes take effect within seconds (no AWS-side cache). Verify
-   by re-running the discover endpoint from Diagnosis step 1; the
-   Warn log line stops firing.
+   by re-running the test from Diagnosis step 1; the Warn log line
+   stops firing and the not-found response includes suggestions.
 
 2. **If the role's policy is managed by a separate IaC tool
    (Terraform, CloudFormation, CDK) — update the source-of-truth,
@@ -248,7 +229,6 @@ that excludes the broader ListSecrets call (which operates on `*`).
          "secretsmanager:GetSecretValue",
          "secretsmanager:DescribeSecret",
          "secretsmanager:ListSecrets",   # <-- add this line
-         "eks:DescribeCluster",
        ]
        resources = ["*"]
      }
@@ -263,8 +243,8 @@ that excludes the broader ListSecrets call (which operates on `*`).
    ARN-pattern-based Resource scoping. The risk is that
    `ListSecrets` operates on the account-wide secret list — most
    resource patterns either match all secrets (which is what you
-   want) or none (which blocks discovery). The simplest correct
-   pattern:
+   want) or none (which blocks the suggestion lookup). The simplest
+   correct pattern:
 
    ```json
    {
@@ -279,12 +259,12 @@ that excludes the broader ListSecrets call (which operates on `*`).
    org's IAM standards forbid `Resource: "*"`, work with your IAM
    policy reviewer to confirm `ListSecrets` is a list-API exception.
 
-4. **Accept the degraded UX and skip discovery.** If the IAM
-   change requires a long review cycle and your operators only ever
-   register named clusters (no discover-then-pick UI), the current
-   behavior is functional. Document the gap so operators know "the
-   suggestions field in the not-found error is permanently empty"
-   and "discovery returns empty" — both expected, not bugs.
+4. **Accept the degraded diagnostics and move on.** If the IAM
+   change requires a long review cycle, the current behavior is
+   functional — clusters at their expected secret path continue to
+   register and test normally. Document the gap so operators know
+   "the suggestions field on a not-found test is permanently empty"
+   is expected, not a bug.
 
    This is a deliberate trade-off, NOT a permanent recommendation.
    Track an issue to add the policy as soon as the IAM review
@@ -322,16 +302,17 @@ Fix is Mitigation step 1 (or 2 if Terraform-managed).
 
 An org-wide IAM cleanup removed `ListSecrets` from the role because
 the policy reviewer saw it as overly broad (it operates on `*`). The
-reviewer didn't realize the discover UX depended on it.
+reviewer didn't realize the cluster-test suggestions feature depended
+on it.
 
 Diagnostic signature: Mitigation step 1's pre-change policy dump
 shows the action used to be present (CloudTrail
-`PutRolePolicy` event shows the modification); discover used to
-work.
+`PutRolePolicy` event shows the modification); the suggestions field
+used to populate.
 
 Fix is Mitigation step 2 (re-add the action via IaC) plus a
 documented conversation with the policy reviewer explaining the
-discovery feature.
+suggestions feature.
 
 ### Cross-account role missing `ListSecrets` in the target account
 
@@ -363,27 +344,27 @@ the Sharko IRSA role in account A).
 - **Gating — startup IAM-check probe.** At startup, Sharko could
   call `ListSecrets` once and emit a startup log warning if the
   call fails:
-  `"[startup] AWS-SM SearchSecrets unavailable — discovery will
-  return empty. Add secretsmanager:ListSecrets to the IRSA role."`
+  `"[startup] AWS-SM SearchSecrets unavailable — not-found test
+  results will have no suggestions. Add secretsmanager:ListSecrets
+  to the IRSA role."`
   Catches the misconfiguration before the operator notices the empty
-  discover UI. This is a v2 follow-up.
+  suggestions field. This is a v2 follow-up.
 
 - **Documentation — IAM policy in the install guide.** The Sharko
-  install guide should ship the full IAM policy (all four actions:
-  `GetSecretValue`, `DescribeSecret`, `ListSecrets`,
-  `eks:DescribeCluster`) as a copy-paste block. Many of the
-  degraded-discovery failures trace to operators who set up Sharko
+  install guide should ship the full IAM policy (`GetSecretValue`,
+  `DescribeSecret`, `ListSecrets`) as a copy-paste block. Many of the
+  degraded-suggestions failures trace to operators who set up Sharko
   with the smaller "GetSecretValue only" policy from an older guide.
 
 - **Gating — Helm chart documentation update.** The chart's
   values.yaml comments should explicitly call out which AWS actions
   are required for which feature ("GetSecretValue: registration,
-  cluster test, refresh. ListSecrets: discovery, suggestions in
-  error responses. eks:DescribeCluster: discover EKS clusters by
-  ARN."). Operators picking a minimum policy then know the trade-off.
+  cluster test, refresh. ListSecrets: not-found suggestions in test
+  error responses."). Operators picking a minimum policy then know
+  the trade-off.
 
 - **Scheduled work — semi-annual IAM review.** Once or twice a year,
-  the platform team should verify the IRSA role still has all four
+  the platform team should verify the IRSA role still has both
   actions. Drift catches via a documented check rather than a user
   report.
 
@@ -396,9 +377,6 @@ the Sharko IRSA role in account A).
   AccessDenied runbook explains why the suggestions field is empty.
 - [`secrets-provider-unreachable.md`](secrets-provider-unreachable.md)
   — P0 escalation: every AWS-SM call fails, not just SearchSecrets.
-- [`eks-discover-failed.md`](eks-discover-failed.md) — adjacent
-  discovery failure: EKS discovery (not AWS-SM discovery) failed
-  for a role.
 - [`k8s-secrets-not-found-in-namespace.md`](k8s-secrets-not-found-in-namespace.md)
   — sibling backend with different RBAC semantics.
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
@@ -408,11 +386,10 @@ the Sharko IRSA role in account A).
 ## Escalation
 
 If the IAM policy update requires escalation through a security
-review and operators are blocked on discovery, file a follow-up
-ticket internally; email the maintainer only if the
-graceful-degradation behavior in the source seems wrong (e.g. discover
-is returning 500 instead of empty when SearchSecrets fails):
-`moran.weissman@gmail.com`. Include:
+review, file a follow-up ticket internally; email the maintainer only
+if the graceful-degradation behavior in the source seems wrong (e.g.
+a cluster test is returning 500 instead of a normal not-found error
+when SearchSecrets fails): `moran.weissman@gmail.com`. Include:
 
 - This runbook URL
 - The role ARN and the IAM policy you propose to apply

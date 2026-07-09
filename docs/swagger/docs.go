@@ -2864,66 +2864,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/clusters/discover": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Scans one or more AWS accounts for EKS clusters via the EKS API.\nIf role_arns is empty, uses the default IRSA identity.\nFor cross-account discovery, provide one or more IAM role ARNs to assume.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "clusters"
-                ],
-                "summary": "Discover EKS clusters",
-                "parameters": [
-                    {
-                        "description": "Discovery request",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_api.discoverEKSRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Discovered clusters",
-                        "schema": {
-                            "$ref": "#/definitions/internal_api.discoverEKSResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "502": {
-                        "description": "Discovery failed",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
         "/clusters/{cluster}/addons/{name}/values": {
             "get": {
                 "security": [
@@ -8165,37 +8105,6 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_MoranWeissman_sharko_internal_providers.DiscoveredCluster": {
-            "type": "object",
-            "properties": {
-                "account": {
-                    "type": "string"
-                },
-                "arn": {
-                    "description": "RoleARN is the IAM role that was assumed to discover this cluster\n(empty when the default IRSA identity was used). Wire name \"arn\"\nmatches the UI's DiscoveredClusterItem.arn field, which the\npost-discovery register flow passes back as role_arn — so the\ncluster mints EKS tokens with the same identity that discovered it\n(V2-cleanup-62.2).",
-                    "type": "string"
-                },
-                "endpoint": {
-                    "type": "string"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "k8s_version": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "region": {
-                    "type": "string"
-                },
-                "status": {
-                    "description": "ACTIVE, CREATING, DELETING, FAILED, UPDATING, PENDING",
-                    "type": "string"
-                }
-            }
-        },
         "github_com_MoranWeissman_sharko_internal_verify.ErrorCode": {
             "type": "string",
             "enum": [
@@ -8696,37 +8605,6 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/internal_api.catalogVersionEntry"
                     }
-                }
-            }
-        },
-        "internal_api.discoverEKSRequest": {
-            "type": "object",
-            "properties": {
-                "provider": {
-                    "type": "string"
-                },
-                "region": {
-                    "type": "string"
-                },
-                "role_arns": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "internal_api.discoverEKSResponse": {
-            "type": "object",
-            "properties": {
-                "clusters": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_providers.DiscoveredCluster"
-                    }
-                },
-                "error": {
-                    "type": "string"
                 }
             }
         },
