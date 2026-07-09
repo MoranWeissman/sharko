@@ -58,7 +58,11 @@ func TestRegisterClusterBatch_AllSucceed(t *testing.T) {
 func TestRegisterClusterBatch_OneFailure(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
-	// Only provide creds for 2 of 3 clusters — the third will fail.
+	// Credentials are OPTIONAL at registration for every cluster
+	// (V2-cleanup-88.3 — lazy credentials), so a missing credProvider entry
+	// no longer fails a batch member. Trigger the one genuine failure via a
+	// referential-integrity rejection instead — prod-us asks for an addon
+	// that is not in the seeded catalog (defaultTestCatalogYAML).
 	creds := &mockCredProvider{
 		creds: map[string]*providers.Kubeconfig{
 			"prod-eu": {Server: "https://eu.example.com:6443", CAData: []byte("ca"), Token: "tok"},
@@ -70,7 +74,7 @@ func TestRegisterClusterBatch_OneFailure(t *testing.T) {
 
 	requests := []RegisterClusterRequest{
 		{Name: "prod-eu", Addons: map[string]bool{"monitoring": true}, Region: "eu-west-1"},
-		{Name: "prod-us", Addons: map[string]bool{"monitoring": true}, Region: "us-east-1"},
+		{Name: "prod-us", Addons: map[string]bool{"nonexistent-addon": true}, Region: "us-east-1"},
 		{Name: "staging", Addons: map[string]bool{"logging": true}, Region: "eu-west-1"},
 	}
 
@@ -86,7 +90,7 @@ func TestRegisterClusterBatch_OneFailure(t *testing.T) {
 		t.Errorf("expected failed=1, got %d", result.Failed)
 	}
 
-	// The failed cluster should be prod-us (no credentials).
+	// The failed cluster should be prod-us (addon not in catalog).
 	var failedCluster string
 	for _, r := range result.Results {
 		if r.Status == "failed" {

@@ -78,3 +78,80 @@ func TestCredentialLookupKeyFor(t *testing.T) {
 		}
 	})
 }
+
+// TestClusterCredentialsResolvable is the truth table for the
+// addon_secrets_ready API field's underlying predicate (V2-cleanup-88.3 —
+// lazy credentials). See CredentialsResolvable's doc comment for the full
+// rationale of each row.
+func TestClusterCredentialsResolvable(t *testing.T) {
+	tests := []struct {
+		name                string
+		credsSource         string
+		connectionManagedBy string
+		backendConfigured   bool
+		want                bool
+	}{
+		{
+			name:        "inline + sharko-managed + backend configured -> true (Sharko wrote the ArgoCD Secret)",
+			credsSource: CredsSourceInlineKubeconfig, connectionManagedBy: "", backendConfigured: true,
+			want: true,
+		},
+		{
+			name:        "inline + sharko-managed + no backend -> true (still true: Sharko wrote the ArgoCD Secret regardless of backend)",
+			credsSource: CredsSourceInlineKubeconfig, connectionManagedBy: "", backendConfigured: false,
+			want: true,
+		},
+		{
+			name:        "inline + self-managed (user) -> false (Sharko never writes the Secret for this mode)",
+			credsSource: CredsSourceInlineKubeconfig, connectionManagedBy: ConnectionManagedByUser, backendConfigured: true,
+			want: false,
+		},
+		{
+			name:        "secret-kubeconfig + backend configured -> true",
+			credsSource: CredsSourceSecretKubeconfig, connectionManagedBy: "", backendConfigured: true,
+			want: true,
+		},
+		{
+			name:        "secret-kubeconfig + no backend -> false",
+			credsSource: CredsSourceSecretKubeconfig, connectionManagedBy: "", backendConfigured: false,
+			want: false,
+		},
+		{
+			name:        "eks-token + backend configured -> true",
+			credsSource: CredsSourceEKSToken, connectionManagedBy: "", backendConfigured: true,
+			want: true,
+		},
+		{
+			name:        "eks-token + no backend -> false",
+			credsSource: CredsSourceEKSToken, connectionManagedBy: "", backendConfigured: false,
+			want: false,
+		},
+		{
+			name:        "unknown/pre-field source + backend configured -> true (backend-first fallback)",
+			credsSource: "", connectionManagedBy: "", backendConfigured: true,
+			want: true,
+		},
+		{
+			name:        "unknown/pre-field source + no backend -> false (the lazy-credentials connection-only case)",
+			credsSource: "", connectionManagedBy: "", backendConfigured: false,
+			want: false,
+		},
+		{
+			name:        "unknown source + self-managed + no backend -> false",
+			credsSource: "", connectionManagedBy: ConnectionManagedByUser, backendConfigured: false,
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := Cluster{CredsSource: tt.credsSource, ConnectionManagedBy: tt.connectionManagedBy}
+			if got := c.CredentialsResolvable(tt.backendConfigured); got != tt.want {
+				t.Errorf("Cluster.CredentialsResolvable(%v) = %v, want %v", tt.backendConfigured, got, tt.want)
+			}
+			e := ManagedClusterEntry{CredsSource: tt.credsSource, ConnectionManagedBy: tt.connectionManagedBy}
+			if got := e.CredentialsResolvable(tt.backendConfigured); got != tt.want {
+				t.Errorf("ManagedClusterEntry.CredentialsResolvable(%v) = %v, want %v", tt.backendConfigured, got, tt.want)
+			}
+		})
+	}
+}

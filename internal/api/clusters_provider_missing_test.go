@@ -19,6 +19,12 @@ import (
 //   - Body includes a hint string operators/UIs can render
 //
 // Coverage: every handler that early-returns on `s.credProvider() == nil`.
+// V2-cleanup-88.3 (lazy credentials) removed that early-return from
+// register / batch-register — those two are pinned separately in
+// clusters_creds_source_test.go and clusters_kubeconfig_test.go as "must NOT
+// 503" cases. Discover / refresh / list-secrets / refresh-secrets are
+// unaffected: those endpoints genuinely need the secrets provider to do
+// their one job, so they keep the 503 contract below.
 //
 // Note: handler order is "authz → provider check → other". Tests use the
 // isolated test server which has no auth headers wired, so the authz layer
@@ -44,7 +50,11 @@ func assertProviderMissingResponse(t *testing.T, w *httptest.ResponseRecorder, l
 	}
 }
 
-func TestRegisterCluster_NoProvider_Returns503(t *testing.T) {
+// TestRegisterCluster_NoProvider_DoesNotReturn503 replaces the old
+// TestRegisterCluster_NoProvider_Returns503 (V2-cleanup-88.3 — lazy
+// credentials removed register's `credProvider == nil` early-return;
+// registration now degrades to a connection-only registration instead).
+func TestRegisterCluster_NoProvider_DoesNotReturn503(t *testing.T) {
 	srv := newIsolatedTestServer(t)
 	router := NewRouter(srv, nil)
 
@@ -54,10 +64,14 @@ func TestRegisterCluster_NoProvider_Returns503(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assertProviderMissingResponse(t, w, "POST /clusters")
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatalf("status = 503: registration must not require a credentials provider (V2-cleanup-88.3)")
+	}
 }
 
-func TestBatchRegisterClusters_NoProvider_Returns503(t *testing.T) {
+// TestBatchRegisterClusters_NoProvider_DoesNotReturn503 is the batch twin —
+// same relaxation, same reasoning.
+func TestBatchRegisterClusters_NoProvider_DoesNotReturn503(t *testing.T) {
 	srv := newIsolatedTestServer(t)
 	router := NewRouter(srv, nil)
 
@@ -67,7 +81,9 @@ func TestBatchRegisterClusters_NoProvider_Returns503(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assertProviderMissingResponse(t, w, "POST /clusters/batch")
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatalf("status = 503: batch registration must not require a credentials provider (V2-cleanup-88.3)")
+	}
 }
 
 func TestDiscoverClusters_NoProvider_Returns503(t *testing.T) {

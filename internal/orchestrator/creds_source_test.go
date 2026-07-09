@@ -261,23 +261,30 @@ func TestRegisterCluster_BackwardCompat_EmptySource_BackendWithSecretPath(t *tes
 
 // ---------- validation 400s ----------
 
-// inline-kubeconfig with no kubeconfig is a caller error.
-func TestRegisterCluster_InlineKubeconfig_NoKubeconfig_Rejected(t *testing.T) {
+// inline-kubeconfig with no kubeconfig is OPTIONAL credentials, not a
+// rejection (V2-cleanup-88.3 — lazy credentials generalized the
+// self-managed-only relaxation this test used to pin). The registration
+// succeeds as a connection-only registration and records the skip.
+func TestRegisterCluster_InlineKubeconfig_NoKubeconfig_Succeeds(t *testing.T) {
 	orch := New(nil, nil, newMockArgocd(), newMockGitProvider(), defaultGitOps(), defaultPaths(), nil)
 
-	_, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name:        "kind-sharko",
 		CredsSource: CredsSourceInlineKubeconfig,
+		Addons:      map[string]bool{"monitoring": true},
 		// Kubeconfig omitted on purpose.
 	})
-	if err == nil {
-		t.Fatal("expected inline-kubeconfig with no kubeconfig to be rejected")
+	if err != nil {
+		t.Fatalf("expected success without a kubeconfig, got error: %v", err)
 	}
-	if !IsInvalidCredsSource(err) {
-		t.Errorf("expected *InvalidCredsSourceError (→ 400), got %T: %v", err, err)
+	if result.Status != "success" {
+		t.Errorf("expected status=success, got %q (%s)", result.Status, result.Error)
 	}
-	if !strings.Contains(err.Error(), "requires a kubeconfig") {
-		t.Errorf("error should mention the missing kubeconfig, got: %v", err)
+	if !hasStep(result.CompletedSteps, "skip_credentials") {
+		t.Errorf("expected skip_credentials step, got %v", result.CompletedSteps)
+	}
+	if hasStep(result.CompletedSteps, "parse_kubeconfig") {
+		t.Errorf("must not attempt to parse an absent kubeconfig, got %v", result.CompletedSteps)
 	}
 }
 

@@ -50,8 +50,11 @@ func TestRegisterCluster_CredsSourceInline_NotGatedByProvider(t *testing.T) {
 }
 
 // Explicit creds_source=secret-kubeconfig with NO provider must hit the
-// backend path and, with a nil credProvider in the test server, surface 503.
-func TestRegisterCluster_CredsSourceSecretBackend_RequiresProvider(t *testing.T) {
+// backend path but, with credentials optional at registration
+// (V2-cleanup-88.3 — lazy credentials), must NOT surface the old 503
+// missing-provider rejection — it degrades to a connection-only
+// registration instead.
+func TestRegisterCluster_CredsSourceSecretBackend_ProviderOptional(t *testing.T) {
 	srv := newIsolatedTestServer(t)
 	router := NewRouter(srv, nil)
 
@@ -60,14 +63,14 @@ func TestRegisterCluster_CredsSourceSecretBackend_RequiresProvider(t *testing.T)
 		"creds_source": "secret-kubeconfig",
 	})
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503: a backend creds_source still needs the secrets provider configured", w.Code)
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatalf("status = 503: a backend creds_source with no provider configured must degrade to connection-only registration, not 503 (V2-cleanup-88.3)")
 	}
 }
 
-// Explicit creds_source=eks-token also routes to the backend path → 503 with a
-// nil credProvider.
-func TestRegisterCluster_CredsSourceEKSToken_RequiresProvider(t *testing.T) {
+// Explicit creds_source=eks-token also routes to the backend path — same
+// relaxation, no 503 with a nil credProvider.
+func TestRegisterCluster_CredsSourceEKSToken_ProviderOptional(t *testing.T) {
 	srv := newIsolatedTestServer(t)
 	router := NewRouter(srv, nil)
 
@@ -76,8 +79,8 @@ func TestRegisterCluster_CredsSourceEKSToken_RequiresProvider(t *testing.T) {
 		"creds_source": "eks-token",
 	})
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503: eks-token routes through the backend path", w.Code)
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatalf("status = 503: eks-token routes through the backend path but must not require a provider (V2-cleanup-88.3)")
 	}
 }
 
@@ -122,9 +125,11 @@ func TestRegisterCluster_CredsSourceInline_RejectsSecretPath(t *testing.T) {
 	}
 }
 
-// Backward-compat: with no creds_source, the empty-provider request still hits
-// the backend path and surfaces 503 (provider missing) — exactly as before.
-func TestRegisterCluster_BackwardCompat_NoCredsSource_EmptyProvider503(t *testing.T) {
+// Backward-compat: with no creds_source, an empty-provider request still
+// hits the backend path but no longer surfaces 503 — credentials are
+// optional at registration for every connection mode (V2-cleanup-88.3 —
+// lazy credentials).
+func TestRegisterCluster_BackwardCompat_NoCredsSource_ProviderOptional(t *testing.T) {
 	srv := newIsolatedTestServer(t)
 	router := NewRouter(srv, nil)
 
@@ -132,7 +137,7 @@ func TestRegisterCluster_BackwardCompat_NoCredsSource_EmptyProvider503(t *testin
 		"name": "prod-eu",
 	})
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503: unchanged legacy empty-provider backend behavior", w.Code)
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatalf("status = 503: the legacy empty-provider backend path must now degrade to connection-only registration (V2-cleanup-88.3)")
 	}
 }

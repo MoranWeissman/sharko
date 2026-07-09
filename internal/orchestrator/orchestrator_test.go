@@ -703,19 +703,32 @@ func TestRegisterCluster_PartialSuccess_GitFails(t *testing.T) {
 	}
 }
 
-func TestRegisterCluster_ProviderFails(t *testing.T) {
+// TestRegisterCluster_ProviderFails_CredentialsOptional_Succeeds pins
+// V2-cleanup-88.3 (lazy credentials): a backend lookup failure at
+// registration time — for ANY connection mode, not just self-managed — no
+// longer fails the registration. Sharko degrades to a connection-only
+// registration and records the skip; credentials are only required later,
+// when a secret-bearing addon is enabled (EnableAddon's pre-flight gate).
+func TestRegisterCluster_ProviderFails_CredentialsOptional_Succeeds(t *testing.T) {
 	creds := &mockCredProvider{err: fmt.Errorf("vault unavailable")}
 	orch := New(nil, creds, newMockArgocd(), newMockGitProvider(), defaultGitOps(), defaultPaths(), nil)
 
-	_, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
-		Name: "prod-eu",
+	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:   "prod-eu",
+		Addons: map[string]bool{"monitoring": true},
 	})
 
-	if err == nil {
-		t.Fatal("expected error when provider fails")
+	if err != nil {
+		t.Fatalf("expected success despite provider failure, got error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "vault unavailable") {
-		t.Errorf("unexpected error message: %v", err)
+	if result.Status != "success" {
+		t.Errorf("expected status=success, got %q (%s)", result.Status, result.Error)
+	}
+	if !hasStep(result.CompletedSteps, "skip_credentials") {
+		t.Errorf("expected skip_credentials step, got %v", result.CompletedSteps)
+	}
+	if result.Verification != nil {
+		t.Error("verification must be skipped when the provider lookup fails")
 	}
 }
 

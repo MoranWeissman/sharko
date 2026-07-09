@@ -25,15 +25,15 @@ import (
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
-// @Failure 503 {object} map[string]interface{} "Credentials provider not configured"
 // @Router /clusters/batch [post]
 // handleBatchRegisterClusters handles POST /api/v1/clusters/batch — register multiple clusters.
+//
+// Credentials are OPTIONAL for every cluster in the batch, same as single
+// registration (V2-cleanup-88.3 — lazy credentials): this handler no longer
+// requires a configured secrets provider up front. Each cluster degrades to
+// a connection-only registration when Sharko has no credentials for it.
 func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.register") {
-		return
-	}
-	if s.credProvider() == nil {
-		writeMissingProviderError(w)
 		return
 	}
 

@@ -89,17 +89,24 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		}
 
 		// Phase 1: Verification (Stage1 connectivity test).
+		//
+		// Credentials are OPTIONAL for adoption, same as registration
+		// (V2-cleanup-88.3 — lazy credentials): an adopted cluster already
+		// has a working ArgoCD cluster Secret created out-of-band — that is
+		// the whole point of Adopt, and adoptSingleCluster below records
+		// connectionManagedBy: user for exactly that reason. A failed
+		// credential lookup is therefore the NORMAL case, not a fatal one —
+		// skip verification instead of failing the adoption. Sharko will
+		// ask for credentials later if a secret-bearing addon is enabled on
+		// this cluster.
 		if o.credProvider != nil && o.remoteClientFn != nil {
 			// Resolve the stored secretPath override (if any) — a re-adopted
 			// cluster may already have a record with one (V2-cleanup-55.1).
 			creds, credErr := o.fetchClusterCredentials(ctx, clusterName)
 			if credErr != nil {
-				cr.Status = "failed"
-				cr.Error = fmt.Sprintf("fetching credentials for cluster %q: %v", clusterName, credErr)
-				result.Results = append(result.Results, cr)
-				continue
-			}
-			if creds.Raw != nil {
+				log.Info("adopt: no credentials available — skipping connectivity verification",
+					"cluster", clusterName, "error", credErr)
+			} else if creds.Raw != nil {
 				remoteClient, clientErr := o.remoteClientFn(creds.Raw)
 				if clientErr != nil {
 					cr.Status = "failed"

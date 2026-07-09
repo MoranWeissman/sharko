@@ -50,6 +50,12 @@ var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // the managed-clusters.yaml PR merges — the reconciler owns the entire
 // ArgoCD cluster-Secret lifecycle, which closes the orphan-on-PR-close
 // bug class at the architectural level.
+//
+// Step 3 credentials are OPTIONAL (V2-cleanup-88.3 — lazy credentials):
+// registration succeeds with zero Sharko-side credentials for every
+// connection mode. Sharko only needs its own spoke-cluster credentials to
+// push addon secrets, and only asks for them at that moment — see
+// EnableAddon's pre-flight gate.
 func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterRequest) (*RegisterClusterResult, error) {
 	log := logging.LoggerFromContext(ctx)
 	// Step 1: Validate input.
@@ -90,15 +96,18 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	selfManaged := models.IsUserManagedConnection(req.ConnectionManagedBy)
 
 	if err := validateCredsSource(credsSource, req); err != nil {
-		// Self-managed registrations may omit credentials entirely — Sharko
-		// never writes the ArgoCD cluster Secret for them, so there is
-		// nothing the credentials are strictly REQUIRED for. Only the exact
+		// Credentials are OPTIONAL at registration, for EVERY connection
+		// mode (V2-cleanup-88.3 — lazy credentials generalizes what used to
+		// be a self-managed-only relaxation): Sharko's one ongoing need for
+		// its own spoke-cluster credentials is pushing addon secrets, and
+		// that need does not exist until a secret-bearing addon is actually
+		// enabled (see EnableAddon's pre-flight gate). Only the exact
 		// "inline source with no kubeconfig" case is relaxed, narrowed via
 		// the ErrMissingInlineKubeconfig sentinel (V2-cleanup-60 M3) — every
 		// OTHER validateCredsSource error (e.g. a contradictory secret_path
-		// set alongside an inline source) must still surface, even for a
-		// self-managed registration.
-		if !(selfManaged && errors.Is(err, ErrMissingInlineKubeconfig)) {
+		// set alongside an inline source) must still surface, regardless of
+		// connection mode.
+		if !errors.Is(err, ErrMissingInlineKubeconfig) {
 			return nil, err
 		}
 	}
@@ -162,42 +171,44 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// backend source (secret-kubeconfig / eks-token) we keep the original
 	// credProvider lookup; v1 does not split the backend sniff, so both
 	// backend labels share this one route (the provider sniffs the payload).
-	// For a SELF-MANAGED connection credentials are OPTIONAL: Sharko never
-	// writes the ArgoCD cluster Secret, so credentials are only useful as a
-	// fail-fast Stage-1 verification. When they are supplied (inline
-	// kubeconfig pasted, or a backend lookup that succeeds) verification
-	// still runs exactly as for Sharko-managed clusters; when they are
-	// absent (or the backend lookup fails) registration logs the reason,
-	// skips verification + addon-secret creation, and proceeds straight to
-	// the Git record. creds == nil downstream means "no credentials
-	// available" and every consumer guards on it.
+	//
+	// Credentials are OPTIONAL at registration, for EVERY connection mode
+	// (V2-cleanup-88.3 — lazy credentials): Sharko's one ongoing need for
+	// its own spoke-cluster credentials is pushing addon secrets, and that
+	// need does not exist until a secret-bearing addon is actually enabled
+	// (see EnableAddon's pre-flight gate). Registering a cluster is a Git +
+	// ArgoCD-connection concern, not a credentials concern. When
+	// credentials ARE supplied (inline kubeconfig pasted, or a backend
+	// lookup that succeeds) verification still runs exactly as before;
+	// when they are absent (or the backend lookup fails) registration logs
+	// the reason, skips verification + addon-secret creation, and proceeds
+	// straight to the Git record. creds == nil downstream means "no
+	// credentials available" and every consumer guards on it.
 	var creds *providers.Kubeconfig
 	credsSkippedReason := ""
 	if isInlineSource(credsSource) {
-		// TrimSpace (V2-cleanup-60 L5): a whitespace-only kubeconfig ("\n",
-		// spaces, ...) must be treated exactly like an absent one for the
-		// self-managed relaxation. Without this, ParseInlineKubeconfig below
-		// received the whitespace string, failed to parse it as YAML, and the
-		// registration errored (502) instead of cleanly skipping verification
-		// the way an empty Kubeconfig does.
-		if selfManaged && strings.TrimSpace(req.Kubeconfig) == "" {
+		// TrimSpace (V2-cleanup-60 L5, generalized by V2-cleanup-88.3): a
+		// whitespace-only kubeconfig ("\n", spaces, ...) must be treated
+		// exactly like an absent one. Without this, ParseInlineKubeconfig
+		// below received the whitespace string, failed to parse it as YAML,
+		// and the registration errored (502) instead of cleanly skipping
+		// verification the way an empty Kubeconfig does.
+		if strings.TrimSpace(req.Kubeconfig) == "" {
 			credsSkippedReason = "no kubeconfig supplied"
 		} else {
 			var parseErr error
 			creds, parseErr = providers.ParseInlineKubeconfig(req.Kubeconfig)
 			if parseErr != nil {
-				// A pasted-but-broken kubeconfig is a caller error in BOTH
-				// modes — silently ignoring it for self-managed would hide a
-				// typo the caller clearly wanted validated.
+				// A pasted-but-broken kubeconfig is always a caller error —
+				// silently ignoring it would hide a typo the caller clearly
+				// wanted validated. Only a genuinely ABSENT kubeconfig is
+				// treated as "connection-only, no credentials".
 				return nil, fmt.Errorf("parsing inline kubeconfig for cluster %q: %w", req.Name, parseErr)
 			}
 			steps = append(steps, "parse_kubeconfig")
 		}
 	} else {
 		if o.credProvider == nil {
-			if !selfManaged {
-				return nil, fmt.Errorf("credentials provider not configured (required for provider %q)", req.Provider)
-			}
 			credsSkippedReason = "no credentials provider configured"
 		} else {
 			// If an explicit secretPath is provided, use it directly (bypasses prefix logic).
@@ -213,14 +224,12 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			var fetchErr error
 			creds, fetchErr = providers.GetCredentialsWithOptionalRole(o.credProvider, credLookupName, req.RoleARN)
 			if fetchErr != nil {
-				if !selfManaged {
-					return nil, fmt.Errorf("fetching credentials for cluster %q: %w", req.Name, fetchErr)
-				}
-				// Self-managed: the backend routinely holds nothing for this
-				// cluster (the user keeps the credentials in their own
-				// Secret). Log + continue without verification.
-				log.Warn("self-managed registration: credentials lookup failed — skipping connectivity verification",
-					"cluster", req.Name, "error", fetchErr)
+				// V2-cleanup-88.3 — lazy credentials: a failed backend
+				// lookup is the NORMAL case for a connection-only
+				// registration (the backend routinely holds nothing for a
+				// cluster Sharko was never given credentials for). Skip
+				// verification instead of failing the whole registration;
+				// the reason is logged in the unified block below.
 				creds = nil
 				credsSkippedReason = "credentials lookup failed: " + fetchErr.Error()
 			} else {
@@ -232,9 +241,19 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		result.Cluster.Server = creds.Server
 	}
 	if credsSkippedReason != "" {
-		steps = append(steps, "skip_credentials_self_managed")
-		log.Info("self-managed registration: proceeding without credentials — Sharko never writes the ArgoCD cluster Secret for this cluster",
-			"cluster", req.Name, "reason", credsSkippedReason)
+		if selfManaged {
+			// Self-managed keeps its own step marker + message: the reason
+			// credentials are unnecessary is structural (Sharko never
+			// writes this connection's ArgoCD Secret), not just "not yet
+			// needed".
+			steps = append(steps, "skip_credentials_self_managed")
+			log.Info("self-managed registration: proceeding without credentials — Sharko never writes the ArgoCD cluster Secret for this cluster",
+				"cluster", req.Name, "reason", credsSkippedReason)
+		} else {
+			steps = append(steps, "skip_credentials")
+			log.Info("registering without Sharko-side credentials — connection-only registration; credentials will be required later if a secret-bearing addon is enabled (V2-cleanup-88.3)",
+				"cluster", req.Name, "reason", credsSkippedReason)
+		}
 	}
 
 	// Step 3a: Verify connectivity via Stage 1 (secret CRUD cycle on remote cluster).
