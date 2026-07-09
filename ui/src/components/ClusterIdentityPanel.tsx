@@ -1,16 +1,17 @@
 /**
- * ClusterIdentityPanel — Layer 1 ("Identity — once per hub") of the
- * two-layer registration dialog (V2-cleanup-88.5).
+ * ClusterIdentityPanel — the full identity explainer: detected AWS identity
+ * ARN, detection method, and an expandable "How identity-based access
+ * works" panel.
  *
- * The maintainer's complaint about the old register-cluster screen: "as a
- * newcomer that sees this for the first time — I don't understand a
- * thing." The fix is this panel: it stops ASKING the user to know how
- * Sharko authenticates and starts TELLING them, using what Sharko already
- * auto-detected about itself (GET /api/v1/system/capabilities,
- * V2-cleanup-88.1) — no guesswork required from the user.
+ * Originally Layer 1 of the two-layer registration dialog (V2-cleanup-88.5).
+ * The maintainer's complaint about that placement: it's read-only
+ * information dominating a form — a newcomer registering a cluster thinks
+ * they must act on it. V2-cleanup-89.2 moved this full panel to the System
+ * page (the "whole chain" read-only screen); the dialog keeps only a
+ * one-line summary (`ClusterIdentityStrip`) that links here.
  *
- * Purely presentational: the parent (ClustersOverview) owns the fetch and
- * passes the result down, the same pattern already used for catalogAddons.
+ * Purely presentational: the caller (SystemView) owns the fetch and passes
+ * the result down, the same pattern already used for catalogAddons.
  */
 import { useState } from 'react';
 import { ShieldCheck, Info, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
@@ -43,7 +44,7 @@ export function ClusterIdentityPanel({ capabilities, loading }: ClusterIdentityP
       className="rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] p-3 dark:ring-gray-700 dark:bg-gray-900"
     >
       <p className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
-        Layer 1 — Identity (once per hub)
+        Detected once per hub — applies to every cluster
       </p>
 
       {loading && (

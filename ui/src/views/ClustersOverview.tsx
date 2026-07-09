@@ -61,7 +61,7 @@ import {
 } from '@/components/ClusterActionHints';
 import { PRModelExplainer } from '@/components/PRFeedback';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
-import { ClusterIdentityPanel } from '@/components/ClusterIdentityPanel';
+import { ClusterIdentityStrip } from '@/components/ClusterIdentityStrip';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
 import { AdoptClustersDialog } from '@/components/AdoptClustersDialog';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
@@ -976,11 +976,13 @@ export function ClustersOverview() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            {/* Layer 1 — Identity (V2-cleanup-88.5). Purely informational:
-              * tells the user what Sharko already knows about its own AWS
-              * identity instead of asking them to know it. Same panel every
-              * time this dialog opens — nothing here is per-cluster. */}
-            <ClusterIdentityPanel capabilities={capabilities} loading={capabilitiesLoading} />
+            {/* Layer 1 — Identity (V2-cleanup-88.5, shrunk to one line by
+              * V2-cleanup-89.2). Purely informational: tells the user what
+              * Sharko already knows about its own AWS identity instead of
+              * asking them to know it. The full explainer (ARN, method,
+              * "how it works") now lives on the System page — this dialog
+              * only needs the one-line summary + a link there. */}
+            <ClusterIdentityStrip capabilities={capabilities} loading={capabilitiesLoading} />
 
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
