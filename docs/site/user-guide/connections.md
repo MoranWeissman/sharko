@@ -1,6 +1,9 @@
 # Settings
 
-After the first-run wizard, all configuration lives in the **Settings** page. It has six sections accessible from the left navigation panel.
+After the first-run wizard, all configuration lives in the **Settings** page, accessible from the left navigation panel.
+
+!!! note "Looking for Sharko's own identity (ARN, detection method)?"
+    That moved off this page. It now lives on the **System** page — one read-only screen showing the whole Sharko → ArgoCD → Git repo → clusters chain, plus the detected ArgoCD version against Sharko's tested range. The register-cluster dialog still shows a one-line identity summary, but the full detail is on System, not here.
 
 ## Connection
 
@@ -71,6 +74,37 @@ Configure how Sharko fetches cluster kubeconfigs.
 **For `aws-sm`:** Set the AWS region. Sharko uses IRSA for authentication — configure the IRSA role annotation at Helm install time (see [Installation](../getting-started/installation.md#aws-secrets-manager-optional)).
 
 **For `k8s-secrets`:** Set the Kubernetes namespace where cluster secrets are stored.
+
+## Server Settings
+
+A handful of server-wide, admin-only toggles live in their own Settings sections (not Helm values — they're stored in Sharko's in-cluster settings store and take effect immediately, no restart needed).
+
+### Connectivity Probe (`probe_mode`)
+
+**Settings → Connectivity Probe.** Controls how Sharko confirms a newly registered cluster is reachable, before you've deployed a real addon to it.
+
+| Value | Behavior |
+|-------|----------|
+| `check-app` (default) | Sharko deploys a tiny throwaway ArgoCD app to the new cluster and watches it sync, then removes it once your first real addon deploys. Proves the whole path end to end, but it is a real (transient) deployment. |
+| `api-test` | Sharko never deploys anything — reachability comes straight from ArgoCD's own connection state to the cluster. |
+
+```bash
+curl -X PUT https://sharko.your-domain.com/api/v1/settings/probe-mode \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"probe_mode": "api-test"}'
+```
+
+### Allow Inline Credentials
+
+**Settings → same section as Connectivity Probe.** Server-wide, admin-only toggle (`allow_inline_credentials`, default **true**) that controls whether cluster registration is allowed to accept a pasted kubeconfig at all.
+
+| Value | Behavior |
+|-------|----------|
+| `true` (default) | Every registration source — paste a kubeconfig, point at a stored secret, mint an EKS token, or no credentials at all — works as documented in [Adding a Cluster](clusters.md#adding-a-cluster). |
+| `false` | Registrations that paste inline kubeconfig bytes are rejected with a plain message. The **paste a kubeconfig** option disappears from the UI entirely. Pointing at an already-stored secret, minting an EKS token, or registering with no credentials at all are all unaffected — this only closes the one path where sensitive bytes travel inside the registration request itself. |
+
+Turn this off in production to enforce GitOps-clean secret-store pointers — see [Security → Secrets Management Recommendations](../operator/security.md#secrets-management-recommendations). Once scoped RBAC lands (see the [roadmap](../community/roadmap.md)), this is planned to become a per-role permission rather than a single server-wide switch.
 
 ## GitOps
 

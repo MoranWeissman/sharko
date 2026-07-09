@@ -14,7 +14,7 @@ Sharko distinguishes between two types of clusters:
 | **Managed** | Registered via Sharko — has a values file in Git. Full lifecycle management: addons, upgrades, secrets reconciliation. |
 | **Discovered** | Found in ArgoCD but not registered via Sharko — no values file in Git. Sharko surfaces these as read-only and offers an **Adopt** path. |
 
-In the UI, managed and discovered clusters appear in separate sections on the Clusters page. In the API, every cluster entry includes a `"managed": true/false` field.
+In the API, every cluster entry includes a `"managed": true/false` field. In the UI, the Clusters page shows managed clusters as the main list; Discovered clusters are collapsed into a single hint line with a count (e.g. "3 clusters found in ArgoCD that Sharko doesn't manage yet") — click it to open **Register New Cluster** pre-set to the "I do" connection-ownership choice, described below.
 
 ## Discovering Available Clusters
 
@@ -28,7 +28,7 @@ Or in the UI: **Clusters → Register Cluster → Browse Available**.
 
 ## Adding a Cluster
 
-When you register a cluster, the first thing to settle is one question: **how should Sharko get this cluster's credentials?** There are three answers, and you pick one:
+When you register a cluster, one of the things to settle is **how should Sharko get this cluster's credentials?** There are three answers, and you pick one — or none at all:
 
 | Credentials source | What it means | You supply |
 |--------------------|---------------|------------|
@@ -37,6 +37,11 @@ When you register a cluster, the first thing to settle is one question: **how sh
 | **Amazon EKS token** | Sharko mints a short-lived token from your EKS cloud identity, so nothing long-lived is stored or pasted. EKS only. | The AWS region |
 
 The credentials source is the *only* thing that changes between these three. Everything else — which addons to enable, the environment label, the cluster name — works the same way no matter how Sharko reaches the cluster.
+
+!!! tip "Credentials are entirely optional at registration"
+    Since V2-cleanup-88.3, you can skip the credentials source altogether and register with none of the three. Registration always succeeds — addons deploy through the normal Git → ArgoCD path, which never needs Sharko's own cluster access. The only place credentials become required is enabling an addon that pushes its own secrets to the cluster (a `secrets:` block in its catalog entry, e.g. Datadog API keys): that specific action is rejected with a `422` naming exactly what's missing, until you add credentials. A secret-less addon enables with zero friction either way. See [Cluster Connectivity Model](../operator/cluster-connectivity-model.md#registration-works-with-zero-credentials-lazy-credentials) for the full model. In the UI, a cluster missing credentials shows a pre-warning on the Apply button for a secret-bearing addon, before you hit the same 422 the API would return.
+
+In the register dialog, a one-line strip above the credentials fields ("Layer 1 — Identity") tells you whether Sharko already has its own AWS identity — useful for the EKS token source. The full identity detail (ARN, detection method, how it works) used to live in the dialog itself; it now lives on the **System** page (left navigation), which also shows the whole Sharko → ArgoCD → Git → clusters chain in one read-only screen.
 
 ![Credential flow: paste a kubeconfig, or point at a stored kubeconfig / EKS token which both call the secrets provider; a structured EKS secret then resolves which IAM role to assume — the secret's own roleArn, then the per-cluster role_arn, then the connection-level default, then the pod's own IRSA identity — before minting a short-lived STS token.](../assets/diagrams/03-credential-flows.drawio.svg)
 
@@ -122,6 +127,9 @@ This creates a PR that adds or removes addon entries from the cluster's values f
 
 Via UI: on the cluster detail page, click **Edit Addons**.
 
+!!! note "Enabling a secret-bearing addon on a credential-less cluster"
+    If the addon you're enabling declares its own secrets (see [Addon Secrets](addons.md#addon-secrets)) and this cluster has no resolvable connection credentials, the request is rejected with a `422` naming what's missing — see [Adding a Cluster](#adding-a-cluster) above. Addons with no secrets enable regardless.
+
 ## Removing a Cluster
 
 ```bash
@@ -160,6 +168,9 @@ What the adopt operation does:
 
 The cluster does **not** need to be in your secrets provider — it is already in ArgoCD, so no kubeconfig fetch is required for the adoption step.
 
+!!! tip "Adopting from the register dialog"
+    Since V2-cleanup-89.3, you don't have to go find `adopt-cluster` separately. In **Register New Cluster**, pick **"I do — Sharko only manages addon labels"** for connection ownership, and if ArgoCD already knows about clusters Sharko doesn't manage yet, a **"Pick from what ArgoCD already has"** list appears — showing each one by name and server URL. Pick one and confirm; it runs the exact same adopt flow as `adopt-cluster` (same verify-then-confirm dialog, same Git-PR result). This block is hidden entirely when there's nothing to pick from. Typing in coordinates by hand is still available below it, for a cluster ArgoCD doesn't know about yet.
+
 ## Testing Cluster Connectivity
 
 Verify that Sharko can reach a cluster's Kubernetes API:
@@ -191,6 +202,24 @@ In the UI, a **Test connection** button on the cluster detail page shows the res
 
 !!! tip
     Use connectivity tests after rotating cluster credentials or after ArgoCD reports a cluster as `Unknown`. It is a lightweight check (calls `ServerVersion()` only — no cluster-wide list operations).
+
+When Test connection fails and you need to know *which* link broke — credentials, addon-secret paths, an IAM role, the cluster's own trust, or (for a self-managed connection) another ArgoCD Application fighting Sharko over the connection secret — click **Run connection doctor** on the same page, or `POST /api/v1/clusters/{name}/doctor`. It runs five real-attempt checks in one call and returns a plain-English fix per failure. See [Connection Doctor](../operator/connection-doctor.md) for what each check means.
+
+## Checking the Last Reconcile / Manual Sync
+
+Sharko's cluster-secret reconciler runs every 30 seconds in the background, converging the ArgoCD cluster Secret's addon labels (and, for Sharko-managed connections, the credentials themselves) to match what's declared in Git. `GET /api/v1/clusters/{name}` includes a `last_reconcile` field showing the most recent outcome (`succeeded`, `failed`, or `skipped`) with a plain-English message on failure — this used to be visible only in the server log. In the UI, it's the **"Last sync"** line on the cluster detail page.
+
+To nudge a reconcile immediately instead of waiting for the next tick, click **Sync now** on the cluster detail page, or:
+
+```bash
+curl -X POST https://sharko.your-domain.com/api/v1/clusters/my-cluster/reconcile \
+  -H "Authorization: Bearer <token>"
+```
+
+This returns `202` right away — the reconcile itself runs in the background. Poll `GET /clusters/{name}` afterward and read the updated `last_reconcile` field.
+
+!!! note "Self-managed connections: a 'succeeded' sync with a warning"
+    On a self-managed connection, if another ArgoCD Application is also rendering the same connection secret from Git, the reconciler can end up in a tug-of-war over the addon-label values. `last_reconcile.outcome` stays `succeeded` in that case — Sharko is still successfully re-applying its labels every tick — but the message names the pattern after two reverts in a row. See [Managing Cluster Connections Yourself](../operator/self-managed-connections.md#when-another-argocd-application-also-renders-this-secret).
 
 ## Refreshing Cluster Credentials
 

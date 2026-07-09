@@ -140,6 +140,15 @@ Two triggers drive a `PollOnce` call:
   calls `reconciler.Trigger()`. The trigger channel has buffer 1, so
   back-to-back merges coalesce — the reconciler will see *at least
   one* tick after the last merge and converge.
+- **Manual "Sync now" trigger** (V2-cleanup-89.4) — `POST
+  /api/v1/clusters/{name}/reconcile` fires the same `Trigger()` channel
+  on demand. It's a fleet-wide pass, not a scoped single-cluster
+  reconcile (`pollOnce` always diffs the full desired-vs-live set in
+  one pass, so a full pass is the same work the 30s tick already does
+  — triggering it early is cheap). Returns `202` immediately; poll `GET
+  /clusters/{name}` and read the updated `last_reconcile` field once
+  the triggered pass completes. In the UI, this is the **Sync now**
+  button on the cluster detail page.
 
 The 30s periodic tick is the safety net for:
 
@@ -152,6 +161,55 @@ The 30s periodic tick is the safety net for:
 End-to-end convergence latency in the happy path (PR merged via
 Sharko-UI auto-merge) is under 5 seconds, proved by
 `tests/e2e/lifecycle/reconciler_test.go::TestE2E_RegisterCluster_PostMergeReconcile_CreatesSecret`.
+
+---
+
+## Per-cluster reconcile visibility (`last_reconcile`)
+
+Before V2-cleanup-89.4, a reconcile failure for one specific cluster (a
+vault fetch error, a rejected K8s API call, a self-managed connection
+still waiting on the user to create its Secret) went to the server log
+and the audit log only — ArgoCD would show a failed apply, and Sharko
+showed nothing. `GET /clusters/{name}` (and the clusters list/detail
+endpoints) now include a `last_reconcile` field:
+
+```json
+{
+  "last_reconcile": {
+    "time": "2026-07-09T14:32:07Z",
+    "outcome": "failed",
+    "message": "vault_get_failed: ..."
+  }
+}
+```
+
+`outcome` is one of `succeeded`, `failed`, or `skipped`. This is
+**derived, in-memory state only** — never written to git, never
+persisted across a restart. A server restart loses the history, but the
+next tick (at most `DefaultTickInterval` later) repopulates it, exactly
+like the reconcile loop itself is self-healing. The field is
+absent/`null` when the reconciler hasn't processed this cluster on this
+server instance yet (fresh startup, or a registration PR that hasn't
+merged). In the UI, this renders as a "Last sync" line on the cluster
+detail page.
+
+### Label-fight detection (V2-cleanup-89.5)
+
+For a **self-managed** connection, the reconciler only ever merges
+addon labels onto the Secret you created — it never touches anything
+else. If that same Secret is *also* rendered from Git by a separate
+ArgoCD Application, the two can end up fighting over the addon-label
+keys. The reconciler tracks consecutive ticks where a label it just
+wrote comes back with a different live value than the one it wrote —
+not merely "changed" (an addon toggle in `managed-clusters.yaml`
+changing what Sharko itself wants is never flagged as a fight). After
+**2 consecutive reverted ticks**, `last_reconcile.outcome` stays
+`succeeded` (Sharko is still successfully re-applying its labels every
+tick — nothing is actually broken from Sharko's side) but `message`
+carries a plain-English warning naming the pattern. Full writeup,
+including the fix, at [Managing Cluster Connections Yourself → When
+another ArgoCD Application also renders this
+secret](self-managed-connections.md#when-another-argocd-application-also-renders-this-secret).
 
 ---
 
@@ -211,9 +269,8 @@ retries on the next tick — there is no exponential backoff in v1.25
 **Self-healing.** The next reconciler tick observes the in-git ∖
 in-argocd delta, re-fetches credentials from vault, and re-creates the
 Secret with the ownership label and addon-enable labels. Up to a 30s
-recovery window unless someone triggers a reconcile sooner (for
-example by re-opening any Sharko PR that already merged — see
-"Troubleshooting" below).
+recovery window, or immediately if you click **Sync now** (or `POST
+/clusters/{name}/reconcile`) — see "Troubleshooting" below.
 
 ### What if `managed-clusters.yaml` has a schema-validation error?
 
@@ -311,12 +368,19 @@ converging ArgoCD state to match the declared git state. Two fixes:
 
 ### "How do I force a reconcile right now without waiting 30s?"
 
-Any merge of a Sharko-opened PR triggers an immediate reconcile via
-`prTracker.SetOnMergeFn`. There is no dedicated CLI command for an
-ad-hoc reconcile trigger in v1.25 — if you genuinely need
-sub-30s convergence without a PR merge, restarting the Sharko Pod
-forces a `PollOnce` on next boot. A dedicated CLI command may land in
-V125-2 polish.
+Two ways, as of V2-cleanup-89.4:
+
+- **UI:** click **Sync now** on the cluster's detail page.
+- **API:** `POST /api/v1/clusters/{name}/reconcile` — returns `202`
+  immediately (the reconcile itself runs asynchronously), then poll
+  `GET /clusters/{name}` and read the updated `last_reconcile` field
+  once the triggered pass completes.
+
+Any merge of a Sharko-opened PR also still triggers an immediate
+reconcile automatically via `prTracker.SetOnMergeFn` — the manual
+trigger above is for the cases that aren't a PR merge (an out-of-band
+git edit, a manually-recreated Secret, or just wanting to confirm
+convergence without waiting for the safety-net tick).
 
 ### Common audit-log actions to grep for
 
@@ -372,6 +436,13 @@ V125-2 polish.
   (the reconciler is on-by-default; no operator opt-in required).
 - [Audit log](./audit-log.md) — query syntax for the events listed
   above.
+- [Connection Doctor](./connection-doctor.md) — an on-demand,
+  per-cluster check that includes a `secret-ownership` check covering
+  the same label-fight failure mode this reconciler self-detects over
+  time.
+- [Managing Cluster Connections Yourself](./self-managed-connections.md)
+  — the self-managed connection mode this reconciler's two-direction
+  policy and label-fight detection both key off.
 - Architecture decision: cluster reconciler — the design discussion
   that motivated this work
   (`docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md`

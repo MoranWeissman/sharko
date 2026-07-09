@@ -45,12 +45,12 @@ After the wizard completes, the dashboard loads with clusters discovered from Ar
 
 ## 5. Start Managing Clusters
 
-From the dashboard, you will see two sections:
+From the dashboard, you will see:
 
 - **Managed clusters** — clusters registered and managed by Sharko
-- **Discovered clusters** — existing ArgoCD clusters not yet managed by Sharko
+- A hint line for **discovered clusters** — existing ArgoCD clusters not yet managed by Sharko, with a count
 
-Click **Start Managing** on any discovered cluster to bring it under Sharko management.
+Click the hint to open **Register New Cluster** pre-set to adopt one of them.
 
 ## Next Steps
 

@@ -190,10 +190,10 @@ Sharko surfaces both cases without asking you to go digging first:
   `app.kubernetes.io/instance` label, depending on your ArgoCD's
   `trackingMethod`), Sharko names the owning Application in a warning on
   the operation's response — it does not block the adopt or registration.
-- **The connection doctor** (`POST /clusters/{name}/doctor`) runs a
-  `secret-ownership` check for self-managed connections: pass when no
-  foreign marker is found, fail with the owning Application's name and the
-  same fix text when one is.
+- **The [connection doctor](connection-doctor.md)** (`POST
+  /clusters/{name}/doctor`) runs a `secret-ownership` check for
+  self-managed connections: pass when no foreign marker is found, fail
+  with the owning Application's name and the same fix text when one is.
 - **The reconciler** keeps a running count of consecutive ticks where a
   label it just wrote comes back with a different value than the one it
   wrote — not merely "changed" (an addon toggle in
@@ -336,7 +336,10 @@ untouched on your secret, so the addon would keep deploying.
 
 - [If You Remove Sharko (no lock-in)](removing-sharko.md) — the same
   guest philosophy applied to the whole installation.
+- [Connection Doctor](connection-doctor.md) — the `secret-ownership`
+  check (and the other four) in full, plus how to run them.
 - [Cluster Reconciler reference](cluster-reconciler.md) — how the label
-  sync loop works.
+  sync loop works, and where `last_reconcile` visibility + "Sync now"
+  live.
 - [ArgoCD declarative setup — clusters](https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters)
   — the authoritative cluster-secret reference.

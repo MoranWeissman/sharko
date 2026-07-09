@@ -68,6 +68,63 @@ addons:
 
 The two concerns can even use the same backend (AWS Secrets Manager, say) without being the same secret — a cluster's connection credentials and an addon's API key just happen to both live in AWS SM, under different paths, read by different code paths, for different reasons. Adding the `argocd` cluster-credentials provider, or the AWS IAM minting in V2-cleanup-88.2, changes nothing about how addon-secret resolution works.
 
+## Registration works with zero credentials (lazy credentials)
+
+Since V2-cleanup-88.3, **registering a cluster never requires connection
+credentials at all**, regardless of which connection mode you pick.
+Addon workloads deploy the normal way — Git → ArgoCD → the cluster —
+and that path needs no credentials from Sharko whatsoever. The one and
+only place Sharko needs *its own* access to a spoke cluster is pushing
+addon secrets (the `secrets:` block on a catalog entry), because that's
+a direct Kubernetes API write Sharko itself performs.
+
+So the gate sits where the need actually is, not at registration:
+
+- **Register a cluster with no credentials source at all.** This
+  succeeds for every connection mode — Sharko-managed and self-managed
+  alike. The cluster's entry goes into `configuration/managed-clusters.yaml`
+  exactly like any other registration.
+- **Enable a secret-*less* addon on a credential-less cluster.** Also
+  succeeds with zero friction — there was never anything for Sharko to
+  push, so there's nothing to gate.
+- **Enable a secret-*bearing* addon on a credential-less cluster.** This
+  is the one case that's rejected — `POST
+  /clusters/{name}/addons/{addon}` returns `422` with a plain message
+  naming exactly what's missing:
+
+  > *"addon "datadog" needs 2 secrets pushed to the cluster, but Sharko
+  > has no credentials for cluster "prod-1" — add connection
+  > credentials (secret path or EKS role) to the cluster, or choose an
+  > addon without secrets."*
+
+  The check performs a real credential-fetch attempt (the same
+  `credsRouter`-aware path the secret push itself uses) — a `nil`
+  result means the push can actually proceed, not just that the
+  cluster record *looks* configured.
+
+**In the UI**, a cluster with no resolvable credentials carries
+`addon_secrets_ready: false` on its read model (`GET
+/clusters/{name}`), and the cluster detail page uses that flag to
+pre-warn *before* you click Apply on a secret-bearing addon, instead of
+letting the request round-trip into the same 422 the API would return
+anyway.
+
+This changes nothing about the two-secret split above: addon secrets
+still flow through the same `SecretProvider` interface either way. What
+changed is *when* Sharko insists on being able to reach that interface
+for a given cluster — at the moment an addon that actually needs it is
+enabled, not upfront at registration.
+
+## Checking a connection end to end
+
+The [Connection Doctor](connection-doctor.md) runs five real-attempt
+checks against a cluster's connection in one call — credentials,
+addon-secret paths, IAM role assumption, cluster access, and (for
+self-managed connections) whether another ArgoCD Application is
+fighting Sharko over the connection secret. Use it when Test
+connection fails and you need to know *which* link in the chain broke,
+not just that one did.
+
 ## Where each piece of connection truth lives
 
 A registered cluster's "how do I connect to this" story is split across three places on purpose — each piece lives where it's cheapest to fix a typo in it, and each has a different blast radius when it's wrong:
