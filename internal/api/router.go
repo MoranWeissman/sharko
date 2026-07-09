@@ -238,6 +238,35 @@ type Server struct {
 	hubPlatformDetectorOnce sync.Once
 	hubPlatformDetector     *capabilities.HubPlatformDetector
 
+	// doctorAssumeRoleFn backs the connection doctor's "cross-account role
+	// assumable" check (V2-cleanup-88.4). Lazily built (see
+	// getDoctorAssumeRoleFn in clusters_doctor.go) — same rationale as
+	// awsDetector/hubPlatformDetector: Server literals built directly by
+	// table-driven tests still work, and tests in this package may pre-set
+	// the field directly to inject a fake AssumeRole attempt.
+	doctorAssumeRoleOnce sync.Once
+	doctorAssumeRoleFn   func(ctx context.Context, roleARN, region string) error
+
+	// doctorK8sClientFn backs the connection doctor's "cluster accepts the
+	// token" check (V2-cleanup-88.4) — the same
+	// remoteclient.NewClientFromKubeconfig call the Test handler makes.
+	// Lazily built and test-injectable for the exact same reason as
+	// doctorAssumeRoleFn: it lets tests substitute a fake kubernetes.Interface
+	// (e.g. client-go's fake clientset) to exercise verify.Stage1's pass path
+	// deterministically, with no real network I/O.
+	doctorK8sClientOnce sync.Once
+	doctorK8sClientFn   func(kubeconfig []byte) (kubernetes.Interface, error)
+
+	// doctorAddonSecretProviderFn backs the connection doctor's
+	// "addon-secret paths readable" check (V2-cleanup-88.4) — the same
+	// providers.NewAddonSecretProvider factory every addon-secret consumer
+	// in this codebase is built from. Lazily built and test-injectable for
+	// the same reason as the other doctor seams: it lets tests substitute a
+	// fake providers.SecretProvider without depending on ambient (and
+	// CI-environment-dependent) cluster/cloud credentials.
+	doctorAddonSecretProviderOnce sync.Once
+	doctorAddonSecretProviderFn   func(cfg providers.AddonSecretProviderConfig) (providers.SecretProvider, error)
+
 	// startTime records when the server was created (used for uptime reporting).
 	startTime time.Time
 
@@ -743,6 +772,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/clusters/{name}/refresh", srv.handleRefreshClusterCredentials)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/test", srv.handleTestCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/diagnose", srv.handleDiagnoseCluster)
+	mux.HandleFunc("POST /api/v1/clusters/{name}/doctor", srv.handleDoctorCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/unadopt", srv.handleUnadoptCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}", srv.handleEnableAddon)
 	mux.HandleFunc("DELETE /api/v1/clusters/{name}/addons/{addon}", srv.handleDisableAddon)
