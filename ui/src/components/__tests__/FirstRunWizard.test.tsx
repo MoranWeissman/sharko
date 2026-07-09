@@ -975,7 +975,7 @@ describe('FirstRunWizard — repo-clarity copy (V2-cleanup-9.2)', () => {
       ),
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/use a brand-new empty repo \(Sharko fills it in for you\)/i),
+      screen.getByText(/Use a new empty repo \(Sharko sets it up\)/i),
     ).toBeInTheDocument()
   })
 

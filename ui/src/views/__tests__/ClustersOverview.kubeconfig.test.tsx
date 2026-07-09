@@ -148,7 +148,7 @@ describe('ClustersOverview — creds-reframe-2 credential source', () => {
     const textarea = screen.getByPlaceholderText(/apiVersion: v1/i) as HTMLTextAreaElement;
     expect(textarea).toBeInTheDocument();
     expect(textarea.tagName).toBe('TEXTAREA');
-    expect(screen.getByText(/bearer-token authentication is supported/i)).toBeInTheDocument();
+    expect(screen.getByText(/only bearer-token auth is supported/i)).toBeInTheDocument();
     expect(screen.getByText(/kubectl create token/i)).toBeInTheDocument();
   });
 

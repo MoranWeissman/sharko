@@ -496,6 +496,31 @@ Card visual states:
 - **Breaking/cross-major badge** — `AlertTriangle` icon when `has_breaking: true` or `cross_major: true`
 - **Recommended card** — teal ring + green-tinted background when `is_recommended: true`; `Star` icon label
 
+## UI Voice (V2-cleanup-89.9)
+
+Terse where you work, human where it matters. Maintainer's verdict on the pre-89.9 copy: too
+chatty, "silly childish explanations", conversational headers ArgoCD would never use.
+
+1. **Labels, titles, headers, nav, buttons: terse standard nouns/verbs.** Never a question as a
+   title — "Where is this cluster?" → **Cluster location**; "Who manages the ArgoCD connection?"
+   → **Connection managed by**; "Discard this cancelled registration?" → **Discard cancelled
+   registration**; "Why a pull request?" → **Every change opens a pull request**.
+2. **Helper text under a field: at most one short factual sentence**, only where the choice is
+   genuinely non-obvious. No metaphors, no "simply/just/works great", no exclamation marks.
+   Example: the secret-path helper dropped "Recommended — a pointer to your secret store is
+   GitOps-clean: the connection is re-derivable from Git..." down to one sentence — the
+   GitOps-clean claim already lives in the select option's own tag, so repeating it in prose
+   underneath is chatter, not information.
+3. **Concept explanations do not live in forms** — a "How X works" paragraph belongs on a docs
+   page or a dedicated read-only screen (see `ClusterIdentityPanel` on `/system`), reached via a
+   one-line pointer from the form, not an inline essay in it.
+4. **Keep the spirit**: honesty tags ("recommended — GitOps-clean", "quick, not GitOps-clean", "no
+   stored credentials") and complete plain-English error/empty-state sentences ("Sharko checked
+   ArgoCD — no other clusters there to adopt.") stay exactly as-is — that's where Sharko still
+   sounds human, not a system dump.
+5. Never let internal design vocabulary (layers, tiers, waves, coordinates) render as user-facing
+   copy — check comments don't leak into JSX text nodes.
+
 ## Update This File When
 - New views or components are added
 - shadcn/ui components are added

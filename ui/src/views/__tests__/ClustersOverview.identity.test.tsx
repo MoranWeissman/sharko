@@ -148,8 +148,8 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
     expect(screen.queryByText('Layer 1 — Identity')).not.toBeInTheDocument();
     expect(screen.queryByText(/Layer 1/)).not.toBeInTheDocument();
     // The "Coordinates" section below also dropped its "Layer 2" header in
-    // favor of a plain question.
-    expect(screen.getByText('Where is this cluster?')).toBeInTheDocument();
+    // favor of a terse noun-phrase title (V2-cleanup-89.9: no questions as titles).
+    expect(screen.getByText('Cluster location')).toBeInTheDocument();
     expect(screen.queryByText(/Layer 2/)).not.toBeInTheDocument();
   });
 
@@ -218,6 +218,6 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
     expect(
       screen.getByText(/Connection credentials below are\s*optional/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/an addon that carries addon secrets/)).toBeInTheDocument();
+    expect(screen.getByText(/enable an addon with addon secrets/)).toBeInTheDocument();
   });
 });

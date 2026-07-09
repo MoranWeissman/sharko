@@ -616,7 +616,7 @@ export function ValuesEditor({
           <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-gray-800">
             <h4 className="flex items-center gap-2 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
               <RotateCcw className="h-4 w-4 text-[#3a6a8a] dark:text-gray-400" />
-              Discard your edits?
+              Discard your edits
             </h4>
             <p className="mt-2 text-sm text-[#1a4a6a] dark:text-gray-300">
               You'll lose the changes you've made. The editor will revert to the

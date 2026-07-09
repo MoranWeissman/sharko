@@ -560,7 +560,7 @@ export function ConnectionSection() {
               <div className="mb-4 flex items-start gap-2 rounded-lg bg-teal-50 p-3 dark:bg-teal-950/30">
                 <Sparkles className="h-4 w-4 mt-0.5 shrink-0 text-teal-600 dark:text-teal-400" />
                 <p className="text-sm text-teal-700 dark:text-teal-300">
-                  Connection saved! If your repository is empty, initialize it now to create the required folder structure and deployment templates.
+                  Connection saved. If the repository is empty, initialize it now to create the required folder structure and deployment templates.
                 </p>
               </div>
             )}

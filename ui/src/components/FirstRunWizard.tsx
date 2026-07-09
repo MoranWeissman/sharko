@@ -120,13 +120,12 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
           className="text-3xl text-[#0a2a4a] dark:text-gray-100"
           style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}
         >
-          Welcome to Sharko!
+          Welcome to Sharko
         </h2>
         <p className="text-[#2a5a7a] dark:text-gray-400 max-w-md">
           Sharko stores your addon setup as files in a Git repo — the same way
-          ArgoCD works. You can use a brand-new empty repo (Sharko fills it in
-          for you) or one you've already set up with Sharko. Next, you'll
-          connect that repo and your ArgoCD instance.
+          ArgoCD works. Use a new empty repo (Sharko sets it up) or one you
+          already have. Next, connect that repo and your ArgoCD instance.
         </p>
       </div>
       <button
@@ -179,8 +178,8 @@ function StepGit({
       </div>
       <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
         This is a dedicated config repo for Sharko — not your application's
-        code. A brand-new empty repo works great; Sharko sets up the folders
-        and files for you in the next step.
+        code. A new empty repo works; Sharko sets up the folders and files
+        in the next step.
       </p>
 
       <div className="space-y-4">
