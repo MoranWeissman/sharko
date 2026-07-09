@@ -6,7 +6,7 @@ import { ClustersOverview } from '@/views/ClustersOverview';
 // V2-cleanup-61.3 (B3): below the locked 5-cluster threshold, the Clusters
 // page hides the 5 health stat cards and the full advanced-filter bar
 // (name search, version/connection dropdowns, view toggle), and turns the
-// always-visible status legend into an on-demand "what do these mean?"
+// always-visible status legend into an on-demand "Status legend"
 // toggle. At >= 5 clusters everything reappears automatically. The
 // register/add-cluster button stays visible regardless of cluster count.
 
@@ -70,7 +70,7 @@ describe('ClustersOverview — control collapse below 5 clusters (V2-cleanup-61.
 
     // Legend is on-demand instead of permanently visible.
     expect(screen.queryByText('Cluster Status:')).not.toBeInTheDocument();
-    const legendToggle = screen.getByRole('button', { name: /what do these mean\?/i });
+    const legendToggle = screen.getByRole('button', { name: /status legend/i });
     expect(legendToggle).toBeInTheDocument();
     fireEvent.click(legendToggle);
     expect(screen.getByText('Cluster Status:')).toBeInTheDocument();
@@ -91,7 +91,7 @@ describe('ClustersOverview — control collapse below 5 clusters (V2-cleanup-61.
 
     // Legend renders automatically — no on-demand toggle.
     expect(screen.getByText('Cluster Status:')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /what do these mean\?/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /status legend/i })).not.toBeInTheDocument();
   });
 
   it('keeps the stat-card row and filter bar hidden with 4 clusters (just under threshold)', async () => {

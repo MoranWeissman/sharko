@@ -465,11 +465,9 @@ export function PRModelExplainer() {
     >
       <GitPullRequest className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
       <div className="flex-1">
-        <p className="font-medium">Why a pull request?</p>
+        <p className="font-medium">Every change opens a pull request</p>
         <p className="mt-1 text-blue-800 dark:text-blue-300">
-          Sharko never changes your cluster or Git repo directly — it opens a pull request
-          instead. Git stays the source of truth, and the PR is your chance to review the change
-          before it goes live. Merge it, and the change takes effect.
+          Sharko never changes your cluster or Git repo directly — merge the PR to make it take effect.
         </p>
       </div>
       <button

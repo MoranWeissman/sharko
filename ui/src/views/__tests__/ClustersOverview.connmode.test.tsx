@@ -144,11 +144,11 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
     expect(screen.queryByText(new RegExp(CONN_OWNER_USER_LABEL))).not.toBeInTheDocument();
   });
 
-  it('asks "Who manages the ArgoCD connection?" with Sharko as the default', async () => {
+  it('shows "Connection managed by" with Sharko as the default', async () => {
     renderView();
     await openAddDialog();
 
-    expect(screen.getByText('Who manages the ArgoCD connection?')).toBeInTheDocument();
+    expect(screen.getByText('Connection managed by')).toBeInTheDocument();
     const select = ownershipSelect();
     expect(select.value).toBe('sharko');
     // Both options are present, in plain English.

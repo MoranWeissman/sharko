@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ClustersOverview } from '@/views/ClustersOverview';
 import { AuthProvider } from '@/hooks/useAuth';
@@ -13,9 +13,10 @@ import { AuthProvider } from '@/hooks/useAuth';
 //      per orphan with name, server URL, last seen, and a destructive
 //      "Discard cancelled registration" button (updated V125-1-7.1).
 //   2. Section is absent when orphan_registrations is empty/undefined.
-//   3. Click Discard → ConfirmationModal opens with title "Discard this
-//      cancelled registration?" → confirm with "Discard" button →
-//      deleteOrphanCluster called with cluster name → on success refetch fires.
+//   3. Click Discard → ConfirmationModal opens with title "Discard
+//      cancelled registration" (V2-cleanup-89.9: terse, no question mark)
+//      → confirm with "Discard" button → deleteOrphanCluster called with
+//      cluster name → on success refetch fires.
 //   4. Orphan cluster names are filtered OUT of the Managed and
 //      Discovered sections — defence-in-depth alongside the BE filter.
 //   5. Success banner reads "Cancelled registration for ... discarded." (V125-1-7.1).
@@ -205,9 +206,10 @@ describe('ClustersOverview — V125-1-7 orphan cluster surface', () => {
     // V125-1-7.1: Click the renamed "Discard cancelled registration" button.
     fireEvent.click(screen.getByRole('button', { name: /Discard cancelled registration for kind-orphan/i }));
 
-    // Wait for the dialog. V125-1-7.1: new title "Discard this cancelled registration?".
+    // Wait for the dialog. V2-cleanup-89.9: terse title "Discard cancelled registration" (no question mark).
+    // Scoped to the dialog since the row's trigger button shares the same visible text.
     await waitFor(() => {
-      expect(screen.getByText(/Discard this cancelled registration\?/i)).toBeInTheDocument();
+      expect(within(screen.getByRole('dialog')).getByText(/^Discard cancelled registration$/i)).toBeInTheDocument();
     });
 
     // V125-1-7.1: modal body explains user mental model (no "Secret" terminology).
@@ -236,8 +238,8 @@ describe('ClustersOverview — V125-1-7 orphan cluster surface', () => {
     });
   });
 
-  it('modal title is "Discard this cancelled registration?" (V125-1-7.1)', async () => {
-    // Pinned regression test for the V125-1-7.1 modal title rename.
+  it('modal title is "Discard cancelled registration" (V2-cleanup-89.9)', async () => {
+    // Pinned regression test for the tone-pass modal title (terse, no question mark).
     mockGetClusters.mockResolvedValue({
       clusters: [],
       health_stats: { total_in_git: 0, connected: 0, failed: 0, missing_from_argocd: 0, not_in_git: 0 },
@@ -254,7 +256,7 @@ describe('ClustersOverview — V125-1-7 orphan cluster surface', () => {
     fireEvent.click(screen.getByRole('button', { name: /Discard cancelled registration for kind-orphan/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Discard this cancelled registration\?/i)).toBeInTheDocument();
+      expect(within(screen.getByRole('dialog')).getByText(/^Discard cancelled registration$/i)).toBeInTheDocument();
     });
     // Action button must say "Discard", not "Delete" or "Delete cluster Secret".
     const discardBtn = screen.getAllByRole('button').find(b => b.textContent?.trim() === 'Discard');

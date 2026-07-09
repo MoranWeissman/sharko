@@ -972,7 +972,7 @@ export function ClustersOverview() {
             className="inline-flex items-center gap-1.5 text-xs text-[#3a6a8a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200"
           >
             <HelpCircle className="h-3.5 w-3.5" />
-            What do these mean?
+            Status legend
           </button>
           {legendOpen && (
             <div className="mt-2">
@@ -995,7 +995,7 @@ export function ClustersOverview() {
           <DialogHeader>
             <DialogTitle>Register New Cluster</DialogTitle>
             <DialogDescription>
-              Two things Sharko needs: how it authenticates (once, below) and where this cluster is.
+              Connection details and cluster location.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -1009,12 +1009,10 @@ export function ClustersOverview() {
 
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
-                Where is this cluster?
+                Cluster location
               </p>
               <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-500">
-                Where this cluster is, and how to reach it. Connection credentials below are
-                optional — you can add them later; Sharko only needs them once you enable an addon
-                that carries addon secrets.
+                Connection credentials below are optional — add them later if you enable an addon with addon secrets.
               </p>
             </div>
 
@@ -1025,7 +1023,7 @@ export function ClustersOverview() {
               * inputs below become optional (verification only). */}
             <div>
               <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                Who manages the ArgoCD connection?
+                Connection managed by
               </label>
               <select
                 value={connManagedBy}
@@ -1053,7 +1051,7 @@ export function ClustersOverview() {
                 className="rounded-lg ring-2 ring-teal-300 bg-teal-50 p-3 dark:ring-teal-800 dark:bg-teal-950/20"
               >
                 <p className="text-sm font-medium text-[#0a3a5a] dark:text-gray-200">
-                  Pick from what ArgoCD already has
+                  Discovered clusters
                 </p>
                 <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-500">
                   ArgoCD already knows about {discoveredClusters.length} cluster{discoveredClusters.length === 1 ? '' : 's'} Sharko doesn't manage yet. Pick one to adopt it instead of typing its coordinates by hand.
@@ -1179,10 +1177,7 @@ export function ClustersOverview() {
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 font-mono text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
                       <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                        Paste your kubeconfig YAML. Sharko extracts the server URL, CA certificate, and bearer token. Note: only bearer-token authentication is supported in this release. For kind: run <code className="font-mono">kubectl create token &lt;serviceaccount&gt; --duration=24h</code> to generate a token.
-                      </p>
-                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                        Quick, but not GitOps-clean — credentials are stored only in the cluster, not re-derivable from Git or your secret store.
+                        Sharko extracts the server URL, CA certificate, and bearer token (only bearer-token auth is supported). For kind, generate one with <code className="font-mono">kubectl create token &lt;serviceaccount&gt; --duration=24h</code>.
                       </p>
                     </div>
                   </>
@@ -1207,7 +1202,7 @@ export function ClustersOverview() {
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
                       <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                        The secret in your configured backend holds this cluster's kubeconfig. Recommended — a pointer to your secret store is GitOps-clean: the connection is re-derivable from Git plus your secret store, not baked into a one-off paste.
+                        The secret in your configured backend holds this cluster's kubeconfig.
                       </p>
                     </div>
                     <div>
@@ -1253,7 +1248,7 @@ export function ClustersOverview() {
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
                       <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                        Use a different IAM role for this cluster (cross-account). Leave empty to use the default identity shown at the top of this dialog.
+                        Cross-account override — leave empty to use the identity shown above.
                       </p>
                     </div>
                     <div>
@@ -2107,7 +2102,7 @@ export function ClustersOverview() {
         open={orphanDeleteTarget !== null}
         onClose={() => setOrphanDeleteTarget(null)}
         onConfirm={handleDeleteOrphan}
-        title="Discard this cancelled registration?"
+        title="Discard cancelled registration"
         description={`This will remove the leftover ArgoCD cluster Secret for "${orphanDeleteTarget}". The Secret was created when you started registering this cluster, but the registration PR was closed without merging — so it is not in any active Git state. Discarding it is safe and will not affect any managed cluster.`}
         confirmText="Discard"
         destructive

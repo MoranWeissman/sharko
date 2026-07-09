@@ -243,24 +243,24 @@ describe('PRModelExplainer', () => {
 
   it('appears the first time it is mounted', () => {
     render(<PRModelExplainer />)
-    expect(screen.getByText('Why a pull request?')).toBeInTheDocument()
+    expect(screen.getByText('Every change opens a pull request')).toBeInTheDocument()
   })
 
   it('does not appear once dismissed', () => {
     render(<PRModelExplainer />)
     fireEvent.click(screen.getByRole('button', { name: /dismiss/i }))
-    expect(screen.queryByText('Why a pull request?')).not.toBeInTheDocument()
+    expect(screen.queryByText('Every change opens a pull request')).not.toBeInTheDocument()
 
     // Simulate remounting on a fresh page (e.g. navigating from Addons to
     // Clusters) — the shared localStorage flag keeps it hidden.
     cleanup()
     render(<PRModelExplainer />)
-    expect(screen.queryByText('Why a pull request?')).not.toBeInTheDocument()
+    expect(screen.queryByText('Every change opens a pull request')).not.toBeInTheDocument()
   })
 
   it('stays hidden across mounts once the shared flag is set directly', () => {
     window.localStorage.setItem(PR_MODEL_EXPLAINER_DISMISSED_KEY, '1')
     render(<PRModelExplainer />)
-    expect(screen.queryByText('Why a pull request?')).not.toBeInTheDocument()
+    expect(screen.queryByText('Every change opens a pull request')).not.toBeInTheDocument()
   })
 })

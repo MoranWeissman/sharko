@@ -14,8 +14,8 @@ import { AuthContext } from '@/hooks/useAuth';
 // for a cluster ArgoCD already knew about. Pinned behaviours:
 //
 //   1. Register dialog + "I do" + at least one discovered cluster: a
-//      "Pick from what ArgoCD already has" block lists them by name +
-//      server URL.
+//      "Discovered clusters" block lists them by name + server URL
+//      (renamed from "Pick from what ArgoCD already has" — V2-cleanup-89.9).
 //   2. The block is absent with the Sharko-managed default, and absent
 //      when there are no discovered clusters at all (today's behavior).
 //   3. Picking one and confirming reuses the EXISTING adopt flow
