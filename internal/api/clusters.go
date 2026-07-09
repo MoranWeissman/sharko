@@ -127,6 +127,9 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		// "Test connection" click — see computeDerivedHealth.
 		hasHealthyAddon := clusterHasHealthyAddon(c.Name, c.ServerURL, allApps)
 		c.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, c.ConnectionStatus)
+		// V2-cleanup-88.1: pure string/shape derivation, no extra call —
+		// always computed, unlike the ArgoCD-app-dependent fields above.
+		c.TargetPlatform = computeTargetPlatform(c.ServerURL, c.CredsSource)
 		if obsMap != nil {
 			applyObsFields(c, obsMap[c.Name])
 		}
@@ -259,6 +262,9 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 		hasHealthyAddon := clusterHasHealthyAddon(resp.Cluster.Name, resp.Cluster.ServerURL, detailApps)
 		resp.Cluster.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, resp.Cluster.ConnectionStatus)
 	}
+	// V2-cleanup-88.1: pure string/shape derivation, no ArgoCD call needed
+	// — set unconditionally, unlike the ArgoCD-app-dependent fields above.
+	resp.Cluster.TargetPlatform = computeTargetPlatform(resp.Cluster.ServerURL, resp.Cluster.CredsSource)
 	if s.obsStore != nil {
 		obsMap, _ := s.obsStore.ListObservations(r.Context())
 		if obsMap != nil {
@@ -397,6 +403,9 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 		hasHealthyAddon := clusterHasHealthyAddon(resp.Cluster.Name, resp.Cluster.ServerURL, compApps)
 		resp.Cluster.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, resp.Cluster.ConnectionStatus)
 	}
+	// V2-cleanup-88.1: pure string/shape derivation, no ArgoCD call needed
+	// — set unconditionally, unlike the ArgoCD-app-dependent fields above.
+	resp.Cluster.TargetPlatform = computeTargetPlatform(resp.Cluster.ServerURL, resp.Cluster.CredsSource)
 	if s.obsStore != nil {
 		obsMap, _ := s.obsStore.ListObservations(r.Context())
 		if obsMap != nil {
