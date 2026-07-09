@@ -326,6 +326,17 @@ export async function diagnoseCluster(name: string) {
 }
 
 /**
+ * reconcileCluster — POST /clusters/{name}/reconcile (V2-cleanup-89.4).
+ * "Sync now": nudges the cluster-secret reconciler to run immediately
+ * instead of waiting for its periodic tick. Returns 202 as soon as the
+ * trigger is accepted — the reconcile itself is async, so callers should
+ * refetch the cluster shortly after to pick up the updated last_reconcile.
+ */
+export async function reconcileCluster(name: string) {
+  return postJSON<{ status: string; message: string }>(`/clusters/${encodeURIComponent(name)}/reconcile`, {})
+}
+
+/**
  * getSystemCapabilities — GET /api/v1/system/capabilities (V2-cleanup-88.1).
  * What Sharko has auto-detected about its own runtime: whether it's running
  * with an AWS identity, and (best-effort) whether the hub cluster looks

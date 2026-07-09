@@ -45,6 +45,21 @@ export interface Cluster {
   last_test_at?: string   // RFC3339
   test_failing?: boolean
   test_error_code?: string
+  // Most recent cluster-secret reconciler outcome for this cluster
+  // (V2-cleanup-89.4) — ArgoCD shows a failed apply; before this, Sharko
+  // showed nothing. Computed at read time from the reconciler's in-memory
+  // per-cluster record; absent when the reconciler hasn't processed this
+  // cluster on this server instance yet.
+  last_reconcile?: ClusterLastReconcile
+}
+
+// ClusterLastReconcile mirrors internal/models.ClusterLastReconcile
+// (V2-cleanup-89.4). message is set on 'failed' and 'skipped', empty on
+// 'succeeded'.
+export interface ClusterLastReconcile {
+  time: string // RFC3339
+  outcome: 'succeeded' | 'failed' | 'skipped'
+  message?: string
 }
 
 // SystemCapabilitiesResponse mirrors GET /api/v1/system/capabilities

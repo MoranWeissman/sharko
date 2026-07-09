@@ -229,6 +229,16 @@ type Reconciler struct {
 	// within-window / expired Secret deterministically. Per-instance (not a
 	// package-level var) so parallel tests do not race on a shared seam.
 	nowFn func() time.Time
+
+	// lastReconcileMu guards lastReconcile. See reconcile_status.go
+	// (V2-cleanup-89.4 — per-cluster reconcile visibility).
+	lastReconcileMu sync.RWMutex
+	// lastReconcile holds the most recent reconcile outcome per cluster
+	// name, in memory only. Derived, self-healing state — the next tick
+	// recomputes every entry it touches — so it is never persisted, and a
+	// server restart simply starts blank (no history, matches the rest of
+	// the reconciler's stance on state).
+	lastReconcile map[string]ClusterReconcileRecord
 }
 
 // New constructs a Reconciler with the given dependencies. It does NOT start
@@ -265,6 +275,7 @@ func New(deps Deps) *Reconciler {
 		triggerCh:           make(chan struct{}, 1),
 		stopCh:              make(chan struct{}),
 		nowFn:               time.Now,
+		lastReconcile:       make(map[string]ClusterReconcileRecord),
 	}
 	r.pollFn = r.pollOnce
 	return r
@@ -545,6 +556,11 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 	// never treat their Secret as an orphan while the cluster is in git.
 	toCreate := make([]models.ManagedClusterEntry, 0, len(desired))
 	selfManaged := make([]models.ManagedClusterEntry, 0)
+	// alreadyInSync holds cluster names present in both git and ArgoCD that
+	// need no create this tick — recorded as a succeeded reconcile below
+	// (V2-cleanup-89.4) so the read model doesn't go stale between the
+	// (rare) ticks that actually create or delete something.
+	alreadyInSync := make([]string, 0, len(desired))
 	for name, entry := range desired {
 		if entry.UserManagedConnection() {
 			selfManaged = append(selfManaged, entry)
@@ -552,7 +568,12 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 		}
 		if _, present := existing[name]; !present {
 			toCreate = append(toCreate, entry)
+		} else {
+			alreadyInSync = append(alreadyInSync, name)
 		}
+	}
+	for _, name := range alreadyInSync {
+		r.recordReconcile(name, OutcomeSucceeded, "")
 	}
 
 	now := r.now()
@@ -749,6 +770,8 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 			Error:     err.Error(),
 			RequestID: logging.RequestID(ctx),
 		})
+		r.recordReconcile(entry.Name, OutcomeFailed,
+			"Sharko couldn't sync addon labels onto this cluster's self-managed ArgoCD secret: "+err.Error())
 		return
 	}
 	if !found {
@@ -767,6 +790,8 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 			Detail:    "connection is managed by the user; create the ArgoCD cluster Secret by hand (see operator guide: self-managed connections)",
 			RequestID: logging.RequestID(ctx),
 		})
+		r.recordReconcile(entry.Name, OutcomeSkipped,
+			"Waiting for you to create this cluster's ArgoCD cluster secret — this connection is self-managed, so Sharko only syncs addon labels onto it once it exists.")
 		return
 	}
 	if changed {
@@ -785,6 +810,9 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 			RequestID: logging.RequestID(ctx),
 		})
 	}
+	// Whether this tick changed a label or found the Secret already
+	// converged, the self-managed connection is in sync as of now.
+	r.recordReconcile(entry.Name, OutcomeSucceeded, "")
 }
 
 // effectiveDisableConnectivityCheck resolves whether the connectivity-check
@@ -926,6 +954,8 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			Error:     getErr.Error(),
 			RequestID: logging.RequestID(ctx),
 		})
+		r.recordReconcile(entry.Name, OutcomeFailed,
+			"Sharko couldn't check whether an ArgoCD cluster secret already exists for this cluster: "+getErr.Error())
 		return
 	}
 	if getErr == nil && !IsManagedBySharko(existing) {
@@ -945,6 +975,8 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			Detail:    "unlabeled Secret exists in argocd namespace; defer to Adopt flow",
 			RequestID: logging.RequestID(ctx),
 		})
+		r.recordReconcile(entry.Name, OutcomeSkipped,
+			"An ArgoCD cluster secret already exists for this cluster without Sharko's ownership label — Sharko will not overwrite it. Use Adopt to bring it under Sharko's management.")
 		return
 	}
 
@@ -974,6 +1006,8 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			Error:     vaultErr.Error(),
 			RequestID: logging.RequestID(ctx),
 		})
+		r.recordReconcile(entry.Name, OutcomeFailed,
+			"Sharko couldn't fetch this cluster's credentials from the secrets backend: "+vaultErr.Error())
 		return
 	}
 
@@ -1052,6 +1086,8 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			Error:     buildErr.Error(),
 			RequestID: logging.RequestID(ctx),
 		})
+		r.recordReconcile(entry.Name, OutcomeFailed,
+			"Sharko couldn't build the ArgoCD cluster secret for this cluster: "+buildErr.Error())
 		return
 	}
 
@@ -1076,6 +1112,8 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			Error:     createErr.Error(),
 			RequestID: logging.RequestID(ctx),
 		})
+		r.recordReconcile(entry.Name, OutcomeFailed,
+			"Sharko couldn't create the ArgoCD cluster secret for this cluster: "+createErr.Error())
 		return
 	}
 
@@ -1093,6 +1131,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		Result:    "success",
 		RequestID: logging.RequestID(ctx),
 	})
+	r.recordReconcile(entry.Name, OutcomeSucceeded, "")
 }
 
 // deleteOne removes a single orphan ArgoCD cluster Secret. The list step

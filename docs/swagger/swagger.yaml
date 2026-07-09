@@ -4392,6 +4392,51 @@ paths:
       summary: Delete an orphan cluster
       tags:
       - clusters
+  /clusters/{name}/reconcile:
+    post:
+      description: |-
+        Nudges the cluster-secret reconciler to run immediately instead of waiting for its periodic tick.
+        Returns 202 as soon as the trigger is accepted — the reconcile itself runs asynchronously.
+        Poll GET /clusters/{name} and read the updated last_reconcile field once the pass completes.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Reconcile triggered
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Cluster not found
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Reconciler not running on this server
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Trigger a manual cluster reconcile
+      tags:
+      - clusters
   /clusters/{name}/refresh:
     post:
       description: Rotates and re-syncs the cluster credentials from the secrets provider

@@ -25,6 +25,7 @@ var HandlerTier = map[string]audit.Tier{
 	"handleDeleteOrphanCluster":       audit.Tier1, // orphan-cluster Secret cleanup
 	"handleUpdateClusterAddons":       audit.Tier1,
 	"handleRefreshClusterCredentials": audit.Tier1,
+	"handleReconcileCluster":          audit.Tier1,
 	"handleTestCluster":               audit.Tier1,
 	"handleDiagnoseCluster":           audit.Tier1,
 	"handleDoctorCluster":             audit.Tier1,

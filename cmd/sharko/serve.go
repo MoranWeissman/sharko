@@ -966,6 +966,11 @@ var serveCmd = &cobra.Command{
 				// (attachPRTracker) immediately sees the nudge fn — no
 				// startup race.
 				srv.SetReconcilerTrigger(clusterRecon.Trigger)
+				// Read side of V2-cleanup-89.4: lets the cluster read model
+				// project each cluster's last reconcile outcome and lets
+				// handleReconcileCluster tell "reconciler not wired" apart
+				// from "trigger accepted".
+				srv.SetClusterReconciler(clusterRecon)
 				clusterRecon.Start(context.Background())
 				// Server-lifetime: shutdown is signal-driven via Stop().
 				// http.ListenAndServe blocks the goroutine until the
