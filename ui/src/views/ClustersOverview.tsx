@@ -24,7 +24,7 @@ import {
   Trash2,
   ExternalLink,
 } from 'lucide-react';
-import { api, registerCluster, testClusterConnection, unadoptCluster, deleteOrphanCluster, isTestClusterUnavailable, type PRWriteResult } from '@/services/api';
+import { api, registerCluster, testClusterConnection, unadoptCluster, deleteOrphanCluster, isTestClusterUnavailable, getSystemCapabilities, type PRWriteResult } from '@/services/api';
 import { PRLifecycleProgress, extractPR } from '@/components/PRFeedback';
 import type { TestClusterUnavailable } from '@/services/api';
 import type {
@@ -38,6 +38,7 @@ import type {
   PendingRegistration,
   OrphanRegistration,
   RegisterClusterResult,
+  SystemCapabilitiesResponse,
   VerifyStep,
 } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
@@ -60,6 +61,7 @@ import {
 } from '@/components/ClusterActionHints';
 import { PRModelExplainer } from '@/components/PRFeedback';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
+import { ClusterIdentityPanel } from '@/components/ClusterIdentityPanel';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
 import { AdoptClustersDialog } from '@/components/AdoptClustersDialog';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
@@ -268,6 +270,14 @@ export function ClustersOverview() {
   const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null);
   const [dryRunLoading, setDryRunLoading] = useState(false);
 
+  // Layer 1 — Identity (V2-cleanup-88.5): what Sharko has auto-detected
+  // about its own AWS identity, fetched once when the dialog opens. `null`
+  // after loading means the fetch failed (or the endpoint isn't reachable)
+  // — ClusterIdentityPanel treats that the same as "not detected", which is
+  // truthful either way and never blocks the form.
+  const [capabilities, setCapabilities] = useState<SystemCapabilitiesResponse | null>(null);
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
+
   const fetchData = useCallback(async (background = false) => {
     try {
       if (background) {
@@ -386,7 +396,24 @@ export function ClustersOverview() {
     if (!catalogAddons) {
       api.getAddonCatalog().then(setCatalogAddons).catch(() => {});
     }
-  }, [catalogAddons]);
+    // Fetch Layer 1 identity info once per dialog session (V2-cleanup-88.5).
+    // Wrapped in try/catch (not just a Promise .catch) because a strict
+    // `vi.mock('@/services/api', ...)` factory that doesn't declare this
+    // export throws synchronously on the property read itself, not just on
+    // the call — the panel just falls back to its "not detected" copy,
+    // same as it would for a real fetch failure.
+    if (!capabilities) {
+      setCapabilitiesLoading(true);
+      try {
+        Promise.resolve(getSystemCapabilities())
+          .then((c) => { if (c) setCapabilities(c); })
+          .catch(() => {})
+          .finally(() => setCapabilitiesLoading(false));
+      } catch {
+        setCapabilitiesLoading(false);
+      }
+    }
+  }, [catalogAddons, capabilities]);
 
   // Build the Direct-mode register payload for the chosen credential source
   // (creds-reframe-2). `creds_source` is the authoritative signal; we also
@@ -492,7 +519,7 @@ export function ClustersOverview() {
       } else {
         // Defensive: server returned no PR URL and no merge flag. Stay
         // truthful — don't claim "registered" without evidence.
-        setAddClusterResultMsg('Cluster registration submitted. Check the open PR list for status.');
+        setAddClusterResultMsg('Cluster registration submitted as a pull request in your GitOps repo. Check the open PR list for status.');
       }
       setAddClusterResult(result);
       setAddClusterOpen(false);
@@ -765,27 +792,20 @@ export function ClustersOverview() {
     [discoveredClusters, selectedDiscoveredForAdopt],
   );
 
-  // Client-side mirror of the backend's per-source required-field validation
-  // (creds-reframe-2). Blocks the Preview/Register buttons before the user
-  // can submit a combo the backend would 400 on:
-  //   inline-kubeconfig → kubeconfig YAML required
-  //   secret-kubeconfig → secret name / path required
-  //   eks-token         → no extra required field (region/role optional)
+  // Client-side gate for the Preview/Register buttons.
   //
-  // EXCEPTION (V2-cleanup-57.2): when the user manages the ArgoCD
-  // connection themselves, credentials are optional (Sharko never writes
-  // the cluster secret; supplied credentials are only used to test
-  // connectivity), so nothing here blocks submission.
+  // Connection credentials are OPTIONAL at registration, for every
+  // connection-source choice and every ownership mode (V2-cleanup-88.3 —
+  // lazy credentials; the backend accepts an empty kubeconfig / secret path
+  // for every creds_source, see internal/orchestrator/cluster.go's
+  // skip_credentials step). Sharko's one ongoing need for a cluster's own
+  // connection credentials is pushing an addon's addon secrets, and that
+  // need is enforced later, at enable-addon time — not here.
   //
-  // The creds-source choice itself is ALWAYS required — there is no
-  // silent default to fall into (V2-cleanup-60.4). The per-source
-  // required fields below stay relaxed for self-managed connections
-  // (credentials optional, verification only).
-  const directRequiredMissing =
-    credsSource === '' ||
-    (connManagedBy !== 'user' &&
-      ((credsSource === 'inline-kubeconfig' && !addClusterKubeconfig.trim()) ||
-        (credsSource === 'secret-kubeconfig' && !addClusterSecretPath.trim())));
+  // The creds-source CHOICE itself is still always required — there is no
+  // silent default to fall into (V2-cleanup-60.4) — but which field, if
+  // any, is filled in underneath it no longer gates submission.
+  const directRequiredMissing = credsSource === '';
 
   const handleStatusFilter = (filter: StatusFilter) => {
     setStatusFilter(statusFilter === filter ? 'all' : filter);
@@ -951,9 +971,28 @@ export function ClustersOverview() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Register New Cluster</DialogTitle>
-            <DialogDescription>Add a new cluster to the Git catalog.</DialogDescription>
+            <DialogDescription>
+              Two things Sharko needs: how it authenticates (once, below) and where this cluster is.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            {/* Layer 1 — Identity (V2-cleanup-88.5). Purely informational:
+              * tells the user what Sharko already knows about its own AWS
+              * identity instead of asking them to know it. Same panel every
+              * time this dialog opens — nothing here is per-cluster. */}
+            <ClusterIdentityPanel capabilities={capabilities} loading={capabilitiesLoading} />
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
+                Layer 2 — Coordinates (this cluster)
+              </p>
+              <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-500">
+                Where this cluster is, and how to reach it. Connection credentials below are
+                optional — you can add them later; Sharko only needs them once you enable an addon
+                that carries addon secrets.
+              </p>
+            </div>
+
             {/* Connection ownership — WHO manages the ArgoCD cluster secret
               * (V2-cleanup-57.2). Asked before the credentials question
               * because it changes what the credentials are FOR: with "I
@@ -976,14 +1015,15 @@ export function ClustersOverview() {
               </p>
             </div>
 
-            {/* Credential source — the PRIMARY registration question
-              * (creds-reframe-2). We ask HOW Sharko should get the
-              * cluster's credentials, and that choice drives which inputs
-              * show below. Cluster platform (EKS/GKE/AKS) is now implied
-              * metadata, not the gate. */}
+            {/* Connection source — the PRIMARY Layer-2 question
+              * (creds-reframe-2, reframed as "coordinates" for
+              * V2-cleanup-88.5). We ask HOW Sharko should get the
+              * cluster's connection credentials, and that choice drives
+              * which inputs show below. Cluster platform (EKS/GKE/AKS) is
+              * now implied metadata, not the gate. */}
             <div>
               <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                How should Sharko get this cluster's credentials?
+                Connection source
               </label>
               <select
                 value={credsSource}
@@ -994,9 +1034,9 @@ export function ClustersOverview() {
                   * not selectable, and Preview/Register stay disabled until
                   * the user makes an explicit choice. */}
                 <option value="" disabled>Choose where this cluster's credentials come from…</option>
-                <option value="inline-kubeconfig">Paste a kubeconfig</option>
-                <option value="secret-kubeconfig">Use a stored kubeconfig (from your secret store)</option>
-                <option value="eks-token">Amazon EKS — generate a token from cloud identity</option>
+                <option value="inline-kubeconfig">Paste a kubeconfig (quick, not GitOps-clean)</option>
+                <option value="secret-kubeconfig">Point at your secret store (recommended — GitOps-clean)</option>
+                <option value="eks-token">Amazon EKS — generate a token from cloud identity (no stored credentials)</option>
               </select>
               {/* Plain-English hint for the selected option (V2-cleanup-55.3). */}
               <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
@@ -1021,12 +1061,14 @@ export function ClustersOverview() {
             </div>
                 {credsSource === 'inline-kubeconfig' && (
                   <>
-                    {/* Paste a kubeconfig — inline YAML. */}
+                    {/* Paste a kubeconfig — inline YAML. Optional for every
+                      * connection-ownership mode (V2-cleanup-88.3/88.5 —
+                      * connection credentials are lazy): you can register
+                      * with connection-only info and add this later. */}
                     <div>
                       <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                        Kubeconfig {connManagedBy === 'user'
-                          ? <span className="font-normal text-[#5a8aaa] dark:text-gray-500">(optional — used only to verify connectivity)</span>
-                          : <span className="text-red-500">*</span>}
+                        Kubeconfig{' '}
+                        <span className="font-normal text-[#5a8aaa] dark:text-gray-500">(optional — you can add connection credentials later)</span>
                       </label>
                       <textarea
                         value={addClusterKubeconfig}
@@ -1038,6 +1080,9 @@ export function ClustersOverview() {
                       <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
                         Paste your kubeconfig YAML. Sharko extracts the server URL, CA certificate, and bearer token. Note: only bearer-token authentication is supported in this release. For kind: run <code className="font-mono">kubectl create token &lt;serviceaccount&gt; --duration=24h</code> to generate a token.
                       </p>
+                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                        Quick, but not GitOps-clean — credentials are stored only in the cluster, not re-derivable from Git or your secret store.
+                      </p>
                     </div>
                   </>
                 )}
@@ -1046,12 +1091,12 @@ export function ClustersOverview() {
                   <>
                     {/* Use a stored kubeconfig — the secret name/path is the
                       * key input (promoted from the old buried "Secret Path"
-                      * field to a first-class, required field). */}
+                      * field to a first-class field). Optional for every
+                      * connection-ownership mode (V2-cleanup-88.3/88.5). */}
                     <div>
                       <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                        Secret name / path {connManagedBy === 'user'
-                          ? <span className="font-normal text-[#5a8aaa] dark:text-gray-500">(optional — used only to verify connectivity)</span>
-                          : <span className="text-red-500">*</span>}
+                        Secret name / path{' '}
+                        <span className="font-normal text-[#5a8aaa] dark:text-gray-500">(optional — you can add connection credentials later)</span>
                       </label>
                       <input
                         type="text"
@@ -1061,7 +1106,7 @@ export function ClustersOverview() {
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
                       <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                        The secret in your configured backend holds this cluster's kubeconfig.
+                        The secret in your configured backend holds this cluster's kubeconfig. Recommended — a pointer to your secret store is GitOps-clean: the connection is re-derivable from Git plus your secret store, not baked into a one-off paste.
                       </p>
                     </div>
                     <div>
@@ -1106,6 +1151,9 @@ export function ClustersOverview() {
                         placeholder="e.g. arn:aws:iam::123456789012:role/sharko-access"
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
+                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                        Use a different IAM role for this cluster (cross-account). Leave empty to use the connection-level default identity shown in Layer 1 above.
+                      </p>
                     </div>
                     <div>
                       <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
@@ -1200,7 +1248,7 @@ export function ClustersOverview() {
                   )}
                   {(dryRunResult.secrets_to_create ?? []).length > 0 && (
                     <div>
-                      <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Secrets to Create:</span>{' '}
+                      <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Addon Secrets to Create:</span>{' '}
                       {(dryRunResult.secrets_to_create ?? []).join(', ')}
                     </div>
                   )}
@@ -1296,8 +1344,16 @@ export function ClustersOverview() {
             : tone === 'pending'
               ? 'hover:bg-blue-100 dark:hover:bg-blue-800'
               : 'hover:bg-green-100 dark:hover:bg-green-800';
+        // L8 (GitOps story on-screen): registration always lands as a PR
+        // against managed-clusters.yaml — say so, as a second line under
+        // the main outcome, so the existing outcome wording (asserted
+        // exactly by ClustersOverview.pending.test.tsx) stays untouched.
+        // Skipped for the untagged no-PR-URL fallback message, which
+        // already says "pull request in your GitOps repo" itself.
+        const showGitOpsLine = !isPartial && (isPendingTag || isMergedTag || addClusterResultMsg.startsWith('http'));
         return (
         <div className={`flex items-center justify-between rounded-md px-4 py-2 text-sm ${toneClasses}`}>
+          <div className="flex flex-col gap-0.5">
           <span>
             {isPartial
               ? addClusterResultMsg
@@ -1322,6 +1378,12 @@ export function ClustersOverview() {
                     : addClusterResultMsg
             }
           </span>
+          {showGitOpsLine && (
+            <span className="text-xs opacity-80">
+              This registration opens a pull request in your GitOps repo, against managed-clusters.yaml.
+            </span>
+          )}
+          </div>
           <button
             type="button"
             onClick={() => { setAddClusterResultMsg(null); setAddClusterResult(null); }}

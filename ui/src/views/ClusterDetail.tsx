@@ -30,8 +30,9 @@ import {
   ShieldCheck,
   Sparkles,
   Settings,
+  Stethoscope,
 } from 'lucide-react';
-import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs } from '@/services/api';
+import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs, previewEnableAddon } from '@/services/api';
 import type { TestClusterUnavailable, PRWriteResult } from '@/services/api';
 import { PRResultBanner, extractPR } from '@/components/PRFeedback';
 import { EnableAddonPicker } from '@/components/EnableAddonPicker';
@@ -56,6 +57,7 @@ import { RoleGuard } from '@/components/RoleGuard';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
+import { DoctorModal, DOCTOR_LABEL, DOCTOR_HINT } from '@/components/DoctorModal';
 import { PendingPRsPanel } from '@/components/PendingPRsPanel';
 import { CompletedChangesPanel } from '@/components/CompletedChangesPanel';
 import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOverridesEditor';
@@ -274,6 +276,10 @@ export function ClusterDetail() {
     | null
   >(null);
   const [diagnoseOpen, setDiagnoseOpen] = useState(false);
+  // Connection doctor (V2-cleanup-88.4/88.5) — four real-attempt checks
+  // against this cluster's connection, next to Test connection / Check
+  // permissions.
+  const [doctorOpen, setDoctorOpen] = useState(false);
 
   // Secret path editing
   const [editingSecretPath, setEditingSecretPath] = useState(false);
@@ -303,6 +309,15 @@ export function ClusterDetail() {
   const [pickerCatalogNames, setPickerCatalogNames] = useState<string[]>([]);
   const [pickerCatalogLoading, setPickerCatalogLoading] = useState(false);
   const [pickerCatalogError, setPickerCatalogError] = useState<string | null>(null);
+
+  // addon_secrets_ready pre-warn (V2-cleanup-88.5, L4): when this cluster
+  // has no resolvable connection credentials, staging a secret-bearing
+  // addon for enable fires a background dry-run of the exact same
+  // pre-flight gate EnableAddon applies, so a would-be 422 shows up here as
+  // an inline warning INSTEAD of surprising the user after "Apply
+  // Changes". Keyed by addon name; the message is the backend's own
+  // MissingClusterCredentialsError text, rendered verbatim.
+  const [addonSecretWarnings, setAddonSecretWarnings] = useState<Record<string, string>>({});
 
   // Compute display status from test result + server state
   const computedStatus = useMemo((): string => {
@@ -537,6 +552,35 @@ export function ClusterDetail() {
       setPickerCatalogLoading(false);
     }
   }, [pickerCatalogNames]);
+
+  // addon_secrets_ready pre-warn (V2-cleanup-88.5, L4). Only worth the
+  // round-trip when this cluster has no resolvable connection credentials
+  // (addon_secrets_ready === false) — a ready cluster's dry-run always
+  // succeeds regardless of the addon, so there's nothing to warn about.
+  // A secret-LESS addon's dry-run also always succeeds (EnableAddon's
+  // pre-flight gate is a no-op for it) — this only fires for the real
+  // "secret-bearing addon + cred-less cluster" combination, and the
+  // message rendered is the backend's own text, verbatim.
+  const checkAddonSecretWarning = useCallback(async (addonName: string) => {
+    if (!name) return;
+    if (data?.cluster.addon_secrets_ready !== false) return;
+    try {
+      await previewEnableAddon(name, addonName);
+      // Dry-run succeeded — no secrets gate applies to this addon; clear
+      // any stale warning from a previous selection of the same addon.
+      setAddonSecretWarnings((prev) => {
+        if (!(addonName in prev)) return prev;
+        const next = { ...prev };
+        delete next[addonName];
+        return next;
+      });
+    } catch (e: unknown) {
+      setAddonSecretWarnings((prev) => ({
+        ...prev,
+        [addonName]: e instanceof Error ? e.message : 'Sharko cannot confirm this addon can be enabled on this cluster yet.',
+      }));
+    }
+  }, [name, data]);
 
   const handleSelectSuggestion = useCallback(async (suggestion: string) => {
     if (!name) return;
@@ -960,6 +1004,15 @@ export function ClusterDetail() {
               {CHECK_PERMISSIONS_LABEL}
             </button>
             <InfoHint text={CHECK_PERMISSIONS_HINT} label="What does Check permissions do?" />
+            <button
+              data-testid="run-connection-doctor"
+              onClick={() => setDoctorOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+            >
+              <Stethoscope className="h-3.5 w-3.5" />
+              {DOCTOR_LABEL}
+            </button>
+            <InfoHint text={DOCTOR_HINT} label="What does the connection doctor do?" />
           </RoleGuard>
         </div>
       </div>
@@ -987,6 +1040,11 @@ export function ClusterDetail() {
         clusterName={name ?? ''}
         open={diagnoseOpen}
         onClose={() => setDiagnoseOpen(false)}
+      />
+      <DoctorModal
+        clusterName={name ?? ''}
+        open={doctorOpen}
+        onClose={() => setDoctorOpen(false)}
       />
       {removeError && (
         <p className="text-sm text-red-600 dark:text-red-400">{removeError}</p>
@@ -1267,10 +1325,14 @@ export function ClusterDetail() {
                           !originalToggles[addonName] && addonToggles[addonName];
                         const isPendingRemove =
                           originalToggles[addonName] && !addonToggles[addonName];
+                        // addon_secrets_ready pre-warn (V2-cleanup-88.5, L4)
+                        // — only relevant while the addon is still staged
+                        // to be enabled (not once it's removed again).
+                        const secretWarning = isPendingEnable ? addonSecretWarnings[addonName] : undefined;
 
                         return (
+                          <div key={addonName} className="flex flex-col gap-1">
                           <div
-                            key={addonName}
                             data-testid={`manage-addon-row-${addonName}`}
                             className={`flex items-center justify-between gap-3 rounded-md px-3 py-2 ${
                               isPendingEnable
@@ -1324,6 +1386,15 @@ export function ClusterDetail() {
                                 Undo
                               </button>
                             )}
+                          </div>
+                          {secretWarning && (
+                            <p
+                              data-testid={`manage-addon-secret-warning-${addonName}`}
+                              className="mx-1 rounded-md bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:ring-amber-800"
+                            >
+                              {secretWarning}
+                            </p>
+                          )}
                           </div>
                         );
                       })
@@ -1382,9 +1453,12 @@ export function ClusterDetail() {
                   enabledNames={pickerEnabledNames}
                   loading={pickerCatalogLoading}
                   error={pickerCatalogError}
-                  onEnable={(addonName) =>
-                    setAddonToggles((prev) => ({ ...prev, [addonName]: true }))
-                  }
+                  onEnable={(addonName) => {
+                    setAddonToggles((prev) => ({ ...prev, [addonName]: true }));
+                    // Pre-warn (V2-cleanup-88.5) instead of letting the
+                    // user hit the 422 blind on Apply Changes.
+                    void checkAddonSecretWarning(addonName);
+                  }}
                   onClose={() => setPickerOpen(false)}
                   onRetry={() => {
                     setPickerCatalogError(null);

@@ -16,11 +16,13 @@ import type {
   ConnectionsListResponse,
   DashboardStats,
   DiagnosticReport,
+  DoctorClusterResponse,
   DryRunResult,
   ObservabilityOverviewResponse,
   PullRequestsResponse,
   RegisterClusterResult,
   SyncActivityEntry,
+  SystemCapabilitiesResponse,
   TrackedPRsResponse,
   UpgradeCheckResponse,
   UpgradeRecommendations,
@@ -321,6 +323,44 @@ export async function testClusterConnection(
 
 export async function diagnoseCluster(name: string) {
   return postJSON<DiagnosticReport>(`/clusters/${encodeURIComponent(name)}/diagnose`, {})
+}
+
+/**
+ * getSystemCapabilities — GET /api/v1/system/capabilities (V2-cleanup-88.1).
+ * What Sharko has auto-detected about its own runtime: whether it's running
+ * with an AWS identity, and (best-effort) whether the hub cluster looks
+ * like EKS. Read-tier — any authenticated user may call this. Standalone
+ * (not under `api.`) so the two-layer registration dialog's Layer 1 can be
+ * mocked the same way diagnoseCluster / testClusterConnection are.
+ */
+export async function getSystemCapabilities() {
+  return fetchJSON<SystemCapabilitiesResponse>('/system/capabilities')
+}
+
+/**
+ * doctorCluster — POST /api/v1/clusters/{name}/doctor (V2-cleanup-88.4).
+ * Runs the connection doctor's four real-attempt checks against the named
+ * cluster and returns a structured pass/fail/not-applicable verdict per
+ * check, each with a plain-English fix on failure.
+ */
+export async function doctorCluster(name: string) {
+  return postJSON<DoctorClusterResponse>(`/clusters/${encodeURIComponent(name)}/doctor`, {})
+}
+
+/**
+ * previewEnableAddon — dry-run of POST /clusters/{name}/addons/{addon}
+ * (dry_run: true). Used by the pre-warn flow (V2-cleanup-88.5, addon_secrets_ready):
+ * before the user commits to enabling an addon on a cluster with no
+ * resolvable connection credentials, this call surfaces the SAME pre-flight
+ * credentials-gate rejection EnableAddon would give — without writing
+ * anything — so the 422 (when it applies) is shown as an inline warning
+ * instead of a surprise after "Apply Changes".
+ */
+export async function previewEnableAddon(clusterName: string, addonName: string): Promise<DeployAddonResult> {
+  return postJSON<DeployAddonResult>(
+    `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}`,
+    { dry_run: true },
+  )
 }
 
 export async function fetchAuditLog(filters?: {
