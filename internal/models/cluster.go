@@ -305,19 +305,31 @@ func SaveManagedClusters(spec ManagedClustersSpec) ([]byte, error) {
 
 // Cluster represents a Kubernetes cluster from the Git configuration.
 type Cluster struct {
-	Name             string            `json:"name" yaml:"name"`
-	SecretPath       string            `json:"secret_path,omitempty" yaml:"secretPath,omitempty"`
-	Labels           map[string]string `json:"labels" yaml:"labels"`
-	Region           string            `json:"region,omitempty" yaml:"region,omitempty"`
-	ServerVersion    string            `json:"server_version,omitempty"`
+	Name          string            `json:"name" yaml:"name"`
+	SecretPath    string            `json:"secret_path,omitempty" yaml:"secretPath,omitempty"`
+	Labels        map[string]string `json:"labels" yaml:"labels"`
+	Region        string            `json:"region,omitempty" yaml:"region,omitempty"`
+	ServerVersion string            `json:"server_version,omitempty"`
 	// ServerURL is the cluster's ArgoCD-registered API-server URL (V2-cleanup-74.1).
 	// Sourced from the matching models.ArgocdCluster.Server — never stored in Git,
 	// always populated at read time. The UI's ClusterTypeBadge parses this hostname
 	// to classify EKS/AKS/GKE/kind/minikube/self-hosted. Left empty for the
 	// hub-local "in-cluster" entry (see ListClusters/GetClusterDetail skip logic).
-	ServerURL        string            `json:"server_url,omitempty" yaml:"serverUrl,omitempty"`
-	ConnectionStatus string            `json:"connection_status,omitempty"`
-	Managed          bool              `json:"managed"` // true if in cluster-addons.yaml
+	ServerURL string `json:"server_url,omitempty" yaml:"serverUrl,omitempty"`
+
+	// TargetPlatform is Sharko's auto-detected guess at whether this
+	// specific cluster looks like EKS (V2-cleanup-88.1, design L11) —
+	// distinct from the server's OWN AWS identity (see
+	// GET /api/v1/system/capabilities). Computed at read time from
+	// ServerURL and CredsSource, the same way DerivedHealthStatus is
+	// computed from live state below — never stored in Git. One of "eks"
+	// or "unknown". The register-cluster screen uses this (via the list
+	// of already-registered clusters) plus system/capabilities to decide
+	// what to ask the user versus what it can already tell them.
+	TargetPlatform string `json:"target_platform,omitempty"`
+
+	ConnectionStatus string `json:"connection_status,omitempty"`
+	Managed          bool   `json:"managed"` // true if in cluster-addons.yaml
 
 	// ConnectionManagedBy mirrors the managed-clusters.yaml entry's
 	// connectionManagedBy field onto the API surface (V2-cleanup-57.2).
@@ -503,7 +515,7 @@ type AddonComparisonStatus struct {
 	// render the complete error in the expanded comparison row. The issues[]
 	// field carries the short first-line version for badges/lists. Empty when
 	// there is no active failing operation.
-	ArgocdOperationMessage  string `json:"argocd_operation_message,omitempty"`
+	ArgocdOperationMessage string `json:"argocd_operation_message,omitempty"`
 
 	// Comparison results
 	Status string   `json:"status,omitempty"`

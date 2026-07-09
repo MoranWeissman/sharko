@@ -24,24 +24,25 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"k8s.io/client-go/kubernetes"
 
+	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/auth"
+	"github.com/MoranWeissman/sharko/internal/capabilities"
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
 	"github.com/MoranWeissman/sharko/internal/changelog"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
-	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/notifications"
 	"github.com/MoranWeissman/sharko/internal/observations"
 	"github.com/MoranWeissman/sharko/internal/operations"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
-	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/providers"
+	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/service"
 	"github.com/MoranWeissman/sharko/internal/settings"
 )
@@ -144,10 +145,10 @@ type Server struct {
 	dashboardSvc     *service.DashboardService
 	observabilitySvc *service.ObservabilityService
 	upgradeSvc       *service.UpgradeService
-	aiClient          *ai.Client
-	agentMemory       *ai.MemoryStore
-	authStore         *auth.Store
-	aiConfigStore     *config.AIConfigStore
+	aiClient         *ai.Client
+	agentMemory      *ai.MemoryStore
+	authStore        *auth.Store
+	aiConfigStore    *config.AIConfigStore
 
 	// Write API dependencies (optional — set via SetWriteAPIDeps).
 	//
@@ -162,10 +163,10 @@ type Server struct {
 	// read them concurrently, so ALL reads go through the credProvider() /
 	// addonSecretCfg() / clusterTestCfg() / credsRouter() accessors and all
 	// writes through publishProviders(). Never add a direct field back.
-	providerState   atomic.Pointer[providerSet]
-	repoPaths       orchestrator.RepoPathsConfig
-	gitopsCfg       orchestrator.GitOpsConfig
-	gitMu           sync.Mutex // shared mutex serializing all Git operations across requests
+	providerState atomic.Pointer[providerSet]
+	repoPaths     orchestrator.RepoPathsConfig
+	gitopsCfg     orchestrator.GitOpsConfig
+	gitMu         sync.Mutex // shared mutex serializing all Git operations across requests
 
 	// Remote secret management (optional — set via SetAddonSecretDefs).
 	addonSecretDefs   map[string]orchestrator.AddonSecretDefinition
@@ -227,6 +228,15 @@ type Server struct {
 	// is ready; nil in out-of-cluster / dev mode, in which case probe_mode
 	// reads as its default "check-app" and writes are rejected with 503).
 	settingsStore *settings.Store
+
+	// awsDetector / hubPlatformDetector back GET /system/capabilities
+	// (V2-cleanup-88.1). Both lazily built on first use (see
+	// getAWSDetector / getHubPlatformDetector in capabilities.go) and
+	// internally cache their own result — see internal/capabilities.
+	awsDetectorOnce         sync.Once
+	awsDetector             *capabilities.AWSDetector
+	hubPlatformDetectorOnce sync.Once
+	hubPlatformDetector     *capabilities.HubPlatformDetector
 
 	// startTime records when the server was created (used for uptime reporting).
 	startTime time.Time
@@ -816,6 +826,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/config", srv.handleGetConfig)
 	mux.HandleFunc("GET /api/v1/settings/probe-mode", srv.handleGetProbeMode)
 	mux.HandleFunc("PUT /api/v1/settings/probe-mode", srv.handleSetProbeMode)
+	// Capability auto-detection (V2-cleanup-88.1) — read-tier, any
+	// authenticated user (the register-cluster screen needs it before the
+	// user has picked a role).
+	mux.HandleFunc("GET /api/v1/system/capabilities", srv.handleGetSystemCapabilities)
 
 	// Curated catalog (v1.21) — embedded marketplace metadata, read-only.
 	// Scope: the Sharko-native curated addon list (catalog/addons.yaml)
@@ -1008,15 +1022,15 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// visible to every downstream layer (logging, metrics, audit, handlers,
 	// orchestrator, gitops, ...). V2-2.2.
 	var handler http.Handler = mux
-	handler = maxBodySize(handler, 1<<20)                     // 1MB request body limit
-	handler = writeRateLimiter(30, 1*time.Minute)(handler)    // 30 writes/min per IP
-	handler = srv.auditMiddleware(handler)                    // emit audit entry after auth sets user
+	handler = maxBodySize(handler, 1<<20)                  // 1MB request body limit
+	handler = writeRateLimiter(30, 1*time.Minute)(handler) // 30 writes/min per IP
+	handler = srv.auditMiddleware(handler)                 // emit audit entry after auth sets user
 	handler = srv.basicAuthMiddleware(handler)
 	handler = corsMiddleware(handler)
 	handler = securityHeadersMiddleware(handler)
-	handler = metrics.Middleware(handler)                      // Prometheus request metrics
+	handler = metrics.Middleware(handler) // Prometheus request metrics
 	handler = loggingMiddleware(handler)
-	handler = requestIDMiddleware(handler)                     // attach correlation ID at the boundary
+	handler = requestIDMiddleware(handler) // attach correlation ID at the boundary
 
 	return handler
 }

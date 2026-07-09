@@ -5928,6 +5928,31 @@ const docTemplate = `{
                 }
             }
         },
+        "/system/capabilities": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reports what Sharko has auto-detected about its own runtime: whether it is running with an AWS identity (EKS Pod Identity / IRSA / default credential chain) and, best-effort, whether the hub cluster looks like EKS. Detection is cached for the life of the process — sts:GetCallerIdentity is called at most once, never per-request. Any authenticated user may read this; the register-cluster screen needs it before the user has picked a role.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Get auto-detected system capabilities",
+                "responses": {
+                    "200": {
+                        "description": "Detected capabilities",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.systemCapabilitiesResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/tokens": {
             "get": {
                 "security": [
@@ -6840,6 +6865,23 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "github_com_MoranWeissman_sharko_internal_capabilities.AWSIdentity": {
+            "type": "object",
+            "properties": {
+                "detected": {
+                    "description": "Detected is true iff sts:GetCallerIdentity succeeded.",
+                    "type": "boolean"
+                },
+                "identity_arn": {
+                    "description": "IdentityARN is the caller's ARN, e.g.\n\"arn:aws:sts::123456789012:assumed-role/SharkoIRSARole/...\". Empty\nwhen Detected is false.",
+                    "type": "string"
+                },
+                "method": {
+                    "description": "Method is one of MethodPodIdentity, MethodIRSA, MethodChain, or\nMethodNone.",
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_catalog.AHLink": {
             "type": "object",
             "properties": {
@@ -8953,6 +8995,23 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.systemCapabilitiesResponse": {
+            "type": "object",
+            "properties": {
+                "aws": {
+                    "description": "AWS reports whether Sharko itself is running with an AWS identity,\nand which mechanism supplied it.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_capabilities.AWSIdentity"
+                        }
+                    ]
+                },
+                "hub_platform": {
+                    "description": "HubPlatform is Sharko's best-effort guess at whether the hub cluster\nit runs on is EKS, derived from the hub's own Kubernetes server\nversion string. One of \"eks\" or \"unknown\" (capabilities.HubPlatformEKS\n/ capabilities.HubPlatformUnknown).",
                     "type": "string"
                 }
             }

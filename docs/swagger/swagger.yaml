@@ -1,5 +1,22 @@
 basePath: /api/v1
 definitions:
+  github_com_MoranWeissman_sharko_internal_capabilities.AWSIdentity:
+    properties:
+      detected:
+        description: Detected is true iff sts:GetCallerIdentity succeeded.
+        type: boolean
+      identity_arn:
+        description: |-
+          IdentityARN is the caller's ARN, e.g.
+          "arn:aws:sts::123456789012:assumed-role/SharkoIRSARole/...". Empty
+          when Detected is false.
+        type: string
+      method:
+        description: |-
+          Method is one of MethodPodIdentity, MethodIRSA, MethodChain, or
+          MethodNone.
+        type: string
+    type: object
   github_com_MoranWeissman_sharko_internal_catalog.AHLink:
     properties:
       name:
@@ -1630,6 +1647,22 @@ definitions:
   internal_api.setMyGitHubTokenRequest:
     properties:
       token:
+        type: string
+    type: object
+  internal_api.systemCapabilitiesResponse:
+    properties:
+      aws:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_capabilities.AWSIdentity'
+        description: |-
+          AWS reports whether Sharko itself is running with an AWS identity,
+          and which mechanism supplied it.
+      hub_platform:
+        description: |-
+          HubPlatform is Sharko's best-effort guess at whether the hub cluster
+          it runs on is EKS, derived from the hub's own Kubernetes server
+          version string. One of "eks" or "unknown" (capabilities.HubPlatformEKS
+          / capabilities.HubPlatformUnknown).
         type: string
     type: object
   internal_api.testClusterRequest:
@@ -5829,6 +5862,26 @@ paths:
       security:
       - BearerAuth: []
       summary: Set probe mode
+      tags:
+      - system
+  /system/capabilities:
+    get:
+      description: 'Reports what Sharko has auto-detected about its own runtime: whether
+        it is running with an AWS identity (EKS Pod Identity / IRSA / default credential
+        chain) and, best-effort, whether the hub cluster looks like EKS. Detection
+        is cached for the life of the process — sts:GetCallerIdentity is called at
+        most once, never per-request. Any authenticated user may read this; the register-cluster
+        screen needs it before the user has picked a role.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Detected capabilities
+          schema:
+            $ref: '#/definitions/internal_api.systemCapabilitiesResponse'
+      security:
+      - BearerAuth: []
+      summary: Get auto-detected system capabilities
       tags:
       - system
   /tokens:
