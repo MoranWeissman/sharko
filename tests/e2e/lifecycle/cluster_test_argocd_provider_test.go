@@ -44,12 +44,22 @@ import (
 //     auto-default ArgoCDProvider, returns HTTP 200, and the response carries
 //     the Stage1 verify.Steps with every step status == "pass".
 //
-//  2. Typed-error paths (Story 10.3): mutating the live cluster Secret's
-//     data["config"] field to inject awsAuthConfig / execProviderConfig /
-//     unrecognised auth shapes routes through ArgoCDProviderError and
-//     surfaces as HTTP 503 with stable error_code values:
-//       - awsAuthConfig    → argocd_provider_iam_required
-//       - execProviderConfig → argocd_provider_exec_unsupported
+//  2. Typed-error paths (Story 10.3, upgraded by V2-cleanup-88.2): mutating
+//     the live cluster Secret's data["config"] field to inject awsAuthConfig /
+//     execProviderConfig / unrecognised auth shapes routes through
+//     ArgoCDProviderError and surfaces as HTTP 503 with stable error_code
+//     values. Since V2-cleanup-88.2, Sharko PARSES the AWS shapes
+//     (awsAuthConfig, and execProviderConfig for the known AWS authenticators
+//     argocd-k8s-auth/aws + aws-iam-authenticator) and attempts to mint an EKS
+//     token with its OWN AWS identity — it never shells out to the exec
+//     plugin. The kind-based e2e Sharko pod has no AWS identity at all, so
+//     that mint attempt always fails, and both AWS shapes still surface
+//     argocd_provider_iam_required (the code's meaning shifted from "shape
+//     rejected outright" to "shape parsed, but Sharko has no usable AWS
+//     identity to mint with" — see internal/providers/argocd_provider.go):
+//       - awsAuthConfig                              → argocd_provider_iam_required
+//       - execProviderConfig, known AWS authenticator → argocd_provider_iam_required
+//       - execProviderConfig, unrecognised command    → argocd_provider_exec_unsupported
 //       - no recognised shape (config field stripped) → argocd_provider_unsupported_auth
 //
 // Test ordering: the typed-error subtests run sequentially against a single
@@ -198,6 +208,12 @@ func TestClusterTest_ArgoCDProvider(t *testing.T) {
 	})
 
 	t.Run("AWSAuthConfig_Returns503_IAMRequired", func(t *testing.T) {
+		// V2-cleanup-88.2: Sharko now PARSES this shape and attempts to mint
+		// an EKS token with its own AWS identity (never shelling out). The
+		// kind-based e2e Sharko pod has no AWS identity at all, so the mint
+		// attempt fails and this still surfaces argocd_provider_iam_required
+		// — same code as before, now meaning "parsed, but no usable AWS
+		// identity" rather than "shape rejected outright".
 		restoreCfg := mutateArgoCDClusterSecretConfig(t, mgmtK8s, argocdHappyClusterName,
 			[]byte(`{"awsAuthConfig":{"clusterName":"e2e-fake","roleARN":"arn:aws:iam::000000000000:role/e2e-fake"},"tlsClientConfig":{"insecure":true}}`))
 		t.Cleanup(restoreCfg)
@@ -209,14 +225,37 @@ func TestClusterTest_ArgoCDProvider(t *testing.T) {
 		assertErrorCode(t, respBody, providers.ArgoCDProviderCodeIAMRequired)
 	})
 
-	t.Run("ExecProviderConfig_Returns503_ExecUnsupported", func(t *testing.T) {
+	t.Run("KnownAWSExecProviderConfig_Returns503_IAMRequired", func(t *testing.T) {
+		// V2-cleanup-88.2: aws-iam-authenticator is now a RECOGNIZED AWS
+		// authenticator — Sharko parses --cluster-name/--role-arn/AWS_REGION
+		// out of the exec args/env and attempts the same own-identity mint
+		// (never executing the plugin). Same reasoning as the awsAuthConfig
+		// subtest above: no AWS identity on the e2e pod → mint fails →
+		// argocd_provider_iam_required, NOT argocd_provider_exec_unsupported
+		// (that code is now reserved for genuinely unrecognized commands —
+		// see the next subtest).
 		restoreCfg := mutateArgoCDClusterSecretConfig(t, mgmtK8s, argocdHappyClusterName,
 			[]byte(`{"execProviderConfig":{"command":"aws-iam-authenticator","apiVersion":"client.authentication.k8s.io/v1beta1"},"tlsClientConfig":{"insecure":true}}`))
 		t.Cleanup(restoreCfg)
 
 		status, respBody := admin.TestClusterConnectivity(t, argocdHappyClusterName, false)
 		if status != http.StatusServiceUnavailable {
-			t.Fatalf("Test endpoint: status=%d body=%v (expected 503 for execProviderConfig path)", status, respBody)
+			t.Fatalf("Test endpoint: status=%d body=%v (expected 503 for known-AWS execProviderConfig path)", status, respBody)
+		}
+		assertErrorCode(t, respBody, providers.ArgoCDProviderCodeIAMRequired)
+	})
+
+	t.Run("UnknownExecProviderConfig_Returns503_ExecUnsupported", func(t *testing.T) {
+		// A command Sharko does NOT recognize as an AWS authenticator (e.g. a
+		// GCP helper) is still rejected outright — Sharko never shells out to
+		// any exec-plugin binary, known or not.
+		restoreCfg := mutateArgoCDClusterSecretConfig(t, mgmtK8s, argocdHappyClusterName,
+			[]byte(`{"execProviderConfig":{"command":"gke-gcloud-auth-plugin","apiVersion":"client.authentication.k8s.io/v1beta1"},"tlsClientConfig":{"insecure":true}}`))
+		t.Cleanup(restoreCfg)
+
+		status, respBody := admin.TestClusterConnectivity(t, argocdHappyClusterName, false)
+		if status != http.StatusServiceUnavailable {
+			t.Fatalf("Test endpoint: status=%d body=%v (expected 503 for unrecognized execProviderConfig path)", status, respBody)
 		}
 		assertErrorCode(t, respBody, providers.ArgoCDProviderCodeExecUnsupported)
 	})
