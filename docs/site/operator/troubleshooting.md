@@ -49,7 +49,7 @@ or covered by adjacent runbooks. The mapping:
 | Catalog entries show as Unverified                      | [`catalog-trust-policy.md`](catalog-trust-policy.md).                                                                    |
 | Third-party catalog source not loading                  | [`catalog-source-http-fetch-failed.md`](catalog-source-http-fetch-failed.md) / [`catalog-source-schema-validation-failed.md`](catalog-source-schema-validation-failed.md). |
 | Corporate-proxy TLS interception breaks `argocd-repo-server` | [`corporate-mitm-tls.md`](corporate-mitm-tls.md).                                                                  |
-| Test connection returns 503 on EKS                         | [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) (IAM-auth limitation) or [`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md) (exec-plugin shape). |
+| Test connection returns 503 on EKS                         | [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) (Sharko couldn't mint a token with its own identity) or [`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md) (exec command Sharko doesn't recognize as AWS). |
 | AWS Secrets Manager: secret not found / access denied   | [`aws-sm-secret-not-found.md`](aws-sm-secret-not-found.md) / [`aws-sm-search-access-denied.md`](aws-sm-search-access-denied.md). |
 | K8s Secrets provider — token not found                  | [`k8s-secrets-not-found-in-namespace.md`](k8s-secrets-not-found-in-namespace.md).                                        |
 | Auto-merge failed after PR opened                       | [`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md).                                          |

@@ -116,7 +116,10 @@ stringData:
     }
 ```
 
-**EKS / IAM** (`argocd-k8s-auth` exec plugin):
+**EKS / IAM** (`argocd-k8s-auth` exec plugin — Sharko parses this shape and
+mints a token with its own AWS identity; see
+[EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md) for the IAM
+roles this depends on):
 
 ```yaml
 stringData:

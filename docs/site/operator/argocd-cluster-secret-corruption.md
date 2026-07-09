@@ -107,11 +107,13 @@ If the symptom is "every cluster fails" with parse errors, this is
 [`cluster-reconciler.md`](cluster-reconciler.md) schema-validation
 runbook (the upstream `managed-clusters.yaml` file is unparseable).
 
-If the failure includes the strings `iam_auth_unsupported_in_v1` or
-`argocd_provider_exec_unsupported`, those are the v1.x scope-cut
-limitations, not corruption — see
-[`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) and
-[`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md).
+If the failure includes the strings `argocd_provider_iam_required` or
+`argocd_provider_exec_unsupported`, those are typed AWS-auth-shape
+errors, not corruption — see
+[`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) (Sharko recognized
+the shape but couldn't mint a token) and
+[`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md)
+(Sharko doesn't recognize the exec command at all).
 
 ---
 
@@ -446,11 +448,12 @@ Fix: Mitigation step 1 with the new server URL.
 ## Related runbooks
 
 - [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) — adjacent
-  v1.x limitation: `awsAuthConfig` shape returns a distinct typed
-  error (NOT a corruption — by design).
+  case: `awsAuthConfig` shape parses fine and returns a distinct typed
+  error only when Sharko can't mint a token with it (NOT a corruption
+  — by design).
 - [`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md)
-  — adjacent v1.x limitation: `execProviderConfig` shape returns a
-  distinct typed error.
+  — adjacent case: an `execProviderConfig` shape with a command Sharko
+  doesn't recognize returns a distinct typed error (NOT a corruption).
 - [`argocd-account-token-expired.md`](argocd-account-token-expired.md)
   — sibling auth failure: Secret is well-formed, but the token is
   revoked or expired upstream.
