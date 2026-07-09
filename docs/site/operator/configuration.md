@@ -1,6 +1,6 @@
 # Configuration Reference
 
-All Sharko configuration is managed via Helm values. This page documents every supported option.
+Most Sharko configuration is managed via Helm values, documented on this page. A small set of server-wide settings — `probe_mode` and `allow_inline_credentials` — are runtime toggles instead: stored in Sharko's in-cluster settings store, admin-only, editable from **Settings** in the UI (or their `/api/v1/settings/*` endpoints) with no restart or redeploy needed. See [Server Settings in the connections guide](../user-guide/connections.md#server-settings) for what each one does.
 
 > Sharko-owned YAML config files wrap content in an
 > `apiVersion: sharko.dev/v1` envelope with schema-validated structure.

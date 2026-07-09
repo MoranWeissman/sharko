@@ -69,10 +69,10 @@ Click **Initialize** and watch the progress. When the step completes, click **Go
 
 The dashboard loads with clusters discovered from ArgoCD. You will see:
 
-- **Managed clusters** — clusters already registered with Sharko
-- **Discovered clusters** — existing ArgoCD clusters not yet managed by Sharko
+- **Managed clusters** — clusters already registered with Sharko, listed on the Clusters page
+- **Discovered clusters** — existing ArgoCD clusters not yet managed by Sharko, collapsed into a single hint line with a count (e.g. "ArgoCD knows 3 more clusters Sharko doesn't manage")
 
-Click **Start Managing** on a discovered cluster to bring it under Sharko management. Click **Test connection** to verify connectivity to any cluster.
+Click that hint to open **Register New Cluster** pre-set to adopt one of them. Click **Test connection** to verify connectivity to any cluster.
 
 ## What's Next
 

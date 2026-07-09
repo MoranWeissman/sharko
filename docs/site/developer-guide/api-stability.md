@@ -193,6 +193,8 @@ Surface default: **`stable`**. The core production flow.
 | POST | `/clusters/{name}/secrets/refresh` | `stable` | Surface default. |
 | POST | `/clusters/{name}/addons/{addon}` | `stable` | Per-cluster addon enable. |
 | DELETE | `/clusters/{name}/addons/{addon}` | `stable` | Per-cluster addon disable. |
+| POST | `/clusters/{name}/doctor` | `beta` | New in V2-cleanup-88.4/89.5 (5 checks); check-ID vocabulary may still grow. |
+| POST | `/clusters/{name}/reconcile` | `beta` | New in V2-cleanup-89.4; `last_reconcile` outcome/message shape may still evolve. |
 | GET | `/clusters/{cluster}/addons/{name}/values` | `stable` | Per-cluster values read. |
 | PUT | `/clusters/{cluster}/addons/{name}/values` | `stable` | Per-cluster values write. |
 | GET | `/clusters/{cluster}/addons/{name}/values/recent-prs` | `stable` | Read-only PR list. |

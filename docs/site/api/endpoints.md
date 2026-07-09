@@ -85,6 +85,8 @@ All write endpoints require the `admin` role.
 | `POST` | `/api/v1/clusters/{name}/secrets/refresh` | Refresh managed secrets on a cluster |
 | `POST` | `/api/v1/clusters/{name}/test` | Test cluster connectivity (returns `{"reachable": bool, "version": "..."}`) |
 | `POST` | `/api/v1/clusters/{name}/adopt` | Adopt a discovered ArgoCD cluster into Sharko management |
+| `POST` | `/api/v1/clusters/{name}/doctor` | Run the [connection doctor](../operator/connection-doctor.md) — five real-attempt checks with plain-English fixes |
+| `POST` | `/api/v1/clusters/{name}/reconcile` | Trigger a manual cluster-secret reconcile ("Sync now") — returns `202`, read the result from `last_reconcile` on the next `GET` |
 
 ### Addons
 

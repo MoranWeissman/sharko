@@ -173,6 +173,7 @@ This means the blast radius of a Sharko compromise is limited to the window betw
 - Rotate GitHub PATs and ArgoCD tokens periodically via the Settings UI
 - Do not enable `config.devMode: true` in production — it allows credential fallback via environment variables
 - Set `SHARKO_WEBHOOK_SECRET` when exposing the webhook endpoint to the internet
+- **Turn off `allow_inline_credentials` in production** (Settings → same section as Connectivity Probe, default `true`). This closes the one registration path where sensitive kubeconfig bytes travel inside the request itself — with it off, registration only accepts a pointer to an already-stored secret, an EKS token mint, or no credentials at all, enforcing GitOps-clean secret-store pointers for every cluster. Every other registration path (and enabling addons) is unaffected. Once scoped RBAC ships (see the [roadmap](../community/roadmap.md)), this is planned to become a per-role permission rather than one server-wide switch — until then, it's all-or-nothing for every admin.
 
 ## Tiered Git Attribution (v1.20+)
 

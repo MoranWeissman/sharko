@@ -197,7 +197,7 @@ ArgoCD cluster registry
         NO  → "discovered" — read-only in Sharko, can be adopted
 ```
 
-The `GET /api/v1/clusters` response includes a `"managed": bool` field on each entry. The UI renders the two groups separately. Discovered clusters show an **Adopt** action that creates the initial values file via PR.
+The `GET /api/v1/clusters` response includes a `"managed": bool` field on each entry. The UI lists managed clusters as the main Clusters page; discovered clusters collapse into a single hint line with a count, which opens **Register New Cluster** pre-set to adopt one of them — same **Adopt** action underneath, creating the initial values file via PR.
 
 ## Notifications
 
