@@ -161,6 +161,43 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
     expect(screen.getByText('Connection source')).toBeInTheDocument();
   });
 
+  // V2-cleanup-89.8 — maintainer walkthrough finding: with "I do" chosen and
+  // no discovered clusters, the picker was hidden entirely with nothing in
+  // its place, indistinguishable from the feature not existing. An explicit
+  // calm line now says so out loud.
+  it('shows an explicit "nothing to adopt" line when "I do" is chosen and ArgoCD has no discovered clusters', async () => {
+    mockGetClusters.mockResolvedValue(clustersResponse([]));
+    renderView();
+    await openAddDialog();
+
+    // Not shown before "I do" is picked — default ownership is "sharko".
+    expect(screen.queryByTestId('discovered-empty')).not.toBeInTheDocument();
+
+    fireEvent.change(ownershipSelect(), { target: { value: 'user' } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('discovered-empty')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText('Sharko checked ArgoCD — no other clusters there to adopt.'),
+    ).toBeInTheDocument();
+    // The picker itself stays absent — this is the "nothing to pick" state.
+    expect(screen.queryByTestId('discovered-picker')).not.toBeInTheDocument();
+  });
+
+  it('does not show the "nothing to adopt" line when the picker has items to show instead', async () => {
+    mockGetClusters.mockResolvedValue(clustersResponse([discoveredCluster]));
+    renderView();
+    await openAddDialog();
+
+    fireEvent.change(ownershipSelect(), { target: { value: 'user' } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('discovered-picker')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('discovered-empty')).not.toBeInTheDocument();
+  });
+
   it('picking a cluster and confirming fires the existing adopt flow, not registerCluster', async () => {
     mockGetClusters.mockResolvedValue(clustersResponse([discoveredCluster]));
     mockTestClusterConnection.mockResolvedValue({

@@ -1,6 +1,6 @@
 /**
- * ClusterIdentityStrip — Layer 1 ("Identity") of the two-layer registration
- * dialog, shrunk to one calm line (V2-cleanup-89.2).
+ * ClusterIdentityStrip — the identity summary at the top of the Register
+ * New Cluster dialog, shrunk to one calm line (V2-cleanup-89.2).
  *
  * V2-cleanup-88.5 put the full identity explainer (ARN, method badge, and
  * an expandable "How identity-based access works" panel) inside the Register
@@ -8,6 +8,10 @@
  * — a newcomer thinks they must act on it. The full explainer now lives on
  * the System page (`ClusterIdentityPanel`, rendered by `SystemView`); this
  * strip is the one line that stays in the dialog, pointing there for detail.
+ *
+ * V2-cleanup-89.8: dropped the "Layer 1" header entirely — it was internal
+ * design vocabulary that gave users nothing. A one-line strip needs no
+ * section header.
  *
  * Purely presentational: the parent (ClustersOverview) still owns the fetch
  * and passes the result down, same as before.
@@ -34,12 +38,8 @@ export function ClusterIdentityStrip({ capabilities, loading }: ClusterIdentityS
       data-testid="identity-strip"
       className="rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] p-3 dark:ring-gray-700 dark:bg-gray-900"
     >
-      <p className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
-        Layer 1 — Identity
-      </p>
-
       {loading && (
-        <p className="mt-1 flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
+        <p className="flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           Checking Sharko's own identity…
         </p>
@@ -47,7 +47,7 @@ export function ClusterIdentityStrip({ capabilities, loading }: ClusterIdentityS
 
       {detected && (
         <p
-          className="mt-1 flex flex-wrap items-center gap-1.5 text-sm font-medium text-green-700 dark:text-green-400"
+          className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-green-700 dark:text-green-400"
           data-testid="identity-strip-detected"
         >
           <CheckCircle2 className="h-4 w-4 shrink-0" />
@@ -64,7 +64,7 @@ export function ClusterIdentityStrip({ capabilities, loading }: ClusterIdentityS
 
       {showNotDetected && (
         <p
-          className="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-amber-700 dark:text-amber-400"
+          className="flex flex-wrap items-center gap-1.5 text-sm text-amber-700 dark:text-amber-400"
           data-testid="identity-strip-not-detected"
         >
           <AlertTriangle className="h-4 w-4 shrink-0" />
