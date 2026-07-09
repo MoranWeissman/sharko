@@ -5935,6 +5935,89 @@ const docTemplate = `{
                 }
             }
         },
+        "/settings/allow-inline-credentials": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns whether the \"Paste a kubeconfig\" registration path is enabled server-wide (V2-cleanup-89.6, default true)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Get allow-inline-credentials setting",
+                "responses": {
+                    "200": {
+                        "description": "Current setting",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.allowInlineCredentialsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Settings store not available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets whether the \"Paste a kubeconfig\" registration path is enabled server-wide (V2-cleanup-89.6). Admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Set allow-inline-credentials setting",
+                "parameters": [
+                    {
+                        "description": "Desired setting",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.allowInlineCredentialsResponse"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Setting saved",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.allowInlineCredentialsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Settings store not available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/settings/probe-mode": {
             "get": {
                 "security": [
@@ -8523,6 +8606,15 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.allowInlineCredentialsResponse": {
+            "type": "object",
+            "properties": {
+                "allow_inline_credentials": {
+                    "description": "AllowInlineCredentials is true (the default) when the \"Paste a\nkubeconfig\" registration path is available. An admin sets this to\nfalse to forbid inline credential paste install-wide — registration\nrequests that actually supply inline kubeconfig bytes are then\nrejected with a 403; connection-only registrations are unaffected.\nSharko has no user RBAC today (single admin login); when V2.x scoped\nRBAC lands this is expected to become a per-role permission.",
+                    "type": "boolean"
                 }
             }
         },

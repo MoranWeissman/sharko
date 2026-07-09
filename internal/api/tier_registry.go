@@ -57,9 +57,11 @@ var HandlerTier = map[string]audit.Tier{
 	"handleSetAIProvider": audit.Tier1,
 	"handleTestAI":        audit.Tier1,
 
-	// Server-wide settings (probe_mode, V2-cleanup-85.4) — a ConfigMap write,
-	// not a Git-affecting mutation; same bucket as AI config above.
-	"handleSetProbeMode": audit.Tier1,
+	// Server-wide settings (probe_mode, V2-cleanup-85.4; allow_inline_credentials,
+	// V2-cleanup-89.6) — a ConfigMap write, not a Git-affecting mutation;
+	// same bucket as AI config above.
+	"handleSetProbeMode":              audit.Tier1,
+	"handleSetAllowInlineCredentials": audit.Tier1,
 
 	// Dashboards (embedded)
 	"handleSaveDashboards": audit.Tier1,

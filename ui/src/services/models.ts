@@ -51,6 +51,13 @@ export interface Cluster {
   // per-cluster record; absent when the reconciler hasn't processed this
   // cluster on this server instance yet.
   last_reconcile?: ClusterLastReconcile
+  // Where this cluster's credentials live, mirrored from the
+  // managed-clusters.yaml entry (V2-cleanup-60.4): 'inline-kubeconfig'
+  // (credentials were pasted at registration and live only in the ArgoCD
+  // cluster Secret), 'secret-kubeconfig' / 'eks-token' (a secrets backend
+  // holds them), or absent for records that predate the field. Used by the
+  // V2-cleanup-89.6 migrate-nudge on ClusterDetail.
+  creds_source?: string
 }
 
 // ClusterLastReconcile mirrors internal/models.ClusterLastReconcile
@@ -103,6 +110,15 @@ export type ProbeMode = 'check-app' | 'api-test'
 
 export interface ProbeModeResponse {
   probe_mode: ProbeMode
+}
+
+// Server-wide admin kill switch for the "Paste a kubeconfig" registration
+// path (V2-cleanup-89.6). Defaults to true (today's behavior, unchanged).
+// When false, registration requests that actually supply inline kubeconfig
+// bytes are rejected server-side, and the UI hides the paste option from
+// the Register dialog's Connection source select.
+export interface AllowInlineCredentialsResponse {
+  allow_inline_credentials: boolean
 }
 
 export interface ClusterHealthStats {

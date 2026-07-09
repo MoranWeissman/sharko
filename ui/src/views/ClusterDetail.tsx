@@ -937,6 +937,15 @@ export function ClusterDetail() {
               )}
             </p>
           )}
+          {/* Migrate nudge (V2-cleanup-89.6) — this cluster was registered
+            * via the "Paste a kubeconfig" path, whose availability an admin
+            * can now turn off install-wide. A light nudge toward the
+            * GitOps-clean alternative; not a warning or a blocker. */}
+          {data?.cluster?.creds_source === 'inline-kubeconfig' && (
+            <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+              Registered with pasted credentials — consider migrating to a secret-store pointer.
+            </p>
+          )}
           {testResult && testResult !== 'testing' && isTestClusterUnavailable(testResult) && (
             // The Test endpoint can be unavailable for several reasons —
             // see the typed `error_code` values on TestClusterUnavailable.

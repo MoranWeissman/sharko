@@ -97,3 +97,72 @@ func TestIsAPITest_NilStoreIsSafe(t *testing.T) {
 		t.Error("IsAPITest on a nil *Store must default to false (check-app), never panic or report true")
 	}
 }
+
+// V2-cleanup-89.6 — allow_inline_credentials kill switch.
+
+func TestGetAllowInlineCredentials_DefaultsToTrue(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	allow, err := store.GetAllowInlineCredentials(ctx)
+	if err != nil {
+		t.Fatalf("GetAllowInlineCredentials: %v", err)
+	}
+	if !allow {
+		t.Error("GetAllowInlineCredentials = false, want default true (today's behavior unchanged)")
+	}
+}
+
+func TestSetAllowInlineCredentials_RoundTrip(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if err := store.SetAllowInlineCredentials(ctx, false); err != nil {
+		t.Fatalf("SetAllowInlineCredentials(false): %v", err)
+	}
+	allow, err := store.GetAllowInlineCredentials(ctx)
+	if err != nil {
+		t.Fatalf("GetAllowInlineCredentials: %v", err)
+	}
+	if allow {
+		t.Error("GetAllowInlineCredentials = true after SetAllowInlineCredentials(false), want false")
+	}
+
+	// Flip back — the ConfigMap is updated, not recreated.
+	if err := store.SetAllowInlineCredentials(ctx, true); err != nil {
+		t.Fatalf("SetAllowInlineCredentials(true): %v", err)
+	}
+	allow, err = store.GetAllowInlineCredentials(ctx)
+	if err != nil {
+		t.Fatalf("GetAllowInlineCredentials (after revert): %v", err)
+	}
+	if !allow {
+		t.Error("GetAllowInlineCredentials (after revert) = false, want true")
+	}
+}
+
+func TestIsInlineCredentialsAllowed(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if !store.IsInlineCredentialsAllowed(ctx) {
+		t.Error("IsInlineCredentialsAllowed should be true by default")
+	}
+
+	if err := store.SetAllowInlineCredentials(ctx, false); err != nil {
+		t.Fatalf("SetAllowInlineCredentials: %v", err)
+	}
+	if store.IsInlineCredentialsAllowed(ctx) {
+		t.Error("IsInlineCredentialsAllowed should be false after SetAllowInlineCredentials(false)")
+	}
+}
+
+func TestIsInlineCredentialsAllowed_NilStoreIsSafe(t *testing.T) {
+	var store *Store
+	if !store.IsInlineCredentialsAllowed(context.Background()) {
+		t.Error("IsInlineCredentialsAllowed on a nil *Store must default to true, never panic or report false")
+	}
+}

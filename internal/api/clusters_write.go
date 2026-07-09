@@ -186,6 +186,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
+	orch.SetAllowInlineCredentialsFn(s.settingsStore.IsInlineCredentialsAllowed)
 	if len(s.defaultAddons) > 0 {
 		orch.SetDefaultAddons(s.defaultAddons)
 	}
@@ -198,6 +199,13 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := orch.RegisterCluster(ctx, req)
 	if err != nil {
+		// Admin kill switch for inline credential paste (V2-cleanup-89.6):
+		// allow_inline_credentials is false and this request actually
+		// supplied inline kubeconfig bytes. Admin-policy rejection → 403.
+		if orchestrator.IsInlineCredentialsDisabled(err) {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
 		// Invalid creds_source (creds-reframe-1): unknown value, or an
 		// inline source with no kubeconfig. Caller error → 400.
 		if orchestrator.IsInvalidCredsSource(err) {

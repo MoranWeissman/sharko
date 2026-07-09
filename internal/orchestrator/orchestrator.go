@@ -153,6 +153,17 @@ type Orchestrator struct {
 	// SetCredsRouter so api-side and orchestrator-side fetches share one
 	// router (and its cached ArgoCD reader).
 	credsRouter *providers.ClusterCredsRouter
+
+	// allowInlineCredentialsFn, when non-nil, is consulted by RegisterCluster
+	// to decide whether an inline-kubeconfig registration that actually
+	// supplied kubeconfig bytes may proceed (V2-cleanup-89.6's
+	// allow_inline_credentials server setting). nil means "no settings store
+	// wired" — every registration is allowed, matching today's behavior and
+	// the setting's own default (true). Wired from
+	// settings.Store.IsInlineCredentialsAllowed in the API layer, which
+	// already swallows read errors and defaults to true — RegisterCluster
+	// never blocks on a settings-store outage.
+	allowInlineCredentialsFn func(ctx context.Context) bool
 }
 
 // SetDefaultAddons configures the default addons applied to clusters
@@ -168,6 +179,16 @@ func (o *Orchestrator) SetDefaultAddons(defaults map[string]bool) {
 func (o *Orchestrator) SetArgoSecretManager(m ArgoSecretManager, defaultRoleARN string) {
 	o.argoSecretManager = m
 	o.defaultRoleARN = defaultRoleARN
+}
+
+// SetAllowInlineCredentialsFn wires in the server-wide allow_inline_credentials
+// policy check (V2-cleanup-89.6). Pass nil (or skip the call) to disable the
+// gate entirely — RegisterCluster then allows every inline-kubeconfig
+// registration, matching pre-89.6 behavior. Production wires this to
+// settings.Store.IsInlineCredentialsAllowed, which is itself nil-safe and
+// defaults to true.
+func (o *Orchestrator) SetAllowInlineCredentialsFn(fn func(ctx context.Context) bool) {
+	o.allowInlineCredentialsFn = fn
 }
 
 // SetReconcilerTrigger wires in a nudge function that is invoked after the
