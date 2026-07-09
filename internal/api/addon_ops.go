@@ -20,8 +20,12 @@ import (
 // @Summary Enable addon on cluster
 // @Description Enables a specific addon on a cluster. Updates the cluster values file
 // @Description (sets addon to true) and managed-clusters.yaml (sets label to enabled) via PR.
-// @Description If the cluster has a credential provider, addon secrets are created on the remote cluster.
-// @Description Requires yes=true for confirmation. Pass dry_run=true to preview.
+// @Description If the addon declares secrets, Sharko must have resolvable credentials for
+// @Description the cluster (V2-cleanup-88.3 — lazy credentials): registration succeeds with
+// @Description no credentials, but enabling a secret-bearing addon on a cred-less cluster is
+// @Description rejected with 422 naming what's missing. Secret-less addons enable with no
+// @Description credential requirement at all. Requires yes=true for confirmation. Pass
+// @Description dry_run=true to preview (the credentials gate applies to the preview too).
 // @Tags clusters
 // @Accept json
 // @Produce json
@@ -34,6 +38,7 @@ import (
 // @Failure 400 {object} map[string]interface{} "Bad request or missing confirmation"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Failure 422 {object} map[string]interface{} "Addon not in catalog, or addon needs secrets but Sharko has no credentials for the cluster"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /clusters/{name}/addons/{addon} [post]
 func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +116,14 @@ func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
 		// in the catalog. This is a caller error, not an upstream failure —
 		// map it to 422 with the orchestrator's actionable message.
 		if orchestrator.IsAddonNotInCatalog(orchErr) {
+			writeError(w, http.StatusUnprocessableEntity, orchErr.Error())
+			return
+		}
+		// Lazy-credentials pre-flight rejection (V2-cleanup-88.3): the addon
+		// needs secrets pushed to the cluster but Sharko has no resolvable
+		// credentials for it. Caller-actionable — map to 422, same status
+		// family as the catalog-membership rejection above, never a 500/502.
+		if orchestrator.IsMissingClusterCredentials(orchErr) {
 			writeError(w, http.StatusUnprocessableEntity, orchErr.Error())
 			return
 		}

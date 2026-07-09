@@ -59,14 +59,6 @@ func TestRegisterCluster_KubeconfigProvider_RejectsAWSFields(t *testing.T) {
 			},
 			wantInError: "region",
 		},
-		{
-			name: "missing kubeconfig is rejected up front",
-			body: map[string]interface{}{
-				"name":     "kind-test",
-				"provider": "kubeconfig",
-			},
-			wantInError: "kubeconfig",
-		},
 	}
 
 	for _, tc := range cases {
@@ -85,6 +77,34 @@ func TestRegisterCluster_KubeconfigProvider_RejectsAWSFields(t *testing.T) {
 				t.Errorf("error %q should mention %q", msg, tc.wantInError)
 			}
 		})
+	}
+}
+
+// TestRegisterCluster_KubeconfigProvider_MissingKubeconfig_NotRejected pins
+// V2-cleanup-88.3 (lazy credentials): provider=kubeconfig with no
+// kubeconfig field is no longer a 400 up front — credentials are optional
+// at registration for every connection mode, so this degrades to a
+// connection-only registration instead of being rejected. The isolated test
+// server has no active ArgoCD/Git connection wired, so the request still
+// fails downstream (502) — the point of this test is that it is NOT the
+// old 400 "kubeconfig is required" rejection.
+func TestRegisterCluster_KubeconfigProvider_MissingKubeconfig_NotRejected(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	w := postCluster(t, router, map[string]interface{}{
+		"name":     "kind-test",
+		"provider": "kubeconfig",
+	})
+
+	if w.Code == http.StatusBadRequest {
+		msg := decodeError(t, w)
+		if strings.Contains(msg, "kubeconfig is required") {
+			t.Fatalf("status = 400 with the old rejection message: %q — credentials must be optional (V2-cleanup-88.3)", msg)
+		}
+	}
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatalf("status = 503: missing kubeconfig must not be gated by the credProvider==nil check either")
 	}
 }
 

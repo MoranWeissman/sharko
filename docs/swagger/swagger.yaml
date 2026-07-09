@@ -3581,9 +3581,12 @@ paths:
         Optionally set "connection_managed_by" to declare who owns the ArgoCD
         cluster secret: "sharko" (default — Sharko writes and rotates it) or
         "user" (self-managed — you create the secret by hand; Sharko never writes
-        it and only syncs addon labels onto it). For a self-managed registration
-        credentials are optional: when supplied, connectivity verification still
-        runs; when absent, it is skipped.
+        it and only syncs addon labels onto it). Credentials are OPTIONAL at
+        registration for every connection mode (V2-cleanup-88.3 — lazy credentials):
+        when supplied, connectivity verification still runs; when absent (no
+        kubeconfig, no secret_path, no working secrets-provider lookup), it is
+        skipped and the cluster registers as connection-only. Sharko only asks
+        for credentials later, when a secret-bearing addon is enabled on the cluster.
       parameters:
       - description: Cluster registration request (supports dry_run + kubeconfig fields)
         in: body
@@ -3626,11 +3629,6 @@ paths:
             type: object
         "502":
           description: Gateway error
-          schema:
-            additionalProperties: true
-            type: object
-        "503":
-          description: Credentials provider not configured (eks provider only)
           schema:
             additionalProperties: true
             type: object
@@ -3983,8 +3981,12 @@ paths:
       description: |-
         Enables a specific addon on a cluster. Updates the cluster values file
         (sets addon to true) and managed-clusters.yaml (sets label to enabled) via PR.
-        If the cluster has a credential provider, addon secrets are created on the remote cluster.
-        Requires yes=true for confirmation. Pass dry_run=true to preview.
+        If the addon declares secrets, Sharko must have resolvable credentials for
+        the cluster (V2-cleanup-88.3 — lazy credentials): registration succeeds with
+        no credentials, but enabling a secret-bearing addon on a cred-less cluster is
+        rejected with 422 naming what's missing. Secret-less addons enable with no
+        credential requirement at all. Requires yes=true for confirmation. Pass
+        dry_run=true to preview (the credentials gate applies to the preview too).
       parameters:
       - description: Cluster name
         in: path
@@ -4025,6 +4027,12 @@ paths:
             type: object
         "403":
           description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Addon not in catalog, or addon needs secrets but Sharko has
+            no credentials for the cluster
           schema:
             additionalProperties: true
             type: object
@@ -4702,11 +4710,6 @@ paths:
             type: object
         "502":
           description: Gateway error
-          schema:
-            additionalProperties: true
-            type: object
-        "503":
-          description: Credentials provider not configured
           schema:
             additionalProperties: true
             type: object

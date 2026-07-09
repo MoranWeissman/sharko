@@ -85,3 +85,54 @@ func CredentialRoutingFor(clusters []Cluster, name string) (lookupKey, credsSour
 	}
 	return name, "", ""
 }
+
+// CredentialsResolvable reports whether Sharko has a plausible, resolvable
+// path to this cluster's own credentials — a CHEAP presence-of-config check
+// over the stored record, NOT a live probe (V2-cleanup-88.3 — lazy
+// credentials). Registration succeeds with zero credentials (see
+// RegisterCluster); this predicate is what the read-only
+// Cluster.DerivedHealthStatus-style `addon_secrets_ready` API field keys
+// off, so the UI can show "this cluster needs credentials before you can
+// enable a secret-bearing addon" without an extra round trip. The
+// orchestrator's EnableAddon pre-flight gate performs the real, strict
+// version of this check (an actual credential fetch attempt) — a "false"
+// here always predicts a gate rejection; a "true" here is a hint, not a
+// guarantee (e.g. a stored secret deleted out-of-band after registration
+// would still read "true" here but fail the real gate).
+//
+// backendConfigured reports whether a secrets-provider backend is wired up
+// at the connection level (orchestrator's o.credProvider != nil / the API's
+// s.credProvider() != nil) — a backend creds source can only ever resolve
+// when a backend actually exists to ask.
+//
+//   - inline-kubeconfig + Sharko-managed connection → true: Sharko wrote
+//     the ArgoCD cluster Secret from the pasted credentials at registration
+//     and can read it back.
+//   - inline-kubeconfig + self-managed ("user") connection → false: Sharko
+//     NEVER writes the ArgoCD cluster Secret for a self-managed connection
+//     (V2-cleanup-57.2), so there is nothing to read back even though the
+//     stored source is "inline".
+//   - secret-kubeconfig / eks-token → true only when a backend is
+//     configured.
+//   - "" (record predates the credsSource field, or credentials were never
+//     supplied at a lazy-credentials registration) → true only when a
+//     backend is configured — the same backend-first fallback every other
+//     "unknown source" reader in this package uses.
+func (c Cluster) CredentialsResolvable(backendConfigured bool) bool {
+	return credentialsResolvable(c.CredsSource, c.ConnectionManagedBy, backendConfigured)
+}
+
+// CredentialsResolvable is the ManagedClusterEntry twin of
+// Cluster.CredentialsResolvable.
+func (e ManagedClusterEntry) CredentialsResolvable(backendConfigured bool) bool {
+	return credentialsResolvable(e.CredsSource, e.ConnectionManagedBy, backendConfigured)
+}
+
+func credentialsResolvable(credsSource, connectionManagedBy string, backendConfigured bool) bool {
+	if credsSource == CredsSourceInlineKubeconfig {
+		return !IsUserManagedConnection(connectionManagedBy)
+	}
+	// secret-kubeconfig / eks-token / "" (unknown, pre-field record) all
+	// route through the backend provider — resolvable only when one exists.
+	return backendConfigured
+}

@@ -221,6 +221,17 @@ func (o *Orchestrator) EnableAddon(ctx context.Context, req EnableAddonRequest) 
 		return nil, catalogErr
 	}
 
+	// Pre-flight credentials gate (V2-cleanup-88.3 — lazy credentials): the
+	// ONE moment Sharko needs its own spoke-cluster credentials is pushing
+	// this addon's Secrets to the cluster. A secret-less addon is a no-op
+	// here — it deploys via Git -> ArgoCD like any other workload, on a
+	// cred-less cluster with zero friction. Checked before any Git write
+	// (including dry-run) so a preview never promises something the real
+	// enable would then reject.
+	if credErr := o.requireClusterCredentialsForAddon(ctx, catalog, req.Cluster, req.Addon); credErr != nil {
+		return nil, credErr
+	}
+
 	result := &EnableAddonResult{
 		Cluster: req.Cluster,
 		Addon:   req.Addon,

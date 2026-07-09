@@ -380,6 +380,20 @@ type Cluster struct {
 	// "is this cluster healthy" without requiring a manual test click.
 	DerivedHealthStatus string `json:"derived_health_status,omitempty"`
 
+	// AddonSecretsReady reports whether Sharko currently has resolvable
+	// credentials for this cluster (V2-cleanup-88.3 — lazy credentials).
+	// Computed on every read via CredentialsResolvable — a cheap
+	// presence-of-config check (creds_source / connection mode / whether a
+	// secrets backend is configured), NOT a live probe, mirroring the
+	// DerivedHealthStatus precedent above. true means a secret-bearing
+	// addon can likely be enabled on this cluster without hitting the
+	// EnableAddon pre-flight rejection; false means the UI should surface
+	// "add connection credentials before enabling an addon with secrets"
+	// instead of letting the request round-trip into a 422. Registration
+	// itself never requires credentials — this field only matters once the
+	// operator tries to enable a secret-bearing addon.
+	AddonSecretsReady bool `json:"addon_secrets_ready"`
+
 	// Sharko observability fields (V2-cleanup-27 folded into V2-cleanup-29).
 	// Populated when obsStore is available; absent otherwise (omitempty).
 	SharkoStatus  string `json:"sharko_status,omitempty"`

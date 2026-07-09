@@ -57,3 +57,18 @@ func (o *Orchestrator) fetchClusterCredentials(ctx context.Context, name string)
 	}
 	return o.credsRouter.Fetch(name, lookupKey, credsSource, roleARN)
 }
+
+// clusterHasResolvableCredentials reports whether Sharko can currently
+// fetch spoke-cluster credentials for the named cluster (V2-cleanup-88.3 —
+// lazy credentials). This is a REAL fetch attempt via fetchClusterCredentials
+// — the enforcement-moment counterpart of the cheap, config-presence-only
+// models.Cluster.CredentialsResolvable used by the read-only
+// addon_secrets_ready API field. A "not resolvable" from the cheap check
+// always means this fails too; this one can occasionally say "no" when the
+// cheap check said "yes" (e.g. a stored secret was deleted out-of-band
+// after registration) — that asymmetry is intentional, this is the strict
+// gate and the API field is only a fast hint.
+func (o *Orchestrator) clusterHasResolvableCredentials(ctx context.Context, name string) bool {
+	creds, err := o.fetchClusterCredentials(ctx, name)
+	return err == nil && creds != nil
+}

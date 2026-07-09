@@ -118,6 +118,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		obsMap, _ = s.obsStore.ListObservations(r.Context())
 	}
 
+	backendConfigured := s.credProvider() != nil
 	for i := range resp.Clusters {
 		c := &resp.Clusters[i]
 		verdict := computeConnectivityVerdict(c.Name, c.ConnectionStatus, allApps)
@@ -130,6 +131,10 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		// V2-cleanup-88.1: pure string/shape derivation, no extra call —
 		// always computed, unlike the ArgoCD-app-dependent fields above.
 		c.TargetPlatform = computeTargetPlatform(c.ServerURL, c.CredsSource)
+		// V2-cleanup-88.3: cheap presence-of-config readiness signal for
+		// "can a secret-bearing addon be enabled here" — see
+		// models.Cluster.CredentialsResolvable.
+		c.AddonSecretsReady = c.CredentialsResolvable(backendConfigured)
 		if obsMap != nil {
 			applyObsFields(c, obsMap[c.Name])
 		}
@@ -265,6 +270,9 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 	// V2-cleanup-88.1: pure string/shape derivation, no ArgoCD call needed
 	// — set unconditionally, unlike the ArgoCD-app-dependent fields above.
 	resp.Cluster.TargetPlatform = computeTargetPlatform(resp.Cluster.ServerURL, resp.Cluster.CredsSource)
+	// V2-cleanup-88.3: cheap presence-of-config readiness signal — does not
+	// depend on the ArgoCD application list, so it is computed unconditionally.
+	resp.Cluster.AddonSecretsReady = resp.Cluster.CredentialsResolvable(s.credProvider() != nil)
 	if s.obsStore != nil {
 		obsMap, _ := s.obsStore.ListObservations(r.Context())
 		if obsMap != nil {
@@ -406,6 +414,9 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 	// V2-cleanup-88.1: pure string/shape derivation, no ArgoCD call needed
 	// — set unconditionally, unlike the ArgoCD-app-dependent fields above.
 	resp.Cluster.TargetPlatform = computeTargetPlatform(resp.Cluster.ServerURL, resp.Cluster.CredsSource)
+	// V2-cleanup-88.3: cheap presence-of-config readiness signal — does not
+	// depend on the ArgoCD application list, so it is computed unconditionally.
+	resp.Cluster.AddonSecretsReady = resp.Cluster.CredentialsResolvable(s.credProvider() != nil)
 	if s.obsStore != nil {
 		obsMap, _ := s.obsStore.ListObservations(r.Context())
 		if obsMap != nil {
