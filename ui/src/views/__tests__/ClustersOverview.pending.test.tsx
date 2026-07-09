@@ -139,28 +139,24 @@ describe('ClustersOverview — V125-1.5 pending-PR registration surface', () => 
 
     renderView();
 
+    // V2-cleanup-89.3: the Discovered section is now a one-line hint (no
+    // per-cluster names, no bulk-select table) — assert on its count text.
     await waitFor(() => {
-      expect(screen.getByText(/Discovered Clusters/i)).toBeInTheDocument();
+      expect(screen.getByTestId('discovered-hint')).toBeInTheDocument();
     });
 
-    // The unrelated discovered cluster renders.
-    expect(screen.getByText('real-discovered')).toBeInTheDocument();
-
-    // The Discovered Clusters count badge should read "1", not "2",
-    // because kind-local was filtered out. The badge sits next to the
-    // section header.
-    const discoveredHeader = screen.getByText(/Discovered Clusters/i).closest('h3');
-    expect(discoveredHeader).toBeTruthy();
-    expect(discoveredHeader!.textContent).toMatch(/Discovered Clusters\s*1/);
+    // The count should read "1", not "2", because kind-local was filtered
+    // out into the Pending Registrations surface.
+    const hint = screen.getByTestId('discovered-hint');
+    expect(hint.textContent).toMatch(/ArgoCD knows 1 more cluster Sharko doesn't manage/);
 
     // kind-local DOES still render — but only in the Pending
-    // Registrations table, never in Discovered. The Pending header sits
-    // ABOVE Discovered in DOM order, so the first occurrence is the
-    // pending row.
+    // Registrations table, never named in the Discovered hint (which
+    // carries no per-cluster names any more).
     const allKindLocal = screen.getAllByText('kind-local');
     expect(allKindLocal.length).toBe(1);
-    // It should not be inside the Discovered table — assert by walking
-    // the parent <table> chain.
+    // It should not be inside a Discovered table — assert by walking the
+    // parent <table> chain.
     const tableForKindLocal = allKindLocal[0].closest('table');
     expect(tableForKindLocal).toBeTruthy();
     // The Pending table header includes "Cluster Name" + "Branch" +
@@ -168,6 +164,10 @@ describe('ClustersOverview — V125-1.5 pending-PR registration surface', () => 
     const headers = Array.from(tableForKindLocal!.querySelectorAll('th')).map(th => th.textContent ?? '');
     expect(headers.some(h => h.match(/Branch/i))).toBe(true);
     expect(headers.some(h => h.match(/Opened/i))).toBe(true);
+
+    // 'real-discovered' — the unrelated, legitimately-discovered cluster —
+    // is counted but not named on the page.
+    expect(screen.queryByText('real-discovered')).not.toBeInTheDocument();
   });
 });
 

@@ -46,6 +46,14 @@ export function AdoptClustersDialog({
   const [phase, setPhase] = useState<'verifying' | 'review' | 'adopting' | 'done'>('verifying')
   const [adoptResults, setAdoptResults] = useState<AdoptResult[]>([])
   const [adoptError, setAdoptError] = useState<string | null>(null)
+  // Bumped every time the dialog opens a fresh verification run. The
+  // verification effect below keys off THIS instead of `phase` directly:
+  // `phase` starts at 'verifying' (its default), so on the very first
+  // adopt of a session `setPhase('verifying')` is a same-value no-op and
+  // React never treats `[phase]` as "changed" — the verification effect
+  // silently never fires. An incrementing id always changes, so it's a
+  // reliable trigger regardless of what `phase` happened to be before.
+  const [verifyRunId, setVerifyRunId] = useState(0)
 
   // Initialize verifications when dialog opens
   useEffect(() => {
@@ -57,11 +65,12 @@ export function AdoptClustersDialog({
     }))
     setVerifications(initial)
     setPhase('verifying')
+    setVerifyRunId((n) => n + 1)
     setAdoptResults([])
     setAdoptError(null)
   }, [open, clusters])
 
-  // Run verifications sequentially when phase is 'verifying'
+  // Run verifications sequentially for each fresh run triggered above.
   useEffect(() => {
     if (phase !== 'verifying') return
     if (verifications.length === 0) return
@@ -147,7 +156,7 @@ export function AdoptClustersDialog({
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase])
+  }, [verifyRunId])
 
   const toggleCluster = useCallback((index: number) => {
     setVerifications((prev) => {

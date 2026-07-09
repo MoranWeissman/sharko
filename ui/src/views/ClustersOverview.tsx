@@ -42,7 +42,6 @@ import type {
   VerifyStep,
 } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
-import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { ClusterStatusSummary } from '@/components/ClusterStatusSummary';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
@@ -114,7 +113,7 @@ export const CONN_OWNERSHIP_HINTS: Record<ConnOwnership, string> = {
   sharko:
     'Sharko creates the ArgoCD cluster secret and keeps its credentials up to date. The usual choice.',
   user:
-    'You create the ArgoCD cluster secret yourself and Sharko never touches its credentials — it only keeps the addon labels on it in sync. Credentials below become optional (used only to test connectivity). See the operator guide: Managing cluster connections yourself.',
+    'You create the ArgoCD cluster secret yourself and Sharko never touches its credentials — it only keeps the addon labels on it in sync. Git stays the source of truth for which addons go where. Credentials below become optional (used only to test connectivity). See the operator guide: Managing cluster connections yourself.',
 };
 
 export function ClustersOverview() {
@@ -185,16 +184,17 @@ export function ClustersOverview() {
   // Expanded test steps per cluster
   const [expandedTestSteps, setExpandedTestSteps] = useState<Record<string, boolean>>({});
 
-  // Adopt (start managing) state per cluster (populated by AdoptClustersDialog via refresh)
-  const [manageStatus] = useState<Record<string, { loading?: boolean; success?: string; error?: string }>>({});
-
   // Diagnose modal state
   const [diagnoseCluster, setDiagnoseCluster] = useState<string | null>(null);
 
   // Adopt dialog state
   const [adoptDialogOpen, setAdoptDialogOpen] = useState(false);
   const [adoptDialogClusters, setAdoptDialogClusters] = useState<Cluster[]>([]);
-  const [selectedDiscoveredForAdopt, setSelectedDiscoveredForAdopt] = useState<Record<string, boolean>>({});
+  // V2-cleanup-89.3: which discovered (ArgoCD-only) cluster is picked in the
+  // Register dialog's "Pick from what ArgoCD already has" block, keyed by
+  // name. Single-select — adopting is a one-cluster-at-a-time decision made
+  // from inside the dialog now, not a standing bulk-select list.
+  const [pickedDiscovered, setPickedDiscovered] = useState<string | null>(null);
 
   // Un-adopt state
   const [unadoptTarget, setUnadoptTarget] = useState<string | null>(null);
@@ -376,7 +376,11 @@ export function ClustersOverview() {
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  const openAddCluster = useCallback(() => {
+  // `presetOwnership` (V2-cleanup-89.3): the collapsed Discovered-clusters
+  // hint opens this same dialog pre-set to "I do", since that's the only
+  // ownership mode where adopting an ArgoCD-known cluster makes sense. The
+  // plain "Add Cluster" button still opens on the Sharko-managed default.
+  const openAddCluster = useCallback((presetOwnership?: ConnOwnership) => {
     setAddClusterOpen(true);
     setAddClusterError(null);
     setAddClusterResult(null);
@@ -389,7 +393,8 @@ export function ClustersOverview() {
     setSelectedAddons({});
     // No silent creds-source default — the user must choose (V2-cleanup-60.4).
     setCredsSource('');
-    setConnManagedBy('sharko');
+    setConnManagedBy(presetOwnership ?? 'sharko');
+    setPickedDiscovered(null);
     setDryRunResult(null);
     setDryRunLoading(false);
     // Fetch catalog for addon multi-select
@@ -631,7 +636,6 @@ export function ClustersOverview() {
   }, []);
 
   const handleAdoptSuccess = useCallback(() => {
-    setSelectedDiscoveredForAdopt({});
     void fetchData();
   }, [fetchData]);
 
@@ -678,13 +682,6 @@ export function ClustersOverview() {
       setOrphanDeleteLoading(false);
     }
   }, [orphanDeleteTarget, fetchData]);
-
-  const toggleDiscoveredSelection = useCallback((name: string) => {
-    setSelectedDiscoveredForAdopt((prev) => ({
-      ...prev,
-      [name]: !prev[name],
-    }));
-  }, []);
 
   const availableVersions = useMemo(() => {
     const versions = new Set(
@@ -775,22 +772,16 @@ export function ClustersOverview() {
     [filteredClusters, pendingNames, orphanNames],
   );
 
-  const handleAdoptSelected = useCallback(() => {
-    const selected = discoveredClusters.filter((c) => selectedDiscoveredForAdopt[c.name]);
-    if (selected.length === 0) return;
-    handleOpenAdoptDialog(selected);
-  }, [discoveredClusters, selectedDiscoveredForAdopt, handleOpenAdoptDialog]);
-
-  const toggleAllDiscovered = useCallback((checked: boolean) => {
-    const next: Record<string, boolean> = {};
-    discoveredClusters.forEach((c) => { next[c.name] = checked; });
-    setSelectedDiscoveredForAdopt(next);
-  }, [discoveredClusters]);
-
-  const selectedDiscoveredCount = useMemo(
-    () => discoveredClusters.filter((c) => selectedDiscoveredForAdopt[c.name]).length,
-    [discoveredClusters, selectedDiscoveredForAdopt],
-  );
+  // V2-cleanup-89.3: confirming a pick in the Register dialog's "Pick from
+  // what ArgoCD already has" block closes the dialog and reuses the EXACT
+  // same adopt flow the (now-collapsed) standing Discovered section used —
+  // same verify-then-confirm dialog, same Git-PR success banner.
+  const handleAdoptFromPicker = useCallback(() => {
+    const cluster = discoveredClusters.find((c) => c.name === pickedDiscovered);
+    if (!cluster) return;
+    setAddClusterOpen(false);
+    handleOpenAdoptDialog([cluster]);
+  }, [discoveredClusters, pickedDiscovered, handleOpenAdoptDialog]);
 
   // Client-side gate for the Preview/Register buttons.
   //
@@ -922,7 +913,7 @@ export function ClustersOverview() {
           <RoleGuard adminOnly>
             <button
               type="button"
-              onClick={openAddCluster}
+              onClick={() => openAddCluster()}
               className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
             >
               <Plus className="h-4 w-4" />
@@ -1016,6 +1007,62 @@ export function ClustersOverview() {
                 {CONN_OWNERSHIP_HINTS[connManagedBy]}
               </p>
             </div>
+
+            {/* "Pick from what ArgoCD already has" (V2-cleanup-89.3). Only
+              * relevant with "I do": if the user is about to type coordinates
+              * for a self-managed connection by hand, but ArgoCD already
+              * knows this cluster, adopting it is strictly less work — and
+              * it's the same data GET /clusters already returns as
+              * managed=false. Hidden entirely when there's nothing to pick
+              * from (today's behavior is unchanged in that case). */}
+            {connManagedBy === 'user' && discoveredClusters.length > 0 && (
+              <div
+                data-testid="discovered-picker"
+                className="rounded-lg ring-2 ring-teal-300 bg-teal-50 p-3 dark:ring-teal-800 dark:bg-teal-950/20"
+              >
+                <p className="text-sm font-medium text-[#0a3a5a] dark:text-gray-200">
+                  Pick from what ArgoCD already has
+                </p>
+                <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-500">
+                  ArgoCD already knows about {discoveredClusters.length} cluster{discoveredClusters.length === 1 ? '' : 's'} Sharko doesn't manage yet. Pick one to adopt it instead of typing its coordinates by hand.
+                </p>
+                <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-md ring-1 ring-teal-200 bg-white p-2 dark:ring-teal-900 dark:bg-gray-900">
+                  {discoveredClusters.map((cluster) => (
+                    <label
+                      key={cluster.name}
+                      className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-teal-50 dark:hover:bg-gray-800"
+                    >
+                      <input
+                        type="radio"
+                        name="discovered-cluster-pick"
+                        checked={pickedDiscovered === cluster.name}
+                        onChange={() => setPickedDiscovered(cluster.name)}
+                        className="border-teal-400 dark:border-gray-600"
+                      />
+                      <span className="font-medium text-[#0a2a4a] dark:text-gray-100">{cluster.name}</span>
+                      <span
+                        className="ml-auto max-w-[220px] truncate font-mono text-xs text-[#3a6a8a] dark:text-gray-400"
+                        title={cluster.server_url}
+                      >
+                        {cluster.server_url ?? '--'}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAdoptFromPicker}
+                  disabled={!pickedDiscovered}
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                >
+                  <GitMerge className="h-3.5 w-3.5" />
+                  {pickedDiscovered ? `Adopt ${pickedDiscovered}` : 'Adopt selected cluster'}
+                </button>
+                <p className="mt-2 text-xs text-[#5a8aaa] dark:text-gray-500">
+                  Or enter details manually below for a cluster ArgoCD doesn't have yet.
+                </p>
+              </div>
+            )}
 
             {/* Connection source — the PRIMARY Layer-2 question
               * (creds-reframe-2, reframed as "coordinates" for
@@ -1951,215 +1998,33 @@ export function ClustersOverview() {
         )}
       </div>
 
-      {/* Discovered (ArgoCD-only) Clusters */}
+      {/* Discovered (ArgoCD-only) Clusters — collapsed to a one-line hint
+        * (V2-cleanup-89.3). The full card/table list with bulk-select is
+        * gone: on a big ArgoCD this cluttered the Clusters page forever,
+        * and adopting is now available right where a user would think to
+        * look for it — the Register dialog's "I do" picker above. This
+        * line just points there, pre-selecting "I do" since that's the
+        * only ownership mode where picking an already-known cluster makes
+        * sense. */}
       {discoveredClusters.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
-              <AlertTriangle className="h-4 w-4 text-amber-500" />
-              Discovered Clusters
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                {discoveredClusters.length}
-              </span>
-              <span className="text-xs font-normal text-[#3a6a8a] dark:text-gray-500">
-                — present in ArgoCD but not yet managed by Sharko
-              </span>
-            </h3>
-            <RoleGuard adminOnly>
-              {selectedDiscoveredCount > 0 && (
-                <button
-                  type="button"
-                  onClick={handleAdoptSelected}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
-                >
-                  <GitMerge className="h-3.5 w-3.5" />
-                  Adopt Selected ({selectedDiscoveredCount})
-                </button>
-              )}
+        <div
+          data-testid="discovered-hint"
+          className="flex items-center gap-2 rounded-lg ring-2 ring-amber-200 bg-[#fffbf0] px-4 py-3 text-sm dark:ring-amber-800 dark:bg-gray-800"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+          <span className="text-[#2a5a7a] dark:text-gray-300">
+            ArgoCD knows {discoveredClusters.length} more cluster{discoveredClusters.length === 1 ? '' : 's'} Sharko doesn't manage —{' '}
+            <RoleGuard adminOnly fallback={<span>adopt them from Register New Cluster</span>}>
+              <button
+                type="button"
+                onClick={() => openAddCluster('user')}
+                className="font-medium text-teal-700 underline hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-300"
+              >
+                adopt them from Register New Cluster
+              </button>
             </RoleGuard>
-          </div>
-
-          {viewMode === 'list' ? (
-            <div className="overflow-x-auto rounded-xl ring-2 ring-amber-200 bg-[#fffbf0] shadow-sm dark:border-amber-800 dark:bg-gray-800">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-amber-200 bg-amber-50 text-xs uppercase text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-500">
-                  <tr>
-                    <th className="px-3 py-3 w-8">
-                      <RoleGuard adminOnly>
-                        <input
-                          type="checkbox"
-                          checked={discoveredClusters.length > 0 && discoveredClusters.every((c) => selectedDiscoveredForAdopt[c.name])}
-                          onChange={(e) => toggleAllDiscovered(e.target.checked)}
-                          className="rounded border-amber-300 dark:border-gray-600"
-                          aria-label="Select all discovered clusters"
-                        />
-                      </RoleGuard>
-                    </th>
-                    <th className="px-6 py-3">Name</th>
-                    <th className="px-6 py-3">Server URL</th>
-                    <th className="px-6 py-3">Status</th>
-                    <th className="px-6 py-3">Version</th>
-                    <th className="px-6 py-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-amber-100 dark:divide-amber-900/30">
-                  {discoveredClusters.map((cluster) => {
-                    const testResult = testResults[cluster.name];
-                    const ms = manageStatus[cluster.name];
-                    return (
-                      <tr key={cluster.name} className="hover:bg-amber-50/60 dark:hover:bg-amber-950/20">
-                        <td className="px-3 py-3">
-                          <RoleGuard adminOnly>
-                            <input
-                              type="checkbox"
-                              checked={!!selectedDiscoveredForAdopt[cluster.name]}
-                              onChange={() => toggleDiscoveredSelection(cluster.name)}
-                              className="rounded border-amber-300 dark:border-gray-600"
-                            />
-                          </RoleGuard>
-                        </td>
-                        <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
-                          {cluster.name}
-                        </td>
-                        <td className="px-6 py-3 font-mono text-xs text-[#3a6a8a] dark:text-gray-400 max-w-[200px] truncate" title={cluster.server_url}>
-                          {cluster.server_url ?? '--'}
-                        </td>
-                        <td className="px-6 py-3">
-                          <div className="flex flex-col gap-0.5">
-                            {/* connection_status is ArgoCD's own connection — say so (V2-cleanup-55.3). */}
-                            <WhoseConnectionLabel who="argocd" />
-                            <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
-                          </div>
-                        </td>
-                        <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
-                          {cluster.server_version ?? '--'}
-                        </td>
-                        <td className="px-6 py-3">
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={(e) => handleTestCluster(cluster.name, e)}
-                                disabled={testResult === 'testing' || !clusterTestAvailable}
-                                title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : SHARKO_CONN_TOOLTIP}
-                                aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_LABEL}
-                                className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-                              >
-                                {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
-                                {TEST_CONNECTION_LABEL}
-                              </button>
-                              <InfoHint
-                                text={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_HINT}
-                                label={!clusterTestAvailable ? 'Why is Test connection disabled?' : 'What does Test connection do?'}
-                              />
-                              {renderTestResult(cluster.name, testResult)}
-                              <RoleGuard adminOnly>
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenAdoptDialog([cluster])}
-                                  disabled={!!ms?.loading}
-                                  className="inline-flex items-center gap-1 rounded bg-teal-600 px-2 py-1 text-xs font-medium text-white hover:bg-teal-700 disabled:opacity-50"
-                                >
-                                  {ms?.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitMerge className="h-3 w-3" />}
-                                  Adopt
-                                </button>
-                              </RoleGuard>
-                            </div>
-                            {ms?.success && (
-                              <span className="text-xs text-green-700 dark:text-green-400">
-                                Cluster adopted!{ms.success !== 'Cluster adopted' ? <> PR: <a href={ms.success} target="_blank" rel="noopener noreferrer" className="underline">{ms.success}</a></> : ''}
-                              </span>
-                            )}
-                            {ms?.error && (
-                              <span className="text-xs text-red-600 dark:text-red-400">{ms.error}</span>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {discoveredClusters.map((cluster) => {
-                const testResult = testResults[cluster.name];
-                const ms = manageStatus[cluster.name];
-                return (
-                  <div key={cluster.name} className="rounded-lg ring-2 ring-amber-200 bg-[#fffbf0] p-4 shadow-sm dark:border-amber-800 dark:bg-gray-800">
-                    <div className="mb-2 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <RoleGuard adminOnly>
-                          <input
-                            type="checkbox"
-                            checked={!!selectedDiscoveredForAdopt[cluster.name]}
-                            onChange={() => toggleDiscoveredSelection(cluster.name)}
-                            className="rounded border-amber-300 dark:border-gray-600"
-                          />
-                        </RoleGuard>
-                        <h3 className="text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{cluster.name}</h3>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={(e) => handleTestCluster(cluster.name, e)}
-                          disabled={testResult === 'testing' || !clusterTestAvailable}
-                          title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : SHARKO_CONN_TOOLTIP}
-                          aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_LABEL}
-                          className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300"
-                        >
-                          {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
-                          {TEST_CONNECTION_LABEL}
-                        </button>
-                        <InfoHint
-                          text={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_HINT}
-                          label={!clusterTestAvailable ? 'Why is Test connection disabled?' : 'What does Test connection do?'}
-                        />
-                      </div>
-                    </div>
-                    {cluster.server_url && (
-                      <p className="mb-2 font-mono text-xs text-[#3a6a8a] dark:text-gray-400 truncate" title={cluster.server_url}>
-                        {cluster.server_url}
-                      </p>
-                    )}
-                    {testResult && testResult !== 'testing' && (
-                      <div className="mb-2">
-                        {renderTestResult(cluster.name, testResult)}
-                      </div>
-                    )}
-                    <div className="mb-3 flex flex-col gap-0.5">
-                      {/* connection_status is ArgoCD's own connection — say so (V2-cleanup-55.3). */}
-                      <WhoseConnectionLabel who="argocd" />
-                      <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
-                    </div>
-                    <p className="mb-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
-                      {cluster.server_version ? `v${cluster.server_version}` : '--'}
-                    </p>
-                    <RoleGuard adminOnly>
-                      <button
-                        type="button"
-                        onClick={() => handleOpenAdoptDialog([cluster])}
-                        disabled={!!ms?.loading}
-                        className="inline-flex w-full items-center justify-center gap-1 rounded bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 disabled:opacity-50"
-                      >
-                        {ms?.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitMerge className="h-3 w-3" />}
-                        Adopt
-                      </button>
-                    </RoleGuard>
-                    {ms?.success && (
-                      <p className="mt-2 text-xs text-green-700 dark:text-green-400">
-                        Cluster adopted!{ms.success !== 'Cluster adopted' ? <> PR: <a href={ms.success} target="_blank" rel="noopener noreferrer" className="underline">{ms.success}</a></> : ''}
-                      </p>
-                    )}
-                    {ms?.error && (
-                      <p className="mt-2 text-xs text-red-600 dark:text-red-400">{ms.error}</p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+            .
+          </span>
         </div>
       )}
 
