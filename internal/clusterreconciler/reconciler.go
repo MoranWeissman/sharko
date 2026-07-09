@@ -239,6 +239,20 @@ type Reconciler struct {
 	// server restart simply starts blank (no history, matches the rest of
 	// the reconciler's stance on state).
 	lastReconcile map[string]ClusterReconcileRecord
+
+	// fightMu guards fightState. See reconcile_status.go (V2-cleanup-89.5
+	// — label-fight detection on self-managed connections). Separate from
+	// lastReconcileMu — the two are updated together on every
+	// syncSelfManaged call, but they protect conceptually distinct state
+	// and there is no reason to serialize them on one lock.
+	fightMu sync.Mutex
+	// fightState holds, per self-managed cluster, what Sharko itself last
+	// wanted written onto the user's Secret and how many consecutive ticks
+	// something else has reverted it. In memory only, same non-persisted
+	// stance as lastReconcile — a restart just resets the revert count to
+	// zero, which only delays (never prevents) the warning from
+	// resurfacing on a genuinely ongoing fight.
+	fightState map[string]clusterFightState
 }
 
 // New constructs a Reconciler with the given dependencies. It does NOT start
@@ -752,6 +766,23 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 	// stamped on a connection Sharko does not own (guest stance, same as
 	// adopted clusters). SyncLabelsOnly strips it defensively as well.
 
+	// Label-fight detection (V2-cleanup-89.5): snapshot the Secret's live
+	// labels BEFORE this tick's write, i.e. exactly what's there coming
+	// in — including anything another ArgoCD Application's sync reasserted
+	// since Sharko's last write. Best-effort: a read failure here only
+	// skips this tick's fight check (recordFightCheck treats a nil
+	// observedLive as "nothing to compare"); the label sync below still
+	// runs regardless.
+	var observedLive map[string]string
+	if liveSecret, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, entry.Name, metav1.GetOptions{}); getErr == nil {
+		observedLive = liveSecret.Labels
+	} else if !apierrors.IsNotFound(getErr) {
+		log.Warn("[clusterreconciler] label-fight pre-read failed — skipping this tick's fight check",
+			"cluster", entry.Name, "namespace", r.namespace, "error", getErr,
+		)
+	}
+	fightWarning := r.recordFightCheck(entry.Name, clusterLabels, observedLive)
+
 	mgr := argosecrets.NewManager(r.deps.ArgoClient, r.namespace)
 	changed, found, err := mgr.SyncLabelsOnly(ctx, entry.Name, clusterLabels)
 	if err != nil {
@@ -811,8 +842,11 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 		})
 	}
 	// Whether this tick changed a label or found the Secret already
-	// converged, the self-managed connection is in sync as of now.
-	r.recordReconcile(entry.Name, OutcomeSucceeded, "")
+	// converged, the self-managed connection is in sync as of now — the
+	// outcome stays Succeeded even when fightWarning is non-empty (Sharko
+	// IS successfully re-applying its labels every tick; the warning is
+	// visibility into a fight, not a sync failure).
+	r.recordReconcile(entry.Name, OutcomeSucceeded, fightWarning)
 }
 
 // effectiveDisableConnectivityCheck resolves whether the connectivity-check

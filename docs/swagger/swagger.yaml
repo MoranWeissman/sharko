@@ -621,6 +621,15 @@ definitions:
         type: string
       verification:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_verify.Result'
+      warnings:
+        description: |-
+          Warnings holds plain-English advisories that do NOT fail the
+          adoption — e.g. this cluster's ArgoCD cluster Secret turning out to
+          be rendered by another ArgoCD Application (V2-cleanup-89.5). Empty/
+          omitted when there is nothing to warn about.
+        items:
+          type: string
+        type: array
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersRequest:
     properties:
@@ -4267,18 +4276,22 @@ paths:
   /clusters/{name}/doctor:
     post:
       description: |-
-        Runs up to four real-attempt checks against the named cluster's
+        Runs up to five real-attempt checks against the named cluster's
         connection and returns a structured pass/fail/not-applicable
         verdict per check, each with a plain-English fix on failure:
         (1) can Sharko read the cluster's connection credentials,
         (2) can Sharko read every provider path an enabled addon's
         secrets need, (3) if a cross-account IAM role is in play, can
-        Sharko assume it, and (4) does the cluster itself accept the
-        resulting token (reuses the existing Stage-1 secret CRUD cycle).
-        Every check is a real attempt, never IAM policy simulation, and
-        read-only except check 4, which reuses Stage-1's existing
-        create/read/delete canary secret. The whole run is bounded to
-        about 30 seconds.
+        Sharko assume it, (4) does the cluster itself accept the
+        resulting token (reuses the existing Stage-1 secret CRUD cycle),
+        and (5) for a self-managed connection, is its ArgoCD cluster
+        Secret free of foreign ArgoCD tracking markers (i.e. not
+        rendered by another Application that could fight Sharko over
+        the addon labels it writes) — not-applicable for Sharko-managed
+        connections. Every check is a real attempt, never IAM policy
+        simulation, and read-only except check 4, which reuses Stage-1's
+        existing create/read/delete canary secret. The whole run is
+        bounded to about 30 seconds.
       parameters:
       - description: Cluster name
         in: path

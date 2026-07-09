@@ -1057,6 +1057,10 @@ export interface AdoptResult {
   error?: string
   pr_url?: string
   verification?: VerifyResult
+  // Plain-English advisories that do NOT fail the adoption — e.g. this
+  // cluster's ArgoCD cluster secret turning out to be rendered by another
+  // ArgoCD Application (V2-cleanup-89.5).
+  warnings?: string[]
 }
 
 export interface AdoptClustersResponse {
@@ -1163,4 +1167,8 @@ export interface RegisterClusterResult {
   dry_run?: DryRunResult
   errors?: string[]
   partial?: boolean
+  // Plain-English advisories that do NOT fail the operation — e.g. a
+  // self-managed connection's ArgoCD cluster secret turning out to be
+  // rendered by another ArgoCD Application (V2-cleanup-89.5).
+  warnings?: string[]
 }

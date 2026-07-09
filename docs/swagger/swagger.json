@@ -3699,7 +3699,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Runs up to four real-attempt checks against the named cluster's\nconnection and returns a structured pass/fail/not-applicable\nverdict per check, each with a plain-English fix on failure:\n(1) can Sharko read the cluster's connection credentials,\n(2) can Sharko read every provider path an enabled addon's\nsecrets need, (3) if a cross-account IAM role is in play, can\nSharko assume it, and (4) does the cluster itself accept the\nresulting token (reuses the existing Stage-1 secret CRUD cycle).\nEvery check is a real attempt, never IAM policy simulation, and\nread-only except check 4, which reuses Stage-1's existing\ncreate/read/delete canary secret. The whole run is bounded to\nabout 30 seconds.",
+                "description": "Runs up to five real-attempt checks against the named cluster's\nconnection and returns a structured pass/fail/not-applicable\nverdict per check, each with a plain-English fix on failure:\n(1) can Sharko read the cluster's connection credentials,\n(2) can Sharko read every provider path an enabled addon's\nsecrets need, (3) if a cross-account IAM role is in play, can\nSharko assume it, (4) does the cluster itself accept the\nresulting token (reuses the existing Stage-1 secret CRUD cycle),\nand (5) for a self-managed connection, is its ArgoCD cluster\nSecret free of foreign ArgoCD tracking markers (i.e. not\nrendered by another Application that could fight Sharko over\nthe addon labels it writes) — not-applicable for Sharko-managed\nconnections. Every check is a real attempt, never IAM policy\nsimulation, and read-only except check 4, which reuses Stage-1's\nexisting create/read/delete canary secret. The whole run is\nbounded to about 30 seconds.",
                 "produces": [
                     "application/json"
                 ],
@@ -7776,6 +7776,13 @@
                 },
                 "verification": {
                     "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_verify.Result"
+                },
+                "warnings": {
+                    "description": "Warnings holds plain-English advisories that do NOT fail the\nadoption — e.g. this cluster's ArgoCD cluster Secret turning out to\nbe rendered by another ArgoCD Application (V2-cleanup-89.5). Empty/\nomitted when there is nothing to warn about.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

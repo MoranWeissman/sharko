@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -81,6 +82,82 @@ func IsAdopted(annotations map[string]string) bool {
 	return annotations[AnnotationAdopted] == "true" ||
 		annotations[AnnotationAdoptedDoubledPrefixLegacy] == "true" ||
 		annotations[AnnotationAdoptedLegacy] == "true"
+}
+
+// Tracking markers ArgoCD itself stamps on a resource when ANOTHER
+// Application's sync renders it from Git (V2-cleanup-89.5). These are
+// ArgoCD's own markers, never written by Sharko — Sharko only READS them,
+// to detect the "someone else's Application also owns this Secret" case
+// for user-managed connections (connectionManagedBy: user). ArgoCD
+// supports two mutually exclusive tracking methods, configured cluster-wide
+// via argocd-cm's application.resourceTrackingMethod: "annotation" (the
+// default since ArgoCD 2.x) stamps AnnotationTrackingID; "label" stamps
+// LabelAppInstance instead. Both are checked so Sharko works regardless of
+// which method the maintainer's ArgoCD install uses.
+const (
+	// AnnotationTrackingID is the annotation ArgoCD stamps under
+	// trackingMethod=annotation (the default). Its value has the form
+	// "<app-name>:<group>/<kind>:<namespace>/<name>" — see
+	// ParseTrackingAppName.
+	AnnotationTrackingID = "argocd.argoproj.io/tracking-id"
+	// LabelAppInstance is the label ArgoCD stamps under trackingMethod=label.
+	// Its value IS the owning Application's name directly — no parsing needed.
+	LabelAppInstance = "app.kubernetes.io/instance"
+)
+
+// ParseTrackingAppName extracts the owning Application's name from an
+// ArgoCD tracking-id annotation value. The format is
+// "<app-name>:<group>/<kind>:<namespace>/<name>" (e.g.
+// "my-app:/Secret:argocd/prod-eu" for a core-group Secret) — the app name
+// is everything before the FIRST colon, since the app name itself cannot
+// contain a colon but the group/kind/namespace/name segments that follow
+// do. Returns ("", false) when trackingID is empty or has no colon at all
+// (not a value ArgoCD would ever produce, but defensive against a
+// hand-edited or malformed annotation).
+func ParseTrackingAppName(trackingID string) (string, bool) {
+	idx := strings.Index(trackingID, ":")
+	if idx <= 0 {
+		return "", false
+	}
+	return trackingID[:idx], true
+}
+
+// DetectForeignOwner inspects secret's tracking markers (both possible
+// ArgoCD trackingMethod spellings) and returns the name of the ArgoCD
+// Application that renders it from Git, if any. Checks the tracking-id
+// annotation first (the default trackingMethod), then falls back to the
+// app.kubernetes.io/instance label. nil-safe.
+func DetectForeignOwner(secret *corev1.Secret) (appName string, found bool) {
+	if secret == nil {
+		return "", false
+	}
+	if trackingID := secret.Annotations[AnnotationTrackingID]; trackingID != "" {
+		if name, ok := ParseTrackingAppName(trackingID); ok {
+			return name, true
+		}
+	}
+	if instance := secret.Labels[LabelAppInstance]; instance != "" {
+		return instance, true
+	}
+	return "", false
+}
+
+// GetTrackingOwner fetches the named secret and reports whether it carries
+// an ArgoCD tracking marker stamped by another Application's sync (see
+// DetectForeignOwner). Mirrors SyncLabelsOnly's not-found handling: a
+// missing secret is NOT an error — found=false, err=nil — because this is
+// commonly called before the user has created their self-managed
+// connection's Secret yet.
+func (m *Manager) GetTrackingOwner(ctx context.Context, name string) (appName string, found bool, err error) {
+	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(getErr) {
+		return "", false, nil
+	}
+	if getErr != nil {
+		return "", false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, getErr)
+	}
+	appName, found = DetectForeignOwner(existing)
+	return appName, found, nil
 }
 
 // ClusterSecretSpec is the desired state for an ArgoCD cluster secret.

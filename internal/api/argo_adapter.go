@@ -61,3 +61,12 @@ func (a *argoManagerAdapter) Ensure(ctx context.Context, spec orchestrator.ArgoS
 		Annotations: spec.Annotations,
 	})
 }
+
+// GetTrackingOwner delegates to the real Manager. This method is not part
+// of orchestrator.ArgoSecretManager — it satisfies the OPTIONAL
+// foreignOwnerDetector capability that AdoptClusters / RegisterCluster
+// type-assert for the foreign-ArgoCD-ownership warning (V2-cleanup-89.5),
+// same optional-capability pattern as StripOwnershipLabel above.
+func (a *argoManagerAdapter) GetTrackingOwner(ctx context.Context, name string) (string, bool, error) {
+	return a.mgr.GetTrackingOwner(ctx, name)
+}
