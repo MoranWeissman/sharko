@@ -22,6 +22,8 @@ import SystemView, {
 } from '@/views/SystemView'
 import type { Cluster } from '@/services/models'
 
+const mockGetSystemCapabilities = vi.fn()
+
 vi.mock('@/services/api', () => ({
   api: {
     getRepoStatus: vi.fn(),
@@ -29,6 +31,7 @@ vi.mock('@/services/api', () => ({
     getNotifications: vi.fn(),
     getObservability: vi.fn(),
   },
+  getSystemCapabilities: (...args: unknown[]) => mockGetSystemCapabilities(...args),
 }))
 
 import { api } from '@/services/api'
@@ -58,6 +61,7 @@ interface MockAllOpts {
   clusters?: Cluster[]
   notifications?: { id: string; type: string; title: string; description: string; timestamp: string; read: boolean }[]
   argocdVersion?: string
+  capabilities?: { aws: { detected: boolean; method: string; identity_arn?: string }; hub_platform: string } | null
 }
 
 function mockAll({
@@ -65,11 +69,13 @@ function mockAll({
   clusters = [],
   notifications = [],
   argocdVersion = 'v3.2.2',
+  capabilities = { aws: { detected: false, method: 'none' }, hub_platform: 'unknown' },
 }: MockAllOpts = {}) {
   mockedApi.getRepoStatus.mockResolvedValue(repo)
   mockedApi.getClusters.mockResolvedValue({ clusters })
   mockedApi.getNotifications.mockResolvedValue({ notifications, unread_count: 0 })
   mockedApi.getObservability.mockResolvedValue(obsWithVersion(argocdVersion))
+  mockGetSystemCapabilities.mockResolvedValue(capabilities)
 }
 
 function renderPage() {
@@ -358,6 +364,7 @@ describe('SystemView', () => {
     mockedApi.getClusters.mockResolvedValue({ clusters: [] })
     mockedApi.getNotifications.mockResolvedValue({ notifications: [], unread_count: 0 })
     mockedApi.getObservability.mockRejectedValue(new Error('boom'))
+    mockGetSystemCapabilities.mockResolvedValue({ aws: { detected: false, method: 'none' }, hub_platform: 'unknown' })
     renderPage()
 
     await waitFor(() => expect(screen.getByText('ArgoCD version unknown')).toBeInTheDocument())
@@ -411,5 +418,79 @@ describe('SystemView', () => {
     fireEvent.click(screen.getByRole('button', { name: /Per-cluster status \(Sharko → cluster\)/ }))
     const clusterLink = screen.getByRole('link', { name: 'prod-1' })
     expect(clusterLink).toHaveAttribute('href', '/clusters/prod-1')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// V2-cleanup-89.2 — the full identity explainer moved here from the
+// Register Cluster dialog's Layer 1 (which now shows only a one-line
+// summary — see ClustersOverview.identity.test.tsx). This section pins
+// that the System page fetches capabilities and renders the full panel:
+// detected ARN, method, and the expandable "how it works" explainer.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SystemView — Sharko identity section (V2-cleanup-89.2)', () => {
+  it('shows the detected ARN and method, and the setup-guide docs link', async () => {
+    mockAll({
+      capabilities: {
+        aws: { detected: true, method: 'pod-identity', identity_arn: 'arn:aws:iam::123456789012:role/sharko-hub' },
+        hub_platform: 'eks',
+      },
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
+    await waitFor(() => {
+      expect(screen.getByTestId('identity-detected')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/Sharko is running with an AWS identity/)).toBeInTheDocument()
+    expect(screen.getByText('arn:aws:iam::123456789012:role/sharko-hub')).toBeInTheDocument()
+    expect(screen.getByText(/\(pod-identity\)/)).toBeInTheDocument()
+  })
+
+  it('shows "no identity detected" copy with the setup-guide link when Sharko has none', async () => {
+    mockAll({ capabilities: { aws: { detected: false, method: 'none' }, hub_platform: 'unknown' } })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
+    await waitFor(() => {
+      expect(screen.getByTestId('identity-not-detected')).toBeInTheDocument()
+    })
+    const guideLink = screen.getByRole('link', { name: /see the setup guide/i })
+    expect(guideLink).toHaveAttribute(
+      'href',
+      'https://sharko.readthedocs.io/en/latest/operator/eks-hub-and-spoke-identity/',
+    )
+  })
+
+  it('the "How identity-based access works" panel expands with the plain-English explanation + docs link', async () => {
+    mockAll({ capabilities: { aws: { detected: false, method: 'none' }, hub_platform: 'unknown' } })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
+    expect(screen.queryByTestId('identity-how-it-works')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /how identity-based access works/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('identity-how-it-works')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/one IAM role on the hub cluster/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /read the full guide/i })).toHaveAttribute(
+      'href',
+      'https://sharko.readthedocs.io/en/latest/operator/eks-hub-and-spoke-identity/',
+    )
+  })
+
+  it('falls back to the not-detected copy when the capabilities fetch fails, without blocking the rest of the page', async () => {
+    mockAll()
+    mockGetSystemCapabilities.mockRejectedValue(new Error('network error'))
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
+    await waitFor(() => {
+      expect(screen.getByTestId('identity-not-detected')).toBeInTheDocument()
+    })
+    // The rest of the page still rendered fine.
+    expect(screen.getByText('Sharko can read and write the repo.')).toBeInTheDocument()
   })
 })

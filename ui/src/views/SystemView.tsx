@@ -26,14 +26,15 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  Fingerprint,
   GitBranch,
   HelpCircle,
   Server,
   Waves,
   XCircle,
 } from 'lucide-react'
-import { api } from '@/services/api'
-import type { Cluster } from '@/services/models'
+import { api, getSystemCapabilities } from '@/services/api'
+import type { Cluster, SystemCapabilitiesResponse } from '@/services/models'
 import {
   ARGOCD_CONN_LABEL,
   ARGOCD_CONN_TOOLTIP,
@@ -41,6 +42,7 @@ import {
   SHARKO_CONN_TOOLTIP,
   WhoseConnectionLabel,
 } from '@/components/WhoseConnectionLabel'
+import { ClusterIdentityPanel } from '@/components/ClusterIdentityPanel'
 import testedRange from '@/generated/argocd-tested-range.json'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -386,6 +388,8 @@ export function SystemView() {
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [alertDescriptions, setAlertDescriptions] = useState<Record<string, string>>({})
   const [argocdVersion, setArgocdVersion] = useState<string | undefined>(undefined)
+  const [capabilities, setCapabilities] = useState<SystemCapabilitiesResponse | null>(null)
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(true)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -395,7 +399,8 @@ export function SystemView() {
       api.getClusters(),
       api.getNotifications(),
       api.getObservability(),
-    ]).then(([repoRes, clustersRes, notifRes, obsRes]) => {
+      getSystemCapabilities(),
+    ]).then(([repoRes, clustersRes, notifRes, obsRes, capsRes]) => {
       if (cancelled) return
       if (repoRes.status === 'fulfilled') setRepoStatus(repoRes.value)
       if (clustersRes.status === 'fulfilled') setClusters(clustersRes.value.clusters ?? [])
@@ -412,6 +417,8 @@ export function SystemView() {
         const v = obsRes.value.control_plane?.argocd_version
         if (v) setArgocdVersion(v)
       }
+      if (capsRes.status === 'fulfilled' && capsRes.value) setCapabilities(capsRes.value)
+      setCapabilitiesLoading(false)
       setLoading(false)
     })
     return () => {
@@ -557,6 +564,21 @@ export function SystemView() {
             />
           </ArrowCard>
         </div>
+      </section>
+
+      {/* Sharko's own identity (V2-cleanup-89.2) — moved here from the
+        * Register Cluster dialog's Layer 1. It's read-only information
+        * about what Sharko has auto-detected about itself, not something a
+        * newcomer registering a cluster needs to act on — this "whole
+        * chain" page is the natural home for it. */}
+      <section>
+        <div className="mb-3 flex items-center gap-2">
+          <Fingerprint className="h-4 w-4 text-[#3a6a8a] dark:text-gray-400" aria-hidden="true" />
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-[#3a6a8a] dark:text-gray-400">
+            Sharko's identity
+          </h2>
+        </div>
+        <ClusterIdentityPanel capabilities={capabilities} loading={capabilitiesLoading} />
       </section>
     </div>
   )
