@@ -145,20 +145,16 @@ Sharko supports two modes for onboarding clusters: **direct registration** (abov
 
 #### Discover Available Clusters
 
-Find clusters that exist in the secrets provider but are not yet registered:
+Find clusters that exist in the configured secrets provider but are not yet registered:
 
 ```bash
-# GET-based discovery (Kubernetes Secrets provider)
 curl -H "Authorization: Bearer $TOKEN" \
   https://sharko.your-cluster.com/api/v1/clusters/available
-
-# POST-based discovery (EKS — requires region + role)
-curl -H "Authorization: Bearer $TOKEN" \
-  -X POST https://sharko.your-cluster.com/api/v1/clusters/discover \
-  -d '{"region": "us-east-1"}'
 ```
 
-In the UI, navigate to **Clusters** and click **Discover**. Unregistered clusters appear as candidates for adoption.
+Sharko only reads from its configured secrets backend and cross-references ArgoCD here — it never
+scans your cloud account's infrastructure directly. In the UI, navigate to **Clusters** to see
+unregistered clusters as candidates for adoption.
 
 #### Adopt Existing Clusters
 
@@ -690,17 +686,11 @@ Clusters are registered sequentially. Each cluster gets its own PR. If one clust
 
 ### Discover Available Clusters
 
-Find clusters that exist in the secrets provider but are not yet registered:
+Find clusters that exist in the configured secrets provider but are not yet registered:
 
 ```bash
-# GET — Kubernetes Secrets provider
 curl -H "Authorization: Bearer $TOKEN" \
   https://sharko.your-cluster.com/api/v1/clusters/available
-
-# POST — EKS discovery (requires region)
-curl -H "Authorization: Bearer $TOKEN" \
-  -X POST https://sharko.your-cluster.com/api/v1/clusters/discover \
-  -d '{"region": "us-east-1"}'
 ```
 
 ---

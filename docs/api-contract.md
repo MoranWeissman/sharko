@@ -536,29 +536,6 @@ List clusters available in the configured secrets provider that have not yet bee
 
 ---
 
-### POST /api/v1/clusters/discover — Discover EKS Clusters
-
-POST variant of cluster discovery for EKS. Accepts region and optional role ARN to discover clusters via the AWS EKS API.
-
-**Request:**
-```json
-{
-  "region": "us-east-1"
-}
-```
-
-**Response (200 OK):**
-```json
-{
-  "clusters": [
-    {"name": "prod-us", "region": "us-east-1"},
-    {"name": "staging-us", "region": "us-east-1"}
-  ]
-}
-```
-
----
-
 ### POST /api/v1/clusters/adopt — Adopt Existing Clusters
 
 Adopt clusters that already have ArgoCD cluster secrets but are not managed by Sharko. Runs Stage 1 connectivity verification, creates values files, adds to `managed-clusters.yaml`, and creates PRs.

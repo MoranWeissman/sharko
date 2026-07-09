@@ -17,7 +17,6 @@ import {
   WifiOff,
   GitMerge,
   Eye,
-  ScanSearch,
   Unlink,
   ChevronDown,
   ChevronUp,
@@ -25,7 +24,7 @@ import {
   Trash2,
   ExternalLink,
 } from 'lucide-react';
-import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster, deleteOrphanCluster, isTestClusterUnavailable, type PRWriteResult } from '@/services/api';
+import { api, registerCluster, testClusterConnection, unadoptCluster, deleteOrphanCluster, isTestClusterUnavailable, type PRWriteResult } from '@/services/api';
 import { PRLifecycleProgress, extractPR } from '@/components/PRFeedback';
 import type { TestClusterUnavailable } from '@/services/api';
 import type {
@@ -35,7 +34,6 @@ import type {
   CredsSource,
   ClustersResponse,
   AddonCatalogResponse,
-  DiscoveredClusterItem,
   DryRunResult,
   PendingRegistration,
   OrphanRegistration,
@@ -266,15 +264,6 @@ export function ClustersOverview() {
   // unreachable (buttons disabled), so the fallback here is display-only.
   const provider: ClusterProvider = credsSource === '' ? 'eks' : providerForCredsSource(credsSource);
 
-  // Discovery mode
-  const [registrationMode, setRegistrationMode] = useState<'direct' | 'discovery'>('direct');
-  const [discoveryRoleArns, setDiscoveryRoleArns] = useState('');
-  const [discoveryRegion, setDiscoveryRegion] = useState('');
-  const [discovering, setDiscovering] = useState(false);
-  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
-  const [discoveredItems, setDiscoveredItems] = useState<DiscoveredClusterItem[]>([]);
-  const [selectedDiscovered, setSelectedDiscovered] = useState<Record<string, boolean>>({});
-
   // Dry-run preview
   const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null);
   const [dryRunLoading, setDryRunLoading] = useState(false);
@@ -391,13 +380,6 @@ export function ClustersOverview() {
     // No silent creds-source default — the user must choose (V2-cleanup-60.4).
     setCredsSource('');
     setConnManagedBy('sharko');
-    setRegistrationMode('direct');
-    setDiscoveryRoleArns('');
-    setDiscoveryRegion('');
-    setDiscovering(false);
-    setDiscoveryError(null);
-    setDiscoveredItems([]);
-    setSelectedDiscovered({});
     setDryRunResult(null);
     setDryRunLoading(false);
     // Fetch catalog for addon multi-select
@@ -405,29 +387,6 @@ export function ClustersOverview() {
       api.getAddonCatalog().then(setCatalogAddons).catch(() => {});
     }
   }, [catalogAddons]);
-
-  const handleDiscoverClusters = useCallback(async () => {
-    const arns = discoveryRoleArns.split(',').map(a => a.trim()).filter(Boolean);
-    if (arns.length === 0) return;
-    setDiscovering(true);
-    setDiscoveryError(null);
-    setDiscoveredItems([]);
-    setSelectedDiscovered({});
-    try {
-      const result = await discoverEKSClusters({
-        role_arns: arns,
-        region: discoveryRegion.trim() || undefined,
-      });
-      setDiscoveredItems(result.clusters || []);
-      if (result.errors && result.errors.length > 0) {
-        setDiscoveryError(result.errors.join('; '));
-      }
-    } catch (e: unknown) {
-      setDiscoveryError(e instanceof Error ? e.message : 'Discovery failed');
-    } finally {
-      setDiscovering(false);
-    }
-  }, [discoveryRoleArns, discoveryRegion]);
 
   // Build the Direct-mode register payload for the chosen credential source
   // (creds-reframe-2). `creds_source` is the authoritative signal; we also
@@ -439,10 +398,9 @@ export function ClustersOverview() {
   const buildRegisterPayload = useCallback(
     (name: string, extra?: { dry_run?: boolean }): Parameters<typeof registerCluster>[0] => {
       const addons = Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined;
-      // Direct mode is gated until an explicit creds-source choice exists
-      // (directRequiredMissing), so '' here only happens for the
-      // discovery-mode dry-run — and discovery registers via the EKS token
-      // path by definition (see handleAddCluster's discovery branch).
+      // Registration is gated until an explicit creds-source choice exists
+      // (directRequiredMissing), so '' here should not normally happen —
+      // eks-token is a safe fallback shape.
       const source: CredsSource = credsSource === '' ? 'eks-token' : credsSource;
       // connection_managed_by is only sent for the non-default 'user'
       // choice — omitting it for 'sharko' keeps the request byte-compatible
@@ -482,14 +440,14 @@ export function ClustersOverview() {
   );
 
   const handleDryRun = useCallback(async () => {
-    const clusterName = registrationMode === 'direct' ? addClusterName.trim() : '';
-    if (registrationMode === 'direct' && !clusterName) return;
+    const clusterName = addClusterName.trim();
+    if (!clusterName) return;
     setDryRunLoading(true);
     setDryRunResult(null);
     setAddClusterError(null);
     try {
       const result = await registerCluster(
-        buildRegisterPayload(clusterName || 'dry-run-preview', { dry_run: true }),
+        buildRegisterPayload(clusterName, { dry_run: true }),
       );
       if (result?.dry_run) {
         setDryRunResult(result.dry_run);
@@ -499,90 +457,52 @@ export function ClustersOverview() {
     } finally {
       setDryRunLoading(false);
     }
-  }, [registrationMode, addClusterName, buildRegisterPayload]);
+  }, [addClusterName, buildRegisterPayload]);
 
   const handleAddCluster = useCallback(async () => {
-    if (registrationMode === 'direct' && !addClusterName.trim()) return;
+    if (!addClusterName.trim()) return;
     setAddClusterSubmitting(true);
     setAddClusterError(null);
     setAddClusterResult(null);
     setAddClusterResultMsg(null);
     try {
-      if (registrationMode === 'discovery') {
-        // Register all selected discovered clusters
-        const selected = discoveredItems.filter(c => selectedDiscovered[c.name]);
-        if (selected.length === 0) return;
-        const errors: string[] = [];
-        let lastResult: RegisterClusterResult | null = null;
-        for (const cluster of selected) {
-          try {
-            // Discovered clusters are EKS clusters found by scanning IAM
-            // roles, so they always use the EKS token creds source.
-            lastResult = await registerCluster({
-              name: cluster.name,
-              region: cluster.region,
-              creds_source: 'eks-token',
-              provider: 'eks',
-              role_arn: cluster.arn || undefined,
-              addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
-            });
-          } catch (e: unknown) {
-            errors.push(`${cluster.name}: ${e instanceof Error ? e.message : 'Failed'}`);
-          }
-        }
-        if (errors.length > 0 && errors.length < selected.length) {
-          // Partial success
-          setAddClusterResultMsg(`Registered ${selected.length - errors.length} of ${selected.length} clusters. Errors: ${errors.join('; ')}`);
-          setAddClusterResult({ status: 'partial', partial: true, errors });
-        } else if (errors.length > 0) {
-          setAddClusterError(errors.join('; '));
-          return;
-        } else {
-          setAddClusterResultMsg(`${selected.length} cluster(s) registered successfully.`);
-          setAddClusterResult(lastResult);
-        }
-        setAddClusterOpen(false);
-        void fetchData();
+      // The chosen creds source (creds-reframe-2) decides which disjoint
+      // field set is sent — see buildRegisterPayload. `creds_source` is
+      // authoritative; `provider` rides along for backward-compat.
+      const result = await registerCluster(buildRegisterPayload(addClusterName.trim()));
+      const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
+      const merged = result?.git?.merged ?? false;
+      // Manual-mode register opens a PR but the cluster is NOT actually
+      // registered until merge. Branch on `merged` so the toast tells
+      // the user the truth.
+      if (merged) {
+        // Auto-merge succeeded (or PR-merge was implicit). Cluster is
+        // truly registered.
+        setAddClusterResultMsg(prUrl
+          ? `__merged__|${prUrl}`
+          : 'Cluster registered successfully.');
+      } else if (prUrl) {
+        // Manual mode (or auto-merge requested but not yet merged):
+        // values-file PR is open. The cluster won't appear as managed
+        // until the PR is merged. We tag the message with a `__pending__`
+        // prefix so the renderer picks the "PR opened — merge to
+        // activate" wording rather than the legacy "Cluster registered"
+        // wording.
+        setAddClusterResultMsg(`__pending__|${prUrl}`);
       } else {
-        // Direct registration. The chosen creds source (creds-reframe-2)
-        // decides which disjoint field set is sent — see
-        // buildRegisterPayload. `creds_source` is authoritative; `provider`
-        // rides along for backward-compat.
-        const result = await registerCluster(buildRegisterPayload(addClusterName.trim()));
-        const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
-        const merged = result?.git?.merged ?? false;
-        // Manual-mode register opens a PR but the cluster is NOT actually
-        // registered until merge. Branch on `merged` so the toast tells
-        // the user the truth.
-        if (merged) {
-          // Auto-merge succeeded (or PR-merge was implicit). Cluster is
-          // truly registered.
-          setAddClusterResultMsg(prUrl
-            ? `__merged__|${prUrl}`
-            : 'Cluster registered successfully.');
-        } else if (prUrl) {
-          // Manual mode (or auto-merge requested but not yet merged):
-          // values-file PR is open. The cluster won't appear as managed
-          // until the PR is merged. We tag the message with a `__pending__`
-          // prefix so the renderer picks the "PR opened — merge to
-          // activate" wording rather than the legacy "Cluster registered"
-          // wording.
-          setAddClusterResultMsg(`__pending__|${prUrl}`);
-        } else {
-          // Defensive: server returned no PR URL and no merge flag. Stay
-          // truthful — don't claim "registered" without evidence.
-          setAddClusterResultMsg('Cluster registration submitted. Check the open PR list for status.');
-        }
-        setAddClusterResult(result);
-        setAddClusterOpen(false);
-        void fetchData();
+        // Defensive: server returned no PR URL and no merge flag. Stay
+        // truthful — don't claim "registered" without evidence.
+        setAddClusterResultMsg('Cluster registration submitted. Check the open PR list for status.');
       }
+      setAddClusterResult(result);
+      setAddClusterOpen(false);
+      void fetchData();
     } catch (e: unknown) {
       setAddClusterError(e instanceof Error ? e.message : 'Failed to register cluster');
     } finally {
       setAddClusterSubmitting(false);
     }
-  }, [addClusterName, buildRegisterPayload, selectedAddons, fetchData, registrationMode, discoveredItems, selectedDiscovered]);
+  }, [addClusterName, buildRegisterPayload, fetchData]);
 
   const handleTestCluster = useCallback(async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -856,16 +776,16 @@ export function ClustersOverview() {
   // connection themselves, credentials are optional (Sharko never writes
   // the cluster secret; supplied credentials are only used to test
   // connectivity), so nothing here blocks submission.
+  //
+  // The creds-source choice itself is ALWAYS required — there is no
+  // silent default to fall into (V2-cleanup-60.4). The per-source
+  // required fields below stay relaxed for self-managed connections
+  // (credentials optional, verification only).
   const directRequiredMissing =
-    registrationMode === 'direct' &&
-    // The creds-source choice itself is ALWAYS required in Direct mode —
-    // there is no silent default to fall into (V2-cleanup-60.4). The
-    // per-source required fields below stay relaxed for self-managed
-    // connections (credentials optional, verification only).
-    (credsSource === '' ||
-      (connManagedBy !== 'user' &&
-        ((credsSource === 'inline-kubeconfig' && !addClusterKubeconfig.trim()) ||
-          (credsSource === 'secret-kubeconfig' && !addClusterSecretPath.trim()))));
+    credsSource === '' ||
+    (connManagedBy !== 'user' &&
+      ((credsSource === 'inline-kubeconfig' && !addClusterKubeconfig.trim()) ||
+        (credsSource === 'secret-kubeconfig' && !addClusterSecretPath.trim())));
 
   const handleStatusFilter = (filter: StatusFilter) => {
     setStatusFilter(statusFilter === filter ? 'all' : filter);
@@ -1034,115 +954,71 @@ export function ClustersOverview() {
             <DialogDescription>Add a new cluster to the Git catalog.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            {/* Registration Mode Toggle — asked FIRST (V2-cleanup-61.4, C1).
-              * Direct vs Discovery decides which questions even apply below:
-              * ownership + creds-source are Direct-only, so asking them
-              * before the mode was chosen meant showing questions that the
-              * very next click could make irrelevant. Mode now gates
-              * everything that follows. */}
+            {/* Connection ownership — WHO manages the ArgoCD cluster secret
+              * (V2-cleanup-57.2). Asked before the credentials question
+              * because it changes what the credentials are FOR: with "I
+              * do", Sharko never writes the secret and the credential
+              * inputs below become optional (verification only). */}
             <div>
               <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                Registration Mode
+                Who manages the ArgoCD connection?
               </label>
-              <div className="flex rounded-md ring-2 ring-[#6aade0] dark:ring-gray-700">
-                <button
-                  type="button"
-                  onClick={() => setRegistrationMode('direct')}
-                  className={`flex-1 rounded-l-md px-4 py-2 text-sm font-medium transition-colors ${
-                    registrationMode === 'direct'
-                      ? 'bg-teal-600 text-white'
-                      : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-                  }`}
-                >
-                  Direct
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRegistrationMode('discovery')}
-                  className={`flex-1 rounded-r-md px-4 py-2 text-sm font-medium transition-colors ${
-                    registrationMode === 'discovery'
-                      ? 'bg-teal-600 text-white'
-                      : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-                  }`}
-                >
-                  <span className="inline-flex items-center gap-1"><ScanSearch className="h-4 w-4" /> Discovery</span>
-                </button>
-              </div>
+              <select
+                value={connManagedBy}
+                onChange={(e) => setConnManagedBy(e.target.value as ConnOwnership)}
+                className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              >
+                <option value="sharko">Sharko (default)</option>
+                <option value="user">I do — Sharko only manages addon labels</option>
+              </select>
+              <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                {CONN_OWNERSHIP_HINTS[connManagedBy]}
+              </p>
             </div>
 
-            {/* Connection ownership — WHO manages the ArgoCD cluster secret
-              * (V2-cleanup-57.2). Direct mode only; asked before the
-              * credentials question because it changes what the credentials
-              * are FOR: with "I do", Sharko never writes the secret and the
-              * credential inputs below become optional (verification only). */}
-            {registrationMode === 'direct' && (
-              <div>
-                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                  Who manages the ArgoCD connection?
-                </label>
-                <select
-                  value={connManagedBy}
-                  onChange={(e) => setConnManagedBy(e.target.value as ConnOwnership)}
-                  className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-                >
-                  <option value="sharko">Sharko (default)</option>
-                  <option value="user">I do — Sharko only manages addon labels</option>
-                </select>
-                <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                  {CONN_OWNERSHIP_HINTS[connManagedBy]}
-                </p>
-              </div>
-            )}
-
-            {/* Credential source — the PRIMARY Direct-mode question
-              * (creds-reframe-2). This replaces the old platform-first
-              * "Provider" dropdown: we ask HOW Sharko should get the
+            {/* Credential source — the PRIMARY registration question
+              * (creds-reframe-2). We ask HOW Sharko should get the
               * cluster's credentials, and that choice drives which inputs
               * show below. Cluster platform (EKS/GKE/AKS) is now implied
-              * metadata, not the gate. Discovery mode always uses the token
-              * path, so this question never applies there. */}
-            {registrationMode === 'direct' && (
-              <div>
-                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                  How should Sharko get this cluster's credentials?
-                </label>
-                <select
-                  value={credsSource}
-                  onChange={(e) => setCredsSource(e.target.value as CredsSource)}
-                  className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-                >
-                  {/* No silent default (V2-cleanup-60.4): the placeholder is
-                    * not selectable, and Preview/Register stay disabled until
-                    * the user makes an explicit choice. */}
-                  <option value="" disabled>Choose where this cluster's credentials come from…</option>
-                  <option value="inline-kubeconfig">Paste a kubeconfig</option>
-                  <option value="secret-kubeconfig">Use a stored kubeconfig (from your secret store)</option>
-                  <option value="eks-token">Amazon EKS — generate a token from cloud identity</option>
-                </select>
-                {/* Plain-English hint for the selected option (V2-cleanup-55.3). */}
-                <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                  {credsSource === ''
-                    ? 'Required — pick one of the three options before registering.'
-                    : CREDS_SOURCE_HINTS[credsSource]}
-                </p>
-              </div>
-            )}
+              * metadata, not the gate. */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                How should Sharko get this cluster's credentials?
+              </label>
+              <select
+                value={credsSource}
+                onChange={(e) => setCredsSource(e.target.value as CredsSource)}
+                className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              >
+                {/* No silent default (V2-cleanup-60.4): the placeholder is
+                  * not selectable, and Preview/Register stay disabled until
+                  * the user makes an explicit choice. */}
+                <option value="" disabled>Choose where this cluster's credentials come from…</option>
+                <option value="inline-kubeconfig">Paste a kubeconfig</option>
+                <option value="secret-kubeconfig">Use a stored kubeconfig (from your secret store)</option>
+                <option value="eks-token">Amazon EKS — generate a token from cloud identity</option>
+              </select>
+              {/* Plain-English hint for the selected option (V2-cleanup-55.3). */}
+              <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                {credsSource === ''
+                  ? 'Required — pick one of the three options before registering.'
+                  : CREDS_SOURCE_HINTS[credsSource]}
+              </p>
+            </div>
 
-            {registrationMode === 'direct' ? (
-              <>
-                {/* Direct mode fields — Cluster Name is required for every provider. */}
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                    Cluster Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={addClusterName}
-                    onChange={(e) => setAddClusterName(e.target.value)}
-                    placeholder="e.g. prod-us-east-1"
-                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                  />
-                </div>
+            {/* Cluster Name is required for every provider. */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                Cluster Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={addClusterName}
+                onChange={(e) => setAddClusterName(e.target.value)}
+                placeholder="e.g. prod-us-east-1"
+                className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+              />
+            </div>
                 {credsSource === 'inline-kubeconfig' && (
                   <>
                     {/* Paste a kubeconfig — inline YAML. */}
@@ -1248,133 +1124,8 @@ export function ClustersOverview() {
                     </div>
                   </>
                 )}
-              </>
-            ) : (
-              <>
-                {/* Discovery mode */}
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                    Role ARNs <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={discoveryRoleArns}
-                    onChange={(e) => setDiscoveryRoleArns(e.target.value)}
-                    placeholder="Comma-separated: arn:aws:iam::111:role/a, arn:aws:iam::222:role/b"
-                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                  />
-                  {/* V2-cleanup-61.4 (C3): the raw comma-separated ARN input
-                    * had zero guidance — a concrete example + what the role
-                    * needs + a docs link. Each ARN is tried in turn to list
-                    * EKS clusters reachable from that identity; the same
-                    * role can also be used later at registration time
-                    * (Direct mode's EKS token path). */}
-                  <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                    Enter one or more AWS IAM Role ARNs to scan for EKS clusters, e.g.{' '}
-                    <code className="font-mono">arn:aws:iam::111122223333:role/sharko-discovery</code>.
-                    Each role needs <code className="font-mono">eks:ListClusters</code> and{' '}
-                    <code className="font-mono">eks:DescribeCluster</code> permission, and Sharko must
-                    be able to assume it. The same role can be reused when registering a cluster directly.{' '}
-                    <a
-                      href="https://sharko.readthedocs.io/en/latest/user-guide/clusters/#discovery-mode-and-role-arns"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-medium text-teal-600 underline hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
-                    >
-                      Learn more
-                    </a>
-                    .
-                  </p>
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                    Region (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={discoveryRegion}
-                    onChange={(e) => setDiscoveryRegion(e.target.value)}
-                    placeholder="e.g. us-east-1 (leave empty for all regions)"
-                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={handleDiscoverClusters}
-                  disabled={discovering || !discoveryRoleArns.trim()}
-                  title="Scan AWS for EKS clusters reachable from each Role ARN above. Found clusters appear below for selection — nothing is registered until you click Register."
-                  className="inline-flex items-center gap-2 rounded-md bg-[#0a2a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#0d3558] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-700 dark:hover:bg-blue-600"
-                >
-                  {discovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
-                  Scan
-                </button>
-                {discoveryError && (
-                  <p className="text-sm text-amber-600 dark:text-amber-400">{discoveryError}</p>
-                )}
-                {discoveredItems.length > 0 && (
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                      Discovered Clusters ({discoveredItems.length})
-                    </label>
-                    <div className="max-h-48 overflow-y-auto rounded-md ring-2 ring-[#6aade0] dark:ring-gray-700">
-                      <table className="w-full text-left text-sm">
-                        <thead className="sticky top-0 border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
-                          <tr>
-                            <th className="px-3 py-2 w-8">
-                              <input
-                                type="checkbox"
-                                checked={discoveredItems.filter(c => !c.already_managed).length > 0 && discoveredItems.filter(c => !c.already_managed).every(c => selectedDiscovered[c.name])}
-                                onChange={(e) => {
-                                  const checked = e.target.checked;
-                                  const next: Record<string, boolean> = {};
-                                  discoveredItems.forEach(c => {
-                                    if (!c.already_managed) next[c.name] = checked;
-                                  });
-                                  setSelectedDiscovered(next);
-                                }}
-                                className="rounded border-[#5a9dd0] dark:border-gray-600"
-                              />
-                            </th>
-                            <th className="px-3 py-2">Name</th>
-                            <th className="px-3 py-2">Region</th>
-                            <th className="px-3 py-2">Version</th>
-                            <th className="px-3 py-2">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700 bg-[#f0f7ff] dark:bg-gray-800">
-                          {discoveredItems.map((cluster) => (
-                            <tr key={cluster.name} className={cluster.already_managed ? 'opacity-50' : ''}>
-                              <td className="px-3 py-2">
-                                <input
-                                  type="checkbox"
-                                  checked={!!selectedDiscovered[cluster.name]}
-                                  disabled={cluster.already_managed}
-                                  onChange={(e) => setSelectedDiscovered(prev => ({ ...prev, [cluster.name]: e.target.checked }))}
-                                  className="rounded border-[#5a9dd0] dark:border-gray-600"
-                                />
-                              </td>
-                              <td className="px-3 py-2 font-medium text-[#0a2a4a] dark:text-gray-100">
-                                {cluster.name}
-                              </td>
-                              <td className="px-3 py-2 text-[#2a5a7a] dark:text-gray-400">{cluster.region}</td>
-                              <td className="px-3 py-2 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">{cluster.version ?? '--'}</td>
-                              <td className="px-3 py-2">
-                                {cluster.already_managed
-                                  ? <span className="text-xs text-[#5a8aaa]">Already managed</span>
-                                  : <span className="text-xs text-teal-600 dark:text-teal-400">{cluster.status ?? 'Available'}</span>
-                                }
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
 
-            {/* Addons selection - shared between modes */}
+            {/* Addons selection */}
             {catalogAddons && catalogAddons.addons.length > 0 && (
               <div>
                 <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
@@ -1479,9 +1230,8 @@ export function ClustersOverview() {
               disabled={
                 dryRunLoading ||
                 addClusterSubmitting ||
-                (registrationMode === 'direct' && !addClusterName.trim()) ||
-                directRequiredMissing ||
-                (registrationMode === 'discovery' && !Object.values(selectedDiscovered).some(Boolean))
+                !addClusterName.trim() ||
+                directRequiredMissing
               }
               title="Dry-run: show the PR title, files that would be committed, and ArgoCD secret that would be created — without actually applying anything."
               className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
@@ -1494,15 +1244,14 @@ export function ClustersOverview() {
               onClick={handleAddCluster}
               disabled={
                 addClusterSubmitting ||
-                (registrationMode === 'direct' && !addClusterName.trim()) ||
-                directRequiredMissing ||
-                (registrationMode === 'discovery' && !Object.values(selectedDiscovered).some(Boolean))
+                !addClusterName.trim() ||
+                directRequiredMissing
               }
               title="Create the ArgoCD cluster Secret, add the cluster to managed-clusters.yaml, and open a PR. Whether that PR auto-merges follows your global GitOps setting (Settings → GitOps)."
               className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
             >
               {addClusterSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              Register{registrationMode === 'discovery' && Object.values(selectedDiscovered).filter(Boolean).length > 1 ? ` (${Object.values(selectedDiscovered).filter(Boolean).length})` : ''}
+              Register
             </button>
           </DialogFooter>
         </DialogContent>

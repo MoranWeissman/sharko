@@ -491,8 +491,6 @@ the cluster's mode).
   primary fetch failed before STS got involved.
 - [`aws-sm-search-access-denied.md`](aws-sm-search-access-denied.md)
   — adjacent IAM failure on the SearchSecrets path.
-- [`eks-discover-failed.md`](eks-discover-failed.md) — adjacent
-  EKS-side failure: cross-account discovery failed.
 - [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) — adjacent
   v1.x limitation: `awsAuthConfig` shape (no STS step here — different
   failure path).

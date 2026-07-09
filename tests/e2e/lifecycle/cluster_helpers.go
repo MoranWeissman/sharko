@@ -9,10 +9,10 @@
 // (they should grow their own _helpers.go alongside their _test.go).
 //
 // The cluster lifecycle file (cluster_test.go) is V2 Epic 7-1.4 — it
-// covers the 21 cluster + cluster-discovery + cluster-orphan endpoints
-// against an in-process sharko backed by a real ArgoCD installed in a
-// kind management cluster. Subtests skip-graceful when the kubeconfig
-// path lacks a credentials provider (EKS-only handlers).
+// covers the cluster + cluster-orphan endpoints against an in-process
+// sharko backed by a real ArgoCD installed in a kind management
+// cluster. Subtests skip-graceful when the kubeconfig path lacks a
+// credentials provider (EKS-only handlers).
 package lifecycle
 
 import (

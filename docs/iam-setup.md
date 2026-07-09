@@ -28,7 +28,7 @@ aws eks describe-cluster --name sharko-cluster --region us-east-1 \
 
 ### 1.2 IAM Policy for Sharko
 
-Create a policy that grants Sharko access to Secrets Manager and EKS discovery.
+Create a policy that grants Sharko access to Secrets Manager.
 
 ```json
 {
@@ -43,15 +43,6 @@ Create a policy that grants Sharko access to Secrets Manager and EKS discovery.
         "secretsmanager:ListSecrets"
       ],
       "Resource": "arn:aws:secretsmanager:*:123456789012:secret:sharko/*"
-    },
-    {
-      "Sid": "EKSDiscovery",
-      "Effect": "Allow",
-      "Action": [
-        "eks:ListClusters",
-        "eks:DescribeCluster"
-      ],
-      "Resource": "*"
     }
   ]
 }
@@ -339,89 +330,7 @@ kubectl get namespaces
 
 ---
 
-## 4. Discovery Mode (Multi-Account Scan)
-
-Discovery mode lets Sharko scan multiple AWS accounts for EKS clusters. This requires a central role that can assume roles across all target accounts.
-
-### 4.1 Central Discovery Role
-
-Extend Sharko's IAM policy with `sts:AssumeRole` for all target accounts:
-
-```json
-{
-  "Sid": "DiscoveryAssumeRole",
-  "Effect": "Allow",
-  "Action": "sts:AssumeRole",
-  "Resource": [
-    "arn:aws:iam::987654321098:role/SharkoTargetRole",
-    "arn:aws:iam::111222333444:role/SharkoTargetRole",
-    "arn:aws:iam::555666777888:role/SharkoTargetRole"
-  ]
-}
-```
-
-For organizations with many accounts, use a wildcard pattern (requires consistent role naming):
-
-```json
-{
-  "Sid": "DiscoveryAssumeRoleOrg",
-  "Effect": "Allow",
-  "Action": "sts:AssumeRole",
-  "Resource": "arn:aws:iam::*:role/SharkoTargetRole"
-}
-```
-
-Each target account must have a `SharkoTargetRole` with a trust policy as shown in [Section 3.1](#31-create-iam-role-in-target-account).
-
-### 4.2 Organizational SCP Considerations
-
-If your AWS Organization uses Service Control Policies (SCPs), verify that:
-
-1. **`sts:AssumeRole` is not denied** at the OU or account level for cross-account calls.
-2. **`eks:ListClusters` and `eks:DescribeCluster` are allowed** in target accounts. Some orgs restrict EKS API access.
-3. **Session duration limits** in SCPs don't conflict with Sharko's role session (default 1 hour).
-
-Common SCP issues:
-
-```json
-{
-  "Sid": "DenyExternalAssumeRole",
-  "Effect": "Deny",
-  "Action": "sts:AssumeRole",
-  "Condition": {
-    "StringNotEquals": {
-      "aws:PrincipalOrgID": "o-your-org-id"
-    }
-  }
-}
-```
-
-If this SCP exists, Sharko's account must be in the same organization as the target accounts, or you must add an exception.
-
-### 4.3 Testing Before First Scan
-
-Before running discovery mode, verify the chain works for each target account:
-
-```bash
-# 1. Verify Sharko's identity
-aws sts get-caller-identity
-
-# 2. Test assume-role into each target account
-aws sts assume-role \
-  --role-arn arn:aws:iam::987654321098:role/SharkoTargetRole \
-  --role-session-name sharko-discovery-test \
-  --external-id sharko-cross-account
-
-# 3. With assumed credentials, verify EKS access
-aws eks list-clusters --region us-east-1
-aws eks describe-cluster --name <cluster-name> --region us-east-1
-```
-
-Run this for each target account. If any step fails, fix it before enabling discovery mode in Sharko.
-
----
-
-## 5. Troubleshooting
+## 4. Troubleshooting
 
 Sharko uses structured error codes during cluster connectivity verification. Each code maps to a specific category of failure.
 
@@ -535,9 +444,9 @@ aws sts assume-role \
 **Symptom:** API throttling or quota exceeded errors from AWS or Kubernetes.
 
 **Fixes:**
-- Check AWS API throttling. If Sharko is scanning many clusters, requests may be rate-limited.
-- Use `aws cloudwatch get-metric-statistics` to check for `ThrottledRequests` on STS/EKS.
-- Consider adding retry logic or reducing the number of concurrent discovery scans.
+- Check AWS API throttling. If Sharko is testing or registering many clusters in quick succession, requests may be rate-limited.
+- Use `aws cloudwatch get-metric-statistics` to check for `ThrottledRequests` on STS.
+- Consider adding retry logic or spacing out concurrent cluster operations.
 - For Kubernetes API throttling, check the target cluster's API server metrics.
 
 #### ERR_NAMESPACE
@@ -591,9 +500,6 @@ Run these from the Sharko pod or a workstation with the same IAM role:
 # Check who Sharko thinks it is
 aws sts get-caller-identity
 
-# Verify EKS access in Sharko's account
-aws eks list-clusters --region us-east-1
-
 # Test cross-account assume-role
 aws sts assume-role \
   --role-arn arn:aws:iam::987654321098:role/SharkoTargetRole \
@@ -607,11 +513,11 @@ aws secretsmanager list-secrets --region us-east-1 \
 
 ---
 
-## 6. Terraform Modules (Reference)
+## 5. Terraform Modules (Reference)
 
 These Terraform examples provide a starting point. A full `sharko-terraform` module repository is planned for the future.
 
-### 6.1 Single-Account Setup
+### 5.1 Single-Account Setup
 
 ```hcl
 # sharko-iam.tf — IAM resources for Sharko in a single-account setup
@@ -664,15 +570,6 @@ resource "aws_iam_role_policy" "sharko" {
         ]
         Resource = "arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:sharko/*"
       },
-      {
-        Sid    = "EKSDiscovery"
-        Effect = "Allow"
-        Action = [
-          "eks:ListClusters",
-          "eks:DescribeCluster",
-        ]
-        Resource = "*"
-      },
     ]
   })
 }
@@ -684,7 +581,7 @@ output "sharko_role_arn" {
 }
 ```
 
-### 6.2 Cross-Account Setup
+### 5.2 Cross-Account Setup
 
 ```hcl
 # sharko-cross-account.tf — Target account role that trusts Sharko
@@ -748,7 +645,7 @@ output "sharko_target_role_arn" {
 }
 ```
 
-### 6.3 Applying the RBAC with Terraform
+### 5.3 Applying the RBAC with Terraform
 
 ```hcl
 # sharko-rbac.tf — Kubernetes RBAC on the target cluster

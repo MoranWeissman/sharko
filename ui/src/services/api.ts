@@ -16,7 +16,6 @@ import type {
   ConnectionsListResponse,
   DashboardStats,
   DiagnosticReport,
-  DiscoverClustersResponse,
   DryRunResult,
   ObservabilityOverviewResponse,
   PullRequestsResponse,
@@ -212,10 +211,6 @@ export async function registerCluster(data: {
   connection_managed_by?: 'sharko' | 'user';
 }) {
   return postJSON<RegisterClusterResult>('/clusters', data)
-}
-
-export async function discoverEKSClusters(data: { role_arns: string[]; region?: string }) {
-  return postJSON<DiscoverClustersResponse>('/clusters/discover', data)
 }
 
 /**

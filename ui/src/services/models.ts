@@ -1068,20 +1068,6 @@ export type ClusterProvider = 'eks' | 'gke' | 'aks' | 'generic' | 'kubeconfig'
 //                            (EKS / IRSA) using region + role ARN.
 export type CredsSource = 'inline-kubeconfig' | 'secret-kubeconfig' | 'eks-token'
 
-export interface DiscoveredClusterItem {
-  name: string
-  region: string
-  status?: string
-  arn?: string
-  version?: string
-  already_managed?: boolean
-}
-
-export interface DiscoverClustersResponse {
-  clusters: DiscoveredClusterItem[]
-  errors?: string[]
-}
-
 export interface DryRunFileEntry {
   path: string
   action: 'create' | 'update'

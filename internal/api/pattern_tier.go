@@ -34,7 +34,6 @@ var mutatingPatternTier = map[string]audit.Tier{
 	"POST /api/v1/clusters":                          audit.Tier1,
 	"POST /api/v1/clusters/batch":                    audit.Tier1,
 	"POST /api/v1/clusters/adopt":                    audit.Tier1,
-	"POST /api/v1/clusters/discover":                 audit.Tier1,
 	"DELETE /api/v1/clusters/{name}":                 audit.Tier1,
 	"PATCH /api/v1/clusters/{name}":                  audit.Tier1,
 	"POST /api/v1/clusters/{name}/refresh":           audit.Tier1,

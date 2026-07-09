@@ -213,25 +213,6 @@ func (c *Client) ListAvailableClusters(t *testing.T) (status int, body map[strin
 	return resp.StatusCode, body
 }
 
-// DiscoverEKSClusters issues POST /api/v1/clusters/discover. 503 is
-// expected when no credentials provider is configured.
-//
-// provider="eks" must be sent — the handler rejects any other value
-// with a 400 (only the EKS path is wired today).
-func (c *Client) DiscoverEKSClusters(t *testing.T, region string) (status int, body map[string]any) {
-	t.Helper()
-	req := map[string]any{
-		"provider": "eks",
-	}
-	if region != "" {
-		req["region"] = region
-	}
-	resp := c.Do(t, http.MethodPost, "/api/v1/clusters/discover", req)
-	defer resp.Body.Close()
-	body = decodeClusterJSON(t, resp.Body)
-	return resp.StatusCode, body
-}
-
 // AdoptClusters issues POST /api/v1/clusters/adopt. 503 is expected
 // without a credentials provider.
 func (c *Client) AdoptClusters(t *testing.T, req orchestrator.AdoptClustersRequest) (status int, body map[string]any) {

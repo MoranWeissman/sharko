@@ -32,7 +32,6 @@ vi.mock('@/services/api', () => ({
     health: () => Promise.resolve({ status: 'healthy', cluster_test_available: true }),
   },
   registerCluster: vi.fn(),
-  discoverEKSClusters: vi.fn(),
   testClusterConnection: vi.fn(),
   unadoptCluster: vi.fn(),
   deleteOrphanCluster: (...args: unknown[]) => mockDeleteOrphanCluster(...args),

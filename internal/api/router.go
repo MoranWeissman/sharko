@@ -716,7 +716,6 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/clusters/batch", srv.handleBatchRegisterClusters)
 	mux.HandleFunc("POST /api/v1/clusters/adopt", srv.handleAdoptClusters)
 	mux.HandleFunc("GET /api/v1/clusters/available", srv.handleDiscoverClusters)
-	mux.HandleFunc("POST /api/v1/clusters/discover", srv.handleDiscoverEKS)
 
 	// Clusters (read)
 	mux.HandleFunc("GET /api/v1/clusters", srv.handleListClusters)

@@ -450,7 +450,7 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
   ```bash
   for cmd in add-addon add-cluster add-clusters adopt \
              completion configure-addon connect describe-addon \
-             discover init list-addons list-clusters \
+             init list-addons list-clusters \
              login pr refresh-secrets remove-addon remove-cluster \
              reset-admin secret-status serve status token \
              unadopt-cluster update-cluster upgrade-addon upgrade-addons \
