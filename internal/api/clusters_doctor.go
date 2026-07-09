@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/capabilities"
@@ -51,6 +53,13 @@ const (
 	doctorCheckAddonSecretPaths      = "addon-secret-paths"
 	doctorCheckAssumeRole            = "assume-role"
 	doctorCheckClusterAccess         = "cluster-access"
+	// doctorCheckSecretOwnership is the fifth check (V2-cleanup-89.5): does
+	// this cluster's ArgoCD cluster Secret carry a foreign ArgoCD tracking
+	// marker, meaning another Application renders it from Git and could
+	// fight Sharko over the addon labels it writes. Not-applicable for
+	// Sharko-managed connections (Sharko is the Secret's sole writer there)
+	// and for self-managed connections with no Secret yet.
+	doctorCheckSecretOwnership = "secret-ownership"
 )
 
 // Check statuses (doctorCheck.Status).
@@ -84,18 +93,22 @@ type doctorClusterResponse struct {
 // handleDoctorCluster godoc
 //
 // @Summary Run the connection doctor
-// @Description Runs up to four real-attempt checks against the named cluster's
+// @Description Runs up to five real-attempt checks against the named cluster's
 // @Description connection and returns a structured pass/fail/not-applicable
 // @Description verdict per check, each with a plain-English fix on failure:
 // @Description (1) can Sharko read the cluster's connection credentials,
 // @Description (2) can Sharko read every provider path an enabled addon's
 // @Description secrets need, (3) if a cross-account IAM role is in play, can
-// @Description Sharko assume it, and (4) does the cluster itself accept the
-// @Description resulting token (reuses the existing Stage-1 secret CRUD cycle).
-// @Description Every check is a real attempt, never IAM policy simulation, and
-// @Description read-only except check 4, which reuses Stage-1's existing
-// @Description create/read/delete canary secret. The whole run is bounded to
-// @Description about 30 seconds.
+// @Description Sharko assume it, (4) does the cluster itself accept the
+// @Description resulting token (reuses the existing Stage-1 secret CRUD cycle),
+// @Description and (5) for a self-managed connection, is its ArgoCD cluster
+// @Description Secret free of foreign ArgoCD tracking markers (i.e. not
+// @Description rendered by another Application that could fight Sharko over
+// @Description the addon labels it writes) — not-applicable for Sharko-managed
+// @Description connections. Every check is a real attempt, never IAM policy
+// @Description simulation, and read-only except check 4, which reuses Stage-1's
+// @Description existing create/read/delete canary secret. The whole run is
+// @Description bounded to about 30 seconds.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
@@ -119,8 +132,9 @@ func (s *Server) handleDoctorCluster(w http.ResponseWriter, r *http.Request) {
 	secretsCheck := s.doctorCheckAddonSecretPaths(ctx, name)
 	assumeCheck := s.doctorCheckAssumeRole(ctx, name)
 	accessCheck := s.doctorCheckClusterAccess(ctx, name, creds, assumeCheck.Status == doctorStatusPass)
+	ownershipCheck := s.doctorCheckSecretOwnership(ctx, name)
 
-	checks := []doctorCheck{credCheck, secretsCheck, assumeCheck, accessCheck}
+	checks := []doctorCheck{credCheck, secretsCheck, assumeCheck, accessCheck, ownershipCheck}
 	resp := doctorClusterResponse{Checks: checks, Overall: doctorOverallStatus(checks)}
 
 	slog.Info("[cluster-doctor] complete", "name", name, "overall", resp.Overall)
@@ -544,5 +558,77 @@ func (s *Server) doctorCheckClusterAccess(ctx context.Context, clusterName strin
 		Status: doctorStatusFail,
 		Detail: fmt.Sprintf("Sharko's connection test on cluster %q failed: %s", clusterName, result.ErrorMessage),
 		Fix:    fix,
+	}
+}
+
+// doctorCheckSecretOwnership is check 5 (V2-cleanup-89.5): for a
+// self-managed connection (connectionManagedBy: user), does its ArgoCD
+// cluster Secret carry a foreign ArgoCD tracking marker — i.e. is it ALSO
+// rendered from Git by another ArgoCD Application, which can fight Sharko
+// over the addon labels it writes onto that same Secret? Reuses
+// argosecrets.Manager.GetTrackingOwner — the exact same detection call
+// AdoptClusters / RegisterCluster use for their upfront warning — so this
+// check and that warning can never disagree about what counts as a
+// foreign owner. Not-applicable for a Sharko-managed connection (Sharko is
+// the Secret's sole writer there, so a foreign marker is a different,
+// out-of-scope problem) and for a self-managed connection whose Secret the
+// user hasn't created yet.
+func (s *Server) doctorCheckSecretOwnership(ctx context.Context, clusterName string) doctorCheck {
+	if s.argoSecretManager == nil {
+		return doctorCheck{
+			ID:     doctorCheckSecretOwnership,
+			Status: doctorStatusNotApplicable,
+			Detail: "Sharko has no ArgoCD cluster-secret manager configured, so it cannot inspect this cluster's connection secret.",
+		}
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, doctorCheckTimeout)
+	defer cancel()
+
+	managedBy, err := s.argoSecretManager.GetManagedByLabel(cctx, clusterName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return doctorCheck{
+				ID:     doctorCheckSecretOwnership,
+				Status: doctorStatusNotApplicable,
+				Detail: fmt.Sprintf("Cluster %q has no ArgoCD connection secret yet, so there is nothing to check for foreign ownership.", clusterName),
+			}
+		}
+		return doctorCheck{
+			ID:     doctorCheckSecretOwnership,
+			Status: doctorStatusFail,
+			Detail: fmt.Sprintf("Sharko could not read cluster %q's ArgoCD connection secret: %s", clusterName, err.Error()),
+			Fix:    "Check that the cluster's ArgoCD cluster Secret still exists in the argocd namespace.",
+		}
+	}
+	if managedBy == argosecrets.ManagedByValue {
+		return doctorCheck{
+			ID:     doctorCheckSecretOwnership,
+			Status: doctorStatusNotApplicable,
+			Detail: fmt.Sprintf("Cluster %q's connection secret is managed by Sharko directly — foreign-ownership checks only apply to self-managed (user-owned) connections.", clusterName),
+		}
+	}
+
+	appName, found, trackErr := s.argoSecretManager.GetTrackingOwner(cctx, clusterName)
+	if trackErr != nil {
+		return doctorCheck{
+			ID:     doctorCheckSecretOwnership,
+			Status: doctorStatusFail,
+			Detail: fmt.Sprintf("Sharko could not inspect cluster %q's connection secret for ArgoCD tracking markers: %s", clusterName, trackErr.Error()),
+			Fix:    "Check that the cluster's ArgoCD cluster Secret still exists in the argocd namespace.",
+		}
+	}
+	if !found {
+		return doctorCheck{
+			ID:     doctorCheckSecretOwnership,
+			Status: doctorStatusPass,
+			Detail: fmt.Sprintf("Cluster %q's connection secret carries no ArgoCD tracking markers from another application.", clusterName),
+		}
+	}
+	return doctorCheck{
+		ID:     doctorCheckSecretOwnership,
+		Status: doctorStatusFail,
+		Detail: fmt.Sprintf("Cluster %q's connection secret is rendered by ArgoCD application %q — that application can overwrite Sharko's addon labels on it.", clusterName, appName),
+		Fix:    fmt.Sprintf("In application %q's manifest, make sure it doesn't define Sharko's addon labels and doesn't use the Replace sync option, or they will fight over this secret. See docs/site/operator/self-managed-connections.md.", appName),
 	}
 }

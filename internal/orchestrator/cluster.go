@@ -160,6 +160,22 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		},
 		Adopted: alreadyInArgoCD,
 	}
+
+	// V2-cleanup-89.5: warn (never fail) when a self-managed connection's
+	// ArgoCD cluster Secret already exists AND is itself rendered by
+	// another ArgoCD Application. Only meaningful for connectionManagedBy:
+	// user — a Sharko-managed connection's Secret is written by Sharko
+	// alone, so a foreign tracking marker there would be a different (and
+	// currently out of scope) problem.
+	if selfManaged {
+		if warnings, warnErr := o.detectForeignOwnerWarnings(ctx, req.Name); warnErr != nil {
+			log.Warn("could not check cluster secret for foreign ArgoCD ownership — proceeding with registration",
+				"cluster", req.Name, "error", warnErr)
+		} else if len(warnings) > 0 {
+			result.Warnings = append(result.Warnings, warnings...)
+		}
+	}
+
 	var steps []string
 
 	// Step 3: Acquire credentials.

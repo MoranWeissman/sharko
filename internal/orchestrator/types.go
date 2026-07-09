@@ -147,6 +147,12 @@ type RegisterClusterResult struct {
 	ArgoSecretStatus string `json:"argocd_secret_status,omitempty"`
 	// ArgoSecretError holds the error message if the ArgoCD secret step failed (non-fatal).
 	ArgoSecretError string `json:"argocd_secret_error,omitempty"`
+
+	// Warnings holds plain-English advisories that do NOT fail the
+	// operation — e.g. a self-managed connection's ArgoCD cluster Secret
+	// turning out to be rendered by another ArgoCD Application
+	// (V2-cleanup-89.5). Empty/omitted when there is nothing to warn about.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // DryRunResult holds the preview information returned when dry_run=true.
@@ -297,6 +303,12 @@ type AdoptClusterResult struct {
 	Error        string         `json:"error,omitempty"`
 	Message      string         `json:"message,omitempty"`
 	DryRun       *DryRunResult  `json:"dry_run,omitempty"`
+
+	// Warnings holds plain-English advisories that do NOT fail the
+	// adoption — e.g. this cluster's ArgoCD cluster Secret turning out to
+	// be rendered by another ArgoCD Application (V2-cleanup-89.5). Empty/
+	// omitted when there is nothing to warn about.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // AdoptClustersResult is the aggregate response from adopting multiple clusters.

@@ -1,6 +1,9 @@
 package clusterreconciler
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // reconcile_status.go — per-cluster reconcile visibility (V2-cleanup-89.4).
 //
@@ -46,7 +49,11 @@ const (
 
 // ClusterReconcileRecord is the last known reconcile outcome for one
 // cluster. Message is a plain-English explanation of what happened —
-// populated on Failed and Skipped, empty on Succeeded.
+// populated on Failed and Skipped, empty on Succeeded UNLESS label-fight
+// detection (V2-cleanup-89.5) has found a sustained revert pattern on a
+// self-managed connection's Secret: that case stays Succeeded (Sharko is
+// still successfully re-applying its labels every tick) but Message
+// carries the fight warning — see recordFightCheck.
 type ClusterReconcileRecord struct {
 	Time    time.Time
 	Outcome ReconcileOutcome
@@ -82,4 +89,117 @@ func (r *Reconciler) LastReconcile(name string) (ClusterReconcileRecord, bool) {
 	defer r.lastReconcileMu.RUnlock()
 	rec, ok := r.lastReconcile[name]
 	return rec, ok
+}
+
+// --- Label-fight detection (V2-cleanup-89.5) ---
+//
+// A self-managed connection's ArgoCD cluster Secret is the user's — Sharko
+// only ever merges its own addon-label keys onto it via
+// argosecrets.Manager.SyncLabelsOnly (syncSelfManaged calls this every
+// tick). If that same Secret is ALSO rendered from Git by a separate
+// ArgoCD Application, two things can go wrong: that Application's
+// `syncOptions: [Replace=true]` wipes Sharko's labels on every one of ITS
+// syncs, or its manifest defines one of Sharko's addon-label keys with a
+// conflicting value and self-heal reverts Sharko's write. Either way the
+// symptom is the same from Sharko's side: a label Sharko wrote keeps
+// coming back different on a later tick, even though Sharko never stopped
+// wanting the value it originally wrote.
+//
+// The detector below tells that apart from the ordinary, expected case of
+// git itself changing what Sharko wants for a key (e.g. an addon toggled
+// off in managed-clusters.yaml) — a value changing because git drove the
+// change is not a fight, it's Sharko doing its job.
+
+// clusterFightState is the per-cluster label-fight tracking state for one
+// self-managed cluster. Held in Reconciler.fightState, guarded by
+// Reconciler.fightMu.
+type clusterFightState struct {
+	// lastWanted is the addon label key/value pairs Sharko computed as
+	// desired the last time syncSelfManaged ran for this cluster,
+	// regardless of whether a write actually occurred that tick (a Secret
+	// already converged to the desired value still updates this baseline —
+	// there is nothing new to compare against on the next tick either
+	// way). nil before the first tick has ever run for this cluster.
+	lastWanted map[string]string
+	// reverts is the number of CONSECUTIVE ticks in which recordFightCheck
+	// observed at least one key Sharko still wanted unchanged (i.e. git did
+	// NOT move it) come back with a live value different from what Sharko
+	// wrote last time. Reset to 0 the instant a tick shows no revert.
+	reverts int
+}
+
+// fightRevertThreshold is the number of consecutive reverted ticks needed
+// before recordFightCheck starts returning a non-empty warning. A single
+// reverted tick is not enough to conclude a fight — the other
+// Application's sync landing between Sharko's read and write on one
+// unlucky tick would trip that — but two or more IN A ROW, at the
+// reconciler's ~30s cadence, means something is durably reasserting a
+// different value.
+const fightRevertThreshold = 2
+
+// recordFightCheck compares the live label values observed on this tick
+// (BEFORE this tick's write, i.e. what was on the Secret coming in) against
+// what Sharko itself last wanted to write for this cluster, and updates the
+// per-cluster revert-streak counter. Returns a non-empty plain-English
+// warning once the streak reaches fightRevertThreshold; empty otherwise.
+//
+// desired is the FULL set of addon labels Sharko wants to write THIS tick
+// (already normalized to the canonical vocabulary). observedLive is the
+// live Secret's label map as read before this tick's write — pass nil when
+// the Secret does not exist yet (nothing to have reverted against).
+//
+// False-positive guard: for each key in the previous tick's lastWanted,
+// the key only counts toward a revert if desired ALSO still wants that
+// exact same value this tick (git has not changed Sharko's own intent for
+// that key since the last write). If git moved the desired value, a
+// mismatch against the OLD lastWanted is expected and is skipped —
+// otherwise every ordinary addon toggle would look identical to a fight.
+func (r *Reconciler) recordFightCheck(name string, desired, observedLive map[string]string) (warning string) {
+	r.fightMu.Lock()
+	defer r.fightMu.Unlock()
+	if r.fightState == nil {
+		r.fightState = make(map[string]clusterFightState)
+	}
+	state := r.fightState[name]
+
+	revertedThisTick := false
+	if state.lastWanted != nil && observedLive != nil {
+		for key, wantedLast := range state.lastWanted {
+			wantedNow, stillWanted := desired[key]
+			if !stillWanted || wantedNow != wantedLast {
+				// git changed (or dropped) what Sharko wants for this key
+				// since the last tick — not a revert signal, regardless of
+				// what the live Secret currently holds for it.
+				continue
+			}
+			if observedLive[key] != wantedLast {
+				revertedThisTick = true
+				break
+			}
+		}
+	}
+
+	if revertedThisTick {
+		state.reverts++
+	} else {
+		state.reverts = 0
+	}
+
+	// Snapshot desired as the new baseline for the NEXT tick's comparison.
+	// Copy rather than alias — desired is the caller's normalizeLabels
+	// output and must not be mutated by a later tick through this map.
+	snapshot := make(map[string]string, len(desired))
+	for k, v := range desired {
+		snapshot[k] = v
+	}
+	state.lastWanted = snapshot
+	r.fightState[name] = state
+
+	if state.reverts >= fightRevertThreshold {
+		warning = fmt.Sprintf(
+			"something else keeps overwriting Sharko's addon labels on this cluster's self-managed ArgoCD secret (reverted %d checks in a row) — likely the ArgoCD application that renders this secret from Git fighting with Sharko over it. Sharko will keep re-applying its labels every tick; see docs/site/operator/self-managed-connections.md.",
+			state.reverts,
+		)
+	}
+	return warning
 }

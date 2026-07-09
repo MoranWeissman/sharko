@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	corev1 "k8s.io/api/core/v1"
@@ -498,6 +499,96 @@ func TestDoctorCheckClusterAccess_Pass(t *testing.T) {
 	}
 }
 
+// ----- check 5: secret-ownership (V2-cleanup-89.5) -----------------------
+
+func TestDoctorCheckSecretOwnership_NotApplicable_NoManagerConfigured(t *testing.T) {
+	srv := newDoctorTestServer(t) // s.argoSecretManager left nil
+
+	check := srv.doctorCheckSecretOwnership(context.Background(), "prod-eu")
+	if check.Status != doctorStatusNotApplicable {
+		t.Fatalf("Status = %q, want not-applicable (detail=%s)", check.Status, check.Detail)
+	}
+}
+
+func TestDoctorCheckSecretOwnership_NotApplicable_NoSecretYet(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	srv.SetArgoSecretManager(argosecrets.NewManager(fake.NewSimpleClientset(), "argocd"))
+
+	check := srv.doctorCheckSecretOwnership(context.Background(), "no-such-cluster")
+	if check.Status != doctorStatusNotApplicable {
+		t.Fatalf("Status = %q, want not-applicable (detail=%s)", check.Status, check.Detail)
+	}
+}
+
+func TestDoctorCheckSecretOwnership_NotApplicable_SharkoManaged(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	sharkoSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "prod-eu",
+			Namespace: "argocd",
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by":   "sharko",
+				"argocd.argoproj.io/secret-type": "cluster",
+			},
+		},
+	}
+	srv.SetArgoSecretManager(argosecrets.NewManager(fake.NewSimpleClientset(sharkoSecret), "argocd"))
+
+	check := srv.doctorCheckSecretOwnership(context.Background(), "prod-eu")
+	if check.Status != doctorStatusNotApplicable {
+		t.Fatalf("Status = %q, want not-applicable for a Sharko-managed connection (detail=%s)", check.Status, check.Detail)
+	}
+}
+
+func TestDoctorCheckSecretOwnership_Pass_NoForeignMarker(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "byo-conn",
+			Namespace: "argocd",
+			// No managed-by label (self-managed) and no tracking marker.
+			Labels: map[string]string{"argocd.argoproj.io/secret-type": "cluster"},
+		},
+	}
+	srv.SetArgoSecretManager(argosecrets.NewManager(fake.NewSimpleClientset(userSecret), "argocd"))
+
+	check := srv.doctorCheckSecretOwnership(context.Background(), "byo-conn")
+	if check.Status != doctorStatusPass {
+		t.Fatalf("Status = %q, want pass (detail=%s)", check.Status, check.Detail)
+	}
+	if check.Fix != "" {
+		t.Errorf("Fix = %q, want empty on pass", check.Fix)
+	}
+}
+
+func TestDoctorCheckSecretOwnership_Fail_ForeignMarkerFound(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "byo-conn",
+			Namespace: "argocd",
+			Annotations: map[string]string{
+				argosecrets.AnnotationTrackingID: "cluster-secrets-app:/Secret:argocd/byo-conn",
+			},
+		},
+	}
+	srv.SetArgoSecretManager(argosecrets.NewManager(fake.NewSimpleClientset(userSecret), "argocd"))
+
+	check := srv.doctorCheckSecretOwnership(context.Background(), "byo-conn")
+	if check.Status != doctorStatusFail {
+		t.Fatalf("Status = %q, want fail (detail=%s)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Detail, "cluster-secrets-app") {
+		t.Errorf("Detail = %q, want it to name the owning app", check.Detail)
+	}
+	if check.Fix == "" {
+		t.Fatal("expected a non-empty Fix on failure")
+	}
+	if !strings.Contains(check.Fix, "Replace") {
+		t.Errorf("Fix = %q, want it to mention the Replace sync-option risk", check.Fix)
+	}
+}
+
 // ----- overall roll-up ------------------------------------------------
 
 func TestDoctorOverallStatus(t *testing.T) {
@@ -587,14 +678,15 @@ func TestDoctorCluster_HTTPContract(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(resp.Checks) != 4 {
-		t.Fatalf("len(Checks) = %d, want 4", len(resp.Checks))
+	if len(resp.Checks) != 5 {
+		t.Fatalf("len(Checks) = %d, want 5", len(resp.Checks))
 	}
 	wantIDs := []string{
 		doctorCheckConnectionCredentials,
 		doctorCheckAddonSecretPaths,
 		doctorCheckAssumeRole,
 		doctorCheckClusterAccess,
+		doctorCheckSecretOwnership,
 	}
 	for i, id := range wantIDs {
 		if resp.Checks[i].ID != id {
@@ -612,6 +704,11 @@ func TestDoctorCluster_HTTPContract(t *testing.T) {
 	}
 	if resp.Checks[3].Status != doctorStatusPass {
 		t.Errorf("cluster-access = %q, want pass (detail=%s)", resp.Checks[3].Status, resp.Checks[3].Detail)
+	}
+	// No argoSecretManager wired in this test server, so secret-ownership
+	// reports not-applicable rather than pass/fail.
+	if resp.Checks[4].Status != doctorStatusNotApplicable {
+		t.Errorf("secret-ownership = %q, want not-applicable (detail=%s)", resp.Checks[4].Status, resp.Checks[4].Detail)
 	}
 	if resp.Overall != doctorOverallPass {
 		t.Errorf("Overall = %q, want pass", resp.Overall)

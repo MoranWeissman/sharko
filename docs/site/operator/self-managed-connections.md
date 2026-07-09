@@ -164,6 +164,50 @@ verbatim:
 Sharko also never stamps its `sharko.dev/connectivity-check` label on a
 connection it does not own.
 
+## When another ArgoCD Application also renders this secret
+
+Some teams manage cluster secrets by committing them to Git and letting a
+separate ArgoCD Application sync them into the cluster — Terraform writing
+the secret manifest into a repo, with an Application pointed at that path,
+is a common shape. If that's how *your* secret gets to the cluster, watch
+for two failure modes:
+
+- **`syncOptions: [Replace=true]` on that Application.** A `Replace` sync
+  overwrites the whole object on every sync of that Application, wiping
+  Sharko's addon labels along with it. Sharko re-applies them on its next
+  tick, so you won't lose addon deployment forever, but the two will keep
+  stepping on each other.
+- **The Application's manifest defines one of Sharko's addon-label keys.**
+  If the committed manifest sets, say, `monitoring: disabled` on the
+  secret and Sharko wants `monitoring: enabled`, ArgoCD's self-heal keeps
+  reverting Sharko's write back to the manifest's value — a silent fight
+  that repeats every ~30 seconds.
+
+Sharko surfaces both cases without asking you to go digging first:
+
+- **At adopt or registration**, if the secret already carries an ArgoCD
+  tracking marker (the `argocd.argoproj.io/tracking-id` annotation, or the
+  `app.kubernetes.io/instance` label, depending on your ArgoCD's
+  `trackingMethod`), Sharko names the owning Application in a warning on
+  the operation's response — it does not block the adopt or registration.
+- **The connection doctor** (`POST /clusters/{name}/doctor`) runs a
+  `secret-ownership` check for self-managed connections: pass when no
+  foreign marker is found, fail with the owning Application's name and the
+  same fix text when one is.
+- **The reconciler** keeps a running count of consecutive ticks where a
+  label it just wrote comes back with a different value than the one it
+  wrote — not merely "changed" (an addon toggle in
+  `managed-clusters.yaml` changes what Sharko wants too, and that's never
+  flagged). After 2 ticks in a row of the SAME reverted value, the
+  cluster's `last_reconcile` outcome stays `succeeded` (Sharko is still
+  re-applying its labels every tick) but the message tells you something
+  keeps overwriting them.
+
+The fix, in every case, is on the OTHER Application: either drop
+`Replace=true` from its `syncOptions`, or stop defining Sharko's addon
+label keys in the manifest it renders — let Sharko own those keys and let
+the other Application own everything else on the secret.
+
 ## Registered but no secret yet?
 
 You can register the cluster in Sharko before creating the secret. Until

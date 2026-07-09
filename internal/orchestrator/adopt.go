@@ -88,6 +88,18 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 			}
 		}
 
+		// V2-cleanup-89.5: warn (never fail) when this cluster's ArgoCD
+		// cluster Secret is itself rendered by another ArgoCD Application.
+		// Adoption always records connectionManagedBy: user (see
+		// adoptSingleCluster below), so this is the earliest point a
+		// foreign owner can be surfaced to the caller.
+		if warnings, warnErr := o.detectForeignOwnerWarnings(ctx, clusterName); warnErr != nil {
+			log.Warn("could not check cluster secret for foreign ArgoCD ownership — proceeding with adoption",
+				"cluster", clusterName, "error", warnErr)
+		} else if len(warnings) > 0 {
+			cr.Warnings = append(cr.Warnings, warnings...)
+		}
+
 		// Phase 1: Verification (Stage1 connectivity test).
 		//
 		// Credentials are OPTIONAL for adoption, same as registration
@@ -171,6 +183,12 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		// Preserve Phase 1 verification result.
 		if cr.Verification != nil {
 			adoptResult.Verification = cr.Verification
+		}
+		// Preserve the foreign-owner warning (if any) detected above —
+		// adoptSingleCluster returns a fresh AdoptClusterResult that
+		// doesn't carry it forward on its own.
+		if len(cr.Warnings) > 0 {
+			adoptResult.Warnings = append(adoptResult.Warnings, cr.Warnings...)
 		}
 		result.Results = append(result.Results, adoptResult)
 	}
