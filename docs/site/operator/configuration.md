@@ -154,7 +154,7 @@ resets on every pod restart, so cleared notifications come back as unread.
 
 v1.25 split the previously-overloaded `providers.Config` struct into **three orthogonal provider concerns**, each with its own typed config block. Operators only need to configure the mechanisms they actually use; defaults are safe for the production happy path (Sharko-in-cluster + ArgoCD-installed).
 
-For the cluster-connectivity story end-to-end, also read [Cluster Connectivity Model](cluster-connectivity-model.md) — it covers the auto-default behaviour and the EKS / exec-plugin limitations.
+For the cluster-connectivity story end-to-end, also read [Cluster Connectivity Model](cluster-connectivity-model.md) — it covers the auto-default behaviour, the AWS IAM / exec-plugin auth Sharko mints tokens for, and where each piece of connection truth lives.
 
 ### 1. Addon-secret backend — supplies addon secret material
 

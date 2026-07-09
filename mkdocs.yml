@@ -70,12 +70,13 @@ nav:
     - 'Reference — Supply Chain': operator/supply-chain.md
     - 'Reference — Catalog Sources (config)': operator/catalog-sources.md
     - 'Reference — Cluster Connectivity Model': operator/cluster-connectivity-model.md
+    - 'Reference — EKS Hub-and-Spoke Identity (IAM Setup)': operator/eks-hub-and-spoke-identity.md
     - 'Reference — Audit Log Retention Model': operator/audit-log.md
     - 'Reference — Perf Baselines': operator/perf-baselines.md
     - 'Reference — SLOs': operator/slos.md
     - 'Reference — Metrics Naming': operator/metrics-naming.md
     - Catalog Trust Policy: operator/catalog-trust-policy.md
-    - AWS IAM Cluster Auth Test Unsupported: operator/aws-iam-cluster-auth.md
+    - 'AWS IAM Cluster Auth — Sharko Identity Needed': operator/aws-iam-cluster-auth.md
     - Corporate TLS MITM: operator/corporate-mitm-tls.md
     - Budget-Burn Runbook: operator/budget-burn-runbook.md
     - Failure Mode Index: operator/failure-mode-index.md
@@ -97,7 +98,7 @@ nav:
     - 'P1 Runbook — AI Provider Misconfigured': operator/ai-provider-misconfigured.md
     - 'P1 Runbook — ArgoCD Account Token Expired': operator/argocd-account-token-expired.md
     - 'P1 Runbook — ArgoCD Cluster-Secret Corruption': operator/argocd-cluster-secret-corruption.md
-    - 'P1 Runbook — ArgoCD Exec-Plugin Auth Unsupported': operator/argocd-exec-plugin-auth-unsupported.md
+    - 'P1 Runbook — ArgoCD Exec-Plugin Auth (Unknown Commands Only)': operator/argocd-exec-plugin-auth-unsupported.md
     - 'P1 Runbook — Auto-Merge Failed After PR Opened': operator/auto-merge-failed-after-pr-opened.md
     - 'P1 Runbook — AWS-SM Search AccessDenied': operator/aws-sm-search-access-denied.md
     - 'P1 Runbook — AWS-SM Secret Not Found': operator/aws-sm-secret-not-found.md
@@ -106,7 +107,6 @@ nav:
     - 'P1 Runbook — Catalog Source HTTP Fetch Failed': operator/catalog-source-http-fetch-failed.md
     - 'P1 Runbook — Catalog Source Schema Validation Failed': operator/catalog-source-schema-validation-failed.md
     - 'P1 Runbook — Cluster Reconciler Dependency Missing': operator/cluster-reconciler-dependency-missing.md
-    - 'P1 Runbook — EKS Discover Failed for a Role': operator/eks-discover-failed.md
     - 'P1 Runbook — EKS Token Generation Failed': operator/eks-token-generation-failed.md
     - 'P1 Runbook — Encryption Key Not Configured': operator/encryption-key-not-configured.md
     - 'P1 Runbook — Git Provider Rate Limited': operator/git-provider-rate-limited.md
