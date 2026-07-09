@@ -1259,4 +1259,24 @@ export const api = {
   setProbeMode: (probe_mode: import('./models').ProbeMode) =>
     putJSON<import('./models').ProbeModeResponse>('/settings/probe-mode', { probe_mode }),
 
+  // ─── Server-wide settings (V2-cleanup-89.6) ────────────────────────────
+
+  /**
+   * Whether the "Paste a kubeconfig" registration path is enabled
+   * server-wide (default true). Powers the Settings → Inline Credentials
+   * toggle and the Register dialog's Connection source select.
+   */
+  getAllowInlineCredentials: () =>
+    fetchJSON<import('./models').AllowInlineCredentialsResponse>('/settings/allow-inline-credentials'),
+
+  /**
+   * Set the server-wide allow_inline_credentials switch. Admin-only on the
+   * backend (403 for non-admins) — gate the control with isAdmin before
+   * calling.
+   */
+  setAllowInlineCredentials: (allow_inline_credentials: boolean) =>
+    putJSON<import('./models').AllowInlineCredentialsResponse>('/settings/allow-inline-credentials', {
+      allow_inline_credentials,
+    }),
+
 }

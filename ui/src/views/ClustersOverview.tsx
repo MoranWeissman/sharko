@@ -219,6 +219,12 @@ export function ClustersOverview() {
   const TEST_BUTTON_DISABLED_TOOLTIP =
     'Cluster connectivity test is unavailable: no secrets backend (Vault / AWS Secrets Manager / file-store) is configured on the active connection. Configure one in Settings → Connections to enable.';
 
+  // Admin kill switch for the "Paste a kubeconfig" registration path
+  // (V2-cleanup-89.6). Defaults to true (today's behavior) so the option
+  // stays visible until the setting is confirmed off — matches the
+  // safe-default polarity used server-side.
+  const [allowInlineCredentials, setAllowInlineCredentials] = useState(true);
+
   // Add Cluster dialog state
   const [addClusterOpen, setAddClusterOpen] = useState(false);
   const [addClusterName, setAddClusterName] = useState('');
@@ -362,6 +368,32 @@ export function ClustersOverview() {
       })
       .catch(() => {
         /* keep optimistic default */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Fetch the admin-level allow_inline_credentials kill switch
+  // (V2-cleanup-89.6) once so the Register dialog's Connection source
+  // select can hide "Paste a kubeconfig" when an admin has turned it off.
+  // Defensive `typeof` guard: many ClustersOverview test suites mock
+  // '@/services/api' with a partial object that predates this call — skip
+  // silently rather than throwing, and keep the safe default (true,
+  // option visible) exactly like a failed fetch would.
+  useEffect(() => {
+    let cancelled = false;
+    if (typeof api.getAllowInlineCredentials !== 'function') return;
+    void api
+      .getAllowInlineCredentials()
+      .then((res) => {
+        if (cancelled) return;
+        if (typeof res?.allow_inline_credentials === 'boolean') {
+          setAllowInlineCredentials(res.allow_inline_credentials);
+        }
+      })
+      .catch(() => {
+        /* keep optimistic default (allowed) */
       });
     return () => {
       cancelled = true;
@@ -1083,7 +1115,12 @@ export function ClustersOverview() {
                   * not selectable, and Preview/Register stay disabled until
                   * the user makes an explicit choice. */}
                 <option value="" disabled>Choose where this cluster's credentials come from…</option>
-                <option value="inline-kubeconfig">Paste a kubeconfig (quick, not GitOps-clean)</option>
+                {/* Hidden when an admin has turned off allow_inline_credentials
+                  * (V2-cleanup-89.6) — the server rejects it anyway, so don't
+                  * offer an option that will only 403. */}
+                {allowInlineCredentials && (
+                  <option value="inline-kubeconfig">Paste a kubeconfig (quick, not GitOps-clean)</option>
+                )}
                 <option value="secret-kubeconfig">Point at your secret store (recommended — GitOps-clean)</option>
                 <option value="eks-token">Amazon EKS — generate a token from cloud identity (no stored credentials)</option>
               </select>

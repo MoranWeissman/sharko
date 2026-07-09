@@ -85,6 +85,21 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		return nil, err
 	}
 
+	// Step 1a-gate: admin-level kill switch for inline credential paste
+	// (V2-cleanup-89.6). allow_inline_credentials defaults to true; when an
+	// admin turns it off, every registration whose EFFECTIVE creds source is
+	// inline-kubeconfig AND that actually supplied kubeconfig bytes is
+	// rejected. A connection-only registration (no kubeconfig at all, even
+	// with an inline creds source) is NOT blocked — the setting governs
+	// pasted credential bytes, not the inline-kubeconfig source label by
+	// itself. Checked before any addon/catalog/ArgoCD lookups so a rejected
+	// request fails fast and cheap. Applies identically to batch
+	// registration, which calls RegisterCluster per cluster.
+	if isInlineSource(credsSource) && strings.TrimSpace(req.Kubeconfig) != "" &&
+		o.allowInlineCredentialsFn != nil && !o.allowInlineCredentialsFn(ctx) {
+		return nil, &InlineCredentialsDisabledError{}
+	}
+
 	// Step 1a'': Validate + resolve the connection-ownership mode
 	// (V2-cleanup-57.2). "" / "sharko" → Sharko owns the ArgoCD cluster
 	// Secret (today's behavior, byte-for-byte). "user" → self-managed: the

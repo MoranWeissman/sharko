@@ -21,6 +21,7 @@ import { AuthProvider } from '@/hooks/useAuth';
 const mockGetClusters = vi.fn();
 const mockGetAddonCatalog = vi.fn();
 const mockRegisterCluster = vi.fn();
+const mockGetAllowInlineCredentials = vi.fn();
 
 vi.mock('@/services/api', () => ({
   api: {
@@ -28,6 +29,8 @@ vi.mock('@/services/api', () => ({
     getAddonCatalog: (...args: unknown[]) => mockGetAddonCatalog(...args),
     // BUG-041: ClustersOverview reads cluster_test_available on mount.
     health: () => Promise.resolve({ status: 'healthy', cluster_test_available: true }),
+    // V2-cleanup-89.6 — admin kill switch for inline credential paste.
+    getAllowInlineCredentials: (...args: unknown[]) => mockGetAllowInlineCredentials(...args),
   },
   registerCluster: (...args: unknown[]) => mockRegisterCluster(...args),
 }));
@@ -78,6 +81,9 @@ describe('ClustersOverview — creds-reframe-2 credential source', () => {
     sessionStorage.clear();
     mockGetClusters.mockResolvedValue(baseClusters);
     mockGetAddonCatalog.mockResolvedValue({ addons: [] });
+    // Default: inline credential paste is allowed (today's behavior) unless
+    // a test overrides this to exercise the V2-cleanup-89.6 kill switch.
+    mockGetAllowInlineCredentials.mockResolvedValue({ allow_inline_credentials: true });
     // The AuthProvider verifies its token by hitting /api/v1/health on mount.
     // Stub fetch globally so the verification is a no-op success.
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true } as Response)));
@@ -256,5 +262,36 @@ describe('ClustersOverview — creds-reframe-2 credential source', () => {
     expect(payload.creds_source).toBe('secret-kubeconfig');
     expect(payload.name).toBe('stored-cluster');
     expect(payload.secret_path).toBeUndefined();
+  });
+
+  // V2-cleanup-89.6 — admin kill switch for inline credential paste. When
+  // allow_inline_credentials is false server-side, the option must not be
+  // offered at all (the server would 403 it anyway).
+  describe('allow_inline_credentials kill switch', () => {
+    it('shows "Paste a kubeconfig" when the setting is allowed (default)', async () => {
+      mockGetAllowInlineCredentials.mockResolvedValue({ allow_inline_credentials: true });
+      renderView();
+      await openAddDialog();
+
+      await waitFor(() => {
+        const select = credsSourceSelect();
+        const values = Array.from(select.options).map((o) => o.value);
+        expect(values).toContain('inline-kubeconfig');
+      });
+    });
+
+    it('hides "Paste a kubeconfig" when an admin has turned the setting off', async () => {
+      mockGetAllowInlineCredentials.mockResolvedValue({ allow_inline_credentials: false });
+      renderView();
+      await openAddDialog();
+
+      await waitFor(() => {
+        const select = credsSourceSelect();
+        const values = Array.from(select.options).map((o) => o.value);
+        expect(values).not.toContain('inline-kubeconfig');
+        // The other two options are unaffected.
+        expect(values).toEqual(['', 'secret-kubeconfig', 'eks-token']);
+      });
+    });
   });
 });

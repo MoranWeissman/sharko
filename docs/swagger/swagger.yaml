@@ -1195,6 +1195,19 @@ definitions:
       name:
         type: string
     type: object
+  internal_api.allowInlineCredentialsResponse:
+    properties:
+      allow_inline_credentials:
+        description: |-
+          AllowInlineCredentials is true (the default) when the "Paste a
+          kubeconfig" registration path is available. An admin sets this to
+          false to forbid inline credential paste install-wide — registration
+          requests that actually supply inline kubeconfig bytes are then
+          rejected with a 403; connection-only registrations are unaffected.
+          Sharko has no user RBAC today (single admin login); when V2.x scoped
+          RBAC lands this is expected to become a per-role permission.
+        type: boolean
+    type: object
   internal_api.annotateAddonValuesResponse:
     properties:
       ai_skip_reason:
@@ -5932,6 +5945,61 @@ paths:
       summary: Get secret reconciliation status
       tags:
       - secrets
+  /settings/allow-inline-credentials:
+    get:
+      description: Returns whether the "Paste a kubeconfig" registration path is enabled
+        server-wide (V2-cleanup-89.6, default true)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Current setting
+          schema:
+            $ref: '#/definitions/internal_api.allowInlineCredentialsResponse'
+        "503":
+          description: Settings store not available
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get allow-inline-credentials setting
+      tags:
+      - system
+    put:
+      consumes:
+      - application/json
+      description: Sets whether the "Paste a kubeconfig" registration path is enabled
+        server-wide (V2-cleanup-89.6). Admin only.
+      parameters:
+      - description: Desired setting
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.allowInlineCredentialsResponse'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Setting saved
+          schema:
+            $ref: '#/definitions/internal_api.allowInlineCredentialsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Settings store not available
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set allow-inline-credentials setting
+      tags:
+      - system
   /settings/probe-mode:
     get:
       description: Returns the server-wide connectivity probe mode (check-app | api-test,
