@@ -1356,6 +1356,35 @@ definitions:
           $ref: '#/definitions/internal_api.catalogVersionEntry'
         type: array
     type: object
+  internal_api.doctorCheck:
+    properties:
+      detail:
+        type: string
+      fix:
+        type: string
+      id:
+        example: connection-credentials
+        type: string
+      status:
+        enum:
+        - pass
+        - fail
+        - not-applicable
+        type: string
+    type: object
+  internal_api.doctorClusterResponse:
+    properties:
+      checks:
+        items:
+          $ref: '#/definitions/internal_api.doctorCheck'
+        type: array
+      overall:
+        enum:
+        - pass
+        - fail
+        - partial
+        type: string
+    type: object
   internal_api.embeddedDashboard:
     properties:
       id:
@@ -4233,6 +4262,44 @@ paths:
       security:
       - BearerAuth: []
       summary: Diagnose cluster permissions
+      tags:
+      - clusters
+  /clusters/{name}/doctor:
+    post:
+      description: |-
+        Runs up to four real-attempt checks against the named cluster's
+        connection and returns a structured pass/fail/not-applicable
+        verdict per check, each with a plain-English fix on failure:
+        (1) can Sharko read the cluster's connection credentials,
+        (2) can Sharko read every provider path an enabled addon's
+        secrets need, (3) if a cross-account IAM role is in play, can
+        Sharko assume it, and (4) does the cluster itself accept the
+        resulting token (reuses the existing Stage-1 secret CRUD cycle).
+        Every check is a real attempt, never IAM policy simulation, and
+        read-only except check 4, which reuses Stage-1's existing
+        create/read/delete canary secret. The whole run is bounded to
+        about 30 seconds.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Doctor verdict
+          schema:
+            $ref: '#/definitions/internal_api.doctorClusterResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Run the connection doctor
       tags:
       - clusters
   /clusters/{name}/history:

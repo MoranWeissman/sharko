@@ -3698,6 +3698,47 @@ const docTemplate = `{
                 }
             }
         },
+        "/clusters/{name}/doctor": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Runs up to four real-attempt checks against the named cluster's\nconnection and returns a structured pass/fail/not-applicable\nverdict per check, each with a plain-English fix on failure:\n(1) can Sharko read the cluster's connection credentials,\n(2) can Sharko read every provider path an enabled addon's\nsecrets need, (3) if a cross-account IAM role is in play, can\nSharko assume it, and (4) does the cluster itself accept the\nresulting token (reuses the existing Stage-1 secret CRUD cycle).\nEvery check is a real attempt, never IAM policy simulation, and\nread-only except check 4, which reuses Stage-1's existing\ncreate/read/delete canary secret. The whole run is bounded to\nabout 30 seconds.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Run the connection doctor",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Doctor verdict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.doctorClusterResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/clusters/{name}/history": {
             "get": {
                 "security": [
@@ -8640,6 +8681,48 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/internal_api.catalogVersionEntry"
                     }
+                }
+            }
+        },
+        "internal_api.doctorCheck": {
+            "type": "object",
+            "properties": {
+                "detail": {
+                    "type": "string"
+                },
+                "fix": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "connection-credentials"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "pass",
+                        "fail",
+                        "not-applicable"
+                    ]
+                }
+            }
+        },
+        "internal_api.doctorClusterResponse": {
+            "type": "object",
+            "properties": {
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.doctorCheck"
+                    }
+                },
+                "overall": {
+                    "type": "string",
+                    "enum": [
+                        "pass",
+                        "fail",
+                        "partial"
+                    ]
                 }
             }
         },

@@ -823,6 +823,71 @@ func (p *ArgoCDProvider) SearchSecrets(query string) ([]string, error) {
 	return matches, nil
 }
 
+// ResolveRoleARN reports the AWS role ARN and region Sharko WOULD use to
+// mint credentials for the named cluster's ArgoCD cluster Secret — the
+// same awsAuthConfig / execProviderConfig parsing GetCredentials performs
+// (V2-cleanup-88.2) — WITHOUT minting a token. Pure read-only
+// introspection: no eksTokenFn call, no STS request, nothing changes.
+//
+// Used by the connection doctor (V2-cleanup-88.4) to run the "cross-account
+// role assumable" check independently of a full credentials fetch, so a
+// mint failure can be attributed specifically to the AssumeRole step
+// (checked directly against AWS) versus something else (missing region,
+// cluster-side trust, ...).
+//
+// ok is false when the Secret has no config field, an unparseable config,
+// or an auth shape that isn't awsAuthConfig / a known-AWS execProviderConfig
+// (bearerToken, client-cert, or an unrecognized exec command) — there is no
+// AWS role-assumption step in play at all for those shapes. When ok is
+// true, roleARN may still be "" — the AWS auth shape is present but names
+// no role, meaning Sharko would mint with its own base identity (no
+// AssumeRole hop); callers should treat an ok=true, roleARN="" result the
+// same as "no cross-account role to test".
+func (p *ArgoCDProvider) ResolveRoleARN(clusterName string) (roleARN, region string, ok bool, err error) {
+	secret, ferr := p.findClusterSecret(context.Background(), clusterName)
+	if ferr != nil {
+		return "", "", false, fmt.Errorf("argocd cluster secret for %q not found in namespace %q: %w", clusterName, p.namespace, ferr)
+	}
+
+	rawConfig, hasConfig := secret.Data["config"]
+	if !hasConfig || len(rawConfig) == 0 {
+		return "", "", false, nil
+	}
+
+	var cfg argoCDClusterConfig
+	if uerr := json.Unmarshal(rawConfig, &cfg); uerr != nil {
+		return "", "", false, fmt.Errorf("parsing argocd cluster config JSON for %q: %w", clusterName, uerr)
+	}
+
+	server := string(secret.Data["server"])
+
+	switch {
+	case cfg.AWSAuthConfig != nil:
+		region = cfg.AWSAuthConfig.Region
+		if region == "" {
+			region = secret.Labels["region"]
+		}
+		if region == "" {
+			region = regionFromEKSServerURL(server)
+		}
+		return cfg.AWSAuthConfig.RoleARN, region, true, nil
+
+	case cfg.ExecProviderConfig != nil && isKnownAWSExecCommand(cfg.ExecProviderConfig):
+		_, parsedRoleARN := parseExecProviderAWSArgs(cfg.ExecProviderConfig.Args)
+		region = cfg.ExecProviderConfig.Env["AWS_REGION"]
+		if region == "" {
+			region = secret.Labels["region"]
+		}
+		if region == "" {
+			region = regionFromEKSServerURL(server)
+		}
+		return parsedRoleARN, region, true, nil
+
+	default:
+		return "", "", false, nil
+	}
+}
+
 // HealthCheck confirms the provider can list ArgoCD cluster Secrets. Uses
 // Limit:1 to avoid pulling the full list when the namespace is large.
 func (p *ArgoCDProvider) HealthCheck(ctx context.Context) error {
