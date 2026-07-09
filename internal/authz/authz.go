@@ -79,6 +79,7 @@ var ActionRequirements = map[string]Role{
 	"cluster.doctor":                RoleOperator,
 	"cluster.discover":              RoleOperator,
 	"cluster.refresh-credentials":   RoleOperator,
+	"cluster.reconcile":             RoleOperator,
 	"cluster.secrets.list":          RoleOperator,
 	"cluster.secrets.refresh":       RoleOperator,
 	"connection.create":             RoleOperator,

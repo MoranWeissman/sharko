@@ -400,6 +400,28 @@ type Cluster struct {
 	LastTestAt    string `json:"last_test_at,omitempty"` // RFC3339
 	TestFailing   bool   `json:"test_failing,omitempty"`
 	TestErrorCode string `json:"test_error_code,omitempty"`
+
+	// LastReconcile is the most recent cluster-secret reconciler outcome for
+	// this cluster (V2-cleanup-89.4 — reconcile results used to be
+	// server-log-only; ArgoCD shows a failed apply, Sharko showed nothing).
+	// Computed at read time from clusterreconciler.Reconciler's in-memory
+	// per-cluster record — never stored in git. nil when the reconciler
+	// hasn't processed this cluster on this server instance yet (fresh
+	// startup, a registration PR that hasn't merged, or no reconciler wired
+	// in this deployment mode).
+	LastReconcile *ClusterLastReconcile `json:"last_reconcile,omitempty"`
+}
+
+// ClusterLastReconcile is the read-model shape of a single cluster's most
+// recent reconcile attempt (V2-cleanup-89.4). Kept as a plain struct here
+// — rather than reusing clusterreconciler.ClusterReconcileRecord directly —
+// because internal/clusterreconciler already imports internal/models, so
+// models cannot import it back; the API layer copies field-by-field from
+// the reconciler's record onto this type.
+type ClusterLastReconcile struct {
+	Time    string `json:"time"`              // RFC3339
+	Outcome string `json:"outcome"`           // "succeeded" | "failed" | "skipped"
+	Message string `json:"message,omitempty"` // plain-English detail; set on failed/skipped
 }
 
 // ClusterHealthStats holds aggregated health statistics for the clusters overview.

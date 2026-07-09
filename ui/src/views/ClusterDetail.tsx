@@ -32,7 +32,7 @@ import {
   Settings,
   Stethoscope,
 } from 'lucide-react';
-import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs, previewEnableAddon } from '@/services/api';
+import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs, previewEnableAddon, reconcileCluster } from '@/services/api';
 import type { TestClusterUnavailable, PRWriteResult } from '@/services/api';
 import { PRResultBanner, extractPR } from '@/components/PRFeedback';
 import { EnableAddonPicker } from '@/components/EnableAddonPicker';
@@ -199,6 +199,24 @@ function shouldTruncateIssues(issues: string[]): boolean {
   return issues.join(' ').length > 100;
 }
 
+// Format a UTC ISO-8601 timestamp as a relative "X ago" string. Mirrors the
+// helper in ConnectivityBadge.tsx / ClusterStatusSummary.tsx — kept local
+// here too rather than introducing a shared util for a three-line function.
+function relativeTime(isoString: string): string {
+  const then = new Date(isoString).getTime();
+  const now = Date.now();
+  const diffMs = now - then;
+  if (diffMs < 0) return 'just now';
+  const secs = Math.floor(diffMs / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
 export function ClusterDetail() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
@@ -280,6 +298,10 @@ export function ClusterDetail() {
   // against this cluster's connection, next to Test connection / Check
   // permissions.
   const [doctorOpen, setDoctorOpen] = useState(false);
+
+  // Manual "sync now" (V2-cleanup-89.4) — nudges the cluster-secret
+  // reconciler instead of waiting for its periodic tick.
+  const [syncingNow, setSyncingNow] = useState(false);
 
   // Secret path editing
   const [editingSecretPath, setEditingSecretPath] = useState(false);
@@ -512,6 +534,27 @@ export function ClusterDetail() {
       setApplyingToggles(false);
     }
   }, [name, addonToggles, originalToggles]);
+
+  // handleSyncNow triggers a manual reconcile (V2-cleanup-89.4) instead of
+  // waiting for the reconciler's periodic tick. The endpoint returns 202
+  // as soon as the trigger is accepted — the reconcile itself runs
+  // asynchronously, so we wait briefly and then refetch once to pick up
+  // the updated last_reconcile field.
+  const handleSyncNow = useCallback(async () => {
+    if (!name) return;
+    setSyncingNow(true);
+    try {
+      await reconcileCluster(name);
+      showToast(`Sync triggered for cluster "${name}".`, 'success');
+      setTimeout(() => {
+        void fetchData(true);
+      }, 1500);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to trigger sync', 'error');
+    } finally {
+      setSyncingNow(false);
+    }
+  }, [name, fetchData]);
 
   const handleTestConnection = useCallback(async () => {
     if (!name) return;
@@ -878,6 +921,22 @@ export function ClusterDetail() {
           <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
             Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
           </p>
+          {/* Last sync (V2-cleanup-89.4) — Sharko's own reconcile result for
+            * this cluster's ArgoCD secret. ArgoCD shows a failed apply;
+            * before this, a failed reconcile here was server-log-only. */}
+          {data?.cluster?.last_reconcile && (
+            <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+              Last sync: {relativeTime(data.cluster.last_reconcile.time)}
+              {data.cluster.last_reconcile.outcome === 'succeeded' && ' — succeeded'}
+              {data.cluster.last_reconcile.outcome === 'skipped' && ' — skipped'}
+              {data.cluster.last_reconcile.outcome === 'failed' && (
+                <span className="text-red-600 dark:text-red-400"> — failed</span>
+              )}
+              {data.cluster.last_reconcile.message && (
+                <span className="block text-[#5a8aaa] dark:text-gray-500">{data.cluster.last_reconcile.message}</span>
+              )}
+            </p>
+          )}
           {testResult && testResult !== 'testing' && isTestClusterUnavailable(testResult) && (
             // The Test endpoint can be unavailable for several reasons —
             // see the typed `error_code` values on TestClusterUnavailable.
@@ -1013,6 +1072,15 @@ export function ClusterDetail() {
               {DOCTOR_LABEL}
             </button>
             <InfoHint text={DOCTOR_HINT} label="What does the connection doctor do?" />
+            <button
+              onClick={handleSyncNow}
+              disabled={syncingNow}
+              title="Trigger the cluster-secret reconciler now instead of waiting for its periodic tick"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+            >
+              {syncingNow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Sync now
+            </button>
           </RoleGuard>
         </div>
       </div>

@@ -33,6 +33,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
 	"github.com/MoranWeissman/sharko/internal/changelog"
+	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/logging"
@@ -219,6 +220,15 @@ type Server struct {
 	// inherits this trigger via attachPRTracker. nil disables — the
 	// reconciler still converges on its periodic safety-net tick.
 	reconcilerTrigger func()
+
+	// clusterRecon is the canonical cluster-secret reconciler (optional —
+	// set via SetClusterReconciler). Used read-only by the cluster read
+	// model to project each cluster's last reconcile outcome
+	// (V2-cleanup-89.4) and by handleReconcileCluster to confirm a
+	// reconciler is actually running before triggering it. nil in
+	// deployment modes where the reconciler isn't wired (out-of-cluster, no
+	// credentials provider) — callers must nil-check.
+	clusterRecon *clusterreconciler.Reconciler
 
 	// obsStore persists cluster connectivity observations (optional — set via SetObservationsStore).
 	obsStore *observations.Store
@@ -479,6 +489,23 @@ func (s *Server) SetReconcilerTrigger(fn func()) {
 // through a real orchestrator request.
 func (s *Server) ReconcilerTrigger() func() {
 	return s.reconcilerTrigger
+}
+
+// SetClusterReconciler wires in the canonical cluster-secret reconciler
+// (V2-cleanup-89.4) so the cluster read model can project each cluster's
+// last reconcile outcome and handleReconcileCluster can tell a real
+// reconciler apart from "not running in this deployment mode". Call once
+// at startup alongside SetReconcilerTrigger. Optional — nil is a valid,
+// commonly-hit state (out-of-cluster / no credentials provider) and every
+// reader of s.clusterRecon must nil-check.
+func (s *Server) SetClusterReconciler(r *clusterreconciler.Reconciler) {
+	s.clusterRecon = r
+}
+
+// ClusterReconciler returns the currently-wired cluster-secret reconciler
+// (may be nil). Exposed for tests + harness wiring.
+func (s *Server) ClusterReconciler() *clusterreconciler.Reconciler {
+	return s.clusterRecon
 }
 
 // ReinitializeFromConnection reads provider config and GitOps settings from the active connection
@@ -770,6 +797,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/clusters/{name}", srv.handleDeregisterCluster)
 	mux.HandleFunc("PATCH /api/v1/clusters/{name}", srv.handleUpdateClusterAddons)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/refresh", srv.handleRefreshClusterCredentials)
+	mux.HandleFunc("POST /api/v1/clusters/{name}/reconcile", srv.handleReconcileCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/test", srv.handleTestCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/diagnose", srv.handleDiagnoseCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/doctor", srv.handleDoctorCluster)

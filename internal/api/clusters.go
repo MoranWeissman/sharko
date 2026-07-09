@@ -135,6 +135,9 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		// "can a secret-bearing addon be enabled here" — see
 		// models.Cluster.CredentialsResolvable.
 		c.AddonSecretsReady = c.CredentialsResolvable(backendConfigured)
+		// V2-cleanup-89.4: per-cluster reconcile visibility — no ArgoCD call,
+		// just an in-memory lookup on the reconciler.
+		applyLastReconcile(c, s.clusterRecon)
 		if obsMap != nil {
 			applyObsFields(c, obsMap[c.Name])
 		}
@@ -273,6 +276,9 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 	// V2-cleanup-88.3: cheap presence-of-config readiness signal — does not
 	// depend on the ArgoCD application list, so it is computed unconditionally.
 	resp.Cluster.AddonSecretsReady = resp.Cluster.CredentialsResolvable(s.credProvider() != nil)
+	// V2-cleanup-89.4: per-cluster reconcile visibility — no ArgoCD call,
+	// just an in-memory lookup on the reconciler.
+	applyLastReconcile(&resp.Cluster, s.clusterRecon)
 	if s.obsStore != nil {
 		obsMap, _ := s.obsStore.ListObservations(r.Context())
 		if obsMap != nil {
@@ -417,6 +423,9 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 	// V2-cleanup-88.3: cheap presence-of-config readiness signal — does not
 	// depend on the ArgoCD application list, so it is computed unconditionally.
 	resp.Cluster.AddonSecretsReady = resp.Cluster.CredentialsResolvable(s.credProvider() != nil)
+	// V2-cleanup-89.4: per-cluster reconcile visibility — no ArgoCD call,
+	// just an in-memory lookup on the reconciler.
+	applyLastReconcile(&resp.Cluster, s.clusterRecon)
 	if s.obsStore != nil {
 		obsMap, _ := s.obsStore.ListObservations(r.Context())
 		if obsMap != nil {
