@@ -140,20 +140,19 @@ describe('ClustersOverview — V125-1-7 orphan cluster surface', () => {
 
     renderView();
 
+    // V2-cleanup-89.3: the Discovered section is now a one-line hint (no
+    // per-cluster names, no bulk-select table) — assert on its count text.
     await waitFor(() => {
-      expect(screen.getByText(/Discovered Clusters/i)).toBeInTheDocument();
+      expect(screen.getByTestId('discovered-hint')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('real-discovered')).toBeInTheDocument();
-
-    // Discovered count should read "1", not "2", because kind-orphan
-    // was filtered out into the orphan section.
-    const discoveredHeader = screen.getByText(/Discovered Clusters/i).closest('h3');
-    expect(discoveredHeader).toBeTruthy();
-    expect(discoveredHeader!.textContent).toMatch(/Discovered Clusters\s*1/);
+    // Count should read "1", not "2", because kind-orphan was filtered
+    // out into the orphan section.
+    const hint = screen.getByTestId('discovered-hint');
+    expect(hint.textContent).toMatch(/ArgoCD knows 1 more cluster Sharko doesn't manage/);
 
     // kind-orphan still renders ONCE — in the orphan section table,
-    // never in Discovered.
+    // never surfaced by name in the Discovered hint (which shows no names).
     const allKindOrphan = screen.getAllByText('kind-orphan');
     expect(allKindOrphan.length).toBe(1);
     const tableForOrphan = allKindOrphan[0].closest('table');
@@ -161,6 +160,11 @@ describe('ClustersOverview — V125-1-7 orphan cluster surface', () => {
     const headers = Array.from(tableForOrphan!.querySelectorAll('th')).map(th => th.textContent ?? '');
     expect(headers.some(h => h.match(/Server URL/i))).toBe(true);
     expect(headers.some(h => h.match(/Last Seen/i))).toBe(true);
+
+    // 'real-discovered' — the unrelated, legitimately-discovered cluster —
+    // is counted but not named on the page (the hint carries no per-cluster
+    // names any more); it must not appear anywhere else either.
+    expect(screen.queryByText('real-discovered')).not.toBeInTheDocument();
   });
 
   it('Delete button click → confirm flow → API call fires with cluster name + refetches', async () => {
