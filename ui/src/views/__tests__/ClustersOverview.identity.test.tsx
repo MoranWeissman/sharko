@@ -133,6 +133,26 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
     expect(screen.queryByTestId('identity-strip-detected')).not.toBeInTheDocument();
   });
 
+  it('does not render the old "Layer 1" section header — the strip needs no header (V2-cleanup-89.8)', async () => {
+    mockGetSystemCapabilities.mockResolvedValue({
+      aws: { detected: true, method: 'irsa', identity_arn: 'arn:aws:iam::123456789012:role/sharko-hub' },
+      hub_platform: 'eks',
+    });
+
+    renderView();
+    await openAddDialog();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('identity-strip-detected')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Layer 1 — Identity')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Layer 1/)).not.toBeInTheDocument();
+    // The "Coordinates" section below also dropped its "Layer 2" header in
+    // favor of a plain question.
+    expect(screen.getByText('Where is this cluster?')).toBeInTheDocument();
+    expect(screen.queryByText(/Layer 2/)).not.toBeInTheDocument();
+  });
+
   it('Layer 1 falls back to the not-detected strip when the capabilities fetch fails, without blocking the form', async () => {
     mockGetSystemCapabilities.mockRejectedValue(new Error('network error'));
 

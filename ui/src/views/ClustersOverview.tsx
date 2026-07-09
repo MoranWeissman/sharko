@@ -1009,7 +1009,7 @@ export function ClustersOverview() {
 
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
-                Layer 2 — Coordinates (this cluster)
+                Where is this cluster?
               </p>
               <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-500">
                 Where this cluster is, and how to reach it. Connection credentials below are
@@ -1094,6 +1094,21 @@ export function ClustersOverview() {
                   Or enter details manually below for a cluster ArgoCD doesn't have yet.
                 </p>
               </div>
+            )}
+
+            {/* Empty-state line for "I do" + nothing to adopt (V2-cleanup-89.8).
+              * Maintainer walkthrough finding: with "I do" chosen and no
+              * discovered clusters, the picker block above was hidden
+              * entirely — indistinguishable from the feature not existing.
+              * Gated on `!loading` (the page's initial GET /clusters fetch)
+              * so this never flashes before clusters have actually loaded. */}
+            {connManagedBy === 'user' && !loading && discoveredClusters.length === 0 && (
+              <p
+                data-testid="discovered-empty"
+                className="text-xs text-[#5a8aaa] dark:text-gray-500"
+              >
+                Sharko checked ArgoCD — no other clusters there to adopt.
+              </p>
             )}
 
             {/* Connection source — the PRIMARY Layer-2 question
@@ -1238,7 +1253,7 @@ export function ClustersOverview() {
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
                       <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                        Use a different IAM role for this cluster (cross-account). Leave empty to use the connection-level default identity shown in Layer 1 above.
+                        Use a different IAM role for this cluster (cross-account). Leave empty to use the default identity shown at the top of this dialog.
                       </p>
                     </div>
                     <div>
