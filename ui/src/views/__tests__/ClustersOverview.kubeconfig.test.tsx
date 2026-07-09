@@ -227,7 +227,14 @@ describe('ClustersOverview — creds-reframe-2 credential source', () => {
     expect(payload.kubeconfig).toBeUndefined();
   });
 
-  it('blocks Register until the stored-kubeconfig secret path is filled', async () => {
+  // V2-cleanup-88.3/88.5 superseded this: connection credentials are
+  // optional at registration for every creds_source (the backend falls
+  // back to the cluster name as the lookup key, and treats a failed
+  // backend lookup as a normal connection-only registration — see
+  // internal/orchestrator/cluster.go's skip_credentials step). The dialog
+  // must allow registering with just a name and no secret path.
+  it('allows registering with an empty stored-kubeconfig secret path (connection credentials are optional)', async () => {
+    mockRegisterCluster.mockResolvedValue({ status: 'success', git: { merged: true } });
     renderView();
     await openAddDialog();
 
@@ -236,8 +243,18 @@ describe('ClustersOverview — creds-reframe-2 credential source', () => {
       target: { value: 'stored-cluster' },
     });
 
-    // With name but no secret path, every Register button stays disabled.
+    // With name but no secret path, Register is enabled.
     const submitButtons = screen.getAllByRole('button', { name: /^register/i });
-    expect(submitButtons.every((b) => b.hasAttribute('disabled'))).toBe(true);
+    const submit = submitButtons.find((b) => !b.hasAttribute('disabled'));
+    expect(submit).toBeTruthy();
+    fireEvent.click(submit!);
+
+    await waitFor(() => {
+      expect(mockRegisterCluster).toHaveBeenCalledTimes(1);
+    });
+    const payload = mockRegisterCluster.mock.calls[0][0];
+    expect(payload.creds_source).toBe('secret-kubeconfig');
+    expect(payload.name).toBe('stored-cluster');
+    expect(payload.secret_path).toBeUndefined();
   });
 });

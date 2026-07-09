@@ -29,11 +29,56 @@ export interface Cluster {
   // click required. Values: 'healthy' | 'reachable' | 'unknown'. Prefer
   // this over sharko_status below when answering "is this cluster OK".
   derived_health_status?: string
+  // Sharko's auto-detected guess at whether THIS cluster looks like EKS
+  // (V2-cleanup-88.1, design L11) — distinct from Sharko's OWN AWS identity
+  // (see SystemCapabilitiesResponse below). One of 'eks' | 'unknown'.
+  target_platform?: string
+  // Whether Sharko currently has resolvable connection credentials for this
+  // cluster (V2-cleanup-88.3 — lazy credentials). Registration never
+  // requires credentials; this only matters once an addon that carries
+  // addon secrets is enabled — false means the two-layer dialog's Layer 2
+  // should show "add connection credentials" before that addon is picked,
+  // instead of letting the enable call round-trip into a 422.
+  addon_secrets_ready?: boolean
   // Sharko observability fields (V2-cleanup-27 folded in)
   sharko_status?: string
   last_test_at?: string   // RFC3339
   test_failing?: boolean
   test_error_code?: string
+}
+
+// SystemCapabilitiesResponse mirrors GET /api/v1/system/capabilities
+// (V2-cleanup-88.1) — what Sharko has auto-detected about its own runtime.
+// The two-layer registration dialog's Layer 1 (Identity) fetches this once
+// when it opens and never asks the user to self-report what Sharko can
+// already tell them.
+export interface AWSIdentity {
+  detected: boolean
+  // One of 'pod-identity' | 'irsa' | 'chain' | 'none'.
+  method: string
+  identity_arn?: string
+}
+
+export interface SystemCapabilitiesResponse {
+  aws: AWSIdentity
+  // One of 'eks' | 'unknown'.
+  hub_platform: string
+}
+
+// DoctorCheck / DoctorClusterResponse mirror POST
+// /api/v1/clusters/{name}/doctor (V2-cleanup-88.4) — the connection
+// doctor's four real-attempt checks, each with a plain-English fix on
+// failure. Check IDs are stable — the UI keys copy/icons off them.
+export interface DoctorCheck {
+  id: 'connection-credentials' | 'addon-secret-paths' | 'assume-role' | 'cluster-access'
+  status: 'pass' | 'fail' | 'not-applicable'
+  detail: string
+  fix?: string
+}
+
+export interface DoctorClusterResponse {
+  checks: DoctorCheck[]
+  overall: 'pass' | 'fail' | 'partial'
 }
 
 // Server-wide connectivity probe mode (V2-cleanup-85.4). Controls whether

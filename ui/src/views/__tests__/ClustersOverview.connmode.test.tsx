@@ -220,7 +220,12 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
     expect('connection_managed_by' in payload).toBe(false);
   });
 
-  it('keeps the kubeconfig required for Sharko-managed inline registrations', async () => {
+  // V2-cleanup-88.3/88.5 superseded this: connection credentials are now
+  // optional for EVERY connection-ownership mode, not just self-managed
+  // ("I do"). The backend accepts an empty kubeconfig for every creds_source
+  // (skip_credentials step) — the two-layer dialog's Layer 2 must allow
+  // registering with connection-only info, Sharko-managed included.
+  it('allows Sharko-managed inline registration with an empty kubeconfig (connection credentials are optional)', async () => {
     renderView();
     await openAddDialog();
 
@@ -232,7 +237,10 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
       target: { value: 'needs-kubeconfig' },
     });
 
-    // Ownership is sharko (default) and the kubeconfig is empty → blocked.
-    expect(screen.getByRole('button', { name: 'Register' })).toBeDisabled();
+    // Ownership is sharko (default) and the kubeconfig is empty — no
+    // longer blocked (V2-cleanup-88.5, contract 3: connection-only info is
+    // enough to register).
+    const registerBtn = screen.getByRole('button', { name: 'Register' });
+    expect(registerBtn).not.toBeDisabled();
   });
 });
