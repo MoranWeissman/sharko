@@ -145,6 +145,31 @@ func TestHandleReconcileCluster_202_TriggersReconciler(t *testing.T) {
 	if body["status"] != "accepted" {
 		t.Errorf(`status = %q, want "accepted"`, body["status"])
 	}
+	// V2-cleanup-90.3 / review finding L2 — the 202 message must not
+	// overclaim per-cluster scoping: this is a fleet-wide pass that happens
+	// to include the named cluster, not a targeted single-cluster reconcile.
+	wantMsg := `reconcile pass triggered — the fleet-wide pass includes cluster "prod-eu"`
+	if body["message"] != wantMsg {
+		t.Errorf("message = %q, want %q", body["message"], wantMsg)
+	}
+}
+
+// TestHandleReconcileCluster_503_NoReconcilerWired_SkipsGitAndArgoCDRoundTrips
+// pins the L2 handler-order fix: the cheap "is a reconciler wired" 503
+// check must run BEFORE the Git/ArgoCD round-trips, so a server with no
+// reconciler wired never touches the Git provider or ArgoCD client at all
+// — even for a cluster that doesn't exist.
+func TestHandleReconcileCluster_503_NoReconcilerWired_SkipsGitAndArgoCDRoundTrips(t *testing.T) {
+	gp := &reconcileFakeGP{} // no managedYAML set — GetFileContent always errors if called
+	_, router := reconcileTestServer(t, gp, "http://127.0.0.1:1") // unreachable ArgoCD URL
+	// Deliberately do NOT call SetReconcilerTrigger.
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, reconcileOperatorReq("does-not-exist"))
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 (reconciler-not-wired check must short-circuit before any Git/ArgoCD round-trip), got %d (body=%s)", w.Code, w.Body.String())
+	}
 }
 
 func TestHandleReconcileCluster_404_UnknownCluster(t *testing.T) {

@@ -86,7 +86,7 @@ All write endpoints require the `admin` role.
 | `POST` | `/api/v1/clusters/{name}/test` | Test cluster connectivity (returns `{"reachable": bool, "version": "..."}`) |
 | `POST` | `/api/v1/clusters/{name}/adopt` | Adopt a discovered ArgoCD cluster into Sharko management |
 | `POST` | `/api/v1/clusters/{name}/doctor` | Run the [connection doctor](../operator/connection-doctor.md) — five real-attempt checks with plain-English fixes |
-| `POST` | `/api/v1/clusters/{name}/reconcile` | Trigger a manual cluster-secret reconcile ("Sync now") — returns `202`, read the result from `last_reconcile` on the next `GET` |
+| `POST` | `/api/v1/clusters/{name}/reconcile` | Trigger a manual cluster-secret reconcile ("Sync now") — returns `202`, read the result from `last_reconcile` on the next `GET`. This is a fleet-wide reconcile pass, not scoped to just the named cluster. |
 
 ### Addons
 

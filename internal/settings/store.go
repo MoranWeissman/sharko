@@ -11,6 +11,8 @@ package settings
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"sync"
 
 	"k8s.io/client-go/kubernetes"
 
@@ -39,8 +41,28 @@ const (
 )
 
 // Store persists server-wide settings in a ConfigMap via cmstore.
+//
+// It also keeps a small thread-safe cache of the last value each setting
+// successfully read as (V2-cleanup-90.3 / review finding M4). The
+// error-swallowing convenience wrappers below (IsAPITest,
+// IsInlineCredentialsAllowed) are called from hot, non-HTTP code paths
+// (register, reconcile) that must never block on a settings-store outage —
+// but "never block" must not mean "silently fail open" either. On a read
+// error they fall back to this cache instead of jumping straight to the
+// static default, so a transient ConfigMap read failure cannot flip a
+// kill switch back on. Only before the FIRST successful read (fresh
+// process, or a nil Store — dev/out-of-cluster mode) does the static
+// default apply.
 type Store struct {
 	cm *cmstore.Store
+
+	cacheMu sync.RWMutex
+
+	cachedProbeMode      string
+	cachedProbeModeValid bool
+
+	cachedAllowInlineCredentials      bool
+	cachedAllowInlineCredentialsValid bool
 }
 
 // NewStore creates a new settings store backed by a ConfigMap named
@@ -67,8 +89,12 @@ func (s *Store) GetProbeMode(ctx context.Context) (string, error) {
 	}
 	mode, _ := data[keyProbeMode].(string)
 	if !isValidProbeMode(mode) {
-		return ProbeModeCheckApp, nil
+		mode = ProbeModeCheckApp
 	}
+	s.cacheMu.Lock()
+	s.cachedProbeMode = mode
+	s.cachedProbeModeValid = true
+	s.cacheMu.Unlock()
 	return mode, nil
 }
 
@@ -85,21 +111,32 @@ func (s *Store) SetProbeMode(ctx context.Context, mode string) error {
 	})
 }
 
-// IsAPITest is a nil-safe, error-swallowing convenience wrapper for
-// non-HTTP callers (the register/reconcile paths) that need a plain bool
-// and must never let a transient settings-store read failure block cluster
-// reconciliation — it falls back to the safe default (check-app / false)
-// on any error or when s is nil (settings store not wired, e.g. out-of-
-// cluster dev mode).
+// IsAPITest is a nil-safe convenience wrapper for non-HTTP callers (the
+// register/reconcile paths) that need a plain bool and must never let a
+// transient settings-store read failure block cluster reconciliation. On a
+// read error it falls back to the last successfully-read probe_mode
+// (V2-cleanup-90.3 — mirrors IsInlineCredentialsAllowed's cache-on-error
+// shape); only before any successful read has ever happened, or when s is
+// nil (settings store not wired, e.g. out-of-cluster dev mode), does it
+// fall back to the static default (check-app / false).
 func (s *Store) IsAPITest(ctx context.Context) bool {
 	if s == nil {
 		return false
 	}
 	mode, err := s.GetProbeMode(ctx)
-	if err != nil {
-		return false
+	if err == nil {
+		return mode == ProbeModeAPITest
 	}
-	return mode == ProbeModeAPITest
+
+	s.cacheMu.RLock()
+	cached, valid := s.cachedProbeMode, s.cachedProbeModeValid
+	s.cacheMu.RUnlock()
+	if valid {
+		slog.Warn("probe_mode: settings read failed, serving last-known value from cache",
+			"error", err, "cached_probe_mode", cached)
+		return cached == ProbeModeAPITest
+	}
+	return false
 }
 
 // InvalidProbeModeError is returned by SetProbeMode for an unrecognized
@@ -137,35 +174,65 @@ func (s *Store) GetAllowInlineCredentials(ctx context.Context) (bool, error) {
 	}
 	allow, ok := data[keyAllowInlineCredentials].(bool)
 	if !ok {
-		return defaultAllowInlineCredentials, nil
+		allow = defaultAllowInlineCredentials
 	}
+	s.cacheMu.Lock()
+	s.cachedAllowInlineCredentials = allow
+	s.cachedAllowInlineCredentialsValid = true
+	s.cacheMu.Unlock()
 	return allow, nil
 }
 
 // SetAllowInlineCredentials persists allow. There is no invalid value for a
 // bool setting — unlike SetProbeMode, this has nothing to reject.
+//
+// On a successful write it also seeds the read cache with the just-persisted
+// value (V2-cleanup-90.3). Without this, an admin flipping the switch off
+// via PUT would not be reflected in IsInlineCredentialsAllowed's
+// error-fallback cache until some later GetAllowInlineCredentials call
+// happened to succeed — a narrow but real gap between "admin turned it off"
+// and "the kill switch's own error-recovery path knows it's off".
 func (s *Store) SetAllowInlineCredentials(ctx context.Context, allow bool) error {
-	return s.cm.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
+	err := s.cm.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
 		data[keyAllowInlineCredentials] = allow
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	s.cacheMu.Lock()
+	s.cachedAllowInlineCredentials = allow
+	s.cachedAllowInlineCredentialsValid = true
+	s.cacheMu.Unlock()
+	return nil
 }
 
-// IsInlineCredentialsAllowed is a nil-safe, error-swallowing convenience
-// wrapper for non-HTTP callers (the orchestrator's RegisterCluster gate)
-// that need a plain bool and must never let a transient settings-store read
-// failure block registration — it falls back to the safe default (true,
-// allowed) on any error or when s is nil (settings store not wired, e.g.
-// out-of-cluster dev mode). Mirrors IsAPITest's shape; the polarity of the
-// safe default differs because allow_inline_credentials defaults to true
-// while probe_mode's api-test flag defaults to false.
+// IsInlineCredentialsAllowed is a nil-safe convenience wrapper for non-HTTP
+// callers (the orchestrator's RegisterCluster gate) that need a plain bool
+// and must never let a transient settings-store read failure block
+// registration outright — but "never block" must not mean "silently fail
+// open" (V2-cleanup-90.3 / review finding M4). On a read error it falls
+// back to the last successfully-read (or written) value; only before any
+// successful read/write has ever happened, or when s is nil (settings store
+// not wired, e.g. out-of-cluster dev mode), does it fall back to the static
+// default (true, allowed) — matching today's behavior for installs that
+// never touch this setting.
 func (s *Store) IsInlineCredentialsAllowed(ctx context.Context) bool {
 	if s == nil {
 		return defaultAllowInlineCredentials
 	}
 	allow, err := s.GetAllowInlineCredentials(ctx)
-	if err != nil {
-		return defaultAllowInlineCredentials
+	if err == nil {
+		return allow
 	}
-	return allow
+
+	s.cacheMu.RLock()
+	cached, valid := s.cachedAllowInlineCredentials, s.cachedAllowInlineCredentialsValid
+	s.cacheMu.RUnlock()
+	if valid {
+		slog.Warn("allow_inline_credentials: settings read failed, serving last-known value from cache",
+			"error", err, "cached_allow_inline_credentials", cached)
+		return cached
+	}
+	return defaultAllowInlineCredentials
 }

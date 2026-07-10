@@ -3875,7 +3875,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Nudges the cluster-secret reconciler to run immediately instead of waiting for its periodic tick.\nReturns 202 as soon as the trigger is accepted — the reconcile itself runs asynchronously.\nPoll GET /clusters/{name} and read the updated last_reconcile field once the pass completes.",
+                "description": "Nudges the cluster-secret reconciler to run immediately instead of waiting for its periodic tick.\nThis is a fleet-wide pass, not a targeted single-cluster reconcile — see the 202 response message.\nReturns 202 as soon as the trigger is accepted — the reconcile itself runs asynchronously.\nPoll GET /clusters/{name} and read the updated last_reconcile field once the pass completes.",
                 "produces": [
                     "application/json"
                 ],
@@ -3900,15 +3900,15 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
-                    "400": {
-                        "description": "Bad request",
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "401": {
-                        "description": "Unauthorized",
+                    "403": {
+                        "description": "Forbidden — requires operator role or higher",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -6001,8 +6001,22 @@ const docTemplate = `{
                             "$ref": "#/definitions/internal_api.allowInlineCredentialsResponse"
                         }
                     },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — admin role required",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
