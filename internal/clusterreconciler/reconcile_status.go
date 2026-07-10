@@ -91,6 +91,83 @@ func (r *Reconciler) LastReconcile(name string) (ClusterReconcileRecord, bool) {
 	return rec, ok
 }
 
+// pruneStaleReconcileRecords removes lastReconcile and fightState entries
+// for cluster names that were neither desired (in managed-clusters.yaml)
+// nor observed live in ArgoCD during this pass (V2-cleanup-90.2, fix M3).
+// Call once at the end of a COMPLETED reconcileDiff pass; never call it on
+// an aborted pass (see stampAbortedTick below) — an abort has no reliable
+// "this pass's clusters" set to prune against.
+//
+// known MUST be the union of the desired set (managed-clusters.yaml
+// entries) AND the existing set (sharko-labeled Secrets observed live in
+// ArgoCD at the START of this pass, i.e. reconcileDiff's `existing` map)
+// — NOT the desired set alone. This union is what makes the interaction
+// with fix L10 (deleteOne now records an outcome for orphan cleanup) come
+// out honest:
+//
+//   - An orphan whose delete SUCCEEDS this pass is still a member of
+//     `existing` (that map is a snapshot taken before any delete runs), so
+//     its freshly-written "orphaned Secret removed" record survives THIS
+//     pass's prune. The FOLLOWING pass re-lists ArgoCD, no longer finds
+//     the (now actually deleted) Secret, so the name drops out of both
+//     desired and existing — the record is pruned one pass later.
+//   - An orphan whose delete FAILS this pass is likewise a member of
+//     `existing` this pass, so its "failed" record survives this pass's
+//     prune too. Next pass the Secret is STILL live (the delete never
+//     happened), so `existing` includes it again — the record survives
+//     again. It keeps surviving for as long as the orphan itself does.
+//
+// Pruning against the desired set alone would erase both records in the
+// SAME pass they were written — an orphan is by definition absent from
+// managed-clusters.yaml — which would make deleteOne's recordReconcile
+// calls invisible to any caller and silently defeat fix L10.
+func (r *Reconciler) pruneStaleReconcileRecords(known map[string]struct{}) {
+	r.lastReconcileMu.Lock()
+	for name := range r.lastReconcile {
+		if _, ok := known[name]; !ok {
+			delete(r.lastReconcile, name)
+		}
+	}
+	r.lastReconcileMu.Unlock()
+
+	r.fightMu.Lock()
+	for name := range r.fightState {
+		if _, ok := known[name]; !ok {
+			delete(r.fightState, name)
+		}
+	}
+	r.fightMu.Unlock()
+}
+
+// stampAbortedTick records OutcomeFailed for every cluster currently known
+// to the reconcile-record map when a pass aborts BEFORE reaching the
+// per-cluster work — a git read failure, a schema-validation rejection, or
+// a failed ArgoCD Secret listing (V2-cleanup-90.2, fix M5a). Without this,
+// an aborted pass leaves every cluster's last-known record untouched and
+// silently aging: an operator watching one cluster's LastReconcile would
+// see a stale "succeeded" from minutes or hours ago with no signal that
+// the reconciler has since been failing to even read its source of truth.
+//
+// Only stamps clusters ALREADY in the record map — an abort has no
+// desired/existing set to draw new cluster names from, so a cluster this
+// server instance has never reconciled stays absent (matches
+// LastReconcile's existing "ok=false means never reconciled" contract).
+// Deliberately does NOT prune: an aborted pass has no reliable "this
+// pass's clusters" set to prune against (see pruneStaleReconcileRecords).
+func (r *Reconciler) stampAbortedTick(reason string) {
+	r.lastReconcileMu.RLock()
+	names := make([]string, 0, len(r.lastReconcile))
+	for name := range r.lastReconcile {
+		names = append(names, name)
+	}
+	r.lastReconcileMu.RUnlock()
+
+	msg := "reconciler pass aborted: " + reason
+	for _, name := range names {
+		r.recordReconcile(name, OutcomeFailed, msg)
+	}
+}
+
 // --- Label-fight detection (V2-cleanup-89.5) ---
 //
 // A self-managed connection's ArgoCD cluster Secret is the user's — Sharko
@@ -126,6 +203,38 @@ type clusterFightState struct {
 	// NOT move it) come back with a live value different from what Sharko
 	// wrote last time. Reset to 0 the instant a tick shows no revert.
 	reverts int
+}
+
+// resetFightStreak clears all label-fight tracking state for one cluster
+// (V2-cleanup-90.2, fix M1). Call this when a self-managed connection's
+// label write itself failed this tick.
+//
+// recordFightCheck runs BEFORE the write and unconditionally advances
+// lastWanted to the value Sharko is ABOUT to write, on the assumption the
+// write will land. When the write then fails, that assumption breaks: the
+// live Secret still holds whatever was there before, but lastWanted now
+// claims Sharko already achieved the new value. On the NEXT tick, comparing
+// the (unchanged) live Secret against that stale lastWanted baseline looks
+// exactly like an external actor reverting Sharko's write — a false "fight"
+// signal caused entirely by Sharko's own failed write, and one that repeats
+// (and escalates past fightRevertThreshold) on a second consecutive
+// failure.
+//
+// Clearing the cluster's fight state entirely — rather than adding a
+// separate "skip the next comparison" flag — is the cleaner shape: it
+// reuses the SAME nil-check (`state.lastWanted != nil`) recordFightCheck
+// already treats as "no baseline yet, nothing to compare" for a cluster's
+// very first tick, so no new field or branch is needed. The cost is that a
+// real, still-ongoing fight's revert streak also resets on a Sharko-side
+// write failure; that trade is acceptable because a genuine fight simply
+// re-accumulates reverts starting from the next tick where Sharko's write
+// actually lands — at worst delaying the warning by one
+// fightRevertThreshold's worth of ticks (~60s). The alternative (a false
+// alarm baked into every write-failure streak) is strictly worse.
+func (r *Reconciler) resetFightStreak(name string) {
+	r.fightMu.Lock()
+	defer r.fightMu.Unlock()
+	delete(r.fightState, name)
 }
 
 // fightRevertThreshold is the number of consecutive reverted ticks needed
@@ -197,7 +306,7 @@ func (r *Reconciler) recordFightCheck(name string, desired, observedLive map[str
 
 	if state.reverts >= fightRevertThreshold {
 		warning = fmt.Sprintf(
-			"something else keeps overwriting Sharko's addon labels on this cluster's self-managed ArgoCD secret (reverted %d checks in a row) — likely the ArgoCD application that renders this secret from Git fighting with Sharko over it. Sharko will keep re-applying its labels every tick; see docs/site/operator/self-managed-connections.md.",
+			"something else keeps overwriting Sharko's addon labels on this cluster's self-managed ArgoCD secret (reverted %d checks in a row) — likely the ArgoCD application that renders this secret from Git fighting with Sharko over it. Sharko will keep re-applying its labels every tick; see https://sharko.readthedocs.io/en/latest/operator/self-managed-connections/.",
 			state.reverts,
 		)
 	}
