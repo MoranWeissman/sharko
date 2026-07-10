@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ClustersOverview } from '@/views/ClustersOverview';
 import { AuthContext } from '@/hooks/useAuth';
@@ -46,6 +46,17 @@ const mockRegisterCluster = vi.fn();
 const mockTestClusterConnection = vi.fn();
 const mockAdoptClusters = vi.fn();
 
+// V2-cleanup-90.4 (L6) — capture toast calls so the "picked cluster
+// disappeared before Adopt was confirmed" assertion can check the error
+// toast names the cluster, without needing ToastContainer mounted.
+const mockShowToast = vi.fn();
+vi.mock('@/components/ToastNotification', async () => {
+  const actual = await vi.importActual<typeof import('@/components/ToastNotification')>(
+    '@/components/ToastNotification',
+  );
+  return { ...actual, showToast: (...args: unknown[]) => mockShowToast(...args) };
+});
+
 vi.mock('@/services/api', async () => {
   const actual = await vi.importActual<typeof import('@/services/api')>('@/services/api');
   return {
@@ -54,6 +65,8 @@ vi.mock('@/services/api', async () => {
       getClusters: (...args: unknown[]) => mockGetClusters(...args),
       getAddonCatalog: (...args: unknown[]) => mockGetAddonCatalog(...args),
       health: (...args: unknown[]) => mockHealth(...args),
+      // V2-cleanup-89.6 kill switch — not under test here, keep the default.
+      getAllowInlineCredentials: () => Promise.resolve({ allow_inline_credentials: true }),
     },
     registerCluster: (...args: unknown[]) => mockRegisterCluster(...args),
     testClusterConnection: (...args: unknown[]) => mockTestClusterConnection(...args),
@@ -185,6 +198,34 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
     expect(screen.queryByTestId('discovered-picker')).not.toBeInTheDocument();
   });
 
+  // V2-cleanup-90.4 (M2) — when ArgoCD itself can't be reached, "Sharko
+  // checked ArgoCD — no other clusters there to adopt" is a lie: Sharko
+  // didn't check, it couldn't. The ArgoCDStatusBanner already tells the
+  // user ArgoCD is unreachable; this line must stay silent instead of
+  // adding a second, misleading message.
+  it('does not show the "nothing to adopt" line when ArgoCD itself is unreachable', async () => {
+    mockGetClusters.mockResolvedValue({
+      // Every cluster failed/unknown + non-empty list is the view's
+      // hasArgoError detection (ClustersOverview.tsx fetchData).
+      clusters: [{ ...managedCluster, connection_status: 'Failed' }],
+      health_stats: { total_in_git: 1, connected: 0, failed: 1, missing_from_argocd: 0, not_in_git: 0 },
+      pending_registrations: [],
+      orphan_registrations: [],
+    });
+    renderView();
+    await openAddDialog();
+
+    fireEvent.change(ownershipSelect(), { target: { value: 'user' } });
+
+    // Give the "nothing to adopt" line a chance to render before asserting
+    // its absence.
+    await waitFor(() => {
+      expect(ownershipSelect().value).toBe('user');
+    });
+    expect(screen.queryByTestId('discovered-empty')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('discovered-picker')).not.toBeInTheDocument();
+  });
+
   it('does not show the "nothing to adopt" line when the picker has items to show instead', async () => {
     mockGetClusters.mockResolvedValue(clustersResponse([discoveredCluster]));
     renderView();
@@ -255,6 +296,79 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
     });
 
     expect(mockRegisterCluster).not.toHaveBeenCalled();
+  });
+
+  // V2-cleanup-90.4 (L6) — the picker's 30s auto-refresh can drop the
+  // picked cluster out of the discovered list between the pick and the
+  // Adopt click, while the picker itself stays visible (other discovered
+  // clusters remain). Confirming used to be a silent no-op — nothing told
+  // the user their click did nothing.
+  it('names the cluster in an error toast and resets the pick when the picked cluster disappears before Adopt is confirmed', async () => {
+    const otherDiscoveredCluster = {
+      name: 'other-discovered-cluster',
+      labels: {},
+      managed: false,
+      connection_status: 'not_in_git',
+      server_url: 'https://other-discovered.example.com:6443',
+      server_version: 'v1.29.0',
+    };
+
+    // Fake timers must be active BEFORE the component mounts — the 30s
+    // auto-refresh `setInterval` is registered on mount, and a timer
+    // registered under real timers is not advanced by a later switch to
+    // fake ones. `shouldAdvanceTime: true` keeps waitFor/fireEvent working
+    // normally alongside it (same pattern as the ClusterDetail adaptive-
+    // polling tests).
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mockGetClusters.mockResolvedValue(clustersResponse([discoveredCluster, otherDiscoveredCluster]));
+      renderView();
+      await openAddDialog();
+      fireEvent.change(ownershipSelect(), { target: { value: 'user' } });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('discovered-picker')).toBeInTheDocument();
+      });
+
+      // Pick the cluster that's about to disappear.
+      fireEvent.click(screen.getByRole('radio', { name: /argo-known-cluster/i }));
+      expect(screen.getByRole('button', { name: /Adopt argo-known-cluster/i })).not.toBeDisabled();
+
+      // The 30s auto-refresh drops the picked cluster from ArgoCD's
+      // discovered list; the OTHER discovered cluster is still there, so
+      // the picker itself stays visible and the pick goes silently stale.
+      mockGetClusters.mockResolvedValue(clustersResponse([otherDiscoveredCluster]));
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('other-discovered-cluster')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('argo-known-cluster')).not.toBeInTheDocument();
+
+      // Confirm the (now-stale) pick — the button still reads the old name
+      // because `pickedDiscovered` hasn't been reset yet.
+      fireEvent.click(screen.getByRole('button', { name: /Adopt argo-known-cluster/i }));
+
+      expect(mockShowToast).toHaveBeenCalledWith(
+        '"argo-known-cluster" is no longer discoverable — refresh the list.',
+        'error',
+      );
+      // No adopt flow fired for a cluster that no longer exists in the list.
+      expect(mockTestClusterConnection).not.toHaveBeenCalled();
+      expect(mockAdoptClusters).not.toHaveBeenCalled();
+      // The Register dialog stays open — closing it would also look like
+      // nothing happened.
+      expect(screen.getByText('Register New Cluster')).toBeInTheDocument();
+
+      // The selection resets — the button reverts to its unpicked label.
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Adopt selected cluster' })).toBeInTheDocument();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('the "I do" line explains self-management, including that Git stays the source of truth', async () => {

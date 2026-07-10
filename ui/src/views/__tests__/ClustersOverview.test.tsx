@@ -23,6 +23,8 @@ vi.mock('@/services/api', () => ({
     // so existing tests keep observing the Test button enabled and do not
     // need to be rewritten.
     health: (...args: unknown[]) => mockHealth(...args),
+    // V2-cleanup-89.6 kill switch — not under test here, keep the default.
+    getAllowInlineCredentials: () => Promise.resolve({ allow_inline_credentials: true }),
   },
 }));
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
@@ -186,5 +186,125 @@ describe('ClusterDetail — last sync + sync now (V2-cleanup-89.4)', () => {
     expect(
       screen.getByText("Sharko couldn't fetch this cluster's credentials from the secrets backend: simulated vault outage"),
     ).toBeInTheDocument();
+  });
+
+  // V2-cleanup-90.4 (L1) — the single blind 1.5s refetch became a bounded
+  // poll: up to 4 refetches, 2s apart, stopping early once
+  // last_reconcile.time changes. The timer is tracked in a ref so it can
+  // be cleared on unmount, and the spinner stays lit through the FIRST
+  // refetch landing, not just until the 202 is accepted.
+  describe('bounded sync-now poll (V2-cleanup-90.4)', () => {
+    it('keeps the spinner lit until the first refetch lands, not just until the 202 is accepted', async () => {
+      mockGetClusterComparison.mockResolvedValue(baseComparisonResponse());
+      renderView();
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const syncBtn = screen.getByRole('button', { name: /^Sync now$/ });
+        fireEvent.click(syncBtn);
+
+        await waitFor(() => {
+          expect(mockReconcileCluster).toHaveBeenCalledWith('prod-eu');
+        });
+        // The 202 has been accepted (reconcileCluster resolved), but the
+        // first scheduled refetch hasn't fired yet — the spinner must
+        // still be lit.
+        expect(syncBtn).toBeDisabled();
+
+        // Advance to the first scheduled refetch (2s) and let it resolve.
+        await act(async () => {
+          vi.advanceTimersByTime(2000);
+          await Promise.resolve();
+        });
+
+        await waitFor(() => {
+          expect(syncBtn).not.toBeDisabled();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('stops polling early once last_reconcile.time changes from the pre-click value', async () => {
+      const initialTime = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      mockGetClusterComparison.mockResolvedValue(
+        baseComparisonResponse({ time: initialTime, outcome: 'succeeded' }),
+      );
+      renderView();
+      await waitFor(() => {
+        expect(screen.getByText(/^Last sync:/)).toBeInTheDocument();
+      });
+
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        fireEvent.click(screen.getByRole('button', { name: /^Sync now$/ }));
+        await waitFor(() => {
+          expect(mockReconcileCluster).toHaveBeenCalledWith('prod-eu');
+        });
+
+        const callsBeforePoll = mockGetClusterComparison.mock.calls.length;
+
+        // Every refetch from here on returns a changed time — only ONE
+        // refetch should happen even though up to 4 are allowed.
+        const newTime = new Date().toISOString();
+        mockGetClusterComparison.mockResolvedValue(
+          baseComparisonResponse({ time: newTime, outcome: 'succeeded' }),
+        );
+
+        // First scheduled refetch (2s) picks up the changed time and stops.
+        await act(async () => {
+          vi.advanceTimersByTime(2000);
+          await Promise.resolve();
+        });
+        await waitFor(() => {
+          expect(mockGetClusterComparison.mock.calls.length).toBe(callsBeforePoll + 1);
+        });
+
+        // Advance well past all 4 possible attempts (8s total from the
+        // first poll) — no further refetches should fire.
+        await act(async () => {
+          vi.advanceTimersByTime(10_000);
+          await Promise.resolve();
+        });
+        expect(mockGetClusterComparison.mock.calls.length).toBe(callsBeforePoll + 1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('clears the pending refetch timer on unmount — no further refetch and no setState-after-unmount error', async () => {
+      mockGetClusterComparison.mockResolvedValue(baseComparisonResponse());
+      const { unmount } = renderView();
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        fireEvent.click(screen.getByRole('button', { name: /^Sync now$/ }));
+        await waitFor(() => {
+          expect(mockReconcileCluster).toHaveBeenCalledWith('prod-eu');
+        });
+
+        const callsBeforeUnmount = mockGetClusterComparison.mock.calls.length;
+        unmount();
+
+        // Advance well past the scheduled refetch — since the pending
+        // timer was cleared on unmount, it must never fire.
+        await act(async () => {
+          vi.advanceTimersByTime(10_000);
+          await Promise.resolve();
+        });
+        expect(mockGetClusterComparison.mock.calls.length).toBe(callsBeforeUnmount);
+        expect(consoleError).not.toHaveBeenCalled();
+      } finally {
+        consoleError.mockRestore();
+        vi.useRealTimers();
+      }
+    });
   });
 });

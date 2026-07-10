@@ -62,6 +62,7 @@ import { PRModelExplainer } from '@/components/PRFeedback';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { ClusterIdentityStrip } from '@/components/ClusterIdentityStrip';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
+import { showToast } from '@/components/ToastNotification';
 import { AdoptClustersDialog } from '@/components/AdoptClustersDialog';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import {
@@ -375,15 +376,17 @@ export function ClustersOverview() {
   }, []);
 
   // Fetch the admin-level allow_inline_credentials kill switch
-  // (V2-cleanup-89.6) once so the Register dialog's Connection source
-  // select can hide "Paste a kubeconfig" when an admin has turned it off.
-  // Defensive `typeof` guard: many ClustersOverview test suites mock
-  // '@/services/api' with a partial object that predates this call — skip
-  // silently rather than throwing, and keep the safe default (true,
-  // option visible) exactly like a failed fetch would.
+  // (V2-cleanup-89.6) whenever the Register dialog OPENS, not just once on
+  // mount (V2-cleanup-90.4): an admin flipping the setting mid-session
+  // wasn't reflected until a full page reload — refetching on every open
+  // means the very next open sees the current value. Every ClustersOverview
+  // test suite's '@/services/api' mock now includes this method, so the
+  // old defensive `typeof api.getAllowInlineCredentials !== 'function'`
+  // skip (which masked stale mocks instead of the mocks being fixed) is
+  // gone.
   useEffect(() => {
+    if (!addClusterOpen) return;
     let cancelled = false;
-    if (typeof api.getAllowInlineCredentials !== 'function') return;
     void api
       .getAllowInlineCredentials()
       .then((res) => {
@@ -398,7 +401,7 @@ export function ClustersOverview() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [addClusterOpen]);
 
   // Auto-refresh every 30s
   useEffect(() => {
@@ -810,7 +813,18 @@ export function ClustersOverview() {
   // same verify-then-confirm dialog, same Git-PR success banner.
   const handleAdoptFromPicker = useCallback(() => {
     const cluster = discoveredClusters.find((c) => c.name === pickedDiscovered);
-    if (!cluster) return;
+    if (!cluster) {
+      // V2-cleanup-90.4: the picked cluster can disappear between the pick
+      // and the confirm click — the picker's 30s auto-refresh may have
+      // dropped it from ArgoCD's discovered list. That used to be a silent
+      // no-op (the button looked like it did nothing). Name the cluster and
+      // reset the selection so the picker returns to its unpicked state.
+      if (pickedDiscovered) {
+        showToast(`"${pickedDiscovered}" is no longer discoverable — refresh the list.`, 'error');
+        setPickedDiscovered(null);
+      }
+      return;
+    }
     setAddClusterOpen(false);
     handleOpenAdoptDialog([cluster]);
   }, [discoveredClusters, pickedDiscovered, handleOpenAdoptDialog]);
@@ -1099,8 +1113,13 @@ export function ClustersOverview() {
               * discovered clusters, the picker block above was hidden
               * entirely — indistinguishable from the feature not existing.
               * Gated on `!loading` (the page's initial GET /clusters fetch)
-              * so this never flashes before clusters have actually loaded. */}
-            {connManagedBy === 'user' && !loading && discoveredClusters.length === 0 && (
+              * so this never flashes before clusters have actually loaded.
+              * Also gated on `!argoCDUnreachable` (V2-cleanup-90.4): when
+              * ArgoCD itself can't be reached, "no other clusters there to
+              * adopt" is misleading — Sharko didn't check, it couldn't. The
+              * ArgoCDStatusBanner already covers that case, so this line
+              * stays silent rather than saying something false. */}
+            {connManagedBy === 'user' && !loading && !argoCDUnreachable && discoveredClusters.length === 0 && (
               <p
                 data-testid="discovered-empty"
                 className="text-xs text-[#5a8aaa] dark:text-gray-500"
