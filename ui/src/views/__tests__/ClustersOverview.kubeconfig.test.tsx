@@ -293,5 +293,35 @@ describe('ClustersOverview — creds-reframe-2 credential source', () => {
         expect(values).toEqual(['', 'secret-kubeconfig', 'eks-token']);
       });
     });
+
+    // V2-cleanup-90.4 — the setting used to be fetched once on mount, so an
+    // admin flipping it mid-session was invisible until a full page reload.
+    // It must now refetch on every dialog OPEN, reflecting the current
+    // server value the very next time the dialog is opened.
+    it('refetches the setting on every dialog open, reflecting a mid-session admin flip', async () => {
+      mockGetAllowInlineCredentials.mockResolvedValue({ allow_inline_credentials: true });
+      renderView();
+      await openAddDialog();
+
+      await waitFor(() => {
+        const values = Array.from(credsSourceSelect().options).map((o) => o.value);
+        expect(values).toContain('inline-kubeconfig');
+      });
+
+      // Close the dialog, flip the switch server-side, then reopen.
+      fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('Register New Cluster')).not.toBeInTheDocument();
+      });
+
+      mockGetAllowInlineCredentials.mockResolvedValue({ allow_inline_credentials: false });
+      await openAddDialog();
+
+      await waitFor(() => {
+        const values = Array.from(credsSourceSelect().options).map((o) => o.value);
+        expect(values).not.toContain('inline-kubeconfig');
+      });
+      expect(mockGetAllowInlineCredentials.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
   });
 });

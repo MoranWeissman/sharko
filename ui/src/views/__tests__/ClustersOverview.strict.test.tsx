@@ -67,6 +67,8 @@ vi.mock('@/services/api', () => ({
     getClusters: (...args: unknown[]) => mockGetClusters(...args),
     // BUG-041: ClustersOverview reads cluster_test_available on mount.
     health: () => Promise.resolve({ status: 'healthy', cluster_test_available: true }),
+    // V2-cleanup-89.6 kill switch — not under test here, keep the default.
+    getAllowInlineCredentials: () => Promise.resolve({ allow_inline_credentials: true }),
   },
 }));
 

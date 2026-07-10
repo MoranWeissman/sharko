@@ -45,6 +45,8 @@ vi.mock('@/services/api', async () => {
       getClusters: (...args: unknown[]) => mockGetClusters(...args),
       getAddonCatalog: (...args: unknown[]) => mockGetAddonCatalog(...args),
       health: (...args: unknown[]) => mockHealth(...args),
+      // V2-cleanup-89.6 kill switch — not under test here, keep the default.
+      getAllowInlineCredentials: () => Promise.resolve({ allow_inline_credentials: true }),
     },
     registerCluster: (...args: unknown[]) => mockRegisterCluster(...args),
   };

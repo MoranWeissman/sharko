@@ -61,8 +61,10 @@ export interface Cluster {
 }
 
 // ClusterLastReconcile mirrors internal/models.ClusterLastReconcile
-// (V2-cleanup-89.4). message is set on 'failed' and 'skipped', empty on
-// 'succeeded'.
+// (V2-cleanup-89.4). message is always set on 'failed' and 'skipped'; it is
+// normally empty on 'succeeded' but CAN be set there too, when the
+// reconciler detects a label fight (something outside Sharko re-applying
+// conflicting labels) — do not assume a succeeded reconcile has no message.
 export interface ClusterLastReconcile {
   time: string // RFC3339
   outcome: 'succeeded' | 'failed' | 'skipped'

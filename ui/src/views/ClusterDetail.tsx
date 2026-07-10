@@ -217,6 +217,11 @@ function relativeTime(isoString: string): string {
   return `${days}d ago`;
 }
 
+// "Sync now" bounded-poll parameters (V2-cleanup-90.4 / L1): at most 4
+// refetches, 2s apart, stopping early once last_reconcile.time changes.
+const SYNC_POLL_MAX_ATTEMPTS = 4;
+const SYNC_POLL_INTERVAL_MS = 2000;
+
 export function ClusterDetail() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
@@ -302,6 +307,23 @@ export function ClusterDetail() {
   // Manual "sync now" (V2-cleanup-89.4) — nudges the cluster-secret
   // reconciler instead of waiting for its periodic tick.
   const [syncingNow, setSyncingNow] = useState(false);
+  // V2-cleanup-90.4 (L1) — bounded-poll state for the "sync now" refetch.
+  // syncPollTimerRef holds the currently-scheduled setTimeout so it can be
+  // cleared on unmount; syncPollCancelledRef is flipped in that same
+  // cleanup so an in-flight fetchData that resolves just after unmount
+  // never calls setState on a gone component.
+  const syncPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncPollCancelledRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      syncPollCancelledRef.current = true;
+      if (syncPollTimerRef.current) {
+        clearTimeout(syncPollTimerRef.current);
+        syncPollTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Secret path editing
   const [editingSecretPath, setEditingSecretPath] = useState(false);
@@ -379,8 +401,8 @@ export function ClusterDetail() {
     return (argoStatus === '' || argoStatus === 'unknown') && serverUrl === '';
   }, [data]);
 
-  const fetchData = useCallback(async (background = false) => {
-    if (!name) return;
+  const fetchData = useCallback(async (background = false): Promise<ClusterComparisonResponse | undefined> => {
+    if (!name) return undefined;
     try {
       if (background) {
         setIsRefreshing(true);
@@ -442,6 +464,11 @@ export function ClusterDetail() {
           setGitDefaultBranch(active.gitops.base_branch);
         }
       }
+      // V2-cleanup-90.4 (L1): return the freshly-fetched comparison so
+      // callers (the "Sync now" bounded poll) can read the new
+      // last_reconcile.time without waiting for a render + effect round
+      // trip through `data` state.
+      return result;
     } catch (e: unknown) {
       if (!background) {
         setError(
@@ -450,6 +477,7 @@ export function ClusterDetail() {
             : `Failed to load comparison for cluster: ${name}`,
         );
       }
+      return undefined;
     } finally {
       setLoading(false);
       setIsRefreshing(false);
@@ -536,25 +564,55 @@ export function ClusterDetail() {
   }, [name, addonToggles, originalToggles]);
 
   // handleSyncNow triggers a manual reconcile (V2-cleanup-89.4) instead of
-  // waiting for the reconciler's periodic tick. The endpoint returns 202
-  // as soon as the trigger is accepted — the reconcile itself runs
-  // asynchronously, so we wait briefly and then refetch once to pick up
-  // the updated last_reconcile field.
+  // waiting for the reconciler's periodic tick. The endpoint returns 202 as
+  // soon as the trigger is accepted — the reconcile itself runs
+  // asynchronously server-side, so a single blind refetch could easily land
+  // before it finished.
+  //
+  // V2-cleanup-90.4 (L1): replaced the single blind 1.5s refetch with a
+  // bounded poll — up to SYNC_POLL_MAX_ATTEMPTS refetches,
+  // SYNC_POLL_INTERVAL_MS apart, stopping as soon as last_reconcile.time
+  // changes from the value observed right before the click. The timer is
+  // tracked in a ref so it can be cleared on unmount (no setState-after-
+  // unmount), and the spinner stays lit through the FIRST refetch landing,
+  // not just until the 202 is accepted.
   const handleSyncNow = useCallback(async () => {
     if (!name) return;
     setSyncingNow(true);
+    const preClickTime = data?.cluster?.last_reconcile?.time;
     try {
       await reconcileCluster(name);
       showToast(`Sync triggered for cluster "${name}".`, 'success');
-      setTimeout(() => {
-        void fetchData(true);
-      }, 1500);
+
+      let attempt = 0;
+      const pollOnce = async () => {
+        attempt += 1;
+        const result = await fetchData(true);
+        if (syncPollCancelledRef.current) return;
+        // Spinner stays lit only through the first refetch landing —
+        // whether or not that refetch detected a change.
+        if (attempt === 1) {
+          setSyncingNow(false);
+        }
+        const newTime = result?.cluster?.last_reconcile?.time;
+        const changed = newTime !== undefined && newTime !== preClickTime;
+        if (changed || attempt >= SYNC_POLL_MAX_ATTEMPTS) {
+          syncPollTimerRef.current = null;
+          return;
+        }
+        syncPollTimerRef.current = setTimeout(() => {
+          void pollOnce();
+        }, SYNC_POLL_INTERVAL_MS);
+      };
+
+      syncPollTimerRef.current = setTimeout(() => {
+        void pollOnce();
+      }, SYNC_POLL_INTERVAL_MS);
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to trigger sync', 'error');
-    } finally {
       setSyncingNow(false);
     }
-  }, [name, fetchData]);
+  }, [name, fetchData, data]);
 
   const handleTestConnection = useCallback(async () => {
     if (!name) return;
