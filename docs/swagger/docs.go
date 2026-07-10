@@ -3705,7 +3705,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Runs up to five real-attempt checks against the named cluster's\nconnection and returns a structured pass/fail/not-applicable\nverdict per check, each with a plain-English fix on failure:\n(1) can Sharko read the cluster's connection credentials,\n(2) can Sharko read every provider path an enabled addon's\nsecrets need, (3) if a cross-account IAM role is in play, can\nSharko assume it, (4) does the cluster itself accept the\nresulting token (reuses the existing Stage-1 secret CRUD cycle),\nand (5) for a self-managed connection, is its ArgoCD cluster\nSecret free of foreign ArgoCD tracking markers (i.e. not\nrendered by another Application that could fight Sharko over\nthe addon labels it writes) — not-applicable for Sharko-managed\nconnections. Every check is a real attempt, never IAM policy\nsimulation, and read-only except check 4, which reuses Stage-1's\nexisting create/read/delete canary secret. The whole run is\nbounded to about 30 seconds.",
+                "description": "Runs up to five real-attempt checks against the named cluster's\nconnection and returns a structured pass/fail/warn/not-applicable\nverdict per check, each with a plain-English fix on failure or\nwarning: (1) can Sharko read the cluster's connection credentials,\n(2) can Sharko read every provider path an enabled addon's\nsecrets need, (3) if a cross-account IAM role is in play, can\nSharko assume it, (4) does the cluster itself accept the\nresulting token (reuses the existing Stage-1 secret CRUD cycle),\nand (5) for a self-managed connection, is its ArgoCD cluster\nSecret free of a tracking marker that may belong to another\napplication — a verified tracking-id match against this exact\nSecret fails the check, a weaker signal (a mismatched\ntracking-id or only the app.kubernetes.io/instance label, which\na plain Helm release also stamps) warns instead of failing —\nnot-applicable for Sharko-managed connections. Every check is a\nreal attempt, never IAM policy simulation, and read-only except\ncheck 4, which reuses Stage-1's existing create/read/delete\ncanary secret. The whole run is bounded to about 30 seconds.",
                 "produces": [
                     "application/json"
                 ],
@@ -8864,7 +8864,8 @@ const docTemplate = `{
                     "enum": [
                         "pass",
                         "fail",
-                        "not-applicable"
+                        "not-applicable",
+                        "warn"
                     ]
                 }
             }

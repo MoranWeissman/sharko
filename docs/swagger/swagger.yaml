@@ -1392,6 +1392,7 @@ definitions:
         - pass
         - fail
         - not-applicable
+        - warn
         type: string
     type: object
   internal_api.doctorClusterResponse:
@@ -4290,21 +4291,23 @@ paths:
     post:
       description: |-
         Runs up to five real-attempt checks against the named cluster's
-        connection and returns a structured pass/fail/not-applicable
-        verdict per check, each with a plain-English fix on failure:
-        (1) can Sharko read the cluster's connection credentials,
+        connection and returns a structured pass/fail/warn/not-applicable
+        verdict per check, each with a plain-English fix on failure or
+        warning: (1) can Sharko read the cluster's connection credentials,
         (2) can Sharko read every provider path an enabled addon's
         secrets need, (3) if a cross-account IAM role is in play, can
         Sharko assume it, (4) does the cluster itself accept the
         resulting token (reuses the existing Stage-1 secret CRUD cycle),
         and (5) for a self-managed connection, is its ArgoCD cluster
-        Secret free of foreign ArgoCD tracking markers (i.e. not
-        rendered by another Application that could fight Sharko over
-        the addon labels it writes) — not-applicable for Sharko-managed
-        connections. Every check is a real attempt, never IAM policy
-        simulation, and read-only except check 4, which reuses Stage-1's
-        existing create/read/delete canary secret. The whole run is
-        bounded to about 30 seconds.
+        Secret free of a tracking marker that may belong to another
+        application — a verified tracking-id match against this exact
+        Secret fails the check, a weaker signal (a mismatched
+        tracking-id or only the app.kubernetes.io/instance label, which
+        a plain Helm release also stamps) warns instead of failing —
+        not-applicable for Sharko-managed connections. Every check is a
+        real attempt, never IAM policy simulation, and read-only except
+        check 4, which reuses Stage-1's existing create/read/delete
+        canary secret. The whole run is bounded to about 30 seconds.
       parameters:
       - description: Cluster name
         in: path

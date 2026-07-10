@@ -90,12 +90,17 @@ export interface SystemCapabilitiesResponse {
 }
 
 // DoctorCheck / DoctorClusterResponse mirror POST
-// /api/v1/clusters/{name}/doctor (V2-cleanup-88.4) — the connection
-// doctor's four real-attempt checks, each with a plain-English fix on
-// failure. Check IDs are stable — the UI keys copy/icons off them.
+// /api/v1/clusters/{name}/doctor (V2-cleanup-88.4, V2-cleanup-89.5's fifth
+// check, and the 'warn' status added by V2-cleanup-90.1) — the connection
+// doctor's five real-attempt checks, each with a plain-English fix on
+// failure or warning. Check IDs are stable — the UI keys copy/icons off
+// them. 'warn' (V2-cleanup-90.1) is additive: currently only
+// 'secret-ownership' ever returns it, for a soft-confidence foreign-owner
+// signal (e.g. a plain Helm release label) that isn't certain enough to
+// fail the connection outright.
 export interface DoctorCheck {
-  id: 'connection-credentials' | 'addon-secret-paths' | 'assume-role' | 'cluster-access'
-  status: 'pass' | 'fail' | 'not-applicable'
+  id: 'connection-credentials' | 'addon-secret-paths' | 'assume-role' | 'cluster-access' | 'secret-ownership'
+  status: 'pass' | 'fail' | 'not-applicable' | 'warn'
   detail: string
   fix?: string
 }
