@@ -589,6 +589,122 @@ func TestDoctorCheckSecretOwnership_Fail_ForeignMarkerFound(t *testing.T) {
 	}
 }
 
+// TestDoctorCheckSecretOwnership_Warn_LabelOnlyMatch pins the V2-cleanup-90.1
+// soft-confidence path: a bare app.kubernetes.io/instance label (the
+// standard Helm release label, with no tracking-id annotation at all) must
+// WARN, not fail — this is the review finding H1 false-positive the story
+// fixes: a plain Helm-installed secret should never read as a scary FAIL.
+func TestDoctorCheckSecretOwnership_Warn_LabelOnlyMatch(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "byo-conn",
+			Namespace: "argocd",
+			Labels:    map[string]string{"app.kubernetes.io/instance": "my-helm-release"},
+		},
+	}
+	srv.SetArgoSecretManager(argosecrets.NewManager(fake.NewSimpleClientset(userSecret), "argocd"))
+
+	check := srv.doctorCheckSecretOwnership(context.Background(), "byo-conn")
+	if check.Status != doctorStatusWarn {
+		t.Fatalf("Status = %q, want warn (detail=%s)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Detail, "my-helm-release") {
+		t.Errorf("Detail = %q, want it to name the app/release found", check.Detail)
+	}
+	if check.Fix == "" {
+		t.Fatal("expected a non-empty Fix on warn")
+	}
+	if !strings.Contains(check.Fix, "Helm") && !strings.Contains(check.Detail, "Helm") {
+		t.Errorf("Detail/Fix must mention the Helm possibility somewhere; Detail=%q Fix=%q", check.Detail, check.Fix)
+	}
+}
+
+// TestDoctorCheckSecretOwnership_Warn_MismatchedTrackingID pins the other
+// soft-confidence arm: a tracking-id annotation IS present, but its own
+// namespace/name suffix names a DIFFERENT secret — the annotation was very
+// likely copied from elsewhere, so it warns rather than fails.
+func TestDoctorCheckSecretOwnership_Warn_MismatchedTrackingID(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "byo-conn",
+			Namespace: "argocd",
+			Annotations: map[string]string{
+				argosecrets.AnnotationTrackingID: "cluster-secrets-app:/Secret:argocd/some-other-secret",
+			},
+		},
+	}
+	srv.SetArgoSecretManager(argosecrets.NewManager(fake.NewSimpleClientset(userSecret), "argocd"))
+
+	check := srv.doctorCheckSecretOwnership(context.Background(), "byo-conn")
+	if check.Status != doctorStatusWarn {
+		t.Fatalf("Status = %q, want warn (detail=%s)", check.Status, check.Detail)
+	}
+}
+
+// TestDoctorCheckSecretOwnership_SingleGet asserts the check issues EXACTLY
+// ONE Get against the K8s API for the secret — replacing the pre-90.1
+// GetManagedByLabel + GetTrackingOwner double-Get pattern with a single
+// GetSecretOwnership call.
+func TestDoctorCheckSecretOwnership_SingleGet(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "byo-conn",
+			Namespace: "argocd",
+			Annotations: map[string]string{
+				argosecrets.AnnotationTrackingID: "cluster-secrets-app:/Secret:argocd/byo-conn",
+			},
+		},
+	}
+	client := fake.NewSimpleClientset(userSecret)
+	getCount := 0
+	client.PrependReactor("get", "secrets", func(clienttesting.Action) (bool, runtime.Object, error) {
+		getCount++
+		return false, nil, nil
+	})
+	srv.SetArgoSecretManager(argosecrets.NewManager(client, "argocd"))
+
+	check := srv.doctorCheckSecretOwnership(context.Background(), "byo-conn")
+	if check.Status != doctorStatusFail {
+		t.Fatalf("Status = %q, want fail (detail=%s)", check.Status, check.Detail)
+	}
+	if getCount != 1 {
+		t.Fatalf("Get call count = %d, want exactly 1 (single-Get, not GetManagedByLabel + GetTrackingOwner)", getCount)
+	}
+}
+
+// TestDoctorCheckSecretOwnership_Fail_RBACError pins the error-type
+// differentiation (review finding part of L4): a real read failure
+// (permission, timeout, anything other than not-found) must produce a fix
+// naming the ACTUAL problem, never the misleading "secret still exists"
+// missing-secret advice.
+func TestDoctorCheckSecretOwnership_Fail_RBACError(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	client := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "byo-conn", Namespace: "argocd"},
+	})
+	client.PrependReactor("get", "secrets", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("secrets is forbidden: User cannot get resource")
+	})
+	srv.SetArgoSecretManager(argosecrets.NewManager(client, "argocd"))
+
+	check := srv.doctorCheckSecretOwnership(context.Background(), "byo-conn")
+	if check.Status != doctorStatusFail {
+		t.Fatalf("Status = %q, want fail (detail=%s)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Fix, "RBAC") {
+		t.Errorf("Fix = %q, want it to name the real problem via the RBAC fix text", check.Fix)
+	}
+	if strings.Contains(check.Fix, "still exists") {
+		t.Errorf("Fix = %q, must NOT use the misleading missing-secret advice for a real read failure", check.Fix)
+	}
+	if !strings.Contains(check.Fix, "forbidden") {
+		t.Errorf("Fix = %q, want it to include the underlying reason", check.Fix)
+	}
+}
+
 // ----- overall roll-up ------------------------------------------------
 
 func TestDoctorOverallStatus(t *testing.T) {
@@ -638,6 +754,35 @@ func TestDoctorOverallStatus(t *testing.T) {
 				{Status: doctorStatusPass}, {Status: doctorStatusFail},
 			},
 			want: doctorOverallPartial,
+		},
+		// V2-cleanup-90.1 — warn rollup.
+		{
+			name: "pass mixed with warn",
+			checks: []doctorCheck{
+				{Status: doctorStatusPass}, {Status: doctorStatusWarn},
+			},
+			want: doctorOverallPartial,
+		},
+		{
+			name: "all warn",
+			checks: []doctorCheck{
+				{Status: doctorStatusWarn}, {Status: doctorStatusWarn},
+			},
+			want: doctorOverallPartial,
+		},
+		{
+			name: "warn mixed with not-applicable, no pass or fail",
+			checks: []doctorCheck{
+				{Status: doctorStatusWarn}, {Status: doctorStatusNotApplicable},
+			},
+			want: doctorOverallPartial,
+		},
+		{
+			name: "fail dominates warn",
+			checks: []doctorCheck{
+				{Status: doctorStatusFail}, {Status: doctorStatusWarn},
+			},
+			want: doctorOverallFail,
 		},
 	}
 	for _, tt := range tests {

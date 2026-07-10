@@ -122,42 +122,138 @@ func ParseTrackingAppName(trackingID string) (string, bool) {
 	return trackingID[:idx], true
 }
 
+// ParseTrackingID parses an ArgoCD tracking-id annotation value of the
+// form "<app-name>:<group>/<kind>:<namespace>/<name>" into its app name
+// and its "<namespace>/<name>" suffix. It is a SplitN(_, ":", 3) rather
+// than two separate Index scans: the app name cannot itself contain a
+// colon, and neither can a K8s API group or Kind name, so the FIRST two
+// colons reliably separate "<app-name>" from "<group>/<kind>" from
+// everything after — the third field is taken whole as nsName, so a
+// hand-edited or unusual value that happens to embed extra colons inside
+// its namespace/name segment is captured intact (not truncated or
+// panicked on). Such a value will then simply fail an exact-match compare
+// against a real "<namespace>/<name>" (see DetectForeignOwner) — a safe,
+// conservative outcome rather than a crash or a false positive.
+//
+// Returns ok=false when trackingID has fewer than two colons (not a value
+// ArgoCD would ever produce, but defensive against a malformed or empty
+// annotation).
+func ParseTrackingID(trackingID string) (appName, nsName string, ok bool) {
+	parts := strings.SplitN(trackingID, ":", 3)
+	if len(parts) != 3 || parts[0] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[2], true
+}
+
+// OwnerConfidence classifies how sure DetectForeignOwner is that the
+// application name it found really identifies THIS secret's renderer, as
+// opposed to a marker that merely happens to be present (V2-cleanup-90.1 —
+// review finding H1: the label-only signal is also the standard Helm
+// release label, so treating it as equally certain as a verified
+// tracking-id match false-positived every plain Helm-created secret).
+type OwnerConfidence string
+
+const (
+	// ConfidenceHard: the tracking-id annotation is present AND its own
+	// "<namespace>/<name>" suffix matches the secret being inspected.
+	// ArgoCD always stamps this annotation with the resource's own
+	// coordinates, so a match means an ArgoCD Application really does
+	// render THIS secret from Git.
+	ConfidenceHard OwnerConfidence = "hard"
+	// ConfidenceSoft covers two weaker signals:
+	//   - the tracking-id annotation is present but its "<namespace>/<name>"
+	//     suffix does NOT match this secret — most likely copied or cloned
+	//     from another resource (e.g. `kubectl get -o yaml | kubectl apply`),
+	//     so the app name found is not reliably THIS secret's owner; or
+	//   - only the app.kubernetes.io/instance label is present. That label
+	//     is ALSO the standard `helm.sh`-adjacent release label every plain
+	//     `helm install` stamps on everything it creates, with no ArgoCD
+	//     involvement at all — its presence alone is not proof of ArgoCD
+	//     ownership.
+	ConfidenceSoft OwnerConfidence = "soft"
+)
+
 // DetectForeignOwner inspects secret's tracking markers (both possible
-// ArgoCD trackingMethod spellings) and returns the name of the ArgoCD
-// Application that renders it from Git, if any. Checks the tracking-id
-// annotation first (the default trackingMethod), then falls back to the
-// app.kubernetes.io/instance label. nil-safe.
-func DetectForeignOwner(secret *corev1.Secret) (appName string, found bool) {
+// ArgoCD trackingMethod spellings) and returns the name of the application
+// that may render it from Git, if any, plus a confidence signal
+// distinguishing a verified ArgoCD match (ConfidenceHard) from a weaker,
+// possibly-Helm-only signal (ConfidenceSoft — see OwnerConfidence). Checks
+// the tracking-id annotation first (the default trackingMethod), then
+// falls back to the app.kubernetes.io/instance label. nil-safe.
+func DetectForeignOwner(secret *corev1.Secret) (appName string, confidence OwnerConfidence, found bool) {
 	if secret == nil {
-		return "", false
+		return "", "", false
 	}
 	if trackingID := secret.Annotations[AnnotationTrackingID]; trackingID != "" {
-		if name, ok := ParseTrackingAppName(trackingID); ok {
-			return name, true
+		if name, nsName, ok := ParseTrackingID(trackingID); ok {
+			if nsName == secret.Namespace+"/"+secret.Name {
+				return name, ConfidenceHard, true
+			}
+			return name, ConfidenceSoft, true
 		}
 	}
 	if instance := secret.Labels[LabelAppInstance]; instance != "" {
-		return instance, true
+		return instance, ConfidenceSoft, true
 	}
-	return "", false
+	return "", "", false
 }
 
 // GetTrackingOwner fetches the named secret and reports whether it carries
-// an ArgoCD tracking marker stamped by another Application's sync (see
-// DetectForeignOwner). Mirrors SyncLabelsOnly's not-found handling: a
-// missing secret is NOT an error — found=false, err=nil — because this is
-// commonly called before the user has created their self-managed
-// connection's Secret yet.
-func (m *Manager) GetTrackingOwner(ctx context.Context, name string) (appName string, found bool, err error) {
+// a tracking marker that may belong to another application's sync (see
+// DetectForeignOwner), along with the confidence of that signal. Mirrors
+// SyncLabelsOnly's not-found handling: a missing secret is NOT an error —
+// found=false, err=nil — because this is commonly called before the user
+// has created their self-managed connection's Secret yet.
+func (m *Manager) GetTrackingOwner(ctx context.Context, name string) (appName string, confidence OwnerConfidence, found bool, err error) {
 	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(getErr) {
-		return "", false, nil
+		return "", "", false, nil
 	}
 	if getErr != nil {
-		return "", false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, getErr)
+		return "", "", false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, getErr)
 	}
-	appName, found = DetectForeignOwner(existing)
-	return appName, found, nil
+	appName, confidence, found = DetectForeignOwner(existing)
+	return appName, confidence, found, nil
+}
+
+// SecretOwnership is the ownership signal for an ArgoCD cluster Secret,
+// read from a single Get. It exists so callers that need BOTH the
+// managed-by label and the foreign-tracking-owner signal (e.g. the
+// connection doctor's check 5) do not have to issue two separate Gets for
+// the same object — the pre-90.1 pattern was a double API cost and a
+// (small) race window between the two reads.
+type SecretOwnership struct {
+	// ManagedBy is the app.kubernetes.io/managed-by label value ("" if unset).
+	ManagedBy string
+	// ForeignOwnerAppName / ForeignOwnerConfidence / ForeignOwnerFound mirror
+	// DetectForeignOwner's return values for this same secret.
+	ForeignOwnerAppName    string
+	ForeignOwnerConfidence OwnerConfidence
+	ForeignOwnerFound      bool
+}
+
+// GetSecretOwnership fetches the named secret ONCE and derives both the
+// managed-by label and the foreign-tracking-owner signal from that single
+// object. Returns (ownership, found, err): found=false, err=nil when the
+// Secret does not exist yet — not an error, same convention as
+// GetTrackingOwner — so callers can tell "nothing to check yet" apart from
+// a real read failure (permission, timeout, etc.) without inspecting err.
+func (m *Manager) GetSecretOwnership(ctx context.Context, name string) (ownership SecretOwnership, found bool, err error) {
+	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(getErr) {
+		return SecretOwnership{}, false, nil
+	}
+	if getErr != nil {
+		return SecretOwnership{}, false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, getErr)
+	}
+	appName, confidence, foreignFound := DetectForeignOwner(existing)
+	return SecretOwnership{
+		ManagedBy:              existing.Labels[LabelManagedBy],
+		ForeignOwnerAppName:    appName,
+		ForeignOwnerConfidence: confidence,
+		ForeignOwnerFound:      foreignFound,
+	}, true, nil
 }
 
 // ClusterSecretSpec is the desired state for an ArgoCD cluster secret.

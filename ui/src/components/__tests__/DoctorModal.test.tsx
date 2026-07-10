@@ -36,6 +36,25 @@ const partialReport: DoctorClusterResponse = {
   ],
 };
 
+// V2-cleanup-90.1 — a warn-only run (no fail present) still rolls up to
+// 'partial' overall, but must read differently than a fail-driven partial:
+// nothing actually failed, one check just raised a softer-confidence signal.
+const warnOnlyReport: DoctorClusterResponse = {
+  overall: 'partial',
+  checks: [
+    { id: 'connection-credentials', status: 'pass', detail: 'Sharko read connection credentials for cluster "prod-eu".' },
+    { id: 'addon-secret-paths', status: 'pass', detail: 'All 2 addon secret paths resolved.' },
+    { id: 'assume-role', status: 'not-applicable', detail: 'No cross-account role is configured for this cluster.' },
+    { id: 'cluster-access', status: 'pass', detail: 'Sharko created, read, and deleted a canary secret on the cluster.' },
+    {
+      id: 'secret-ownership',
+      status: 'warn',
+      detail: 'Cluster "prod-eu"\'s connection secret may be managed by ArgoCD application or Helm release "my-helm-release" — the signal isn\'t strong enough to be sure it\'s ArgoCD.',
+      fix: 'If an ArgoCD application named "my-helm-release" renders this secret from Git, make sure its manifest doesn\'t define Sharko\'s addon labels and doesn\'t use the Replace sync option. See https://sharko.readthedocs.io/en/latest/operator/self-managed-connections/.',
+    },
+  ],
+};
+
 const allFailReport: DoctorClusterResponse = {
   overall: 'fail',
   checks: [
@@ -124,6 +143,30 @@ describe('DoctorModal', () => {
 
     // Passing checks in the same report carry no fix line.
     expect(screen.queryByTestId('doctor-fix-connection-credentials')).not.toBeInTheDocument();
+  });
+
+  it('renders an amber warning icon and fix line on a warn check, with warn-specific overall copy', async () => {
+    mockDoctorCluster.mockResolvedValue(warnOnlyReport);
+    renderModal();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('doctor-check-secret-ownership')).toBeInTheDocument();
+    });
+
+    // Warn-driven partial reads differently from a fail-driven partial —
+    // nothing here actually failed.
+    expect(
+      screen.getByText('Everything checked out, but one or more checks raised a warning — see the details below.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Some checks passed and some failed — see the fixes below.')).not.toBeInTheDocument();
+
+    expect(screen.getByTestId('doctor-check-secret-ownership')).toHaveAttribute('data-status', 'warn');
+    expect(screen.getByText('Secret ownership')).toBeInTheDocument();
+
+    // The fix line renders on warn, not just on fail.
+    const fix = screen.getByTestId('doctor-fix-secret-ownership');
+    expect(fix).toHaveTextContent(/Replace sync option/);
+    expect(fix).toHaveTextContent('https://sharko.readthedocs.io/en/latest/operator/self-managed-connections/');
   });
 
   it('renders the all-fail overall verdict and fix lines on every failed check', async () => {

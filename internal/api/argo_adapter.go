@@ -66,7 +66,11 @@ func (a *argoManagerAdapter) Ensure(ctx context.Context, spec orchestrator.ArgoS
 // of orchestrator.ArgoSecretManager — it satisfies the OPTIONAL
 // foreignOwnerDetector capability that AdoptClusters / RegisterCluster
 // type-assert for the foreign-ArgoCD-ownership warning (V2-cleanup-89.5),
-// same optional-capability pattern as StripOwnershipLabel above.
-func (a *argoManagerAdapter) GetTrackingOwner(ctx context.Context, name string) (string, bool, error) {
-	return a.mgr.GetTrackingOwner(ctx, name)
+// same optional-capability pattern as StripOwnershipLabel above. The
+// confidence value is converted from argosecrets.OwnerConfidence to a plain
+// string (V2-cleanup-90.1) so the orchestrator package — which must not
+// import internal/argosecrets — can declare the interface without it.
+func (a *argoManagerAdapter) GetTrackingOwner(ctx context.Context, name string) (string, string, bool, error) {
+	appName, confidence, found, err := a.mgr.GetTrackingOwner(ctx, name)
+	return appName, string(confidence), found, err
 }
