@@ -455,6 +455,11 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 			Error:     err.Error(),
 			RequestID: logging.RequestID(ctx),
 		})
+		// M5a: this pass never reaches the per-cluster work below, so every
+		// cluster's last-known record would otherwise silently age. Stamp
+		// them all Failed so an operator watching one cluster sees the
+		// abort, not a stale success from an earlier tick.
+		r.stampAbortedTick("git read failed: " + err.Error())
 		return
 	}
 
@@ -479,6 +484,8 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 			Error:     err.Error(),
 			RequestID: logging.RequestID(ctx),
 		})
+		// M5a — see the git-read-failure branch above for the rationale.
+		r.stampAbortedTick("schema validation failed: " + err.Error())
 		return
 	}
 
@@ -557,6 +564,9 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 			Error:     err.Error(),
 			RequestID: logging.RequestID(ctx),
 		})
+		// M5a — this pass never reaches the per-cluster work either; see
+		// the pollOnce git-read-failure branch for the full rationale.
+		r.stampAbortedTick("listing ArgoCD cluster secrets failed: " + err.Error())
 		return
 	}
 
@@ -587,7 +597,20 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 		}
 	}
 	for _, name := range alreadyInSync {
-		r.recordReconcile(name, OutcomeSucceeded, "")
+		// M5b: "succeeded" here was previously earned by Secret PRESENCE
+		// alone — the record never said what, if anything, was actually
+		// checked. We already have both sides of the comparison in hand
+		// from this pass (desired[name], and existing[name].Labels from the
+		// listManagedSecrets call above) — no extra API call needed — so
+		// state honestly what was verified: the addon labels too, if they
+		// match, or just presence if they don't (reconcileDiff does not
+		// currently repair label drift on an already-existing Sharko-owned
+		// Secret, so claiming "verified" when they differ would be a lie).
+		msg := "cluster Secret present"
+		if secret := existing[name]; secret != nil && labelsMatch(desiredAddonLabels(desired[name]), secret.Labels) {
+			msg = "cluster Secret present; labels verified"
+		}
+		r.recordReconcile(name, OutcomeSucceeded, msg)
 	}
 
 	now := r.now()
@@ -730,6 +753,53 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 			r.clearRegistrationPending(ctx, name, secret, stats)
 		}
 	}
+
+	// M3: prune reconcile records for clusters this pass no longer knows
+	// about — neither desired (in managed-clusters.yaml) nor observed live
+	// in ArgoCD. `existing` is a snapshot taken before any create/delete
+	// ran, so an orphan whose delete just succeeded or failed THIS pass is
+	// still a member of it — see pruneStaleReconcileRecords's doc comment
+	// for the full L10 interaction.
+	known := make(map[string]struct{}, len(desired)+len(existing))
+	for name := range desired {
+		known[name] = struct{}{}
+	}
+	for name := range existing {
+		known[name] = struct{}{}
+	}
+	r.pruneStaleReconcileRecords(known)
+}
+
+// desiredAddonLabels computes the addon-label set Sharko wants for a
+// managed-clusters.yaml entry, using the same normalization createOne
+// applies (raw labels coerced to map[string]string, legacy "true"/"false"
+// values upgraded to the canonical vocabulary). Deliberately excludes the
+// connectivity-check and managed-by labels — those are reconciler-derived
+// / ownership bookkeeping, not part of "what the operator asked for", and
+// including them would make an honest already-in-sync comparison (M5b)
+// depend on server settings (ProbeModeFn) that have nothing to do with
+// whether the cluster's OWN addon labels are correct.
+func desiredAddonLabels(entry models.ManagedClusterEntry) map[string]string {
+	labels := normalizeLabels(entry.Labels)
+	for k, v := range labels {
+		if normalized, changed := models.NormalizeAddonLabelValue(v); changed {
+			labels[k] = normalized
+		}
+	}
+	return labels
+}
+
+// labelsMatch reports whether every key/value in want is present with an
+// identical value in have. have may carry extra keys (e.g. the ownership
+// and secret-type labels) without failing the match — this only checks
+// that the wanted subset is satisfied.
+func labelsMatch(want, have map[string]string) bool {
+	for k, v := range want {
+		if have[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // syncSelfManaged converges ONLY the addon labels onto the user-created
@@ -776,6 +846,16 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 	var observedLive map[string]string
 	if liveSecret, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, entry.Name, metav1.GetOptions{}); getErr == nil {
 		observedLive = liveSecret.Labels
+		if observedLive == nil {
+			// The Secret exists but currently carries NO labels at all — a
+			// real (possibly reverted-to-nothing) observation, not an
+			// unknown one. Use the empty map so recordFightCheck's
+			// `observedLive != nil` gate treats this as "compare against
+			// zero labels" instead of silently skipping the fight check —
+			// a Replace=true sync wiping every label would otherwise look
+			// identical to "read failed" and go undetected (L5).
+			observedLive = map[string]string{}
+		}
 	} else if !apierrors.IsNotFound(getErr) {
 		log.Warn("[clusterreconciler] label-fight pre-read failed — skipping this tick's fight check",
 			"cluster", entry.Name, "namespace", r.namespace, "error", getErr,
@@ -801,6 +881,11 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 			Error:     err.Error(),
 			RequestID: logging.RequestID(ctx),
 		})
+		// M1: this tick's write never landed, so the fight-check baseline
+		// recordFightCheck just advanced (above) is a lie — clear it so the
+		// NEXT tick doesn't mistake Sharko's own failed write for another
+		// actor reverting it. See resetFightStreak's doc comment.
+		r.resetFightStreak(entry.Name)
 		r.recordReconcile(entry.Name, OutcomeFailed,
 			"Sharko couldn't sync addon labels onto this cluster's self-managed ArgoCD secret: "+err.Error())
 		return
@@ -1181,6 +1266,8 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 		log.Warn("[clusterreconciler] cached secret missing sharko label between list and delete — skipping (invariant guard)",
 			"cluster", name, "namespace", r.namespace,
 		)
+		r.recordReconcile(name, OutcomeSkipped,
+			"This cluster's ArgoCD secret unexpectedly lost Sharko's ownership label between listing and delete — left in place as a safety measure.")
 		return
 	}
 
@@ -1190,6 +1277,7 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 			log.Info("[clusterreconciler] orphan Secret already deleted",
 				"cluster", name, "namespace", r.namespace,
 			)
+			r.recordReconcile(name, OutcomeSucceeded, "orphaned Secret already removed")
 			return
 		}
 		stats.Errors++
@@ -1207,6 +1295,14 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 			Error:     err.Error(),
 			RequestID: logging.RequestID(ctx),
 		})
+		// L10: without this, an orphan Sharko repeatedly fails to delete
+		// would silently keep whatever stale record it had (or none at
+		// all) — the operator has no way to see the delete itself is
+		// failing, only that the Secret is still there. The pruning
+		// interaction that keeps this record visible for as long as the
+		// orphan exists is documented on pruneStaleReconcileRecords.
+		r.recordReconcile(name, OutcomeFailed,
+			"Sharko couldn't remove this orphaned ArgoCD cluster secret: "+err.Error())
 		return
 	}
 
@@ -1224,6 +1320,7 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 		Result:    "success",
 		RequestID: logging.RequestID(ctx),
 	})
+	r.recordReconcile(name, OutcomeSucceeded, "orphaned Secret removed")
 }
 
 // emitSummaryAudit fires one audit entry per tick describing the net
