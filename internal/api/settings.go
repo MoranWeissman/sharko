@@ -140,7 +140,9 @@ func (s *Server) handleGetAllowInlineCredentials(w http.ResponseWriter, r *http.
 // @Security BearerAuth
 // @Param body body allowInlineCredentialsResponse true "Desired setting"
 // @Success 200 {object} allowInlineCredentialsResponse "Setting saved"
+// @Failure 400 {object} map[string]interface{} "Invalid request body"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden — admin role required"
 // @Failure 503 {object} map[string]interface{} "Settings store not available"
 // @Router /settings/allow-inline-credentials [put]
 func (s *Server) handleSetAllowInlineCredentials(w http.ResponseWriter, r *http.Request) {

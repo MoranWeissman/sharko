@@ -50,6 +50,7 @@ func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) 
 //
 // @Summary Trigger a manual cluster reconcile
 // @Description Nudges the cluster-secret reconciler to run immediately instead of waiting for its periodic tick.
+// @Description This is a fleet-wide pass, not a targeted single-cluster reconcile — see the 202 response message.
 // @Description Returns 202 as soon as the trigger is accepted — the reconcile itself runs asynchronously.
 // @Description Poll GET /clusters/{name} and read the updated last_reconcile field once the pass completes.
 // @Tags clusters
@@ -57,8 +58,8 @@ func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) 
 // @Security BearerAuth
 // @Param name path string true "Cluster name"
 // @Success 202 {object} map[string]interface{} "Reconcile triggered"
-// @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden — requires operator role or higher"
 // @Failure 404 {object} map[string]interface{} "Cluster not found"
 // @Failure 503 {object} map[string]interface{} "Reconciler not running on this server"
 // @Router /clusters/{name}/reconcile [post]
@@ -74,14 +75,31 @@ func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) 
 // safety-net tick already does continuously, so triggering it early is
 // cheap. The UI polls GET /clusters/{name} afterward and reads the updated
 // last_reconcile field once the triggered pass completes.
+//
+// Handler order (V2-cleanup-90.3 / review finding L2): the cheap
+// "is a reconciler even wired on this server" 503 check runs FIRST, before
+// the Git/ArgoCD round-trips needed for the 404 existence check — no reason
+// to pay for two upstream calls just to then discover there is nowhere to
+// route the trigger. The 404 check still runs after that gate, so a request
+// for an unknown cluster on a server WITH a reconciler wired still gets 404
+// rather than a false 202.
+//
+// name is never empty here: the only route to this handler is
+// "POST /clusters/{name}/reconcile" (see router.go), and Go 1.22
+// ServeMux path-cleaning redirects "/clusters//reconcile" away from this
+// pattern before the handler ever runs — so there is no reachable path that
+// reaches this handler with an empty PathValue("name").
 func (s *Server) handleReconcileCluster(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.reconcile") {
 		return
 	}
 
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "cluster name is required")
+
+	if s.reconcilerTrigger == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "the cluster reconciler is not running on this server (no in-cluster Kubernetes client or credentials provider configured) — addon labels are not auto-synced to ArgoCD on this deployment",
+		})
 		return
 	}
 
@@ -106,12 +124,6 @@ func (s *Server) handleReconcileCluster(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if s.reconcilerTrigger == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"error": "the cluster reconciler is not running on this server (no in-cluster Kubernetes client or credentials provider configured) — addon labels are not auto-synced to ArgoCD on this deployment",
-		})
-		return
-	}
 	s.reconcilerTrigger()
 
 	audit.Enrich(r.Context(), audit.Fields{
@@ -121,6 +133,6 @@ func (s *Server) handleReconcileCluster(w http.ResponseWriter, r *http.Request) 
 
 	writeJSON(w, http.StatusAccepted, map[string]string{
 		"status":  "accepted",
-		"message": "reconcile triggered for cluster " + name,
+		"message": fmt.Sprintf("reconcile pass triggered — the fleet-wide pass includes cluster %q", name),
 	})
 }
