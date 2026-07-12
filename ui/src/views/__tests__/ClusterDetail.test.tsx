@@ -826,6 +826,40 @@ describe('ClusterDetail', () => {
       });
       expect(screen.queryByTestId('test-unavailable-banner')).not.toBeInTheDocument();
     });
+
+    // V2-cleanup-91.1/F5: the Test-connection result now lives in a modal
+    // (TestConnectionModal), mirroring "Check permissions". Clicking the
+    // button opens the modal and renders the same step-by-step result the
+    // old inline panel showed.
+    it('opens the Test connection modal and renders the step-by-step result (F5)', async () => {
+      mockTestClusterConnection.mockResolvedValueOnce({
+        reachable: true,
+        success: true,
+        server_version: 'v1.29.3',
+        steps: [
+          { name: 'Fetch credentials', status: 'pass' },
+          { name: 'Fetch server version', status: 'pass' },
+        ],
+      });
+      renderView();
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      // Modal is not mounted until the button is clicked.
+      expect(screen.queryByTestId('test-connection-modal')).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: /^test connection$/i }));
+
+      // Modal opens, titled for this cluster, and shows the step rows +
+      // Connected badge.
+      await waitFor(() => {
+        expect(screen.getByTestId('test-connection-modal')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Test connection: prod-eu')).toBeInTheDocument();
+      expect(screen.getByText('Fetch credentials')).toBeInTheDocument();
+      expect(screen.getByText(/Connected.*v1\.29\.3/)).toBeInTheDocument();
+    });
   });
 
   // V2-cleanup-13 → V2-cleanup-40: cluster removal uses the global auto-merge
@@ -866,34 +900,39 @@ describe('ClusterDetail', () => {
       });
     });
 
-    it('merged: toasts "removed" and navigates away', async () => {
-      mockDeregisterCluster.mockResolvedValue({ git: { merged: true, pr_id: 7 } });
+    // V2-cleanup-91.1/F1: removal now surfaces its PR the same way every
+    // other write flow does — a persistent on-page PRResultBanner with a
+    // clickable "View PR" link — instead of a transient toast. This holds
+    // for BOTH the auto-merge (merged) and manual (open PR) paths.
+    it('merged: shows a persistent merged-PR banner with a clickable View-PR link', async () => {
+      mockDeregisterCluster.mockResolvedValue({
+        git: { merged: true, pr_id: 7, pr_url: 'https://github.com/example/repo/pull/7' },
+      });
       await openRemoveModal();
       fireEvent.click(screen.getByRole('button', { name: /^Remove$/i }));
 
-      await waitFor(() => {
-        expect(mockShowToast).toHaveBeenCalledWith(
-          expect.stringMatching(/removed/i),
-          'success',
-        );
-      });
-      expect(mockNavigate).toHaveBeenCalledWith('/clusters');
+      // Persistent banner (not a transient toast) shows the merged outcome
+      // with a clickable link to the PR.
+      const link = await screen.findByRole('link', { name: /View PR #7 on GitHub/i });
+      expect(link).toHaveAttribute('href', 'https://github.com/example/repo/pull/7');
+      expect(screen.getByText(/PR merged/i)).toBeInTheDocument();
+
+      // F1 keeps the user on the page so the banner + link survive; it does
+      // not auto-navigate away mid-removal.
+      expect(mockNavigate).not.toHaveBeenCalledWith('/clusters');
     });
 
-    it('open PR: toasts "PR opened", stays on page', async () => {
+    it('open PR: shows a persistent open-PR banner with a clickable View-PR link, stays on page', async () => {
       mockDeregisterCluster.mockResolvedValue({
         git: { merged: false, pr_id: 12, pr_url: 'https://github.com/example/repo/pull/12' },
       });
       await openRemoveModal();
       fireEvent.click(screen.getByRole('button', { name: /^Remove$/i }));
 
-      await waitFor(() => {
-        expect(mockShowToast).toHaveBeenCalledWith(
-          expect.stringMatching(/PR opened for review/i),
-          'success',
-          { url: 'https://github.com/example/repo/pull/12', id: 12 },
-        );
-      });
+      const link = await screen.findByRole('link', { name: /View PR #12 on GitHub/i });
+      expect(link).toHaveAttribute('href', 'https://github.com/example/repo/pull/12');
+      expect(screen.getByText(/PR opened/i)).toBeInTheDocument();
+
       // Manual path must NOT navigate away — the cluster is still listed.
       expect(mockNavigate).not.toHaveBeenCalledWith('/clusters');
     });

@@ -93,7 +93,7 @@ describe('DoctorModal', () => {
     renderModal();
 
     expect(screen.getByText('Running the doctor…')).toBeInTheDocument();
-    expect(screen.getByText('Run connection doctor: prod-eu')).toBeInTheDocument();
+    expect(screen.getByText('Diagnose connection: prod-eu')).toBeInTheDocument();
   });
 
   it('does not call the API when closed', () => {
@@ -103,7 +103,7 @@ describe('DoctorModal', () => {
     expect(mockDoctorCluster).not.toHaveBeenCalled();
   });
 
-  it('renders all four checks with a green check on pass and a gray dash on not-applicable', async () => {
+  it('renders all four checks with a green check on pass and a muted dash on not-applicable', async () => {
     mockDoctorCluster.mockResolvedValue(allPassReport);
     renderModal();
 
