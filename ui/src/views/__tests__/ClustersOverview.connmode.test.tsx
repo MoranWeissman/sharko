@@ -168,8 +168,14 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
 
     fireEvent.change(ownershipSelect(), { target: { value: 'user' } });
 
+    // V2-cleanup-91.2 (F4): the hint is now one sentence + a real docs link.
     expect(
-      screen.getByText(/Sharko never touches its credentials — it only keeps the addon labels on it in sync/),
+      screen.getByText(
+        /You create and maintain the ArgoCD cluster secret yourself; Sharko only manages the addon labels on it\./,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Operator guide: Managing cluster connections yourself/ }),
     ).toBeInTheDocument();
   });
 
@@ -178,6 +184,11 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
     await openAddDialog();
 
     fireEvent.change(ownershipSelect(), { target: { value: 'user' } });
+    // V2-cleanup-91.2 (F2): in the "I do" + nothing-to-adopt case, the
+    // connection-source selector is optional and collapsed. Expand it first.
+    fireEvent.click(
+      screen.getByText(/Add connection credentials \(optional — used only to test connectivity\)/),
+    );
     // Switch to the inline-kubeconfig source and leave it EMPTY — allowed
     // for self-managed connections (credentials optional).
     fireEvent.change(
