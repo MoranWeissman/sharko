@@ -456,7 +456,7 @@ func (s *Server) doctorCheckAssumeRole(ctx context.Context, clusterName string) 
 			ID:     doctorCheckAssumeRole,
 			Status: doctorStatusFail,
 			Detail: fmt.Sprintf("Sharko could not assume role %q: %s", roleARN, err.Error()),
-			Fix:    fmt.Sprintf("In AWS, check that role %q trusts Sharko's own IAM identity in its trust policy, and that Sharko's identity has sts:AssumeRole permission on it.", roleARN),
+			Fix:    verify.AssumeRoleHint(err),
 		}
 	}
 
