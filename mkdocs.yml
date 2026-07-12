@@ -46,6 +46,7 @@ nav:
     - First Run: getting-started/first-run.md
   - User Guide:
     - Managing Connections: user-guide/connections.md
+    - Secrets Provider: user-guide/secrets-provider.md
     - Managing Clusters: user-guide/clusters.md
     - Managing Addons: user-guide/addons.md
     - Marketplace: user-guide/marketplace.md
