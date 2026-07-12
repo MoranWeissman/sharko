@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Server,
@@ -110,11 +110,25 @@ const CREDS_SOURCE_HINTS: Record<CredsSource, string> = {
 // it yourself (the operator guide shows the exact YAML) and Sharko only
 // keeps the addon labels on it in sync.
 export type ConnOwnership = 'sharko' | 'user';
-export const CONN_OWNERSHIP_HINTS: Record<ConnOwnership, string> = {
-  sharko:
-    'Sharko creates the ArgoCD cluster secret and keeps its credentials up to date. The usual choice.',
-  user:
-    'You create the ArgoCD cluster secret yourself and Sharko never touches its credentials — it only keeps the addon labels on it in sync. Git stays the source of truth for which addons go where. Credentials below become optional (used only to test connectivity). See the operator guide: Managing cluster connections yourself.',
+export const CONN_OWNERSHIP_HINTS: Record<ConnOwnership, ReactNode> = {
+  sharko: (
+    <>
+      Sharko creates the ArgoCD cluster secret and keeps its credentials up to date. The usual choice.
+    </>
+  ),
+  user: (
+    <>
+      You create and maintain the ArgoCD cluster secret yourself; Sharko only manages the addon labels on it.{' '}
+      <a
+        href="https://github.com/moran/sharko/blob/main/docs/operator-guide.md#managing-cluster-connections-yourself"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-teal-600 hover:underline dark:text-teal-400"
+      >
+        Operator guide: Managing cluster connections yourself
+      </a>
+    </>
+  ),
 };
 
 export function ClustersOverview() {
@@ -258,6 +272,11 @@ export function ClustersOverview() {
   // user creates the secret by hand, Sharko only syncs addon labels onto
   // it, and the credential inputs become optional (verification only).
   const [connManagedBy, setConnManagedBy] = useState<ConnOwnership>('sharko');
+
+  // V2-cleanup-91.2 (F2): toggle for optional connection credentials in the
+  // "I do" + nothing-to-adopt case. When false, the selector is collapsed;
+  // when true, it expands.
+  const [showOptionalCreds, setShowOptionalCreds] = useState(false);
 
   // Legacy `provider` value, kept in sync with `credsSource` so anything
   // that still reads `provider` (audit trails, persisted state) sees a
@@ -430,6 +449,8 @@ export function ClustersOverview() {
     setCredsSource('');
     setConnManagedBy(presetOwnership ?? 'sharko');
     setPickedDiscovered(null);
+    // V2-cleanup-91.2 (F2): reset optional-creds toggle when dialog reopens.
+    setShowOptionalCreds(false);
     setDryRunResult(null);
     setDryRunLoading(false);
     // Fetch catalog for addon multi-select
@@ -842,7 +863,17 @@ export function ClustersOverview() {
   // The creds-source CHOICE itself is still always required — there is no
   // silent default to fall into (V2-cleanup-60.4) — but which field, if
   // any, is filled in underneath it no longer gates submission.
-  const directRequiredMissing = credsSource === '';
+  //
+  // V2-cleanup-91.2 (F2): EXCEPT in the "I do" + nothing-to-adopt case where
+  // the creds-source selector is optional (collapsed behind a toggle) — then
+  // an empty credsSource is allowed (the user never clicked the toggle to add
+  // optional credentials).
+  const userManagedWithNothingToAdopt =
+    connManagedBy === 'user' &&
+    !loading &&
+    !argoCDUnreachable &&
+    discoveredClusters.length === 0;
+  const directRequiredMissing = credsSource === '' && !userManagedWithNothingToAdopt;
 
   const handleStatusFilter = (filter: StatusFilter) => {
     setStatusFilter(statusFilter === filter ? 'all' : filter);
@@ -1047,7 +1078,7 @@ export function ClustersOverview() {
                 <option value="sharko">Sharko (default)</option>
                 <option value="user">I do — Sharko only manages addon labels</option>
               </select>
-              <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+              <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-400">
                 {CONN_OWNERSHIP_HINTS[connManagedBy]}
               </p>
             </div>
@@ -1133,36 +1164,71 @@ export function ClustersOverview() {
               * V2-cleanup-88.5). We ask HOW Sharko should get the
               * cluster's connection credentials, and that choice drives
               * which inputs show below. Cluster platform (EKS/GKE/AKS) is
-              * now implied metadata, not the gate. */}
-            <div>
-              <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                Connection source
-              </label>
-              <select
-                value={credsSource}
-                onChange={(e) => setCredsSource(e.target.value as CredsSource)}
-                className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-              >
-                {/* No silent default (V2-cleanup-60.4): the placeholder is
-                  * not selectable, and Preview/Register stay disabled until
-                  * the user makes an explicit choice. */}
-                <option value="" disabled>Choose where this cluster's credentials come from…</option>
-                {/* Hidden when an admin has turned off allow_inline_credentials
-                  * (V2-cleanup-89.6) — the server rejects it anyway, so don't
-                  * offer an option that will only 403. */}
-                {allowInlineCredentials && (
-                  <option value="inline-kubeconfig">Paste a kubeconfig (quick, not GitOps-clean)</option>
-                )}
-                <option value="secret-kubeconfig">Point at your secret store (recommended — GitOps-clean)</option>
-                <option value="eks-token">Amazon EKS — generate a token from cloud identity (no stored credentials)</option>
-              </select>
-              {/* Plain-English hint for the selected option (V2-cleanup-55.3). */}
-              <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                {credsSource === ''
-                  ? 'Required — pick one of the three options before registering.'
-                  : CREDS_SOURCE_HINTS[credsSource]}
-              </p>
-            </div>
+              * now implied metadata, not the gate.
+              *
+              * V2-cleanup-91.2 (F2): in the "I do" path with nothing to
+              * adopt, credentials are OPTIONAL (connectivity test only) and
+              * the selector is gated — collapsed behind an expand toggle
+              * instead of rendering as a required choice under the "nothing
+              * to adopt" empty-state. Credentials stay required where they
+              * genuinely apply: Sharko-managed connections, or when there ARE
+              * discovered clusters to adopt in the "I do" path. */}
+            {(() => {
+              const userManagedWithNothingToAdopt =
+                connManagedBy === 'user' &&
+                !loading &&
+                !argoCDUnreachable &&
+                discoveredClusters.length === 0;
+
+              if (userManagedWithNothingToAdopt && !showOptionalCreds) {
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setShowOptionalCreds(true)}
+                    className="text-xs text-teal-600 hover:underline dark:text-teal-400"
+                  >
+                    + Add connection credentials (optional — used only to test connectivity)
+                  </button>
+                );
+              }
+
+              return (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                    Connection source{userManagedWithNothingToAdopt && <span className="font-normal text-[#5a8aaa] dark:text-gray-500"> (optional)</span>}
+                  </label>
+                  <select
+                    value={credsSource}
+                    onChange={(e) => setCredsSource(e.target.value as CredsSource)}
+                    className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  >
+                    {/* No silent default (V2-cleanup-60.4): the placeholder is
+                      * not selectable, and Preview/Register stay disabled until
+                      * the user makes an explicit choice. */}
+                    <option value="" disabled>Choose where this cluster's credentials come from…</option>
+                    {/* Hidden when an admin has turned off allow_inline_credentials
+                      * (V2-cleanup-89.6) — the server rejects it anyway, so don't
+                      * offer an option that will only 403. */}
+                    {allowInlineCredentials && (
+                      <option value="inline-kubeconfig">Paste a kubeconfig (quick, not GitOps-clean)</option>
+                    )}
+                    <option value="secret-kubeconfig">Point at your secret store (recommended — GitOps-clean)</option>
+                    <option value="eks-token">Amazon EKS — generate a token from cloud identity (no stored credentials)</option>
+                  </select>
+                  {/* Plain-English hint for the selected option (V2-cleanup-55.3).
+                    * V2-cleanup-91.2 (F2): "Required" only fires when the selector
+                    * is genuinely required (not in the "I do" + nothing-to-adopt
+                    * case where credentials are optional). */}
+                  <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                    {credsSource === ''
+                      ? userManagedWithNothingToAdopt
+                        ? 'Pick a credential source if you want to test connectivity now.'
+                        : 'Required — pick one of the three options before registering.'
+                      : CREDS_SOURCE_HINTS[credsSource]}
+                  </p>
+                </div>
+              );
+            })()}
 
             {/* Cluster Name is required for every provider. */}
             <div>

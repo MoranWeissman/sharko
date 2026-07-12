@@ -4,8 +4,9 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
 
-// V2-cleanup-88.5 — "Run connection doctor" button on the cluster detail
-// page, next to Test connection / Check permissions. The doctor's own
+// V2-cleanup-88.5 — the connection doctor button ("Diagnose connection",
+// renamed in V2-cleanup-91.1/F6) on the cluster detail page, next to Test
+// connection / Check permissions. The doctor's own
 // check-rendering (all three statuses + fix line) is pinned in
 // DoctorModal.test.tsx; this file pins the integration: the button exists
 // in the right place, is wired to the right cluster name, and opens the
@@ -104,7 +105,7 @@ describe('ClusterDetail — connection doctor button (V2-cleanup-88.5)', () => {
     mockGetAddonCatalog.mockResolvedValue({ addons: [] });
   });
 
-  it('renders "Run connection doctor" next to Test connection and Check permissions', async () => {
+  it('renders "Diagnose connection" next to Test connection and Check permissions', async () => {
     renderView();
 
     await waitFor(() => {
@@ -114,7 +115,7 @@ describe('ClusterDetail — connection doctor button (V2-cleanup-88.5)', () => {
     expect(screen.getByRole('button', { name: /^Test connection$/ })).toBeInTheDocument();
     const doctorButton = screen.getByTestId('run-connection-doctor');
     expect(doctorButton).toBeInTheDocument();
-    expect(doctorButton).toHaveTextContent('Run connection doctor');
+    expect(doctorButton).toHaveTextContent('Diagnose connection');
   });
 
   it('opens the doctor modal for this cluster and renders real check data on click', async () => {
@@ -140,7 +141,7 @@ describe('ClusterDetail — connection doctor button (V2-cleanup-88.5)', () => {
       expect(mockDoctorCluster).toHaveBeenCalledWith('prod-eu');
     });
     await waitFor(() => {
-      expect(screen.getByText('Run connection doctor: prod-eu')).toBeInTheDocument();
+      expect(screen.getByText('Diagnose connection: prod-eu')).toBeInTheDocument();
     });
     await waitFor(() => {
       expect(screen.getByText('All checks passed — this cluster’s connection looks healthy.')).toBeInTheDocument();

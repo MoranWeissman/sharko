@@ -91,6 +91,10 @@ func Hint(code ErrorCode) string {
 		return "the cluster rejected the credentials (HTTP 401) — the token may be expired or invalid; regenerate the kubeconfig/token and try again."
 	case ERR_RBAC:
 		return "the cluster accepted the credentials but denied the action (HTTP 403) — grant the service account the required RBAC permissions and try again."
+	case ERR_AWS_STS:
+		return "AWS STS token minting failed — check that Sharko's identity has permission to mint tokens for this cluster and that the cluster region is correctly configured."
+	case ERR_AWS_ASSUME:
+		return "the assume-role attempt failed — check the role's trust policy, ensure Sharko's identity has sts:AssumeRole permission on it, and verify sts:TagSession is granted if using EKS Pod Identity."
 	default:
 		return ""
 	}
@@ -110,4 +114,41 @@ func FriendlyMessage(r Result) string {
 		return base + " — " + hint
 	}
 	return base
+}
+
+// AssumeRoleHint returns a cause-specific hint for an assume-role failure by
+// matching known AWS error patterns. This is narrower than the generic
+// ERR_AWS_ASSUME hint and distinguishes the three most actionable sub-types:
+// trust policy rejection, missing sts:AssumeRole permission, and missing
+// sts:TagSession permission. When the failure doesn't clearly match any
+// sub-type, it falls back to the combined generic hint from Hint(ERR_AWS_ASSUME).
+func AssumeRoleHint(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+
+	// sts:TagSession denial — EKS Pod Identity sessions require session tags
+	// Check this first since it's the most specific pattern
+	if strings.Contains(msg, "TagSession") || strings.Contains(msg, "sts:TagSession") {
+		return "Sharko's identity lacks sts:TagSession permission — EKS Pod Identity sessions carry session tags, so grant both sts:AssumeRole and sts:TagSession on this role."
+	}
+
+	// Trust policy rejection — the role won't be assumed by Sharko's identity
+	// "not authorized to assume" is the clearest signal
+	if strings.Contains(msg, "not authorized to assume") {
+		return "The role's trust policy does not allow Sharko's identity to assume it — update the role's trust policy to trust Sharko's IAM principal."
+	}
+
+	// AccessDenied on AssumeRole with "not authorized to perform" and "sts:AssumeRole"
+	// This pattern (AccessDenied + perform + AssumeRole) typically indicates a trust policy issue
+	if (strings.Contains(lower, "accessdenied") || strings.Contains(lower, "access denied")) &&
+		strings.Contains(lower, "not authorized to perform") &&
+		strings.Contains(lower, "sts:assumerole") {
+		return "The role's trust policy does not allow Sharko's identity to assume it — update the role's trust policy to trust Sharko's IAM principal."
+	}
+
+	// Fallback to the generic ERR_AWS_ASSUME hint
+	return Hint(ERR_AWS_ASSUME)
 }

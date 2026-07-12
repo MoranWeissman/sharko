@@ -25,9 +25,8 @@ interface DoctorModalProps {
   onClose: () => void;
 }
 
-export const DOCTOR_LABEL = 'Run connection doctor';
-export const DOCTOR_HINT =
-  'Runs four real checks against this cluster’s connection — reading connection credentials, reading every addon secret path, assuming a cross-account role if one is configured, and writing/reading on the cluster itself — and tells you exactly what to fix on failure.';
+export const DOCTOR_LABEL = 'Diagnose connection';
+export const DOCTOR_HINT = 'Checks connection credentials, addon secret paths, cross-account role (if configured), cluster access, and secret ownership. Tells you exactly what to fix on failure.';
 
 const CHECK_LABELS: Record<DoctorCheck['id'], string> = {
   'connection-credentials': 'Connection credentials',
@@ -47,7 +46,7 @@ function CheckIcon({ status }: { status: DoctorCheck['status'] }) {
   if (status === 'fail') {
     return <XCircle className="h-4 w-4 shrink-0 text-red-500 dark:text-red-400" aria-label="Failed" />;
   }
-  return <MinusCircle className="h-4 w-4 shrink-0 text-gray-400 dark:text-gray-500" aria-label="Not applicable" />;
+  return <MinusCircle className="h-4 w-4 shrink-0 text-[#5a8aaa] dark:text-gray-500" aria-label="Not applicable" />;
 }
 
 export function DoctorModal({ clusterName, open, onClose }: DoctorModalProps) {

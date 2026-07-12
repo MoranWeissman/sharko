@@ -40,7 +40,7 @@ import type { ClusterChange, ClusterComparisonResponse, AddonComparisonStatus, C
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ConnectivityBadge } from '@/components/ConnectivityBadge';
-import { SHARKO_CONN_LABEL, SHARKO_CONN_TOOLTIP } from '@/components/WhoseConnectionLabel';
+import { SHARKO_CONN_TOOLTIP } from '@/components/WhoseConnectionLabel';
 import {
   TEST_CONNECTION_LABEL,
   TEST_CONNECTION_HINT,
@@ -58,6 +58,7 @@ import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { DoctorModal, DOCTOR_LABEL, DOCTOR_HINT } from '@/components/DoctorModal';
+import { TestConnectionModal } from '@/components/TestConnectionModal';
 import { PendingPRsPanel } from '@/components/PendingPRsPanel';
 import { CompletedChangesPanel } from '@/components/CompletedChangesPanel';
 import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOverridesEditor';
@@ -131,66 +132,6 @@ function ClusterChangesSection({
         refreshKey={completedRefreshKey}
         onDataChange={handleCompletedData}
       />
-    </div>
-  );
-}
-
-// Per-error-code copy + optional action link for the Test-unavailable
-// banner. Production targets are self-hosted K8s + AWS-managed clusters;
-// kind/minikube are dev-only and must not anchor production-facing copy.
-// The aws-iam-cluster-auth docs link points at an in-app placeholder
-// today; it will resolve once the operator-docs page lands.
-function TestUnavailableBanner({ result }: { result: TestClusterUnavailable }) {
-  let title: string;
-  let body: string;
-  let actionTo: string | null = null;
-  let actionLabel: string | null = null;
-
-  switch (result.error_code) {
-    case 'no_secrets_backend':
-      title = 'Cluster test unavailable';
-      body = result.error;
-      actionTo = '/settings?section=connections';
-      actionLabel = 'Open Settings → Connections';
-      break;
-    case 'argocd_provider_iam_required':
-      title = 'AWS IAM authentication required';
-      body =
-        "This cluster uses AWS IAM authentication. Configure AWS credentials for the Sharko pod's role (IRSA, EC2 instance profile, or Pod Identity) to enable Test connection for AWS-managed clusters.";
-      actionTo = '/docs/operator/aws-iam-cluster-auth';
-      actionLabel = 'Open IAM setup guide';
-      break;
-    case 'argocd_provider_exec_unsupported':
-      title = 'Exec-plugin authentication not supported';
-      body =
-        'This cluster uses exec-plugin auth (e.g. gcloud, azure-cli, aws-iam-authenticator). Exec plugins are not supported in Sharko v1.x — tracked for v2.';
-      // No action link — surface the limitation; there is no in-app fix path.
-      break;
-    case 'argocd_provider_unsupported_auth':
-      title = 'Unrecognized cluster authentication';
-      body =
-        "Unrecognized authentication shape in this cluster's ArgoCD Secret. Inspect the Secret manually in the argocd namespace (kubectl -n argocd get secret <name> -o yaml).";
-      // No action link — manual inspection is the only path.
-      break;
-  }
-
-  return (
-    <div
-      role="alert"
-      data-testid="test-unavailable-banner"
-      data-error-code={result.error_code}
-      className="mt-2 rounded-lg ring-2 ring-amber-300 bg-amber-50 px-3 py-2 dark:ring-amber-700 dark:bg-amber-950/30"
-    >
-      <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">{title}</p>
-      <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300">{body}</p>
-      {actionTo && actionLabel && (
-        <Link
-          to={actionTo}
-          className="mt-1 inline-block text-xs font-medium text-amber-800 underline hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
-        >
-          {actionLabel}
-        </Link>
-      )}
     </div>
   );
 }
@@ -303,6 +244,8 @@ export function ClusterDetail() {
   // against this cluster's connection, next to Test connection / Check
   // permissions.
   const [doctorOpen, setDoctorOpen] = useState(false);
+  // Test connection modal (V2-cleanup-91.1/F5) — replaces inline results panel.
+  const [testOpen, setTestOpen] = useState(false);
 
   // Manual "sync now" (V2-cleanup-89.4) — nudges the cluster-secret
   // reconciler instead of waiting for its periodic tick.
@@ -495,6 +438,10 @@ export function ClusterDetail() {
     setConfigFetched(false);
   }, []);
 
+  // F1 (V2-cleanup-91.1): cluster removal PR transparency — state for the
+  // persistent on-page PR banner/progress after the modal closes.
+  const [removalPRResult, setRemovalPRResult] = useState<PRWriteResult | null>(null);
+
   const handleRemoveCluster = useCallback(async () => {
     if (!name) return;
     setRemoving(true);
@@ -502,31 +449,33 @@ export function ClusterDetail() {
     try {
       // Let the global GitOps auto-merge setting decide — don't pass an override.
       const result = await deregisterCluster(name);
-      const git = result?.git;
+      // deregisterCluster wraps its PR fields under `git` — hand THAT to the
+      // banner (extractPR reads pr_url/pr_id/merged off the object it's given).
+      const git = result?.git ?? null;
       const merged = git?.merged ?? false;
-      const prUrl = git?.pr_url || git?.pull_request_url;
-      const prId = git?.pr_id;
-      if (merged) {
-        showToast(`Cluster "${name}" removed.`, 'success');
-        navigate('/clusters');
-        return;
-      }
-      // Manual path: PR opened, cluster stays listed until it merges. Close
-      // the dialog and surface the PR so it doesn't look like nothing happened.
+
+      // F1: surface the PR (both paths) via a persistent PRResultBanner —
+      // the same clickable-link experience every other write flow gives —
+      // instead of a transient toast. We deliberately keep the user on the
+      // page so the banner (and its "View PR" link) survives; the "Back to
+      // Clusters" control is one click away. This also honours the confirm
+      // modal's promise that removal opens a pull request.
       setRemoveModalOpen(false);
       setRemoving(false);
-      showToast(
-        'Removal PR opened for review. The cluster stays listed until it merges.',
-        'success',
-        prUrl ? { url: prUrl, id: prId } : undefined,
-      );
-      // Refresh so any pending-PR indicator picks up the new open PR.
-      void fetchData(true);
+      setRemovalPRResult(git);
+
+      // Manual path: the cluster stays listed until the PR merges, so refresh
+      // to pick up its new open PR indicator. Auto-merge path: the cluster is
+      // gone from Git — leave the terminal "PR merged — cluster removed"
+      // banner up and don't refetch (it would 404).
+      if (!merged) {
+        void fetchData(true);
+      }
     } catch (e: unknown) {
       setRemoveError(e instanceof Error ? e.message : 'Failed to remove cluster');
       setRemoving(false);
     }
-  }, [name, navigate, fetchData]);
+  }, [name, fetchData]);
 
   const hasToggleChanges = useMemo(() => {
     return Object.keys(addonToggles).some((k) => addonToggles[k] !== originalToggles[k]);
@@ -616,23 +565,9 @@ export function ClusterDetail() {
 
   const handleTestConnection = useCallback(async () => {
     if (!name) return;
-    setTestResult('testing');
-    try {
-      const result = await testClusterConnection(name);
-      setTestResult(result);
-      // Skip the refetch when the test came back as "unavailable" —
-      // there's no new server-side state to observe.
-      if (isTestClusterUnavailable(result)) {
-        return;
-      }
-      // Refetch cluster data so server-side computed status is up to date
-      if (result.reachable || result.success) {
-        void fetchData();
-      }
-    } catch (err) {
-      setTestResult({ reachable: false, error: err instanceof Error ? err.message : 'Failed' });
-    }
-  }, [name, fetchData]);
+    // F5 (V2-cleanup-91.1): open the modal instead of rendering inline.
+    setTestOpen(true);
+  }, [name]);
 
   // Open the enable-addon picker and lazily fetch the real catalog so the
   // picker offers every catalog addon, not just the ones already in
@@ -1004,104 +939,9 @@ export function ClusterDetail() {
               Registered with pasted credentials — consider migrating to a secret-store pointer.
             </p>
           )}
-          {testResult && testResult !== 'testing' && isTestClusterUnavailable(testResult) && (
-            // The Test endpoint can be unavailable for several reasons —
-            // see the typed `error_code` values on TestClusterUnavailable.
-            // Branch-specific copy + an action link per code gives the
-            // operator a clear next step instead of a generic "test
-            // failed" message. The cluster itself is NOT classified as
-            // "Unreachable" in any of these branches — only the test
-            // feature is unavailable. See computedStatus above.
-            <TestUnavailableBanner result={testResult} />
-          )}
-          {testResult && testResult !== 'testing' && !isTestClusterUnavailable(testResult) && (
-            <div className="mt-2">
-              {/* Step-by-step test results */}
-              {testResult.steps && testResult.steps.length > 0 && (
-                <div className="mb-2 rounded-lg bg-[#f8fbff] p-3 ring-1 ring-[#d0e4f5] dark:bg-gray-800 dark:ring-gray-700">
-                  {/* The Test connection flow is Sharko's own connection — say so (V2-cleanup-55.3). */}
-                  <div className="mb-2 flex items-center gap-1">
-                    <p className="cursor-help text-xs font-semibold text-[#0a2a4a] dark:text-gray-200" title={SHARKO_CONN_TOOLTIP}>
-                      Connection test results ({SHARKO_CONN_LABEL}):
-                    </p>
-                    {/* V2-cleanup-61.4 (G3): click/focus affordance for the
-                      * explanation above — a hover-only title never reaches
-                      * touch or keyboard users. V2-cleanup-65.1: echoes the
-                      * same "what does Test connection do" one-liner shown
-                      * next to the button, plus the whose-connection note. */}
-                    <InfoHint text={`${TEST_CONNECTION_HINT} ${SHARKO_CONN_TOOLTIP}`} label="What does this mean?" />
-                  </div>
-                  <div className="space-y-1">
-                    {testResult.steps.map((step, i) => (
-                      <div key={i} className="flex items-center gap-2 text-xs">
-                        {step.status === 'pass' && (
-                          <span className="text-green-600 dark:text-green-400">&#10003;</span>
-                        )}
-                        {step.status === 'fail' && (
-                          <span className="text-red-600 dark:text-red-400">&#10007;</span>
-                        )}
-                        {step.status === 'skipped' && (
-                          <span className="text-gray-400 dark:text-gray-500">&#9675;</span>
-                        )}
-                        <span className={
-                          step.status === 'pass'
-                            ? 'text-[#0a2a4a] dark:text-gray-200'
-                            : step.status === 'fail'
-                              ? 'text-red-700 dark:text-red-400'
-                              : 'text-gray-400 dark:text-gray-500'
-                        }>
-                          {step.name}
-                          {step.detail && step.status !== 'skipped' && (
-                            <span className="ml-1 text-[#3a6a8a] dark:text-gray-400">
-                              {step.status === 'fail' ? ` \u2014 ${step.detail}` : ` (${step.detail})`}
-                            </span>
-                          )}
-                          {step.status === 'skipped' && (
-                            <span className="ml-1 text-gray-400 dark:text-gray-500">(skipped)</span>
-                          )}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {/* Summary badge — Sharko's own connection result (V2-cleanup-55.3). */}
-              <div className="flex items-center gap-1">
-                <div title={SHARKO_CONN_TOOLTIP} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
-                  testResult.reachable || testResult.success
-                    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                    : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                }`}>
-                  {testResult.reachable || testResult.success
-                    ? `Connected${testResult.server_version ? ` \u2014 ${testResult.server_version}` : ''}`
-                    : testResult.error || testResult.error_message || 'Unreachable'}
-                </div>
-                <InfoHint text={SHARKO_CONN_TOOLTIP} label="What does this mean?" />
-              </div>
-              {!testResult.reachable && !testResult.success && testResult.suggestions && testResult.suggestions.length > 0 && (
-                <div className="mt-2 rounded-lg bg-[#e8f4ff] p-3 ring-2 ring-[#6aade0] dark:bg-gray-800 dark:ring-gray-700">
-                  <p className="text-xs font-semibold text-[#0a2a4a] dark:text-gray-200">Similar secrets found:</p>
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {testResult.suggestions.map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => handleSelectSuggestion(s)}
-                        className="inline-flex items-center gap-1 rounded-md bg-[#f0f7ff] px-2.5 py-1 text-xs font-medium text-[#0a3a5a] ring-1 ring-[#5a9dd0] hover:bg-[#d6eeff] dark:bg-gray-700 dark:text-gray-200 dark:ring-gray-600 dark:hover:bg-gray-600"
-                      >
-                        <KeyRound className="h-3 w-3" />
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {!testResult.reachable && !testResult.success && (!testResult.suggestions || testResult.suggestions.length === 0) && (
-                <p className="mt-1.5 text-xs text-[#3a6a8a] dark:text-gray-400">
-                  Set the secret path manually in cluster settings.
-                </p>
-              )}
-            </div>
-          )}
+          {/* F5 (V2-cleanup-91.1): Test-connection results — including the
+            * per-error-code guidance banners — now live in TestConnectionModal,
+            * opened by the "Test connection" button below. */}
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -1114,11 +954,10 @@ export function ClusterDetail() {
           <RoleGuard roles={['admin', 'operator']}>
             <button
               onClick={handleTestConnection}
-              disabled={testResult === 'testing'}
               title={SHARKO_CONN_TOOLTIP}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
             >
-              {testResult === 'testing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />}
+              <Wifi className="h-3.5 w-3.5" />
               {TEST_CONNECTION_LABEL}
             </button>
             <InfoHint text={TEST_CONNECTION_HINT} label="What does Test connection do?" />
@@ -1142,12 +981,15 @@ export function ClusterDetail() {
             <button
               onClick={handleSyncNow}
               disabled={syncingNow}
-              title="Trigger the cluster-secret reconciler now instead of waiting for its periodic tick"
               className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
             >
               {syncingNow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
               Sync now
             </button>
+            <InfoHint
+              text="Sharko keeps a label on each cluster's connection listing which addons belong there, matching what's in Git. This re-checks and fixes those labels now instead of waiting. Out of sync means the live labels drifted from what Git says (rare)."
+              label="What does Sync now do?"
+            />
           </RoleGuard>
         </div>
       </div>
@@ -1181,8 +1023,23 @@ export function ClusterDetail() {
         open={doctorOpen}
         onClose={() => setDoctorOpen(false)}
       />
+      <TestConnectionModal
+        clusterName={name ?? ''}
+        open={testOpen}
+        onClose={() => setTestOpen(false)}
+        onSuggestionSelect={handleSelectSuggestion}
+      />
       {removeError && (
         <p className="text-sm text-red-600 dark:text-red-400">{removeError}</p>
+      )}
+      {removalPRResult && (
+        <div className="mb-4">
+          <PRResultBanner
+            result={removalPRResult}
+            mergedMessage={`PR merged — cluster "${name}" removed`}
+            openMessage={`PR opened — cluster "${name}" removes once it merges`}
+          />
+        </div>
       )}
 
       {/* Vitals ribbon — persistent across every section (V2-cleanup-78.1).

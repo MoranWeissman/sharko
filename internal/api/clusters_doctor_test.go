@@ -346,6 +346,87 @@ func TestDoctorCheckAssumeRole_Fail_AssumeRoleDenied(t *testing.T) {
 	}
 }
 
+// TestDoctorCheckAssumeRole_CauseSpecificFixes asserts the check returns
+// cause-specific fix text for the clearly distinguishable assume-role failure
+// sub-types, matching the V2-cleanup-91.3 classifier wiring.
+func TestDoctorCheckAssumeRole_CauseSpecificFixes(t *testing.T) {
+	tests := []struct {
+		name         string
+		awsError     error
+		wantInFix    []string
+		wantNotInFix []string
+	}{
+		{
+			name:         "trust policy rejection",
+			awsError:     errors.New("User: arn:aws:sts::123456789012:assumed-role/sharko-role/session is not authorized to assume arn:aws:iam::123456789012:role/target-role"),
+			wantInFix:    []string{"trust policy", "Sharko's identity"},
+			wantNotInFix: []string{"sts:TagSession"},
+		},
+		{
+			name:         "missing sts:TagSession",
+			awsError:     errors.New("User is not authorized to perform: sts:TagSession on resource"),
+			wantInFix:    []string{"sts:TagSession", "EKS Pod Identity"},
+			wantNotInFix: []string{"trust policy"},
+		},
+		{
+			name:         "generic failure falls back to combined hint",
+			awsError:     errors.New("timeout connecting to STS endpoint"),
+			wantInFix:    []string{"assume-role", "trust policy", "sts:AssumeRole", "sts:TagSession"},
+			wantNotInFix: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newDoctorTestServer(t)
+			withDoctorGitFiles(srv)
+			srv.doctorAssumeRoleFn = func(context.Context, string, string) error {
+				return tt.awsError
+			}
+
+			check := srv.doctorCheckAssumeRole(context.Background(), "cross-account")
+			if check.Status != doctorStatusFail {
+				t.Fatalf("Status = %q, want fail", check.Status)
+			}
+			for _, want := range tt.wantInFix {
+				if !strings.Contains(check.Fix, want) {
+					t.Errorf("Fix = %q, want it to contain %q", check.Fix, want)
+				}
+			}
+			for _, notWant := range tt.wantNotInFix {
+				if strings.Contains(check.Fix, notWant) {
+					t.Errorf("Fix = %q, must not contain %q", check.Fix, notWant)
+				}
+			}
+		})
+	}
+}
+
+// TestDoctorCheckClusterAccess_L6L12Fix_Unchanged is a regression pin that
+// the check-3-pass + check-4-fail EKS-access-entry message (line ~578) is
+// unchanged by V2-cleanup-91.3 — the story's scope is only check-3 fix text.
+func TestDoctorCheckClusterAccess_L6L12Fix_Unchanged(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	client := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "sharko-test"}})
+	client.PrependReactor("create", "secrets", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("secrets is Forbidden")
+	})
+	srv.doctorK8sClientFn = func([]byte) (kubernetes.Interface, error) { return client, nil }
+
+	creds := &providers.Kubeconfig{Raw: []byte("unused-fake-seam-bypasses-parsing")}
+	check := srv.doctorCheckClusterAccess(context.Background(), "prod-eu", creds, true)
+	if check.Status != doctorStatusFail {
+		t.Fatalf("Status = %q, want fail", check.Status)
+	}
+	// The exact L6/L12 message from line ~578 must be unchanged.
+	if !strings.Contains(check.Fix, "The role works in AWS, but the cluster doesn't trust it yet") {
+		t.Errorf("Fix = %q, want the unchanged check-3-pass + check-4-fail message", check.Fix)
+	}
+	if !strings.Contains(check.Fix, "add an EKS access entry") {
+		t.Errorf("Fix = %q, want it to mention EKS access entry", check.Fix)
+	}
+}
+
 // startFakeArgoSecretListAPI serves a single ArgoCD cluster-secret List
 // response so an *providers.ArgoCDProvider built against it can resolve a
 // role embedded in the secret's awsAuthConfig, without any real cluster.

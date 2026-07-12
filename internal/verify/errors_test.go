@@ -80,6 +80,12 @@ func TestHint(t *testing.T) {
 	if got := Hint(ERR_RBAC); !strings.Contains(got, "HTTP 403") {
 		t.Errorf("ERR_RBAC hint missing 403 guidance: %q", got)
 	}
+	if got := Hint(ERR_AWS_STS); got == "" || !strings.Contains(got, "STS") {
+		t.Errorf("ERR_AWS_STS hint must be non-empty and mention STS: %q", got)
+	}
+	if got := Hint(ERR_AWS_ASSUME); got == "" || !strings.Contains(got, "assume-role") {
+		t.Errorf("ERR_AWS_ASSUME hint must be non-empty and mention assume-role: %q", got)
+	}
 	if got := Hint(ERR_NETWORK); got != "" {
 		t.Errorf("expected empty hint for ERR_NETWORK, got %q", got)
 	}
@@ -122,5 +128,67 @@ func TestFriendlyMessage_NoHintKeepsRawCause(t *testing.T) {
 	}
 	if strings.Contains(msg, " — ") {
 		t.Errorf("did not expect a hint suffix for ERR_NETWORK: %q", msg)
+	}
+}
+
+func TestAssumeRoleHint(t *testing.T) {
+	tests := []struct {
+		name         string
+		err          error
+		wantContains []string
+		wantNotContains []string
+	}{
+		{
+			name:         "trust policy rejection - not authorized to assume",
+			err:          errors.New("User: arn:aws:sts::123456789012:assumed-role/sharko-role/session is not authorized to assume role arn:aws:iam::123456789012:role/target-role"),
+			wantContains: []string{"trust policy", "Sharko's identity"},
+			wantNotContains: []string{"sts:AssumeRole permission", "sts:TagSession"},
+		},
+		{
+			name:         "trust policy rejection - AccessDenied on AssumeRole",
+			err:          errors.New("operation error STS: AssumeRole, https response error StatusCode: 403, api error AccessDenied: User is not authorized to perform: sts:AssumeRole on resource"),
+			wantContains: []string{"trust policy", "IAM principal"},
+			wantNotContains: []string{"sts:TagSession"},
+		},
+		{
+			name:         "missing sts:TagSession permission",
+			err:          errors.New("User is not authorized to perform: sts:TagSession on resource"),
+			wantContains: []string{"sts:TagSession", "EKS Pod Identity", "session tags"},
+			wantNotContains: []string{"trust policy"},
+		},
+		{
+			name:         "nil error returns empty string",
+			err:          nil,
+			wantContains: nil,
+			wantNotContains: nil,
+		},
+		{
+			name:         "generic error falls back to combined hint",
+			err:          errors.New("timeout waiting for AssumeRole response"),
+			wantContains: []string{"assume-role", "trust policy", "sts:AssumeRole", "sts:TagSession"},
+			wantNotContains: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := AssumeRoleHint(tt.err)
+			if tt.err == nil {
+				if got != "" {
+					t.Errorf("AssumeRoleHint(nil) = %q, want empty string", got)
+				}
+				return
+			}
+			for _, want := range tt.wantContains {
+				if !strings.Contains(got, want) {
+					t.Errorf("AssumeRoleHint() = %q, want it to contain %q", got, want)
+				}
+			}
+			for _, notWant := range tt.wantNotContains {
+				if strings.Contains(got, notWant) {
+					t.Errorf("AssumeRoleHint() = %q, must not contain %q", got, notWant)
+				}
+			}
+		})
 	}
 }

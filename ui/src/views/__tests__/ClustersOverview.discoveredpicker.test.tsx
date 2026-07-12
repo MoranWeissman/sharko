@@ -170,7 +170,15 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
     fireEvent.change(ownershipSelect(), { target: { value: 'user' } });
 
     expect(screen.queryByTestId('discovered-picker')).not.toBeInTheDocument();
-    // The manual coordinates path is unaffected.
+    // V2-cleanup-91.2 (F2): in the "I do" + nothing-to-adopt case, the
+    // connection-source selector is optional and collapsed behind a toggle.
+    expect(
+      screen.getByText(/Add connection credentials \(optional — used only to test connectivity\)/),
+    ).toBeInTheDocument();
+    // Clicking the toggle expands the selector.
+    fireEvent.click(
+      screen.getByText(/Add connection credentials \(optional — used only to test connectivity\)/),
+    );
     expect(screen.getByText('Connection source')).toBeInTheDocument();
   });
 
@@ -378,10 +386,14 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
 
     fireEvent.change(ownershipSelect(), { target: { value: 'user' } });
 
+    // V2-cleanup-91.2 (F4): the hint is now one sentence + a real docs link.
     expect(
       screen.getByText(
-        /Sharko never touches its credentials — it only keeps the addon labels on it in sync\. Git stays the source of truth for which addons go where\./,
+        /You create and maintain the ArgoCD cluster secret yourself; Sharko only manages the addon labels on it\./,
       ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Operator guide: Managing cluster connections yourself/ }),
     ).toBeInTheDocument();
   });
 
