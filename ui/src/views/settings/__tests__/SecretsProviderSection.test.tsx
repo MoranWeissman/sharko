@@ -432,6 +432,8 @@ describe('SecretsProviderSection', () => {
       const select = await screen.findByRole('combobox')
       await user.selectOptions(select, 'aws-sm')
       await user.type(screen.getByPlaceholderText(/eu-west-1/i), 'us-east-1')
+      // Expand Advanced to reveal Prefix field (V2-cleanup-92.3 F5)
+      await user.click(screen.getByRole('button', { name: /Advanced \(optional\)/i }))
       await user.type(screen.getByPlaceholderText(/prepended to cluster name/i), 'k8s-')
       await user.click(screen.getByRole('button', { name: /Save Provider/i }))
 
@@ -550,6 +552,123 @@ describe('SecretsProviderSection', () => {
 
       expect(screen.getByText(/Loading secrets provider/i)).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /Save Provider/i })).toBeNull()
+    })
+  })
+
+  // V2-cleanup-92.3 F4 — plain-English opener + docs link at the top
+  describe('Plain-English opener + docs link (F4)', () => {
+    it('renders the opener sentence and docs link at the top of the section', async () => {
+      setupHook()
+      render(<SecretsProviderSection />)
+
+      expect(
+        screen.getByText(/Sharko needs each cluster's credentials to reach it — this is where those credentials come from/i),
+      ).toBeInTheDocument()
+
+      const link = screen.getByRole('link', { name: /Learn how this works/i })
+      expect(link).toBeInTheDocument()
+      expect(link).toHaveAttribute('href', '/user-guide/secrets-provider/')
+    })
+  })
+
+  // V2-cleanup-92.3 F5 — Prefix field hidden behind Advanced toggle
+  describe('Advanced toggle for Prefix field (F5)', () => {
+    it('Prefix field is hidden by default behind "Advanced (optional)" for aws-sm', async () => {
+      setupHook()
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox')
+      await user.selectOptions(select, 'aws-sm')
+
+      // Region is always visible for aws-sm
+      expect(screen.getByPlaceholderText(/eu-west-1/i)).toBeInTheDocument()
+
+      // Prefix is behind the toggle — button visible, field NOT visible
+      expect(screen.getByRole('button', { name: /Advanced \(optional\)/i })).toBeInTheDocument()
+      expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
+    })
+
+    it('clicking Advanced toggle reveals the Prefix field', async () => {
+      setupHook()
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox')
+      await user.selectOptions(select, 'aws-sm')
+
+      const advancedBtn = screen.getByRole('button', { name: /Advanced \(optional\)/i })
+      await user.click(advancedBtn)
+
+      // Prefix field now visible
+      expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toBeInTheDocument()
+    })
+
+    it('if stored provider has a non-empty prefix, Advanced is auto-expanded', async () => {
+      setupHook([{
+        ...sampleConnection,
+        provider: { type: 'aws-sm', region: 'eu-west-1', prefix: 'k8s-' },
+      }])
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox') as HTMLSelectElement
+      await waitFor(() => expect(select.value).toBe('aws-sm'))
+
+      // Prefix field visible without clicking Advanced — auto-expanded
+      const prefixInput = screen.getByPlaceholderText(/prepended to cluster name/i)
+      expect(prefixInput).toBeInTheDocument()
+      expect(prefixInput).toHaveValue('k8s-')
+    })
+
+    it('if stored prefix is empty, Advanced defaults collapsed', async () => {
+      setupHook([{
+        ...sampleConnection,
+        provider: { type: 'aws-sm', region: 'eu-west-1', prefix: '' },
+      }])
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox') as HTMLSelectElement
+      await waitFor(() => expect(select.value).toBe('aws-sm'))
+
+      // Prefix field hidden by default
+      expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
+      // But Advanced button is present
+      expect(screen.getByRole('button', { name: /Advanced \(optional\)/i })).toBeInTheDocument()
+    })
+
+    it('Advanced toggle is not rendered for argocd (no prefix support)', async () => {
+      setupHook()
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox')
+      await user.selectOptions(select, 'argocd')
+
+      // No Advanced button for argocd
+      expect(screen.queryByRole('button', { name: /Advanced \(optional\)/i })).toBeNull()
+      expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
+    })
+
+    it('Prefix field remains functional when expanded — value persists and saves', async () => {
+      setupHook()
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox')
+      await user.selectOptions(select, 'k8s-secrets')
+
+      // Expand Advanced
+      await user.click(screen.getByRole('button', { name: /Advanced \(optional\)/i }))
+
+      const prefixInput = screen.getByPlaceholderText(/prepended to cluster name/i)
+      await user.type(prefixInput, 'team-')
+
+      await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+
+      await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+      const body = updateConnectionMock.mock.calls[0][1] as { provider: { type: string; prefix?: string } }
+      expect(body.provider.type).toBe('k8s-secrets')
+      expect(body.provider.prefix).toBe('team-')
     })
   })
 })

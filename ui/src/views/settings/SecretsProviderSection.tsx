@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Shield, Globe, Activity, Loader2, CheckCircle, KeyRound } from 'lucide-react'
+import { Shield, Globe, Activity, Loader2, CheckCircle, KeyRound, ChevronRight } from 'lucide-react'
 import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
@@ -147,6 +147,7 @@ export function SecretsProviderSection() {
   // Non-null iff the currently hydrated form.provider_type === UNKNOWN_PROVIDER;
   // holds the raw stored string so Save can pass it through unchanged.
   const [unknownRawType, setUnknownRawType] = useState<string | null>(null)
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   // GET /providers feeds the STATUS card only (type / region / live
   // health). It is deliberately NOT the source the form hydrates from:
@@ -193,6 +194,8 @@ export function SecretsProviderSection() {
         provider_region: connRegion,
         provider_prefix: connPrefix,
       })
+      // Auto-expand Advanced if there's a stored prefix (F5)
+      setShowAdvanced(!!connPrefix)
       return
     }
     setUnknownRawType(null)
@@ -201,6 +204,8 @@ export function SecretsProviderSection() {
       provider_region: connRegion,
       provider_prefix: connPrefix,
     })
+    // Auto-expand Advanced if there's a stored prefix (F5)
+    setShowAdvanced(!!connPrefix)
   }, [hasConnProvider, connType, connRegion, connPrefix])
 
   // Fallback for installs where the provider is configured via env vars
@@ -211,21 +216,24 @@ export function SecretsProviderSection() {
   useEffect(() => {
     if (hasConnProvider || !providerInfo) return
     const canonical = canonicalizeProviderType(providerInfo.type)
+    const fallbackPrefix = providerInfo.prefix || ''
     if (providerInfo.type && canonical === '') {
       setUnknownRawType(providerInfo.type)
       setForm({
         provider_type: UNKNOWN_PROVIDER,
         provider_region: providerInfo.region || '',
-        provider_prefix: providerInfo.prefix || '',
+        provider_prefix: fallbackPrefix,
       })
+      setShowAdvanced(!!fallbackPrefix)
       return
     }
     setUnknownRawType(null)
     setForm({
       provider_type: canonical,
       provider_region: providerInfo.region || '',
-      provider_prefix: providerInfo.prefix || '',
+      provider_prefix: fallbackPrefix,
     })
+    setShowAdvanced(!!fallbackPrefix)
   }, [hasConnProvider, providerInfo])
 
   async function handleSave() {
@@ -262,6 +270,20 @@ export function SecretsProviderSection() {
 
   return (
     <div className="space-y-6">
+      {/* F4: Plain-English opener + docs link */}
+      <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
+        <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
+          Sharko needs each cluster's credentials to reach it — this is where those credentials come from.
+        </p>
+        <a
+          href="/user-guide/secrets-provider/"
+          className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-[#0a3a5a] hover:text-teal-600 dark:text-gray-100 dark:hover:text-teal-400"
+        >
+          Learn how this works
+          <ChevronRight className="h-3.5 w-3.5" />
+        </a>
+      </div>
+
       {/* Current status card */}
       {providerInfo && (
         <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:bg-gray-800">
@@ -369,16 +391,29 @@ export function SecretsProviderSection() {
                 />
               </div>
             )}
+            {/* F5: Advanced toggle for Prefix field */}
             {form.provider_type !== '' && form.provider_type !== UNKNOWN_PROVIDER && PREFIX_PROVIDERS.has(form.provider_type) && (
-              <div>
-                <label className={labelCls}>Prefix <span className="text-[#3a6a8a] font-normal">(optional)</span></label>
-                <input
-                  className={inputCls}
-                  value={form.provider_prefix}
-                  onChange={(e) => setForm(prev => ({ ...prev, provider_prefix: e.target.value }))}
-                  placeholder="e.g. k8s- (prepended to cluster name for SM lookup)"
-                />
-                <p className="mt-1 text-xs text-[#3a6a8a]">Prepended to cluster name when looking up the secret.</p>
+              <div className="sm:col-span-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="flex items-center gap-1.5 text-sm font-medium text-[#2a5a7a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200"
+                >
+                  <ChevronRight className={`h-3.5 w-3.5 transition-transform ${showAdvanced ? 'rotate-90' : ''}`} />
+                  Advanced (optional)
+                </button>
+                {showAdvanced && (
+                  <div className="mt-3">
+                    <label className={labelCls}>Prefix</label>
+                    <input
+                      className={inputCls}
+                      value={form.provider_prefix}
+                      onChange={(e) => setForm(prev => ({ ...prev, provider_prefix: e.target.value }))}
+                      placeholder="e.g. k8s- (prepended to cluster name for SM lookup)"
+                    />
+                    <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400">Prepended to cluster name when looking up the secret.</p>
+                  </div>
+                )}
               </div>
             )}
           </div>
