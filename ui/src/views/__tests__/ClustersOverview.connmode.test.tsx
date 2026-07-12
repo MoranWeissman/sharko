@@ -153,9 +153,9 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
     expect(screen.getByText('Connection managed by')).toBeInTheDocument();
     const select = ownershipSelect();
     expect(select.value).toBe('sharko');
-    // Both options are present, in plain English.
+    // Both options are present, in plain English (V2-cleanup-92.1 F11).
     expect(screen.getByText('Sharko (default)')).toBeInTheDocument();
-    expect(screen.getByText('I do — Sharko only manages addon labels')).toBeInTheDocument();
+    expect(screen.getByText('Manage a cluster ArgoCD already connects to')).toBeInTheDocument();
     // Default hint explains Sharko ownership.
     expect(
       screen.getByText(/Sharko creates the ArgoCD cluster secret and keeps its credentials up to date/),
@@ -168,10 +168,10 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
 
     fireEvent.change(ownershipSelect(), { target: { value: 'user' } });
 
-    // V2-cleanup-91.2 (F4): the hint is now one sentence + a real docs link.
+    // V2-cleanup-92.1 (F11): hint reworded to plain English.
     expect(
       screen.getByText(
-        /You create and maintain the ArgoCD cluster secret yourself; Sharko only manages the addon labels on it\./,
+        /You manage the cluster connection yourself — Sharko only updates its addon labels\./,
       ),
     ).toBeInTheDocument();
     expect(

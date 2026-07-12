@@ -33,7 +33,6 @@ import type {
   ClusterProvider,
   CredsSource,
   ClustersResponse,
-  AddonCatalogResponse,
   DryRunResult,
   PendingRegistration,
   OrphanRegistration,
@@ -118,7 +117,7 @@ export const CONN_OWNERSHIP_HINTS: Record<ConnOwnership, ReactNode> = {
   ),
   user: (
     <>
-      You create and maintain the ArgoCD cluster secret yourself; Sharko only manages the addon labels on it.{' '}
+      You manage the cluster connection yourself — Sharko only updates its addon labels.{' '}
       <a
         href="https://github.com/moran/sharko/blob/main/docs/operator-guide.md#managing-cluster-connections-yourself"
         target="_blank"
@@ -188,7 +187,8 @@ export function ClustersOverview() {
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   // V2-cleanup-61.3 (B3): below the collapse threshold the legend is
   // on-demand — this tracks whether the user has opened it.
-  const [legendOpen, setLegendOpen] = useState(false);
+  // V2-cleanup-92.1 (F3): shown by default (legendOpen starts true).
+  const [legendOpen, setLegendOpen] = useState(true);
   const [versionDropdownOpen, setVersionDropdownOpen] = useState(false);
   const [connectionDropdownOpen, setConnectionDropdownOpen] = useState(false);
   const navigate = useNavigate();
@@ -210,6 +210,8 @@ export function ClustersOverview() {
   // name. Single-select — adopting is a one-cluster-at-a-time decision made
   // from inside the dialog now, not a standing bulk-select list.
   const [pickedDiscovered, setPickedDiscovered] = useState<string | null>(null);
+  // V2-cleanup-92.1 (F13): search filter for discovered-clusters picker.
+  const [discoveredFilter, setDiscoveredFilter] = useState('');
 
   // Un-adopt state
   const [unadoptTarget, setUnadoptTarget] = useState<string | null>(null);
@@ -252,8 +254,6 @@ export function ClustersOverview() {
   const [addClusterError, setAddClusterError] = useState<string | null>(null);
   const [addClusterResult, setAddClusterResult] = useState<RegisterClusterResult | null>(null);
   const [addClusterResultMsg, setAddClusterResultMsg] = useState<string | null>(null);
-  const [catalogAddons, setCatalogAddons] = useState<AddonCatalogResponse | null>(null);
-  const [selectedAddons, setSelectedAddons] = useState<Record<string, boolean>>({});
 
   // Credential-source selection (creds-reframe-2). This is the PRIMARY
   // question the Direct-mode form asks: "How should Sharko get this
@@ -444,19 +444,15 @@ export function ClustersOverview() {
     setAddClusterRoleArn('');
     setAddClusterSecretPath('');
     setAddClusterKubeconfig('');
-    setSelectedAddons({});
     // No silent creds-source default — the user must choose (V2-cleanup-60.4).
     setCredsSource('');
     setConnManagedBy(presetOwnership ?? 'sharko');
     setPickedDiscovered(null);
+    setDiscoveredFilter('');
     // V2-cleanup-91.2 (F2): reset optional-creds toggle when dialog reopens.
     setShowOptionalCreds(false);
     setDryRunResult(null);
     setDryRunLoading(false);
-    // Fetch catalog for addon multi-select
-    if (!catalogAddons) {
-      api.getAddonCatalog().then(setCatalogAddons).catch(() => {});
-    }
     // Fetch Layer 1 identity info once per dialog session (V2-cleanup-88.5).
     // Wrapped in try/catch (not just a Promise .catch) because a strict
     // `vi.mock('@/services/api', ...)` factory that doesn't declare this
@@ -474,7 +470,7 @@ export function ClustersOverview() {
         setCapabilitiesLoading(false);
       }
     }
-  }, [catalogAddons, capabilities]);
+  }, [capabilities]);
 
   // Build the Direct-mode register payload for the chosen credential source
   // (creds-reframe-2). `creds_source` is the authoritative signal; we also
@@ -485,7 +481,6 @@ export function ClustersOverview() {
   //   eks-token         → name + creds_source + provider + region/role_arn/secret_path
   const buildRegisterPayload = useCallback(
     (name: string, extra?: { dry_run?: boolean }): Parameters<typeof registerCluster>[0] => {
-      const addons = Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined;
       // Registration is gated until an explicit creds-source choice exists
       // (directRequiredMissing), so '' here should not normally happen —
       // eks-token is a safe fallback shape.
@@ -497,7 +492,6 @@ export function ClustersOverview() {
         name,
         creds_source: source,
         provider,
-        addons,
         ...(connManagedBy === 'user' ? { connection_managed_by: 'user' as const } : {}),
         ...extra,
       };
@@ -524,7 +518,7 @@ export function ClustersOverview() {
           };
       }
     },
-    [credsSource, provider, connManagedBy, selectedAddons, addClusterKubeconfig, addClusterSecretPath, addClusterRegion, addClusterRoleArn],
+    [credsSource, provider, connManagedBy, addClusterKubeconfig, addClusterSecretPath, addClusterRegion, addClusterRoleArn],
   );
 
   const handleDryRun = useCallback(async () => {
@@ -1017,7 +1011,7 @@ export function ClustersOverview() {
             className="inline-flex items-center gap-1.5 text-xs text-[#3a6a8a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200"
           >
             <HelpCircle className="h-3.5 w-3.5" />
-            Status legend
+            {legendOpen ? 'Hide status legend' : 'Status legend'}
           </button>
           {legendOpen && (
             <div className="mt-2">
@@ -1056,7 +1050,7 @@ export function ClustersOverview() {
               <p className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
                 Cluster location
               </p>
-              <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-500">
+              <p className="mt-0.5 text-xs text-[#2a5a7a] dark:text-gray-500">
                 Connection credentials below are optional — add them later if you enable an addon with addon secrets.
               </p>
             </div>
@@ -1076,7 +1070,7 @@ export function ClustersOverview() {
                 className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
               >
                 <option value="sharko">Sharko (default)</option>
-                <option value="user">I do — Sharko only manages addon labels</option>
+                <option value="user">Manage a cluster ArgoCD already connects to</option>
               </select>
               <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-400">
                 {CONN_OWNERSHIP_HINTS[connManagedBy]}
@@ -1089,8 +1083,17 @@ export function ClustersOverview() {
               * knows this cluster, adopting it is strictly less work — and
               * it's the same data GET /clusters already returns as
               * managed=false. Hidden entirely when there's nothing to pick
-              * from (today's behavior is unchanged in that case). */}
-            {connManagedBy === 'user' && discoveredClusters.length > 0 && (
+              * from (today's behavior is unchanged in that case).
+              * V2-cleanup-92.1 (F13): search filter + showing X of Y count. */}
+            {connManagedBy === 'user' && discoveredClusters.length > 0 && (() => {
+              const filteredDiscovered = discoveredClusters.filter((c) => {
+                const filterLower = discoveredFilter.toLowerCase();
+                return (
+                  c.name.toLowerCase().includes(filterLower) ||
+                  (c.server_url && c.server_url.toLowerCase().includes(filterLower))
+                );
+              });
+              return (
               <div
                 data-testid="discovered-picker"
                 className="rounded-lg ring-2 ring-teal-300 bg-teal-50 p-3 dark:ring-teal-800 dark:bg-teal-950/20"
@@ -1098,32 +1101,53 @@ export function ClustersOverview() {
                 <p className="text-sm font-medium text-[#0a3a5a] dark:text-gray-200">
                   Discovered clusters
                 </p>
-                <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-500">
-                  ArgoCD already knows about {discoveredClusters.length} cluster{discoveredClusters.length === 1 ? '' : 's'} Sharko doesn't manage yet. Pick one to adopt it instead of typing its coordinates by hand.
+                <p className="mt-0.5 text-xs text-[#2a5a7a] dark:text-gray-500">
+                  ArgoCD already knows about {discoveredClusters.length} cluster{discoveredClusters.length === 1 ? '' : 's'} Sharko doesn't manage yet. Pick one to adopt {discoveredClusters.length === 1 ? 'it' : 'them'} instead of typing its coordinates by hand.
                 </p>
-                <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-md ring-1 ring-teal-200 bg-white p-2 dark:ring-teal-900 dark:bg-gray-900">
-                  {discoveredClusters.map((cluster) => (
-                    <label
-                      key={cluster.name}
-                      className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-teal-50 dark:hover:bg-gray-800"
-                    >
-                      <input
-                        type="radio"
-                        name="discovered-cluster-pick"
-                        checked={pickedDiscovered === cluster.name}
-                        onChange={() => setPickedDiscovered(cluster.name)}
-                        className="border-teal-400 dark:border-gray-600"
-                      />
-                      <span className="font-medium text-[#0a2a4a] dark:text-gray-100">{cluster.name}</span>
-                      <span
-                        className="ml-auto max-w-[220px] truncate font-mono text-xs text-[#3a6a8a] dark:text-gray-400"
-                        title={cluster.server_url}
-                      >
-                        {cluster.server_url ?? '--'}
-                      </span>
-                    </label>
-                  ))}
+                <div className="mt-2 relative">
+                  <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#3a6a8a] dark:text-gray-500" />
+                  <input
+                    type="text"
+                    placeholder="Search by name or server URL..."
+                    value={discoveredFilter}
+                    onChange={(e) => setDiscoveredFilter(e.target.value)}
+                    className="w-full rounded-md border border-teal-200 bg-white py-1.5 pl-8 pr-3 text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-teal-900 dark:bg-gray-900 dark:text-gray-100"
+                  />
                 </div>
+                {filteredDiscovered.length > 0 ? (
+                  <>
+                    <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-500">
+                      Showing {filteredDiscovered.length} of {discoveredClusters.length}
+                    </p>
+                    <div className="mt-1 max-h-40 space-y-1 overflow-y-auto rounded-md ring-1 ring-teal-200 bg-white p-2 dark:ring-teal-900 dark:bg-gray-900">
+                      {filteredDiscovered.map((cluster) => (
+                        <label
+                          key={cluster.name}
+                          className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-teal-50 dark:hover:bg-gray-800"
+                        >
+                          <input
+                            type="radio"
+                            name="discovered-cluster-pick"
+                            checked={pickedDiscovered === cluster.name}
+                            onChange={() => setPickedDiscovered(cluster.name)}
+                            className="border-teal-400 dark:border-gray-600"
+                          />
+                          <span className="font-medium text-[#0a2a4a] dark:text-gray-100">{cluster.name}</span>
+                          <span
+                            className="ml-auto max-w-[220px] truncate font-mono text-xs text-[#3a6a8a] dark:text-gray-400"
+                            title={cluster.server_url}
+                          >
+                            {cluster.server_url ?? '--'}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <p className="mt-2 rounded-md bg-white px-3 py-2 text-xs text-[#3a6a8a] dark:bg-gray-900 dark:text-gray-500">
+                    No clusters match your search.
+                  </p>
+                )}
                 <button
                   type="button"
                   onClick={handleAdoptFromPicker}
@@ -1131,13 +1155,14 @@ export function ClustersOverview() {
                   className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
                 >
                   <GitMerge className="h-3.5 w-3.5" />
-                  {pickedDiscovered ? `Adopt ${pickedDiscovered}` : 'Adopt selected cluster'}
+                  {pickedDiscovered ? `Adopt ${pickedDiscovered}` : 'Adopt cluster'}
                 </button>
-                <p className="mt-2 text-xs text-[#5a8aaa] dark:text-gray-500">
+                <p className="mt-2 text-xs text-[#2a5a7a] dark:text-gray-500">
                   Or enter details manually below for a cluster ArgoCD doesn't have yet.
                 </p>
               </div>
-            )}
+              );
+            })()}
 
             {/* Empty-state line for "I do" + nothing to adopt (V2-cleanup-89.8).
               * Maintainer walkthrough finding: with "I do" chosen and no
@@ -1153,7 +1178,7 @@ export function ClustersOverview() {
             {connManagedBy === 'user' && !loading && !argoCDUnreachable && discoveredClusters.length === 0 && (
               <p
                 data-testid="discovered-empty"
-                className="text-xs text-[#5a8aaa] dark:text-gray-500"
+                className="text-xs text-[#2a5a7a] dark:text-gray-500"
               >
                 Sharko checked ArgoCD — no other clusters there to adopt.
               </p>
@@ -1172,13 +1197,24 @@ export function ClustersOverview() {
               * instead of rendering as a required choice under the "nothing
               * to adopt" empty-state. Credentials stay required where they
               * genuinely apply: Sharko-managed connections, or when there ARE
-              * discovered clusters to adopt in the "I do" path. */}
+              * discovered clusters to adopt in the "I do" path.
+              *
+              * V2-cleanup-92.1 (F12): hide this entire Connection source
+              * selector when adopting — the picked discovered cluster already
+              * supplies its connection from ArgoCD. */}
             {(() => {
               const userManagedWithNothingToAdopt =
                 connManagedBy === 'user' &&
                 !loading &&
                 !argoCDUnreachable &&
                 discoveredClusters.length === 0;
+              const adoptingDiscovered = connManagedBy === 'user' && pickedDiscovered;
+
+              if (adoptingDiscovered) {
+                // Adopting an ArgoCD-known cluster — Connection + Name come
+                // from the picked cluster, so hide these fields entirely.
+                return null;
+              }
 
               if (userManagedWithNothingToAdopt && !showOptionalCreds) {
                 return (
@@ -1195,7 +1231,7 @@ export function ClustersOverview() {
               return (
                 <div>
                   <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                    Connection source{userManagedWithNothingToAdopt && <span className="font-normal text-[#5a8aaa] dark:text-gray-500"> (optional)</span>}
+                    Connection source{userManagedWithNothingToAdopt && <span className="font-normal text-[#2a5a7a] dark:text-gray-500"> (optional)</span>}
                   </label>
                   <select
                     value={credsSource}
@@ -1219,7 +1255,7 @@ export function ClustersOverview() {
                     * V2-cleanup-91.2 (F2): "Required" only fires when the selector
                     * is genuinely required (not in the "I do" + nothing-to-adopt
                     * case where credentials are optional). */}
-                  <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                  <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-500">
                     {credsSource === ''
                       ? userManagedWithNothingToAdopt
                         ? 'Pick a credential source if you want to test connectivity now.'
@@ -1230,7 +1266,10 @@ export function ClustersOverview() {
               );
             })()}
 
-            {/* Cluster Name is required for every provider. */}
+            {/* Cluster Name is required for every provider.
+              * V2-cleanup-92.1 (F12): hide when adopting a discovered cluster
+              * — its name comes from the picker. */}
+            {!(connManagedBy === 'user' && pickedDiscovered) && (
             <div>
               <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                 Cluster Name <span className="text-red-500">*</span>
@@ -1243,6 +1282,7 @@ export function ClustersOverview() {
                 className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
               />
             </div>
+            )}
                 {credsSource === 'inline-kubeconfig' && (
                   <>
                     {/* Paste a kubeconfig — inline YAML. Optional for every
@@ -1252,7 +1292,7 @@ export function ClustersOverview() {
                     <div>
                       <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                         Kubeconfig{' '}
-                        <span className="font-normal text-[#5a8aaa] dark:text-gray-500">(optional — you can add connection credentials later)</span>
+                        <span className="font-normal text-[#2a5a7a] dark:text-gray-500">(optional — you can add connection credentials later)</span>
                       </label>
                       <textarea
                         value={addClusterKubeconfig}
@@ -1261,7 +1301,7 @@ export function ClustersOverview() {
                         placeholder={'apiVersion: v1\nkind: Config\nclusters:\n- name: my-cluster\n  cluster:\n    server: https://...\n    certificate-authority-data: ...\nusers:\n- name: my-user\n  user:\n    token: ...'}
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 font-mono text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
-                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                      <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-500">
                         Sharko extracts the server URL, CA certificate, and bearer token (only bearer-token auth is supported). For kind, generate one with <code className="font-mono">kubectl create token &lt;serviceaccount&gt; --duration=24h</code>.
                       </p>
                     </div>
@@ -1277,7 +1317,7 @@ export function ClustersOverview() {
                     <div>
                       <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                         Secret name / path{' '}
-                        <span className="font-normal text-[#5a8aaa] dark:text-gray-500">(optional — you can add connection credentials later)</span>
+                        <span className="font-normal text-[#2a5a7a] dark:text-gray-500">(optional — you can add connection credentials later)</span>
                       </label>
                       <input
                         type="text"
@@ -1286,7 +1326,7 @@ export function ClustersOverview() {
                         placeholder="e.g. k8s-my-cluster or secret/data/clusters/my-cluster"
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
-                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                      <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-500">
                         The secret in your configured backend holds this cluster's kubeconfig.
                       </p>
                     </div>
@@ -1332,7 +1372,7 @@ export function ClustersOverview() {
                         placeholder="e.g. arn:aws:iam::123456789012:role/sharko-access"
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
-                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                      <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-500">
                         Cross-account override — leave empty to use the identity shown above.
                       </p>
                     </div>
@@ -1347,45 +1387,15 @@ export function ClustersOverview() {
                         placeholder="Override AWS SM secret name (e.g., k8s-my-cluster)"
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
-                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                      <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-500">
                         Leave empty to use cluster name as the secret key
                       </p>
                     </div>
                   </>
                 )}
 
-            {/* Addons selection */}
-            {catalogAddons && catalogAddons.addons.length > 0 && (
-              <div>
-                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                  Enable Addons (optional)
-                </label>
-                <div className="max-h-40 space-y-1 overflow-y-auto rounded-md ring-2 ring-[#6aade0] p-2 dark:ring-gray-700">
-                  {catalogAddons.addons.map((addon) => (
-                    <label
-                      key={addon.addon_name}
-                      className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!!selectedAddons[addon.addon_name]}
-                        onChange={(e) =>
-                          setSelectedAddons((prev) => ({
-                            ...prev,
-                            [addon.addon_name]: e.target.checked,
-                          }))
-                        }
-                        className="rounded border-[#5a9dd0] dark:border-gray-600"
-                      />
-                      <span>{addon.addon_name}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* Auto-merge is now a global setting — no per-flow checkbox. */}
-            <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
+            <p className="text-xs text-[#2a5a7a] dark:text-gray-500">
               Auto-merge follows your{' '}
               <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
                 global GitOps setting
@@ -2130,35 +2140,6 @@ export function ClustersOverview() {
         )}
       </div>
 
-      {/* Discovered (ArgoCD-only) Clusters — collapsed to a one-line hint
-        * (V2-cleanup-89.3). The full card/table list with bulk-select is
-        * gone: on a big ArgoCD this cluttered the Clusters page forever,
-        * and adopting is now available right where a user would think to
-        * look for it — the Register dialog's "I do" picker above. This
-        * line just points there, pre-selecting "I do" since that's the
-        * only ownership mode where picking an already-known cluster makes
-        * sense. */}
-      {discoveredClusters.length > 0 && (
-        <div
-          data-testid="discovered-hint"
-          className="flex items-center gap-2 rounded-lg ring-2 ring-amber-200 bg-[#fffbf0] px-4 py-3 text-sm dark:ring-amber-800 dark:bg-gray-800"
-        >
-          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
-          <span className="text-[#2a5a7a] dark:text-gray-300">
-            ArgoCD knows {discoveredClusters.length} more cluster{discoveredClusters.length === 1 ? '' : 's'} Sharko doesn't manage —{' '}
-            <RoleGuard adminOnly fallback={<span>adopt them from Register New Cluster</span>}>
-              <button
-                type="button"
-                onClick={() => openAddCluster('user')}
-                className="font-medium text-teal-700 underline hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-300"
-              >
-                adopt them from Register New Cluster
-              </button>
-            </RoleGuard>
-            .
-          </span>
-        </div>
-      )}
 
       {/* Adopt Clusters Dialog */}
       <AdoptClustersDialog

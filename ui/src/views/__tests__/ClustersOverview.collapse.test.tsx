@@ -70,12 +70,14 @@ describe('ClustersOverview — control collapse below 5 clusters (V2-cleanup-61.
     expect(screen.queryByRole('button', { name: /ArgoCD Connection/ })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Grid view')).not.toBeInTheDocument();
 
-    // Legend is on-demand instead of permanently visible.
-    expect(screen.queryByText('Cluster Status:')).not.toBeInTheDocument();
-    const legendToggle = screen.getByRole('button', { name: /status legend/i });
+    // V2-cleanup-92.1 (F3): Legend is shown by default, but togglable.
+    expect(screen.getByText('Cluster Status:')).toBeInTheDocument();
+    const legendToggle = screen.getByRole('button', { name: /hide status legend/i });
     expect(legendToggle).toBeInTheDocument();
     fireEvent.click(legendToggle);
-    expect(screen.getByText('Cluster Status:')).toBeInTheDocument();
+    expect(screen.queryByText('Cluster Status:')).not.toBeInTheDocument();
+    // Button text flips
+    expect(screen.getByRole('button', { name: /^status legend$/i })).toBeInTheDocument();
   });
 
   it('shows the stat-card row, filter bar, and automatic legend with 5 clusters', async () => {
