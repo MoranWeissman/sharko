@@ -653,6 +653,20 @@ func (s *Server) ReinitializeFromConnection() {
 		s.gitopsCfg.RepoURL = conn.Git.RepoURL
 	}
 
+	// Reinit default addons from git (V3-P2.1a hot-reload).
+	// Reuses the same read+fallback logic boot and GET handler use.
+	addons, err := s.ReadDefaultAddons(context.Background())
+	if err != nil {
+		slog.Info("failed to read default addons during hot-reload", "error", err)
+	} else if len(addons) > 0 {
+		defaults := make(map[string]bool, len(addons))
+		for _, name := range addons {
+			defaults[name] = true
+		}
+		s.SetDefaultAddons(defaults)
+		slog.Info("default addons reinitialized", "count", len(addons))
+	}
+
 	// Restart argosecrets reconciler with the updated provider/config.
 	if s.argoReconcilerConfig != nil && s.credProvider() != nil {
 		// Stop the existing reconciler before replacing it.
@@ -794,6 +808,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/connections/test", srv.handleTestConnection)
 	mux.HandleFunc("POST /api/v1/connections/test-credentials", srv.handleTestCredentials)
 	mux.HandleFunc("GET /api/v1/connections/discover-argocd", srv.handleDiscoverArgocd)
+
+	// Default addons (GitOps-native)
+	mux.HandleFunc("GET /api/v1/default-addons", srv.handleGetDefaultAddons)
+	mux.HandleFunc("PUT /api/v1/default-addons", srv.handlePutDefaultAddons)
 
 	// Clusters — batch and adoption operations (registered before {name} wildcard routes)
 	mux.HandleFunc("POST /api/v1/clusters/batch", srv.handleBatchRegisterClusters)

@@ -6,6 +6,49 @@ Adding to the catalog and enabling on a cluster are two separate operations that
 
 ![Two parallel operations — add to catalog (PR adds the addon entry) and enable on a cluster (PR sets the addon label on that cluster's values file) — both feed the ApplicationSet's cluster x values-file matrix generator, which creates the ArgoCD Application that deploys the addon.](../assets/diagrams/04-two-operation-model.drawio.svg)
 
+## Default Addons
+
+When you register or adopt a cluster without specifying which addons to enable, Sharko can auto-enable a set of **default addons**. The source of truth for default addons is a git file in your GitOps repository:
+
+```
+configuration/default-addons.yaml
+```
+
+This file is an enveloped document with the following structure:
+
+```yaml
+apiVersion: sharko.io/v1
+kind: DefaultAddons
+metadata:
+  name: default-addons
+spec:
+  addons:
+    - cert-manager
+    - external-dns
+    - metrics-server
+```
+
+The addon names listed in `spec.addons` must refer to addons already present in your `addons-catalog.yaml` — they are references, not definitions. When you register a cluster without explicit addon selections, Sharko enables every addon in this list automatically.
+
+### Editing Default Addons via the UI
+
+The UI provides an interface to edit the default addons list. When you make changes and click **Save**, Sharko **opens a pull request** against `configuration/default-addons.yaml` — it never changes the file directly. This keeps default addons consistent with how every other Sharko mutation works (registering clusters, enabling addons, editing values).
+
+One editing session creates one pull request. You review and merge the PR; Sharko applies the new defaults once the PR lands.
+
+The API endpoints for default addons are:
+
+- `GET /api/v1/default-addons` — fetch the current list
+- `PUT /api/v1/default-addons` — submit changes (opens a PR)
+
+### Backward Compatibility
+
+If you upgrade to this version and don't yet have `configuration/default-addons.yaml` in your repo, Sharko continues to use the existing default-addons setting from your connection configuration. The git file takes over once present, but nothing forces you to create it immediately.
+
+### Design Note — Sharko is a GitOps agent
+
+Sharko is built around a single principle: **the UI opens pull requests, it doesn't mutate state directly**. Default addons were the last holdout — they used to save live to the connection config. With the shift to a git-backed file, every action in Sharko follows the same pattern: edit, open PR, review, merge, apply.
+
 ## Viewing the Catalog
 
 ```bash

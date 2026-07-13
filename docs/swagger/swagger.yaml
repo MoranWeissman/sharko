@@ -1057,6 +1057,20 @@ definitions:
         description: '"pass", "fail", "skipped"'
         type: string
     type: object
+  internal_api.DefaultAddonsPutRequest:
+    properties:
+      addons:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_api.DefaultAddonsResponse:
+    properties:
+      addons:
+        items:
+          type: string
+        type: array
+    type: object
   internal_api.InitStatusResponse:
     properties:
       detail:
@@ -5202,6 +5216,75 @@ paths:
       summary: Dashboard stats
       tags:
       - dashboard
+  /default-addons:
+    get:
+      description: Returns the current set of default addon names (auto-enabled on
+        cluster registration without explicit addons). Reads from default-addons.yaml
+        if present, falls back to the connection's gitops.default_addons string for
+        backward compatibility.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Current default addons
+          schema:
+            $ref: '#/definitions/internal_api.DefaultAddonsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get default addons
+      tags:
+      - default-addons
+    put:
+      consumes:
+      - application/json
+      description: Replaces the current default addon set with the supplied list.
+        Opens a PR with the new default-addons.yaml (or updates an existing open PR
+        for idempotency). Does NOT mutate the connection.
+      parameters:
+      - description: New default addon list
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.DefaultAddonsPutRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: PR created/updated
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update default addons
+      tags:
+      - default-addons
   /docs/{slug}:
     get:
       description: Returns the Markdown content for a specific documentation page

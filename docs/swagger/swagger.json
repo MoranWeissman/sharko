@@ -4830,6 +4830,104 @@
                 }
             }
         },
+        "/default-addons": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the current set of default addon names (auto-enabled on cluster registration without explicit addons). Reads from default-addons.yaml if present, falls back to the connection's gitops.default_addons string for backward compatibility.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "default-addons"
+                ],
+                "summary": "Get default addons",
+                "responses": {
+                    "200": {
+                        "description": "Current default addons",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.DefaultAddonsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replaces the current default addon set with the supplied list. Opens a PR with the new default-addons.yaml (or updates an existing open PR for idempotency). Does NOT mutate the connection.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "default-addons"
+                ],
+                "summary": "Update default addons",
+                "parameters": [
+                    {
+                        "description": "New default addon list",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.DefaultAddonsPutRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PR created/updated",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/docs/list": {
             "get": {
                 "security": [
@@ -8417,6 +8515,28 @@
                 "status": {
                     "description": "\"pass\", \"fail\", \"skipped\"",
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.DefaultAddonsPutRequest": {
+            "type": "object",
+            "properties": {
+                "addons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_api.DefaultAddonsResponse": {
+            "type": "object",
+            "properties": {
+                "addons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

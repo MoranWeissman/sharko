@@ -102,6 +102,15 @@ type addonCatalogDoc struct {
 	Spec       config.AddonCatalogSpec `json:"spec"`
 }
 
+// defaultAddonsDoc mirrors schema.Envelope[config.DefaultAddonsSpec] for the
+// same reason as managedClustersDoc. Same parity invariant applies.
+type defaultAddonsDoc struct {
+	APIVersion string                   `json:"apiVersion"`
+	Kind       string                   `json:"kind"`
+	Metadata   schema.Metadata          `json:"metadata"`
+	Spec       config.DefaultAddonsSpec `json:"spec"`
+}
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(logger); err != nil {
@@ -161,13 +170,31 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	logger.Info("generated 2 schemas (mirrored to 2 locations each)",
+	// default-addons.v1.json
+	daBytes, err := schema.GenerateSchema(
+		&defaultAddonsDoc{},
+		schema.DefaultAddonsSchemaID,
+		"Sharko DefaultAddons",
+		"default-addons.yaml — the list of addons auto-enabled on clusters registered without explicit addon selection.",
+		schema.KindDefaultAddons,
+	)
+	if err != nil {
+		return fmt.Errorf("generating default-addons schema: %w", err)
+	}
+	daDocsPath, daEmbedPath, err := writeSchemaToBoth("default-addons.v1.json", daBytes)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("generated 3 schemas (mirrored to 2 locations each)",
 		"managed_clusters_docs", mcDocsPath,
 		"managed_clusters_embed", mcEmbedPath,
 		"addons_catalog_docs", acDocsPath,
 		"addons_catalog_embed", acEmbedPath,
+		"default_addons_docs", daDocsPath,
+		"default_addons_embed", daEmbedPath,
 	)
-	fmt.Printf("generated 2 schemas to %s + %s: managed-clusters.v1.json, addons-catalog.v1.json\n",
+	fmt.Printf("generated 3 schemas to %s + %s: managed-clusters.v1.json, addons-catalog.v1.json, default-addons.v1.json\n",
 		docsOutputDir, embedOutputDir)
 	return nil
 }

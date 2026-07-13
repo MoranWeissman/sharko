@@ -99,6 +99,10 @@ const (
 	// KindAddonCatalog identifies an addons-catalog.yaml document.
 	// Consumed by Story 9.2.
 	KindAddonCatalog = "AddonCatalog"
+
+	// KindDefaultAddons identifies a default-addons.yaml document.
+	// V3-Phase-2: GitOps-native default addons (UI opens PR, git file is truth).
+	KindDefaultAddons = "DefaultAddons"
 )
 
 // Metadata holds the envelope's metadata block. Only Name is required by the

@@ -75,6 +75,15 @@ type AddonCatalogSpec struct {
 	ApplicationSets []models.AddonCatalogEntry `json:"applicationsets" yaml:"applicationsets"`
 }
 
+// DefaultAddonsSpec is the spec body of an enveloped default-addons.yaml.
+// It holds the list of addon names that are auto-enabled when a cluster
+// is registered/adopted without explicit addon selection. V3-Phase-2 moves
+// the source of truth from the connection's gitops.default_addons string
+// to a git file; this is the enveloped shape.
+type DefaultAddonsSpec struct {
+	Addons []string `json:"addons" yaml:"addons"`
+}
+
 // addonsCatalogFile is the legacy on-disk shape of addons-catalog.yaml
 // — a bare YAML document with `applicationsets:` at the top level.
 // The reader still accepts this shape; the writer always emits the
