@@ -39,6 +39,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/MoranWeissman/sharko/internal/schema"
+	"gopkg.in/yaml.v3"
 )
 
 // CatalogSource is a single third-party catalog URL configured by the
@@ -69,6 +72,22 @@ type CatalogSourcesConfig struct {
 	// logging / UI warnings; it has no functional effect after parsing
 	// (enforcement happened during Load).
 	AllowPrivate bool
+}
+
+// MarketplaceSourcesSpec is the spec body of an enveloped marketplace-sources.yaml.
+// It holds the list of third-party catalog source URLs (V3-Phase-3 GitOps-native
+// catalog sources). The env-var path remains available for tokened/private URLs
+// that must not be committed to Git.
+type MarketplaceSourcesSpec struct {
+	// Sources is the list of catalog source URLs. Each source must be HTTPS
+	// and will be validated against the same SSRF guards as env-sourced URLs.
+	Sources []struct {
+		URL string `json:"url" yaml:"url"`
+	} `json:"sources" yaml:"sources"`
+
+	// RefreshInterval is an optional Go duration string (e.g., "30m", "2h").
+	// Defaults to 1h when absent. Must be between 1m and 24h.
+	RefreshInterval string `json:"refreshInterval,omitempty" yaml:"refreshInterval,omitempty"`
 }
 
 // Env var names (exported so tests + docs have a single source of truth).
@@ -308,4 +327,99 @@ func canonicalize(u *url.URL) string {
 	}
 
 	return scheme + "://" + hostport + path
+}
+
+// MarketplaceSourcesPath is the canonical git path for the marketplace sources file.
+const MarketplaceSourcesPath = "configuration/marketplace-sources.yaml"
+
+// LoadMarketplaceSourcesFromFile parses a marketplace-sources.yaml body
+// (enveloped) and returns a *CatalogSourcesConfig with the same shape as
+// LoadCatalogSourcesFromEnv, so downstream fetcher wiring is unchanged.
+//
+// The file must be enveloped (apiVersion: sharko.dev/v1, kind:
+// MarketplaceSources). Validation is schema-based via the runtime
+// validator; the same SSRF + scheme checks that guard env-sourced URLs
+// apply to file-sourced URLs. Deduplication is applied (case-insensitive
+// host, trailing-slash-normalized path).
+//
+// Returns (nil, error) on validation or parsing failures. An empty
+// sources list in the file is valid and returns a non-nil config with
+// empty Sources slice.
+//
+// IMPORTANT TOKEN-LEAK GUARD: catalog URLs may encode an auth token in
+// the path (e.g., https://catalogs.example.com/private/<token>/cat.yaml).
+// A committed gitops file with such a URL would leak the token into Git.
+// This file reader is intended for PUBLIC / TOKENLESS source URLs only.
+// Tokened / private sources should remain in the SHARKO_CATALOG_URLS env
+// fallback. The code does NOT log file-sourced URLs for this reason.
+func LoadMarketplaceSourcesFromFile(body []byte) (*CatalogSourcesConfig, error) {
+	return loadMarketplaceSourcesFromFileImpl(body, lookupHostFn)
+}
+
+// loadMarketplaceSourcesFromFileImpl is the testable core of
+// LoadMarketplaceSourcesFromFile, with a stub-able DNS resolver.
+func loadMarketplaceSourcesFromFileImpl(body []byte, lookupHost func(string) ([]string, error)) (*CatalogSourcesConfig, error) {
+	// Check envelope.
+	enveloped, err := schema.IsEnveloped(body)
+	if err != nil {
+		return nil, fmt.Errorf("checking envelope: %w", err)
+	}
+	if !enveloped {
+		return nil, fmt.Errorf("marketplace-sources.yaml must be enveloped (apiVersion: sharko.dev/v1, kind: MarketplaceSources)")
+	}
+
+	// Validate against schema.
+	if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
+		if err := validator.Validate(schema.KindMarketplaceSources, body); err != nil {
+			return nil, fmt.Errorf("validating marketplace-sources.yaml: %w", err)
+		}
+	}
+
+	// Parse the envelope.
+	var doc schema.Envelope[MarketplaceSourcesSpec]
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return nil, fmt.Errorf("unmarshalling marketplace-sources.yaml: %w", err)
+	}
+	if doc.Kind != schema.KindMarketplaceSources {
+		return nil, fmt.Errorf("wrong kind %q, expected %q", doc.Kind, schema.KindMarketplaceSources)
+	}
+
+	// Parse refresh interval from spec (or default).
+	interval, err := parseRefreshInterval(doc.Spec.RefreshInterval)
+	if err != nil {
+		return nil, err
+	}
+
+	// AllowPrivate is NOT exposed in the file format — the file is for
+	// public URLs only. Tokened URLs stay in the env var. We pass
+	// allowPrivate=false to the validation pipeline below so the SSRF
+	// guard rejects private IPs.
+	allowPrivate := false
+
+	cfg := &CatalogSourcesConfig{
+		RefreshInterval: interval,
+		AllowPrivate:    allowPrivate,
+	}
+
+	// Validate and canonicalize each source URL, reusing the SAME
+	// validation pipeline as the env loader (no fork).
+	seen := make(map[string]struct{})
+	for _, src := range doc.Spec.Sources {
+		raw := strings.TrimSpace(src.URL)
+		if raw == "" {
+			// Tolerate empty entries (YAML array with empty string).
+			continue
+		}
+		canon, err := validateAndCanonicalize(raw, allowPrivate, lookupHost)
+		if err != nil {
+			return nil, fmt.Errorf("marketplace-sources.yaml: source URL %q: %w", raw, err)
+		}
+		if _, dup := seen[canon]; dup {
+			continue
+		}
+		seen[canon] = struct{}{}
+		cfg.Sources = append(cfg.Sources, CatalogSource{URL: canon})
+	}
+
+	return cfg, nil
 }

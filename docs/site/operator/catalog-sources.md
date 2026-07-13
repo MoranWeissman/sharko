@@ -2,7 +2,7 @@
 
 > **Reference page, not a runbook.** This page documents the
 > third-party catalog source configuration surface
-> (`SHARKO_CATALOG_URLS`, the SSRF guard, refresh cadence). If you are
+> (`SHARKO_CATALOG_URLS`, the git-native `configuration/marketplace-sources.yaml`, the SSRF guard, refresh cadence). If you are
 > diagnosing a fetcher failure, search
 > [`failure-mode-index.md`](failure-mode-index.md) — the failures that
 > surface during catalog source fetch are covered by
@@ -13,20 +13,29 @@
 > [`catalog-trust-policy.md`](catalog-trust-policy.md).
 
 Sharko ships with an embedded curated addon catalog. Starting with **v1.23**
-operators can extend it with one or more private HTTPS-served catalog
+operators can extend it with one or more HTTPS-served catalog
 YAML files — for internal charts, partner catalogs, or org-specific
-curation — without forking Sharko.
+curation — without forking Sharko. Starting with **v3.0.0**, you can declare these sources in a git-native file (`configuration/marketplace-sources.yaml`) instead of (or in addition to) the `SHARKO_CATALOG_URLS` environment variable.
 
 The embedded catalog is always the baseline. Third-party catalogs are
 additive, and the embedded entry wins on a name collision.
 
-## Environment variables
+## Configuration Options
+
+Sharko reads third-party catalog sources from two places (you can use one or both):
+
+1. **Environment variable** `SHARKO_CATALOG_URLS` — comma-separated list of HTTPS URLs. Use this for private/tokened sources or temporary test sources.
+2. **Git file** `configuration/marketplace-sources.yaml` — enveloped YAML with `spec.sources[]`. Use this for public/tokenless sources your team should track in GitOps. See [Marketplace Sources Configuration](marketplace-sources-config.md) for the schema and examples.
+
+At startup and on every refresh interval, Sharko merges both lists (deduplicating by canonical URL) and fetches each source.
+
+### Environment variables
 
 | Variable | Required | Default | Notes |
 |----------|----------|---------|-------|
-| `SHARKO_CATALOG_URLS` | No | *(unset)* | Comma-separated list of HTTPS URLs pointing at catalog YAML files. Unset or empty = **embedded-only mode** (no fetch loop runs). |
-| `SHARKO_CATALOG_REFRESH_INTERVAL` | No | `1h` | Go duration (e.g. `30m`, `2h`). Bounded to `[1m, 24h]`. Values outside that range fail at startup. |
-| `SHARKO_CATALOG_URLS_ALLOW_PRIVATE` | No | `false` | Set to `true` only on trusted networks (home-lab, dev) to disable the SSRF guard. **See the warning below.** |
+| `SHARKO_CATALOG_URLS` | No | *(unset)* | Comma-separated list of HTTPS URLs pointing at catalog YAML files. Unset or empty = **no env-var sources** (git file or embedded-only mode). |
+| `SHARKO_CATALOG_REFRESH_INTERVAL` | No | `1h` | Go duration (e.g. `30m`, `2h`). Bounded to `[1m, 24h]`. Values outside that range fail at startup. Applies to both env-var and git-file sources. |
+| `SHARKO_CATALOG_URLS_ALLOW_PRIVATE` | No | `false` | Set to `true` only on trusted networks (home-lab, dev) to disable the SSRF guard. **See the warning below.** Applies to both env-var and git-file sources. |
 
 ## Example
 
@@ -119,19 +128,14 @@ SHARKO_CATALOG_URLS_ALLOW_PRIVATE=true
 Values outside the `[1m, 24h]` range cause a startup error so the
 operator notices the misconfiguration immediately.
 
-## What happens when the env is unset?
+## What happens when both env and git file are absent?
 
 Sharko logs `no third-party catalogs configured, using embedded only`
 and skips the fetch loop entirely. The embedded curated catalog is the
 sole source of truth. No startup error.
 
-## What lands in v1.23 vs later
+## Related Pages
 
-- **v1.23 — Story V123-1.1 (this page):** parse + validate +
-  stash the config on the server. No fetcher yet, no UI.
-- **v1.23 — Story V123-1.2:** fetch loop + YAML validation +
-  last-successful snapshot + `GET /api/v1/catalog/sources`.
-- **v1.23 — Story V123-1.3+:** source attribution on catalog entries,
-  UI tile showing embedded vs third-party provenance.
-- **v1.24+:** editable Settings page backed by a ConfigMap (deferred per
-  the design doc §7.1 resolution — env-only for v1.23).
+- [Marketplace Sources Configuration](marketplace-sources-config.md) — git-native `configuration/marketplace-sources.yaml` schema and usage
+- [Marketplace Architecture](marketplace-architecture.md) — three-layer model (Marketplace / Catalog / Enablement)
+- [Catalog Scan Runbook](../developer-guide/catalog-scan-runbook.md) — discovery bot that proposes new addons from configured sources

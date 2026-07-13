@@ -47,3 +47,9 @@ var embeddedAddonCatalogSchema []byte
 //
 //go:embed default-addons.v1.json
 var embeddedDefaultAddonsSchema []byte
+
+// embeddedMarketplaceSourcesSchema is the JSON Schema bytes for
+// marketplace-sources.yaml. Same lifecycle as the other embedded schemas.
+//
+//go:embed marketplace-sources.v1.json
+var embeddedMarketplaceSourcesSchema []byte

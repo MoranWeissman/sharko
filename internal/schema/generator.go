@@ -88,6 +88,10 @@ const AddonCatalogSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sh
 // default-addons.v1.json file's $id. Mirrors the other schema ID constants.
 const DefaultAddonsSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/default-addons.v1.json"
 
+// MarketplaceSourcesSchemaID is the public URL embedded in every generated
+// marketplace-sources.v1.json file's $id. Mirrors the other schema ID constants.
+const MarketplaceSourcesSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/marketplace-sources.v1.json"
+
 // SchemaDialect is the JSON Schema dialect URL emitted as $schema in every
 // generated file. Story 9.4's runtime validator (santhosh-tekuri/jsonschema
 // v5) defaults to draft 2020-12 when this URL is present.

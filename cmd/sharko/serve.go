@@ -280,22 +280,74 @@ var serveCmd = &cobra.Command{
 		slog.Info("curated catalog loaded", "entries", cat.Len())
 		srv.SetCatalog(cat)
 
-		// Third-party catalog sources. Parses SHARKO_CATALOG_URLS +
-		// SHARKO_CATALOG_REFRESH_INTERVAL; a misconfiguration is fatal so the
-		// operator notices at startup. Empty env = embedded-only mode.
+		// Third-party catalog sources moved to after ReinitializeFromConnection
+		// so we can try file-then-env (V3-P3.1). See below.
+
+		// Daily OpenSSF Scorecard refresh (non-fatal failures per design §4.6).
+		scorecardSched := catalog.NewScheduler(cat, metrics.ScorecardMetricsAdapter{})
+		scorecardSched.Start(context.Background())
+		defer scorecardSched.Stop()
+
+		slog.Info("sharko starting", "version", version)
+
+		// Initialize provider + gitops config from active connection (if exists).
+		// This ensures a pod restart doesn't leave the provider nil when a connection is already stored.
+		slog.Info("initializing from stored connection")
+		srv.ReinitializeFromConnection()
+		slog.Info("server initialization complete")
+
+		// Third-party catalog sources (V3-P3.1): try file-then-env.
+		// Reads configuration/marketplace-sources.yaml if the git provider is
+		// available and the file exists; falls back to SHARKO_CATALOG_URLS env
+		// when the file is absent or git not yet connected. A misconfiguration
+		// in EITHER path is fatal so the operator notices at startup.
 		//
 		// URLs are deliberately NOT logged — a third-party catalog URL may
-		// encode an auth token in the path. Authenticated operators can
+		// encode an auth token in the path (the file is for public URLs only;
+		// tokened URLs stay in the env var). Authenticated operators can
 		// retrieve the authoritative list via /api/v1/catalog/sources.
-		catSources, err := config.LoadCatalogSourcesFromEnv()
-		if err != nil {
-			return fmt.Errorf("load catalog sources: %w", err)
+		var catSources *config.CatalogSourcesConfig
+		var catSourcesOrigin string
+
+		// Try file first if git is available.
+		if gp, gpErr := connSvc.GetActiveGitProvider(); gpErr == nil && gp != nil {
+			if gitopsCfg := getConnectionGitOps(connSvc); gitopsCfg != nil {
+				fileBody, fileErr := gp.GetFileContent(cmd.Context(), config.MarketplaceSourcesPath, gitopsCfg.BaseBranch)
+				if fileErr == nil && len(fileBody) > 0 {
+					// File exists — parse it.
+					catSources, err = config.LoadMarketplaceSourcesFromFile(fileBody)
+					if err != nil {
+						return fmt.Errorf("load marketplace sources from file: %w", err)
+					}
+					catSourcesOrigin = "file"
+					slog.Info("loaded marketplace sources from git file",
+						"path", config.MarketplaceSourcesPath,
+						"count", len(catSources.Sources),
+					)
+				}
+			}
 		}
+
+		// Fall back to env if file didn't provide sources.
+		if catSources == nil {
+			catSources, err = config.LoadCatalogSourcesFromEnv()
+			if err != nil {
+				return fmt.Errorf("load catalog sources from env: %w", err)
+			}
+			catSourcesOrigin = "env"
+			if len(catSources.Sources) > 0 {
+				slog.Info("loaded catalog sources from env",
+					"count", len(catSources.Sources),
+				)
+			}
+		}
+
 		srv.SetCatalogSources(catSources)
 		if len(catSources.Sources) == 0 {
 			slog.Info("no third-party catalogs configured, using embedded only")
 		} else {
 			slog.Info("third-party catalog sources configured",
+				"origin", catSourcesOrigin,
 				"count", len(catSources.Sources),
 				"refresh_interval", catSources.RefreshInterval,
 				"allow_private", catSources.AllowPrivate,
@@ -329,19 +381,6 @@ var serveCmd = &cobra.Command{
 			defer sourcesFetcher.Stop()
 			slog.Info("catalog sources fetcher started", "count", len(catSources.Sources))
 		}
-
-		// Daily OpenSSF Scorecard refresh (non-fatal failures per design §4.6).
-		scorecardSched := catalog.NewScheduler(cat, metrics.ScorecardMetricsAdapter{})
-		scorecardSched.Start(context.Background())
-		defer scorecardSched.Stop()
-
-		slog.Info("sharko starting", "version", version)
-
-		// Initialize provider + gitops config from active connection (if exists).
-		// This ensures a pod restart doesn't leave the provider nil when a connection is already stored.
-		slog.Info("initializing from stored connection")
-		srv.ReinitializeFromConnection()
-		slog.Info("server initialization complete")
 
 		// Start notification checker (background goroutine, checks every 30 min).
 		notifProvider := notifications.NewServiceProvider(connSvc, addonSvc)

@@ -991,7 +991,7 @@ export function AddonCatalog() {
         <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
           {tab === 'catalog'
             ? 'All addons defined in your Git catalog. See deployment coverage, health, and version per addon.'
-            : 'Browse Sharko\u2019s curated catalog and configure a new addon for your Git repo.'}
+            : 'Discover approved addons for your deployable catalog.'}
         </p>
       </div>
       <AddonsTabBar tab={tab} onChange={switchTab} />

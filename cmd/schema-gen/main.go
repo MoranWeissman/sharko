@@ -111,6 +111,15 @@ type defaultAddonsDoc struct {
 	Spec       config.DefaultAddonsSpec `json:"spec"`
 }
 
+// marketplaceSourcesDoc mirrors schema.Envelope[config.MarketplaceSourcesSpec] for the
+// same reason as managedClustersDoc. Same parity invariant applies.
+type marketplaceSourcesDoc struct {
+	APIVersion string                         `json:"apiVersion"`
+	Kind       string                         `json:"kind"`
+	Metadata   schema.Metadata                `json:"metadata"`
+	Spec       config.MarketplaceSourcesSpec  `json:"spec"`
+}
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(logger); err != nil {
@@ -186,15 +195,33 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	logger.Info("generated 3 schemas (mirrored to 2 locations each)",
+	// marketplace-sources.v1.json
+	msBytes, err := schema.GenerateSchema(
+		&marketplaceSourcesDoc{},
+		schema.MarketplaceSourcesSchemaID,
+		"Sharko MarketplaceSources",
+		"marketplace-sources.yaml — the list of third-party catalog source URLs pulled by Sharko's marketplace fetcher.",
+		schema.KindMarketplaceSources,
+	)
+	if err != nil {
+		return fmt.Errorf("generating marketplace-sources schema: %w", err)
+	}
+	msDocsPath, msEmbedPath, err := writeSchemaToBoth("marketplace-sources.v1.json", msBytes)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("generated 4 schemas (mirrored to 2 locations each)",
 		"managed_clusters_docs", mcDocsPath,
 		"managed_clusters_embed", mcEmbedPath,
 		"addons_catalog_docs", acDocsPath,
 		"addons_catalog_embed", acEmbedPath,
 		"default_addons_docs", daDocsPath,
 		"default_addons_embed", daEmbedPath,
+		"marketplace_sources_docs", msDocsPath,
+		"marketplace_sources_embed", msEmbedPath,
 	)
-	fmt.Printf("generated 3 schemas to %s + %s: managed-clusters.v1.json, addons-catalog.v1.json, default-addons.v1.json\n",
+	fmt.Printf("generated 4 schemas to %s + %s: managed-clusters.v1.json, addons-catalog.v1.json, default-addons.v1.json, marketplace-sources.v1.json\n",
 		docsOutputDir, embedOutputDir)
 	return nil
 }

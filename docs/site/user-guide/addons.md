@@ -6,6 +6,8 @@ Adding to the catalog and enabling on a cluster are two separate operations that
 
 ![Two parallel operations — add to catalog (PR adds the addon entry) and enable on a cluster (PR sets the addon label on that cluster's values file) — both feed the ApplicationSet's cluster x values-file matrix generator, which creates the ArgoCD Application that deploys the addon.](../assets/diagrams/04-two-operation-model.drawio.svg)
 
+> **Three-layer model:** This page covers the **Catalog** layer (deployable list in `addons-catalog.yaml`) and the **Enablement** layer (per-cluster labels). The **Marketplace** layer (browse/discover surface) is covered in [Marketplace](marketplace.md). See [Marketplace Architecture](../operator/marketplace-architecture.md) for how the three layers fit together.
+
 ## Default Addons
 
 When you register or adopt a cluster without specifying which addons to enable, Sharko can auto-enable a set of **default addons**. The source of truth for default addons is a git file in your GitOps repository:
