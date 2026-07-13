@@ -273,6 +273,15 @@ export function MarketplaceBrowseTab() {
       />
 
       <section aria-label="Marketplace results" className="flex min-w-0 flex-col gap-3">
+        <div className="rounded-lg bg-[#f0f7ff] ring-2 ring-[#6aade0] p-4 dark:ring-gray-700 dark:bg-gray-800">
+          <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+            Your team's own approved, deployable addon menu.
+          </h3>
+          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
+            Sharko keeps it fresh — it scans upstream and opens a pull request proposing new or updated addons; you review and merge.
+          </p>
+        </div>
+
         <header className="flex items-center justify-between">
           <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
             <Sparkles className="mr-1 inline h-4 w-4 text-teal-600" aria-hidden="true" />

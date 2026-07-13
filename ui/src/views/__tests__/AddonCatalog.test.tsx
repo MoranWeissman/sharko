@@ -244,7 +244,7 @@ describe('AddonCatalog — Marketplace front door (V2-cleanup-61.3, A2)', () => 
     // Switching tabs re-renders the page header with the Marketplace copy.
     await waitFor(() => {
       expect(
-        screen.getByText(/browse Sharko.s curated catalog/i),
+        screen.getByText(/discover approved addons/i),
       ).toBeInTheDocument()
     })
   })
@@ -276,7 +276,7 @@ describe('AddonCatalog — empty catalog points to the Marketplace (V2-cleanup-6
 
     await waitFor(() => {
       expect(
-        screen.getByText(/browse Sharko.s curated catalog/i),
+        screen.getByText(/discover approved addons/i),
       ).toBeInTheDocument()
     })
   })

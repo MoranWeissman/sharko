@@ -88,7 +88,7 @@ const navSections: NavSection[] = [
 const routeLabels: Record<string, string> = {
   dashboard: 'Dashboard',
   clusters: 'Clusters',
-  addons: 'Addons Catalog',
+  addons: 'Addons',
   system: 'System',
   observability: 'Observability',
   dashboards: 'External Dashboards',
@@ -134,7 +134,7 @@ function getAIPageContext(pathname: string): string | undefined {
   const routes: Record<string, string> = {
     '/dashboard': 'the Dashboard (overview stats)',
     '/clusters': 'the Clusters page',
-    '/addons': 'the Addons Catalog',
+    '/addons': 'the Addons page (Catalog + Marketplace)',
     '/system': 'the System page (Sharko/ArgoCD → repo/clusters chain)',
     '/observability': 'the Observability page',
     '/dashboards': 'the External Dashboards page (external dashboard links)',
