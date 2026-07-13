@@ -1281,4 +1281,21 @@ export const api = {
       allow_inline_credentials,
     }),
 
+  // ─── Default Addons (V3-P2.2) ──────────────────────────────────────────
+
+  /**
+   * Get the current default addon set (reads git file, falls back to
+   * connection string). Returns `{addons: string[]}`.
+   */
+  getDefaultAddons: () =>
+    fetchJSON<{ addons: string[] }>('/default-addons'),
+
+  /**
+   * Update default addons via PR. Writes git file and opens (or updates)
+   * a PR. Does NOT mutate the connection. Returns `{pr_url: string,
+   * pr_id: number, message?: string}`.
+   */
+  putDefaultAddons: (addons: string[]) =>
+    putJSON<{ pr_url: string; pr_id: number; message?: string }>('/default-addons', { addons }),
+
 }
