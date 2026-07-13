@@ -239,8 +239,14 @@ func TestHotReload_ConnectionSaveSwapsRegistrationProviderToAWSSM(t *testing.T) 
 // provider that matches the latest save.
 func TestHotReload_SubsequentRegistrationUsesNewProvider(t *testing.T) {
 	// The post-reload registration hits the real (credential-less) AWS SM
-	// provider; disabling IMDS keeps that failure fast and offline-safe.
+	// provider; disabling IMDS and stubbing out config files keeps construction
+	// hermetic and offline-safe (HOME=/tmp/nohome in CI means ~/.aws/config DNE).
+	// AWS_REGION is required for SDK construction when config file is absent.
 	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	t.Setenv("AWS_CONFIG_FILE", "/dev/null")
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", "/dev/null")
+	t.Setenv("AWS_REGION", "eu-west-1")
+	t.Setenv("AWS_PROFILE", "")
 
 	fakeOld := &recordingCredProvider{kc: &providers.Kubeconfig{Server: "https://old.example.com"}}
 	srv := newRegisterBackendTestServer(t, fakeOld)

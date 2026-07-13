@@ -706,19 +706,28 @@ func TestReinitializeFromConnection_SeparateAddonSecretProvider(t *testing.T) {
 
 	srv.ReinitializeFromConnection()
 
-	// Cluster-test config: argocd
-	if srv.clusterTestCfg() == nil || srv.clusterTestCfg().Type != "argocd" {
-		t.Errorf("expected clusterTestCfg.Type=argocd, got %+v", srv.clusterTestCfg())
+	// Cluster-test config: argocd (config must publish even if provider construction failed)
+	testCfg := srv.clusterTestCfg()
+	if testCfg == nil {
+		t.Fatalf("expected clusterTestCfg to be published, got nil")
 	}
-	// Addon-secret config: aws-sm with explicit fields
-	if srv.addonSecretCfg() == nil || srv.addonSecretCfg().Type != "aws-sm" {
-		t.Errorf("expected addonSecretCfg.Type=aws-sm, got %+v", srv.addonSecretCfg())
+	if testCfg.Type != "argocd" {
+		t.Errorf("expected clusterTestCfg.Type=argocd, got %q", testCfg.Type)
 	}
-	if srv.addonSecretCfg().Region != "us-east-1" {
-		t.Errorf("expected addonSecretCfg.Region=us-east-1, got %q", srv.addonSecretCfg().Region)
+
+	// Addon-secret config: aws-sm with explicit fields (independent of cluster-creds provider)
+	addonCfg := srv.addonSecretCfg()
+	if addonCfg == nil {
+		t.Fatalf("expected addonSecretCfg to be published, got nil")
 	}
-	if srv.addonSecretCfg().Prefix != "addons/" {
-		t.Errorf("expected addonSecretCfg.Prefix=addons/, got %q", srv.addonSecretCfg().Prefix)
+	if addonCfg.Type != "aws-sm" {
+		t.Errorf("expected addonSecretCfg.Type=aws-sm, got %q", addonCfg.Type)
+	}
+	if addonCfg.Region != "us-east-1" {
+		t.Errorf("expected addonSecretCfg.Region=us-east-1, got %q", addonCfg.Region)
+	}
+	if addonCfg.Prefix != "addons/" {
+		t.Errorf("expected addonSecretCfg.Prefix=addons/, got %q", addonCfg.Prefix)
 	}
 }
 

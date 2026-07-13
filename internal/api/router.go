@@ -611,12 +611,20 @@ func (s *Server) ReinitializeFromConnection() {
 		if err != nil {
 			slog.Info("[startup] no credentials provider configured", "reason", err)
 		} else {
-			// Race-safe publish (M1): handlers read the provider trio
-			// concurrently with this hot-reload; the atomic snapshot swap
-			// replaces the old plain field assignments.
-			s.publishProviders(p, &addonCfg, &testCfg)
-			slog.Info("[startup] provider reinitialized from connection", "type", addonCfg.Type, "region", addonCfg.Region, "prefix", addonCfg.Prefix)
+			slog.Info("[startup] credentials provider constructed", "type", testCfg.Type)
 		}
+
+		// Race-safe publish (M1): handlers read the provider trio
+		// concurrently with this hot-reload; the atomic snapshot swap
+		// replaces the old plain field assignments.
+		//
+		// V3-P1.1: publish the configs (addonSecretCfg, clusterTestCfg)
+		// even when the cluster-creds provider failed to construct
+		// (p == nil), since addon-secret backend is independent of
+		// cluster-creds backend. The credProvider slot can be nil
+		// (handlers already surface structured 503 for nil credProvider).
+		s.publishProviders(p, &addonCfg, &testCfg)
+		slog.Info("[startup] provider reinitialized from connection", "addon_type", addonCfg.Type, "addon_region", addonCfg.Region, "addon_prefix", addonCfg.Prefix)
 	}
 
 	// Reinit GitOps config from connection.

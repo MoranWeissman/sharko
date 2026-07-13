@@ -573,26 +573,33 @@ var serveCmd = &cobra.Command{
 				slog.Info("[serve] no credentials provider configured", "reason", err)
 			} else {
 				credProvider = cp
-				addonCfgPtr = &resolvedAddonCfg
-				clusterTestCfgPtr = &resolvedTestCfg
+				slog.Info("[serve] credentials provider constructed", "type", resolvedTestCfg.Type)
+			}
 
-				// Default addons (applied to clusters registered without explicit addons).
-				if connGitOps := getConnectionGitOps(connSvc); connGitOps != nil && connGitOps.DefaultAddons != "" {
-					defaults := make(map[string]bool)
-					for _, name := range strings.Split(connGitOps.DefaultAddons, ",") {
-						name = strings.TrimSpace(name)
-						if name != "" {
-							defaults[name] = true
-						}
-					}
-					if len(defaults) > 0 {
-						srv.SetDefaultAddons(defaults)
-						slog.Info("default addons configured", "addons", connGitOps.DefaultAddons)
+			// V3-P1.1: publish the configs (addon-secret, cluster-test)
+			// even when the cluster-creds provider failed to construct
+			// (cp == nil), since addon-secret backend is independent of
+			// cluster-creds backend. The credProvider can be nil (handlers
+			// surface structured 503 for nil credProvider).
+			addonCfgPtr = &resolvedAddonCfg
+			clusterTestCfgPtr = &resolvedTestCfg
+
+			// Default addons (applied to clusters registered without explicit addons).
+			if connGitOps := getConnectionGitOps(connSvc); connGitOps != nil && connGitOps.DefaultAddons != "" {
+				defaults := make(map[string]bool)
+				for _, name := range strings.Split(connGitOps.DefaultAddons, ",") {
+					name = strings.TrimSpace(name)
+					if name != "" {
+						defaults[name] = true
 					}
 				}
-
-				slog.Info("secrets provider enabled", "type", resolvedAddonCfg.Type)
+				if len(defaults) > 0 {
+					srv.SetDefaultAddons(defaults)
+					slog.Info("default addons configured", "addons", connGitOps.DefaultAddons)
+				}
 			}
+
+			slog.Info("secrets provider enabled", "addon_type", resolvedAddonCfg.Type)
 		}
 
 		// Pre-wire ClusterRegistrationSourceConfig for the cluster reconciler.
