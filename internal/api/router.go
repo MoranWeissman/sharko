@@ -653,6 +653,20 @@ func (s *Server) ReinitializeFromConnection() {
 		s.gitopsCfg.RepoURL = conn.Git.RepoURL
 	}
 
+	// Reinit default addons from git (V3-P2.1a hot-reload).
+	// Reuses the same read+fallback logic boot and GET handler use.
+	addons, err := s.ReadDefaultAddons(context.Background())
+	if err != nil {
+		slog.Info("failed to read default addons during hot-reload", "error", err)
+	} else if len(addons) > 0 {
+		defaults := make(map[string]bool, len(addons))
+		for _, name := range addons {
+			defaults[name] = true
+		}
+		s.SetDefaultAddons(defaults)
+		slog.Info("default addons reinitialized", "count", len(addons))
+	}
+
 	// Restart argosecrets reconciler with the updated provider/config.
 	if s.argoReconcilerConfig != nil && s.credProvider() != nil {
 		// Stop the existing reconciler before replacing it.

@@ -585,18 +585,19 @@ var serveCmd = &cobra.Command{
 			clusterTestCfgPtr = &resolvedTestCfg
 
 			// Default addons (applied to clusters registered without explicit addons).
-			if connGitOps := getConnectionGitOps(connSvc); connGitOps != nil && connGitOps.DefaultAddons != "" {
-				defaults := make(map[string]bool)
-				for _, name := range strings.Split(connGitOps.DefaultAddons, ",") {
-					name = strings.TrimSpace(name)
-					if name != "" {
-						defaults[name] = true
-					}
+			// V3-P2.1a: read from git file (configuration/default-addons.yaml) with
+			// connection-string fallback for backward compatibility. Reuses the
+			// same read+fallback logic the GET handler uses.
+			addons, err := srv.ReadDefaultAddons(cmd.Context())
+			if err != nil {
+				slog.Info("failed to read default addons at boot", "error", err)
+			} else if len(addons) > 0 {
+				defaults := make(map[string]bool, len(addons))
+				for _, name := range addons {
+					defaults[name] = true
 				}
-				if len(defaults) > 0 {
-					srv.SetDefaultAddons(defaults)
-					slog.Info("default addons configured", "addons", connGitOps.DefaultAddons)
-				}
+				srv.SetDefaultAddons(defaults)
+				slog.Info("default addons configured", "count", len(addons), "addons", strings.Join(addons, ","))
 			}
 
 			slog.Info("secrets provider enabled", "addon_type", resolvedAddonCfg.Type)

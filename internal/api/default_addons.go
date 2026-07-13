@@ -45,7 +45,7 @@ type DefaultAddonsPutRequest struct {
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /default-addons [get]
 func (s *Server) handleGetDefaultAddons(w http.ResponseWriter, r *http.Request) {
-	addons, err := s.readDefaultAddons(r.Context())
+	addons, err := s.ReadDefaultAddons(r.Context())
 	if err != nil {
 		writeServerError(w, http.StatusInternalServerError, "read_default_addons", err)
 		return
@@ -127,9 +127,10 @@ func (s *Server) handlePutDefaultAddons(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// readDefaultAddons reads the current default addon set from git (default-addons.yaml)
-// or falls back to the connection's gitops.default_addons string.
-func (s *Server) readDefaultAddons(ctx context.Context) ([]string, error) {
+// ReadDefaultAddons reads the current default addon set from git (default-addons.yaml)
+// or falls back to the connection's gitops.default_addons string. Exported so boot
+// and hot-reload can reuse the same read+fallback logic.
+func (s *Server) ReadDefaultAddons(ctx context.Context) ([]string, error) {
 	git, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
 		return nil, fmt.Errorf("no active git provider: %w", err)
@@ -154,7 +155,7 @@ func (s *Server) readDefaultAddons(ctx context.Context) ([]string, error) {
 		return []string{}, nil
 	}
 
-	if conn.GitOps.DefaultAddons == "" {
+	if conn == nil || conn.GitOps == nil || conn.GitOps.DefaultAddons == "" {
 		return []string{}, nil
 	}
 
