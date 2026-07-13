@@ -147,7 +147,7 @@ func DefaultValidator() (*Validator, error) {
 // internal/schema/loader_disk.go (if/when added) would be a separate
 // dev-only constructor.
 func NewValidator() (*Validator, error) {
-	v := &Validator{schemas: make(map[string]*jsonschema.Schema, 3)}
+	v := &Validator{schemas: make(map[string]*jsonschema.Schema, 4)}
 
 	if err := v.registerEmbedded(KindManagedClusters, ManagedClustersSchemaID, embeddedManagedClustersSchema); err != nil {
 		return nil, err
@@ -156,6 +156,9 @@ func NewValidator() (*Validator, error) {
 		return nil, err
 	}
 	if err := v.registerEmbedded(KindDefaultAddons, DefaultAddonsSchemaID, embeddedDefaultAddonsSchema); err != nil {
+		return nil, err
+	}
+	if err := v.registerEmbedded(KindMarketplaceSources, MarketplaceSourcesSchemaID, embeddedMarketplaceSourcesSchema); err != nil {
 		return nil, err
 	}
 	return v, nil
@@ -405,7 +408,7 @@ func knownKinds(v *Validator) string {
 	// Hard-coded order for stability — same convention as the
 	// generator's per-kind iteration in cmd/schema-gen/main.go.
 	var known []string
-	for _, k := range []string{KindManagedClusters, KindAddonCatalog, KindDefaultAddons} {
+	for _, k := range []string{KindManagedClusters, KindAddonCatalog, KindDefaultAddons, KindMarketplaceSources} {
 		if _, ok := v.schemas[k]; ok {
 			known = append(known, k)
 		}

@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/marketplace-sources.v1.json",
+  "properties": {
+    "apiVersion": {
+      "enum": [
+        "sharko.dev/v1",
+        "sharko.io/v1"
+      ]
+    },
+    "kind": {
+      "const": "MarketplaceSources"
+    },
+    "metadata": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "spec": {
+      "properties": {
+        "sources": {
+          "items": {
+            "properties": {
+              "url": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "url"
+            ]
+          },
+          "type": "array"
+        },
+        "refreshInterval": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sources"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "Sharko MarketplaceSources",
+  "description": "marketplace-sources.yaml — the list of third-party catalog source URLs pulled by Sharko's marketplace fetcher."
+}

@@ -353,3 +353,195 @@ func TestLoadCatalogSourcesFromEnv_DNSFailureIsFailOpen(t *testing.T) {
 		t.Fatalf("expected 1 source, got %d", len(cfg.Sources))
 	}
 }
+
+// --- File-based reader tests (V3-P3.1) ---
+
+func TestLoadMarketplaceSourcesFromFile_ValidSingleSource(t *testing.T) {
+	body := []byte(`apiVersion: sharko.dev/v1
+kind: MarketplaceSources
+metadata:
+  name: marketplace-sources
+spec:
+  sources:
+    - url: https://catalogs.example.com/addons.yaml
+`)
+	cfg, err := LoadMarketplaceSourcesFromFile(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Sources) != 1 {
+		t.Fatalf("expected 1 source, got %d", len(cfg.Sources))
+	}
+	if got, want := cfg.Sources[0].URL, "https://catalogs.example.com/addons.yaml"; got != want {
+		t.Errorf("URL = %q, want %q", got, want)
+	}
+	if cfg.RefreshInterval != DefaultRefreshInterval {
+		t.Errorf("expected default refresh %s, got %s", DefaultRefreshInterval, cfg.RefreshInterval)
+	}
+	if cfg.AllowPrivate {
+		t.Error("expected AllowPrivate=false for file-sourced config")
+	}
+}
+
+func TestLoadMarketplaceSourcesFromFile_MultipleSources(t *testing.T) {
+	body := []byte(`apiVersion: sharko.dev/v1
+kind: MarketplaceSources
+metadata:
+  name: marketplace-sources
+spec:
+  sources:
+    - url: https://a.example.com/cat.yaml
+    - url: https://b.example.com/cat.yaml
+    - url: https://c.example.com/cat.yaml
+`)
+	cfg, err := LoadMarketplaceSourcesFromFile(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Sources) != 3 {
+		t.Fatalf("expected 3 sources, got %d", len(cfg.Sources))
+	}
+	wantURLs := []string{
+		"https://a.example.com/cat.yaml",
+		"https://b.example.com/cat.yaml",
+		"https://c.example.com/cat.yaml",
+	}
+	for i, want := range wantURLs {
+		if cfg.Sources[i].URL != want {
+			t.Errorf("Sources[%d] = %q, want %q", i, cfg.Sources[i].URL, want)
+		}
+	}
+}
+
+func TestLoadMarketplaceSourcesFromFile_EmptySources(t *testing.T) {
+	body := []byte(`apiVersion: sharko.dev/v1
+kind: MarketplaceSources
+metadata:
+  name: marketplace-sources
+spec:
+  sources: []
+`)
+	cfg, err := LoadMarketplaceSourcesFromFile(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Sources) != 0 {
+		t.Errorf("expected 0 sources, got %d", len(cfg.Sources))
+	}
+}
+
+func TestLoadMarketplaceSourcesFromFile_CustomRefreshInterval(t *testing.T) {
+	body := []byte(`apiVersion: sharko.dev/v1
+kind: MarketplaceSources
+metadata:
+  name: marketplace-sources
+spec:
+  sources:
+    - url: https://catalogs.example.com/addons.yaml
+  refreshInterval: 30m
+`)
+	cfg, err := LoadMarketplaceSourcesFromFile(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.RefreshInterval != 30*time.Minute {
+		t.Errorf("expected refresh 30m, got %s", cfg.RefreshInterval)
+	}
+}
+
+func TestLoadMarketplaceSourcesFromFile_RejectsHTTP(t *testing.T) {
+	body := []byte(`apiVersion: sharko.dev/v1
+kind: MarketplaceSources
+metadata:
+  name: marketplace-sources
+spec:
+  sources:
+    - url: http://catalogs.example.com/cat.yaml
+`)
+	_, err := LoadMarketplaceSourcesFromFile(body)
+	if err == nil {
+		t.Fatal("expected error for http:// URL, got nil")
+	}
+	if !strings.Contains(err.Error(), "HTTPS-only") {
+		t.Errorf("error should mention HTTPS-only; got: %v", err)
+	}
+}
+
+func TestLoadMarketplaceSourcesFromFile_RejectsPrivateIP(t *testing.T) {
+	// Stub DNS to return a private IP.
+	origLookup := lookupHostFn
+	defer func() { lookupHostFn = origLookup }()
+	lookupHostFn = func(host string) ([]string, error) {
+		if host == "internal.example.com" {
+			return []string{"192.168.1.10"}, nil
+		}
+		return []string{"93.184.216.34"}, nil
+	}
+
+	body := []byte(`apiVersion: sharko.dev/v1
+kind: MarketplaceSources
+metadata:
+  name: marketplace-sources
+spec:
+  sources:
+    - url: https://internal.example.com/cat.yaml
+`)
+	_, err := loadMarketplaceSourcesFromFileImpl(body, lookupHostFn)
+	if err == nil {
+		t.Fatal("expected error for private IP, got nil")
+	}
+	if !strings.Contains(err.Error(), "SSRF guard") {
+		t.Errorf("error should mention SSRF guard; got: %v", err)
+	}
+}
+
+func TestLoadMarketplaceSourcesFromFile_Deduplicates(t *testing.T) {
+	body := []byte(`apiVersion: sharko.dev/v1
+kind: MarketplaceSources
+metadata:
+  name: marketplace-sources
+spec:
+  sources:
+    - url: https://catalogs.example.com/cat.yaml
+    - url: https://CATALOGS.EXAMPLE.COM/cat.yaml
+    - url: https://catalogs.example.com/cat.yaml/
+`)
+	cfg, err := LoadMarketplaceSourcesFromFile(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Sources) != 1 {
+		t.Errorf("expected 1 source after dedup, got %d: %+v", len(cfg.Sources), cfg.Sources)
+	}
+}
+
+func TestLoadMarketplaceSourcesFromFile_RejectsBareYAML(t *testing.T) {
+	body := []byte(`sources:
+  - url: https://catalogs.example.com/cat.yaml
+`)
+	_, err := LoadMarketplaceSourcesFromFile(body)
+	if err == nil {
+		t.Fatal("expected error for bare YAML, got nil")
+	}
+	if !strings.Contains(err.Error(), "enveloped") {
+		t.Errorf("error should mention enveloped requirement; got: %v", err)
+	}
+}
+
+func TestLoadMarketplaceSourcesFromFile_RejectsWrongKind(t *testing.T) {
+	body := []byte(`apiVersion: sharko.dev/v1
+kind: DefaultAddons
+metadata:
+  name: wrong-kind
+spec:
+  sources:
+    - url: https://catalogs.example.com/cat.yaml
+`)
+	_, err := LoadMarketplaceSourcesFromFile(body)
+	if err == nil {
+		t.Fatal("expected error for wrong kind, got nil")
+	}
+	if !strings.Contains(err.Error(), "kind") {
+		t.Errorf("error should mention kind mismatch; got: %v", err)
+	}
+}

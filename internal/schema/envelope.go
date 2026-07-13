@@ -103,6 +103,10 @@ const (
 	// KindDefaultAddons identifies a default-addons.yaml document.
 	// V3-Phase-2: GitOps-native default addons (UI opens PR, git file is truth).
 	KindDefaultAddons = "DefaultAddons"
+
+	// KindMarketplaceSources identifies a marketplace-sources.yaml document.
+	// V3-Phase-3: GitOps-native third-party catalog source URLs (env fallback for tokened URLs).
+	KindMarketplaceSources = "MarketplaceSources"
 )
 
 // Metadata holds the envelope's metadata block. Only Name is required by the
