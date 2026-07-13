@@ -57,7 +57,7 @@ Flags:
 
 | Flag | Description |
 |------|-------------|
-| `--addons` | Comma-separated list of addons to enable on this cluster |
+| `--addons` | Comma-separated list of addons to enable on this cluster. If omitted, Sharko applies the default addons from `configuration/default-addons.yaml` (see [Default Addons](addons.md#default-addons)) |
 | `--region` | AWS region — use this for the **Amazon EKS token** source |
 | `--env` | Environment label (e.g., `prod`, `staging`) — auto-detected from name if `config.environments` is set |
 | `--secret-path` | The path/name of a stored kubeconfig — use this for the **stored kubeconfig** source (see [Secret Path](#secret-path)) |
@@ -67,7 +67,7 @@ Flags:
 1. Navigate to **Clusters → Register Cluster**
 2. Choose **how Sharko should get the credentials** — paste a kubeconfig, point at a stored kubeconfig, or mint an Amazon EKS token
 3. Fill in what that source needs (the kubeconfig YAML, the secret path, or the AWS region)
-4. Choose which addons to enable
+4. Choose which addons to enable (or leave empty to use the [default addons](addons.md#default-addons))
 5. Click **Register** — Sharko creates a PR in your Git repo
 
 !!! note "Old registrations still work the same"
@@ -157,6 +157,8 @@ curl -X POST https://sharko.your-domain.com/api/v1/clusters/my-cluster/adopt \
   -H "Content-Type: application/json" \
   -d '{"addons": ["cert-manager", "metrics-server"]}'
 ```
+
+If you omit the `--addons` flag (CLI) or `addons` field (API), Sharko applies the [default addons](addons.md#default-addons) from `configuration/default-addons.yaml`, just like when registering a new cluster.
 
 What the adopt operation does:
 
