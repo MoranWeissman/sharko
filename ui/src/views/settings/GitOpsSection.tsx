@@ -5,6 +5,7 @@ import {
   Loader2,
   CheckCircle,
   Info,
+  Search,
 } from 'lucide-react'
 import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
@@ -16,7 +17,6 @@ interface GitOpsFormData {
   gitops_base_branch: string
   gitops_pr_auto_merge: boolean
   gitops_host_cluster_name: string
-  gitops_default_addons: string
 }
 
 const labelCls = 'block text-sm font-medium text-[#0a3a5a] dark:text-gray-300'
@@ -32,17 +32,28 @@ export function GitOpsSection() {
     gitops_base_branch: 'main',
     gitops_pr_auto_merge: false,
     gitops_host_cluster_name: '',
-    gitops_default_addons: '',
   })
 
-  // Addon catalog for the checklist
+  // Addon catalog for the searchable table
   const [catalogAddons, setCatalogAddons] = useState<AddonCatalogItem[]>([])
   const [catalogLoading, setCatalogLoading] = useState(false)
-  const [selectedDefaults, setSelectedDefaults] = useState<string[]>([])
 
+  // Default addons — hydrated from GET /default-addons, not connection
+  const [selectedDefaults, setSelectedDefaults] = useState<string[]>([])
+  const [defaultAddonsLoading, setDefaultAddonsLoading] = useState(false)
+
+  // Search filter for the default addons table (F13 pattern)
+  const [defaultAddonsFilter, setDefaultAddonsFilter] = useState('')
+
+  // GitOps settings save (base branch, auto-merge, host cluster)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [justSaved, setJustSaved] = useState(false)
+
+  // Default addons save (opens a PR)
+  const [savingDefaults, setSavingDefaults] = useState(false)
+  const [saveDefaultsError, setSaveDefaultsError] = useState<string | null>(null)
+  const [defaultsPRResult, setDefaultsPRResult] = useState<{ pr_url: string; pr_id: number } | null>(null)
 
   // Detected host cluster name from platform info
   const [detectedClusterName, setDetectedClusterName] = useState<string | null>(null)
@@ -66,10 +77,21 @@ export function GitOpsSection() {
       .catch(() => {})
   }, [])
 
+  const fetchDefaultAddons = useCallback(() => {
+    setDefaultAddonsLoading(true)
+    api.getDefaultAddons()
+      .then((res) => {
+        setSelectedDefaults(res.addons || [])
+      })
+      .catch(() => setSelectedDefaults([]))
+      .finally(() => setDefaultAddonsLoading(false))
+  }, [])
+
   useEffect(() => {
     fetchCatalog()
     fetchPlatformInfo()
-  }, [fetchCatalog, fetchPlatformInfo])
+    fetchDefaultAddons()
+  }, [fetchCatalog, fetchPlatformInfo, fetchDefaultAddons])
 
   // Sync form state from saved connection data when it loads
   useEffect(() => {
@@ -78,27 +100,16 @@ export function GitOpsSection() {
         gitops_base_branch: existingConn.gitops.base_branch || 'main',
         gitops_pr_auto_merge: existingConn.gitops.pr_auto_merge ?? false,
         gitops_host_cluster_name: existingConn.gitops.host_cluster_name || '',
-        gitops_default_addons: existingConn.gitops.default_addons || '',
       })
     }
   }, [existingConn])
 
-  // Parse default addons from form whenever form changes
-  useEffect(() => {
-    const defaults = form.gitops_default_addons
-      ? form.gitops_default_addons.split(',').map(s => s.trim()).filter(Boolean)
-      : []
-    setSelectedDefaults(defaults)
-  }, [form.gitops_default_addons])
-
   function toggleDefault(addonName: string) {
-    setSelectedDefaults(prev => {
-      const next = prev.includes(addonName)
+    setSelectedDefaults(prev =>
+      prev.includes(addonName)
         ? prev.filter(n => n !== addonName)
         : [...prev, addonName]
-      setForm(f => ({ ...f, gitops_default_addons: next.join(',') }))
-      return next
-    })
+    )
   }
 
   async function handleSave() {
@@ -115,6 +126,20 @@ export function GitOpsSection() {
       setSaveError(err instanceof Error ? err.message : 'Save failed')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleSaveDefaults() {
+    setSavingDefaults(true)
+    setSaveDefaultsError(null)
+    setDefaultsPRResult(null)
+    try {
+      const result = await api.putDefaultAddons(selectedDefaults)
+      setDefaultsPRResult({ pr_url: result.pr_url, pr_id: result.pr_id })
+    } catch (err) {
+      setSaveDefaultsError(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setSavingDefaults(false)
     }
   }
 
@@ -212,45 +237,107 @@ export function GitOpsSection() {
         </div>
       </div>
 
-      {/* Default Addons checklist */}
+      {/* Default Addons — searchable table, Save opens a PR */}
       <div>
         <div className="mb-3 flex items-center gap-2">
           <GitMerge className="h-4 w-4 text-[#2a5a7a]" />
           <h5 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Default Addons</h5>
         </div>
-        <p className="mb-3 text-xs text-[#3a6a8a]">
+        <p className="mb-1 text-xs text-[#3a6a8a]">
           Addons enabled by default on newly registered clusters.
         </p>
-        {catalogLoading ? (
+        <p className="mb-3 text-xs text-[#3a6a8a]">
+          Saving opens a pull request.
+        </p>
+        {catalogLoading || defaultAddonsLoading ? (
           <div className="flex items-center gap-2 text-xs text-[#3a6a8a]">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Loading addon catalog...
+            Loading...
           </div>
         ) : catalogAddons.length === 0 ? (
           <p className="text-xs text-[#3a6a8a] dark:text-gray-500">
             No addons in catalog yet. Add addons to the catalog to configure defaults.
           </p>
-        ) : (
-          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-            {catalogAddons.map(addon => (
-              <label key={addon.addon_name} className="flex items-center gap-2 text-sm cursor-pointer rounded-lg px-2 py-1.5 hover:bg-[#d6eeff] dark:hover:bg-gray-700 transition-colors">
+        ) : (() => {
+          const filterLower = defaultAddonsFilter.toLowerCase()
+          const filteredAddons = catalogAddons.filter((addon) =>
+            addon.addon_name.toLowerCase().includes(filterLower)
+          )
+          return (
+            <>
+              <div className="relative mb-2">
+                <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#3a6a8a] dark:text-gray-500" />
                 <input
-                  type="checkbox"
-                  checked={selectedDefaults.includes(addon.addon_name)}
-                  onChange={() => toggleDefault(addon.addon_name)}
-                  className="h-3.5 w-3.5 rounded border-[#5a9dd0] text-teal-600 focus:ring-teal-500"
+                  type="text"
+                  placeholder="Search addons..."
+                  value={defaultAddonsFilter}
+                  onChange={(e) => setDefaultAddonsFilter(e.target.value)}
+                  className="w-full rounded-md border border-[#5a9dd0] bg-white py-1.5 pl-8 pr-3 text-xs text-[#0a2a4a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
                 />
-                <span className="text-[#0a2a4a] dark:text-gray-100">{addon.addon_name}</span>
-                <span className="text-xs text-[#3a6a8a] dark:text-gray-400">v{addon.version}</span>
-              </label>
-            ))}
-          </div>
-        )}
-        {selectedDefaults.length > 0 && (
-          <p className="mt-2 text-xs text-[#3a6a8a]">
-            Selected: {selectedDefaults.join(', ')}
-          </p>
-        )}
+              </div>
+              {filteredAddons.length > 0 ? (
+                <>
+                  <p className="mb-1 text-xs text-[#2a5a7a] dark:text-gray-500">
+                    Showing {filteredAddons.length} of {catalogAddons.length}
+                  </p>
+                  <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-[#5a9dd0] bg-white p-2 dark:border-gray-600 dark:bg-gray-900">
+                    {filteredAddons.map((addon) => (
+                      <label
+                        key={addon.addon_name}
+                        className="flex items-center gap-2 text-sm cursor-pointer rounded px-1.5 py-1 hover:bg-[#d6eeff] dark:hover:bg-gray-700 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedDefaults.includes(addon.addon_name)}
+                          onChange={() => toggleDefault(addon.addon_name)}
+                          className="h-3.5 w-3.5 rounded border-[#5a9dd0] text-teal-600 focus:ring-teal-500 dark:border-gray-600"
+                        />
+                        <span className="text-[#0a2a4a] dark:text-gray-100">{addon.addon_name}</span>
+                        <span className="ml-auto text-xs text-[#3a6a8a] dark:text-gray-400">v{addon.version}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {selectedDefaults.length > 0 && (
+                    <p className="mt-2 text-xs text-[#2a5a7a] dark:text-gray-500">
+                      {selectedDefaults.length} selected
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-xs text-[#3a6a8a] dark:border-gray-600 dark:bg-gray-900 dark:text-gray-500">
+                  No addons match your search.
+                </p>
+              )}
+              {saveDefaultsError && (
+                <p className="mt-2 text-sm text-red-600 dark:text-red-400">{saveDefaultsError}</p>
+              )}
+              {defaultsPRResult && (
+                <p className="mt-2 text-xs text-green-600 dark:text-green-400">
+                  Opened{' '}
+                  <a
+                    href={defaultsPRResult.pr_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-green-700 dark:hover:text-green-300"
+                  >
+                    PR #{defaultsPRResult.pr_id}
+                  </a>
+                </p>
+              )}
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={handleSaveDefaults}
+                  disabled={savingDefaults}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                >
+                  {savingDefaults && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Save default addons
+                </button>
+              </div>
+            </>
+          )
+        })()}
       </div>
 
       {saveError && (
@@ -277,7 +364,8 @@ export function GitOpsSection() {
   )
 }
 
-// Build a full connection update payload, preserving existing connection data
+// Build a full connection update payload, preserving existing connection data.
+// default_addons is NO LONGER part of this payload — it's saved via PUT /default-addons.
 function buildConnectionPayload(
   conn: { name: string; git_provider: string; git_repo_identifier: string; argocd_server_url: string; argocd_namespace: string },
   gitopsForm: GitOpsFormData
@@ -305,7 +393,6 @@ function buildConnectionPayload(
       commit_prefix: 'sharko:',
       pr_auto_merge: gitopsForm.gitops_pr_auto_merge,
       host_cluster_name: gitopsForm.gitops_host_cluster_name || undefined,
-      default_addons: gitopsForm.gitops_default_addons || undefined,
     },
   }
 }
