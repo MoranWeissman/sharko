@@ -70,7 +70,9 @@ nav:
     - 'Reference — AI Configuration': operator/ai-config.md
     - 'Reference — Security': operator/security.md
     - 'Reference — Supply Chain': operator/supply-chain.md
-    - 'Reference — Catalog Sources (config)': operator/catalog-sources.md
+    - 'Reference — Marketplace Architecture (three-layer model)': operator/marketplace-architecture.md
+    - 'Reference — Catalog Sources (env vars)': operator/catalog-sources.md
+    - 'Reference — Marketplace Sources (git-native config)': operator/marketplace-sources-config.md
     - 'Reference — Cluster Connectivity Model': operator/cluster-connectivity-model.md
     - 'Reference — EKS Hub-and-Spoke Identity (IAM Setup)': operator/eks-hub-and-spoke-identity.md
     - 'Reference — Audit Log Retention Model': operator/audit-log.md

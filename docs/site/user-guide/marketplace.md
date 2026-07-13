@@ -4,6 +4,8 @@ The **Marketplace** is Sharko's curated catalog of community Helm charts that yo
 
 The Marketplace is a **read-only browse experience**. Submitting an addon goes through the same GitOps PR flow as every other Sharko mutation — nothing lands in your `addons-catalog.yaml` until a pull request opens (and, if your active connection has `pr_auto_merge` enabled, merges automatically).
 
+> **Three-layer model:** The Marketplace is the **browse/discover surface** (metadata only). Adding an addon moves it to your **Catalog** (deployable list in `addons-catalog.yaml`). Enabling it on a cluster is **Enablement** (per-cluster labels). See [Marketplace Architecture](../operator/marketplace-architecture.md) for the full model.
+
 ## Overview — three ways to add an addon
 
 Sharko gives you three discovery paths. Pick the one that matches what you already know about the chart.

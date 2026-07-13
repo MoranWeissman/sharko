@@ -1,10 +1,16 @@
-# Catalog Scan Runbook
+# Catalog Scan Runbook — Addon Discovery Bot
 
 > **Verified:** Not verified end-to-end since authoring (V123-3.5, 2026-04-25); review pending. The runbook describes a daily, stateless GitHub Actions workflow whose source-of-truth is `.github/workflows/catalog-scan.yml` + `scripts/catalog-scan.mjs` — those have not changed materially since they were authored. A re-walk against a real bot-opened PR is recommended.
 
 Operational guide for reviewers of `catalog-scan` bot PRs.
 
-The bot (codenamed V123-3 internally) opens one **draft PR per scan day** with proposed catalog additions and updates derived from upstream sources. Reviewers triage these PRs — the bot **never** auto-merges.
+The **addon discovery bot** (codenamed V123-3 internally) opens one **draft PR per scan day** with proposed catalog additions and updates derived from upstream sources. Reviewers triage these PRs — the bot **never** auto-merges.
+
+## What This Bot Does — Menu Ownership, Not Security Scanning
+
+The bot **finds addons** from configured upstream sources (CNCF Landscape, AWS EKS Blueprints, custom partner catalogs) and proposes them for your team's approved catalog. The headline value is **menu ownership** — your team's deployable addon list stays fresh without manual curation.
+
+The bot includes an OpenSSF Scorecard signal for each proposal, but this is **one column in the review table, not the purpose of the bot**. The bot is not a "security scanner" — it does not audit your running clusters, flag vulnerabilities, or block deployments. It finds addons and opens PRs for you to review.
 
 ---
 
