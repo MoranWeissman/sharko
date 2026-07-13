@@ -1068,6 +1068,8 @@ export const api = {
             prefix?: string
             status: string
             error?: string
+            addon_secret_status?: 'ok' | 'missing' | 'invalid_argocd'
+            addon_secret_message?: string
           }
         | null
       available_types: import('./models').ProviderType[]

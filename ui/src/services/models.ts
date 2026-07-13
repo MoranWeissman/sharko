@@ -316,6 +316,11 @@ export interface ConnectionResponse {
     region?: string
     prefix?: string
   }
+  addon_secret_provider?: {
+    type: _ProviderType
+    region?: string
+    prefix?: string
+  }
   gitops?: {
     base_branch?: string
     branch_prefix?: string
