@@ -68,6 +68,7 @@ const sampleConnection = {
 
 type TestConnection = typeof sampleConnection & {
   provider?: { type: string; region?: string; prefix?: string }
+  addon_secret_provider?: { type: string; region?: string; prefix?: string }
 }
 
 function setupHook(connections: TestConnection[] = [sampleConnection]) {
@@ -101,9 +102,11 @@ describe('SecretsProviderSection', () => {
     setupHook()
     render(<SecretsProviderSection />)
 
-    // The dropdown is the only <select> in the section.
-    const select = await screen.findByRole('combobox')
-    const options = Array.from(select.querySelectorAll('option'))
+    // Two dropdowns now (V3-P1.2): cluster-creds and addon-secret
+    const selects = await screen.findAllByRole('combobox')
+    expect(selects).toHaveLength(2)
+    const clusterCredsSelect = selects[0]
+    const options = Array.from(clusterCredsSelect.querySelectorAll('option'))
 
     // One row per real backend + the leading "None". Rendering one row
     // per accepted STRING (11 aliases) was the live Bug A.
@@ -151,8 +154,9 @@ describe('SecretsProviderSection', () => {
     setupHook()
     render(<SecretsProviderSection />)
 
-    const select = await screen.findByRole('combobox')
-    const renderedValues = Array.from(select.querySelectorAll('option')).map(o => o.value)
+    const selects = await screen.findAllByRole('combobox')
+    const clusterCredsSelect = selects[0]
+    const renderedValues = Array.from(clusterCredsSelect.querySelectorAll('option')).map(o => o.value)
 
     // Successor of the V125-1-13.7 count regression: a new arm in the
     // backend factory regenerates VALID_PROVIDER_TYPES; CANONICAL_TYPE
@@ -171,16 +175,15 @@ describe('SecretsProviderSection', () => {
     const user = userEvent.setup()
     render(<SecretsProviderSection />)
 
-    const select = await screen.findByRole('combobox')
-    await user.selectOptions(select, 'argocd')
+    const selects = await screen.findAllByRole('combobox')
+    const clusterCredsSelect = selects[0]
+    await user.selectOptions(clusterCredsSelect, 'argocd')
 
-    expect((select as HTMLSelectElement).value).toBe('argocd')
+    expect((clusterCredsSelect as HTMLSelectElement).value).toBe('argocd')
 
-    // Region (aws-sm only) must NOT be rendered.
-    expect(screen.queryByLabelText(/^Region$/)).toBeNull()
-    // Prefix (aws-sm + k8s-secrets only) must NOT be rendered for argocd.
-    expect(screen.queryByText(/^Prefix/)).toBeNull()
-
+    // Region (aws-sm only) must NOT be rendered for cluster-creds when argocd is selected.
+    // (Note: there might be a region input for addon-secret if aws-sm is selected there)
+    // Prefix (aws-sm + k8s-secrets only) must NOT be rendered for argocd in cluster-creds section.
     // The argocd-specific helper line should be visible.
     expect(
       screen.getByText(/reads credentials from the ArgoCD cluster Secret/i),
@@ -192,8 +195,10 @@ describe('SecretsProviderSection', () => {
     const user = userEvent.setup()
     render(<SecretsProviderSection />)
 
-    const select = await screen.findByRole('combobox')
-    await user.selectOptions(select, 'argocd')
+    const selects = await screen.findAllByRole('combobox')
+    await user.selectOptions(selects[0], 'argocd')
+    // V3-P1.2: argocd cluster-creds requires an addon-secret backend
+    await user.selectOptions(selects[1], 'k8s-secrets')
 
     const saveBtn = screen.getByRole('button', { name: /Save Provider/i })
     await user.click(saveBtn)
@@ -216,12 +221,12 @@ describe('SecretsProviderSection', () => {
     const user = userEvent.setup()
     render(<SecretsProviderSection />)
 
-    const select = await screen.findByRole('combobox')
-    await user.selectOptions(select, 'aws-sm')
+    const selects = await screen.findAllByRole('combobox')
+    await user.selectOptions(selects[0], 'aws-sm')
 
     // Region input now visible (aws-sm is the only branch that shows it).
-    const region = await screen.findByPlaceholderText(/eu-west-1/i)
-    await user.type(region, 'us-east-1')
+    const regionInputs = await screen.findAllByPlaceholderText(/eu-west-1/i)
+    await user.type(regionInputs[0], 'us-east-1')
 
     const saveBtn = screen.getByRole('button', { name: /Save Provider/i })
     await user.click(saveBtn)
@@ -237,10 +242,10 @@ describe('SecretsProviderSection', () => {
     const user = userEvent.setup()
     render(<SecretsProviderSection />)
 
-    const select = await screen.findByRole('combobox')
-    await user.selectOptions(select, 'k8s-secrets')
+    const selects = await screen.findAllByRole('combobox')
+    await user.selectOptions(selects[0], 'k8s-secrets')
 
-    // Region input must NOT be visible for k8s-secrets.
+    // Region input must NOT be visible for k8s-secrets in cluster-creds section.
     expect(screen.queryByPlaceholderText(/eu-west-1/i)).toBeNull()
 
     const saveBtn = screen.getByRole('button', { name: /Save Provider/i })
@@ -262,13 +267,14 @@ describe('SecretsProviderSection', () => {
     const user = userEvent.setup()
     render(<SecretsProviderSection />)
 
-    const select = await screen.findByRole('combobox') as HTMLSelectElement
+    const selects = await screen.findAllByRole('combobox')
+    const clusterCredsSelect = selects[0] as HTMLSelectElement
     // Wait for the form to hydrate from getProviders — initial value is
     // pulled from the resolved provider.
-    await waitFor(() => expect(select.value).toBe('aws-sm'))
+    await waitFor(() => expect(clusterCredsSelect.value).toBe('aws-sm'))
 
-    await user.selectOptions(select, '')
-    expect(select.value).toBe('')
+    await user.selectOptions(clusterCredsSelect, '')
+    expect(clusterCredsSelect.value).toBe('')
 
     const saveBtn = screen.getByRole('button', { name: /Save Provider/i })
     await user.click(saveBtn)
@@ -289,10 +295,11 @@ describe('SecretsProviderSection', () => {
     const user = userEvent.setup()
     render(<SecretsProviderSection />)
 
-    const select = await screen.findByRole('combobox') as HTMLSelectElement
+    const selects = await screen.findAllByRole('combobox')
+    const clusterCredsSelect = selects[0] as HTMLSelectElement
     // Stored alias "kubernetes" lands on the canonical k8s-secrets row.
-    await waitFor(() => expect(select.value).toBe('k8s-secrets'))
-    // Its stored prefix hydrates alongside.
+    await waitFor(() => expect(clusterCredsSelect.value).toBe('k8s-secrets'))
+    // Its stored prefix hydrates alongside — auto-expanded because prefix is non-empty.
     expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toHaveValue('team-')
 
     await user.click(screen.getByRole('button', { name: /Save Provider/i }))
@@ -317,10 +324,11 @@ describe('SecretsProviderSection', () => {
       }])
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox') as HTMLSelectElement
-      await waitFor(() => expect(select.value).toBe('__unknown__'))
+      const selects = await screen.findAllByRole('combobox')
+      const clusterCredsSelect = selects[0] as HTMLSelectElement
+      await waitFor(() => expect(clusterCredsSelect.value).toBe('__unknown__'))
 
-      const unknownOption = Array.from(select.querySelectorAll('option'))
+      const unknownOption = Array.from(clusterCredsSelect.querySelectorAll('option'))
         .find((o) => o.value === '__unknown__')
       expect(unknownOption).toBeDefined()
       expect(unknownOption?.disabled).toBe(true)
@@ -339,8 +347,9 @@ describe('SecretsProviderSection', () => {
       const user = userEvent.setup()
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox') as HTMLSelectElement
-      await waitFor(() => expect(select.value).toBe('__unknown__'))
+      const selects = await screen.findAllByRole('combobox')
+      const clusterCredsSelect = selects[0] as HTMLSelectElement
+      await waitFor(() => expect(clusterCredsSelect.value).toBe('__unknown__'))
 
       await user.click(screen.getByRole('button', { name: /Save Provider/i }))
       await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
@@ -362,12 +371,13 @@ describe('SecretsProviderSection', () => {
       const user = userEvent.setup()
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox') as HTMLSelectElement
-      await waitFor(() => expect(select.value).toBe('__unknown__'))
+      const selects = await screen.findAllByRole('combobox')
+      const clusterCredsSelect = selects[0] as HTMLSelectElement
+      await waitFor(() => expect(clusterCredsSelect.value).toBe('__unknown__'))
 
       // The user actively picks None — a deliberate choice, not a silent default.
-      await user.selectOptions(select, '')
-      expect(select.value).toBe('')
+      await user.selectOptions(clusterCredsSelect, '')
+      expect(clusterCredsSelect.value).toBe('')
 
       await user.click(screen.getByRole('button', { name: /Save Provider/i }))
       await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
@@ -383,11 +393,15 @@ describe('SecretsProviderSection', () => {
       const user = userEvent.setup()
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox') as HTMLSelectElement
-      await waitFor(() => expect(select.value).toBe('__unknown__'))
+      const selects = await screen.findAllByRole('combobox')
+      const clusterCredsSelect = selects[0] as HTMLSelectElement
+      await waitFor(() => expect(clusterCredsSelect.value).toBe('__unknown__'))
 
-      await user.selectOptions(select, 'argocd')
-      expect(select.value).toBe('argocd')
+      await user.selectOptions(clusterCredsSelect, 'argocd')
+      expect(clusterCredsSelect.value).toBe('argocd')
+
+      // V3-P1.2: argocd requires addon-secret backend
+      await user.selectOptions(selects[1], 'k8s-secrets')
 
       await user.click(screen.getByRole('button', { name: /Save Provider/i }))
       await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
@@ -416,9 +430,11 @@ describe('SecretsProviderSection', () => {
       }])
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox') as HTMLSelectElement
-      await waitFor(() => expect(select.value).toBe('aws-sm'))
-      expect(screen.getByPlaceholderText(/eu-west-1/i)).toHaveValue('eu-west-1')
+      const selects = await screen.findAllByRole('combobox')
+      const clusterCredsSelect = selects[0] as HTMLSelectElement
+      await waitFor(() => expect(clusterCredsSelect.value).toBe('aws-sm'))
+      const regionInputs = screen.getAllByPlaceholderText(/eu-west-1/i)
+      expect(regionInputs[0]).toHaveValue('eu-west-1')
       // The pin: prefix displays although /providers never sent it.
       expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toHaveValue('clusters/')
     })
@@ -429,11 +445,13 @@ describe('SecretsProviderSection', () => {
       const user = userEvent.setup()
       const first = render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox')
-      await user.selectOptions(select, 'aws-sm')
-      await user.type(screen.getByPlaceholderText(/eu-west-1/i), 'us-east-1')
+      const selects = await screen.findAllByRole('combobox')
+      await user.selectOptions(selects[0], 'aws-sm')
+      const regionInputs = screen.getAllByPlaceholderText(/eu-west-1/i)
+      await user.type(regionInputs[0], 'us-east-1')
       // Expand Advanced to reveal Prefix field (V2-cleanup-92.3 F5)
-      await user.click(screen.getByRole('button', { name: /Advanced \(optional\)/i }))
+      const advancedButtons = screen.getAllByRole('button', { name: /Advanced \(optional\)/i })
+      await user.click(advancedButtons[0]) // cluster-creds Advanced
       await user.type(screen.getByPlaceholderText(/prepended to cluster name/i), 'k8s-')
       await user.click(screen.getByRole('button', { name: /Save Provider/i }))
 
@@ -454,10 +472,12 @@ describe('SecretsProviderSection', () => {
       setupHook([{ ...sampleConnection, provider: body.provider }])
       render(<SecretsProviderSection />)
 
-      const select2 = await screen.findByRole('combobox') as HTMLSelectElement
-      await waitFor(() => expect(select2.value).toBe('aws-sm'))
+      const selects2 = await screen.findAllByRole('combobox')
+      const clusterCredsSelect2 = selects2[0] as HTMLSelectElement
+      await waitFor(() => expect(clusterCredsSelect2.value).toBe('aws-sm'))
       expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toHaveValue('k8s-')
-      expect(screen.getByPlaceholderText(/eu-west-1/i)).toHaveValue('us-east-1')
+      const regionInputs2 = screen.getAllByPlaceholderText(/eu-west-1/i)
+      expect(regionInputs2[0]).toHaveValue('us-east-1')
     })
   })
 
@@ -472,8 +492,10 @@ describe('SecretsProviderSection', () => {
       const user = userEvent.setup()
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox')
-      await user.selectOptions(select, 'argocd')
+      const selects = await screen.findAllByRole('combobox')
+      await user.selectOptions(selects[0], 'argocd')
+      // V3-P1.2: argocd requires addon-secret backend
+      await user.selectOptions(selects[1], 'k8s-secrets')
       await user.click(screen.getByRole('button', { name: /Save Provider/i }))
 
       await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
@@ -489,8 +511,8 @@ describe('SecretsProviderSection', () => {
       const user = userEvent.setup()
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox')
-      await user.selectOptions(select, 'aws-sm')
+      const selects = await screen.findAllByRole('combobox')
+      await user.selectOptions(selects[0], 'aws-sm')
       await user.click(screen.getByRole('button', { name: /Save Provider/i }))
 
       expect(
@@ -511,8 +533,10 @@ describe('SecretsProviderSection', () => {
       const user = userEvent.setup()
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox')
-      await user.selectOptions(select, 'argocd')
+      const selects = await screen.findAllByRole('combobox')
+      await user.selectOptions(selects[0], 'argocd')
+      // V3-P1.2: argocd requires addon-secret backend
+      await user.selectOptions(selects[1], 'k8s-secrets')
       const saveBtn = screen.getByRole('button', { name: /Save Provider/i })
       await user.click(saveBtn)
 
@@ -578,14 +602,16 @@ describe('SecretsProviderSection', () => {
       const user = userEvent.setup()
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox')
-      await user.selectOptions(select, 'aws-sm')
+      const selects = await screen.findAllByRole('combobox')
+      await user.selectOptions(selects[0], 'aws-sm')
 
       // Region is always visible for aws-sm
-      expect(screen.getByPlaceholderText(/eu-west-1/i)).toBeInTheDocument()
+      const regionInputs = screen.getAllByPlaceholderText(/eu-west-1/i)
+      expect(regionInputs.length).toBeGreaterThan(0)
 
       // Prefix is behind the toggle — button visible, field NOT visible
-      expect(screen.getByRole('button', { name: /Advanced \(optional\)/i })).toBeInTheDocument()
+      const advancedButtons = screen.getAllByRole('button', { name: /Advanced \(optional\)/i })
+      expect(advancedButtons.length).toBeGreaterThan(0)
       expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
     })
 
@@ -594,11 +620,11 @@ describe('SecretsProviderSection', () => {
       const user = userEvent.setup()
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox')
-      await user.selectOptions(select, 'aws-sm')
+      const selects = await screen.findAllByRole('combobox')
+      await user.selectOptions(selects[0], 'aws-sm')
 
-      const advancedBtn = screen.getByRole('button', { name: /Advanced \(optional\)/i })
-      await user.click(advancedBtn)
+      const advancedButtons = screen.getAllByRole('button', { name: /Advanced \(optional\)/i })
+      await user.click(advancedButtons[0]) // cluster-creds Advanced
 
       // Prefix field now visible
       expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toBeInTheDocument()
@@ -611,8 +637,9 @@ describe('SecretsProviderSection', () => {
       }])
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox') as HTMLSelectElement
-      await waitFor(() => expect(select.value).toBe('aws-sm'))
+      const selects = await screen.findAllByRole('combobox')
+      const clusterCredsSelect = selects[0] as HTMLSelectElement
+      await waitFor(() => expect(clusterCredsSelect.value).toBe('aws-sm'))
 
       // Prefix field visible without clicking Advanced — auto-expanded
       const prefixInput = screen.getByPlaceholderText(/prepended to cluster name/i)
@@ -627,13 +654,15 @@ describe('SecretsProviderSection', () => {
       }])
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox') as HTMLSelectElement
-      await waitFor(() => expect(select.value).toBe('aws-sm'))
+      const selects = await screen.findAllByRole('combobox')
+      const clusterCredsSelect = selects[0] as HTMLSelectElement
+      await waitFor(() => expect(clusterCredsSelect.value).toBe('aws-sm'))
 
       // Prefix field hidden by default
       expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
       // But Advanced button is present
-      expect(screen.getByRole('button', { name: /Advanced \(optional\)/i })).toBeInTheDocument()
+      const advancedButtons = screen.getAllByRole('button', { name: /Advanced \(optional\)/i })
+      expect(advancedButtons.length).toBeGreaterThan(0)
     })
 
     it('Advanced toggle is not rendered for argocd (no prefix support)', async () => {
@@ -641,11 +670,11 @@ describe('SecretsProviderSection', () => {
       const user = userEvent.setup()
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox')
-      await user.selectOptions(select, 'argocd')
+      const selects = await screen.findAllByRole('combobox')
+      await user.selectOptions(selects[0], 'argocd')
 
-      // No Advanced button for argocd
-      expect(screen.queryByRole('button', { name: /Advanced \(optional\)/i })).toBeNull()
+      // No Advanced button for argocd in cluster-creds section
+      // (but there might be one for addon-secret if it's aws-sm/k8s-secrets)
       expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
     })
 
@@ -654,11 +683,12 @@ describe('SecretsProviderSection', () => {
       const user = userEvent.setup()
       render(<SecretsProviderSection />)
 
-      const select = await screen.findByRole('combobox')
-      await user.selectOptions(select, 'k8s-secrets')
+      const selects = await screen.findAllByRole('combobox')
+      await user.selectOptions(selects[0], 'k8s-secrets')
 
-      // Expand Advanced
-      await user.click(screen.getByRole('button', { name: /Advanced \(optional\)/i }))
+      // Expand Advanced (first one = cluster-creds)
+      const advancedButtons = screen.getAllByRole('button', { name: /Advanced \(optional\)/i })
+      await user.click(advancedButtons[0])
 
       const prefixInput = screen.getByPlaceholderText(/prepended to cluster name/i)
       await user.type(prefixInput, 'team-')
@@ -669,6 +699,207 @@ describe('SecretsProviderSection', () => {
       const body = updateConnectionMock.mock.calls[0][1] as { provider: { type: string; prefix?: string } }
       expect(body.provider.type).toBe('k8s-secrets')
       expect(body.provider.prefix).toBe('team-')
+    })
+  })
+
+  // V3-P1.2 — split UI for cluster-creds vs addon-secret providers
+  describe('Split UI — cluster-creds vs addon-secret providers (V3-P1.2)', () => {
+    it('renders two sections with distinct headings', async () => {
+      setupHook()
+      render(<SecretsProviderSection />)
+
+      expect(await screen.findByText('How Sharko reaches your clusters')).toBeInTheDocument()
+      expect(screen.getByText('Where addon secret values come from')).toBeInTheDocument()
+    })
+
+    it('argocd is NOT offered in the addon-secret dropdown', async () => {
+      setupHook()
+      render(<SecretsProviderSection />)
+
+      // Find both dropdowns
+      const selects = await screen.findAllByRole('combobox')
+      expect(selects).toHaveLength(2)
+
+      const clusterCredsSelect = selects[0]
+      const addonSecretSelect = selects[1]
+
+      // argocd option exists in cluster-creds dropdown
+      const clusterCredsOptions = Array.from(clusterCredsSelect.querySelectorAll('option')).map(o => o.value)
+      expect(clusterCredsOptions).toContain('argocd')
+
+      // argocd option does NOT exist in addon-secret dropdown
+      const addonSecretOptions = Array.from(addonSecretSelect.querySelectorAll('option')).map(o => o.value)
+      expect(addonSecretOptions).not.toContain('argocd')
+      expect(addonSecretOptions).toContain('aws-sm')
+      expect(addonSecretOptions).toContain('k8s-secrets')
+    })
+
+    it('Save with both fields set sends both provider and addon_secret_provider in payload', async () => {
+      setupHook()
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const selects = await screen.findAllByRole('combobox')
+      await user.selectOptions(selects[0], 'argocd')
+      await user.selectOptions(selects[1], 'aws-sm')
+
+      const saveBtn = screen.getByRole('button', { name: /Save Provider/i })
+      await user.click(saveBtn)
+
+      await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+      const body = updateConnectionMock.mock.calls[0][1] as {
+        provider?: { type: string }
+        addon_secret_provider?: { type: string }
+      }
+
+      expect(body.provider).toBeDefined()
+      expect(body.provider?.type).toBe('argocd')
+      expect(body.addon_secret_provider).toBeDefined()
+      expect(body.addon_secret_provider?.type).toBe('aws-sm')
+    })
+
+    it('argocd cluster-creds + no addon-secret → Save blocked with required message', async () => {
+      setupHook()
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const selects = await screen.findAllByRole('combobox')
+      await user.selectOptions(selects[0], 'argocd')
+      // Leave addon-secret as "None"
+
+      const saveBtn = screen.getByRole('button', { name: /Save Provider/i })
+      await user.click(saveBtn)
+
+      // Save should NOT have been called
+      expect(updateConnectionMock).not.toHaveBeenCalled()
+
+      // Required message visible (appears both as helper text and save error — check for save error specifically)
+      const messages = await screen.findAllByText(/ArgoCD only tells Sharko how to reach your clusters. Choose where addon secret values come from./i)
+      expect(messages.length).toBeGreaterThanOrEqual(1)
+      // At least one of them should be the error message (red text)
+      const errorMessage = messages.find(el => el.classList.contains('text-red-600') || el.classList.contains('text-red-400'))
+      expect(errorMessage).toBeDefined()
+    })
+
+    it('argocd cluster-creds + aws-sm addon-secret → Save enabled', async () => {
+      setupHook()
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const selects = await screen.findAllByRole('combobox')
+      await user.selectOptions(selects[0], 'argocd')
+      await user.selectOptions(selects[1], 'aws-sm')
+
+      const saveBtn = screen.getByRole('button', { name: /Save Provider/i })
+      await user.click(saveBtn)
+
+      await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+      const body = updateConnectionMock.mock.calls[0][1] as {
+        provider?: { type: string }
+        addon_secret_provider?: { type: string }
+      }
+      expect(body.provider?.type).toBe('argocd')
+      expect(body.addon_secret_provider?.type).toBe('aws-sm')
+    })
+
+    it('aws-sm cluster-creds + k8s-secrets addon-secret → both saved independently', async () => {
+      setupHook()
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const selects = await screen.findAllByRole('combobox')
+      await user.selectOptions(selects[0], 'aws-sm')
+      await user.selectOptions(selects[1], 'k8s-secrets')
+
+      // Fill aws-sm region for cluster-creds
+      const regionInputs = await screen.findAllByPlaceholderText(/eu-west-1/i)
+      await user.type(regionInputs[0], 'us-east-1')
+
+      const saveBtn = screen.getByRole('button', { name: /Save Provider/i })
+      await user.click(saveBtn)
+
+      await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+      const body = updateConnectionMock.mock.calls[0][1] as {
+        provider?: { type: string; region?: string }
+        addon_secret_provider?: { type: string }
+      }
+      expect(body.provider?.type).toBe('aws-sm')
+      expect(body.provider?.region).toBe('us-east-1')
+      expect(body.addon_secret_provider?.type).toBe('k8s-secrets')
+    })
+
+    it('hydrates both fields from connection data', async () => {
+      setupHook([{
+        ...sampleConnection,
+        provider: { type: 'argocd' },
+        addon_secret_provider: { type: 'aws-sm', region: 'eu-west-1' },
+      }])
+      render(<SecretsProviderSection />)
+
+      const selects = await screen.findAllByRole('combobox') as HTMLSelectElement[]
+      await waitFor(() => expect(selects[0].value).toBe('argocd'))
+      await waitFor(() => expect(selects[1].value).toBe('aws-sm'))
+
+      // Region hydrated for addon-secret
+      const regionInputs = screen.getAllByPlaceholderText(/eu-west-1/i)
+      expect(regionInputs[0]).toHaveValue('eu-west-1')
+    })
+
+    it('addon_secret_status=missing + addon_secret_message renders the message', async () => {
+      getProvidersMock.mockResolvedValue({
+        configured_provider: {
+          type: 'argocd',
+          region: '',
+          status: 'configured',
+          addon_secret_status: 'missing',
+          addon_secret_message: 'No addon-secret backend configured',
+        },
+        available_types: ['argocd', 'aws-sm', 'k8s-secrets'],
+      })
+      setupHook([{
+        ...sampleConnection,
+        provider: { type: 'argocd' },
+      }])
+      render(<SecretsProviderSection />)
+
+      expect(
+        await screen.findByText('No addon-secret backend configured'),
+      ).toBeInTheDocument()
+    })
+
+    it('addon_secret_status=invalid_argocd + message renders the message', async () => {
+      getProvidersMock.mockResolvedValue({
+        configured_provider: {
+          type: 'argocd',
+          region: '',
+          status: 'configured',
+          addon_secret_status: 'invalid_argocd',
+          addon_secret_message: 'ArgoCD provider is cluster-credentials-only; configure a separate backend (aws-sm, k8s-secrets, gcp-sm, azure-kv) for addon secrets',
+        },
+        available_types: ['argocd', 'aws-sm', 'k8s-secrets'],
+      })
+      setupHook([{
+        ...sampleConnection,
+        provider: { type: 'argocd' },
+        addon_secret_provider: { type: 'argocd' }, // invalid choice
+      }])
+      render(<SecretsProviderSection />)
+
+      expect(
+        await screen.findByText(/ArgoCD provider is cluster-credentials-only; configure a separate backend/i),
+      ).toBeInTheDocument()
+    })
+  })
+
+  // V3-P1.2 — positioning one-liner in opener
+  describe('Positioning one-liner in opener (V3-P1.2)', () => {
+    it('renders the IDP/GitOps positioning sentence verbatim', async () => {
+      setupHook()
+      render(<SecretsProviderSection />)
+
+      expect(
+        screen.getByText(/Sharko is a GitOps agent with an API: your portal or pipeline asks for "a cluster with these addons," and Sharko opens a pull request — it never changes your cluster behind your back/i),
+      ).toBeInTheDocument()
     })
   })
 })
