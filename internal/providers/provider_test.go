@@ -245,6 +245,92 @@ func TestClusterTestConfigFromConnection(t *testing.T) {
 	}
 }
 
+// --- AddonSecretConfigFromConnection (shared boot/hot-reload mapper, V3-P1.1) ---
+
+// The mapper is the single source of truth for connection→addon-secret config
+// fan-through (V3-P1.1). These tests pin backward-compat fallback, explicit
+// addon-secret precedence, and namespace resolution.
+func TestAddonSecretConfigFromConnection(t *testing.T) {
+	cases := []struct {
+		name   string
+		ccType string
+		asType string
+		want   AddonSecretProviderConfig
+	}{
+		{
+			name:   "explicit addon-secret provider takes full precedence",
+			ccType: "argocd",
+			asType: "aws-sm",
+			want:   AddonSecretProviderConfig{Type: "aws-sm", Region: "us-east-1", Prefix: "addons/", Namespace: "addons-ns", RoleARN: "arn:aws:iam::123456789012:role/y"},
+		},
+		{
+			name:   "backward compat: no addon-secret provider → fall back to cluster-creds",
+			ccType: "k8s-secrets",
+			asType: "",
+			want:   AddonSecretProviderConfig{Type: "k8s-secrets", Region: "eu-west-1", Prefix: "clusters/", Namespace: "custom", RoleARN: "arn:aws:iam::000000000000:role/x"},
+		},
+		{
+			name:   "both nil → zero config except default namespace",
+			ccType: "",
+			asType: "",
+			want:   AddonSecretProviderConfig{Namespace: "default-ns"},
+		},
+		{
+			name:   "cluster-creds argocd + no addon-secret → falls back to argocd (trap scenario)",
+			ccType: "argocd",
+			asType: "",
+			want:   AddonSecretProviderConfig{Type: "argocd", Region: "eu-west-1", Prefix: "clusters/", Namespace: "custom", RoleARN: "arn:aws:iam::000000000000:role/x"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var ccRegion, ccPrefix, ccNamespace, ccRoleARN string
+			if tc.ccType != "" {
+				ccRegion, ccPrefix, ccNamespace, ccRoleARN = "eu-west-1", "clusters/", "custom", "arn:aws:iam::000000000000:role/x"
+			}
+			var asRegion, asPrefix, asNamespace, asRoleARN string
+			if tc.asType != "" {
+				asRegion, asPrefix, asNamespace, asRoleARN = "us-east-1", "addons/", "addons-ns", "arn:aws:iam::123456789012:role/y"
+			}
+
+			got := AddonSecretConfigFromConnection(
+				tc.ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN,
+				tc.asType, asRegion, asPrefix, asNamespace, asRoleARN,
+				"default-ns",
+			)
+
+			if got != tc.want {
+				t.Errorf("AddonSecretConfigFromConnection(cc=%q, as=%q, ...) = %+v, want %+v", tc.ccType, tc.asType, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAddonSecretConfigFromConnection_NamespaceResolution pins the namespace
+// fallback: explicit provider namespace > default namespace.
+func TestAddonSecretConfigFromConnection_NamespaceResolution(t *testing.T) {
+	// Addon-secret provider with empty namespace → default wins
+	got := AddonSecretConfigFromConnection(
+		"", "", "", "", "",
+		"aws-sm", "us-east-1", "addons/", "", "",
+		"default-ns",
+	)
+	if got.Namespace != "default-ns" {
+		t.Errorf("expected default namespace when addon-secret provider has no namespace, got %q", got.Namespace)
+	}
+
+	// Addon-secret provider with explicit namespace → provider wins
+	got = AddonSecretConfigFromConnection(
+		"", "", "", "", "",
+		"aws-sm", "us-east-1", "addons/", "custom-ns", "",
+		"default-ns",
+	)
+	if got.Namespace != "custom-ns" {
+		t.Errorf("expected provider namespace to win, got %q", got.Namespace)
+	}
+}
+
 // --- NewAddonSecretProvider (canonical) regression sweep ------------------
 
 // NewAddonSecretProvider rejects argocd type — argocd is not a SecretProvider

@@ -91,3 +91,99 @@ func TestGetProviders_PrefixKeyPresentWhenEmpty(t *testing.T) {
 		t.Errorf("expected type=k8s-secrets (cluster-test fallback), got %v", got)
 	}
 }
+
+// V3-P1.1: GET /api/v1/providers must report addon_secret_status when the
+// addon-secret backend is missing or invalid (e.g., "argocd" which is rejected
+// by NewAddonSecretProvider). The UI uses this to require an explicit addon-
+// secret backend choice when the user picks "argocd" for cluster-credentials.
+func TestGetProviders_AddonSecretStatus_OK(t *testing.T) {
+	srv := newTestServer()
+	installCredProvider(srv, healthTestStubCredProvider{}, &providers.AddonSecretProviderConfig{
+		Type:   "aws-sm",
+		Region: "us-east-1",
+	}, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/providers", nil)
+	w := httptest.NewRecorder()
+	srv.handleGetProviders(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var body struct {
+		ConfiguredProvider map[string]interface{} `json:"configured_provider"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+
+	// When addon-secret backend is valid, addon_secret_status is "ok" (or absent
+	// — the response omits it when status is ok to reduce noise).
+	status, present := body.ConfiguredProvider["addon_secret_status"]
+	if present && status != "ok" {
+		t.Errorf("expected addon_secret_status absent or ok, got %v", status)
+	}
+}
+
+func TestGetProviders_AddonSecretStatus_Missing(t *testing.T) {
+	srv := newTestServer()
+	installCredProvider(srv, healthTestStubCredProvider{}, &providers.AddonSecretProviderConfig{
+		Type: "", // no addon-secret backend configured
+	}, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/providers", nil)
+	w := httptest.NewRecorder()
+	srv.handleGetProviders(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var body struct {
+		ConfiguredProvider map[string]interface{} `json:"configured_provider"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+
+	status := body.ConfiguredProvider["addon_secret_status"]
+	if status != "missing" {
+		t.Errorf("expected addon_secret_status=missing when Type is empty, got %v", status)
+	}
+	message := body.ConfiguredProvider["addon_secret_message"]
+	if message == nil || message == "" {
+		t.Error("expected non-empty addon_secret_message when status=missing")
+	}
+}
+
+func TestGetProviders_AddonSecretStatus_InvalidArgoCD(t *testing.T) {
+	srv := newTestServer()
+	installCredProvider(srv, healthTestStubCredProvider{}, &providers.AddonSecretProviderConfig{
+		Type: "argocd", // rejected by NewAddonSecretProvider
+	}, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/providers", nil)
+	w := httptest.NewRecorder()
+	srv.handleGetProviders(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var body struct {
+		ConfiguredProvider map[string]interface{} `json:"configured_provider"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+
+	status := body.ConfiguredProvider["addon_secret_status"]
+	if status != "invalid_argocd" {
+		t.Errorf("expected addon_secret_status=invalid_argocd when Type=argocd, got %v", status)
+	}
+	message := body.ConfiguredProvider["addon_secret_message"]
+	if message == nil || message == "" {
+		t.Error("expected non-empty addon_secret_message when status=invalid_argocd")
+	}
+}

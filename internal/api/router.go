@@ -552,45 +552,54 @@ func (s *Server) ReinitializeFromConnection() {
 	// cluster-test). Both are stashed on the Server so /providers and
 	// the orchestrator handlers can read the right slice.
 	pc := conn.Provider
+	addonPc := conn.AddonSecretProvider
 	{
 		namespace := os.Getenv("SHARKO_NAMESPACE")
 		if namespace == "" {
 			namespace = "sharko"
 		}
 
-		addonCfg := providers.AddonSecretProviderConfig{Namespace: namespace}
+		// Unpack the two provider blocks into raw fields for the shared resolvers.
+		// V3-P1.1: addon-secret backend resolution goes through
+		// AddonSecretConfigFromConnection so boot and hot-reload can never
+		// drift (mirrors the V2-cleanup-53.1 cluster-test mapper discipline).
+		var ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN string
+		if pc != nil {
+			ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN = pc.Type, pc.Region, pc.Prefix, pc.Namespace, pc.RoleARN
+		}
+		var asType, asRegion, asPrefix, asNamespace, asRoleARN string
+		if addonPc != nil {
+			asType, asRegion, asPrefix, asNamespace, asRoleARN = addonPc.Type, addonPc.Region, addonPc.Prefix, addonPc.Namespace, addonPc.RoleARN
+		}
+
+		addonCfg := providers.AddonSecretConfigFromConnection(
+			ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN,
+			asType, asRegion, asPrefix, asNamespace, asRoleARN,
+			namespace,
+		)
+
+		// Cluster-test fan-through goes through the SINGLE shared
+		// mapper (providers.ClusterTestConfigFromConnection) — the
+		// same one serve.go uses at boot, so boot and hot-reload
+		// wiring can never drift (V2-cleanup-53.1). aws-sm and
+		// k8s-secrets now fan through to their restored cluster-creds
+		// arms; gcp-sm/azure-kv and unknown types still fall to the
+		// auto-default. The V125-1-10.8 guard is preserved inside the
+		// mapper: pc.Namespace (addon-secrets-shaped) is NEVER copied
+		// into ArgoCDNamespace — empty ArgoCDNamespace lets the
+		// canonical resolveArgoCDNamespaceTyped precedence take over:
+		//   1. cfg.ArgoCDNamespace (empty here, by design)
+		//   2. SHARKO_ARGOCD_NAMESPACE env (deprecated compat alias)
+		//   3. "argocd" hardcoded default
+		// For k8s-secrets, namespace (SHARKO_NAMESPACE default,
+		// overridden by pc.Namespace) flows into the DISTINCT
+		// Namespace field, matching the addon-side convention.
 		testCfg := providers.ClusterTestProviderConfig{}
 		if pc != nil {
-			if pc.Namespace != "" {
-				namespace = pc.Namespace
-			}
-			addonCfg = providers.AddonSecretProviderConfig{
-				Type:      pc.Type,
-				Region:    pc.Region,
-				Prefix:    pc.Prefix,
-				Namespace: namespace,
-				RoleARN:   pc.RoleARN,
-			}
-			// Cluster-test fan-through goes through the SINGLE shared
-			// mapper (providers.ClusterTestConfigFromConnection) — the
-			// same one serve.go uses at boot, so boot and hot-reload
-			// wiring can never drift (V2-cleanup-53.1). aws-sm and
-			// k8s-secrets now fan through to their restored cluster-creds
-			// arms; gcp-sm/azure-kv and unknown types still fall to the
-			// auto-default. The V125-1-10.8 guard is preserved inside the
-			// mapper: pc.Namespace (addon-secrets-shaped) is NEVER copied
-			// into ArgoCDNamespace — empty ArgoCDNamespace lets the
-			// canonical resolveArgoCDNamespaceTyped precedence take over:
-			//   1. cfg.ArgoCDNamespace (empty here, by design)
-			//   2. SHARKO_ARGOCD_NAMESPACE env (deprecated compat alias)
-			//   3. "argocd" hardcoded default
-			// For k8s-secrets, namespace (SHARKO_NAMESPACE default,
-			// overridden by pc.Namespace) flows into the DISTINCT
-			// Namespace field, matching the addon-side convention.
 			testCfg = providers.ClusterTestConfigFromConnection(
-				pc.Type, pc.Region, pc.Prefix, namespace, pc.RoleARN)
-			if pc.Type != "" {
-				slog.Info("[startup] initializing provider", "type", pc.Type, "region", pc.Region)
+				ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN)
+			if ccType != "" {
+				slog.Info("[startup] initializing provider", "type", ccType, "region", ccRegion)
 			} else {
 				slog.Info("[startup] no explicit provider type — cluster-test will auto-default")
 			}

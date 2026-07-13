@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -146,5 +147,67 @@ func TestDeriveProviderFromURL(t *testing.T) {
 				t.Errorf("provider = %q, want %q", got, tc.wantProvider)
 			}
 		})
+	}
+}
+
+// TestGetAddonSecretProviderConfig exercises the V3-P1.1 separate addon-secret
+// provider field accessor.
+func TestGetAddonSecretProviderConfig(t *testing.T) {
+	store := config.NewFileStore(t.TempDir() + "/test-config.yaml")
+	svc := NewConnectionService(store)
+
+	// No active connection → nil
+	got := svc.GetAddonSecretProviderConfig()
+	if got != nil {
+		t.Errorf("expected nil when no active connection, got %+v", got)
+	}
+
+	// Active connection with AddonSecretProvider set
+	addonProv := &models.ProviderConfig{
+		Type:   "aws-sm",
+		Region: "us-east-1",
+		Prefix: "addons/",
+	}
+	conn := models.Connection{
+		Name: "test",
+		Git: models.GitRepoConfig{
+			Provider: models.GitProviderGitHub,
+			Owner:    "owner",
+			Repo:     "repo",
+			Token:    "token",
+		},
+		Argocd: models.ArgocdConfig{
+			ServerURL: "https://argocd.example.com",
+			Token:     "token",
+			Namespace: "argocd",
+		},
+		Provider: &models.ProviderConfig{
+			Type: "argocd",
+		},
+		AddonSecretProvider: addonProv,
+	}
+	if err := store.SaveConnection(conn); err != nil {
+		t.Fatalf("SaveConnection: %v", err)
+	}
+	if err := store.SetActiveConnection("test"); err != nil {
+		t.Fatalf("SetActiveConnection: %v", err)
+	}
+
+	got = svc.GetAddonSecretProviderConfig()
+	if got == nil {
+		t.Fatal("expected non-nil AddonSecretProvider, got nil")
+	}
+	if got.Type != "aws-sm" || got.Region != "us-east-1" || got.Prefix != "addons/" {
+		t.Errorf("GetAddonSecretProviderConfig() = %+v, want Type=aws-sm Region=us-east-1 Prefix=addons/", got)
+	}
+
+	// Active connection with AddonSecretProvider nil (backward compat)
+	conn.AddonSecretProvider = nil
+	if err := store.SaveConnection(conn); err != nil {
+		t.Fatalf("SaveConnection: %v", err)
+	}
+	got = svc.GetAddonSecretProviderConfig()
+	if got != nil {
+		t.Errorf("expected nil when AddonSecretProvider not set, got %+v", got)
 	}
 }

@@ -7557,6 +7557,9 @@ const docTemplate = `{
         "github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest": {
             "type": "object",
             "properties": {
+                "addon_secret_provider": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ProviderConfig"
+                },
                 "argocd": {
                     "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ArgocdConfig"
                 },

@@ -146,6 +146,53 @@ func ClusterTestConfigFromConnection(provType, region, prefix, namespace, roleAR
 	}
 }
 
+// AddonSecretConfigFromConnection maps the connection-level provider blocks
+// (cluster-credentials Provider + optional addon-secret AddonSecretProvider)
+// into the typed AddonSecretProviderConfig. This is the SINGLE source of
+// truth for addon-secret backend resolution — both boot-time wiring
+// (cmd/sharko/serve.go) and hot-reload (api.Server.ReinitializeFromConnection)
+// call it, so the two can never drift (V3-P1.1 discipline, mirroring the
+// V2-cleanup-53.1 cluster-test mapper).
+//
+// Backward compatibility: when the addon-secret provider fields are all empty,
+// falls back to the cluster-creds provider fields so existing connections
+// (single Provider field) keep working byte-for-byte as they do today. When
+// addonSecretType is non-empty, the addon-secret fields take full precedence
+// — this is the new explicit addon-secret provider slot introduced in V3-P1.1
+// to separate the two mechanisms.
+//
+// Namespace resolution: prefers the addon-secret provider's namespace (if
+// addonSecretType is set); else prefers the cluster-creds provider's namespace;
+// falls back to defaultNamespace when both are empty.
+//
+// Parameters mirror the models.ProviderConfig fields without importing models
+// (avoiding circular dependency). Callers unpack their *models.ProviderConfig
+// pointers and pass the raw string fields.
+func AddonSecretConfigFromConnection(
+	clusterCredsType, clusterCredsRegion, clusterCredsPrefix, clusterCredsNamespace, clusterCredsRoleARN string,
+	addonSecretType, addonSecretRegion, addonSecretPrefix, addonSecretNamespace, addonSecretRoleARN string,
+	defaultNamespace string,
+) AddonSecretProviderConfig {
+	// Choose the source: explicit addon-secret provider wins when Type is set,
+	// else fall back to cluster-creds provider (backward compat).
+	typ, region, prefix, ns, roleARN := clusterCredsType, clusterCredsRegion, clusterCredsPrefix, clusterCredsNamespace, clusterCredsRoleARN
+	if addonSecretType != "" {
+		typ, region, prefix, ns, roleARN = addonSecretType, addonSecretRegion, addonSecretPrefix, addonSecretNamespace, addonSecretRoleARN
+	}
+
+	if ns == "" {
+		ns = defaultNamespace
+	}
+
+	return AddonSecretProviderConfig{
+		Type:      typ,
+		Region:    region,
+		Prefix:    prefix,
+		Namespace: ns,
+		RoleARN:   roleARN,
+	}
+}
+
 // ClusterRegistrationSourceConfig configures where Sharko WRITES
 // cluster registration material. The struct exists, gets parsed from
 // env, and is stashed on the application context for the cluster

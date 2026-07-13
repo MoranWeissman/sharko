@@ -166,28 +166,35 @@ type Connection struct {
 	Git         GitRepoConfig   `json:"git" yaml:"git"`
 	Argocd      ArgocdConfig    `json:"argocd" yaml:"argocd"`
 	Provider    *ProviderConfig `json:"provider,omitempty" yaml:"provider,omitempty"`
-	GitOps      *GitOpsSettings `json:"gitops,omitempty" yaml:"gitops,omitempty"`
-	IsDefault   bool            `json:"is_default" yaml:"default,omitempty"`
-	CreatedAt   string          `json:"created_at,omitempty" yaml:"-"`
-	UpdatedAt   string          `json:"updated_at,omitempty" yaml:"-"`
+	// AddonSecretProvider is the optional SEPARATE provider for addon-secret
+	// material (V3-P1.1). When set, addon secrets are fetched from this
+	// backend; the Provider field above is used ONLY for cluster-connectivity
+	// tests. When nil, addon secrets fall back to Provider for backward
+	// compatibility (pre-V3 connections).
+	AddonSecretProvider *ProviderConfig `json:"addon_secret_provider,omitempty" yaml:"addon_secret_provider,omitempty"`
+	GitOps              *GitOpsSettings `json:"gitops,omitempty" yaml:"gitops,omitempty"`
+	IsDefault           bool            `json:"is_default" yaml:"default,omitempty"`
+	CreatedAt           string          `json:"created_at,omitempty" yaml:"-"`
+	UpdatedAt           string          `json:"updated_at,omitempty" yaml:"-"`
 }
 
 // ConnectionResponse is a connection with masked sensitive data for API responses.
 type ConnectionResponse struct {
-	Name              string          `json:"name"`
-	Description       string          `json:"description,omitempty"`
-	GitProvider       GitProviderType `json:"git_provider"`
-	GitRepoIdentifier string          `json:"git_repo_identifier"`
-	GitTokenMasked    string          `json:"git_token_masked"`
-	ArgocdServerURL   string          `json:"argocd_server_url"`
-	ArgocdTokenMasked string          `json:"argocd_token_masked"`
-	ArgocdNamespace   string          `json:"argocd_namespace"`
-	Provider          *ProviderConfig `json:"provider,omitempty"`
-	GitOps            *GitOpsSettings `json:"gitops,omitempty"`
-	IsDefault         bool            `json:"is_default"`
-	IsActive          bool            `json:"is_active"`
-	CreatedAt         string          `json:"created_at,omitempty"`
-	UpdatedAt         string          `json:"updated_at,omitempty"`
+	Name                string          `json:"name"`
+	Description         string          `json:"description,omitempty"`
+	GitProvider         GitProviderType `json:"git_provider"`
+	GitRepoIdentifier   string          `json:"git_repo_identifier"`
+	GitTokenMasked      string          `json:"git_token_masked"`
+	ArgocdServerURL     string          `json:"argocd_server_url"`
+	ArgocdTokenMasked   string          `json:"argocd_token_masked"`
+	ArgocdNamespace     string          `json:"argocd_namespace"`
+	Provider            *ProviderConfig `json:"provider,omitempty"`
+	AddonSecretProvider *ProviderConfig `json:"addon_secret_provider,omitempty"`
+	GitOps              *GitOpsSettings `json:"gitops,omitempty"`
+	IsDefault           bool            `json:"is_default"`
+	IsActive            bool            `json:"is_active"`
+	CreatedAt           string          `json:"created_at,omitempty"`
+	UpdatedAt           string          `json:"updated_at,omitempty"`
 }
 
 // ConnectionsListResponse is the API response for listing connections.
@@ -206,13 +213,14 @@ type ConnectionsListResponse struct {
 // and tests with those, so the wizard can honor the "leave blank to
 // keep, or enter new value to replace" placeholder end-to-end.
 type CreateConnectionRequest struct {
-	Name         string          `json:"name"`
-	Description  string          `json:"description,omitempty"`
-	Git          GitRepoConfig   `json:"git"`
-	Argocd       ArgocdConfig    `json:"argocd"`
-	Provider     *ProviderConfig `json:"provider,omitempty"`
-	GitOps       *GitOpsSettings `json:"gitops,omitempty"`
-	SetAsDefault bool            `json:"set_as_default"`
+	Name                string          `json:"name"`
+	Description         string          `json:"description,omitempty"`
+	Git                 GitRepoConfig   `json:"git"`
+	Argocd              ArgocdConfig    `json:"argocd"`
+	Provider            *ProviderConfig `json:"provider,omitempty"`
+	AddonSecretProvider *ProviderConfig `json:"addon_secret_provider,omitempty"`
+	GitOps              *GitOpsSettings `json:"gitops,omitempty"`
+	SetAsDefault        bool            `json:"set_as_default"`
 	// UseSaved, when true on a test-credentials request, instructs the
 	// handler to look up the saved connection by Name and test using its
 	// stored credentials instead of the request body. Returns 400 if no
@@ -259,19 +267,20 @@ func (c *Connection) ToResponse(isActive bool) ConnectionResponse {
 	}
 
 	return ConnectionResponse{
-		Name:              c.Name,
-		Description:       c.Description,
-		GitProvider:       c.Git.Provider,
-		GitRepoIdentifier: repoID,
-		GitTokenMasked:    MaskToken(token),
-		ArgocdServerURL:   c.Argocd.ServerURL,
-		ArgocdTokenMasked: MaskToken(c.Argocd.Token),
-		ArgocdNamespace:   c.Argocd.Namespace,
-		Provider:          c.Provider,
-		GitOps:            c.GitOps,
-		IsDefault:         c.IsDefault,
-		IsActive:          isActive,
-		CreatedAt:         c.CreatedAt,
-		UpdatedAt:         c.UpdatedAt,
+		Name:                c.Name,
+		Description:         c.Description,
+		GitProvider:         c.Git.Provider,
+		GitRepoIdentifier:   repoID,
+		GitTokenMasked:      MaskToken(token),
+		ArgocdServerURL:     c.Argocd.ServerURL,
+		ArgocdTokenMasked:   MaskToken(c.Argocd.Token),
+		ArgocdNamespace:     c.Argocd.Namespace,
+		Provider:            c.Provider,
+		AddonSecretProvider: c.AddonSecretProvider,
+		GitOps:              c.GitOps,
+		IsDefault:           c.IsDefault,
+		IsActive:            isActive,
+		CreatedAt:           c.CreatedAt,
+		UpdatedAt:           c.UpdatedAt,
 	}
 }

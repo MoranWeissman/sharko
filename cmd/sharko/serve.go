@@ -512,43 +512,53 @@ var serveCmd = &cobra.Command{
 		var resolvedTestCfg providers.ClusterTestProviderConfig
 		{
 			connProv := connSvc.GetProviderConfig()
+			addonProv := connSvc.GetAddonSecretProviderConfig()
 			ns := namespace
-			resolvedAddonCfg = providers.AddonSecretProviderConfig{Namespace: ns}
-			resolvedTestCfg = providers.ClusterTestProviderConfig{}
+
+			// Unpack the two provider blocks into raw fields for the shared resolvers.
+			// V3-P1.1: addon-secret backend resolution goes through
+			// AddonSecretConfigFromConnection so boot and hot-reload can never
+			// drift (mirrors the V2-cleanup-53.1 cluster-test mapper discipline).
+			var ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN string
 			if connProv != nil {
-				if connProv.Namespace != "" {
-					ns = connProv.Namespace
-				}
-				resolvedAddonCfg = providers.AddonSecretProviderConfig{
-					Type:      connProv.Type,
-					Region:    connProv.Region,
-					Prefix:    connProv.Prefix,
-					Namespace: ns,
-					RoleARN:   connProv.RoleARN,
-				}
-				// Cluster-test fan-through goes through the SINGLE shared
-				// mapper (providers.ClusterTestConfigFromConnection) — the
-				// same one ReinitializeFromConnection uses on connection
-				// save, so boot and hot-reload wiring can never drift
-				// (V2-cleanup-53.1). The mapper preserves the V125-1-10.8
-				// cross-contamination guard: connProv.Namespace is NEVER
-				// copied into ArgoCDNamespace (it's the addon-secrets-shaped
-				// slot; e.g. a leftover "sharko" from a prior k8s-secrets
-				// selection would make ArgoCDProvider look for cluster
-				// Secrets in "sharko" instead of "argocd"). Empty
-				// ArgoCDNamespace lets resolveArgoCDNamespaceTyped fall back
-				// through SHARKO_ARGOCD_NAMESPACE env → "argocd" default.
-				// For k8s-secrets, ns (SHARKO_NAMESPACE default, overridden
-				// by connProv.Namespace) flows into the DISTINCT Namespace
-				// field, matching the addon-side k8s-secrets convention.
+				ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN = connProv.Type, connProv.Region, connProv.Prefix, connProv.Namespace, connProv.RoleARN
+			}
+			var asType, asRegion, asPrefix, asNamespace, asRoleARN string
+			if addonProv != nil {
+				asType, asRegion, asPrefix, asNamespace, asRoleARN = addonProv.Type, addonProv.Region, addonProv.Prefix, addonProv.Namespace, addonProv.RoleARN
+			}
+
+			resolvedAddonCfg = providers.AddonSecretConfigFromConnection(
+				ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN,
+				asType, asRegion, asPrefix, asNamespace, asRoleARN,
+				ns,
+			)
+
+			// Cluster-test fan-through goes through the SINGLE shared
+			// mapper (providers.ClusterTestConfigFromConnection) — the
+			// same one ReinitializeFromConnection uses on connection
+			// save, so boot and hot-reload wiring can never drift
+			// (V2-cleanup-53.1). The mapper preserves the V125-1-10.8
+			// cross-contamination guard: connProv.Namespace is NEVER
+			// copied into ArgoCDNamespace (it's the addon-secrets-shaped
+			// slot; e.g. a leftover "sharko" from a prior k8s-secrets
+			// selection would make ArgoCDProvider look for cluster
+			// Secrets in "sharko" instead of "argocd"). Empty
+			// ArgoCDNamespace lets resolveArgoCDNamespaceTyped fall back
+			// through SHARKO_ARGOCD_NAMESPACE env → "argocd" default.
+			// For k8s-secrets, ns (SHARKO_NAMESPACE default, overridden
+			// by connProv.Namespace) flows into the DISTINCT Namespace
+			// field, matching the addon-side k8s-secrets convention.
+			if connProv != nil {
 				resolvedTestCfg = providers.ClusterTestConfigFromConnection(
-					connProv.Type, connProv.Region, connProv.Prefix, ns, connProv.RoleARN)
-				if connProv.Type != "" {
-					slog.Info("secrets provider configured from connection", "type", connProv.Type)
+					ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN)
+				if ccType != "" {
+					slog.Info("secrets provider configured from connection", "type", ccType)
 				} else {
 					slog.Info("no explicit provider type in connection — cluster-test will auto-default")
 				}
 			} else {
+				resolvedTestCfg = providers.ClusterTestProviderConfig{}
 				slog.Info("no provider config in connection — cluster-test will auto-default")
 			}
 		}

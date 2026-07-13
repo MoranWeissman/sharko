@@ -64,6 +64,16 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 		providerInfo["error"] = statusError
 	}
 
+	// V3-P1.1: surface addon-secret backend status so the UI can detect the
+	// "argocd selected for cluster-creds but no addon-secret backend" trap.
+	addonSecretStatus, addonSecretMessage := s.addonSecretBackendStatus()
+	if addonSecretStatus != "ok" {
+		providerInfo["addon_secret_status"] = addonSecretStatus
+		if addonSecretMessage != "" {
+			providerInfo["addon_secret_message"] = addonSecretMessage
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"configured_provider": providerInfo,
 		"available_types":     availableTypes,
@@ -283,4 +293,28 @@ func (s *Server) providerDisplay() (typ, region, prefix string) {
 		typ = s.clusterTestCfg().Type
 	}
 	return typ, region, prefix
+}
+
+// addonSecretBackendStatus returns (status, message) indicating whether the
+// addon-secret backend is properly configured (V3-P1.1). Valid statuses:
+//   "ok"              — addon-secret backend Type is valid (not empty, not "argocd")
+//   "missing"         — no addon-secret backend configured (Type is empty)
+//   "invalid_argocd"  — Type is "argocd" (rejected by NewAddonSecretProvider)
+//
+// The UI (story 1.2) uses this to require an explicit addon-secret provider
+// choice when the user picks "argocd" for cluster-credentials.
+func (s *Server) addonSecretBackendStatus() (status, message string) {
+	cfg := s.addonSecretCfg()
+	if cfg == nil {
+		return "missing", "No addon-secret backend configured"
+	}
+
+	switch cfg.Type {
+	case "":
+		return "missing", "No addon-secret backend configured"
+	case "argocd":
+		return "invalid_argocd", "ArgoCD provider is cluster-credentials-only; configure a separate backend (aws-sm, k8s-secrets, gcp-sm, azure-kv) for addon secrets"
+	default:
+		return "ok", ""
+	}
 }
