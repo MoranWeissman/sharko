@@ -143,19 +143,15 @@ describe('ClustersOverview — V125-1-7 orphan cluster surface', () => {
 
     renderView();
 
-    // V2-cleanup-89.3: the Discovered section is now a one-line hint (no
-    // per-cluster names, no bulk-select table) — assert on its count text.
+    // V2-cleanup-92.1 (F2): banner removed — the Discovered hint no longer
+    // exists on the Clusters page. kind-orphan still renders once, in the
+    // orphan section table (V2-cleanup-24), and no longer appears as a
+    // discovered cluster anywhere.
     await waitFor(() => {
-      expect(screen.getByTestId('discovered-hint')).toBeInTheDocument();
+      expect(screen.getByText('kind-orphan')).toBeInTheDocument();
     });
 
-    // Count should read "1", not "2", because kind-orphan was filtered
-    // out into the orphan section.
-    const hint = screen.getByTestId('discovered-hint');
-    expect(hint.textContent).toMatch(/ArgoCD knows 1 more cluster Sharko doesn't manage/);
-
-    // kind-orphan still renders ONCE — in the orphan section table,
-    // never surfaced by name in the Discovered hint (which shows no names).
+    // kind-orphan renders ONCE — in the orphan section table only.
     const allKindOrphan = screen.getAllByText('kind-orphan');
     expect(allKindOrphan.length).toBe(1);
     const tableForOrphan = allKindOrphan[0].closest('table');

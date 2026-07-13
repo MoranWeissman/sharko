@@ -370,9 +370,10 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
       // nothing happened.
       expect(screen.getByText('Register New Cluster')).toBeInTheDocument();
 
-      // The selection resets — the button reverts to its unpicked label.
+      // The selection resets — the button reverts to its unpicked label
+      // (V2-cleanup-92.1 F1: "Adopt cluster", not "Adopt selected cluster").
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: 'Adopt selected cluster' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Adopt cluster' })).toBeInTheDocument();
       });
     } finally {
       vi.useRealTimers();
@@ -386,10 +387,10 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
 
     fireEvent.change(ownershipSelect(), { target: { value: 'user' } });
 
-    // V2-cleanup-91.2 (F4): the hint is now one sentence + a real docs link.
+    // V2-cleanup-92.1 (F11): hint reworded to plain English.
     expect(
       screen.getByText(
-        /You create and maintain the ArgoCD cluster secret yourself; Sharko only manages the addon labels on it\./,
+        /You manage the cluster connection yourself — Sharko only updates its addon labels\./,
       ),
     ).toBeInTheDocument();
     expect(
@@ -397,39 +398,7 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
     ).toBeInTheDocument();
   });
 
-  it('collapses the standing Discovered section to a one-line hint with a count', async () => {
-    mockGetClusters.mockResolvedValue(clustersResponse([discoveredCluster]));
-    renderView();
-    await waitForClusters();
-
-    const hint = screen.getByTestId('discovered-hint');
-    expect(hint.textContent).toMatch(/ArgoCD knows 1 more cluster Sharko doesn't manage/);
-    // No individual cluster name and no bulk-select checkbox machinery —
-    // the big card/table list is gone.
-    expect(screen.queryByText('argo-known-cluster')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/Select all discovered clusters/i)).not.toBeInTheDocument();
-  });
-
-  it('does not render the collapsed hint when there are no discovered clusters', async () => {
-    mockGetClusters.mockResolvedValue(clustersResponse([]));
-    renderView();
-    await waitForClusters();
-
-    expect(screen.queryByTestId('discovered-hint')).not.toBeInTheDocument();
-  });
-
-  it('clicking the collapsed hint opens Register New Cluster pre-set to "I do"', async () => {
-    mockGetClusters.mockResolvedValue(clustersResponse([discoveredCluster]));
-    renderView();
-    await waitForClusters();
-
-    fireEvent.click(screen.getByRole('button', { name: /adopt them from Register New Cluster/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText('Register New Cluster')).toBeInTheDocument();
-    });
-    expect(ownershipSelect().value).toBe('user');
-    // Preset "I do" surfaces the picker immediately, no extra click needed.
-    expect(screen.getByTestId('discovered-picker')).toBeInTheDocument();
-  });
+  // V2-cleanup-92.1 (F2): banner removed — these tests deleted. The
+  // discovered-picker still exists inside the Register dialog when
+  // connManagedBy==='user', tested by the in-dialog suite below.
 });

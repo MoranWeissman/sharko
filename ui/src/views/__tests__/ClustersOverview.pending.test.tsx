@@ -141,24 +141,19 @@ describe('ClustersOverview — V125-1.5 pending-PR registration surface', () => 
 
     renderView();
 
-    // V2-cleanup-89.3: the Discovered section is now a one-line hint (no
-    // per-cluster names, no bulk-select table) — assert on its count text.
+    // V2-cleanup-92.1 (F2): banner removed — the Discovered hint no longer
+    // exists on the Clusters page. kind-local still renders once, in the
+    // Pending Registrations table (V2-cleanup-57.4), and no longer appears
+    // in a discovered-cluster surface.
     await waitFor(() => {
-      expect(screen.getByTestId('discovered-hint')).toBeInTheDocument();
+      expect(screen.getByText('kind-local')).toBeInTheDocument();
     });
 
-    // The count should read "1", not "2", because kind-local was filtered
-    // out into the Pending Registrations surface.
-    const hint = screen.getByTestId('discovered-hint');
-    expect(hint.textContent).toMatch(/ArgoCD knows 1 more cluster Sharko doesn't manage/);
-
     // kind-local DOES still render — but only in the Pending
-    // Registrations table, never named in the Discovered hint (which
-    // carries no per-cluster names any more).
+    // Registrations table.
     const allKindLocal = screen.getAllByText('kind-local');
     expect(allKindLocal.length).toBe(1);
-    // It should not be inside a Discovered table — assert by walking the
-    // parent <table> chain.
+    // It should be inside a Pending Registrations table.
     const tableForKindLocal = allKindLocal[0].closest('table');
     expect(tableForKindLocal).toBeTruthy();
     // The Pending table header includes "Cluster Name" + "Branch" +

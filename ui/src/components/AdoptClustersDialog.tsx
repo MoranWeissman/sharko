@@ -26,7 +26,7 @@ interface AdoptClustersDialogProps {
   onDiagnose: (clusterName: string) => void
 }
 
-type VerificationState = 'pending' | 'verifying' | 'passed' | 'failed'
+type VerificationState = 'pending' | 'verifying' | 'passed' | 'failed' | 'not-verified'
 
 interface ClusterVerification {
   cluster: Cluster
@@ -90,18 +90,31 @@ export function AdoptClustersDialog({
         try {
           const result = await testClusterConnection(verifications[i].cluster.name)
           if (cancelled) return
-          // When the test feature itself is unavailable (no secrets backend
-          // configured), treat as failed for the adopt workflow but surface
-          // the underlying message so the operator understands the root
-          // cause. Adoption still requires a working test, so we can't
-          // auto-select these — but we don't want to pretend the cluster
-          // "failed to verify" with a misleading error.
+
+          // F14: Credentials-optional contract — distinguish informational
+          // cases (test unavailable OR credentials not found) from genuine
+          // verification failures. The backend (adopt.go:103-139) documents
+          // that credentials are OPTIONAL: "A failed credential lookup is
+          // the NORMAL case, not a fatal one — skip verification instead of
+          // failing the adoption."
+          const isCredentialsNotFound = (msg: string | undefined): boolean => {
+            if (!msg) return false
+            const lower = msg.toLowerCase()
+            return (
+              lower.includes('secret') && lower.includes('not found') ||
+              lower.includes('credential') && (lower.includes('not found') || lower.includes('unavailable')) ||
+              lower.includes('no credentials available')
+            )
+          }
+
+          // Case (a): Test unavailable OR credentials not found → informational,
+          // not blocking. Keep cluster selected and adoptable.
           if (isTestClusterUnavailable(result)) {
             setVerifications((prev) => {
               const next = [...prev]
               next[i] = {
                 ...next[i],
-                state: 'failed',
+                state: 'not-verified',
                 result: {
                   success: false,
                   stage: 'unavailable',
@@ -109,12 +122,31 @@ export function AdoptClustersDialog({
                   duration_ms: 0,
                   reachable: false,
                 },
-                selected: false,
+                selected: true,  // Keep selected
               }
               return next
             })
             continue
           }
+
+          // Case (a) continued: Credentials not found in error message → also
+          // informational, per the credentials-optional contract.
+          const errorMsg = result.error_message || ''
+          if (!result.success && isCredentialsNotFound(errorMsg)) {
+            setVerifications((prev) => {
+              const next = [...prev]
+              next[i] = {
+                ...next[i],
+                state: 'not-verified',
+                result,
+                selected: true,  // Keep selected
+              }
+              return next
+            })
+            continue
+          }
+
+          // Case (b): Genuine reachable-but-broken verification → real failure.
           const passed = result.reachable !== false && result.success !== false
           setVerifications((prev) => {
             const next = [...prev]
@@ -159,12 +191,16 @@ export function AdoptClustersDialog({
   }, [verifyRunId])
 
   const toggleCluster = useCallback((index: number) => {
+    // F16: Single-cluster case (clusters.length === 1) doesn't show checkboxes,
+    // so this function won't be called. But as a defensive measure, prevent
+    // toggling off the single cluster.
+    if (clusters.length === 1) return
     setVerifications((prev) => {
       const next = [...prev]
       next[index] = { ...next[index], selected: !next[index].selected }
       return next
     })
-  }, [])
+  }, [clusters.length])
 
   const selectedClusters = verifications.filter((v) => v.selected)
   const passedCount = verifications.filter((v) => v.state === 'passed').length
@@ -176,7 +212,10 @@ export function AdoptClustersDialog({
     setPhase('adopting')
     setAdoptError(null)
     try {
-      // Let the global GitOps auto-merge setting decide — no per-flow override.
+      // F15: Let the backend handle credentials-optional adoption. Selected
+      // clusters include informational-not-verified ones (F14) — the backend
+      // (adopt.go:103-139) skips verification when credentials are unavailable
+      // and proceeds with adoption anyway.
       const response = await adoptClusters({
         clusters: names,
       })
@@ -213,7 +252,8 @@ export function AdoptClustersDialog({
             <table className="w-full text-left text-sm">
               <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
                 <tr>
-                  {(phase === 'review' || phase === 'adopting') && (
+                  {/* F16: Hide checkbox column when clusters.length === 1 (single-pick path) */}
+                  {clusters.length > 1 && (phase === 'review' || phase === 'adopting') && (
                     <th className="px-4 py-2 w-8"></th>
                   )}
                   <th className="px-4 py-2">Cluster</th>
@@ -223,65 +263,86 @@ export function AdoptClustersDialog({
               </thead>
               <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700 bg-[#f0f7ff] dark:bg-gray-800">
                 {verifications.map((v, idx) => (
-                  <tr key={v.cluster.name} className={v.selected ? '' : 'opacity-50'}>
-                    {(phase === 'review' || phase === 'adopting') && (
-                      <td className="px-4 py-2">
-                        <input
-                          type="checkbox"
-                          checked={v.selected}
-                          disabled={phase === 'adopting'}
-                          onChange={() => toggleCluster(idx)}
-                          className="rounded border-[#5a9dd0] dark:border-gray-600"
-                        />
+                  <>
+                    <tr key={v.cluster.name} className={v.selected ? '' : 'opacity-50'}>
+                      {/* F16: Hide checkbox column when clusters.length === 1 */}
+                      {clusters.length > 1 && (phase === 'review' || phase === 'adopting') && (
+                        <td className="px-4 py-2">
+                          <input
+                            type="checkbox"
+                            checked={v.selected}
+                            disabled={phase === 'adopting'}
+                            onChange={() => toggleCluster(idx)}
+                            className="rounded border-[#5a9dd0] dark:border-gray-600"
+                          />
+                        </td>
+                      )}
+                      <td className="px-4 py-2 font-medium text-[#0a2a4a] dark:text-gray-100">
+                        {v.cluster.name}
                       </td>
-                    )}
-                    <td className="px-4 py-2 font-medium text-[#0a2a4a] dark:text-gray-100">
-                      {v.cluster.name}
-                    </td>
-                    <td className="px-4 py-2 font-mono text-xs text-[#3a6a8a] dark:text-gray-400 max-w-[200px] truncate" title={v.cluster.server_url}>
-                      {v.cluster.server_url ?? '--'}
-                    </td>
-                    <td className="px-4 py-2">
-                      {v.state === 'pending' && (
-                        <span className="text-xs text-[#5a8aaa] dark:text-gray-500">Pending</span>
-                      )}
-                      {v.state === 'verifying' && (
-                        <span className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400">
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Verifying...
-                        </span>
-                      )}
-                      {v.state === 'passed' && (
-                        <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                          <CheckCircle className="h-3 w-3" />
-                          Passed
-                          {v.result?.server_version && (
-                            <span className="ml-1 font-mono text-[#3a6a8a] dark:text-gray-500">
-                              v{v.result.server_version}
-                            </span>
-                          )}
-                        </span>
-                      )}
-                      {v.state === 'failed' && (
-                        <div className="space-y-1">
+                      <td className="px-4 py-2 font-mono text-xs text-[#3a6a8a] dark:text-gray-400 max-w-[200px] truncate" title={v.cluster.server_url}>
+                        {v.cluster.server_url ?? '--'}
+                      </td>
+                      <td className="px-4 py-2">
+                        {v.state === 'pending' && (
+                          <span className="text-xs text-[#5a8aaa] dark:text-gray-500">Pending</span>
+                        )}
+                        {v.state === 'verifying' && (
+                          <span className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Verifying...
+                          </span>
+                        )}
+                        {v.state === 'passed' && (
+                          <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                            <CheckCircle className="h-3 w-3" />
+                            Passed
+                            {v.result?.server_version && (
+                              <span className="ml-1 font-mono text-[#3a6a8a] dark:text-gray-500">
+                                v{v.result.server_version}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                        {v.state === 'not-verified' && (
+                          <span className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400">
+                            <CheckCircle className="h-3 w-3" />
+                            Not verified
+                          </span>
+                        )}
+                        {v.state === 'failed' && (
                           <span className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
                             <XCircle className="h-3 w-3" />
                             Failed
                           </span>
-                          <p className="text-xs text-red-500 dark:text-red-400">
-                            {v.result?.error_message ?? 'Verification failed'}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => onDiagnose(v.cluster.name)}
-                            className="text-xs font-medium text-blue-600 underline hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-                          >
-                            {CHECK_PERMISSIONS_LABEL}
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
+                        )}
+                      </td>
+                    </tr>
+                    {/* F17: Error message in full-width row below the cluster row */}
+                    {(v.state === 'failed' || v.state === 'not-verified') && v.result?.error_message && (
+                      <tr key={`${v.cluster.name}-error`} className={v.selected ? '' : 'opacity-50'}>
+                        <td colSpan={clusters.length > 1 && (phase === 'review' || phase === 'adopting') ? 4 : 3} className="px-4 py-2 bg-[#e8f4ff] dark:bg-gray-900">
+                          <div className="space-y-1">
+                            <p className={`text-xs ${v.state === 'failed' ? 'text-red-500 dark:text-red-400' : 'text-[#2a5a7a] dark:text-gray-400'}`}>
+                              {v.state === 'not-verified'
+                                ? `Not verified — connectivity will be checked when a secret-bearing addon needs it. (${v.result.error_message})`
+                                : v.result.error_message
+                              }
+                            </p>
+                            {v.state === 'failed' && (
+                              <button
+                                type="button"
+                                onClick={() => onDiagnose(v.cluster.name)}
+                                className="text-xs font-medium text-blue-600 underline hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                              >
+                                {CHECK_PERMISSIONS_LABEL}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 ))}
               </tbody>
             </table>
@@ -380,7 +441,8 @@ export function AdoptClustersDialog({
               className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
             >
               <GitMerge className="h-4 w-4" />
-              Confirm Adoption ({selectedClusters.length})
+              {/* F16: Don't show count for single-cluster case (implicitly selected) */}
+              {clusters.length === 1 ? 'Confirm Adoption' : `Confirm Adoption (${selectedClusters.length})`}
             </button>
           )}
           {phase === 'adopting' && (
