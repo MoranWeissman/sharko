@@ -795,6 +795,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/connections/test-credentials", srv.handleTestCredentials)
 	mux.HandleFunc("GET /api/v1/connections/discover-argocd", srv.handleDiscoverArgocd)
 
+	// Default addons (GitOps-native)
+	mux.HandleFunc("GET /api/v1/default-addons", srv.handleGetDefaultAddons)
+	mux.HandleFunc("PUT /api/v1/default-addons", srv.handlePutDefaultAddons)
+
 	// Clusters — batch and adoption operations (registered before {name} wildcard routes)
 	mux.HandleFunc("POST /api/v1/clusters/batch", srv.handleBatchRegisterClusters)
 	mux.HandleFunc("POST /api/v1/clusters/adopt", srv.handleAdoptClusters)

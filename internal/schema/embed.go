@@ -41,3 +41,9 @@ var embeddedManagedClustersSchema []byte
 //
 //go:embed addons-catalog.v1.json
 var embeddedAddonCatalogSchema []byte
+
+// embeddedDefaultAddonsSchema is the JSON Schema bytes for
+// default-addons.yaml. Same lifecycle as the other embedded schemas.
+//
+//go:embed default-addons.v1.json
+var embeddedDefaultAddonsSchema []byte

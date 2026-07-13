@@ -85,6 +85,10 @@ var HandlerTier = map[string]audit.Tier{
 	"handleTestProviderConfig": audit.Tier1,
 
 	// ─── Tier 2: configuration changes (define future state) ────────────────
+	// Default addons configuration (GitOps-native; sets which addons
+	// auto-enable on cluster registration)
+	"handlePutDefaultAddons": audit.Tier2,
+
 	// Catalog (addon catalog metadata: sync options, ignore differences,
 	// additional sources, version pin)
 	"handleAddAddon":       audit.Tier2,
