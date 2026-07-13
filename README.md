@@ -20,6 +20,10 @@
 
 > **v2.0.0 — production release.** Sharko follows [semantic versioning](https://semver.org/) and an [API stability contract](docs/site/developer-guide/api-stability.md): breaking changes only land in MAJOR version bumps.
 
+**Sharko is a GitOps agent with an API: your portal or pipeline asks for "a cluster with these addons," and Sharko opens a pull request — it never changes your cluster behind your back.**
+
+It's built as an **API-driven building block for IDP / platform-engineering** — a self-service portal, Backstage, or a pipeline calls Sharko's API to say "give me a cluster with these addons." Sharko is not a second control plane and not competing with hand-run app-of-apps for a 3-cluster shop. It sits on top of ArgoCD and extends the same GitOps patterns with a curated catalog, upgrade advisor, and audit trail that people who didn't author the repo can use safely.
+
 Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and manages the lifecycle of addons across your fleet. Install it with a single Helm command, and a guided wizard walks you through connecting your Git repo, ArgoCD instance, and optional secrets provider — no config files, no env vars to set by hand.
 
 <p align="center">
@@ -29,6 +33,8 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and man
 ## Why not just ApplicationSets?
 
 Fair question — it's usually the first one ArgoCD users ask. If your platform team is comfortable with ApplicationSets, the app-of-apps pattern, and the public [gitops-bridge](https://github.com/gitops-bridge-dev/gitops-bridge) approach, you can build most of this yourselves: fleet-wide addon rollout, per-cluster values selected by labels on ArgoCD cluster secrets, Git as the source of truth. That's a legitimate choice, and Sharko doesn't replace that pattern — it sits on top of the exact same one.
+
+The concept — an addon manager on ArgoCD — is copyable. The moat is execution and trust: being the clean, well-documented, GitOps-native API layer that platforms actually build on.
 
 What Sharko adds on top:
 

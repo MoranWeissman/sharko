@@ -1,6 +1,17 @@
 # Secrets Provider
 
-The Secrets Provider is **where Sharko gets cluster credentials** — the kubeconfig or token it needs to reach each registered cluster.
+Sharko uses secrets providers for two distinct concerns:
+
+1. **How Sharko reaches your clusters** — the cluster-credentials provider (argocd / aws-sm / k8s-secrets)
+2. **Where addon secret values come from** — a separate addon-secret backend (aws-sm / k8s-secrets; gcp/azure planned but not yet supported)
+
+The split exists because cluster credentials and addon secret values have different lifecycles and sources. This page explains both.
+
+---
+
+## Cluster Credentials Provider
+
+The **cluster-credentials provider** is where Sharko gets the kubeconfig or token it needs to reach each registered cluster.
 
 You configure it in **Settings → Secrets Provider** (Type / Region / Prefix). Supported today:
 
@@ -8,11 +19,11 @@ You configure it in **Settings → Secrets Provider** (Type / Region / Prefix). 
 - **Kubernetes Secrets** (`k8s-secrets`)
 - **ArgoCD** (`argocd`) — auto mode, reads from the ArgoCD cluster Secrets already in your cluster
 
-**Azure Key Vault and GCP Secret Manager are not yet supported** for cluster credentials. They work fine for addon secrets (license keys, DB passwords), but not for the cluster kubeconfigs themselves.
+**Azure Key Vault and GCP Secret Manager are planned but not yet supported** for cluster credentials.
 
-## One source, three jobs
+### What the cluster-credentials provider does
 
-Those fetched credentials feed three different things:
+Those fetched credentials feed two different jobs:
 
 1. **Test and reach the cluster directly.**  
    When you click **Test connection** or **Diagnose connection**, Sharko connects to the cluster on its own — independent of ArgoCD — to run permission checks and confirm it can create Kubernetes Secrets there.
@@ -20,34 +31,25 @@ Those fetched credentials feed three different things:
 2. **Write the ArgoCD cluster Secret.**  
    Once a cluster is registered, Sharko hands the connection to ArgoCD by creating the ArgoCD cluster Secret (the same Secret you'd get from `argocd cluster add`). That's how ArgoCD gets access to deploy to the cluster.
 
-3. **Deploy addon secrets.**  
-   If an addon needs a Kubernetes Secret — a Datadog API key, a license file, a database password — Sharko fetches that secret value and deploys it onto the target cluster for you.
+These are the two cluster-credentials jobs.
 
-**The flow:**
+---
 
-```
-Register a cluster
-  ↓
-Sharko fetches credentials from the Secrets Provider
-  ↓
-Tests the cluster directly (Test connection / Diagnose)
-  ↓
-Writes the ArgoCD cluster Secret
-  ↓
-ArgoCD deploys addons to the cluster
-  ↓
-Addon secrets get deployed as needed
-```
+## Addon Secret Values Provider
 
-One credential source feeds all of it.
+The **addon-secret-values provider** is a separate concern. This is where the secret VALUES that addons need — API keys, tokens, license files, database passwords — are read from and pushed to the target cluster.
 
-## Important caveat: "argocd" is cluster-credentials-only
+Supported today for addon secret values:
 
-If you choose **`argocd`** as the Secrets Provider, that covers reaching clusters and writing ArgoCD cluster Secrets, but it **does NOT provide addon secret values**.
+- **AWS Secrets Manager** (`aws-sm`)
+- **Kubernetes Secrets** (`k8s-secrets`)
+- **GCP Secret Manager** and **Azure Key Vault** — planned but not yet supported
 
-For addon secrets you need a separate secret backend — AWS Secrets Manager, Kubernetes Secrets, GCP Secret Manager, Azure Key Vault, or Vault.
+### Important: "argocd" is cluster-credentials-ONLY
 
-This is by design: the ArgoCD provider reads from ArgoCD's own cluster Secrets to get cluster credentials, but those Secrets don't contain addon-specific values like Datadog API keys or license files. You need a dedicated secret store for those.
+If you choose **`argocd`** as the cluster-credentials provider, it covers reaching clusters and writing ArgoCD cluster Secrets, but it **does NOT provide addon secret values**.
+
+This is by design and enforced in code. The ArgoCD provider reads from ArgoCD's own cluster Secrets to get cluster credentials, but those Secrets don't contain addon-specific values like Datadog API keys or license files. You need a dedicated secret store for those.
 
 **What you'll see if you try:**  
 If you select `argocd` as the Secrets Provider and then try to deploy an addon that references a secret, Sharko will return this error:
@@ -56,3 +58,27 @@ If you select `argocd` as the Secrets Provider and then try to deploy an addon t
 
 **How to fix it:**  
 Configure a second Secrets Provider for addon secrets. The two can coexist — one for cluster credentials (e.g., `argocd`), another for addon secret values (e.g., `aws-sm`).
+
+---
+
+## The Flow (reconciled view)
+
+Here's how the two concerns fit together:
+
+```
+Register a cluster
+  ↓
+Sharko fetches cluster credentials from the cluster-credentials provider
+  ↓
+Tests the cluster directly (Test connection / Diagnose)
+  ↓
+Writes the ArgoCD cluster Secret
+  ↓
+ArgoCD deploys addons to the cluster
+  ↓
+Addon secret values (if any) are fetched from the addon-secret-values provider
+  and deployed to the target cluster
+```
+
+The first two jobs are the cluster-credentials provider's. The last job — deploying addon secret values — is the separate addon-secret backend's, which is why "argocd" can't do it.
+

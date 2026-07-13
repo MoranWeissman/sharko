@@ -129,13 +129,14 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 		return fmt.Errorf("invalid git URL: %w: %w", ErrValidation, err)
 	}
 	conn := models.Connection{
-		Name:        req.Name,
-		Description: req.Description,
-		Git:         req.Git,
-		Argocd:      req.Argocd,
-		Provider:    req.Provider,
-		GitOps:      req.GitOps,
-		IsDefault:   req.SetAsDefault,
+		Name:                req.Name,
+		Description:         req.Description,
+		Git:                 req.Git,
+		Argocd:              req.Argocd,
+		Provider:            req.Provider,
+		AddonSecretProvider: req.AddonSecretProvider,
+		GitOps:              req.GitOps,
+		IsDefault:           req.SetAsDefault,
 	}
 	// Auto-derive connection name from git repo if not provided
 	if conn.Name == "" || conn.Name == "default" {
@@ -553,6 +554,18 @@ func (s *ConnectionService) GetProviderConfig() *models.ProviderConfig {
 		return nil
 	}
 	return conn.Provider
+}
+
+// GetAddonSecretProviderConfig returns the addon-secret provider config from
+// the active connection (V3-P1.1 separate addon-secret backend field), or nil
+// if not set. When nil, callers should fall back to GetProviderConfig() for
+// backward compatibility.
+func (s *ConnectionService) GetAddonSecretProviderConfig() *models.ProviderConfig {
+	conn, err := s.getActiveConn()
+	if err != nil || conn == nil {
+		return nil
+	}
+	return conn.AddonSecretProvider
 }
 
 func (s *ConnectionService) getActiveConn() (*models.Connection, error) {

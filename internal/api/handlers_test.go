@@ -566,11 +566,12 @@ func installCredProvider(srv *Server, cp providers.ClusterCredentialsProvider, a
 func seedActiveConnection(t *testing.T, srv *Server, conn models.Connection) {
 	t.Helper()
 	if err := srv.connSvc.Create(models.CreateConnectionRequest{
-		Name:     conn.Name,
-		Git:      conn.Git,
-		Argocd:   conn.Argocd,
-		Provider: conn.Provider,
-		GitOps:   conn.GitOps,
+		Name:                conn.Name,
+		Git:                 conn.Git,
+		Argocd:              conn.Argocd,
+		Provider:            conn.Provider,
+		AddonSecretProvider: conn.AddonSecretProvider,
+		GitOps:              conn.GitOps,
 	}); err != nil {
 		t.Fatalf("seed connection: %v", err)
 	}
@@ -681,6 +682,85 @@ func TestReinitializeFromConnection_RepoURL(t *testing.T) {
 
 	if srv.gitopsCfg.RepoURL != "https://github.com/owner/repo.git" {
 		t.Errorf("expected RepoURL=https://github.com/owner/repo.git, got %q", srv.gitopsCfg.RepoURL)
+	}
+}
+
+// V3-P1.1: when Connection has BOTH Provider (cluster-creds) AND
+// AddonSecretProvider (addon-secret), hot-reload must route them separately.
+// This is the "argocd for cluster-creds + aws-sm for addon-secrets" scenario.
+func TestReinitializeFromConnection_SeparateAddonSecretProvider(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "split-providers",
+		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "owner", Repo: "repo"},
+		Provider: &models.ProviderConfig{
+			Type: "argocd", // cluster-creds only
+		},
+		AddonSecretProvider: &models.ProviderConfig{
+			Type:   "aws-sm", // addon-secrets only
+			Region: "us-east-1",
+			Prefix: "addons/",
+		},
+	})
+
+	srv.ReinitializeFromConnection()
+
+	// Cluster-test config: argocd (config must publish even if provider construction failed)
+	testCfg := srv.clusterTestCfg()
+	if testCfg == nil {
+		t.Fatalf("expected clusterTestCfg to be published, got nil")
+	}
+	if testCfg.Type != "argocd" {
+		t.Errorf("expected clusterTestCfg.Type=argocd, got %q", testCfg.Type)
+	}
+
+	// Addon-secret config: aws-sm with explicit fields (independent of cluster-creds provider)
+	addonCfg := srv.addonSecretCfg()
+	if addonCfg == nil {
+		t.Fatalf("expected addonSecretCfg to be published, got nil")
+	}
+	if addonCfg.Type != "aws-sm" {
+		t.Errorf("expected addonSecretCfg.Type=aws-sm, got %q", addonCfg.Type)
+	}
+	if addonCfg.Region != "us-east-1" {
+		t.Errorf("expected addonSecretCfg.Region=us-east-1, got %q", addonCfg.Region)
+	}
+	if addonCfg.Prefix != "addons/" {
+		t.Errorf("expected addonSecretCfg.Prefix=addons/, got %q", addonCfg.Prefix)
+	}
+}
+
+// V3-P1.1 backward compat: legacy connection (Provider set, AddonSecretProvider
+// nil) must resolve addon-secret backend from Provider exactly as before.
+func TestReinitializeFromConnection_LegacyProviderBackwardCompat(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "legacy-provider",
+		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "owner", Repo: "repo"},
+		Provider: &models.ProviderConfig{
+			Type:   "aws-sm",
+			Region: "eu-west-1",
+			Prefix: "clusters/",
+		},
+		AddonSecretProvider: nil, // not set (pre-V3 connection)
+	})
+
+	srv.ReinitializeFromConnection()
+
+	// Both cluster-test and addon-secret should resolve from Provider (backward compat)
+	if srv.clusterTestCfg() == nil || srv.clusterTestCfg().Type != "aws-sm" {
+		t.Errorf("expected clusterTestCfg.Type=aws-sm, got %+v", srv.clusterTestCfg())
+	}
+	if srv.addonSecretCfg() == nil || srv.addonSecretCfg().Type != "aws-sm" {
+		t.Errorf("expected addonSecretCfg.Type=aws-sm (fallback from Provider), got %+v", srv.addonSecretCfg())
+	}
+	if srv.addonSecretCfg().Region != "eu-west-1" {
+		t.Errorf("expected addonSecretCfg.Region=eu-west-1, got %q", srv.addonSecretCfg().Region)
+	}
+	if srv.addonSecretCfg().Prefix != "clusters/" {
+		t.Errorf("expected addonSecretCfg.Prefix=clusters/, got %q", srv.addonSecretCfg().Prefix)
 	}
 }
 

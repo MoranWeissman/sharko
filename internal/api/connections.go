@@ -118,6 +118,9 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 		if req.Provider == nil {
 			req.Provider = saved.Provider
 		}
+		if req.AddonSecretProvider == nil {
+			req.AddonSecretProvider = saved.AddonSecretProvider
+		}
 		// Preserve existing GitOps settings when not provided
 		if req.GitOps == nil {
 			req.GitOps = saved.GitOps
