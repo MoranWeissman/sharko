@@ -1,6 +1,8 @@
 # Quick Start
 
-Get Sharko running on your cluster in about 5 minutes.
+**Sharko is a GitOps agent with an API: your portal or pipeline asks for "a cluster with these addons," and Sharko opens a pull request — it never changes your cluster behind your back.**
+
+Registering a cluster is an API call that tells ArgoCD about a new cluster and its addons. Get Sharko running on your cluster in about 5 minutes.
 
 ## Prerequisites
 
