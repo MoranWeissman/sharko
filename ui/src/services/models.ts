@@ -1080,10 +1080,17 @@ export interface UpgradeRecommendations {
 // --- Cluster Adoption ---
 
 export interface AdoptResult {
-  cluster: string
-  success: boolean
+  name: string
+  status: 'success' | 'partial' | 'failed' | 'skipped'
   error?: string
-  pr_url?: string
+  git?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+    commit_sha?: string
+    values_file?: string
+  }
   verification?: VerifyResult
   // Plain-English advisories that do NOT fail the adoption — e.g. this
   // cluster's ArgoCD cluster secret turning out to be rendered by another

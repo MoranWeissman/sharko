@@ -256,4 +256,67 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
     const registerBtn = screen.getByRole('button', { name: 'Register' });
     expect(registerBtn).not.toBeDisabled();
   });
+
+  it('F1: clears discovered pick when ownership is toggled away from user', async () => {
+    // Mock GET /clusters with one discovered (managed=false) cluster
+    mockGetClusters.mockResolvedValue({
+      clusters: [
+        {
+          name: 'discovered-aks',
+          labels: {},
+          server_url: 'https://discovered-aks.hcp.eastus.azmk8s.io:443',
+          managed: false,
+        },
+      ],
+    });
+    mockHealth.mockResolvedValue({
+      status: 'healthy',
+      argocd: { healthy: true, url: 'https://argocd.example.com' },
+    });
+    mockGetAddonCatalog.mockResolvedValue({ addons: [] });
+
+    render(
+      <MemoryRouter>
+        <AuthContext.Provider value={adminAuth}>
+          <ClustersOverview />
+        </AuthContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(mockGetClusters).toHaveBeenCalled());
+
+    // Open Add Cluster dialog
+    const addButton = screen.getByRole('button', { name: /add cluster/i });
+    fireEvent.click(addButton);
+
+    // Wait for dialog
+    await waitFor(() => {
+      expect(screen.getByText('Add Cluster')).toBeInTheDocument();
+    });
+
+    // Switch ownership to "user"
+    const ownershipSelect = screen.getByDisplayValue('Sharko (default)');
+    fireEvent.change(ownershipSelect, { target: { value: 'user' } });
+
+    // Pick the discovered cluster
+    const discoveredRow = screen.getByText('discovered-aks');
+    fireEvent.click(discoveredRow);
+
+    // The Connection source and Cluster Name fields should be hidden (adopting mode)
+    expect(screen.queryByText(/connection source/i)).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/e.g. prod-us-east-1/i)).not.toBeInTheDocument();
+
+    // Toggle ownership to "sharko"
+    fireEvent.change(ownershipSelect, { target: { value: 'sharko' } });
+
+    // Toggle back to "user"
+    fireEvent.change(ownershipSelect, { target: { value: 'user' } });
+
+    // F1 pin: the Connection source and Cluster Name fields are NOW VISIBLE
+    // (the pick was cleared on ownership toggle)
+    await waitFor(() => {
+      expect(screen.getByText(/connection source/i)).toBeInTheDocument();
+    });
+    expect(screen.getByPlaceholderText(/e.g. prod-us-east-1/i)).toBeInTheDocument();
+  });
 });

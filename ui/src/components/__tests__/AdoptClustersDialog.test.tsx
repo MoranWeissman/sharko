@@ -117,7 +117,7 @@ describe('AdoptClustersDialog', () => {
 
       // Wait for verification to complete — both clusters will fail
       await waitFor(() => {
-        const failedElements = screen.getAllByText('Failed')
+        const failedElements = screen.getAllByText('Unreachable')
         expect(failedElements.length).toBeGreaterThan(0)
       })
 
@@ -142,9 +142,11 @@ describe('AdoptClustersDialog', () => {
 
       vi.mocked(api.adoptClusters).mockResolvedValue({
         results: [{
-          cluster: 'prod-cluster',
-          success: true,
-          pr_url: 'https://github.com/example/repo/pull/123',
+          name: 'prod-cluster',
+          status: 'success',
+          git: {
+            pr_url: 'https://github.com/example/repo/pull/123',
+          },
         }],
       })
 
@@ -199,7 +201,7 @@ describe('AdoptClustersDialog', () => {
 
       // Wait for verification
       await waitFor(() => {
-        expect(screen.getByText('Passed')).toBeInTheDocument()
+        expect(screen.getByText('Reachable')).toBeInTheDocument()
       })
 
       // No checkboxes should be present
@@ -234,7 +236,7 @@ describe('AdoptClustersDialog', () => {
 
       // Wait for verification
       await waitFor(() => {
-        expect(screen.getAllByText('Passed')).toHaveLength(2)
+        expect(screen.getAllByText('Reachable')).toHaveLength(2)
       })
 
       // Checkboxes should be present
@@ -272,7 +274,7 @@ describe('AdoptClustersDialog', () => {
 
       // Wait for verification
       await waitFor(() => {
-        expect(screen.getByText('Failed')).toBeInTheDocument()
+        expect(screen.getByText('Unreachable')).toBeInTheDocument()
       })
 
       // Error message should be present and contain the full text
@@ -304,6 +306,112 @@ describe('AdoptClustersDialog', () => {
 
       // Should show informational message
       expect(screen.getByText(/not verified — connectivity will be checked when a secret-bearing addon needs it/i)).toBeInTheDocument()
+    })
+  })
+
+  describe('F2: Adoption failure handling + type alignment', () => {
+    it('surfaces per-cluster failures and does NOT call onSuccess', async () => {
+      vi.mocked(api.isTestClusterUnavailable).mockReturnValue(false)
+      vi.mocked(api.testClusterConnection).mockResolvedValue({
+        success: true,
+        stage: 'connectivity',
+        duration_ms: 100,
+        reachable: true,
+        server_version: '1.29.3',
+      })
+
+      vi.mocked(api.adoptClusters).mockResolvedValue({
+        results: [{
+          name: 'prod-cluster',
+          status: 'failed',
+          error: 'cluster "prod-cluster" not found in ArgoCD — cannot adopt',
+        }],
+      })
+
+      render(
+        <AdoptClustersDialog
+          open={true}
+          onClose={mockOnClose}
+          clusters={[mockCluster1]}
+          onSuccess={mockOnSuccess}
+          onDiagnose={mockOnDiagnose}
+        />
+      )
+
+      // Wait for verification
+      await waitFor(() => {
+        expect(screen.getByText('Reachable')).toBeInTheDocument()
+      })
+
+      // Confirm adoption
+      const confirmButton = screen.getByRole('button', { name: /confirm adoption/i })
+      await userEvent.click(confirmButton)
+
+      // Wait for adoption to complete
+      await waitFor(() => {
+        expect(api.adoptClusters).toHaveBeenCalledWith({
+          clusters: ['prod-cluster'],
+        })
+      })
+
+      // Should show the error message
+      await waitFor(() => {
+        expect(screen.getByText('cluster "prod-cluster" not found in ArgoCD — cannot adopt')).toBeInTheDocument()
+      })
+
+      // onSuccess should NOT have been called
+      expect(mockOnSuccess).not.toHaveBeenCalled()
+    })
+
+    it('renders PR link from git.pr_url when adoption succeeds', async () => {
+      vi.mocked(api.isTestClusterUnavailable).mockReturnValue(false)
+      vi.mocked(api.testClusterConnection).mockResolvedValue({
+        success: true,
+        stage: 'connectivity',
+        duration_ms: 100,
+        reachable: true,
+        server_version: '1.29.3',
+      })
+
+      vi.mocked(api.adoptClusters).mockResolvedValue({
+        results: [{
+          name: 'prod-cluster',
+          status: 'success',
+          git: {
+            pr_url: 'https://example.test/pr/1',
+            merged: true,
+          },
+        }],
+      })
+
+      render(
+        <AdoptClustersDialog
+          open={true}
+          onClose={mockOnClose}
+          clusters={[mockCluster1]}
+          onSuccess={mockOnSuccess}
+          onDiagnose={mockOnDiagnose}
+        />
+      )
+
+      // Wait for verification
+      await waitFor(() => {
+        expect(screen.getByText('Reachable')).toBeInTheDocument()
+      })
+
+      // Confirm adoption
+      const confirmButton = screen.getByRole('button', { name: /confirm adoption/i })
+      await userEvent.click(confirmButton)
+
+      // Wait for done phase
+      await waitFor(() => {
+        expect(mockOnSuccess).toHaveBeenCalled()
+      })
+
+      // Should show the PR link
+      const prLink = screen.getByRole('link', { name: /PR/i })
+      expect(prLink).toBeInTheDocument()
+      expect(prLink).toHaveAttribute('href', 'https://example.test/pr/1')
     })
   })
 })
