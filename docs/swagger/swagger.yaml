@@ -664,6 +664,10 @@ definitions:
           PRMetadata.AutoMergeOverride via the prMeta builder and resolved by
           resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
         type: boolean
+      dry_run:
+        description: DryRun, when true, returns a preview of what would be committed
+          (no side effects).
+        type: boolean
       extra_helm_values:
         additionalProperties:
           type: string
@@ -806,7 +810,7 @@ definitions:
   github_com_MoranWeissman_sharko_internal_orchestrator.FilePreview:
     properties:
       action:
-        description: '"create" or "update"'
+        description: '"create", "update", or "delete"'
         type: string
       path:
         type: string
@@ -1063,6 +1067,8 @@ definitions:
         items:
           type: string
         type: array
+      dry_run:
+        type: boolean
     type: object
   internal_api.DefaultAddonsResponse:
     properties:
@@ -1687,6 +1693,10 @@ definitions:
           AutoMerge overrides the connection-level PRAutoMerge default for this
           values-edit PR only. nil = fall back to the connection default.
         type: boolean
+      dry_run:
+        description: DryRun, when true, returns a preview of what would be committed
+          (no side effects).
+        type: boolean
       refresh_from_upstream:
         description: |-
           RefreshFromUpstream, when true, regenerates the global values file
@@ -1708,6 +1718,10 @@ definitions:
         description: |-
           AutoMerge overrides the connection-level PRAutoMerge default for this
           values-edit PR only. nil = fall back to the connection default.
+        type: boolean
+      dry_run:
+        description: DryRun, when true, returns a preview of what would be committed
+          (no side effects).
         type: boolean
       values:
         type: string

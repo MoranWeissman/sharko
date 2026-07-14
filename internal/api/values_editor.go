@@ -66,6 +66,9 @@ type setAddonValuesRequest struct {
 	// AutoMerge overrides the connection-level PRAutoMerge default for this
 	// values-edit PR only. nil = fall back to the connection default.
 	AutoMerge *bool `json:"auto_merge,omitempty"`
+
+	// DryRun, when true, returns a preview of what would be committed (no side effects).
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // setClusterAddonValuesRequest is the body of
@@ -78,6 +81,9 @@ type setClusterAddonValuesRequest struct {
 	// AutoMerge overrides the connection-level PRAutoMerge default for this
 	// values-edit PR only. nil = fall back to the connection default.
 	AutoMerge *bool `json:"auto_merge,omitempty"`
+
+	// DryRun, when true, returns a preview of what would be committed (no side effects).
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // handleSetAddonValues godoc
@@ -232,9 +238,15 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 	// Route through the WithOp variant so the dashboard PR panel filter
 	// chip reflects the requested operation (manual edit vs. upstream
 	// refresh) rather than the generic values-edit default.
-	result, err := orch.SetGlobalAddonValuesWithOp(ctx, name, yamlPayload, prOperation, prTitle, req.AutoMerge)
+	result, err := orch.SetGlobalAddonValuesWithOp(ctx, name, yamlPayload, prOperation, prTitle, req.AutoMerge, req.DryRun)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	// Dry-run: return preview without side effects.
+	if req.DryRun {
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 
@@ -305,7 +317,7 @@ func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
-	result, err := orch.SetClusterAddonValues(ctx, cluster, addonName, req.Values, req.AutoMerge)
+	result, err := orch.SetClusterAddonValues(ctx, cluster, addonName, req.Values, req.AutoMerge, req.DryRun)
 	if err != nil {
 		// Referential-integrity rejection (V2-cleanup-22): the addon is not
 		// in the catalog. Caller error → 422 with the actionable message.
@@ -314,6 +326,12 @@ func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	// Dry-run: return preview without side effects.
+	if req.DryRun {
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 

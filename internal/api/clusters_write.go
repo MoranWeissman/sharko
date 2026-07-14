@@ -463,6 +463,25 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 		if user == "" {
 			user = "system"
 		}
+
+		// Dry-run: return preview without side effects.
+		if req.DryRun {
+			filePreviews := []orchestrator.FilePreview{
+				{Path: managedPath, Action: "update"},
+			}
+			dryRunResult := &orchestrator.DryRunResult{
+				EffectiveAddons: []string{},
+				FilesToWrite:    filePreviews,
+				PRTitle:         fmt.Sprintf("Update secret_path for cluster %s", name),
+				SecretsToCreate: []string{},
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"status":  "success",
+				"dry_run": dryRunResult,
+			})
+			return
+		}
+
 		files := map[string][]byte{managedPath: updated}
 		gitResult, prErr := orch.CommitFilesAsPRWithMeta(ctx, files,
 			fmt.Sprintf("update secret_path for cluster %s", name),
@@ -498,13 +517,19 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	// Pass per-request auto_merge override (nil = fall back to
 	// connection-level PRAutoMerge). The orchestrator forwards it to
 	// commitChangesWithMeta via PRMetadata.AutoMergeOverride.
-	result, err := orch.UpdateClusterAddons(ctx, name, serverURL, "", req.Addons, req.AutoMerge)
+	result, err := orch.UpdateClusterAddons(ctx, name, serverURL, "", req.Addons, req.AutoMerge, req.DryRun)
 	if err != nil {
 		if orchestrator.IsAddonNotInCatalog(err) {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
 		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	// Dry-run: return preview without side effects.
+	if req.DryRun {
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 

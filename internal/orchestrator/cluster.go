@@ -747,7 +747,10 @@ func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serve
 // autoMergeOverride is the per-request auto-merge decision (nil = fall
 // back to o.gitops.PRAutoMerge). Passed through to commitChangesWithMeta
 // via PRMetadata.AutoMergeOverride — never mutates o.gitops.PRAutoMerge.
-func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, serverURL string, region string, addons map[string]bool, autoMergeOverride *bool) (*RegisterClusterResult, error) {
+//
+// dryRun, when true, computes and returns the preview (DryRunResult) with NO
+// side effects — no secrets written, no Git PR, no ArgoCD label changes.
+func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, serverURL string, region string, addons map[string]bool, autoMergeOverride *bool, dryRun bool) (*RegisterClusterResult, error) {
 	result := &RegisterClusterResult{
 		Cluster: ClusterResult{Name: name, Server: serverURL, Addons: addons},
 	}
@@ -766,6 +769,53 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 		if _, err := o.requireAddonsInCatalog(ctx, names); err != nil {
 			return nil, err
 		}
+	}
+
+	// Dry-run early exit: compute the file preview before any side effects.
+	if dryRun {
+		valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
+		clusterAddonsPath := o.paths.ManagedClusters
+		if clusterAddonsPath == "" {
+			clusterAddonsPath = "configuration/managed-clusters.yaml"
+		}
+
+		filePreviews := []FilePreview{
+			{Path: valuesPath, Action: o.fileAction(ctx, valuesPath)},
+		}
+		if len(addons) > 0 {
+			filePreviews = append(filePreviews, FilePreview{Path: clusterAddonsPath, Action: "update"})
+		}
+
+		// Secrets to create: only enabled addons.
+		secretsToCreate := []string{}
+		if o.secretDefs != nil {
+			for addon, enabled := range addons {
+				if enabled {
+					for _, def := range o.secretDefs {
+						if def.AddonName == addon {
+							secretsToCreate = append(secretsToCreate, def.SecretName)
+						}
+					}
+				}
+			}
+		}
+
+		result.Status = "success"
+		result.DryRun = &DryRunResult{
+			EffectiveAddons: func() []string {
+				enabled := []string{}
+				for a, e := range addons {
+					if e {
+						enabled = append(enabled, a)
+					}
+				}
+				return enabled
+			}(),
+			FilesToWrite:    filePreviews,
+			PRTitle:         fmt.Sprintf("%s update addons for cluster %s", o.gitops.CommitPrefix, name),
+			SecretsToCreate: secretsToCreate,
+		}
+		return result, nil
 	}
 
 	// Step 1: Fetch credentials if provider is configured (needed for secret operations).

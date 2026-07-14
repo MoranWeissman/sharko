@@ -8031,6 +8031,10 @@ const docTemplate = `{
                     "description": "AutoMerge overrides the connection-level PRAutoMerge default for the\nconfigure PR only. nil = fall back to the connection default. Routed to\nPRMetadata.AutoMergeOverride via the prMeta builder and resolved by\nresolveAutoMerge — never mutate o.gitops.PRAutoMerge.",
                     "type": "boolean"
                 },
+                "dry_run": {
+                    "description": "DryRun, when true, returns a preview of what would be committed (no side effects).",
+                    "type": "boolean"
+                },
                 "extra_helm_values": {
                     "type": "object",
                     "additionalProperties": {
@@ -8230,7 +8234,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "action": {
-                    "description": "\"create\" or \"update\"",
+                    "description": "\"create\", \"update\", or \"delete\"",
                     "type": "string"
                 },
                 "path": {
@@ -8532,6 +8536,9 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "dry_run": {
+                    "type": "boolean"
                 }
             }
         },
@@ -9345,6 +9352,10 @@ const docTemplate = `{
                     "description": "AutoMerge overrides the connection-level PRAutoMerge default for this\nvalues-edit PR only. nil = fall back to the connection default.",
                     "type": "boolean"
                 },
+                "dry_run": {
+                    "description": "DryRun, when true, returns a preview of what would be committed (no side effects).",
+                    "type": "boolean"
+                },
                 "refresh_from_upstream": {
                     "description": "RefreshFromUpstream, when true, regenerates the global values file\nfrom the chart's upstream values.yaml at the catalog-pinned version.\nThe audit event for this path is ` + "`" + `values_refreshed_from_upstream` + "`" + `\n(overriding the default ` + "`" + `values_set` + "`" + `) so audit consumers can\ndistinguish manual edits from upstream refreshes.",
                     "type": "boolean"
@@ -9360,6 +9371,10 @@ const docTemplate = `{
             "properties": {
                 "auto_merge": {
                     "description": "AutoMerge overrides the connection-level PRAutoMerge default for this\nvalues-edit PR only. nil = fall back to the connection default.",
+                    "type": "boolean"
+                },
+                "dry_run": {
+                    "description": "DryRun, when true, returns a preview of what would be committed (no side effects).",
                     "type": "boolean"
                 },
                 "values": {

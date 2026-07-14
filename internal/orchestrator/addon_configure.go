@@ -79,6 +79,18 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 			return nil, fmt.Errorf("serializing catalog: %w", err)
 		}
 
+		// Dry-run exit point: return a preview of what would happen.
+		if req.DryRun {
+			return &GitResult{
+				DryRun: &DryRunResult{
+					EffectiveAddons: []string{req.Name},
+					FilesToWrite:    []FilePreview{{Path: catalogPath, Action: o.fileAction(ctx, catalogPath)}},
+					PRTitle:         fmt.Sprintf("%s configure addon %s", o.gitops.CommitPrefix, req.Name),
+					SecretsToCreate: []string{},
+				},
+			}, nil
+		}
+
 		files := map[string][]byte{catalogPath: updatedData}
 		return o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("configure addon %s", req.Name),
 			o.prMeta(req.AutoMerge, "addon-configure", fmt.Sprintf("Configure addon %s", req.Name), "", req.Name))
@@ -100,6 +112,18 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 	updatedData, err := gitops.UpdateCatalogEntry(data, req.Name, updates)
 	if err != nil {
 		return nil, fmt.Errorf("updating addon %q in catalog: %w", req.Name, err)
+	}
+
+	// Dry-run exit point: return a preview of what would happen.
+	if req.DryRun {
+		return &GitResult{
+			DryRun: &DryRunResult{
+				EffectiveAddons: []string{req.Name},
+				FilesToWrite:    []FilePreview{{Path: catalogPath, Action: o.fileAction(ctx, catalogPath)}},
+				PRTitle:         fmt.Sprintf("%s configure addon %s", o.gitops.CommitPrefix, req.Name),
+				SecretsToCreate: []string{},
+			},
+		}, nil
 	}
 
 	files := map[string][]byte{

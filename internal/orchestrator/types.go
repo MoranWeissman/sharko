@@ -121,6 +121,8 @@ type UpdateClusterAddonsRequest struct {
 	// AutoMerge is the per-request auto-merge decision. nil means "fall
 	// back to the connection-level PRAutoMerge default".
 	AutoMerge *bool `json:"auto_merge,omitempty"`
+	// DryRun, when true, returns a preview of what would be committed (no side effects).
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // RegisterClusterResult is the output of a successful cluster registration.
@@ -168,7 +170,7 @@ type DryRunResult struct {
 // FilePreview describes a file that would be written during a non-dry-run operation.
 type FilePreview struct {
 	Path   string `json:"path"`
-	Action string `json:"action"` // "create" or "update"
+	Action string `json:"action"` // "create", "update", or "delete"
 }
 
 // SecretError records a secret that failed to create on the remote cluster.
@@ -266,6 +268,15 @@ type AddAddonRequest struct {
 	ExtraClusterSpecificPaths []string `json:"-"`
 }
 
+// RemoveAddonRequest is the input for removing an addon from the catalog.
+type RemoveAddonRequest struct {
+	Name string `json:"name"`
+	// AutoMerge overrides the connection-level PRAutoMerge default. nil = fall back to the connection default.
+	AutoMerge *bool `json:"auto_merge,omitempty"`
+	// DryRun, when true, returns a preview of what would be committed (no side effects).
+	DryRun bool `json:"dry_run,omitempty"`
+}
+
 // ConfigureAddonRequest is the input for updating an addon's catalog configuration.
 type ConfigureAddonRequest struct {
 	Name              string                   `json:"name"`
@@ -280,6 +291,8 @@ type ConfigureAddonRequest struct {
 	// PRMetadata.AutoMergeOverride via the prMeta builder and resolved by
 	// resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
 	AutoMerge *bool `json:"auto_merge,omitempty"`
+	// DryRun, when true, returns a preview of what would be committed (no side effects).
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // AdoptClustersRequest is the input for adopting existing ArgoCD clusters.

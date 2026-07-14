@@ -143,7 +143,7 @@ func TestSetClusterAddonValues_NotInCatalog_Rejected(t *testing.T) {
 
 	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
-	_, err := orch.SetClusterAddonValues(context.Background(), "prod-eu", "ghost", "replicaCount: 2\n", nil)
+	_, err := orch.SetClusterAddonValues(context.Background(), "prod-eu", "ghost", "replicaCount: 2\n", nil, false)
 	if err == nil {
 		t.Fatal("expected rejection setting values for an addon not in the catalog, got nil")
 	}
@@ -169,7 +169,7 @@ func TestSetClusterAddonValues_RemoveAllowedForNonCatalogAddon(t *testing.T) {
 
 	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
-	_, err := orch.SetClusterAddonValues(context.Background(), "prod-eu", "ghost", "", nil)
+	_, err := orch.SetClusterAddonValues(context.Background(), "prod-eu", "ghost", "", nil, false)
 	if err != nil {
 		t.Fatalf("removing overrides for a non-catalog addon should be allowed (cleanup): %v", err)
 	}
@@ -213,7 +213,7 @@ func TestGuardrails_FullFlow_Regression(t *testing.T) {
 	}
 
 	// 3) Edit per-cluster values for the real addon.
-	if _, err := orch.SetClusterAddonValues(context.Background(), "prod-eu", "cert-manager", "replicaCount: 2\n", nil); err != nil {
+	if _, err := orch.SetClusterAddonValues(context.Background(), "prod-eu", "cert-manager", "replicaCount: 2\n", nil, false); err != nil {
 		t.Fatalf("values edit failed: %v", err)
 	}
 
@@ -241,7 +241,7 @@ func TestUpdateClusterAddons_UnknownAddon_Rejected(t *testing.T) {
 
 	_, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "", map[string]bool{
 		"ghost": true,
-	}, nil)
+	}, nil, false)
 	if err == nil {
 		t.Fatal("expected rejection when addon is not in catalog, got nil")
 	}
@@ -272,7 +272,7 @@ func TestUpdateClusterAddons_MixedAddonNames_Rejected(t *testing.T) {
 	_, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "", map[string]bool{
 		"cert-manager": true,
 		"ghost":        false,
-	}, nil)
+	}, nil, false)
 	if err == nil {
 		t.Fatal("expected rejection, got nil")
 	}
@@ -301,7 +301,7 @@ func TestUpdateClusterAddons_ValidCatalogAddons_Succeeds(t *testing.T) {
 	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "", map[string]bool{
 		"cert-manager":   true,
 		"metrics-server": false,
-	}, nil)
+	}, nil, false)
 	if err != nil {
 		t.Fatalf("expected success for valid catalog addons, got: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestUpdateClusterAddons_EmptyMap_SkipsGuard(t *testing.T) {
 
 	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
-	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "", map[string]bool{}, nil)
+	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "", map[string]bool{}, nil, false)
 	if err != nil {
 		t.Fatalf("empty addons map should skip the catalog guard: %v", err)
 	}

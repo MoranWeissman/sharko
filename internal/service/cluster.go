@@ -389,11 +389,14 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 		comparisons = append(comparisons, comp)
 	}
 
-	// Find untracked ArgoCD apps (not in Git), excluding infrastructure apps.
-	// The connectivity-check app is a special case: it IS GitOps-managed (its
-	// ApplicationSet lives in the repo) but it is not a catalog addon. Surface
-	// it with status "sharko_system" so operators understand what it is.
-	totalUntracked := 0
+	// Find Sharko's own system apps that aren't catalog addons but should be
+	// visible. Currently only the connectivity-check app: it IS GitOps-managed
+	// (its ApplicationSet lives in the repo) but it is not a catalog addon.
+	// Surface it with status "sharko_system" so operators understand what it is.
+	//
+	// Foreign apps (ArgoCD applications the user deployed themselves, unrelated
+	// to Sharko's addon model) are intentionally SKIPPED — they are not addons
+	// and must not appear in the addon list (V3-TX-B).
 	connectivityCheckAppName := "connectivity-check-" + clusterName
 	for appName, app := range argocdAppMap {
 		if trackedArgocdApps[appName] {
@@ -420,21 +423,9 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 			})
 			continue
 		}
-		totalUntracked++
-		comparisons = append(comparisons, models.AddonComparisonStatus{
-			AddonName:               appName,
-			ArgocdDeployed:          true,
-			ArgocdApplicationName:   app.Name,
-			ArgocdSyncStatus:        app.SyncStatus,
-			ArgocdHealthStatus:      app.HealthStatus,
-			ArgocdDeployedVersion:   app.SourceTargetRevision,
-			ArgocdNamespace:         app.DestinationNamespace,
-			ArgocdSourceRepoURL:     app.SourceRepoURL,
-			ArgocdDestinationServer: app.DestinationServer,
-			Status:                  "untracked_in_argocd",
-			Issues:                  []string{"Application exists in ArgoCD but not configured in Git"},
-		})
+		// Foreign apps intentionally skipped — not addons (V3-TX-B).
 	}
+	totalUntracked := 0
 
 	// ArgoCD summary stats
 	argocdHealthy, argocdSynced, argocdDegraded, argocdOutOfSync := 0, 0, 0, 0

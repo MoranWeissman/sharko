@@ -108,8 +108,8 @@ func (o *Orchestrator) AddAddon(ctx context.Context, req AddAddonRequest) (*GitR
 }
 
 // RemoveAddon removes an addon's catalog entry and global values file.
-func (o *Orchestrator) RemoveAddon(ctx context.Context, name string, autoMerge *bool) (*GitResult, error) {
-	if name == "" {
+func (o *Orchestrator) RemoveAddon(ctx context.Context, req RemoveAddonRequest) (*GitResult, error) {
+	if req.Name == "" {
 		return nil, fmt.Errorf("addon name is required")
 	}
 
@@ -121,22 +121,38 @@ func (o *Orchestrator) RemoveAddon(ctx context.Context, name string, autoMerge *
 	}
 
 	// Remove the entry from the catalog.
-	updatedCatalog, err := gitops.RemoveCatalogEntry(catalogData, name)
+	updatedCatalog, err := gitops.RemoveCatalogEntry(catalogData, req.Name)
 	if err != nil {
-		return nil, fmt.Errorf("removing addon %q from catalog: %w", name, err)
+		return nil, fmt.Errorf("removing addon %q from catalog: %w", req.Name, err)
 	}
 
-	globalValuesPath := path.Join(o.paths.GlobalValues, name+".yaml")
+	globalValuesPath := path.Join(o.paths.GlobalValues, req.Name+".yaml")
+
+	// Dry-run exit point: return a preview of what would happen.
+	if req.DryRun {
+		filePreviews := []FilePreview{
+			{Path: catalogPath, Action: "update"},
+			{Path: globalValuesPath, Action: "delete"},
+		}
+		return &GitResult{
+			DryRun: &DryRunResult{
+				EffectiveAddons: []string{},
+				FilesToWrite:    filePreviews,
+				PRTitle:         fmt.Sprintf("%s remove addon %s", o.gitops.CommitPrefix, req.Name),
+				SecretsToCreate: []string{},
+			},
+		}, nil
+	}
 
 	files := map[string][]byte{
 		catalogPath: updatedCatalog,
 	}
 	deletePaths := []string{globalValuesPath}
 
-	gitResult, err := o.commitChangesWithMeta(ctx, files, deletePaths, fmt.Sprintf("remove addon %s", name),
-		o.prMeta(autoMerge, "addon-remove", fmt.Sprintf("Remove addon %s", name), "", name))
+	gitResult, err := o.commitChangesWithMeta(ctx, files, deletePaths, fmt.Sprintf("remove addon %s", req.Name),
+		o.prMeta(req.AutoMerge, "addon-remove", fmt.Sprintf("Remove addon %s", req.Name), "", req.Name))
 	if err != nil {
-		return nil, fmt.Errorf("committing addon %q removal to Git: %w", name, err)
+		return nil, fmt.Errorf("committing addon %q removal to Git: %w", req.Name, err)
 	}
 
 	return gitResult, nil
