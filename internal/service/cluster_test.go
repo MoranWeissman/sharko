@@ -482,3 +482,98 @@ func TestClusterService_GetClusterDetail_UnknownClusterReturnsNil(t *testing.T) 
 		t.Errorf("expected nil for unknown cluster, got %+v", resp)
 	}
 }
+
+// TestClusterService_GetClusterComparison_ForeignAppsNotShownAsAddons is the
+// V3-TX-B regression test: a foreign ArgoCD app deployed on an adopted cluster
+// (e.g. a user's guestbook/hello-world that is NOT a Sharko-managed addon)
+// must NOT appear in the addon_comparisons list at all. The cluster page's
+// addon list shows ONLY Sharko-managed addons plus Sharko's own system apps
+// (connectivity-check). Foreign apps are neither.
+func TestClusterService_GetClusterComparison_ForeignAppsNotShownAsAddons(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			_, _ = w.Write([]byte(`{"items":[
+				{"name":"prod-eks","server":"https://EXAMPLE.gr7.eu-west-1.eks.amazonaws.com","info":{"connectionState":{"status":"Successful"}}}
+			]}`))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/applications") {
+			// ArgoCD has 3 apps on this cluster:
+			// 1. A Sharko-managed addon (cert-manager) — enabled in Git.
+			// 2. Sharko's own connectivity-check app — a system app, not a catalog addon.
+			// 3. A FOREIGN app (guestbook) — deployed by the user, NOT managed by Sharko.
+			_, _ = w.Write([]byte(`{"items":[
+				{"metadata":{"name":"cert-manager-prod-eks"},"spec":{"destination":{"namespace":"cert-manager","server":"https://EXAMPLE.gr7.eu-west-1.eks.amazonaws.com"},"source":{"repoURL":"https://charts.jetstack.io","targetRevision":"v1.11.0"}},"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}},
+				{"metadata":{"name":"connectivity-check-prod-eks"},"spec":{"destination":{"namespace":"sharko-system","server":"https://EXAMPLE.gr7.eu-west-1.eks.amazonaws.com"},"source":{"repoURL":"https://github.com/example/gitops","targetRevision":"main"}},"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}},
+				{"metadata":{"name":"guestbook"},"spec":{"destination":{"namespace":"default","server":"https://EXAMPLE.gr7.eu-west-1.eks.amazonaws.com"},"source":{"repoURL":"https://github.com/example/guestbook","targetRevision":"main"}},"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}}
+			]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+
+	svc := NewClusterService("")
+	gp := &fakeGP{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": []byte(`
+clusters:
+  - name: prod-eks
+    labels:
+      cert-manager: enabled
+`),
+			"configuration/addons-catalog.yaml": []byte(`
+applicationsets:
+  - name: cert-manager
+    chart: cert-manager
+    repoURL: https://charts.jetstack.io
+    version: v1.11.0
+    namespace: cert-manager
+`),
+		},
+	}
+
+	resp, err := svc.GetClusterComparison(context.Background(), "prod-eks", gp, ac)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response for known cluster")
+	}
+
+	// Build a map of addon names in the comparison list for easy lookup.
+	addonNames := make(map[string]bool)
+	for _, comp := range resp.AddonComparisons {
+		addonNames[comp.AddonName] = true
+	}
+
+	// Verify the managed addon is present.
+	if !addonNames["cert-manager"] {
+		t.Errorf("expected managed addon cert-manager in addon_comparisons, not found. Got: %+v", addonNames)
+	}
+
+	// Verify Sharko's connectivity-check app is present with sharko_system status.
+	foundConnCheck := false
+	for _, comp := range resp.AddonComparisons {
+		if comp.AddonName == "connectivity-check-prod-eks" {
+			foundConnCheck = true
+			if comp.Status != "sharko_system" {
+				t.Errorf("connectivity-check status = %q, want sharko_system", comp.Status)
+			}
+		}
+	}
+	if !foundConnCheck {
+		t.Errorf("expected Sharko's connectivity-check-prod-eks in addon_comparisons, not found. Got: %+v", addonNames)
+	}
+
+	// Verify the foreign app is NOT present.
+	if addonNames["guestbook"] {
+		t.Errorf("foreign app guestbook must NOT appear in addon_comparisons, but found it. Full list: %+v", resp.AddonComparisons)
+	}
+
+	// Verify totalUntracked is 0 (no foreign apps counted).
+	if resp.TotalUntrackedInArgocd != 0 {
+		t.Errorf("TotalUntrackedInArgocd = %d, want 0 (foreign apps not counted)", resp.TotalUntrackedInArgocd)
+	}
+}
