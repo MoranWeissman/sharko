@@ -16,6 +16,23 @@ Sharko distinguishes between two types of clusters:
 
 In the API, every cluster entry includes a `"managed": true/false` field. In the UI, the Clusters page shows managed clusters as the main list; Discovered clusters are collapsed into a single hint line with a count (e.g. "3 clusters found in ArgoCD that Sharko doesn't manage yet") — click it to open **Register New Cluster** pre-set to the "I do" connection-ownership choice, described below.
 
+## Preview Changes Before a PR Opens
+
+Sharko is a GitOps agent: every change it makes to your GitOps repository goes through a pull request — it never mutates live state. Before opening that PR, the UI offers a **"Preview changes"** button on every PR-opening operation.
+
+Clicking **Preview changes** runs a server-side dry-run (no branch, no commit, no PR) and shows exactly what the PR would contain:
+
+- The files it would write (create or update)
+- For destructive operations (removing a cluster, un-adopting, removing an addon), the files or entries it would **delete** (shown distinctly)
+- The PR title
+- The names of any secrets it would create (names only — never secret values)
+
+You then confirm to actually open the PR, or cancel and adjust your input.
+
+This transparency feature is available on all PR-opening operations: register cluster, adopt cluster, remove cluster, un-adopt cluster, add addon, remove addon, configure addon, enable/disable addons on a cluster (Apply Changes), update cluster settings (secret path), save default addons, and save/refresh addon values (global + per-cluster).
+
+Under the hood, this uses the API's `dry_run: true` request option, which returns a `DryRunResult` instead of opening a PR. See [API Walkthrough](../api/api-walkthrough.md) for examples of using `dry_run` from the command line.
+
 ## Discovering Available Clusters
 
 Before registering, you can see which clusters are available from your secrets provider:
@@ -140,6 +157,12 @@ This creates a PR that removes the cluster's directory from the addons repo. Aft
 
 !!! warning
     Removing a cluster from Sharko does not uninstall addons from that cluster. ArgoCD will stop managing them, but the Helm releases remain in place. Uninstall addons manually if needed.
+
+## What Shows in a Cluster's Addon List
+
+When viewing a cluster's detail page, the Addons list shows only the addons **Sharko manages** for that cluster — the ones enabled for it in your GitOps configuration — plus Sharko's own connectivity-check Application.
+
+If you adopt a cluster that already runs ArgoCD Applications the user deployed themselves (e.g., a guestbook app, a hello-world, any workload unrelated to Sharko), those foreign Applications are **not** listed as addons. An addon is something Sharko manages via your catalog and GitOps config; a random Application running on the cluster is not an addon, and on a busy adopted cluster listing them all would be noise.
 
 ## Adopting an Existing ArgoCD Cluster
 
