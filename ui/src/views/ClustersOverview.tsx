@@ -1066,7 +1066,11 @@ export function ClustersOverview() {
               </label>
               <select
                 value={connManagedBy}
-                onChange={(e) => setConnManagedBy(e.target.value as ConnOwnership)}
+                onChange={(e) => {
+                  setConnManagedBy(e.target.value as ConnOwnership);
+                  setPickedDiscovered(null);
+                  setDiscoveredFilter('');
+                }}
                 className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
               >
                 <option value="sharko">Sharko (default)</option>

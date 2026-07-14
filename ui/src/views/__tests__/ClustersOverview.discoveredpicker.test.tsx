@@ -257,7 +257,7 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
       server_version: '1.29.0',
     });
     mockAdoptClusters.mockResolvedValue({
-      results: [{ cluster: 'argo-known-cluster', success: true, pr_url: 'https://github.com/org/repo/pull/99' }],
+      results: [{ name: 'argo-known-cluster', status: 'success', git: { pr_url: 'https://github.com/org/repo/pull/99' } }],
     });
 
     renderView();

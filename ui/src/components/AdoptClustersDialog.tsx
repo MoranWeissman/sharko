@@ -220,8 +220,21 @@ export function AdoptClustersDialog({
         clusters: names,
       })
       setAdoptResults(response.results)
-      setPhase('done')
-      onSuccess()
+
+      // F2: Check if ANY result has status === 'failed'. If so, surface the
+      // errors and do NOT proceed to done/refetch. The server returns HTTP 200
+      // even for all-failed (207 only for mixed), so we must inspect status.
+      const anyFailed = response.results.some((r) => r.status === 'failed')
+      if (anyFailed) {
+        // Show the results (errors included) but stay in 'review' so the user
+        // sees what failed. Do NOT call onSuccess() — that refetches and
+        // would give false success feedback.
+        setPhase('review')
+      } else {
+        // All results are success|partial — proceed to done.
+        setPhase('done')
+        onSuccess()
+      }
     } catch (err) {
       setAdoptError(err instanceof Error ? err.message : 'Adoption failed')
       setPhase('review')
@@ -296,7 +309,7 @@ export function AdoptClustersDialog({
                         {v.state === 'passed' && (
                           <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
                             <CheckCircle className="h-3 w-3" />
-                            Passed
+                            Reachable
                             {v.result?.server_version && (
                               <span className="ml-1 font-mono text-[#3a6a8a] dark:text-gray-500">
                                 v{v.result.server_version}
@@ -313,7 +326,7 @@ export function AdoptClustersDialog({
                         {v.state === 'failed' && (
                           <span className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
                             <XCircle className="h-3 w-3" />
-                            Failed
+                            Unreachable
                           </span>
                         )}
                       </td>
@@ -348,17 +361,17 @@ export function AdoptClustersDialog({
             </table>
           </div>
 
-          {/* Summary */}
+          {/* Summary — connectivity checks during review phase */}
           {phase === 'review' && (
             <div className="flex items-center gap-4 text-sm text-[#2a5a7a] dark:text-gray-400">
               <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400">
                 <CheckCircle className="h-4 w-4" />
-                {passedCount} passed
+                {passedCount} reachable
               </span>
               {failedCount > 0 && (
                 <span className="inline-flex items-center gap-1 text-red-500 dark:text-red-400">
                   <XCircle className="h-4 w-4" />
-                  {failedCount} failed
+                  {failedCount} unreachable
                 </span>
               )}
               <span className="ml-auto text-[#3a6a8a] dark:text-gray-500">
@@ -383,41 +396,45 @@ export function AdoptClustersDialog({
             <p className="text-sm text-red-600 dark:text-red-400">{adoptError}</p>
           )}
 
-          {/* Done state — show results */}
-          {phase === 'done' && adoptResults.length > 0 && (
+          {/* Adoption results — shown in 'done' (all succeeded) or 'review' (some/all failed) */}
+          {(phase === 'done' || (phase === 'review' && adoptResults.length > 0)) && (
             <div className="space-y-2">
-              {adoptResults.map((r) => (
-                <div
-                  key={r.cluster}
-                  className={`flex items-center justify-between rounded-md px-3 py-2 text-sm ${
-                    r.success
-                      ? 'bg-green-50 text-green-800 ring-1 ring-green-200 dark:bg-green-900/20 dark:text-green-300 dark:ring-green-800'
-                      : 'bg-red-50 text-red-800 ring-1 ring-red-200 dark:bg-red-900/20 dark:text-red-300 dark:ring-red-800'
-                  }`}
-                >
-                  <span className="inline-flex items-center gap-1.5">
-                    {r.success ? <CheckCircle className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-                    {r.cluster}
-                  </span>
-                  {r.success && r.pr_url && (
-                    <a
-                      href={r.pr_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs font-medium underline"
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                      PR
-                    </a>
-                  )}
-                  {r.success && !r.pr_url && (
-                    <span className="text-xs">Adopted</span>
-                  )}
-                  {!r.success && r.error && (
-                    <span className="text-xs">{r.error}</span>
-                  )}
-                </div>
-              ))}
+              {adoptResults.map((r) => {
+                const isSuccess = r.status === 'success' || r.status === 'partial'
+                const isFailed = r.status === 'failed'
+                return (
+                  <div
+                    key={r.name}
+                    className={`flex items-center justify-between rounded-md px-3 py-2 text-sm ${
+                      isSuccess
+                        ? 'bg-green-50 text-green-800 ring-1 ring-green-200 dark:bg-green-900/20 dark:text-green-300 dark:ring-green-800'
+                        : 'bg-red-50 text-red-800 ring-1 ring-red-200 dark:bg-red-900/20 dark:text-red-300 dark:ring-red-800'
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-1.5">
+                      {isSuccess ? <CheckCircle className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+                      {r.name}
+                    </span>
+                    {isSuccess && r.git?.pr_url && (
+                      <a
+                        href={r.git.pr_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs font-medium underline"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        PR
+                      </a>
+                    )}
+                    {isSuccess && !r.git?.pr_url && (
+                      <span className="text-xs">Adopted</span>
+                    )}
+                    {isFailed && r.error && (
+                      <span className="text-xs">{r.error}</span>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
