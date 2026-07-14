@@ -192,6 +192,9 @@ function PerClusterAddonOverridesEditorImpl({
             onSaved?.()
             return result
           }}
+          onPreviewSubmit={(newYAML) =>
+            api.setClusterAddonValues(clusterName, selected, newYAML, true)
+          }
           belowEditor={({ refreshKey }) => (
             <RecentPRsPanel
               title="Recent changes (last 5)"

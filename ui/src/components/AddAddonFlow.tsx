@@ -46,13 +46,15 @@ export interface DryRunPreviewProps {
 }
 
 /**
- * DryRunPreview — renders the files the addAddon(dry_run:true) call WOULD
- * write, with create/update markers. No PR, no commit. Every array read is
- * null-safe (`?? []`) because the Go DryRunResult serializes the slice as
- * `files_to_write` while older fixtures may use `files`.
+ * DryRunPreview — renders the files the dry-run call WOULD write/update/delete,
+ * with distinct markers: green `+` for create, amber `~` for update, red `-`
+ * for delete. Also surfaces secrets_to_create (names only) when present. No PR,
+ * no commit. Every array read is null-safe (`?? []`) because the Go DryRunResult
+ * serializes the slice as `files_to_write` while older fixtures may use `files`.
  */
 export function DryRunPreview({ result }: DryRunPreviewProps) {
   const files = result.files_to_write ?? result.files ?? []
+  const secrets = result.secrets_to_create ?? []
   return (
     <div className="rounded-md bg-[#e8f4ff] p-3 ring-2 ring-[#6aade0] dark:bg-gray-900 dark:ring-gray-700">
       <h4 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
@@ -77,15 +79,25 @@ export function DryRunPreview({ result }: DryRunPreviewProps) {
                     className={
                       f.action === 'create'
                         ? 'text-green-600 dark:text-green-400'
-                        : 'text-amber-600 dark:text-amber-400'
+                        : f.action === 'delete'
+                          ? 'text-red-600 dark:text-red-400'
+                          : 'text-amber-600 dark:text-amber-400'
                     }
                   >
-                    {f.action === 'create' ? '+' : '~'}
+                    {f.action === 'create' ? '+' : f.action === 'delete' ? '-' : '~'}
                   </span>{' '}
                   {f.path}
                 </li>
               ))}
             </ul>
+          </div>
+        )}
+        {secrets.length > 0 && (
+          <div>
+            <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
+              Secrets:
+            </span>{' '}
+            {secrets.join(', ')}
           </div>
         )}
       </div>

@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   CloudDownload,
   ExternalLink,
+  Eye,
   GitPullRequest,
   Layers,
   Loader2,
@@ -14,7 +15,8 @@ import {
 import { AttributionNudge } from '@/components/AttributionNudge'
 import { showToast } from '@/components/ToastNotification'
 import { PRLifecycleProgress } from '@/components/PRFeedback'
-import type { PreviewMergeResponse, ValuesEditResult } from '@/services/models'
+import { DryRunPreview } from '@/components/AddAddonFlow'
+import type { PreviewMergeResponse, ValuesEditResult, DryRunResult } from '@/services/models'
 
 /**
  * In-app YAML editor for addon values. Single textarea preloaded with the
@@ -44,6 +46,19 @@ export interface ValuesEditorProps {
   githubFileURL?: string
   /** Called when the user clicks Submit. Should return the API response. */
   onSubmit: (newYAML: string) => Promise<ValuesEditResult>
+  /**
+   * Optional dry-run for the plain Save. When provided the editor renders a
+   * "Preview changes" button next to Submit that calls this with the current
+   * draft and shows the returned DryRunResult (files, deletions, PR title)
+   * via the shared DryRunPreview. Submit stays a separate, explicit action.
+   */
+  onPreviewSubmit?: (newYAML: string) => Promise<DryRunResult>
+  /**
+   * Optional dry-run for Refresh-from-upstream. When provided the
+   * version-mismatch banner gains a "Preview changes" button that calls this
+   * and shows the DryRunResult before the real refresh confirm.
+   */
+  onPreviewRefreshFromUpstream?: () => Promise<DryRunResult>
   /**
    * Heading shown above the editor (e.g. "Global Values", "Cluster Overrides").
    */
@@ -122,6 +137,13 @@ export interface ValuesEditorProps {
    */
   legacyWrapDetected?: boolean
   onMigrateLegacyWrap?: () => Promise<void>
+  /**
+   * Optional dry-run for the legacy-wrap migration. When provided the
+   * migration banner gains a "Preview changes" button that calls this and
+   * shows the DryRunResult (the file the unwrap would rewrite) before the
+   * real "Migrate this file" confirm.
+   */
+  onPreviewMigrateLegacyWrap?: () => Promise<DryRunResult>
 }
 
 export function ValuesEditor({
@@ -130,6 +152,8 @@ export function ValuesEditor({
   hasPersonalToken,
   githubFileURL,
   onSubmit,
+  onPreviewSubmit,
+  onPreviewRefreshFromUpstream,
   title,
   subtitle,
   allowEmpty = false,
@@ -142,6 +166,7 @@ export function ValuesEditor({
   onPreviewMerge,
   legacyWrapDetected = false,
   onMigrateLegacyWrap,
+  onPreviewMigrateLegacyWrap,
 }: ValuesEditorProps) {
   const [draft, setDraft] = useState(initialYAML)
   const [submitting, setSubmitting] = useState(false)
@@ -159,6 +184,16 @@ export function ValuesEditor({
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [previewResult, setPreviewResult] = useState<PreviewMergeResponse | null>(null)
   const [applyingMerge, setApplyingMerge] = useState(false)
+  // Save / Refresh dry-run preview state (shared DryRunPreview panel).
+  const [savePreview, setSavePreview] = useState<DryRunResult | null>(null)
+  const [savePreviewLoading, setSavePreviewLoading] = useState(false)
+  const [savePreviewError, setSavePreviewError] = useState<string | null>(null)
+  const [refreshPreview, setRefreshPreview] = useState<DryRunResult | null>(null)
+  const [refreshPreviewLoading, setRefreshPreviewLoading] = useState(false)
+  const [refreshPreviewError, setRefreshPreviewError] = useState<string | null>(null)
+  const [migratePreview, setMigratePreview] = useState<DryRunResult | null>(null)
+  const [migratePreviewLoading, setMigratePreviewLoading] = useState(false)
+  const [migratePreviewError, setMigratePreviewError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Reset when the underlying current values change (e.g. after a successful
@@ -166,6 +201,8 @@ export function ValuesEditor({
   useEffect(() => {
     setDraft(initialYAML)
     setSubmitError(null)
+    setSavePreview(null)
+    setSavePreviewError(null)
   }, [initialYAML])
 
   // Reset the banner-dismiss flag whenever the mismatch pair changes — a
@@ -230,6 +267,48 @@ export function ValuesEditor({
       showToast(`Failed to submit values — ${msg}`, 'info')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const handlePreviewSubmit = async () => {
+    if (!onPreviewSubmit || !canSubmit) return
+    setSavePreviewLoading(true)
+    setSavePreviewError(null)
+    try {
+      const res = await onPreviewSubmit(draft)
+      setSavePreview(res)
+    } catch (e) {
+      setSavePreviewError(e instanceof Error ? e.message : 'Failed to generate preview')
+    } finally {
+      setSavePreviewLoading(false)
+    }
+  }
+
+  const handlePreviewRefresh = async () => {
+    if (!onPreviewRefreshFromUpstream) return
+    setRefreshPreviewLoading(true)
+    setRefreshPreviewError(null)
+    try {
+      const res = await onPreviewRefreshFromUpstream()
+      setRefreshPreview(res)
+    } catch (e) {
+      setRefreshPreviewError(e instanceof Error ? e.message : 'Failed to generate preview')
+    } finally {
+      setRefreshPreviewLoading(false)
+    }
+  }
+
+  const handlePreviewMigrate = async () => {
+    if (!onPreviewMigrateLegacyWrap) return
+    setMigratePreviewLoading(true)
+    setMigratePreviewError(null)
+    try {
+      const res = await onPreviewMigrateLegacyWrap()
+      setMigratePreview(res)
+    } catch (e) {
+      setMigratePreviewError(e instanceof Error ? e.message : 'Failed to generate preview')
+    } finally {
+      setMigratePreviewLoading(false)
     }
   }
 
@@ -388,7 +467,27 @@ export function ValuesEditor({
               silently ignore everything nested under it. Migrate now to apply these values
               correctly.
             </p>
-            <div className="mt-2 flex items-center gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {onPreviewMigrateLegacyWrap && (
+                <button
+                  type="button"
+                  onClick={handlePreviewMigrate}
+                  disabled={migratingWrap || migratePreviewLoading}
+                  className="inline-flex items-center gap-1 rounded-md border border-yellow-400 bg-white px-3 py-1 text-xs font-medium text-yellow-900 hover:bg-yellow-100 disabled:opacity-50 dark:border-yellow-600 dark:bg-gray-800 dark:text-yellow-200 dark:hover:bg-yellow-900/40"
+                >
+                  {migratePreviewLoading ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Previewing…
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="h-3 w-3" />
+                      Preview changes
+                    </>
+                  )}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={async () => {
@@ -413,6 +512,14 @@ export function ValuesEditor({
                 )}
               </button>
             </div>
+            {migratePreview && (
+              <div className="mt-3">
+                <DryRunPreview result={migratePreview} />
+              </div>
+            )}
+            {migratePreviewError && (
+              <p className="mt-2 text-xs text-red-600 dark:text-red-400">{migratePreviewError}</p>
+            )}
           </div>
         </div>
       )}
@@ -432,7 +539,27 @@ export function ValuesEditor({
               <span className="font-mono">{versionMismatch.valuesVersion}</span>. Refresh values
               from upstream?
             </p>
-            <div className="mt-2 flex items-center gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {onPreviewRefreshFromUpstream && (
+                <button
+                  type="button"
+                  onClick={handlePreviewRefresh}
+                  disabled={refreshing || refreshPreviewLoading}
+                  className="inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-3 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-600 dark:bg-gray-800 dark:text-amber-200 dark:hover:bg-amber-900/40"
+                >
+                  {refreshPreviewLoading ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Previewing…
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="h-3 w-3" />
+                      Preview changes
+                    </>
+                  )}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleRefresh}
@@ -460,6 +587,14 @@ export function ValuesEditor({
                 Dismiss
               </button>
             </div>
+            {refreshPreview && (
+              <div className="mt-3">
+                <DryRunPreview result={refreshPreview} />
+              </div>
+            )}
+            {refreshPreviewError && (
+              <p className="mt-2 text-xs text-red-600 dark:text-red-400">{refreshPreviewError}</p>
+            )}
           </div>
         </div>
       )}
@@ -512,7 +647,11 @@ export function ValuesEditor({
         <textarea
           ref={textareaRef}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            // A stale preview no longer matches the edited draft — drop it.
+            if (savePreview) setSavePreview(null)
+          }}
           spellCheck={false}
           className="block min-h-[320px] w-full resize-y rounded-md border border-[#c0ddf0] bg-[#f8fbff] p-3 font-mono text-xs leading-5 text-[#0a2a4a] focus:border-[#6aade0] focus:outline-none focus:ring-2 focus:ring-[#6aade0]/30 dark:ring-gray-700 dark:bg-gray-900 dark:text-gray-100"
           placeholder="# YAML values&#10;# e.g.&#10;# replicaCount: 2&#10;# resources:&#10;#   limits:&#10;#     memory: 256Mi"
@@ -567,6 +706,18 @@ export function ValuesEditor({
 
       {renderedBelow && <div className="mt-4">{renderedBelow}</div>}
 
+      {/* Save dry-run preview — the files this Submit would write, shown
+          via the shared DryRunPreview. Additive: the user opts in by
+          clicking "Preview changes"; Submit stays a distinct action. */}
+      {savePreview && (
+        <div className="mt-4">
+          <DryRunPreview result={savePreview} />
+        </div>
+      )}
+      {savePreviewError && (
+        <p className="mt-3 text-sm text-red-600 dark:text-red-400">{savePreviewError}</p>
+      )}
+
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
         <button
           type="button"
@@ -578,6 +729,27 @@ export function ValuesEditor({
           <RotateCcw className="h-3 w-3" />
           Discard changes
         </button>
+        {onPreviewSubmit && (
+          <button
+            type="button"
+            onClick={handlePreviewSubmit}
+            disabled={!canSubmit || savePreviewLoading}
+            title={!isDirty ? 'No changes to preview' : 'Preview the files this change would write'}
+            className="inline-flex items-center gap-1 rounded-md border border-[#6aade0] bg-[#e0f0ff] px-3 py-1.5 text-xs font-medium text-[#0a6aaa] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-[#6aade0] dark:hover:bg-gray-600"
+          >
+            {savePreviewLoading ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Previewing…
+              </>
+            ) : (
+              <>
+                <Eye className="h-3 w-3" />
+                Preview changes
+              </>
+            )}
+          </button>
+        )}
         <button
           type="button"
           onClick={handleSubmit}

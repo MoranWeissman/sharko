@@ -36,6 +36,7 @@ const mockTestClusterConnection = vi.fn();
 const mockFetchTrackedPRs = vi.fn();
 const mockDeregisterCluster = vi.fn();
 const mockUpdateClusterAddons = vi.fn();
+const mockUpdateClusterSettings = vi.fn();
 const mockGetAddonCatalog = vi.fn();
 const mockRestartAddonSync = vi.fn();
 const mockGetClusterHistory = vi.fn();
@@ -79,7 +80,7 @@ vi.mock('@/services/api', async () => {
     testClusterConnection: (...args: unknown[]) => mockTestClusterConnection(...args),
     deregisterCluster: (...args: unknown[]) => mockDeregisterCluster(...args),
     updateClusterAddons: (...args: unknown[]) => mockUpdateClusterAddons(...args),
-    updateClusterSettings: vi.fn().mockResolvedValue({}),
+    updateClusterSettings: (...args: unknown[]) => mockUpdateClusterSettings(...args),
     // BUG-042: ClusterDetail now fetches /api/v1/prs?status=open&cluster=<name>
     // alongside the cluster comparison to overlay pending-PR badges on
     // addon rows. Default to an empty PR list so existing tests keep
@@ -182,6 +183,8 @@ describe('ClusterDetail', () => {
     // BUG-042: default to "no pending PRs" so existing assertions don't
     // accidentally find a badge. Per-test overrides drive the badge cases.
     mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
+    // Default: secret-path save/preview resolves to a no-PR result.
+    mockUpdateClusterSettings.mockResolvedValue({});
     // V2-cleanup-13: default removal returns an opened-but-not-merged PR.
     mockDeregisterCluster.mockResolvedValue({});
     // V2-cleanup-31: default apply-addons returns an empty result (no PR).
@@ -938,6 +941,88 @@ describe('ClusterDetail', () => {
     });
   });
 
+  // V3-TX-A3: "Preview changes" on every PR-opening operation. ClusterDetail
+  // owns three PR-opening surfaces: remove-cluster (deregister), apply-changes
+  // (updateClusterAddons), and update-cluster-settings (secret_path). Each gets
+  // a Preview button that calls the op's dry-run, renders the DryRunResult, and
+  // still requires a separate confirm to open the PR.
+  describe('V3-TX-A3: Preview changes', () => {
+    // Surface 2 — Remove cluster preview.
+    it('remove-cluster: Preview calls deregisterCluster(dry-run) and renders deletions without removing', async () => {
+      mockDeregisterCluster.mockImplementation((_name: string, _autoMerge: unknown, dryRun?: boolean) => {
+        if (dryRun) {
+          return Promise.resolve({
+            pr_title: 'Remove cluster prod-eu',
+            files_to_write: [
+              { path: 'configuration/managed-clusters.yaml', action: 'update' },
+              { path: 'configuration/clusters/prod-eu.yaml', action: 'delete' },
+            ],
+          });
+        }
+        return Promise.resolve({ git: { merged: false, pr_id: 1 } });
+      });
+
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      fireEvent.click(screen.getByRole('button', { name: /Remove Cluster/i }));
+      await waitFor(() =>
+        expect(screen.getByText(/Remove cluster "prod-eu"\?/i)).toBeInTheDocument(),
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /preview changes/i }));
+
+      await waitFor(() =>
+        expect(mockDeregisterCluster).toHaveBeenCalledWith('prod-eu', undefined, true),
+      );
+      // Dry-run rendered — the deletion path is the whole point.
+      await waitFor(() =>
+        expect(screen.getByText('configuration/clusters/prod-eu.yaml')).toBeInTheDocument(),
+      );
+      expect(screen.getByText('Remove cluster prod-eu')).toBeInTheDocument();
+      // Preview must NOT have fired the real (non-dry-run) removal.
+      expect(mockDeregisterCluster).not.toHaveBeenCalledWith('prod-eu');
+    });
+
+    // Surface 7 — Update cluster settings (secret_path) preview.
+    it('secret-path: Preview calls updateClusterSettings(dry-run) and renders the diff without saving', async () => {
+      mockUpdateClusterSettings.mockImplementation((_name: string, settings: { dry_run?: boolean }) => {
+        if (settings?.dry_run) {
+          return Promise.resolve({
+            pr_title: 'Update secret path for prod-eu',
+            files_to_write: [
+              { path: 'configuration/managed-clusters.yaml', action: 'update' },
+            ],
+          });
+        }
+        return Promise.resolve({ message: 'Secret path updated' });
+      });
+
+      renderView('settings');
+      await waitFor(() => expect(screen.getByText('Cluster Settings')).toBeInTheDocument());
+
+      // Enter edit mode on the Secret Path (admin-gated pencil).
+      fireEvent.click(screen.getByLabelText(/Edit secret path/i));
+      const input = await screen.findByPlaceholderText('e.g. k8s-my-cluster');
+      fireEvent.change(input, { target: { value: 'k8s-prod-eu' } });
+
+      fireEvent.click(screen.getByRole('button', { name: /preview changes/i }));
+
+      await waitFor(() =>
+        expect(mockUpdateClusterSettings).toHaveBeenCalledWith('prod-eu', {
+          secret_path: 'k8s-prod-eu',
+          dry_run: true,
+        }),
+      );
+      await waitFor(() =>
+        expect(screen.getByText('Update secret path for prod-eu')).toBeInTheDocument(),
+      );
+      // Preview must NOT have saved (no non-dry-run call).
+      expect(mockUpdateClusterSettings).not.toHaveBeenCalledWith('prod-eu', {
+        secret_path: 'k8s-prod-eu',
+      });
+    });
+  });
+
   // V2-cleanup-30: sharko_system row rendering
   describe('V2-cleanup-30: sharko_system comparison row', () => {
     const responseWithCheckApp = {
@@ -1241,6 +1326,52 @@ describe('ClusterDetail', () => {
         'cert-manager': true,
         'ingress-nginx': true,
         prometheus: true,
+      });
+    });
+
+    // --- 4b. V3-TX-A3: Preview changes (Surface 6) ---
+
+    it('Preview changes calls updateClusterAddons(dry-run) and renders the diff without applying', async () => {
+      mockUpdateClusterAddons.mockImplementation(
+        (_name: string, _addons: unknown, dryRun?: boolean) => {
+          if (dryRun) {
+            return Promise.resolve({
+              pr_title: 'Update addons on prod-eu',
+              files_to_write: [
+                { path: 'configuration/managed-clusters.yaml', action: 'update' },
+              ],
+              secrets_to_create: ['prod-eu-cert-manager-creds'],
+            });
+          }
+          return Promise.resolve({ git: { merged: false, pr_id: 2 } });
+        },
+      );
+
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      // Stage cert-manager for removal so the Apply/Preview footer appears.
+      fireEvent.click(screen.getByTestId('manage-addon-remove-cert-manager'));
+
+      fireEvent.click(screen.getByRole('button', { name: /preview changes/i }));
+
+      // Dry-run call carries the diff-only payload + dryRun: true.
+      await waitFor(() =>
+        expect(mockUpdateClusterAddons).toHaveBeenCalledWith(
+          'prod-eu',
+          { 'cert-manager': false, 'ingress-nginx': true },
+          true,
+        ),
+      );
+      await waitFor(() =>
+        expect(screen.getByText('Update addons on prod-eu')).toBeInTheDocument(),
+      );
+      // Secret NAMES are surfaced (never values).
+      expect(screen.getByText(/prod-eu-cert-manager-creds/)).toBeInTheDocument();
+      // Preview must NOT have applied the change (no non-dry-run call).
+      expect(mockUpdateClusterAddons).not.toHaveBeenCalledWith('prod-eu', {
+        'cert-manager': false,
+        'ingress-nginx': true,
       });
     });
 

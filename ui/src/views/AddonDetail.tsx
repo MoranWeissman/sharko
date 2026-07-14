@@ -27,10 +27,12 @@ import {
   MessageSquare,
   Shield,
   Star,
+  Eye,
 } from 'lucide-react'
 import { api, removeAddon, upgradeAddon, configureAddon, getAddonPRs, type PRWriteResult } from '@/services/api'
 import { PRLifecycleProgress, PRLink, extractPR } from '@/components/PRFeedback'
-import type { AddonCatalogItem, CatalogEntry, CatalogSourceRecord, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR, AddonValuesSchemaResponse, MeResponse } from '@/services/models'
+import { DryRunPreview } from '@/components/AddAddonFlow'
+import type { AddonCatalogItem, CatalogEntry, CatalogSourceRecord, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR, AddonValuesSchemaResponse, MeResponse, DryRunResult } from '@/services/models'
 import { ValuesEditor } from '@/components/ValuesEditor'
 import { RecentPRsPanel } from '@/components/RecentPRsPanel'
 import { showToast } from '@/components/ToastNotification'
@@ -1131,6 +1133,9 @@ export function AddonDetail() {
   const [removeModalOpen, setRemoveModalOpen] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [removeError, setRemoveError] = useState<string | null>(null)
+  const [removePreview, setRemovePreview] = useState<DryRunResult | null>(null)
+  const [removePreviewLoading, setRemovePreviewLoading] = useState(false)
+  const [removePreviewError, setRemovePreviewError] = useState<string | null>(null)
   // The removal PR result. Removing an addon opens a PR (or auto-merges it);
   // we surface that PR instead of navigating away and throwing the response
   // out (V2-cleanup-24, defect 2.1). Only when the PR is already merged do we
@@ -1151,6 +1156,9 @@ export function AddonDetail() {
   // covers the no-PR success case (nothing changed / direct apply).
   const [configResult, setConfigResult] = useState<PRWriteResult | null>(null)
   const [configSaved, setConfigSaved] = useState(false)
+  const [configPreview, setConfigPreview] = useState<DryRunResult | null>(null)
+  const [configPreviewLoading, setConfigPreviewLoading] = useState(false)
+  const [configPreviewError, setConfigPreviewError] = useState<string | null>(null)
 
   // Inline upgrade analysis
   const [inlineAnalysisVersion, setInlineAnalysisVersion] = useState<string | null>(null)
@@ -1282,6 +1290,20 @@ export function AddonDetail() {
     }
   }, [name])
 
+  const handlePreviewRemoveAddon = useCallback(async () => {
+    if (!name) return
+    setRemovePreviewLoading(true)
+    setRemovePreviewError(null)
+    try {
+      const result = await removeAddon(name, true)
+      setRemovePreview(result)
+    } catch (e: unknown) {
+      setRemovePreviewError(e instanceof Error ? e.message : 'Failed to generate preview')
+    } finally {
+      setRemovePreviewLoading(false)
+    }
+  }, [name])
+
   const handleRemoveAddon = useCallback(async () => {
     if (!name) return
     setRemoving(true)
@@ -1343,7 +1365,76 @@ export function AddonDetail() {
     setConfigError(null)
     setConfigResult(null)
     setConfigSaved(false)
+    setConfigPreview(null)
+    setConfigPreviewError(null)
   }, [])
+
+  // Builds the diff-only config payload shared by preview + save so the two
+  // paths can never drift. Throws on YAML parse errors (surfaced by callers).
+  const buildConfigPayload = useCallback(() => {
+    if (!addon) return {}
+    const syncOptions = editSyncOptionsText
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+
+    const extraHelmValues: Record<string, string> = {}
+    for (const { key, value } of editHelmValues) {
+      if (key.trim()) {
+        extraHelmValues[key.trim()] = value
+      }
+    }
+
+    const payload: {
+      self_heal?: boolean
+      sync_options?: string[]
+      extra_helm_values?: Record<string, string>
+      ignore_differences?: Record<string, unknown>[]
+      additional_sources?: Record<string, unknown>[]
+    } = {}
+
+    if (editSelfHeal !== (addon.selfHeal !== false)) payload.self_heal = editSelfHeal
+    const origOptions = (addon.syncOptions ?? []).join(',')
+    if (syncOptions.join(',') !== origOptions) payload.sync_options = syncOptions
+    const origHelm = JSON.stringify(addon.extraHelmValues ?? {})
+    if (JSON.stringify(extraHelmValues) !== origHelm) payload.extra_helm_values = extraHelmValues
+
+    // Parse YAML fields
+    if (editIgnoreDifferencesYaml.trim()) {
+      const parsed = yaml.parse(editIgnoreDifferencesYaml)
+      const asArray = Array.isArray(parsed) ? parsed : [parsed]
+      const origIgnore = JSON.stringify(addon.ignoreDifferences ?? [])
+      if (JSON.stringify(asArray) !== origIgnore) payload.ignore_differences = asArray
+    } else if (addon.ignoreDifferences && addon.ignoreDifferences.length > 0) {
+      payload.ignore_differences = []
+    }
+
+    if (editAdditionalSourcesYaml.trim()) {
+      const parsed = yaml.parse(editAdditionalSourcesYaml)
+      const asArray = Array.isArray(parsed) ? parsed : [parsed]
+      const origSources = JSON.stringify(addon.additionalSources ?? [])
+      if (JSON.stringify(asArray) !== origSources) payload.additional_sources = asArray
+    } else if (addon.additionalSources && addon.additionalSources.length > 0) {
+      payload.additional_sources = []
+    }
+
+    return payload
+  }, [addon, editSelfHeal, editSyncOptionsText, editHelmValues, editIgnoreDifferencesYaml, editAdditionalSourcesYaml])
+
+  const handlePreviewConfig = useCallback(async () => {
+    if (!name || !addon) return
+    setConfigPreviewLoading(true)
+    setConfigPreviewError(null)
+    try {
+      const payload = buildConfigPayload()
+      const result = await configureAddon(name, { ...payload, dry_run: true })
+      setConfigPreview(result)
+    } catch (e: unknown) {
+      setConfigPreviewError(e instanceof Error ? e.message : 'Failed to generate preview')
+    } finally {
+      setConfigPreviewLoading(false)
+    }
+  }, [name, addon, buildConfigPayload])
 
   const handleSaveConfig = useCallback(async () => {
     if (!name || !addon) return
@@ -1352,51 +1443,7 @@ export function AddonDetail() {
     setConfigResult(null)
     setConfigSaved(false)
     try {
-      const syncOptions = editSyncOptionsText
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-
-      const extraHelmValues: Record<string, string> = {}
-      for (const { key, value } of editHelmValues) {
-        if (key.trim()) {
-          extraHelmValues[key.trim()] = value
-        }
-      }
-
-      const payload: {
-        self_heal?: boolean
-        sync_options?: string[]
-        extra_helm_values?: Record<string, string>
-        ignore_differences?: Record<string, unknown>[]
-        additional_sources?: Record<string, unknown>[]
-      } = {}
-
-      if (editSelfHeal !== (addon.selfHeal !== false)) payload.self_heal = editSelfHeal
-      const origOptions = (addon.syncOptions ?? []).join(',')
-      if (syncOptions.join(',') !== origOptions) payload.sync_options = syncOptions
-      const origHelm = JSON.stringify(addon.extraHelmValues ?? {})
-      if (JSON.stringify(extraHelmValues) !== origHelm) payload.extra_helm_values = extraHelmValues
-
-      // Parse YAML fields
-      if (editIgnoreDifferencesYaml.trim()) {
-        const parsed = yaml.parse(editIgnoreDifferencesYaml)
-        const asArray = Array.isArray(parsed) ? parsed : [parsed]
-        const origIgnore = JSON.stringify(addon.ignoreDifferences ?? [])
-        if (JSON.stringify(asArray) !== origIgnore) payload.ignore_differences = asArray
-      } else if (addon.ignoreDifferences && addon.ignoreDifferences.length > 0) {
-        payload.ignore_differences = []
-      }
-
-      if (editAdditionalSourcesYaml.trim()) {
-        const parsed = yaml.parse(editAdditionalSourcesYaml)
-        const asArray = Array.isArray(parsed) ? parsed : [parsed]
-        const origSources = JSON.stringify(addon.additionalSources ?? [])
-        if (JSON.stringify(asArray) !== origSources) payload.additional_sources = asArray
-      } else if (addon.additionalSources && addon.additionalSources.length > 0) {
-        payload.additional_sources = []
-      }
-
+      const payload = buildConfigPayload()
       const result = await configureAddon(name, payload)
       const { prUrl } = extractPR(result)
       if (prUrl) {
@@ -1405,6 +1452,8 @@ export function AddonDetail() {
         setConfigSaved(true)
       }
       setIsEditingConfig(false)
+      setConfigPreview(null)
+      setConfigPreviewError(null)
       // Refresh addon data
       api.getAddonDetail(name).then((res) => setAddon(res.addon)).catch(() => {})
     } catch (e: unknown) {
@@ -1412,7 +1461,7 @@ export function AddonDetail() {
     } finally {
       setConfigSaving(false)
     }
-  }, [name, addon, editSelfHeal, editSyncOptionsText, editHelmValues, editIgnoreDifferencesYaml, editAdditionalSourcesYaml])
+  }, [name, addon, buildConfigPayload])
 
   const handleInlineAnalyze = useCallback(async (version: string) => {
     if (!name) return
@@ -1655,7 +1704,11 @@ export function AddonDetail() {
 
       <ConfirmationModal
         open={removeModalOpen}
-        onClose={() => setRemoveModalOpen(false)}
+        onClose={() => {
+          setRemoveModalOpen(false)
+          setRemovePreview(null)
+          setRemovePreviewError(null)
+        }}
         onConfirm={handleRemoveAddon}
         title={`Remove addon "${name}"?`}
         description="This will remove the addon from the catalog. This action creates a pull request and cannot be undone."
@@ -1663,6 +1716,39 @@ export function AddonDetail() {
         typeToConfirm={name}
         destructive
         loading={removing}
+        extraContent={
+          <div className="space-y-3">
+            {!removePreview && !removePreviewLoading && (
+              <button
+                type="button"
+                onClick={handlePreviewRemoveAddon}
+                className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                <Eye className="h-4 w-4" />
+                Preview changes
+              </button>
+            )}
+            {removePreviewLoading && (
+              <div
+                role="status"
+                className="flex items-center gap-2 rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] p-3 text-sm text-[#0a3a5a] dark:ring-gray-700 dark:bg-gray-900 dark:text-gray-300"
+              >
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+                <span>Generating preview...</span>
+              </div>
+            )}
+            {removePreview && <DryRunPreview result={removePreview} />}
+            {removePreviewError && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200"
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <p>{removePreviewError}</p>
+              </div>
+            )}
+          </div>
+        }
       />
       {removeError && (
         <p className="text-sm text-red-600 dark:text-red-400">{removeError}</p>
@@ -2230,6 +2316,12 @@ export function AddonDetail() {
                     setValuesYaml(newYAML)
                     return result
                   }}
+                  onPreviewSubmit={(newYAML) =>
+                    api.setAddonValues(addon.addon_name, newYAML, true)
+                  }
+                  onPreviewRefreshFromUpstream={() =>
+                    api.refreshAddonValuesFromUpstream(addon.addon_name, true)
+                  }
                   versionMismatch={
                     valuesSchema?.values_version_mismatch
                       ? {
@@ -2261,6 +2353,9 @@ export function AddonDetail() {
                   // renders a yellow banner with a "Migrate this file"
                   // action that opens a Tier 2 PR.
                   legacyWrapDetected={!!valuesSchema?.legacy_wrap_detected}
+                  onPreviewMigrateLegacyWrap={() =>
+                    api.unwrapGlobalValues(addon.addon_name, true)
+                  }
                   onMigrateLegacyWrap={async () => {
                     try {
                       const res = await api.unwrapGlobalValues(addon.addon_name)
@@ -2589,24 +2684,45 @@ export function AddonDetail() {
 
                   {/* Edit mode action buttons */}
                   {isEditingConfig && (
-                    <div className="flex items-center gap-3 border-t border-[#c0ddf0] pt-4 dark:border-gray-700">
-                      <button
-                        type="button"
-                        onClick={handleSaveConfig}
-                        disabled={configSaving}
-                        className="inline-flex items-center gap-2 rounded-lg bg-[#0a2a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#14466e] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {configSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-                        Save (opens PR)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleCancelEditConfig}
-                        disabled={configSaving}
-                        className="rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 disabled:opacity-50"
-                      >
-                        Cancel
-                      </button>
+                    <div className="space-y-3 border-t border-[#c0ddf0] pt-4 dark:border-gray-700">
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={handlePreviewConfig}
+                          disabled={configSaving || configPreviewLoading}
+                          className="inline-flex items-center gap-2 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {configPreviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+                          Preview changes
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSaveConfig}
+                          disabled={configSaving}
+                          className="inline-flex items-center gap-2 rounded-lg bg-[#0a2a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#14466e] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {configSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                          Save (opens PR)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCancelEditConfig}
+                          disabled={configSaving}
+                          className="rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      {configPreview && <DryRunPreview result={configPreview} />}
+                      {configPreviewError && (
+                        <div
+                          role="alert"
+                          className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200"
+                        >
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                          <p>{configPreviewError}</p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

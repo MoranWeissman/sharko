@@ -6,12 +6,14 @@ import {
   CheckCircle,
   Info,
   Search,
+  Eye,
 } from 'lucide-react'
 import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
-import type { AddonCatalogItem } from '@/services/models'
+import { DryRunPreview } from '@/components/AddAddonFlow'
+import type { AddonCatalogItem, DryRunResult } from '@/services/models'
 
 interface GitOpsFormData {
   gitops_base_branch: string
@@ -54,6 +56,9 @@ export function GitOpsSection() {
   const [savingDefaults, setSavingDefaults] = useState(false)
   const [saveDefaultsError, setSaveDefaultsError] = useState<string | null>(null)
   const [defaultsPRResult, setDefaultsPRResult] = useState<{ pr_url: string; pr_id: number } | null>(null)
+  const [defaultsPreview, setDefaultsPreview] = useState<DryRunResult | null>(null)
+  const [defaultsPreviewLoading, setDefaultsPreviewLoading] = useState(false)
+  const [defaultsPreviewError, setDefaultsPreviewError] = useState<string | null>(null)
 
   // Detected host cluster name from platform info
   const [detectedClusterName, setDetectedClusterName] = useState<string | null>(null)
@@ -129,6 +134,19 @@ export function GitOpsSection() {
     }
   }
 
+  async function handlePreviewDefaults() {
+    setDefaultsPreviewLoading(true)
+    setDefaultsPreviewError(null)
+    try {
+      const result = await api.putDefaultAddons(selectedDefaults, true)
+      setDefaultsPreview(result)
+    } catch (err) {
+      setDefaultsPreviewError(err instanceof Error ? err.message : 'Failed to generate preview')
+    } finally {
+      setDefaultsPreviewLoading(false)
+    }
+  }
+
   async function handleSaveDefaults() {
     setSavingDefaults(true)
     setSaveDefaultsError(null)
@@ -136,6 +154,8 @@ export function GitOpsSection() {
     try {
       const result = await api.putDefaultAddons(selectedDefaults)
       setDefaultsPRResult({ pr_url: result.pr_url, pr_id: result.pr_id })
+      setDefaultsPreview(null)
+      setDefaultsPreviewError(null)
     } catch (err) {
       setSaveDefaultsError(err instanceof Error ? err.message : 'Save failed')
     } finally {
@@ -324,7 +344,24 @@ export function GitOpsSection() {
                   </a>
                 </p>
               )}
-              <div className="mt-3">
+              {defaultsPreview && (
+                <div className="mt-3">
+                  <DryRunPreview result={defaultsPreview} />
+                </div>
+              )}
+              {defaultsPreviewError && (
+                <p className="mt-2 text-sm text-red-600 dark:text-red-400">{defaultsPreviewError}</p>
+              )}
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handlePreviewDefaults}
+                  disabled={savingDefaults || defaultsPreviewLoading}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                >
+                  {defaultsPreviewLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
+                  Preview changes
+                </button>
                 <button
                   type="button"
                   onClick={handleSaveDefaults}

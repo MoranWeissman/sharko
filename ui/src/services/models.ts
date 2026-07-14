@@ -1096,6 +1096,8 @@ export interface AdoptResult {
   // cluster's ArgoCD cluster secret turning out to be rendered by another
   // ArgoCD Application (V2-cleanup-89.5).
   warnings?: string[]
+  // Preview returned when dry_run is true
+  preview?: DryRunResult
 }
 
 export interface AdoptClustersResponse {

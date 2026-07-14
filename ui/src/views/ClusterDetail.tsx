@@ -35,8 +35,9 @@ import {
 import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs, previewEnableAddon, reconcileCluster } from '@/services/api';
 import type { TestClusterUnavailable, PRWriteResult } from '@/services/api';
 import { PRResultBanner, extractPR } from '@/components/PRFeedback';
+import { DryRunPreview } from '@/components/AddAddonFlow';
 import { EnableAddonPicker } from '@/components/EnableAddonPicker';
-import type { ClusterChange, ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, VerifyStep } from '@/services/models';
+import type { ClusterChange, ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, VerifyStep, DryRunResult } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ConnectivityBadge } from '@/components/ConnectivityBadge';
@@ -231,6 +232,9 @@ export function ClusterDetail() {
   const [removeModalOpen, setRemoveModalOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removePreview, setRemovePreview] = useState<DryRunResult | null>(null);
+  const [removePreviewLoading, setRemovePreviewLoading] = useState(false);
+  const [removePreviewError, setRemovePreviewError] = useState<string | null>(null);
 
   // Test connection
   const [testResult, setTestResult] = useState<
@@ -276,6 +280,9 @@ export function ClusterDetail() {
   // clickable PR link (PRResultBanner) instead of dumping the raw URL as text.
   // `message` carries the non-PR / error fallback.
   const [secretPathResult, setSecretPathResult] = useState<{ pr?: PRWriteResult; message?: string } | null>(null);
+  const [secretPathPreview, setSecretPathPreview] = useState<DryRunResult | null>(null);
+  const [secretPathPreviewLoading, setSecretPathPreviewLoading] = useState(false);
+  const [secretPathPreviewError, setSecretPathPreviewError] = useState<string | null>(null);
 
   // AI-enabled state — fetched once on mount so the "Ask AI" button on
   // sync_failing rows knows whether to render.
@@ -289,6 +296,9 @@ export function ClusterDetail() {
   // Defect 2.2: apply-toggles keeps the PR result so the success line is a
   // clickable PR link (PRResultBanner) instead of "Changes applied. PR: <url>".
   const [toggleResult, setToggleResult] = useState<{ pr?: PRWriteResult; message?: string } | null>(null);
+  const [togglePreview, setTogglePreview] = useState<DryRunResult | null>(null);
+  const [togglePreviewLoading, setTogglePreviewLoading] = useState(false);
+  const [togglePreviewError, setTogglePreviewError] = useState<string | null>(null);
 
   // Enable-addon picker (Manage Addons card)
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -442,6 +452,20 @@ export function ClusterDetail() {
   // persistent on-page PR banner/progress after the modal closes.
   const [removalPRResult, setRemovalPRResult] = useState<PRWriteResult | null>(null);
 
+  const handlePreviewRemoveCluster = useCallback(async () => {
+    if (!name) return;
+    setRemovePreviewLoading(true);
+    setRemovePreviewError(null);
+    try {
+      const result = await deregisterCluster(name, undefined, true);
+      setRemovePreview(result);
+    } catch (e: unknown) {
+      setRemovePreviewError(e instanceof Error ? e.message : 'Failed to generate preview');
+    } finally {
+      setRemovePreviewLoading(false);
+    }
+  }, [name]);
+
   const handleRemoveCluster = useCallback(async () => {
     if (!name) return;
     setRemoving(true);
@@ -481,6 +505,36 @@ export function ClusterDetail() {
     return Object.keys(addonToggles).some((k) => addonToggles[k] !== originalToggles[k]);
   }, [addonToggles, originalToggles]);
 
+  // Builds the enabled/staged-only toggle payload shared by preview + apply
+  // so the two paths can never diverge (V2-cleanup-32 fix logic).
+  const buildTogglePayload = useCallback(() => {
+    const payload: Record<string, boolean> = {};
+    for (const [k, v] of Object.entries(addonToggles)) {
+      const wasEnabled = originalToggles[k] === true;
+      const isEnabled = v === true;
+      // Include if currently enabled, was enabled (being removed), or is newly staged
+      if (wasEnabled || isEnabled) {
+        payload[k] = v;
+      }
+    }
+    return payload;
+  }, [addonToggles, originalToggles]);
+
+  const handlePreviewToggles = useCallback(async () => {
+    if (!name) return;
+    setTogglePreviewLoading(true);
+    setTogglePreviewError(null);
+    try {
+      const payload = buildTogglePayload();
+      const result = await updateClusterAddons(name, payload, true);
+      setTogglePreview(result);
+    } catch (e: unknown) {
+      setTogglePreviewError(e instanceof Error ? e.message : 'Failed to generate preview');
+    } finally {
+      setTogglePreviewLoading(false);
+    }
+  }, [name, buildTogglePayload]);
+
   const handleApplyToggles = useCallback(async () => {
     if (!name) return;
     setApplyingToggles(true);
@@ -492,25 +546,33 @@ export function ClusterDetail() {
       // that are disabled-in-git with no pending change — those are catalog addons
       // the operator never touched on this cluster. Sending them as `false` would
       // add spurious labels to managed-clusters.yaml (V2-cleanup-32 fix).
-      const payload: Record<string, boolean> = {};
-      for (const [k, v] of Object.entries(addonToggles)) {
-        const wasEnabled = originalToggles[k] === true;
-        const isEnabled = v === true;
-        // Include if currently enabled, was enabled (being removed), or is newly staged
-        if (wasEnabled || isEnabled) {
-          payload[k] = v;
-        }
-      }
+      const payload = buildTogglePayload();
       const result = await updateClusterAddons(name, payload);
       const { prUrl } = extractPR(result);
       setToggleResult(prUrl ? { pr: result } : { message: 'Changes applied successfully.' });
       setOriginalToggles({ ...addonToggles });
+      setTogglePreview(null);
+      setTogglePreviewError(null);
     } catch (e: unknown) {
       setToggleError(e instanceof Error ? e.message : 'Failed to apply changes');
     } finally {
       setApplyingToggles(false);
     }
-  }, [name, addonToggles, originalToggles]);
+  }, [name, addonToggles, buildTogglePayload]);
+
+  const handlePreviewSecretPath = useCallback(async () => {
+    if (!name) return;
+    setSecretPathPreviewLoading(true);
+    setSecretPathPreviewError(null);
+    try {
+      const result = await updateClusterSettings(name, { secret_path: secretPathValue, dry_run: true });
+      setSecretPathPreview(result);
+    } catch (e: unknown) {
+      setSecretPathPreviewError(e instanceof Error ? e.message : 'Failed to generate preview');
+    } finally {
+      setSecretPathPreviewLoading(false);
+    }
+  }, [name, secretPathValue]);
 
   // handleSyncNow triggers a manual reconcile (V2-cleanup-89.4) instead of
   // waiting for the reconciler's periodic tick. The endpoint returns 202 as
@@ -996,7 +1058,11 @@ export function ClusterDetail() {
 
       <ConfirmationModal
         open={removeModalOpen}
-        onClose={() => setRemoveModalOpen(false)}
+        onClose={() => {
+          setRemoveModalOpen(false);
+          setRemovePreview(null);
+          setRemovePreviewError(null);
+        }}
         onConfirm={handleRemoveCluster}
         title={`Remove cluster "${name}"?`}
         description="This will remove the cluster from the Git catalog. This action creates a pull request and cannot be undone."
@@ -1004,13 +1070,44 @@ export function ClusterDetail() {
         destructive
         loading={removing}
         extraContent={
-          <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
-            Auto-merge follows your{' '}
-            <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
-              global GitOps setting
-            </a>
-            .
-          </p>
+          <div className="space-y-3">
+            {!removePreview && !removePreviewLoading && (
+              <button
+                type="button"
+                onClick={handlePreviewRemoveCluster}
+                className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                <Eye className="h-4 w-4" />
+                Preview changes
+              </button>
+            )}
+            {removePreviewLoading && (
+              <div
+                role="status"
+                className="flex items-center gap-2 rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] p-3 text-sm text-[#0a3a5a] dark:ring-gray-700 dark:bg-gray-900 dark:text-gray-300"
+              >
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+                <span>Generating preview...</span>
+              </div>
+            )}
+            {removePreview && <DryRunPreview result={removePreview} />}
+            {removePreviewError && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200"
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <p>{removePreviewError}</p>
+              </div>
+            )}
+            <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
+              Auto-merge follows your{' '}
+              <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
+                global GitOps setting
+              </a>
+              .
+            </p>
+          </div>
         }
       />
       <DiagnoseModal
@@ -1399,6 +1496,15 @@ export function ClusterDetail() {
                   <div className="mt-4 flex items-center gap-3">
                     <button
                       type="button"
+                      onClick={handlePreviewToggles}
+                      disabled={applyingToggles || togglePreviewLoading}
+                      className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                    >
+                      {togglePreviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+                      Preview changes
+                    </button>
+                    <button
+                      type="button"
                       onClick={handleApplyToggles}
                       disabled={applyingToggles}
                       className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
@@ -1412,6 +1518,8 @@ export function ClusterDetail() {
                         setAddonToggles({ ...originalToggles });
                         setToggleError(null);
                         setToggleResult(null);
+                        setTogglePreview(null);
+                        setTogglePreviewError(null);
                       }}
                       disabled={applyingToggles}
                       className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
@@ -1419,6 +1527,14 @@ export function ClusterDetail() {
                       Discard
                     </button>
                   </div>
+                )}
+                {togglePreview && (
+                  <div className="mt-3">
+                    <DryRunPreview result={togglePreview} />
+                  </div>
+                )}
+                {togglePreviewError && (
+                  <p className="mt-2 text-sm text-red-600 dark:text-red-400">{togglePreviewError}</p>
                 )}
                 {toggleError && (
                   <p className="mt-2 text-sm text-red-600 dark:text-red-400">{toggleError}</p>
@@ -1602,6 +1718,15 @@ export function ClusterDetail() {
                       />
                       <button
                         type="button"
+                        disabled={secretPathSaving || secretPathPreviewLoading}
+                        onClick={handlePreviewSecretPath}
+                        className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-0.5 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                      >
+                        {secretPathPreviewLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Eye className="h-3 w-3" />}
+                        Preview changes
+                      </button>
+                      <button
+                        type="button"
                         disabled={secretPathSaving}
                         onClick={async () => {
                           if (!name) return;
@@ -1616,6 +1741,8 @@ export function ClusterDetail() {
                                 : { message: result?.message || 'Secret path updated' },
                             );
                             setEditingSecretPath(false);
+                            setSecretPathPreview(null);
+                            setSecretPathPreviewError(null);
                           } catch (e: unknown) {
                             setSecretPathResult({ message: e instanceof Error ? e.message : 'Failed to update' });
                           } finally {
@@ -1628,7 +1755,11 @@ export function ClusterDetail() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setEditingSecretPath(false)}
+                        onClick={() => {
+                          setEditingSecretPath(false);
+                          setSecretPathPreview(null);
+                          setSecretPathPreviewError(null);
+                        }}
                         className="text-xs text-[#3a6a8a] hover:text-[#0a2a4a] dark:text-gray-400"
                       >
                         Cancel
@@ -1666,6 +1797,14 @@ export function ClusterDetail() {
                   )}
                   {secretPathResult?.message && (
                     <p className="mt-0.5 text-xs text-teal-600 dark:text-teal-400">{secretPathResult.message}</p>
+                  )}
+                  {secretPathPreview && (
+                    <div className="mt-2">
+                      <DryRunPreview result={secretPathPreview} />
+                    </div>
+                  )}
+                  {secretPathPreviewError && (
+                    <p className="mt-1 text-xs text-red-600 dark:text-red-400">{secretPathPreviewError}</p>
                   )}
                 </div>
               </div>

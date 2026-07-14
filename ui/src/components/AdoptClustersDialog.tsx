@@ -5,6 +5,7 @@ import {
   Loader2,
   GitMerge,
   ExternalLink,
+  Eye,
 } from 'lucide-react'
 import {
   Dialog,
@@ -15,8 +16,9 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { testClusterConnection, adoptClusters, isTestClusterUnavailable } from '@/services/api'
-import type { Cluster, AdoptResult, VerifyResult } from '@/services/models'
+import type { Cluster, AdoptResult, VerifyResult, DryRunResult } from '@/services/models'
 import { CHECK_PERMISSIONS_LABEL } from '@/components/ClusterActionHints'
+import { DryRunPreview } from '@/components/AddAddonFlow'
 
 interface AdoptClustersDialogProps {
   open: boolean
@@ -43,9 +45,11 @@ export function AdoptClustersDialog({
   onDiagnose,
 }: AdoptClustersDialogProps) {
   const [verifications, setVerifications] = useState<ClusterVerification[]>([])
-  const [phase, setPhase] = useState<'verifying' | 'review' | 'adopting' | 'done'>('verifying')
+  const [phase, setPhase] = useState<'verifying' | 'review' | 'previewing' | 'preview-ready' | 'adopting' | 'done'>('verifying')
   const [adoptResults, setAdoptResults] = useState<AdoptResult[]>([])
   const [adoptError, setAdoptError] = useState<string | null>(null)
+  const [previewResult, setPreviewResult] = useState<DryRunResult | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   // Bumped every time the dialog opens a fresh verification run. The
   // verification effect below keys off THIS instead of `phase` directly:
   // `phase` starts at 'verifying' (its default), so on the very first
@@ -68,6 +72,8 @@ export function AdoptClustersDialog({
     setVerifyRunId((n) => n + 1)
     setAdoptResults([])
     setAdoptError(null)
+    setPreviewResult(null)
+    setPreviewError(null)
   }, [open, clusters])
 
   // Run verifications sequentially for each fresh run triggered above.
@@ -206,6 +212,30 @@ export function AdoptClustersDialog({
   const passedCount = verifications.filter((v) => v.state === 'passed').length
   const failedCount = verifications.filter((v) => v.state === 'failed').length
 
+  const handlePreview = useCallback(async () => {
+    const names = selectedClusters.map((v) => v.cluster.name)
+    if (names.length === 0) return
+    setPhase('previewing')
+    setPreviewError(null)
+    try {
+      const response = await adoptClusters({
+        clusters: names,
+        dry_run: true,
+      })
+      // The backend returns the preview in the first result's preview field
+      // (adopt.go returns a single aggregated DryRunResult for all clusters)
+      const preview = response.results[0]?.preview
+      if (!preview) {
+        throw new Error('No preview data returned')
+      }
+      setPreviewResult(preview)
+      setPhase('preview-ready')
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : 'Preview failed')
+      setPhase('review')
+    }
+  }, [selectedClusters])
+
   const handleConfirmAdoption = useCallback(async () => {
     const names = selectedClusters.map((v) => v.cluster.name)
     if (names.length === 0) return
@@ -241,8 +271,14 @@ export function AdoptClustersDialog({
     }
   }, [selectedClusters, onSuccess])
 
+  const handleBackToReview = useCallback(() => {
+    setPhase('review')
+    setPreviewResult(null)
+    setPreviewError(null)
+  }, [])
+
   const handleClose = useCallback(() => {
-    if (phase === 'adopting') return // prevent closing during adoption
+    if (phase === 'adopting' || phase === 'previewing') return // prevent closing during operations
     onClose()
   }, [phase, onClose])
 
@@ -254,13 +290,44 @@ export function AdoptClustersDialog({
           <DialogDescription>
             {phase === 'verifying' && 'Verifying cluster connectivity...'}
             {phase === 'review' && 'Review verification results and confirm adoption.'}
+            {phase === 'previewing' && 'Generating preview...'}
+            {phase === 'preview-ready' && 'Review the changes that will be made.'}
             {phase === 'adopting' && 'Adopting clusters...'}
             {phase === 'done' && 'Adoption complete.'}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
+          {/* Preview section */}
+          {(phase === 'previewing' || phase === 'preview-ready') && (
+            <div className="space-y-3">
+              {phase === 'previewing' && (
+                <div
+                  role="status"
+                  className="flex items-center gap-2 rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] p-3 text-sm text-[#0a3a5a] dark:ring-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                >
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+                  <span>Generating preview...</span>
+                </div>
+              )}
+              {phase === 'preview-ready' && previewResult && (
+                <DryRunPreview result={previewResult} />
+              )}
+              {previewError && (
+                <div
+                  role="alert"
+                  className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200"
+                >
+                  <XCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <p>{previewError}</p>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Verification Progress Table */}
+          {(phase === 'verifying' || phase === 'review' || phase === 'adopting' || phase === 'done') && (
+            <>
           <div className="overflow-x-auto rounded-lg ring-2 ring-[#6aade0] dark:ring-gray-700">
             <table className="w-full text-left text-sm">
               <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
@@ -437,6 +504,8 @@ export function AdoptClustersDialog({
               })}
             </div>
           )}
+            </>
+          )}
         </div>
 
         <DialogFooter className="flex-wrap gap-2">
@@ -444,23 +513,63 @@ export function AdoptClustersDialog({
             <button
               type="button"
               onClick={handleClose}
-              disabled={phase === 'adopting'}
+              disabled={phase === 'adopting' || phase === 'previewing'}
               className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               Cancel
             </button>
           )}
           {phase === 'review' && (
+            <>
+              <button
+                type="button"
+                onClick={handlePreview}
+                disabled={selectedClusters.length === 0}
+                className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                <Eye className="h-4 w-4" />
+                Preview changes
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAdoption}
+                disabled={selectedClusters.length === 0}
+                className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+              >
+                <GitMerge className="h-4 w-4" />
+                {/* F16: Don't show count for single-cluster case (implicitly selected) */}
+                {clusters.length === 1 ? 'Confirm Adoption' : `Confirm Adoption (${selectedClusters.length})`}
+              </button>
+            </>
+          )}
+          {phase === 'previewing' && (
             <button
               type="button"
-              onClick={handleConfirmAdoption}
-              disabled={selectedClusters.length === 0}
-              className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+              disabled
+              className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
             >
-              <GitMerge className="h-4 w-4" />
-              {/* F16: Don't show count for single-cluster case (implicitly selected) */}
-              {clusters.length === 1 ? 'Confirm Adoption' : `Confirm Adoption (${selectedClusters.length})`}
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Previewing...
             </button>
+          )}
+          {phase === 'preview-ready' && (
+            <>
+              <button
+                type="button"
+                onClick={handleBackToReview}
+                className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAdoption}
+                className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+              >
+                <GitMerge className="h-4 w-4" />
+                {clusters.length === 1 ? 'Confirm Adoption' : `Confirm Adoption (${selectedClusters.length})`}
+              </button>
+            </>
           )}
           {phase === 'adopting' && (
             <button
