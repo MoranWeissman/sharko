@@ -407,13 +407,16 @@ export function createAuditStream(): EventSource {
 // confirmation-required operations with HTTP 400 "confirmation required:
 // set yes: true in request body" when the body doesn't include
 // `{"yes": true}`. Include the confirmation flag in the DELETE body.
-export async function deregisterCluster(name: string, autoMerge?: boolean): Promise<RemoveClusterResult> {
+export async function deregisterCluster(name: string, autoMerge: boolean | undefined, dryRun: true): Promise<DryRunResult>
+export async function deregisterCluster(name: string, autoMerge?: boolean, dryRun?: false): Promise<RemoveClusterResult>
+export async function deregisterCluster(name: string, autoMerge?: boolean, dryRun = false): Promise<RemoveClusterResult | DryRunResult> {
   // auto_merge mirrors init/register: when set it overrides the connection's
   // PRAutoMerge default for this removal PR only; when omitted the backend
   // falls back to the connection default. Omitting the key (rather than
   // sending null) keeps the wire shape identical to the legacy call.
-  const body: { yes: boolean; auto_merge?: boolean } = { yes: true }
+  const body: { yes: boolean; auto_merge?: boolean; dry_run?: boolean } = { yes: true }
   if (autoMerge !== undefined) body.auto_merge = autoMerge
+  if (dryRun) body.dry_run = true
   const res = await fetch(`${BASE_URL}/clusters/${encodeURIComponent(name)}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -427,6 +430,9 @@ export async function deregisterCluster(name: string, autoMerge?: boolean): Prom
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error || res.statusText)
+  }
+  if (dryRun) {
+    return res.json() as Promise<DryRunResult>
   }
   return res.json() as Promise<RemoveClusterResult>
 }
@@ -442,11 +448,15 @@ export async function adoptClusters(data: { clusters: string[]; auto_merge?: boo
 
 // The unadopt handler is `POST /clusters/{name}/unadopt` and requires
 // `yes: true` in the body.
-export async function unadoptCluster(name: string): Promise<PRWriteResult> {
-  return postJSON<PRWriteResult>(
-    `/clusters/${encodeURIComponent(name)}/unadopt`,
-    { yes: true },
-  )
+export async function unadoptCluster(name: string, dryRun: true): Promise<DryRunResult>
+export async function unadoptCluster(name: string, dryRun?: false): Promise<PRWriteResult>
+export async function unadoptCluster(name: string, dryRun = false): Promise<PRWriteResult | DryRunResult> {
+  const body: { yes: boolean; dry_run?: boolean } = { yes: true }
+  if (dryRun) body.dry_run = true
+  if (dryRun) {
+    return postJSON<DryRunResult>(`/clusters/${encodeURIComponent(name)}/unadopt`, body)
+  }
+  return postJSON<PRWriteResult>(`/clusters/${encodeURIComponent(name)}/unadopt`, body)
 }
 
 // Orphan cluster Secret cleanup. The BE returns 204 No Content on
@@ -471,11 +481,20 @@ export async function deleteOrphanCluster(name: string): Promise<void> {
   // 204 No Content — nothing to parse.
 }
 
-export async function updateClusterAddons(name: string, addons: Record<string, boolean>): Promise<DeployAddonResult> {
-  return patchJSON<DeployAddonResult>(`/clusters/${encodeURIComponent(name)}`, { addons })
+export async function updateClusterAddons(name: string, addons: Record<string, boolean>, dryRun: true): Promise<DryRunResult>
+export async function updateClusterAddons(name: string, addons: Record<string, boolean>, dryRun?: false): Promise<DeployAddonResult>
+export async function updateClusterAddons(name: string, addons: Record<string, boolean>, dryRun = false): Promise<DeployAddonResult | DryRunResult> {
+  const body: { addons: Record<string, boolean>; dry_run?: boolean } = { addons }
+  if (dryRun) body.dry_run = true
+  return patchJSON<DeployAddonResult | DryRunResult>(`/clusters/${encodeURIComponent(name)}`, body)
 }
 
-export async function updateClusterSettings(name: string, settings: { secret_path?: string }): Promise<PRWriteResult> {
+export async function updateClusterSettings(name: string, settings: { secret_path?: string; dry_run: true }): Promise<DryRunResult>
+export async function updateClusterSettings(name: string, settings: { secret_path?: string; dry_run?: false }): Promise<PRWriteResult>
+export async function updateClusterSettings(name: string, settings: { secret_path?: string; dry_run?: boolean }): Promise<PRWriteResult | DryRunResult> {
+  if (settings.dry_run) {
+    return patchJSON<DryRunResult>(`/clusters/${encodeURIComponent(name)}`, settings)
+  }
   return patchJSON<PRWriteResult>(`/clusters/${encodeURIComponent(name)}`, settings)
 }
 
@@ -582,7 +601,27 @@ export async function addAddon(data: {
   return (await res.json()) as AddAddonResponse
 }
 
-export async function removeAddon(name: string): Promise<PRWriteResult> {
+export async function removeAddon(name: string, dryRun: true): Promise<DryRunResult>
+export async function removeAddon(name: string, dryRun?: false): Promise<PRWriteResult>
+export async function removeAddon(name: string, dryRun = false): Promise<PRWriteResult | DryRunResult> {
+  if (dryRun) {
+    // Dry-run: pass dry_run in body (prefer body over query for consistency)
+    const res = await fetch(`${BASE_URL}/addons/${encodeURIComponent(name)}?confirm=true`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ dry_run: true }),
+    })
+    if (res.status === 401) {
+      sessionStorage.removeItem(TOKEN_KEY)
+      window.location.reload()
+      throw new Error('Session expired')
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new Error(err.error || res.statusText)
+    }
+    return res.json() as Promise<DryRunResult>
+  }
   return deleteJSON<PRWriteResult>(`/addons/${encodeURIComponent(name)}?confirm=true`)
 }
 
@@ -590,6 +629,7 @@ export async function upgradeAddon(name: string, data: { version: string; cluste
   return postJSON<PRWriteResult>(`/addons/${encodeURIComponent(name)}/upgrade`, data)
 }
 
+// Overloads for configureAddon
 export async function configureAddon(
   name: string,
   config: {
@@ -599,14 +639,40 @@ export async function configureAddon(
     extra_helm_values?: Record<string, string>
     ignore_differences?: Record<string, unknown>[]
     additional_sources?: Record<string, unknown>[]
+    dry_run: true
   },
-) {
+): Promise<DryRunResult>
+export async function configureAddon(
+  name: string,
+  config: {
+    version?: string
+    self_heal?: boolean
+    sync_options?: string[]
+    extra_helm_values?: Record<string, string>
+    ignore_differences?: Record<string, unknown>[]
+    additional_sources?: Record<string, unknown>[]
+    dry_run?: false
+  },
+): Promise<PRWriteResult>
+export async function configureAddon(
+  name: string,
+  config: {
+    version?: string
+    self_heal?: boolean
+    sync_options?: string[]
+    extra_helm_values?: Record<string, string>
+    ignore_differences?: Record<string, unknown>[]
+    additional_sources?: Record<string, unknown>[]
+    dry_run?: boolean
+  },
+): Promise<PRWriteResult | DryRunResult> {
   // The backend handler is registered at PATCH /api/v1/addons/{name}
   // (see internal/api/router.go).
-  return patchJSON<PRWriteResult>(
-    `/addons/${encodeURIComponent(name)}`,
-    { name, ...config },
-  )
+  const body = { name, ...config }
+  if (config.dry_run) {
+    return patchJSON<DryRunResult>(`/addons/${encodeURIComponent(name)}`, body)
+  }
+  return patchJSON<PRWriteResult>(`/addons/${encodeURIComponent(name)}`, body)
 }
 
 export async function createToken(data: { name: string; role: string; expires?: string }) {
@@ -917,20 +983,47 @@ export const api = {
     fetchJSON<import('./models').AddonValuesSchemaResponse>(
       `/addons/${encodeURIComponent(addonName)}/values-schema`,
     ),
-  setAddonValues: (addonName: string, valuesYAML: string) =>
-    putJSON<import('./models').ValuesEditResult>(
+  setAddonValues: ((addonName: string, valuesYAML: string, dryRun = false) => {
+    const body: { values: string; dry_run?: boolean } = { values: valuesYAML }
+    if (dryRun) body.dry_run = true
+    if (dryRun) {
+      return putJSON<DryRunResult>(
+        `/addons/${encodeURIComponent(addonName)}/values`,
+        body,
+      )
+    }
+    return putJSON<import('./models').ValuesEditResult>(
       `/addons/${encodeURIComponent(addonName)}/values`,
-      { values: valuesYAML },
-    ),
+      body,
+    )
+  }) as {
+    (addonName: string, valuesYAML: string, dryRun: true): Promise<DryRunResult>
+    (addonName: string, valuesYAML: string, dryRun?: false): Promise<import('./models').ValuesEditResult>
+  },
   // Refresh-from-upstream uses the SAME endpoint as setAddonValues.
   // Backend ignores `values` when `refresh_from_upstream` is true,
   // fetches the chart's upstream values.yaml, runs the smart-values
   // pipeline, and overwrites the global file.
-  refreshAddonValuesFromUpstream: (addonName: string) =>
-    putJSON<import('./models').ValuesEditResult>(
+  refreshAddonValuesFromUpstream: ((addonName: string, dryRun = false) => {
+    const body: { values: string; refresh_from_upstream: boolean; dry_run?: boolean } = {
+      values: '',
+      refresh_from_upstream: true,
+    }
+    if (dryRun) body.dry_run = true
+    if (dryRun) {
+      return putJSON<DryRunResult>(
+        `/addons/${encodeURIComponent(addonName)}/values`,
+        body,
+      )
+    }
+    return putJSON<import('./models').ValuesEditResult>(
       `/addons/${encodeURIComponent(addonName)}/values`,
-      { values: '', refresh_from_upstream: true },
-    ),
+      body,
+    )
+  }) as {
+    (addonName: string, dryRun: true): Promise<DryRunResult>
+    (addonName: string, dryRun?: false): Promise<import('./models').ValuesEditResult>
+  },
   // Preview an additive merge of upstream values into the user's current
   // file. Returns a candidate body the UI shows in a diff modal; applying
   // calls setAddonValues with that body (no dedicated "apply merge"
@@ -944,11 +1037,23 @@ export const api = {
     fetchJSON<import('./models').ClusterAddonValuesResponse>(
       `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values`,
     ),
-  setClusterAddonValues: (clusterName: string, addonName: string, valuesYAML: string) =>
-    putJSON<import('./models').ValuesEditResult>(
+  setClusterAddonValues: ((clusterName: string, addonName: string, valuesYAML: string, dryRun = false) => {
+    const body: { values: string; dry_run?: boolean } = { values: valuesYAML }
+    if (dryRun) body.dry_run = true
+    if (dryRun) {
+      return putJSON<DryRunResult>(
+        `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values`,
+        body,
+      )
+    }
+    return putJSON<import('./models').ValuesEditResult>(
       `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values`,
-      { values: valuesYAML },
-    ),
+      body,
+    )
+  }) as {
+    (clusterName: string, addonName: string, valuesYAML: string, dryRun: true): Promise<DryRunResult>
+    (clusterName: string, addonName: string, valuesYAML: string, dryRun?: false): Promise<import('./models').ValuesEditResult>
+  },
 
   // Manual AI annotate. Returns 200 (AnnotateAddonValuesResponse), 422
   // (AIAnnotateBlockedResponse) when the secret guard fires, or 503 when
@@ -987,8 +1092,14 @@ export const api = {
   // Legacy `<addon>:` wrap migration. Pass `addon` to migrate a single
   // file (used by the per-addon "Migrate this file" banner button); omit
   // it to migrate every wrapped file in the repo.
-  unwrapGlobalValues: (addonName?: string) => {
-    const qs = addonName ? `?addon=${encodeURIComponent(addonName)}` : ''
+  unwrapGlobalValues: ((addonName?: string, dryRun = false) => {
+    const params = new URLSearchParams()
+    if (addonName) params.set('addon', addonName)
+    if (dryRun) params.set('dry_run', 'true')
+    const qs = params.toString()
+    if (dryRun) {
+      return postJSON<DryRunResult>(`/addons/unwrap-globals${qs ? `?${qs}` : ''}`, {})
+    }
     return postJSON<{
       migrated: number
       skipped: number
@@ -999,7 +1110,20 @@ export const api = {
       branch?: string
       merged?: boolean
       attribution_warning?: string
-    }>(`/addons/unwrap-globals${qs}`, {})
+    }>(`/addons/unwrap-globals${qs ? `?${qs}` : ''}`, {})
+  }) as {
+    (addonName: string | undefined, dryRun: true): Promise<DryRunResult>
+    (addonName?: string, dryRun?: false): Promise<{
+      migrated: number
+      skipped: number
+      files: Array<{ file: string; addon: string; status: string; message?: string }>
+      message?: string
+      pr_url?: string
+      pr_id?: number
+      branch?: string
+      merged?: boolean
+      attribution_warning?: string
+    }>
   },
 
   getAddonValuesRecentPRs: (addonName: string, limit = 5) =>
@@ -1293,9 +1417,18 @@ export const api = {
   /**
    * Update default addons via PR. Writes git file and opens (or updates)
    * a PR. Does NOT mutate the connection. Returns `{pr_url: string,
-   * pr_id: number, message?: string}`.
+   * pr_id: number, message?: string}` or DryRunResult when dry_run is true.
    */
-  putDefaultAddons: (addons: string[]) =>
-    putJSON<{ pr_url: string; pr_id: number; message?: string }>('/default-addons', { addons }),
+  putDefaultAddons: ((addons: string[], dryRun = false) => {
+    const body: { addons: string[]; dry_run?: boolean } = { addons }
+    if (dryRun) body.dry_run = true
+    if (dryRun) {
+      return putJSON<DryRunResult>('/default-addons', body)
+    }
+    return putJSON<{ pr_url: string; pr_id: number; message?: string }>('/default-addons', body)
+  }) as {
+    (addons: string[], dryRun: true): Promise<DryRunResult>
+    (addons: string[], dryRun?: false): Promise<{ pr_url: string; pr_id: number; message?: string }>
+  },
 
 }
