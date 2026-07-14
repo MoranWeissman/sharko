@@ -264,8 +264,22 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Without ?confirm=true, return a dry-run impact report.
-	if r.URL.Query().Get("confirm") != "true" {
+	// Parse optional request body for auto_merge and dry_run.
+	var reqBody struct {
+		AutoMerge *bool `json:"auto_merge,omitempty"`
+		DryRun    bool  `json:"dry_run,omitempty"`
+	}
+	if r.Body != nil && r.ContentLength > 0 {
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
+	}
+
+	// Support dry_run via query param as well (common for DELETE).
+	if r.URL.Query().Get("dry_run") == "true" {
+		reqBody.DryRun = true
+	}
+
+	// Without ?confirm=true AND not a dry-run, return a dry-run impact report.
+	if r.URL.Query().Get("confirm") != "true" && !reqBody.DryRun {
 		catalog, err := s.addonSvc.GetCatalog(ctx, git, ac)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "failed to fetch addon catalog: "+err.Error())
@@ -300,24 +314,21 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional per-request auto-merge override. The DELETE body is
-	// optional — when absent or unparseable, autoMerge stays nil and the
-	// removal PR follows the connection-level default.
-	var autoMerge *bool
-	if r.Body != nil && r.ContentLength > 0 {
-		var body struct {
-			AutoMerge *bool `json:"auto_merge,omitempty"`
-		}
-		if decErr := json.NewDecoder(r.Body).Decode(&body); decErr == nil {
-			autoMerge = body.AutoMerge
-		}
-	}
-
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
-	result, err := orch.RemoveAddon(ctx, name, autoMerge)
+	result, err := orch.RemoveAddon(ctx, orchestrator.RemoveAddonRequest{
+		Name:      name,
+		AutoMerge: reqBody.AutoMerge,
+		DryRun:    reqBody.DryRun,
+	})
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	// Dry-run: return preview without side effects.
+	if reqBody.DryRun {
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 
@@ -383,6 +394,12 @@ func (s *Server) handleConfigureAddon(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	// Dry-run: return preview without side effects.
+	if req.DryRun {
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 

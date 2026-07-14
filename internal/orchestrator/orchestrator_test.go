@@ -788,7 +788,7 @@ func TestUpdateClusterAddons(t *testing.T) {
 	orch := New(nil, defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "eu-west-1",
-		map[string]bool{"monitoring": true, "logging": true}, nil)
+		map[string]bool{"monitoring": true, "logging": true}, nil, false)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -856,7 +856,7 @@ func TestRemoveAddon(t *testing.T) {
 
 	orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 
-	result, err := orch.RemoveAddon(context.Background(), "prometheus", nil)
+	result, err := orch.RemoveAddon(context.Background(), RemoveAddonRequest{Name: "prometheus"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1153,7 +1153,7 @@ func TestUpdateClusterAddons_AutoMergeFails(t *testing.T) {
 	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
 	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "eu-west-1",
-		map[string]bool{"monitoring": true}, nil)
+		map[string]bool{"monitoring": true}, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -136,7 +136,7 @@ func TestSetClusterAddonValues_AutoMergeOverride(t *testing.T) {
 			git.files["configuration/addons-clusters-values/prod-eu.yaml"] = []byte(certManagerValuesFile)
 		},
 		func(o *Orchestrator, override *bool) (*GitResult, error) {
-			return o.SetClusterAddonValues(context.Background(), "prod-eu", "cert-manager", "replicaCount: 2\n", override)
+			return o.SetClusterAddonValues(context.Background(), "prod-eu", "cert-manager", "replicaCount: 2\n", override, false)
 		})
 }
 
@@ -178,7 +178,7 @@ func TestRemoveAddon_AutoMergeOverride(t *testing.T) {
 			git.files["configuration/addons-global-values/cert-manager.yaml"] = []byte("replicaCount: 1\n")
 		},
 		func(o *Orchestrator, override *bool) (*GitResult, error) {
-			return o.RemoveAddon(context.Background(), "cert-manager", override)
+			return o.RemoveAddon(context.Background(), RemoveAddonRequest{Name: "cert-manager", AutoMerge: override})
 		})
 }
 
@@ -210,7 +210,7 @@ func TestUpdateClusterAddons_AutoMergeOverride_Regression(t *testing.T) {
 			git.files["configuration/managed-clusters.yaml"] = []byte(managedClustersWithCertManager)
 		},
 		func(o *Orchestrator, override *bool) (*GitResult, error) {
-			res, err := o.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "", map[string]bool{"cert-manager": true}, override)
+			res, err := o.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "", map[string]bool{"cert-manager": true}, override, false)
 			if res == nil {
 				return nil, err
 			}

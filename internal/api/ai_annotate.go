@@ -179,7 +179,8 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 	result, err := orch.SetGlobalAddonValuesWithOp(
 		ctx, name, string(generated), "ai-annotate",
 		fmt.Sprintf("AI annotate values for %s@%s", chart, version),
-		nil, // no per-request override — follow the connection default
+		nil,   // no per-request override — follow the connection default
+		false, // not a dry-run
 	)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -289,7 +290,8 @@ func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) 
 	result, err := orch.SetGlobalAddonValuesWithOp(
 		ctx, name, string(updated), "ai-annotate",
 		fmt.Sprintf("Toggle AI opt-out for %s (%s)", name, optOutLabel(req.OptOut)),
-		nil, // no per-request override — follow the connection default
+		nil,   // no per-request override — follow the connection default
+		false, // not a dry-run
 	)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())

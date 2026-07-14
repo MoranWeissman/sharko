@@ -90,6 +90,7 @@ func (s *Server) handleUnwrapGlobalValues(w http.ResponseWriter, r *http.Request
 	}
 
 	scopeAddon := strings.TrimSpace(r.URL.Query().Get("addon"))
+	dryRun := r.URL.Query().Get("dry_run") == "true"
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
@@ -190,6 +191,33 @@ func (s *Server) handleUnwrapGlobalValues(w http.ResponseWriter, r *http.Request
 	if migratedCount == 0 {
 		resp.Message = "all files already unwrapped"
 		writeJSON(w, http.StatusOK, withAttributionWarning(resp, tokRes))
+		return
+	}
+
+	// Dry-run: return preview without side effects.
+	if dryRun {
+		filePreviews := []orchestrator.FilePreview{}
+		for path := range files {
+			filePreviews = append(filePreviews, orchestrator.FilePreview{Path: path, Action: "update"})
+		}
+		dryRunResult := &orchestrator.GitResult{
+			DryRun: &orchestrator.DryRunResult{
+				EffectiveAddons: []string{},
+				FilesToWrite:    filePreviews,
+				PRTitle:         fmt.Sprintf("Unwrap legacy global values (%d file(s))", migratedCount),
+				SecretsToCreate: []string{},
+			},
+		}
+		resp.PRUrl = ""
+		resp.PRID = 0
+		resp.Branch = ""
+		resp.Merged = false
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"migrated": migratedCount,
+			"skipped":  skippedCount,
+			"files":    results,
+			"dry_run":  dryRunResult.DryRun,
+		})
 		return
 	}
 

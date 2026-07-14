@@ -31,6 +31,7 @@ type DefaultAddonsResponse struct {
 // DefaultAddonsPutRequest is the JSON shape accepted by PUT /default-addons.
 type DefaultAddonsPutRequest struct {
 	Addons []string `json:"addons"`
+	DryRun bool     `json:"dry_run,omitempty"`
 }
 
 // handleGetDefaultAddons godoc
@@ -112,6 +113,23 @@ func (s *Server) handlePutDefaultAddons(w http.ResponseWriter, r *http.Request) 
 		OperationCode: "default_addons_update",
 		Title:         "Update default addons",
 		// Cluster and Addon fields are empty — this is a global operation.
+	}
+
+	// Dry-run: return preview without side effects.
+	if req.DryRun {
+		filePreviews := []orchestrator.FilePreview{
+			{Path: DefaultAddonsPath, Action: "update"},
+		}
+		dryRunResult := &orchestrator.GitResult{
+			DryRun: &orchestrator.DryRunResult{
+				EffectiveAddons: normalized,
+				FilesToWrite:    filePreviews,
+				PRTitle:         meta.Title,
+				SecretsToCreate: []string{},
+			},
+		}
+		writeJSON(w, http.StatusOK, dryRunResult)
+		return
 	}
 
 	result, err := orch.CommitFilesAsPRWithMeta(r.Context(), files, operation, meta)

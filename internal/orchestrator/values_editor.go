@@ -29,7 +29,7 @@ import (
 // The path written is `<paths.GlobalValues>/<addonName>.yaml`. The
 // content is validated as parseable YAML before any Git activity happens.
 func (o *Orchestrator) SetGlobalAddonValues(ctx context.Context, addonName, valuesYAML string, autoMerge *bool) (*GitResult, error) {
-	return o.SetGlobalAddonValuesWithOp(ctx, addonName, valuesYAML, "values-edit", "", autoMerge)
+	return o.SetGlobalAddonValuesWithOp(ctx, addonName, valuesYAML, "values-edit", "", autoMerge, false)
 }
 
 // SetGlobalAddonValuesWithOp is the tracking-aware variant of
@@ -40,7 +40,9 @@ func (o *Orchestrator) SetGlobalAddonValues(ctx context.Context, addonName, valu
 //
 // titleOverride lets callers provide a more specific PR title than the
 // default "Update global values for X" — empty string keeps the default.
-func (o *Orchestrator) SetGlobalAddonValuesWithOp(ctx context.Context, addonName, valuesYAML, opCode, titleOverride string, autoMerge *bool) (*GitResult, error) {
+//
+// dryRun, when true, returns a preview of what would be committed (no side effects).
+func (o *Orchestrator) SetGlobalAddonValuesWithOp(ctx context.Context, addonName, valuesYAML, opCode, titleOverride string, autoMerge *bool, dryRun bool) (*GitResult, error) {
 	if addonName == "" {
 		return nil, fmt.Errorf("addon name is required")
 	}
@@ -54,13 +56,26 @@ func (o *Orchestrator) SetGlobalAddonValuesWithOp(ctx context.Context, addonName
 	}
 	filePath := path.Join(dir, addonName+".yaml")
 
-	files := map[string][]byte{filePath: []byte(valuesYAML)}
-	op := fmt.Sprintf("update global values for %s", addonName)
-
 	title := titleOverride
 	if title == "" {
 		title = fmt.Sprintf("Update global values for %s", addonName)
 	}
+
+	// Dry-run exit point: return a preview with no side effects.
+	if dryRun {
+		return &GitResult{
+			DryRun: &DryRunResult{
+				EffectiveAddons: []string{addonName},
+				FilesToWrite:    []FilePreview{{Path: filePath, Action: o.fileAction(ctx, filePath)}},
+				PRTitle:         title,
+				SecretsToCreate: []string{},
+			},
+		}, nil
+	}
+
+	files := map[string][]byte{filePath: []byte(valuesYAML)}
+	op := fmt.Sprintf("update global values for %s", addonName)
+
 	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, op,
 		o.prMeta(autoMerge, opCode, title, "", addonName))
 	if err != nil {
@@ -79,7 +94,9 @@ func (o *Orchestrator) SetGlobalAddonValuesWithOp(ctx context.Context, addonName
 // not the whole file. Pass an empty string to remove the addon's overrides
 // (the addon section is deleted from the file). The result of the merge is
 // validated before write.
-func (o *Orchestrator) SetClusterAddonValues(ctx context.Context, clusterName, addonName, overridesYAML string, autoMerge *bool) (*GitResult, error) {
+//
+// dryRun, when true, returns a preview of what would be committed (no side effects).
+func (o *Orchestrator) SetClusterAddonValues(ctx context.Context, clusterName, addonName, overridesYAML string, autoMerge *bool, dryRun bool) (*GitResult, error) {
 	if clusterName == "" {
 		return nil, fmt.Errorf("cluster name is required")
 	}
@@ -105,6 +122,18 @@ func (o *Orchestrator) SetClusterAddonValues(ctx context.Context, clusterName, a
 		dir = "configuration/addons-clusters-values"
 	}
 	filePath := path.Join(dir, clusterName+".yaml")
+
+	// Dry-run exit point: return a preview with no side effects.
+	if dryRun {
+		return &GitResult{
+			DryRun: &DryRunResult{
+				EffectiveAddons: []string{addonName},
+				FilesToWrite:    []FilePreview{{Path: filePath, Action: o.fileAction(ctx, filePath)}},
+				PRTitle:         fmt.Sprintf("Update %s overrides on cluster %s", addonName, clusterName),
+				SecretsToCreate: []string{},
+			},
+		}, nil
+	}
 
 	// Read the current cluster file (if present); fall back to an empty map.
 	current, err := o.git.GetFileContent(ctx, filePath, o.gitops.BaseBranch)

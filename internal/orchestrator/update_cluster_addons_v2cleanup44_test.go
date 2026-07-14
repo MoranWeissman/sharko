@@ -68,7 +68,7 @@ func TestUpdateClusterAddons_Disable_WritesManagedClusters(t *testing.T) {
 
 	orch := setupUpdateClusterAddonsOrch(git)
 
-	result, err := orch.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "", map[string]bool{"keda": false}, nil)
+	result, err := orch.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "", map[string]bool{"keda": false}, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestUpdateClusterAddons_Enable_WritesManagedClusters(t *testing.T) {
 
 	orch := setupUpdateClusterAddonsOrch(git)
 
-	result, err := orch.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "", map[string]bool{"foo": true}, nil)
+	result, err := orch.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "", map[string]bool{"foo": true}, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestUpdateClusterAddons_MultiCluster_OtherClusterUntouched(t *testing.T) {
 
 	orch := setupUpdateClusterAddonsOrch(git)
 
-	_, err := orch.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "", map[string]bool{"keda": false}, nil)
+	_, err := orch.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "", map[string]bool{"keda": false}, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestUpdateClusterAddons_MissingManagedClusters_FailsBeforePR(t *testing.T) 
 
 	orch := setupUpdateClusterAddonsOrch(git)
 
-	result, err := orch.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "", map[string]bool{"keda": false}, nil)
+	result, err := orch.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "", map[string]bool{"keda": false}, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected hard error (should return a result with failed status): %v", err)
 	}
@@ -280,7 +280,7 @@ func TestUpdateClusterAddons_EmptyAddonsMap_NoManagedClustersWrite(t *testing.T)
 
 	orch := setupUpdateClusterAddonsOrch(git)
 
-	result, err := orch.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "", map[string]bool{}, nil)
+	result, err := orch.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "", map[string]bool{}, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestUpdateClusterAddons_ValuesFileAlwaysWritten(t *testing.T) {
 
 	orch := setupUpdateClusterAddonsOrch(git)
 
-	result, err := orch.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "", map[string]bool{"keda": false}, nil)
+	result, err := orch.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "", map[string]bool{"keda": false}, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
