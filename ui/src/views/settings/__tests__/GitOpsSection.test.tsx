@@ -34,7 +34,7 @@ vi.mock('@/services/api', () => ({
   api: {
     getAddonCatalog: () => getAddonCatalogMock(),
     getDefaultAddons: () => getDefaultAddonsMock(),
-    putDefaultAddons: (addons: string[]) => putDefaultAddonsMock(addons),
+    putDefaultAddons: (addons: string[], dryRun?: boolean) => putDefaultAddonsMock(addons, dryRun),
     updateConnection: (name: string, payload: unknown) => updateConnectionMock(name, payload),
     health: () => healthMock(),
   },
@@ -141,7 +141,7 @@ describe('GitOpsSection — Default Addons (V3-P2.2)', () => {
 
     await user.click(screen.getByText('Save default addons'))
 
-    await waitFor(() => expect(putDefaultAddonsMock).toHaveBeenCalledWith(['cert-manager', 'ingress-nginx']))
+    await waitFor(() => expect(putDefaultAddonsMock).toHaveBeenCalledWith(['cert-manager', 'ingress-nginx'], undefined))
     await waitFor(() => expect(screen.getByText('PR #123')).toBeInTheDocument())
     expect(screen.getByText('PR #123').closest('a')).toHaveAttribute(
       'href',
@@ -176,5 +176,31 @@ describe('GitOpsSection — Default Addons (V3-P2.2)', () => {
 
     await waitFor(() => expect(putDefaultAddonsMock).toHaveBeenCalled())
     expect(updateConnectionMock).not.toHaveBeenCalled()
+  })
+
+  // V3-TX-A3 — Preview on every PR-opening operation. Surface 8: Save Default Addons.
+  it('"Preview changes" calls putDefaultAddons(dry_run) and renders the dry-run without saving', async () => {
+    putDefaultAddonsMock.mockResolvedValue({
+      pr_title: 'Update default addons',
+      files_to_write: [
+        { path: 'configuration/default-addons.yaml', action: 'update' },
+      ],
+    })
+    const user = userEvent.setup()
+    render(<GitOpsSection />)
+
+    await waitFor(() => expect(screen.getByText('Preview changes')).toBeInTheDocument())
+
+    await user.click(screen.getByText('Preview changes'))
+
+    // Dry-run call carries dry_run: true.
+    await waitFor(() =>
+      expect(putDefaultAddonsMock).toHaveBeenCalledWith(['cert-manager', 'ingress-nginx'], true),
+    )
+    // The returned diff renders via the shared DryRunPreview.
+    await waitFor(() => expect(screen.getByText('Update default addons')).toBeInTheDocument())
+    expect(screen.getByText('configuration/default-addons.yaml')).toBeInTheDocument()
+    // Preview is a courtesy — no PR was opened (no PR link yet).
+    expect(screen.queryByText('PR #123')).not.toBeInTheDocument()
   })
 })

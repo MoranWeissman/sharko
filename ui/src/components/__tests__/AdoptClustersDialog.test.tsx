@@ -414,4 +414,73 @@ describe('AdoptClustersDialog', () => {
       expect(prLink).toHaveAttribute('href', 'https://example.test/pr/1')
     })
   })
+
+  // V3-TX-A3 — Preview on every PR-opening operation. Surface 1: Adopt.
+  describe('V3-TX-A3: Preview changes', () => {
+    it('Preview calls adoptClusters(dry_run) and renders the diff without adopting', async () => {
+      vi.mocked(api.isTestClusterUnavailable).mockReturnValue(false)
+      vi.mocked(api.testClusterConnection).mockResolvedValue({
+        success: true,
+        stage: 'connectivity',
+        duration_ms: 100,
+        reachable: true,
+        server_version: '1.29.3',
+      })
+
+      // Dry-run returns the aggregated preview in the first result.
+      vi.mocked(api.adoptClusters).mockResolvedValue({
+        results: [
+          {
+            name: 'prod-cluster',
+            status: 'success',
+            preview: {
+              pr_title: 'Adopt cluster prod-cluster',
+              files_to_write: [
+                { path: 'configuration/managed-clusters.yaml', action: 'update' },
+                { path: 'configuration/clusters/prod-cluster.yaml', action: 'create' },
+              ],
+            },
+          },
+        ],
+      } as never)
+
+      render(
+        <AdoptClustersDialog
+          open={true}
+          onClose={mockOnClose}
+          clusters={[mockCluster1]}
+          onSuccess={mockOnSuccess}
+          onDiagnose={mockOnDiagnose}
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Reachable')).toBeInTheDocument()
+      })
+
+      // Click Preview changes.
+      await userEvent.click(screen.getByRole('button', { name: /preview changes/i }))
+
+      // Dry-run call carries dry_run: true.
+      await waitFor(() => {
+        expect(api.adoptClusters).toHaveBeenCalledWith({
+          clusters: ['prod-cluster'],
+          dry_run: true,
+        })
+      })
+
+      // Preview rendered via the shared DryRunPreview.
+      await waitFor(() =>
+        expect(screen.getByText('Adopt cluster prod-cluster')).toBeInTheDocument(),
+      )
+      expect(
+        screen.getByText('configuration/clusters/prod-cluster.yaml'),
+      ).toBeInTheDocument()
+
+      // Preview must NOT have opened the PR — onSuccess is not called and the
+      // real (non-dry-run) adopt was never invoked.
+      expect(mockOnSuccess).not.toHaveBeenCalled()
+      expect(api.adoptClusters).not.toHaveBeenCalledWith({ clusters: ['prod-cluster'] })
+    })
+  })
 })

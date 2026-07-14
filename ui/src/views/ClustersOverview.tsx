@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { api, registerCluster, testClusterConnection, unadoptCluster, deleteOrphanCluster, isTestClusterUnavailable, getSystemCapabilities, type PRWriteResult } from '@/services/api';
 import { PRLifecycleProgress, extractPR } from '@/components/PRFeedback';
+import { DryRunPreview } from '@/components/AddAddonFlow';
 import type { TestClusterUnavailable } from '@/services/api';
 import type {
   Cluster,
@@ -219,6 +220,9 @@ export function ClustersOverview() {
   // Un-adopt result: a PR-bearing result (clickable PRResultBanner), a plain
   // success message (no PR), or an error (V2-cleanup-24).
   const [unadoptResult, setUnadoptResult] = useState<{ pr?: PRWriteResult; success?: string; error?: string } | null>(null);
+  const [unadoptPreview, setUnadoptPreview] = useState<DryRunResult | null>(null);
+  const [unadoptPreviewLoading, setUnadoptPreviewLoading] = useState(false);
+  const [unadoptPreviewError, setUnadoptPreviewError] = useState<string | null>(null);
 
   // ArgoCD unreachable detection
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
@@ -688,6 +692,20 @@ export function ClustersOverview() {
   const handleAdoptSuccess = useCallback(() => {
     void fetchData();
   }, [fetchData]);
+
+  const handlePreviewUnadopt = useCallback(async () => {
+    if (!unadoptTarget) return;
+    setUnadoptPreviewLoading(true);
+    setUnadoptPreviewError(null);
+    try {
+      const result = await unadoptCluster(unadoptTarget, true);
+      setUnadoptPreview(result);
+    } catch (err) {
+      setUnadoptPreviewError(err instanceof Error ? err.message : 'Failed to generate preview');
+    } finally {
+      setUnadoptPreviewLoading(false);
+    }
+  }, [unadoptTarget]);
 
   const handleUnadopt = useCallback(async () => {
     if (!unadoptTarget) return;
@@ -2157,7 +2175,11 @@ export function ClustersOverview() {
       {/* Un-adopt Confirmation Modal */}
       <ConfirmationModal
         open={unadoptTarget !== null}
-        onClose={() => setUnadoptTarget(null)}
+        onClose={() => {
+          setUnadoptTarget(null);
+          setUnadoptPreview(null);
+          setUnadoptPreviewError(null);
+        }}
         onConfirm={handleUnadopt}
         title="Un-adopt Cluster"
         description={`This will remove "${unadoptTarget}" from Sharko management. The ArgoCD connection will remain, but Sharko will no longer manage addons for this cluster.`}
@@ -2165,6 +2187,39 @@ export function ClustersOverview() {
         typeToConfirm={unadoptTarget ?? ''}
         destructive
         loading={unadoptLoading}
+        extraContent={
+          <div className="space-y-3">
+            {!unadoptPreview && !unadoptPreviewLoading && (
+              <button
+                type="button"
+                onClick={handlePreviewUnadopt}
+                className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                <Eye className="h-4 w-4" />
+                Preview changes
+              </button>
+            )}
+            {unadoptPreviewLoading && (
+              <div
+                role="status"
+                className="flex items-center gap-2 rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] p-3 text-sm text-[#0a3a5a] dark:ring-gray-700 dark:bg-gray-900 dark:text-gray-300"
+              >
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+                <span>Generating preview...</span>
+              </div>
+            )}
+            {unadoptPreview && <DryRunPreview result={unadoptPreview} />}
+            {unadoptPreviewError && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200"
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <p>{unadoptPreviewError}</p>
+              </div>
+            )}
+          </div>
+        }
       />
 
       {/* Orphan Delete Confirmation Modal */}

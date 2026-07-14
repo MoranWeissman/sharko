@@ -84,6 +84,47 @@ describe('AddonDetail — remove surfaces its PR (V2-cleanup-24 defect 2.1)', ()
     vi.clearAllMocks()
   })
 
+  // V3-TX-A3 — Preview on every PR-opening operation. Surface 4: Remove Addon.
+  it('Preview changes calls removeAddon(dry-run) and renders the deletions without removing', async () => {
+    mockRemoveAddon.mockImplementation((_name: string, dryRun?: boolean) => {
+      if (dryRun) {
+        return Promise.resolve({
+          pr_title: 'Remove addon ingress-nginx',
+          files_to_write: [
+            { path: 'configuration/addons-catalog.yaml', action: 'update' },
+            { path: 'configuration/addons-global-values/ingress-nginx.yaml', action: 'delete' },
+          ],
+        })
+      }
+      return Promise.resolve({ pr_url: 'https://github.com/example/repo/pull/99', pr_id: 99, merged: false })
+    })
+
+    renderDetail()
+    await waitFor(() =>
+      expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThanOrEqual(1),
+    )
+
+    // Open the remove modal (header Remove button).
+    const removeButtons = await screen.findAllByRole('button', { name: /^Remove$/i })
+    fireEvent.click(removeButtons[0])
+
+    // Click Preview changes inside the modal.
+    const previewBtn = await screen.findByRole('button', { name: /preview changes/i })
+    fireEvent.click(previewBtn)
+
+    await waitFor(() => expect(mockRemoveAddon).toHaveBeenCalledWith('ingress-nginx', true))
+    // The deletion (red `-`) path is the whole point of a destructive preview.
+    await waitFor(() =>
+      expect(
+        screen.getByText('configuration/addons-global-values/ingress-nginx.yaml'),
+      ).toBeInTheDocument(),
+    )
+    expect(screen.getByText('Remove addon ingress-nginx')).toBeInTheDocument()
+    // Preview is a courtesy — the real (non-dry-run) removal was NOT called.
+    expect(mockRemoveAddon).not.toHaveBeenCalledWith('ingress-nginx')
+    expect(mockNavigate).not.toHaveBeenCalledWith('/addons')
+  })
+
   it('shows the open-PR result and does NOT navigate away', async () => {
     mockRemoveAddon.mockResolvedValue({
       pr_url: 'https://github.com/example/repo/pull/77',
