@@ -1172,6 +1172,7 @@ export type CredsSource = 'inline-kubeconfig' | 'secret-kubeconfig' | 'eks-token
 export interface DryRunFileEntry {
   path: string
   action: 'create' | 'update' | 'delete'
+  diff?: string
 }
 
 // The Go DryRunResult struct serializes its slice fields as
