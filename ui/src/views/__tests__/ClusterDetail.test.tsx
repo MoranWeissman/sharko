@@ -903,41 +903,61 @@ describe('ClusterDetail', () => {
       });
     });
 
-    // V2-cleanup-91.1/F1: removal now surfaces its PR the same way every
-    // other write flow does — a persistent on-page PRResultBanner with a
-    // clickable "View PR" link — instead of a transient toast. This holds
-    // for BOTH the auto-merge (merged) and manual (open PR) paths.
-    it('merged: shows a persistent merged-PR banner with a clickable View-PR link', async () => {
+    // V3-D5: successful removal (both auto-merge and manual) navigates to
+    // /clusters with the removalPR in router state — ClustersOverview shows
+    // it as a dismissible note. Only failure stays on the detail page.
+    it('merged: navigates to /clusters with removalPR state', async () => {
       mockDeregisterCluster.mockResolvedValue({
         git: { merged: true, pr_id: 7, pr_url: 'https://github.com/example/repo/pull/7' },
       });
       await openRemoveModal();
       fireEvent.click(screen.getByRole('button', { name: /^Remove$/i }));
 
-      // Persistent banner (not a transient toast) shows the merged outcome
-      // with a clickable link to the PR.
-      const link = await screen.findByRole('link', { name: /View PR #7 on GitHub/i });
-      expect(link).toHaveAttribute('href', 'https://github.com/example/repo/pull/7');
-      expect(screen.getByText(/PR merged/i)).toBeInTheDocument();
-
-      // F1 keeps the user on the page so the banner + link survive; it does
-      // not auto-navigate away mid-removal.
-      expect(mockNavigate).not.toHaveBeenCalledWith('/clusters');
+      await waitFor(() => {
+        expect(mockNavigate).toHaveBeenCalledWith('/clusters', {
+          state: {
+            removalPR: {
+              cluster: 'prod-eu',
+              pr_url: 'https://github.com/example/repo/pull/7',
+              pr_id: 7,
+              merged: true,
+            },
+          },
+        });
+      });
     });
 
-    it('open PR: shows a persistent open-PR banner with a clickable View-PR link, stays on page', async () => {
+    it('open PR: navigates to /clusters with removalPR state', async () => {
       mockDeregisterCluster.mockResolvedValue({
         git: { merged: false, pr_id: 12, pr_url: 'https://github.com/example/repo/pull/12' },
       });
       await openRemoveModal();
       fireEvent.click(screen.getByRole('button', { name: /^Remove$/i }));
 
-      const link = await screen.findByRole('link', { name: /View PR #12 on GitHub/i });
-      expect(link).toHaveAttribute('href', 'https://github.com/example/repo/pull/12');
-      expect(screen.getByText(/PR opened/i)).toBeInTheDocument();
+      await waitFor(() => {
+        expect(mockNavigate).toHaveBeenCalledWith('/clusters', {
+          state: {
+            removalPR: {
+              cluster: 'prod-eu',
+              pr_url: 'https://github.com/example/repo/pull/12',
+              pr_id: 12,
+              merged: false,
+            },
+          },
+        });
+      });
+    });
 
-      // Manual path must NOT navigate away — the cluster is still listed.
-      expect(mockNavigate).not.toHaveBeenCalledWith('/clusters');
+    it('failure: stays on the detail page and shows the error', async () => {
+      mockDeregisterCluster.mockRejectedValue(new Error('Network error'));
+      await openRemoveModal();
+      fireEvent.click(screen.getByRole('button', { name: /^Remove$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Network error/i)).toBeInTheDocument();
+      });
+      // Must NOT navigate away on failure.
+      expect(mockNavigate).not.toHaveBeenCalled();
     });
   });
 

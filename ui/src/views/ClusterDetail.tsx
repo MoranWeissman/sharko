@@ -448,9 +448,6 @@ export function ClusterDetail() {
     setConfigFetched(false);
   }, []);
 
-  // F1 (V2-cleanup-91.1): cluster removal PR transparency — state for the
-  // persistent on-page PR banner/progress after the modal closes.
-  const [removalPRResult, setRemovalPRResult] = useState<PRWriteResult | null>(null);
 
   const handlePreviewRemoveCluster = useCallback(async () => {
     if (!name) return;
@@ -478,28 +475,28 @@ export function ClusterDetail() {
       const git = result?.git ?? null;
       const merged = git?.merged ?? false;
 
-      // F1: surface the PR (both paths) via a persistent PRResultBanner —
-      // the same clickable-link experience every other write flow gives —
-      // instead of a transient toast. We deliberately keep the user on the
-      // page so the banner (and its "View PR" link) survives; the "Back to
-      // Clusters" control is one click away. This also honours the confirm
-      // modal's promise that removal opens a pull request.
+      // V3-D5: on successful removal navigate to Clusters list with the removal
+      // PR in router state — the Clusters page shows it as a dismissible note.
+      // The detail page is soon-dead for auto-merge, and for manual the cluster
+      // stays in the list with its open-PR badge, so better to land where the
+      // action lives. On failure: stay on the page + show the error (unchanged).
       setRemoveModalOpen(false);
       setRemoving(false);
-      setRemovalPRResult(git);
-
-      // Manual path: the cluster stays listed until the PR merges, so refresh
-      // to pick up its new open PR indicator. Auto-merge path: the cluster is
-      // gone from Git — leave the terminal "PR merged — cluster removed"
-      // banner up and don't refetch (it would 404).
-      if (!merged) {
-        void fetchData(true);
-      }
+      navigate('/clusters', {
+        state: {
+          removalPR: {
+            cluster: name,
+            pr_url: git?.pr_url,
+            pr_id: git?.pr_id,
+            merged: merged,
+          },
+        },
+      });
     } catch (e: unknown) {
       setRemoveError(e instanceof Error ? e.message : 'Failed to remove cluster');
       setRemoving(false);
     }
-  }, [name, fetchData]);
+  }, [name, navigate]);
 
   const hasToggleChanges = useMemo(() => {
     return Object.keys(addonToggles).some((k) => addonToggles[k] !== originalToggles[k]);
@@ -1128,15 +1125,6 @@ export function ClusterDetail() {
       />
       {removeError && (
         <p className="text-sm text-red-600 dark:text-red-400">{removeError}</p>
-      )}
-      {removalPRResult && (
-        <div className="mb-4">
-          <PRResultBanner
-            result={removalPRResult}
-            mergedMessage={`PR merged — cluster "${name}" removed`}
-            openMessage={`PR opened — cluster "${name}" removes once it merges`}
-          />
-        </div>
       )}
 
       {/* Vitals ribbon — persistent across every section (V2-cleanup-78.1).
