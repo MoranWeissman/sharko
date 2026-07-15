@@ -1,20 +1,21 @@
 import { describe, it, expect } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { DryRunPreview } from '@/components/AddAddonFlow'
 import type { DryRunResult } from '@/services/models'
 
 /*
- * V3-D2+D3 — Per-file diff rendering in DryRunPreview.
+ * V3-D4 — Per-action rendering in DryRunPreview.
  *
- * Each file with a `diff` field becomes expandable: the header row shows
- * the action marker + path (unchanged), and clicking it expands a line-by-line
- * diff below with added lines green, removed lines red. Files without a diff
- * render exactly as before (no regression). Collapsed by default. Secret
- * values arrive as `<redacted>` from the server and render verbatim.
+ * create → 'new file' label, no content dump.
+ * delete → 'removed' label, no content dump.
+ * update → actual line-by-line diff shown inline and visible by default
+ *          (green added / red removed, <redacted> verbatim).
+ * Dumping a whole new/removed file as +/- lines was noise, and the
+ * collapsed-by-default chevron made the feature look like it did nothing.
  */
 
-describe('DryRunPreview — per-file diff rendering (V3-D2+D3)', () => {
-  it('a file WITH a diff renders an expand control; after expanding, added/removed lines appear with correct colors', () => {
+describe('DryRunPreview — per-action rendering (V3-D4)', () => {
+  it('an UPDATE file shows its diff inline and visible immediately (no click needed)', () => {
     const result: DryRunResult = {
       pr_title: 'Update ingress-nginx config',
       files_to_write: [
@@ -35,22 +36,15 @@ describe('DryRunPreview — per-file diff rendering (V3-D2+D3)', () => {
     // The marker is amber for 'update'.
     expect(screen.getByText('~')).toBeInTheDocument()
 
-    // The diff body is NOT visible by default (collapsed).
-    expect(screen.queryByText('host: db.example.com')).not.toBeInTheDocument()
-
-    // Click the expand control (the button containing the path).
-    const expandBtn = screen.getByRole('button', { expanded: false })
-    fireEvent.click(expandBtn)
-
-    // The diff body now renders, with the added line visible.
+    // The diff body is VISIBLE immediately (no expand control, no click needed).
     expect(screen.getByText(/\+\s+host: db\.example\.com/)).toBeInTheDocument()
     // The removed line (password: <redacted>) is also present.
     expect(screen.getByText(/-\s+password: <redacted>/)).toBeInTheDocument()
     // The added password line.
     expect(screen.getByText(/\+\s+password: <redacted>/)).toBeInTheDocument()
 
-    // The expand button is now marked expanded.
-    expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument()
+    // No expand button exists.
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
   it('added lines get the green class, removed lines the red class', () => {
@@ -67,9 +61,7 @@ describe('DryRunPreview — per-file diff rendering (V3-D2+D3)', () => {
 
     const { container } = render(<DryRunPreview result={result} />)
 
-    // Expand the diff.
-    fireEvent.click(screen.getByRole('button', { expanded: false }))
-
+    // The diff is visible immediately (no expand step).
     // The added line should have the green class.
     const addedLine = container.querySelector('.text-green-600')
     expect(addedLine).toBeInTheDocument()
@@ -81,7 +73,7 @@ describe('DryRunPreview — per-file diff rendering (V3-D2+D3)', () => {
     expect(removedLine?.textContent).toContain('-legacyFlag: false')
   })
 
-  it('<redacted> in a diff renders verbatim (present in the DOM after expand)', () => {
+  it('<redacted> in a diff renders verbatim (visible immediately)', () => {
     const result: DryRunResult = {
       pr_title: 'Rotate secret',
       files_to_write: [
@@ -95,24 +87,72 @@ describe('DryRunPreview — per-file diff rendering (V3-D2+D3)', () => {
 
     render(<DryRunPreview result={result} />)
 
-    // Before expand, <redacted> is not visible.
-    expect(screen.queryByText(/<redacted>/)).not.toBeInTheDocument()
-
-    // Expand the diff.
-    fireEvent.click(screen.getByRole('button', { expanded: false }))
-
-    // <redacted> appears verbatim in both lines (removed and added).
+    // <redacted> appears verbatim in both lines (removed and added), visible immediately.
     const redactedElements = screen.getAllByText(/<redacted>/)
     expect(redactedElements.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('a file entry WITHOUT a diff renders the plain one-line row and NO expand control (no regression)', () => {
+  it('a CREATE entry shows the "new file" label and no content dump', () => {
     const result: DryRunResult = {
       pr_title: 'Create new file',
       files_to_write: [
         {
           path: 'new-addon.yaml',
           action: 'create',
+          diff: 'name: test\nversion: 1.0.0\n# ... 50 more lines of boilerplate',
+        },
+      ],
+    }
+
+    render(<DryRunPreview result={result} />)
+
+    // The file row is present with the create marker, path, and "new file" label.
+    expect(screen.getByText('new-addon.yaml')).toBeInTheDocument()
+    expect(screen.getByText('+')).toBeInTheDocument()
+    expect(screen.getByText('(new file)')).toBeInTheDocument()
+
+    // The diff content is NOT rendered (no full-content dump).
+    expect(screen.queryByText(/name: test/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/version: 1\.0\.0/)).not.toBeInTheDocument()
+
+    // No expand control is rendered (no button).
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('a DELETE entry shows the "removed" label and no content dump', () => {
+    const result: DryRunResult = {
+      pr_title: 'Remove deprecated addon',
+      files_to_write: [
+        {
+          path: 'old-addon.yaml',
+          action: 'delete',
+          diff: '- name: old-addon\n- version: 0.5.0\n- # ... entire removed file',
+        },
+      ],
+    }
+
+    render(<DryRunPreview result={result} />)
+
+    // The file row is present with the delete marker, path, and "removed" label.
+    expect(screen.getByText('old-addon.yaml')).toBeInTheDocument()
+    expect(screen.getByText('-')).toBeInTheDocument()
+    expect(screen.getByText('(removed)')).toBeInTheDocument()
+
+    // The diff content is NOT rendered (no full-content dump).
+    expect(screen.queryByText(/name: old-addon/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/version: 0\.5\.0/)).not.toBeInTheDocument()
+
+    // No expand control is rendered (no button).
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('an update WITHOUT a diff renders a plain row (marker + path, no body, no crash)', () => {
+    const result: DryRunResult = {
+      pr_title: 'Update config',
+      files_to_write: [
+        {
+          path: 'app.yaml',
+          action: 'update',
           // No `diff` field — the backend may omit it for non-content ops.
         },
       ],
@@ -120,53 +160,28 @@ describe('DryRunPreview — per-file diff rendering (V3-D2+D3)', () => {
 
     render(<DryRunPreview result={result} />)
 
-    // The file row is present with the create marker and path.
-    expect(screen.getByText('new-addon.yaml')).toBeInTheDocument()
-    expect(screen.getByText('+')).toBeInTheDocument()
+    // The file row is present with the update marker and path.
+    expect(screen.getByText('app.yaml')).toBeInTheDocument()
+    expect(screen.getByText('~')).toBeInTheDocument()
 
-    // No expand control is rendered (no button).
+    // No diff body is rendered (the file had no diff field).
+    // The DOM should not crash or show an error; the row is just the marker + path.
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
-  it('collapsed by default: the diff body is not visible until expanded', () => {
+  it('multi-file op: an update + a delete renders the update diff inline AND the delete label (no deleted content)', () => {
     const result: DryRunResult = {
-      pr_title: 'Update config',
+      pr_title: 'Update one, remove one',
       files_to_write: [
         {
-          path: 'app.yaml',
+          path: 'updated.yaml',
           action: 'update',
-          diff: '+newKey: value\n oldKey: oldValue',
-        },
-      ],
-    }
-
-    render(<DryRunPreview result={result} />)
-
-    // The file row is present.
-    expect(screen.getByText('app.yaml')).toBeInTheDocument()
-    // The diff body is NOT visible (collapsed by default).
-    expect(screen.queryByText('newKey: value')).not.toBeInTheDocument()
-
-    // Expand the diff.
-    fireEvent.click(screen.getByRole('button', { expanded: false }))
-
-    // The diff body now renders.
-    expect(screen.getByText(/\+newKey: value/)).toBeInTheDocument()
-  })
-
-  it('multiple files with diffs each expand independently', () => {
-    const result: DryRunResult = {
-      pr_title: 'Multi-file update',
-      files_to_write: [
-        {
-          path: 'file1.yaml',
-          action: 'update',
-          diff: '+line1',
+          diff: '+newFeature: enabled',
         },
         {
-          path: 'file2.yaml',
-          action: 'update',
-          diff: '+line2',
+          path: 'removed.yaml',
+          action: 'delete',
+          diff: '- # Entire removed file content here...',
         },
       ],
     }
@@ -174,20 +189,16 @@ describe('DryRunPreview — per-file diff rendering (V3-D2+D3)', () => {
     render(<DryRunPreview result={result} />)
 
     // Both files are present.
-    expect(screen.getByText('file1.yaml')).toBeInTheDocument()
-    expect(screen.getByText('file2.yaml')).toBeInTheDocument()
+    expect(screen.getByText('updated.yaml')).toBeInTheDocument()
+    expect(screen.getByText('removed.yaml')).toBeInTheDocument()
 
-    // Neither diff is visible by default.
-    expect(screen.queryByText('line1')).not.toBeInTheDocument()
-    expect(screen.queryByText('line2')).not.toBeInTheDocument()
+    // The update's diff is visible immediately.
+    expect(screen.getByText(/\+newFeature: enabled/)).toBeInTheDocument()
 
-    // Expand file1 only.
-    const buttons = screen.getAllByRole('button', { expanded: false })
-    fireEvent.click(buttons[0])
+    // The delete label is visible.
+    expect(screen.getByText('(removed)')).toBeInTheDocument()
 
-    // file1's diff is visible.
-    expect(screen.getByText(/\+line1/)).toBeInTheDocument()
-    // file2's diff is NOT visible (still collapsed).
-    expect(screen.queryByText('line2')).not.toBeInTheDocument()
+    // The deleted file's content is NOT rendered.
+    expect(screen.queryByText(/Entire removed file content here/)).not.toBeInTheDocument()
   })
 })
