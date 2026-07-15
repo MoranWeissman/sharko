@@ -5,11 +5,13 @@ import { StrictMode } from 'react';
 import { ClustersOverview } from '@/views/ClustersOverview';
 
 const mockNavigate = vi.fn();
+const mockLocationState: { state?: Record<string, unknown> } = {};
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
   return {
     ...actual,
     useNavigate: () => mockNavigate,
+    useLocation: () => ({ state: mockLocationState.state }),
   };
 });
 
@@ -98,6 +100,7 @@ function renderView() {
 describe('ClustersOverview', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockLocationState.state = undefined;
     mockGetClusters.mockResolvedValue(clustersResponse);
     mockHealth.mockResolvedValue({
       status: 'healthy',
@@ -484,5 +487,105 @@ describe('ClustersOverview', () => {
     // Only the failed cluster should remain
     expect(screen.queryByText('prod-eu')).not.toBeInTheDocument();
     expect(screen.getByText('staging-us')).toBeInTheDocument();
+  });
+
+  // V3-D5: cluster removal PR note carried via router state after a successful
+  // removal — shows as a dismissible banner, clears state so refresh drops it.
+  describe('V3-D5: removal PR note from router state', () => {
+    beforeEach(() => {
+      mockGetClusters.mockResolvedValue(clustersResponse);
+      mockHealth.mockResolvedValue({ cluster_test_available: true });
+    });
+
+    it('renders dismissible note when removalPR state is present', async () => {
+      mockLocationState.state = {
+        removalPR: {
+          cluster: 'prod-eu',
+          pr_url: 'https://github.com/example/repo/pull/42',
+          pr_id: 42,
+          merged: false,
+        },
+      };
+
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText(/Removal PR opened for "prod-eu"/i)).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: /View PR #42 on GitHub/i })).toHaveAttribute(
+          'href',
+          'https://github.com/example/repo/pull/42',
+        );
+      });
+    });
+
+    it('clears router state after reading removalPR', async () => {
+      mockLocationState.state = {
+        removalPR: {
+          cluster: 'prod-eu',
+          pr_url: 'https://github.com/example/repo/pull/42',
+          pr_id: 42,
+          merged: false,
+        },
+      };
+
+      renderView();
+
+      await waitFor(() => {
+        expect(mockNavigate).toHaveBeenCalledWith('.', { replace: true, state: {} });
+      });
+    });
+
+    it('dismissing the note hides it', async () => {
+      mockLocationState.state = {
+        removalPR: {
+          cluster: 'prod-eu',
+          pr_url: 'https://github.com/example/repo/pull/42',
+          pr_id: 42,
+          merged: false,
+        },
+      };
+
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText(/Removal PR opened for "prod-eu"/i)).toBeInTheDocument();
+      });
+
+      const dismissButton = screen.getByLabelText('Dismiss');
+      fireEvent.click(dismissButton);
+
+      await waitFor(() => {
+        expect(screen.queryByText(/Removal PR opened for "prod-eu"/i)).not.toBeInTheDocument();
+      });
+    });
+
+    it('does not render note when no removalPR state', async () => {
+      mockLocationState.state = {};
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByText(/Removal PR opened/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/removed/i)).not.toBeInTheDocument();
+    });
+
+    it('shows merged message when merged=true', async () => {
+      mockLocationState.state = {
+        removalPR: {
+          cluster: 'prod-eu',
+          pr_url: 'https://github.com/example/repo/pull/42',
+          pr_id: 42,
+          merged: true,
+        },
+      };
+
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText(/Cluster "prod-eu" removed/i)).toBeInTheDocument();
+      });
+    });
   });
 });

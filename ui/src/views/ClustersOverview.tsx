@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef, type ReactNode } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import {
   Server,
   CheckCircle,
@@ -193,6 +193,17 @@ export function ClustersOverview() {
   const [versionDropdownOpen, setVersionDropdownOpen] = useState(false);
   const [connectionDropdownOpen, setConnectionDropdownOpen] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // V3-D5: cluster removal PR note carried via router state from ClusterDetail
+  // after a successful removal. Read on mount, show as dismissible banner,
+  // clear state so a refresh drops the note.
+  const [removalNote, setRemovalNote] = useState<{
+    cluster: string;
+    pr_url?: string;
+    pr_id?: number;
+    merged: boolean;
+  } | null>(() => location.state?.removalPR ?? null);
 
   // Test connection state per cluster
   const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] } | TestClusterUnavailable | 'testing'>>({});
@@ -373,6 +384,14 @@ export function ClustersOverview() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  // V3-D5: clear the removalPR state from the router after reading it on mount
+  // so a manual browser refresh drops the note.
+  useEffect(() => {
+    if (location.state?.removalPR) {
+      navigate('.', { replace: true, state: {} });
+    }
+  }, [location.state?.removalPR, navigate]);
 
   // Fetch /health once to learn whether the cluster-connectivity test
   // endpoint is available (depends on a secrets backend being configured).
@@ -2264,6 +2283,26 @@ export function ClustersOverview() {
             type="button"
             onClick={() => setUnadoptResult(null)}
             className={`ml-4 rounded p-0.5 ${unadoptResult.error ? 'hover:bg-red-100 dark:hover:bg-red-800' : 'hover:bg-green-100 dark:hover:bg-green-800'}`}
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* V3-D5: cluster removal PR note carried from ClusterDetail on successful removal */}
+      {removalNote?.pr_url && (
+        <div className="relative">
+          <PRLifecycleProgress
+            result={{ pr_url: removalNote.pr_url, pr_id: removalNote.pr_id, merged: removalNote.merged }}
+            autoMergeExpected={removalNote.merged}
+            mergedLabel={`Cluster "${removalNote.cluster}" removed`}
+            openLabel={`Removal PR opened for "${removalNote.cluster}"`}
+          />
+          <button
+            type="button"
+            onClick={() => setRemovalNote(null)}
+            className="absolute right-2 top-2 rounded p-0.5 hover:bg-green-100 dark:hover:bg-green-800"
             aria-label="Dismiss"
           >
             <X className="h-4 w-4" />
