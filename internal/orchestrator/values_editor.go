@@ -63,10 +63,14 @@ func (o *Orchestrator) SetGlobalAddonValuesWithOp(ctx context.Context, addonName
 
 	// Dry-run exit point: return a preview with no side effects.
 	if dryRun {
+		action := o.fileAction(ctx, filePath)
+		oldContent, _ := o.readFileIfExists(ctx, filePath)
+		newContent := []byte(valuesYAML)
+		diff := o.buildFileDiff(filePath, oldContent, newContent, action)
 		return &GitResult{
 			DryRun: &DryRunResult{
 				EffectiveAddons: []string{addonName},
-				FilesToWrite:    []FilePreview{{Path: filePath, Action: o.fileAction(ctx, filePath)}},
+				FilesToWrite:    []FilePreview{{Path: filePath, Action: action, Diff: diff}},
 				PRTitle:         title,
 				SecretsToCreate: []string{},
 			},
@@ -123,18 +127,6 @@ func (o *Orchestrator) SetClusterAddonValues(ctx context.Context, clusterName, a
 	}
 	filePath := path.Join(dir, clusterName+".yaml")
 
-	// Dry-run exit point: return a preview with no side effects.
-	if dryRun {
-		return &GitResult{
-			DryRun: &DryRunResult{
-				EffectiveAddons: []string{addonName},
-				FilesToWrite:    []FilePreview{{Path: filePath, Action: o.fileAction(ctx, filePath)}},
-				PRTitle:         fmt.Sprintf("Update %s overrides on cluster %s", addonName, clusterName),
-				SecretsToCreate: []string{},
-			},
-		}, nil
-	}
-
 	// Read the current cluster file (if present); fall back to an empty map.
 	current, err := o.git.GetFileContent(ctx, filePath, o.gitops.BaseBranch)
 	if err != nil {
@@ -145,6 +137,20 @@ func (o *Orchestrator) SetClusterAddonValues(ctx context.Context, clusterName, a
 	merged, err := mergeAddonSection(current, addonName, overridesYAML)
 	if err != nil {
 		return nil, fmt.Errorf("merging overrides for addon %q on cluster %q: %w", addonName, clusterName, err)
+	}
+
+	// Dry-run exit point: return a preview with no side effects.
+	if dryRun {
+		action := o.fileAction(ctx, filePath)
+		diff := o.buildFileDiff(filePath, current, merged, action)
+		return &GitResult{
+			DryRun: &DryRunResult{
+				EffectiveAddons: []string{addonName},
+				FilesToWrite:    []FilePreview{{Path: filePath, Action: action, Diff: diff}},
+				PRTitle:         fmt.Sprintf("Update %s overrides on cluster %s", addonName, clusterName),
+				SecretsToCreate: []string{},
+			},
+		}, nil
 	}
 
 	files := map[string][]byte{filePath: merged}

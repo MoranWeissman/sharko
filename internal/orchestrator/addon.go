@@ -81,12 +81,24 @@ func (o *Orchestrator) AddAddon(ctx context.Context, req AddAddonRequest) (*GitR
 		filePreviews := make([]FilePreview, 0, len(files))
 		// Catalog file first for a stable, readable preview order; the
 		// remaining files (global values, when present) follow.
-		filePreviews = append(filePreviews, FilePreview{Path: catalogPath, Action: o.fileAction(ctx, catalogPath)})
+		catalogAction := o.fileAction(ctx, catalogPath)
+		oldCatalog, _ := o.readFileIfExists(ctx, catalogPath)
+		filePreviews = append(filePreviews, FilePreview{
+			Path:   catalogPath,
+			Action: catalogAction,
+			Diff:   o.buildFileDiff(catalogPath, oldCatalog, files[catalogPath], catalogAction),
+		})
 		for p := range files {
 			if p == catalogPath {
 				continue
 			}
-			filePreviews = append(filePreviews, FilePreview{Path: p, Action: o.fileAction(ctx, p)})
+			action := o.fileAction(ctx, p)
+			oldContent, _ := o.readFileIfExists(ctx, p)
+			filePreviews = append(filePreviews, FilePreview{
+				Path:   p,
+				Action: action,
+				Diff:   o.buildFileDiff(p, oldContent, files[p], action),
+			})
 		}
 		return &GitResult{
 			DryRun: &DryRunResult{
@@ -130,9 +142,17 @@ func (o *Orchestrator) RemoveAddon(ctx context.Context, req RemoveAddonRequest) 
 
 	// Dry-run exit point: return a preview of what would happen.
 	if req.DryRun {
+		// Catalog is updated with the entry removed
+		oldCatalog := catalogData
+		catalogDiff := o.buildFileDiff(catalogPath, oldCatalog, updatedCatalog, "update")
+
+		// Global values file is deleted
+		oldGlobalValues, _ := o.readFileIfExists(ctx, globalValuesPath)
+		globalValuesDiff := o.buildFileDiff(globalValuesPath, oldGlobalValues, nil, "delete")
+
 		filePreviews := []FilePreview{
-			{Path: catalogPath, Action: "update"},
-			{Path: globalValuesPath, Action: "delete"},
+			{Path: catalogPath, Action: "update", Diff: catalogDiff},
+			{Path: globalValuesPath, Action: "delete", Diff: globalValuesDiff},
 		}
 		return &GitResult{
 			DryRun: &DryRunResult{

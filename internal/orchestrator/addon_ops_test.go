@@ -78,7 +78,11 @@ func TestDisableAddon_NoneCleanup_OnlyUpdatesValues(t *testing.T) {
 }
 
 func TestDisableAddon_RequiresConfirmation(t *testing.T) {
-	orch := New(nil, nil, newMockArgocd(), newMockGitProvider(), autoMergeGitOps(), defaultPaths(), nil)
+	git := newMockGitProvider()
+	git.files["configuration/addons-clusters-values/prod-eu.yaml"] = []byte("cert-manager: true")
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n  - name: prod-eu\n")
+
+	orch := New(nil, nil, newMockArgocd(), git, autoMergeGitOps(), defaultPaths(), nil)
 
 	_, err := orch.DisableAddon(context.Background(), DisableAddonRequest{
 		Cluster: "prod-eu",
@@ -98,6 +102,14 @@ func TestDisableAddon_DryRun(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
 
+	// Set up required files for the dry-run preview
+	git.files["configuration/addons-clusters-values/prod-eu.yaml"] = []byte(`cert-manager: true`)
+	git.files["configuration/managed-clusters.yaml"] = []byte(`clusters:
+  - name: prod-eu
+    region: us-east-1
+    labels:
+      cert-manager: enabled`)
+
 	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
 	result, err := orch.DisableAddon(context.Background(), DisableAddonRequest{
@@ -114,6 +126,15 @@ func TestDisableAddon_DryRun(t *testing.T) {
 	}
 	if result.DryRun.PRTitle == "" {
 		t.Error("expected PR title in dry run")
+	}
+	// Verify that the diff is populated
+	if len(result.DryRun.FilesToWrite) == 0 {
+		t.Error("expected files in dry-run preview")
+	}
+	for _, fp := range result.DryRun.FilesToWrite {
+		if fp.Diff == "" {
+			t.Errorf("expected diff for file %s, got empty", fp.Path)
+		}
 	}
 	// No PRs should have been created.
 	if len(git.prs) > 0 {

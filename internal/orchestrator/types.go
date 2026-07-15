@@ -171,6 +171,7 @@ type DryRunResult struct {
 type FilePreview struct {
 	Path   string `json:"path"`
 	Action string `json:"action"` // "create", "update", or "delete"
+	Diff   string `json:"diff,omitempty"`
 }
 
 // SecretError records a secret that failed to create on the remote cluster.

@@ -78,14 +78,44 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 		clusterAddonsPath = "configuration/managed-clusters.yaml"
 	}
 
+	// Generate file content (shared between dry-run and real path).
+	clusterAddonsData, err := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+	if err != nil && !req.DryRun {
+		log.Warn("managed-clusters.yaml not found — skipping removal from it", "cluster", req.Name)
+	}
+
+	var updatedClusterAddons []byte
+	if clusterAddonsData != nil {
+		var removeErr error
+		updatedClusterAddons, removeErr = gitops.RemoveClusterEntry(clusterAddonsData, req.Name)
+		if removeErr != nil && !req.DryRun {
+			log.Warn("failed to remove cluster entry from managed-clusters.yaml",
+				"cluster", req.Name, "error", removeErr)
+			updatedClusterAddons = nil
+		}
+	}
+
 	// Dry-run exit point: return a preview of what would happen.
 	if req.DryRun {
-		filePreviews := []FilePreview{
-			{Path: clusterAddonsPath, Action: "update"},
+		var filePreviews []FilePreview
+
+		if updatedClusterAddons != nil {
+			filePreviews = append(filePreviews, FilePreview{
+				Path:   clusterAddonsPath,
+				Action: "update",
+				Diff:   o.buildFileDiff(clusterAddonsPath, clusterAddonsData, updatedClusterAddons, "update"),
+			})
 		}
+
 		if cleanup != "none" {
-			filePreviews = append(filePreviews, FilePreview{Path: valuesPath, Action: "delete"})
+			oldValues, _ := o.readFileIfExists(ctx, valuesPath)
+			filePreviews = append(filePreviews, FilePreview{
+				Path:   valuesPath,
+				Action: "delete",
+				Diff:   o.buildFileDiff(valuesPath, oldValues, nil, "delete"),
+			})
 		}
+
 		prTitle := fmt.Sprintf("%s remove cluster %s", o.gitops.CommitPrefix, req.Name)
 
 		var secretsToDelete []string
@@ -116,10 +146,7 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 	var steps []string
 
 	// Step 1: Create PR to remove from managed-clusters.yaml and optionally delete values file.
-	clusterAddonsData, err := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
-	if err != nil {
-		log.Warn("managed-clusters.yaml not found — skipping removal from it", "cluster", req.Name)
-	}
+	// Reuse updatedClusterAddons already computed above.
 
 	// Resolve the credential routing NOW, from the bytes we just read —
 	// the PR below removes this cluster's entry (and may auto-merge), so a
@@ -142,17 +169,11 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 	var files map[string][]byte
 	var deletePaths []string
 
-	if clusterAddonsData != nil {
-		updatedData, removeErr := gitops.RemoveClusterEntry(clusterAddonsData, req.Name)
-		if removeErr != nil {
-			log.Warn("failed to remove cluster entry from managed-clusters.yaml",
-				"cluster", req.Name, "error", removeErr)
-		} else {
-			files = map[string][]byte{
-				clusterAddonsPath: updatedData,
-			}
-			steps = append(steps, "remove_managed_clusters_entry")
+	if updatedClusterAddons != nil {
+		files = map[string][]byte{
+			clusterAddonsPath: updatedClusterAddons,
 		}
+		steps = append(steps, "remove_managed_clusters_entry")
 	}
 
 	if cleanup != "none" {

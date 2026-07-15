@@ -8237,6 +8237,9 @@ const docTemplate = `{
                     "description": "\"create\", \"update\", or \"delete\"",
                     "type": "string"
                 },
+                "diff": {
+                    "type": "string"
+                },
                 "path": {
                     "type": "string"
                 }

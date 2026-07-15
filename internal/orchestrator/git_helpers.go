@@ -12,13 +12,26 @@ import (
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 )
 
-// fileAction returns "update" if the file exists on the base branch, "create" otherwise.
-func (o *Orchestrator) fileAction(ctx context.Context, filePath string) string {
-	_, err := o.git.GetFileContent(ctx, filePath, o.gitops.BaseBranch)
+// readFileIfExists attempts to read a file from the base branch. Returns the
+// content and true if the file exists, or nil and false if the file does not
+// exist or any error occurs during retrieval. This is intended for dry-run
+// previews where missing files are an expected, non-error condition (creates).
+func (o *Orchestrator) readFileIfExists(ctx context.Context, filePath string) ([]byte, bool) {
+	content, err := o.git.GetFileContent(ctx, filePath, o.gitops.BaseBranch)
 	if err != nil {
-		return "create"
+		return nil, false
 	}
-	return "update"
+	return content, true
+}
+
+// fileAction returns "update" if the file exists on the base branch, "create" otherwise.
+// Reuses readFileIfExists so the existence check and content read for dry-run diffs
+// share a single round-trip to the git provider.
+func (o *Orchestrator) fileAction(ctx context.Context, filePath string) string {
+	if _, exists := o.readFileIfExists(ctx, filePath); exists {
+		return "update"
+	}
+	return "create"
 }
 
 // detectConflicts checks whether any of the target files have been modified on
