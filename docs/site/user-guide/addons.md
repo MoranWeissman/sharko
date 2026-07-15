@@ -73,9 +73,9 @@ The **Version Matrix** view shows an addon × cluster grid, making it easy to se
 
 ### Preview Changes Before a PR Opens
 
-Before submitting an addon addition (or removal, or configuration change), the UI offers a **"Preview changes"** button. Clicking it shows exactly what the PR would contain: the files it would write, any files it would delete (for removals), the PR title, and the names of any secrets it would create (names only — secret values are never shown). This dry-run costs nothing (no branch, no commit, no PR) and gives you full transparency before confirming.
+Before submitting an addon addition (or removal, or configuration change), the UI offers a **"Preview changes"** button. Clicking it shows exactly what the PR would contain: which files would be written or deleted, the actual line-by-line change inside each file (added/removed lines), the PR title, and the names of any secrets it would create. Secret values are redacted (shown as `<redacted>`) while keys and structure remain visible. This dry-run costs nothing (no branch, no commit, no PR) and gives you full transparency before confirming.
 
-This preview feature works on all addon operations: adding to the catalog, removing an addon, configuring values, and saving default addons. See [Preview Changes](clusters.md#preview-changes-before-a-pr-opens) for full details and the API usage.
+This preview feature works on all addon operations: adding to the catalog, removing an addon, configuring values, and saving default addons. See [Preview Changes](clusters.md#preview-changes-before-a-pr-opens) for details, including a diff example and API usage.
 
 ### Via CLI
 

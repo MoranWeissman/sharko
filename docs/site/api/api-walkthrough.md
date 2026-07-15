@@ -214,9 +214,9 @@ comes back as a 400 with a clear message telling you what's missing.
     becomes optional cluster-type metadata.
 
 !!! tip "Preview first"
-    Add `"dry_run": true` to see exactly which files would be written and which
-    secrets would be created, with no side effects. The preview comes back under
-    a `dry_run` key.
+    Add `"dry_run": true` to see which files would be written, the line-by-line
+    diff of each change (secret values redacted), and which secrets would be
+    created, with no side effects. The preview comes back under a `dry_run` key.
 
 ### Test connectivity
 

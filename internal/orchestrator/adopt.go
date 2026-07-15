@@ -145,14 +145,56 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 			if clusterAddonsPath == "" {
 				clusterAddonsPath = "configuration/managed-clusters.yaml"
 			}
+
+			// Generate content for preview (reuse the same generation logic as real path)
+			addons := make(map[string]bool)
+			if len(o.defaultAddons) > 0 {
+				for k, v := range o.defaultAddons {
+					addons[k] = v
+				}
+			}
+			previewValuesContent := generateClusterValues(clusterName, "", addons, nil)
+
+			previewClusterAddonsData, _ := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+			if previewClusterAddonsData == nil {
+				previewClusterAddonsData = []byte("clusters:\n")
+			}
+
+			clusterLabels := make(map[string]string, len(addons))
+			for addon, enabled := range addons {
+				clusterLabels[addon] = models.AddonLabelValue(enabled)
+			}
+
+			previewClusterAddons, _ := gitops.AddClusterEntry(previewClusterAddonsData, gitops.ClusterEntryInput{
+				Name:                clusterName,
+				Labels:              clusterLabels,
+				ConnectionManagedBy: models.ConnectionManagedByUser,
+			})
+
+			var filePreviews []FilePreview
+
+			valuesAction := o.fileAction(ctx, valuesPath)
+			oldValues, _ := o.readFileIfExists(ctx, valuesPath)
+			filePreviews = append(filePreviews, FilePreview{
+				Path:   valuesPath,
+				Action: valuesAction,
+				Diff:   o.buildFileDiff(valuesPath, oldValues, previewValuesContent, valuesAction),
+			})
+
+			if previewClusterAddons != nil {
+				clusterAddonsAction := o.fileAction(ctx, clusterAddonsPath)
+				filePreviews = append(filePreviews, FilePreview{
+					Path:   clusterAddonsPath,
+					Action: clusterAddonsAction,
+					Diff:   o.buildFileDiff(clusterAddonsPath, previewClusterAddonsData, previewClusterAddons, clusterAddonsAction),
+				})
+			}
+
 			prTitle := fmt.Sprintf("%s adopt cluster %s", o.gitops.CommitPrefix, clusterName)
 			cr.Status = "success"
 			cr.DryRun = &DryRunResult{
-				FilesToWrite: []FilePreview{
-					{Path: valuesPath, Action: o.fileAction(ctx, valuesPath)},
-					{Path: clusterAddonsPath, Action: o.fileAction(ctx, clusterAddonsPath)},
-				},
-				PRTitle: prTitle,
+				FilesToWrite: filePreviews,
+				PRTitle:      prTitle,
 			}
 			if cr.Verification != nil {
 				cr.DryRun.Verification = cr.Verification

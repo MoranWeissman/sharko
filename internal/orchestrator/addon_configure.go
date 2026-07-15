@@ -81,10 +81,13 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 
 		// Dry-run exit point: return a preview of what would happen.
 		if req.DryRun {
+			action := o.fileAction(ctx, catalogPath)
+			oldCatalog, _ := o.readFileIfExists(ctx, catalogPath)
+			diff := o.buildFileDiff(catalogPath, oldCatalog, updatedData, action)
 			return &GitResult{
 				DryRun: &DryRunResult{
 					EffectiveAddons: []string{req.Name},
-					FilesToWrite:    []FilePreview{{Path: catalogPath, Action: o.fileAction(ctx, catalogPath)}},
+					FilesToWrite:    []FilePreview{{Path: catalogPath, Action: action, Diff: diff}},
 					PRTitle:         fmt.Sprintf("%s configure addon %s", o.gitops.CommitPrefix, req.Name),
 					SecretsToCreate: []string{},
 				},
@@ -116,10 +119,13 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 
 	// Dry-run exit point: return a preview of what would happen.
 	if req.DryRun {
+		action := o.fileAction(ctx, catalogPath)
+		oldCatalog := data
+		diff := o.buildFileDiff(catalogPath, oldCatalog, updatedData, action)
 		return &GitResult{
 			DryRun: &DryRunResult{
 				EffectiveAddons: []string{req.Name},
-				FilesToWrite:    []FilePreview{{Path: catalogPath, Action: o.fileAction(ctx, catalogPath)}},
+				FilesToWrite:    []FilePreview{{Path: catalogPath, Action: action, Diff: diff}},
 				PRTitle:         fmt.Sprintf("%s configure addon %s", o.gitops.CommitPrefix, req.Name),
 				SecretsToCreate: []string{},
 			},

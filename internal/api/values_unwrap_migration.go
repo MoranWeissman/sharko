@@ -196,9 +196,19 @@ func (s *Server) handleUnwrapGlobalValues(w http.ResponseWriter, r *http.Request
 
 	// Dry-run: return preview without side effects.
 	if dryRun {
+		// Create a temporary orchestrator for diff computation (no credentials needed)
+		tempOrch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+
 		filePreviews := []orchestrator.FilePreview{}
-		for path := range files {
-			filePreviews = append(filePreviews, orchestrator.FilePreview{Path: path, Action: "update"})
+		for path, newContent := range files {
+			// Read old content for diff (already read during unwrap check above)
+			oldContent, _ := git.GetFileContent(ctx, path, s.gitopsCfg.BaseBranch)
+			diff := tempOrch.BuildFileDiff(path, oldContent, newContent, "update")
+			filePreviews = append(filePreviews, orchestrator.FilePreview{
+				Path:   path,
+				Action: "update",
+				Diff:   diff,
+			})
 		}
 		dryRunResult := &orchestrator.GitResult{
 			DryRun: &orchestrator.DryRunResult{

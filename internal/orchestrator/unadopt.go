@@ -48,21 +48,53 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 		}
 	}
 
+	valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
+	clusterAddonsPath := o.paths.ManagedClusters
+	if clusterAddonsPath == "" {
+		clusterAddonsPath = "configuration/managed-clusters.yaml"
+	}
+
+	// Generate file content (shared between dry-run and real path).
+	clusterAddonsData, err := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+	if err != nil && !req.DryRun {
+		log.Warn("managed-clusters.yaml not found — skipping removal", "cluster", name)
+	}
+
+	var updatedClusterAddons []byte
+	if clusterAddonsData != nil {
+		var removeErr error
+		updatedClusterAddons, removeErr = gitops.RemoveClusterEntry(clusterAddonsData, name)
+		if removeErr != nil && !req.DryRun {
+			log.Warn("failed to remove cluster entry from managed-clusters.yaml",
+				"cluster", name, "error", removeErr)
+			updatedClusterAddons = nil
+		}
+	}
+
 	// Dry-run exit point.
 	if req.DryRun {
-		valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
-		clusterAddonsPath := o.paths.ManagedClusters
-		if clusterAddonsPath == "" {
-			clusterAddonsPath = "configuration/managed-clusters.yaml"
+		var filePreviews []FilePreview
+
+		oldValues, _ := o.readFileIfExists(ctx, valuesPath)
+		filePreviews = append(filePreviews, FilePreview{
+			Path:   valuesPath,
+			Action: "delete",
+			Diff:   o.buildFileDiff(valuesPath, oldValues, nil, "delete"),
+		})
+
+		if updatedClusterAddons != nil {
+			filePreviews = append(filePreviews, FilePreview{
+				Path:   clusterAddonsPath,
+				Action: "update",
+				Diff:   o.buildFileDiff(clusterAddonsPath, clusterAddonsData, updatedClusterAddons, "update"),
+			})
 		}
+
 		prTitle := fmt.Sprintf("%s unadopt cluster %s", o.gitops.CommitPrefix, name)
 		result.Status = "success"
 		result.DryRun = &DryRunResult{
-			FilesToWrite: []FilePreview{
-				{Path: valuesPath, Action: "delete"},
-				{Path: clusterAddonsPath, Action: "update"},
-			},
-			PRTitle: prTitle,
+			FilesToWrite: filePreviews,
+			PRTitle:      prTitle,
 		}
 		return result, nil
 	}
@@ -89,30 +121,14 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 	}
 
 	// Step 4: Create PR to remove from managed-clusters.yaml and delete values file.
-	valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
-	clusterAddonsPath := o.paths.ManagedClusters
-	if clusterAddonsPath == "" {
-		clusterAddonsPath = "configuration/managed-clusters.yaml"
-	}
-
-	// Read and update managed-clusters.yaml.
-	clusterAddonsData, err := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
-	if err != nil {
-		log.Warn("managed-clusters.yaml not found — skipping removal", "cluster", name)
-	}
+	// Reuse updatedClusterAddons already computed above.
 
 	var files map[string][]byte
 	var deletePaths []string
 
-	if clusterAddonsData != nil {
-		updatedData, removeErr := gitops.RemoveClusterEntry(clusterAddonsData, name)
-		if removeErr != nil {
-			log.Warn("failed to remove cluster entry from managed-clusters.yaml",
-				"cluster", name, "error", removeErr)
-		} else {
-			files = map[string][]byte{
-				clusterAddonsPath: updatedData,
-			}
+	if updatedClusterAddons != nil {
+		files = map[string][]byte{
+			clusterAddonsPath: updatedClusterAddons,
 		}
 	}
 

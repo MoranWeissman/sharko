@@ -331,10 +331,58 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			clusterAddonsPath = "configuration/managed-clusters.yaml"
 		}
 
-		// Determine file actions: "create" or "update" based on whether the file already exists.
-		filePreviews := []FilePreview{
-			{Path: valuesPath, Action: o.fileAction(ctx, valuesPath)},
-			{Path: clusterAddonsPath, Action: o.fileAction(ctx, clusterAddonsPath)},
+		// Build the file preview with diffs. The generation happens below
+		// (generateClusterValues + AddClusterEntry) — we need to hoist a minimal
+		// preview-only compute here for the dry-run diff.
+		var filePreviews []FilePreview
+
+		// Generate the cluster values content for preview
+		var catalog []models.AddonCatalogEntry
+		catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
+		if catalogErr == nil && catalogData != nil {
+			catalog, _ = parseAddonsCatalog(catalogData)
+		}
+		previewValuesContent := generateClusterValues(req.Name, req.Region, req.Addons, catalog)
+
+		// Generate the managed-clusters update for preview
+		clusterAddonsData, clusterAddonsErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+		if clusterAddonsErr != nil {
+			clusterAddonsData = []byte("clusters:\n")
+		}
+		clusterLabels := make(map[string]string, len(req.Addons))
+		for addon, enabled := range req.Addons {
+			clusterLabels[addon] = models.AddonLabelValue(enabled)
+		}
+		connMode := ""
+		if selfManaged {
+			connMode = models.ConnectionManagedByUser
+		}
+		previewClusterAddons, addEntryErr := gitops.AddClusterEntry(clusterAddonsData, gitops.ClusterEntryInput{
+			Name:                req.Name,
+			Region:              req.Region,
+			SecretPath:          req.SecretPath,
+			Labels:              clusterLabels,
+			ConnectionManagedBy: connMode,
+			CredsSource:         string(credsSource),
+			RoleARN:             req.RoleARN,
+		})
+
+		// Build file previews with diffs
+		valuesAction := o.fileAction(ctx, valuesPath)
+		oldValues, _ := o.readFileIfExists(ctx, valuesPath)
+		filePreviews = append(filePreviews, FilePreview{
+			Path:   valuesPath,
+			Action: valuesAction,
+			Diff:   o.buildFileDiff(valuesPath, oldValues, previewValuesContent, valuesAction),
+		})
+
+		if addEntryErr == nil && previewClusterAddons != nil {
+			clusterAddonsAction := o.fileAction(ctx, clusterAddonsPath)
+			filePreviews = append(filePreviews, FilePreview{
+				Path:   clusterAddonsPath,
+				Action: clusterAddonsAction,
+				Diff:   o.buildFileDiff(clusterAddonsPath, clusterAddonsData, previewClusterAddons, clusterAddonsAction),
+			})
 		}
 
 		// Provider-aware PR title:
@@ -771,19 +819,88 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 		}
 	}
 
+	// Generate file content for both dry-run and real paths (same source of truth).
+	valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
+	clusterAddonsPath := o.paths.ManagedClusters
+	if clusterAddonsPath == "" {
+		clusterAddonsPath = "configuration/managed-clusters.yaml"
+	}
+
+	// Read catalog to generate cluster values
+	catalogPath := o.paths.Catalog
+	if catalogPath == "" {
+		catalogPath = "configuration/addons-catalog.yaml"
+	}
+	var catalog []models.AddonCatalogEntry
+	catalogData, catalogErr := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
+	if catalogErr == nil && catalogData != nil {
+		catalog, _ = parseAddonsCatalog(catalogData)
+	}
+	valuesContent := generateClusterValues(name, region, addons, catalog)
+
+	// Read and mutate managed-clusters.yaml if addons are specified
+	var updatedMC []byte
+	if len(addons) > 0 {
+		clusterAddonsData, mcErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+		if mcErr != nil || clusterAddonsData == nil {
+			// For dry-run, report what would happen; for real path, abort below
+			if !dryRun {
+				result.Status = "failed"
+				result.CompletedSteps = []string{}
+				result.FailedStep = "update_addon_label"
+				result.Error = "managed-clusters.yaml not found"
+				result.Message = fmt.Sprintf("Cluster %s is not registered in managed-clusters.yaml, so addon labels cannot be updated. No change was committed.", name)
+				return result, nil
+			}
+		} else {
+			updatedMC = clusterAddonsData
+			for addon, enabled := range addons {
+				var mutated []byte
+				var labelErr error
+				if enabled {
+					mutated, labelErr = gitops.EnableAddonLabel(updatedMC, name, addon)
+				} else {
+					mutated, labelErr = gitops.DisableAddonLabel(updatedMC, name, addon)
+				}
+				if labelErr != nil {
+					if !dryRun {
+						result.Status = "failed"
+						result.CompletedSteps = []string{}
+						result.FailedStep = "update_addon_label"
+						result.Error = labelErr.Error()
+						result.Message = fmt.Sprintf("Could not update the addon label for %s on cluster %s; no change was committed. Make sure the cluster is registered in managed-clusters.yaml, then retry.", addon, name)
+						return result, nil
+					}
+					// Dry-run: note the error but continue to show preview
+					updatedMC = nil
+					break
+				}
+				updatedMC = mutated
+			}
+		}
+	}
+
 	// Dry-run early exit: compute the file preview before any side effects.
 	if dryRun {
-		valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
-		clusterAddonsPath := o.paths.ManagedClusters
-		if clusterAddonsPath == "" {
-			clusterAddonsPath = "configuration/managed-clusters.yaml"
-		}
+		var filePreviews []FilePreview
 
-		filePreviews := []FilePreview{
-			{Path: valuesPath, Action: o.fileAction(ctx, valuesPath)},
-		}
-		if len(addons) > 0 {
-			filePreviews = append(filePreviews, FilePreview{Path: clusterAddonsPath, Action: "update"})
+		// Values file preview
+		valuesAction := o.fileAction(ctx, valuesPath)
+		oldValues, _ := o.readFileIfExists(ctx, valuesPath)
+		filePreviews = append(filePreviews, FilePreview{
+			Path:   valuesPath,
+			Action: valuesAction,
+			Diff:   o.buildFileDiff(valuesPath, oldValues, valuesContent, valuesAction),
+		})
+
+		// Managed-clusters preview (if addons are updated)
+		if len(addons) > 0 && updatedMC != nil {
+			oldMC, _ := o.readFileIfExists(ctx, clusterAddonsPath)
+			filePreviews = append(filePreviews, FilePreview{
+				Path:   clusterAddonsPath,
+				Action: "update",
+				Diff:   o.buildFileDiff(clusterAddonsPath, oldMC, updatedMC, "update"),
+			})
 		}
 
 		// Secrets to create: only enabled addons.
@@ -864,65 +981,14 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 	// addon we just tried to disable on the next reconcile cycle. Both files
 	// must travel in the same PR so they never disagree (mirrors the
 	// no-half-write guard in DisableAddon / EnableAddon — V2-cleanup-44).
-	var catalog []models.AddonCatalogEntry
-	catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
-	if catalogErr == nil && catalogData != nil {
-		catalog, _ = parseAddonsCatalog(catalogData)
-	}
-	valuesContent := generateClusterValues(name, region, addons, catalog)
-	valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
-
+	//
+	// Reuse the valuesContent + updatedMC already computed above for dry-run
+	// preview — single source of truth for both paths.
 	files := map[string][]byte{
 		valuesPath: valuesContent,
 	}
 
-	// Read managed-clusters.yaml and apply addon label mutations for this
-	// cluster only. Each helper returns updated bytes; chain them so
-	// sequential mutations accumulate correctly. Mirror DisableAddon's
-	// no-half-write discipline: if the file is missing or a mutation fails,
-	// abort before opening the PR so we never commit a values-only change
-	// that diverges from the Git source of truth.
-	if len(addons) > 0 {
-		log := logging.LoggerFromContext(ctx)
-
-		clusterAddonsPath := o.paths.ManagedClusters
-		if clusterAddonsPath == "" {
-			clusterAddonsPath = "configuration/managed-clusters.yaml"
-		}
-
-		clusterAddonsData, mcErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
-		if mcErr != nil || clusterAddonsData == nil {
-			log.Error("managed-clusters.yaml unavailable — aborting before PR (no half-write)",
-				"cluster", name, "error", mcErr)
-			result.Status = "failed"
-			result.CompletedSteps = []string{"create_secrets", "delete_secrets"}
-			result.FailedStep = "update_addon_label"
-			result.Error = "managed-clusters.yaml not found"
-			result.Message = fmt.Sprintf("Cluster %s is not registered in managed-clusters.yaml, so addon labels cannot be updated. No change was committed.", name)
-			return result, nil
-		}
-
-		updatedMC := clusterAddonsData
-		for addon, enabled := range addons {
-			var mutated []byte
-			var labelErr error
-			if enabled {
-				mutated, labelErr = gitops.EnableAddonLabel(updatedMC, name, addon)
-			} else {
-				mutated, labelErr = gitops.DisableAddonLabel(updatedMC, name, addon)
-			}
-			if labelErr != nil {
-				log.Error("failed to update addon label in managed-clusters.yaml — aborting before PR (no half-write)",
-					"cluster", name, "addon", addon, "enabled", enabled, "error", labelErr)
-				result.Status = "failed"
-				result.CompletedSteps = []string{"create_secrets", "delete_secrets"}
-				result.FailedStep = "update_addon_label"
-				result.Error = labelErr.Error()
-				result.Message = fmt.Sprintf("Could not update the addon label for %s on cluster %s; no change was committed. Make sure the cluster is registered in managed-clusters.yaml, then retry.", addon, name)
-				return result, nil
-			}
-			updatedMC = mutated
-		}
+	if len(addons) > 0 && updatedMC != nil {
 		files[clusterAddonsPath] = updatedMC
 	}
 
