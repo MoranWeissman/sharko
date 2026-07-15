@@ -1,5 +1,4 @@
-import { AlertCircle, ChevronRight } from 'lucide-react'
-import { useState } from 'react'
+import { AlertCircle } from 'lucide-react'
 import type { DryRunResult } from '@/services/models'
 import type { AddAddonResponse } from '@/services/api'
 import {
@@ -52,15 +51,15 @@ export interface DryRunPreviewProps {
  * for delete. Also surfaces secrets_to_create (names only) when present. No PR,
  * no commit. Every array read is null-safe (`?? []`) because the Go DryRunResult
  * serializes the slice as `files_to_write` while older fixtures may use `files`.
+ *
+ * V3-D4: per-action rendering — create/delete show a terse label and no
+ * content dump (a whole new/removed file as +/- lines is noise), update shows
+ * the actual line-by-line diff inline and visible by default (green added /
+ * red removed, <redacted> verbatim).
  */
 export function DryRunPreview({ result }: DryRunPreviewProps) {
   const files = result.files_to_write ?? result.files ?? []
   const secrets = result.secrets_to_create ?? []
-  const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({})
-
-  const toggleFile = (path: string) => {
-    setExpandedFiles((prev) => ({ ...prev, [path]: !prev[path] }))
-  }
 
   return (
     <div className="rounded-md bg-[#e8f4ff] p-3 ring-2 ring-[#6aade0] dark:bg-gray-900 dark:ring-gray-700">
@@ -81,51 +80,39 @@ export function DryRunPreview({ result }: DryRunPreviewProps) {
             </span>
             <ul className="mt-1 space-y-1 font-mono">
               {files.map((f) => {
+                if (f.action === 'create') {
+                  return (
+                    <li key={f.path} className="flex items-start gap-1">
+                      <span className="text-green-600 dark:text-green-400">+</span>{' '}
+                      <span className="break-all">{f.path}</span>
+                      <span className="ml-1 text-[#5a8aaa] dark:text-gray-500">
+                        (new file)
+                      </span>
+                    </li>
+                  )
+                }
+
+                if (f.action === 'delete') {
+                  return (
+                    <li key={f.path} className="flex items-start gap-1">
+                      <span className="text-red-600 dark:text-red-400">-</span>{' '}
+                      <span className="break-all">{f.path}</span>
+                      <span className="ml-1 text-[#5a8aaa] dark:text-gray-500">
+                        (removed)
+                      </span>
+                    </li>
+                  )
+                }
+
+                // action === 'update'
                 const hasDiff = f.diff && f.diff.trim().length > 0
-                const isExpanded = expandedFiles[f.path] || false
                 return (
                   <li key={f.path}>
-                    {hasDiff ? (
-                      <button
-                        onClick={() => toggleFile(f.path)}
-                        className="flex w-full items-start gap-1 text-left hover:opacity-80"
-                        aria-expanded={isExpanded}
-                      >
-                        <ChevronRight
-                          className={`mt-0.5 h-3 w-3 flex-shrink-0 transition-transform ${
-                            isExpanded ? 'rotate-90' : ''
-                          }`}
-                        />
-                        <span
-                          className={
-                            f.action === 'create'
-                              ? 'text-green-600 dark:text-green-400'
-                              : f.action === 'delete'
-                                ? 'text-red-600 dark:text-red-400'
-                                : 'text-amber-600 dark:text-amber-400'
-                          }
-                        >
-                          {f.action === 'create' ? '+' : f.action === 'delete' ? '-' : '~'}
-                        </span>{' '}
-                        <span className="break-all">{f.path}</span>
-                      </button>
-                    ) : (
-                      <div className="flex items-start gap-1">
-                        <span
-                          className={
-                            f.action === 'create'
-                              ? 'text-green-600 dark:text-green-400'
-                              : f.action === 'delete'
-                                ? 'text-red-600 dark:text-red-400'
-                                : 'text-amber-600 dark:text-amber-400'
-                          }
-                        >
-                          {f.action === 'create' ? '+' : f.action === 'delete' ? '-' : '~'}
-                        </span>{' '}
-                        <span className="break-all">{f.path}</span>
-                      </div>
-                    )}
-                    {hasDiff && isExpanded && f.diff && (
+                    <div className="flex items-start gap-1">
+                      <span className="text-amber-600 dark:text-amber-400">~</span>{' '}
+                      <span className="break-all">{f.path}</span>
+                    </div>
+                    {hasDiff && f.diff && (
                       <div className="ml-4 mt-1 overflow-x-auto rounded border border-[#6aade0] bg-white p-2 dark:border-gray-600 dark:bg-gray-800">
                         <pre className="whitespace-pre text-xs">
                           {f.diff.split('\n').map((line, idx) => {
