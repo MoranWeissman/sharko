@@ -432,7 +432,8 @@ export async function deregisterCluster(name: string, autoMerge?: boolean, dryRu
     throw new Error(err.error || res.statusText)
   }
   if (dryRun) {
-    return res.json() as Promise<DryRunResult>
+    const envelope = await res.json() as { dry_run?: DryRunResult }
+    return (envelope.dry_run ?? (envelope as unknown as DryRunResult))
   }
   return res.json() as Promise<RemoveClusterResult>
 }
@@ -454,7 +455,8 @@ export async function unadoptCluster(name: string, dryRun = false): Promise<PRWr
   const body: { yes: boolean; dry_run?: boolean } = { yes: true }
   if (dryRun) body.dry_run = true
   if (dryRun) {
-    return postJSON<DryRunResult>(`/clusters/${encodeURIComponent(name)}/unadopt`, body)
+    const envelope = await postJSON<{ dry_run?: DryRunResult }>(`/clusters/${encodeURIComponent(name)}/unadopt`, body)
+    return (envelope.dry_run ?? (envelope as unknown as DryRunResult))
   }
   return postJSON<PRWriteResult>(`/clusters/${encodeURIComponent(name)}/unadopt`, body)
 }
@@ -486,14 +488,19 @@ export async function updateClusterAddons(name: string, addons: Record<string, b
 export async function updateClusterAddons(name: string, addons: Record<string, boolean>, dryRun = false): Promise<DeployAddonResult | DryRunResult> {
   const body: { addons: Record<string, boolean>; dry_run?: boolean } = { addons }
   if (dryRun) body.dry_run = true
-  return patchJSON<DeployAddonResult | DryRunResult>(`/clusters/${encodeURIComponent(name)}`, body)
+  if (dryRun) {
+    const envelope = await patchJSON<{ dry_run?: DryRunResult }>(`/clusters/${encodeURIComponent(name)}`, body)
+    return (envelope.dry_run ?? (envelope as unknown as DryRunResult))
+  }
+  return patchJSON<DeployAddonResult>(`/clusters/${encodeURIComponent(name)}`, body)
 }
 
 export async function updateClusterSettings(name: string, settings: { secret_path?: string; dry_run: true }): Promise<DryRunResult>
 export async function updateClusterSettings(name: string, settings: { secret_path?: string; dry_run?: false }): Promise<PRWriteResult>
 export async function updateClusterSettings(name: string, settings: { secret_path?: string; dry_run?: boolean }): Promise<PRWriteResult | DryRunResult> {
   if (settings.dry_run) {
-    return patchJSON<DryRunResult>(`/clusters/${encodeURIComponent(name)}`, settings)
+    const envelope = await patchJSON<{ dry_run?: DryRunResult }>(`/clusters/${encodeURIComponent(name)}`, settings)
+    return (envelope.dry_run ?? (envelope as unknown as DryRunResult))
   }
   return patchJSON<PRWriteResult>(`/clusters/${encodeURIComponent(name)}`, settings)
 }
@@ -620,7 +627,8 @@ export async function removeAddon(name: string, dryRun = false): Promise<PRWrite
       const err = await res.json().catch(() => ({ error: res.statusText }))
       throw new Error(err.error || res.statusText)
     }
-    return res.json() as Promise<DryRunResult>
+    const envelope = await res.json() as { dry_run?: DryRunResult }
+    return (envelope.dry_run ?? (envelope as unknown as DryRunResult))
   }
   return deleteJSON<PRWriteResult>(`/addons/${encodeURIComponent(name)}?confirm=true`)
 }
@@ -670,7 +678,8 @@ export async function configureAddon(
   // (see internal/api/router.go).
   const body = { name, ...config }
   if (config.dry_run) {
-    return patchJSON<DryRunResult>(`/addons/${encodeURIComponent(name)}`, body)
+    const envelope = await patchJSON<{ dry_run?: DryRunResult }>(`/addons/${encodeURIComponent(name)}`, body)
+    return (envelope.dry_run ?? (envelope as unknown as DryRunResult))
   }
   return patchJSON<PRWriteResult>(`/addons/${encodeURIComponent(name)}`, body)
 }
@@ -987,10 +996,10 @@ export const api = {
     const body: { values: string; dry_run?: boolean } = { values: valuesYAML }
     if (dryRun) body.dry_run = true
     if (dryRun) {
-      return putJSON<DryRunResult>(
+      return putJSON<{ dry_run?: DryRunResult }>(
         `/addons/${encodeURIComponent(addonName)}/values`,
         body,
-      )
+      ).then(envelope => (envelope.dry_run ?? (envelope as unknown as DryRunResult)))
     }
     return putJSON<import('./models').ValuesEditResult>(
       `/addons/${encodeURIComponent(addonName)}/values`,
@@ -1011,10 +1020,10 @@ export const api = {
     }
     if (dryRun) body.dry_run = true
     if (dryRun) {
-      return putJSON<DryRunResult>(
+      return putJSON<{ dry_run?: DryRunResult }>(
         `/addons/${encodeURIComponent(addonName)}/values`,
         body,
-      )
+      ).then(envelope => (envelope.dry_run ?? (envelope as unknown as DryRunResult)))
     }
     return putJSON<import('./models').ValuesEditResult>(
       `/addons/${encodeURIComponent(addonName)}/values`,
@@ -1041,10 +1050,10 @@ export const api = {
     const body: { values: string; dry_run?: boolean } = { values: valuesYAML }
     if (dryRun) body.dry_run = true
     if (dryRun) {
-      return putJSON<DryRunResult>(
+      return putJSON<{ dry_run?: DryRunResult }>(
         `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values`,
         body,
-      )
+      ).then(envelope => (envelope.dry_run ?? (envelope as unknown as DryRunResult)))
     }
     return putJSON<import('./models').ValuesEditResult>(
       `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values`,
@@ -1098,7 +1107,8 @@ export const api = {
     if (dryRun) params.set('dry_run', 'true')
     const qs = params.toString()
     if (dryRun) {
-      return postJSON<DryRunResult>(`/addons/unwrap-globals${qs ? `?${qs}` : ''}`, {})
+      return postJSON<{ dry_run?: DryRunResult }>(`/addons/unwrap-globals${qs ? `?${qs}` : ''}`, {})
+        .then(envelope => (envelope.dry_run ?? (envelope as unknown as DryRunResult)))
     }
     return postJSON<{
       migrated: number
@@ -1423,7 +1433,8 @@ export const api = {
     const body: { addons: string[]; dry_run?: boolean } = { addons }
     if (dryRun) body.dry_run = true
     if (dryRun) {
-      return putJSON<DryRunResult>('/default-addons', body)
+      return putJSON<{ dry_run?: DryRunResult }>('/default-addons', body)
+        .then(envelope => (envelope.dry_run ?? (envelope as unknown as DryRunResult)))
     }
     return putJSON<{ pr_url: string; pr_id: number; message?: string }>('/default-addons', body)
   }) as {
