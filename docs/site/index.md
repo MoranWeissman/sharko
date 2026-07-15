@@ -55,7 +55,7 @@ Sharko runs in-cluster and manages the full lifecycle of addons (cert-manager, m
 - **Wizard-based setup** — guided first-run configures Git, ArgoCD, secrets provider, and initializes your repo
 - **Fleet dashboard** — cluster health cards, addon version matrix, drift detection
 - **Managed vs discovered clusters** — adopt existing ArgoCD clusters into Sharko management in one click
-- **GitOps-native** — all write operations create PRs; auto-merge optional. Preview every change before the PR opens.
+- **GitOps-native** — all write operations create PRs; auto-merge optional. Preview the actual file changes (line-by-line diff, secrets redacted) before the PR opens.
 - **Unified API** — CLI, UI, Backstage, Terraform, and CI/CD all use the same REST API
 - **Secrets management** — deliver credentials to remote clusters (AWS SM or Kubernetes Secrets, no ESO)
 - **AI assistant** — context-aware troubleshooting with OpenAI, Claude, Gemini, or Ollama

@@ -22,16 +22,30 @@ Sharko is a GitOps agent: every change it makes to your GitOps repository goes t
 
 Clicking **Preview changes** runs a server-side dry-run (no branch, no commit, no PR) and shows exactly what the PR would contain:
 
-- The files it would write (create or update)
-- For destructive operations (removing a cluster, un-adopting, removing an addon), the files or entries it would **delete** (shown distinctly)
+- **Which files** would be written (create or update) or deleted (for destructive operations)
+- **The actual change inside each file** — a line-by-line diff showing added lines (green) and removed lines (red)
+- **Secret values redacted** — secrets appear as `<redacted>` in the diff; keys and structure remain visible
 - The PR title
-- The names of any secrets it would create (names only — never secret values)
 
 You then confirm to actually open the PR, or cancel and adjust your input.
 
+### Example preview
+
+When registering a cluster, the preview might show:
+
+```diff
+~ configuration/managed-clusters.yaml
++ - name: prod-eu-west
++   environment: prod
++   connection:
++     credentials:
++       aws_secret_manager:
++         secret_name: <redacted>
+```
+
 This transparency feature is available on all PR-opening operations: register cluster, adopt cluster, remove cluster, un-adopt cluster, add addon, remove addon, configure addon, enable/disable addons on a cluster (Apply Changes), update cluster settings (secret path), save default addons, and save/refresh addon values (global + per-cluster).
 
-Under the hood, this uses the API's `dry_run: true` request option, which returns a `DryRunResult` instead of opening a PR. See [API Walkthrough](../api/api-walkthrough.md) for examples of using `dry_run` from the command line.
+Under the hood, this uses the API's `dry_run: true` request option, which returns a `DryRunResult` with the file paths and content diffs. See [API Walkthrough](../api/api-walkthrough.md) for examples of using `dry_run` from the command line.
 
 ## Discovering Available Clusters
 
