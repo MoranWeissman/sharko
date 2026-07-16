@@ -904,8 +904,8 @@ func TestDoctorCluster_HTTPContract(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(resp.Checks) != 5 {
-		t.Fatalf("len(Checks) = %d, want 5", len(resp.Checks))
+	if len(resp.Checks) != 6 {
+		t.Fatalf("len(Checks) = %d, want 6", len(resp.Checks))
 	}
 	wantIDs := []string{
 		doctorCheckConnectionCredentials,
@@ -913,6 +913,7 @@ func TestDoctorCluster_HTTPContract(t *testing.T) {
 		doctorCheckAssumeRole,
 		doctorCheckClusterAccess,
 		doctorCheckSecretOwnership,
+		doctorCheckConnectivityApp,
 	}
 	for i, id := range wantIDs {
 		if resp.Checks[i].ID != id {
