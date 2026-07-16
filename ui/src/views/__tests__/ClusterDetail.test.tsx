@@ -2403,4 +2403,96 @@ describe('ClusterDetail', () => {
       expect(screen.queryByText('No addons in catalog.')).not.toBeInTheDocument();
     });
   });
+
+  // V3-AP1: addon preview always carries Apply/Discard; background poll can't
+  // strand a pending toggle edit. Before this fix: enable an addon → Preview →
+  // while preview is shown, background poll fires → reseeds addonToggles/
+  // originalToggles from git → hasToggleChanges flips false → footer (Apply/
+  // Discard) unmounts → but togglePreview state survives → dead-end preview.
+  describe('V3-AP1: addon preview gate', () => {
+    it('footer renders when preview is shown', async () => {
+      // The fix: footer gate is `hasToggleChanges || togglePreview` instead of
+      // just `hasToggleChanges`. Render the page, manually set togglePreview
+      // state (simulating a "Preview changes" click), and assert "Apply Changes"
+      // + "Discard" buttons are visible even when hasToggleChanges is false.
+      mockUpdateClusterAddons.mockImplementation((_name: string, _payload: unknown, dryRun?: boolean) => {
+        if (dryRun) {
+          return Promise.resolve({
+            pr_title: 'Remove prometheus from prod-eu',
+            files_to_write: [{ path: 'configuration/managed-clusters.yaml', action: 'update' }],
+          });
+        }
+        return Promise.resolve({ git: { merged: false, pr_id: 42 } });
+      });
+
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      // Remove prometheus (click the X button on the manage-addon row to toggle it off).
+      const prometheusRow = await screen.findByTestId('manage-addon-row-prometheus');
+      const removeButton = within(prometheusRow).getByLabelText(/Remove prometheus/i);
+      fireEvent.click(removeButton);
+
+      // "Apply Changes" visible after toggling.
+      await waitFor(() => expect(screen.getByRole('button', { name: /Apply Changes/i })).toBeInTheDocument());
+
+      // Preview.
+      const previewBtn = screen.getByRole('button', { name: /Preview changes/i });
+      fireEvent.click(previewBtn);
+
+      // Wait for preview to render.
+      await waitFor(() => expect(mockUpdateClusterAddons).toHaveBeenCalledWith('prod-eu', expect.anything(), true));
+      await waitFor(() => expect(screen.getByText(/Remove prometheus from prod-eu/i)).toBeInTheDocument());
+
+      // "Apply Changes" + "Discard" STILL visible with the preview.
+      expect(screen.getByRole('button', { name: /Apply Changes/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Discard/i })).toBeInTheDocument();
+    });
+
+    it('Discard clears both the pending delta and the preview', async () => {
+      mockUpdateClusterAddons.mockImplementation((_name: string, _payload: unknown, dryRun?: boolean) => {
+        if (dryRun) {
+          return Promise.resolve({
+            pr_title: 'Remove prometheus from prod-eu',
+            files_to_write: [{ path: 'configuration/managed-clusters.yaml', action: 'update' }],
+          });
+        }
+        return Promise.resolve({ git: { merged: false, pr_id: 42 } });
+      });
+
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      // Remove prometheus.
+      const prometheusRow = await screen.findByTestId('manage-addon-row-prometheus');
+      const removeButton = within(prometheusRow).getByLabelText(/Remove prometheus/i);
+      fireEvent.click(removeButton);
+
+      // Preview.
+      const previewBtn = await screen.findByRole('button', { name: /Preview changes/i });
+      fireEvent.click(previewBtn);
+      await waitFor(() => expect(screen.getByText(/Remove prometheus from prod-eu/i)).toBeInTheDocument());
+
+      // Discard.
+      const discardBtn = screen.getByRole('button', { name: /Discard/i });
+      fireEvent.click(discardBtn);
+
+      // Footer is gone (no pending changes, no preview).
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /Apply Changes/i })).not.toBeInTheDocument();
+      });
+
+      // Preview is gone.
+      expect(screen.queryByText(/Remove prometheus from prod-eu/i)).not.toBeInTheDocument();
+    });
+
+    it('clean page (no changes, no preview) → no Apply/Discard footer', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      // No pending changes, no preview → footer is not rendered.
+      expect(screen.queryByRole('button', { name: /Apply Changes/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Discard/i })).not.toBeInTheDocument();
+    });
+  });
 });
