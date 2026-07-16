@@ -115,7 +115,7 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     // optional sections (Effective Addons / Files / Secrets) are absent
     // because their arrays are null/empty — that's the correct shape.
     await waitFor(() => {
-      expect(screen.getByText('Dry Run Preview')).toBeInTheDocument();
+      expect(screen.getByText('Preview')).toBeInTheDocument();
     });
     expect(screen.getByText(/kubeconfig provider/i)).toBeInTheDocument();
     expect(screen.queryByText(/Effective Addons:/i)).not.toBeInTheDocument();
@@ -153,7 +153,7 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     fireEvent.click(previewBtn);
 
     await waitFor(() => {
-      expect(screen.getByText('Dry Run Preview')).toBeInTheDocument();
+      expect(screen.getByText('Preview')).toBeInTheDocument();
     });
     // Files section now renders from the canonical files_to_write key.
     expect(screen.getByText('Files:')).toBeInTheDocument();
@@ -227,7 +227,7 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     fireEvent.click(screen.getByRole('button', { name: /preview/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Dry Run Preview')).toBeInTheDocument();
+      expect(screen.getByText('Preview')).toBeInTheDocument();
     });
 
     // Register button is still there and enabled (we have a valid name).
