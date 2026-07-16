@@ -18,6 +18,12 @@ type Store interface {
 	DeleteConnection(name string) error
 	GetActiveConnection() (string, error)
 	SetActiveConnection(name string) error
+	// MergeConnectionFromEnvAtomic atomically loads the named connection, merges
+	// non-secret env fields via MergeConnectionFromEnv, and saves the result.
+	// Returns (changed, error). This method ensures the merge operates on the
+	// freshest connection state (M1 fix — no lost-update race with concurrent
+	// token rotations via the UI).
+	MergeConnectionFromEnvAtomic(name string) (bool, error)
 }
 
 // configFile represents the on-disk YAML config file structure.
@@ -229,4 +235,43 @@ func (s *FileStore) SetActiveConnection(name string) error {
 
 	cfg.ActiveConnection = name
 	return s.save(cfg)
+}
+
+// MergeConnectionFromEnvAtomic atomically loads the named connection, merges
+// non-secret env fields via MergeConnectionFromEnv, and saves the result.
+// Returns (changed, error). This is the M1 fix: the merge operates on the
+// freshest connection state (loaded inside the lock), so a concurrent token
+// rotation via the UI is NOT clobbered.
+func (s *FileStore) MergeConnectionFromEnvAtomic(name string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cfg, err := s.load()
+	if err != nil {
+		return false, err
+	}
+
+	// Find the connection
+	var conn *models.Connection
+	for i := range cfg.Connections {
+		if cfg.Connections[i].Name == name {
+			conn = &cfg.Connections[i]
+			break
+		}
+	}
+	if conn == nil {
+		return false, nil // not found — no-op
+	}
+
+	// Merge non-secret env fields onto the FRESH load
+	if !MergeConnectionFromEnv(conn) {
+		return false, nil // already converged — no save
+	}
+
+	// Save — the merge operated on the fresh load
+	if err := s.save(cfg); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }

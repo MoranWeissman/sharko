@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/MoranWeissman/sharko/internal/api"
+	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -221,4 +222,28 @@ func (s *inMemoryStore) SetActiveConnection(name string) error {
 	defer s.mu.Unlock()
 	s.activeConnection = name
 	return nil
+}
+
+func (s *inMemoryStore) MergeConnectionFromEnvAtomic(name string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Find the connection
+	var conn *models.Connection
+	for i := range s.connections {
+		if s.connections[i].Name == name {
+			conn = &s.connections[i]
+			break
+		}
+	}
+	if conn == nil {
+		return false, nil
+	}
+
+	// Merge non-secret env fields onto the fresh load
+	if !config.MergeConnectionFromEnv(conn) {
+		return false, nil
+	}
+
+	return true, nil
 }

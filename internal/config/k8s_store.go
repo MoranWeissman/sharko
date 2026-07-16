@@ -324,3 +324,44 @@ func (s *K8sStore) SetActiveConnection(name string) error {
 	data.ActiveConnection = name
 	return s.save(data, rv)
 }
+
+// MergeConnectionFromEnvAtomic atomically loads the named connection, merges
+// non-secret env fields via MergeConnectionFromEnv, and saves the result.
+// Returns (changed, error). This is the M1 fix: the merge operates on the
+// freshest connection state (loaded inside the lock), so a concurrent token
+// rotation via the UI is NOT clobbered.
+func (s *K8sStore) MergeConnectionFromEnvAtomic(name string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	data, rv, err := s.load()
+	if err != nil {
+		return false, err
+	}
+
+	// Find the connection
+	var conn *models.Connection
+	for i := range data.Connections {
+		if data.Connections[i].Name == name {
+			conn = &data.Connections[i]
+			break
+		}
+	}
+	if conn == nil {
+		return false, nil // not found — no-op
+	}
+
+	// Merge non-secret env fields onto the FRESH load
+	if !MergeConnectionFromEnv(conn) {
+		return false, nil // already converged — no save
+	}
+
+	// Save — the merge operated on the fresh load, so we preserve any
+	// concurrent token rotation that landed between the previous reconcile
+	// tick's Get and this Save.
+	if err := s.save(data, rv); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
