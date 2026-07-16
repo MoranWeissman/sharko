@@ -116,7 +116,7 @@ func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Check #2: cluster must NOT have an open registration PR.
-	pending := resolvePendingRegistrations(r.Context(), gp, s.gitopsCfg.CommitPrefix)
+	pending := resolvePendingRegistrations(r.Context(), gp, s.gitopsConfig().CommitPrefix)
 	for _, p := range pending {
 		if p.ClusterName == name {
 			writeError(w, http.StatusBadRequest,

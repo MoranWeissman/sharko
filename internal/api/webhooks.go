@@ -78,7 +78,7 @@ func (s *Server) handleGitWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Determine the base branch to watch (mirrors gitopsCfg.BaseBranch; default "main").
-	baseBranch := s.gitopsCfg.BaseBranch
+	baseBranch := s.gitopsConfig().BaseBranch
 	if baseBranch == "" {
 		baseBranch = "main"
 	}

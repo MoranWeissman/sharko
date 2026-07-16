@@ -184,7 +184,7 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 			dir = "configuration/addons-global-values"
 		}
 		valuesFile := dir + "/" + name + ".yaml"
-		if existing, gerr := git.GetFileContent(ctx, valuesFile, s.gitopsCfg.BaseBranch); gerr == nil && len(existing) > 0 {
+		if existing, gerr := git.GetFileContent(ctx, valuesFile, s.gitopsConfig().BaseBranch); gerr == nil && len(existing) > 0 {
 			if h := orchestrator.ParseSmartValuesHeader(existing); h.AIOptOut {
 				aiOptOut = true
 			}
@@ -233,7 +233,7 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 		auditDetail = fmt.Sprintf("chart=%s version=%s bytes=%d ai=%s", chart, version, len(generated), aiState)
 	}
 
-	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	// Route through the WithOp variant so the dashboard PR panel filter
 	// chip reflects the requested operation (manual edit vs. upstream
@@ -315,7 +315,7 @@ func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	result, err := orch.SetClusterAddonValues(ctx, cluster, addonName, req.Values, req.AutoMerge, req.DryRun)
 	if err != nil {

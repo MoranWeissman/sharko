@@ -47,9 +47,9 @@ func TestHandleGitWebhook_Ping(t *testing.T) {
 
 func TestHandleGitWebhook_PushToBaseBranch(t *testing.T) {
 	srv := &Server{
-		gitopsCfg: orchestrator.GitOpsConfig{BaseBranch: "main"},
-		auditLog:  audit.NewLog(10),
+		auditLog: audit.NewLog(10),
 	}
+	srv.publishGitopsCfg(orchestrator.GitOpsConfig{BaseBranch: "main"})
 
 	payload := map[string]interface{}{
 		"ref": "refs/heads/main",
@@ -79,9 +79,9 @@ func TestHandleGitWebhook_ValidSignature(t *testing.T) {
 	t.Setenv("SHARKO_WEBHOOK_SECRET", secret)
 
 	srv := &Server{
-		gitopsCfg: orchestrator.GitOpsConfig{BaseBranch: "main"},
-		auditLog:  audit.NewLog(10),
+		auditLog: audit.NewLog(10),
 	}
+	srv.publishGitopsCfg(orchestrator.GitOpsConfig{BaseBranch: "main"})
 
 	payload := []byte(`{"ref":"refs/heads/main","pusher":{"name":"ci"},"commits":[]}`)
 	sig := makeWebhookSig(payload, secret)

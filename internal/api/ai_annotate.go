@@ -128,7 +128,7 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 		dir = "configuration/addons-global-values"
 	}
 	valuesFile := dir + "/" + name + ".yaml"
-	if existing, eerr := git.GetFileContent(ctx, valuesFile, s.gitopsCfg.BaseBranch); eerr == nil && len(existing) > 0 {
+	if existing, eerr := git.GetFileContent(ctx, valuesFile, s.gitopsConfig().BaseBranch); eerr == nil && len(existing) > 0 {
 		if h := orchestrator.ParseSmartValuesHeader(existing); h.AIOptOut {
 			writeError(w, http.StatusConflict, "this addon is opted out of AI annotation; clear the opt-out via PUT /addons/"+name+"/values/ai-opt-out before retrying")
 			return
@@ -171,7 +171,7 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 		annRes.AdditionalClusterPaths...,
 	)
 
-	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	// Route through the WithOp variant so the resulting PR surfaces
 	// under the "AI" / Addons category on the dashboard PR panel rather
@@ -261,7 +261,7 @@ func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) 
 	}
 	valuesFile := dir + "/" + name + ".yaml"
 
-	existing, eerr := git.GetFileContent(ctx, valuesFile, s.gitopsCfg.BaseBranch)
+	existing, eerr := git.GetFileContent(ctx, valuesFile, s.gitopsConfig().BaseBranch)
 	if eerr != nil || len(existing) == 0 {
 		writeError(w, http.StatusNotFound, "no global values file at "+valuesFile)
 		return
@@ -281,7 +281,7 @@ func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) 
 
 	updated := rewriteHeaderOptOut(existing, req.OptOut)
 
-	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	// The AI opt-out toggle is a header-only mutation but it's still an
 	// AI-annotate-related action — file it under the same "ai-annotate"

@@ -70,7 +70,7 @@ func (s *Server) handleRepoStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if bootstrap/Chart.yaml exists on the base branch.
-	baseBranch := s.gitopsCfg.BaseBranch
+	baseBranch := s.gitopsConfig().BaseBranch
 	if baseBranch == "" {
 		baseBranch = "main"
 	}

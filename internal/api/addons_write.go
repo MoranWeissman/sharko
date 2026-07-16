@@ -132,7 +132,7 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	result, err := orch.AddAddon(ctx, req)
 	if err != nil {
@@ -314,7 +314,7 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	result, err := orch.RemoveAddon(ctx, orchestrator.RemoveAddonRequest{
 		Name:      name,
@@ -385,7 +385,7 @@ func (s *Server) handleConfigureAddon(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Name = name
 
-	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	result, err := orch.ConfigureAddon(ctx, req)
 	if err != nil {

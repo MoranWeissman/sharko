@@ -212,7 +212,7 @@ func TestHandleRepoStatus_NotInitialized_ConnectionError(t *testing.T) {
 func repoStatusInitializedTestSetup(t *testing.T, ac orchestrator.ArgocdClient) map[string]interface{} {
 	t.Helper()
 	srv := newTestServer()
-	srv.gitopsCfg = orchestrator.GitOpsConfig{BaseBranch: "main"}
+	srv.publishGitopsCfg(orchestrator.GitOpsConfig{BaseBranch: "main"})
 	gp := &handlerFakeGitProvider{files: map[string][]byte{
 		"bootstrap/Chart.yaml": []byte("apiVersion: v2\nname: bootstrap\n"),
 	}}
@@ -593,7 +593,7 @@ func TestReinitializeFromConnection_NoConnection(t *testing.T) {
 
 func TestReinitializeFromConnection_GitOpsConfig(t *testing.T) {
 	// Connection with GitOps settings populated.
-	// ReinitializeFromConnection must copy those values into srv.gitopsCfg.
+	// ReinitializeFromConnection must copy those values into published gitops config (GF2).
 	srv := newIsolatedTestServer(t)
 
 	autoMerge := true
@@ -610,16 +610,17 @@ func TestReinitializeFromConnection_GitOpsConfig(t *testing.T) {
 
 	srv.ReinitializeFromConnection()
 
-	if srv.gitopsCfg.BaseBranch != "develop" {
-		t.Errorf("expected BaseBranch=develop, got %q", srv.gitopsCfg.BaseBranch)
+	cfg := srv.gitopsConfig()
+	if cfg.BaseBranch != "develop" {
+		t.Errorf("expected BaseBranch=develop, got %q", cfg.BaseBranch)
 	}
-	if srv.gitopsCfg.BranchPrefix != "feature/" {
-		t.Errorf("expected BranchPrefix=feature/, got %q", srv.gitopsCfg.BranchPrefix)
+	if cfg.BranchPrefix != "feature/" {
+		t.Errorf("expected BranchPrefix=feature/, got %q", cfg.BranchPrefix)
 	}
-	if srv.gitopsCfg.CommitPrefix != "feat:" {
-		t.Errorf("expected CommitPrefix=feat:, got %q", srv.gitopsCfg.CommitPrefix)
+	if cfg.CommitPrefix != "feat:" {
+		t.Errorf("expected CommitPrefix=feat:, got %q", cfg.CommitPrefix)
 	}
-	if !srv.gitopsCfg.PRAutoMerge {
+	if !cfg.PRAutoMerge {
 		t.Error("expected PRAutoMerge=true")
 	}
 }
@@ -665,7 +666,7 @@ func TestReinitializeFromConnection_SetsProvider(t *testing.T) {
 }
 
 func TestReinitializeFromConnection_RepoURL(t *testing.T) {
-	// Connection with a git RepoURL — gitopsCfg.RepoURL must be populated.
+	// Connection with a git RepoURL — published gitops config RepoURL must be populated (GF2).
 	srv := newIsolatedTestServer(t)
 
 	seedActiveConnection(t, srv, models.Connection{
@@ -680,8 +681,9 @@ func TestReinitializeFromConnection_RepoURL(t *testing.T) {
 
 	srv.ReinitializeFromConnection()
 
-	if srv.gitopsCfg.RepoURL != "https://github.com/owner/repo.git" {
-		t.Errorf("expected RepoURL=https://github.com/owner/repo.git, got %q", srv.gitopsCfg.RepoURL)
+	cfg := srv.gitopsConfig()
+	if cfg.RepoURL != "https://github.com/owner/repo.git" {
+		t.Errorf("expected RepoURL=https://github.com/owner/repo.git, got %q", cfg.RepoURL)
 	}
 }
 

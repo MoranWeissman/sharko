@@ -22,7 +22,7 @@ For a Sharko-managed cluster, Sharko reads the cluster entry from `configuration
 - **Synced**: the live addon labels match what Git declares (or the cluster has no addons enabled, so there's nothing to compare).
 - **OutOfSync**: one or more addon label keys were **added**, **removed**, or **changed** outside Git — for example, if someone edited the ArgoCD Secret directly via `kubectl` or the ArgoCD UI.
 
-**What gets compared:** only Sharko's addon label keys (the ones that say which addons are enabled, like `argocd.argoproj.io/addon.cert-manager`). Ownership bookkeeping labels like `app.kubernetes.io/managed-by` are excluded from drift detection — they're Sharko internals, not part of your declared configuration.
+**What gets compared:** only Sharko's addon label keys (the ones that say which addons are enabled — bare, unqualified keys like `cert-manager: "enabled"` or `datadog-version`). Ownership bookkeeping labels like `app.kubernetes.io/managed-by` are excluded from drift detection — they're Sharko internals, not part of your declared configuration.
 
 **What does NOT get compared:** Secret Data (the actual kubeconfig), annotations, or non-addon labels. Drift detection is scoped to addon labels only.
 
@@ -93,6 +93,8 @@ Self-heal never touches Secret Data, annotations, or non-addon labels. It only r
 ## Limitations and honest framing
 
 - **Labels only.** Drift detection and self-heal apply to Sharko's addon labels only — not Secret Data (the kubeconfig itself), not annotations, not other labels.
+- **Connection Data is not reconciled.** Sharko reconciles the cluster Secret's **addon labels** from Git. The connection details themselves — the server URL, CA certificate, and auth token or exec config that live in the Secret's **Data** field — are **not declared in Git**, so Sharko has no Git-desired version to reconcile them against. If someone hand-edits or breaks the connection Data (wrong token, bad CA, changed server URL), Sharko does **not** auto-repair it. Instead, a broken connection surfaces through the cluster's connectivity checks, where you see the failure and fix it yourself. Connection Data is verified by diagnostics, not reconciled.
+- **Ownership during self-heal: adopted clusters stay guests.** When Sharko self-heals a cluster it **owns** (Sharko created the Secret — it carries `app.kubernetes.io/managed-by: sharko`), it preserves and defensively re-applies its ownership label. When a cluster's Secret is **adopted** (another owner created it — e.g. a Helm chart or an ArgoCD Application manages that Secret, and Sharko is a guest on it), Sharko's self-heal converges only its own addon label keys and **never stamps its own ownership label** or touches the other owner's labels, annotations, or Data. Adopting a cluster does not make Sharko claim the Secret — Sharko stays a well-behaved guest and only keeps its addon labels correct.
 - **Enforcement-by-reconcile, not a hard lock.** An out-of-band edit to the cluster Secret is detected and (if self-heal is on) reverted on the next reconcile tick, but it's not blocked at write time. An admission webhook for hard locking is a V3+ backlog item, not part of v3.0.0.
 - **Self-managed clusters already self-heal.** The v3.0.0 drift detection surface (OutOfSync state, drift diff, opt-in self-heal) applies to **Sharko-managed clusters** only. Self-managed clusters continue to use the pre-existing self-heal behavior (always on, with fight detection).
 

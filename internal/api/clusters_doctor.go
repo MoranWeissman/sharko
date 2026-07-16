@@ -295,7 +295,7 @@ func (s *Server) doctorCheckAddonSecretPaths(ctx context.Context, clusterName st
 		}
 	}
 
-	catalogData, err := gp.GetFileContent(cctx, s.repoPaths.Catalog, s.gitopsCfg.BaseBranch)
+	catalogData, err := gp.GetFileContent(cctx, s.repoPaths.Catalog, s.gitopsConfig().BaseBranch)
 	if err != nil {
 		return doctorCheck{
 			ID:     doctorCheckAddonSecretPaths,
@@ -315,7 +315,7 @@ func (s *Server) doctorCheckAddonSecretPaths(ctx context.Context, clusterName st
 		}
 	}
 
-	clusterData, err := gp.GetFileContent(cctx, s.repoPaths.ManagedClusters, s.gitopsCfg.BaseBranch)
+	clusterData, err := gp.GetFileContent(cctx, s.repoPaths.ManagedClusters, s.gitopsConfig().BaseBranch)
 	if err != nil {
 		return doctorCheck{
 			ID:     doctorCheckAddonSecretPaths,

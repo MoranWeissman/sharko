@@ -32,7 +32,7 @@ func (s *Server) credentialRouting(ctx context.Context, name string) (lookupKey,
 	if err != nil || gp == nil {
 		return name, "", ""
 	}
-	return config.ResolveCredentialRouting(ctx, gp, s.repoPaths.ManagedClusters, s.gitopsCfg.BaseBranch, name)
+	return config.ResolveCredentialRouting(ctx, gp, s.repoPaths.ManagedClusters, s.gitopsConfig().BaseBranch, name)
 }
 
 // fetchClusterCredentials fetches the named cluster's credentials routed by
