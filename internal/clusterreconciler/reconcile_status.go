@@ -47,6 +47,25 @@ const (
 	OutcomeSkipped ReconcileOutcome = "skipped"
 )
 
+// LabelDrift holds the concrete label difference between git-desired and
+// live cluster-secret labels for a Sharko-managed cluster (V3 G1 — drift
+// detection for the managed path). nil when labels are in sync, or when the
+// cluster is self-managed (user owns the Secret — syncSelfManaged already
+// self-heals labels every tick, no OutOfSync concept needed there).
+//
+// Only Sharko's own addon-label keys are compared (same scope as
+// desiredAddonLabels + the labelsMatch check at reconciler.go:610) —
+// ownership bookkeeping labels (managed-by, connectivity-check) and other
+// unrelated labels are excluded by design.
+type LabelDrift struct {
+	// Added: keys present in git-desired but missing from live Secret
+	Added []string `json:"added,omitempty"`
+	// Removed: keys present on live Secret but missing from git-desired
+	Removed []string `json:"removed,omitempty"`
+	// Changed: keys present in both but with differing values
+	Changed []string `json:"changed,omitempty"`
+}
+
 // ClusterReconcileRecord is the last known reconcile outcome for one
 // cluster. Message is a plain-English explanation of what happened —
 // populated on Failed and Skipped, empty on Succeeded UNLESS label-fight
@@ -54,10 +73,15 @@ const (
 // self-managed connection's Secret: that case stays Succeeded (Sharko is
 // still successfully re-applying its labels every tick) but Message
 // carries the fight warning — see recordFightCheck.
+//
+// LabelDrift (V3 G1) carries the git-vs-live label comparison for
+// Sharko-managed clusters; nil when labels are in sync or for self-managed
+// connections (which already self-heal every tick).
 type ClusterReconcileRecord struct {
-	Time    time.Time
-	Outcome ReconcileOutcome
-	Message string
+	Time       time.Time
+	Outcome    ReconcileOutcome
+	Message    string
+	LabelDrift *LabelDrift
 }
 
 // recordReconcile stores the outcome of the most recent reconcile attempt
@@ -65,16 +89,20 @@ type ClusterReconcileRecord struct {
 // reconciler's clock seam (r.now()) rather than time.Now() directly so
 // tests can drive a deterministic timestamp the same way they do for the
 // registration-pending grace window.
-func (r *Reconciler) recordReconcile(name string, outcome ReconcileOutcome, message string) {
+//
+// drift (V3 G1) carries the label difference for Sharko-managed clusters;
+// nil when labels are in sync or for self-managed connections.
+func (r *Reconciler) recordReconcile(name string, outcome ReconcileOutcome, message string, drift *LabelDrift) {
 	r.lastReconcileMu.Lock()
 	defer r.lastReconcileMu.Unlock()
 	if r.lastReconcile == nil {
 		r.lastReconcile = make(map[string]ClusterReconcileRecord)
 	}
 	r.lastReconcile[name] = ClusterReconcileRecord{
-		Time:    r.now(),
-		Outcome: outcome,
-		Message: message,
+		Time:       r.now(),
+		Outcome:    outcome,
+		Message:    message,
+		LabelDrift: drift,
 	}
 }
 
@@ -164,7 +192,7 @@ func (r *Reconciler) stampAbortedTick(reason string) {
 
 	msg := "reconciler pass aborted: " + reason
 	for _, name := range names {
-		r.recordReconcile(name, OutcomeFailed, msg)
+		r.recordReconcile(name, OutcomeFailed, msg, nil)
 	}
 }
 

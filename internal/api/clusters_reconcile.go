@@ -31,6 +31,8 @@ import (
 // not wired in this deployment mode) or when the reconciler has never
 // processed this cluster (fresh startup, or a registration PR that hasn't
 // merged yet) — the field is left nil/omitted either way.
+//
+// V3 G1: also copies the LabelDrift field when present.
 func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) {
 	if recon == nil {
 		return
@@ -39,11 +41,20 @@ func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) 
 	if !ok {
 		return
 	}
-	c.LastReconcile = &models.ClusterLastReconcile{
+	lastRec := &models.ClusterLastReconcile{
 		Time:    rec.Time.Format(time.RFC3339),
 		Outcome: string(rec.Outcome),
 		Message: rec.Message,
 	}
+	// V3 G1 — copy drift info if present
+	if rec.LabelDrift != nil {
+		lastRec.LabelDrift = &models.ClusterLastReconcileLabelDrift{
+			Added:   rec.LabelDrift.Added,
+			Removed: rec.LabelDrift.Removed,
+			Changed: rec.LabelDrift.Changed,
+		}
+	}
+	c.LastReconcile = lastRec
 }
 
 // handleReconcileCluster godoc
