@@ -8,6 +8,12 @@ describe('StatusBadge', () => {
     expect(screen.getByText('Healthy')).toBeInTheDocument();
   });
 
+  it('guarantees single-line with whitespace-nowrap', () => {
+    const { container } = render(<StatusBadge status="Partly done" />);
+    const badge = container.firstChild as HTMLElement;
+    expect(badge.className).toContain('whitespace-nowrap');
+  });
+
   it('renders with "Healthy" status and shows green styling', () => {
     const { container } = render(<StatusBadge status="Healthy" />);
     const badge = container.firstChild as HTMLElement;
