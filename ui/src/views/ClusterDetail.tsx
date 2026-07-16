@@ -68,6 +68,7 @@ import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOver
 import { HelperText } from '@/components/HelperText';
 import { showToast } from '@/components/ToastNotification';
 import { prettyOperation } from '@/lib/utils';
+import type { StatusSeverity } from '@/lib/clusterStatus';
 import type { ConnectionsListResponse, TrackedPR, DiagnosticReport, DoctorClusterResponse } from '@/services/models';
 
 type StatusFilter =
@@ -166,6 +167,49 @@ function relativeTime(isoString: string): string {
 // refetches, 2s apart, stopping early once last_reconcile.time changes.
 const SYNC_POLL_MAX_ATTEMPTS = 4;
 const SYNC_POLL_INTERVAL_MS = 2000;
+
+// Map GitOps sync states to severity levels and colors from clusterStatus.ts contract.
+// Synced → good (green), OutOfSync → attention (amber), Sync failed → problem (red),
+// Reconciling → pending (blue), Not synced yet → unknown (neutral/gray).
+function getSyncStatusStyle(state: 'synced' | 'out_of_sync' | 'failed' | 'reconciling' | 'unknown'): {
+  severity: StatusSeverity;
+  bgClass: string;
+  textClass: string;
+} {
+  switch (state) {
+    case 'synced':
+      return {
+        severity: 'good',
+        bgClass: 'bg-green-600 dark:bg-green-700',
+        textClass: 'text-white',
+      };
+    case 'out_of_sync':
+      return {
+        severity: 'attention',
+        bgClass: 'bg-amber-500 dark:bg-amber-600',
+        textClass: 'text-white',
+      };
+    case 'failed':
+      return {
+        severity: 'problem',
+        bgClass: 'bg-red-600 dark:bg-red-700',
+        textClass: 'text-white',
+      };
+    case 'reconciling':
+      return {
+        severity: 'pending',
+        bgClass: 'bg-[#3a6a8a] dark:bg-gray-500',
+        textClass: 'text-white',
+      };
+    case 'unknown':
+    default:
+      return {
+        severity: 'unknown',
+        bgClass: 'bg-[#5a8aaa] dark:bg-gray-600',
+        textClass: 'text-white',
+      };
+  }
+}
 
 export function ClusterDetail() {
   const { name } = useParams<{ name: string }>();
@@ -1330,45 +1374,45 @@ export function ClusterDetail() {
         );
       })()}
 
-      {/* GitOps Sync Area (V3 G4) — dedicated section consolidating sync status,
+      {/* GitOps Sync Area (V3 G4 + GF5) — dedicated section consolidating sync status,
         * sync action, and live drift diff. Uses ArgoCD-familiar vocabulary:
-        * Synced / OutOfSync / Sync failed / Reconciling. Colors from clusterStatus.ts. */}
-      <RoleGuard roles={['admin', 'operator']}>
-        <div className="space-y-3 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-5 py-4 dark:ring-gray-700 dark:bg-gray-800">
-          <div className="flex items-center justify-between">
-            <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-              GitOps Sync
-            </h3>
-            {/* Sync status pill (ArgoCD-familiar words) */}
-            {(() => {
-              const lastRec = data?.cluster?.last_reconcile;
-              const drift = lastRec?.label_drift;
-              const hasDrift = drift && (drift.added?.length || drift.removed?.length || drift.changed?.length);
-              let label = 'Not synced yet';
-              let bgClass = 'bg-[#5a8aaa] dark:bg-gray-600';
-              let textClass = 'text-white';
-              if (syncingNow) {
-                label = 'Reconciling';
-                bgClass = 'bg-[#3a6a8a] dark:bg-gray-500';
-              } else if (lastRec?.outcome === 'succeeded') {
-                label = hasDrift ? 'OutOfSync' : 'Synced';
-                bgClass = hasDrift ? 'bg-amber-500' : 'bg-green-600 dark:bg-green-700';
-              } else if (lastRec?.outcome === 'failed') {
-                label = 'Sync failed';
-                bgClass = 'bg-red-600 dark:bg-red-700';
-              } else if (lastRec?.outcome === 'skipped') {
-                label = 'Synced';
-                bgClass = 'bg-green-600 dark:bg-green-700';
-              }
-              return (
-                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${bgClass} ${textClass}`}>
-                  {label}
-                </span>
-              );
-            })()}
-          </div>
+        * Synced / OutOfSync / Sync failed / Reconciling. Colors from clusterStatus.ts contract. */}
+      <div className="space-y-3 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-5 py-4 dark:ring-gray-700 dark:bg-gray-800">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+            GitOps Sync
+          </h3>
+          {/* Sync status pill (ArgoCD-familiar words, colors from clusterStatus severity contract) */}
+          {(() => {
+            const lastRec = data?.cluster?.last_reconcile;
+            const drift = lastRec?.label_drift;
+            const hasDrift = drift && (drift.added?.length || drift.removed?.length || drift.changed?.length);
+            let label = 'Not synced yet';
+            let state: 'synced' | 'out_of_sync' | 'failed' | 'reconciling' | 'unknown' = 'unknown';
+            if (syncingNow) {
+              label = 'Reconciling';
+              state = 'reconciling';
+            } else if (lastRec?.outcome === 'succeeded') {
+              label = hasDrift ? 'OutOfSync' : 'Synced';
+              state = hasDrift ? 'out_of_sync' : 'synced';
+            } else if (lastRec?.outcome === 'failed') {
+              label = 'Sync failed';
+              state = 'failed';
+            } else if (lastRec?.outcome === 'skipped') {
+              label = 'Synced';
+              state = 'synced';
+            }
+            const { bgClass, textClass } = getSyncStatusStyle(state);
+            return (
+              <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${bgClass} ${textClass}`}>
+                {label}
+              </span>
+            );
+          })()}
+        </div>
 
-          {/* Sync-now action */}
+        {/* Sync-now action (write-gated for admin/operator only) */}
+        <RoleGuard roles={['admin', 'operator']}>
           <div className="flex items-center gap-2">
             <button
               onClick={handleSyncNow}
@@ -1383,6 +1427,7 @@ export function ClusterDetail() {
               label="What does Sync now do?"
             />
           </div>
+        </RoleGuard>
 
           {/* Drift diff — integrated into the GitOps area (V3 G2 + G4) */}
           {(() => {
@@ -1458,8 +1503,7 @@ export function ClusterDetail() {
               </div>
             );
           })()}
-        </div>
-      </RoleGuard>
+      </div>
 
       {/* Main layout: nav panel + content */}
       <div className="flex gap-6">
