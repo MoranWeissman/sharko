@@ -412,16 +412,30 @@ type Cluster struct {
 	LastReconcile *ClusterLastReconcile `json:"last_reconcile,omitempty"`
 }
 
+// ClusterLastReconcileLabelDrift is the read-model shape of label drift
+// between git-desired and live cluster-secret labels (V3 G1). Only populated
+// for Sharko-managed clusters when labels don't match; nil otherwise.
+type ClusterLastReconcileLabelDrift struct {
+	Added   []string `json:"added,omitempty"`   // keys in git but not on cluster
+	Removed []string `json:"removed,omitempty"` // keys on cluster but not in git
+	Changed []string `json:"changed,omitempty"` // keys in both but values differ
+}
+
 // ClusterLastReconcile is the read-model shape of a single cluster's most
 // recent reconcile attempt (V2-cleanup-89.4). Kept as a plain struct here
 // — rather than reusing clusterreconciler.ClusterReconcileRecord directly —
 // because internal/clusterreconciler already imports internal/models, so
 // models cannot import it back; the API layer copies field-by-field from
 // the reconciler's record onto this type.
+//
+// LabelDrift (V3 G1) carries the git-vs-live label comparison for
+// Sharko-managed clusters; nil when labels are in sync or for self-managed
+// connections.
 type ClusterLastReconcile struct {
-	Time    string `json:"time"`              // RFC3339
-	Outcome string `json:"outcome"`           // "succeeded" | "failed" | "skipped"
-	Message string `json:"message,omitempty"` // plain-English detail; set on failed/skipped
+	Time       string                           `json:"time"`                 // RFC3339
+	Outcome    string                           `json:"outcome"`              // "succeeded" | "failed" | "skipped"
+	Message    string                           `json:"message,omitempty"`    // plain-English detail; set on failed/skipped
+	LabelDrift *ClusterLastReconcileLabelDrift `json:"label_drift,omitempty"` // V3 G1 — drift detection
 }
 
 // ClusterHealthStats holds aggregated health statistics for the clusters overview.

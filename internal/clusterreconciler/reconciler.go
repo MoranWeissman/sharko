@@ -597,20 +597,30 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 		}
 	}
 	for _, name := range alreadyInSync {
-		// M5b: "succeeded" here was previously earned by Secret PRESENCE
-		// alone — the record never said what, if anything, was actually
-		// checked. We already have both sides of the comparison in hand
-		// from this pass (desired[name], and existing[name].Labels from the
-		// listManagedSecrets call above) — no extra API call needed — so
+		// M5b / V3 G1: "succeeded" here was previously earned by Secret
+		// PRESENCE alone. We already have both sides of the comparison in
+		// hand from this pass (desired[name], and existing[name].Labels from
+		// the listManagedSecrets call above) — no extra API call needed — so
 		// state honestly what was verified: the addon labels too, if they
-		// match, or just presence if they don't (reconcileDiff does not
-		// currently repair label drift on an already-existing Sharko-owned
-		// Secret, so claiming "verified" when they differ would be a lie).
+		// match, or just presence if they don't. V3 G1 adds drift detection:
+		// when labels don't match, compute and store the concrete difference
+		// (which keys added/removed/changed) so the read model can expose
+		// OutOfSync state + the diff to the UI.
 		msg := "cluster Secret present"
-		if secret := existing[name]; secret != nil && labelsMatch(desiredAddonLabels(desired[name]), secret.Labels) {
-			msg = "cluster Secret present; labels verified"
+		var drift *LabelDrift
+		desiredLabels := desiredAddonLabels(desired[name])
+		if secret := existing[name]; secret != nil {
+			if labelsMatch(desiredLabels, secret.Labels) {
+				msg = "cluster Secret present; labels verified"
+				// drift stays nil — labels are in sync
+			} else {
+				// Labels differ — compute concrete diff for G1 OutOfSync state
+				drift = computeLabelDrift(desiredLabels, secret.Labels)
+				// msg stays "cluster Secret present" — not claiming "verified"
+				// when they don't match (honest reporting, same as before G1)
+			}
 		}
-		r.recordReconcile(name, OutcomeSucceeded, msg)
+		r.recordReconcile(name, OutcomeSucceeded, msg, drift)
 	}
 
 	now := r.now()
@@ -802,6 +812,65 @@ func labelsMatch(want, have map[string]string) bool {
 	return true
 }
 
+// computeLabelDrift compares git-desired addon labels against live
+// cluster-secret labels and returns the concrete difference (V3 G1 — drift
+// detection for Sharko-managed clusters). Returns nil when labels are in sync.
+//
+// Only Sharko's addon-label keys are compared — the same scope as
+// desiredAddonLabels (excludes ownership bookkeeping labels like managed-by
+// and connectivity-check). The `have` map is the FULL secret.Labels from the
+// live Secret; this function extracts just the addon keys from it for the
+// comparison.
+//
+// desired: output of desiredAddonLabels(entry) — the addon labels Sharko
+//
+//	wants for this cluster per managed-clusters.yaml.
+//
+// have: the live Secret's full Labels map (includes ownership labels).
+func computeLabelDrift(desired, have map[string]string) *LabelDrift {
+	drift := &LabelDrift{}
+
+	// Extract just the addon keys from the live Secret. Addon keys are those
+	// that are NOT the ownership bookkeeping labels. Use the same exclusion
+	// logic as desiredAddonLabels (see lines 778-789) — skip managed-by and
+	// connectivity-check labels.
+	liveAddonLabels := make(map[string]string)
+	for k, v := range have {
+		if k == LabelManagedBy || k == models.LabelConnectivityCheck {
+			continue
+		}
+		liveAddonLabels[k] = v
+	}
+
+	// Added: keys in desired but not in live
+	for k := range desired {
+		if _, present := liveAddonLabels[k]; !present {
+			drift.Added = append(drift.Added, k)
+		}
+	}
+
+	// Removed: keys in live but not in desired
+	for k := range liveAddonLabels {
+		if _, present := desired[k]; !present {
+			drift.Removed = append(drift.Removed, k)
+		}
+	}
+
+	// Changed: keys in both but with different values
+	for k, desiredVal := range desired {
+		if liveVal, present := liveAddonLabels[k]; present && liveVal != desiredVal {
+			drift.Changed = append(drift.Changed, k)
+		}
+	}
+
+	// Return nil when no diff (all slices empty)
+	if len(drift.Added) == 0 && len(drift.Removed) == 0 && len(drift.Changed) == 0 {
+		return nil
+	}
+
+	return drift
+}
+
 // syncSelfManaged converges ONLY the addon labels onto the user-created
 // ArgoCD cluster Secret of a self-managed connection (connectionManagedBy:
 // user — V2-cleanup-57.2). Delegates to argosecrets.Manager.SyncLabelsOnly
@@ -887,7 +956,7 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 		// actor reverting it. See resetFightStreak's doc comment.
 		r.resetFightStreak(entry.Name)
 		r.recordReconcile(entry.Name, OutcomeFailed,
-			"Sharko couldn't sync addon labels onto this cluster's self-managed ArgoCD secret: "+err.Error())
+			"Sharko couldn't sync addon labels onto this cluster's self-managed ArgoCD secret: "+err.Error(), nil)
 		return
 	}
 	if !found {
@@ -907,7 +976,7 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(entry.Name, OutcomeSkipped,
-			"Waiting for you to create this cluster's ArgoCD cluster secret — this connection is self-managed, so Sharko only syncs addon labels onto it once it exists.")
+			"Waiting for you to create this cluster's ArgoCD cluster secret — this connection is self-managed, so Sharko only syncs addon labels onto it once it exists.", nil)
 		return
 	}
 	if changed {
@@ -931,7 +1000,7 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 	// outcome stays Succeeded even when fightWarning is non-empty (Sharko
 	// IS successfully re-applying its labels every tick; the warning is
 	// visibility into a fight, not a sync failure).
-	r.recordReconcile(entry.Name, OutcomeSucceeded, fightWarning)
+	r.recordReconcile(entry.Name, OutcomeSucceeded, fightWarning, nil)
 }
 
 // effectiveDisableConnectivityCheck resolves whether the connectivity-check
@@ -1074,7 +1143,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(entry.Name, OutcomeFailed,
-			"Sharko couldn't check whether an ArgoCD cluster secret already exists for this cluster: "+getErr.Error())
+			"Sharko couldn't check whether an ArgoCD cluster secret already exists for this cluster: "+getErr.Error(), nil)
 		return
 	}
 	if getErr == nil && !IsManagedBySharko(existing) {
@@ -1095,7 +1164,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(entry.Name, OutcomeSkipped,
-			"An ArgoCD cluster secret already exists for this cluster without Sharko's ownership label — Sharko will not overwrite it. Use Adopt to bring it under Sharko's management.")
+			"An ArgoCD cluster secret already exists for this cluster without Sharko's ownership label — Sharko will not overwrite it. Use Adopt to bring it under Sharko's management.", nil)
 		return
 	}
 
@@ -1126,7 +1195,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(entry.Name, OutcomeFailed,
-			"Sharko couldn't fetch this cluster's credentials from the secrets backend: "+vaultErr.Error())
+			"Sharko couldn't fetch this cluster's credentials from the secrets backend: "+vaultErr.Error(), nil)
 		return
 	}
 
@@ -1206,7 +1275,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(entry.Name, OutcomeFailed,
-			"Sharko couldn't build the ArgoCD cluster secret for this cluster: "+buildErr.Error())
+			"Sharko couldn't build the ArgoCD cluster secret for this cluster: "+buildErr.Error(), nil)
 		return
 	}
 
@@ -1232,7 +1301,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(entry.Name, OutcomeFailed,
-			"Sharko couldn't create the ArgoCD cluster secret for this cluster: "+createErr.Error())
+			"Sharko couldn't create the ArgoCD cluster secret for this cluster: "+createErr.Error(), nil)
 		return
 	}
 
@@ -1250,7 +1319,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		Result:    "success",
 		RequestID: logging.RequestID(ctx),
 	})
-	r.recordReconcile(entry.Name, OutcomeSucceeded, "")
+	r.recordReconcile(entry.Name, OutcomeSucceeded, "", nil)
 }
 
 // deleteOne removes a single orphan ArgoCD cluster Secret. The list step
@@ -1267,7 +1336,7 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 			"cluster", name, "namespace", r.namespace,
 		)
 		r.recordReconcile(name, OutcomeSkipped,
-			"This cluster's ArgoCD secret unexpectedly lost Sharko's ownership label between listing and delete — left in place as a safety measure.")
+			"This cluster's ArgoCD secret unexpectedly lost Sharko's ownership label between listing and delete — left in place as a safety measure.", nil)
 		return
 	}
 
@@ -1277,7 +1346,7 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 			log.Info("[clusterreconciler] orphan Secret already deleted",
 				"cluster", name, "namespace", r.namespace,
 			)
-			r.recordReconcile(name, OutcomeSucceeded, "orphaned Secret already removed")
+			r.recordReconcile(name, OutcomeSucceeded, "orphaned Secret already removed", nil)
 			return
 		}
 		stats.Errors++
@@ -1302,7 +1371,7 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 		// interaction that keeps this record visible for as long as the
 		// orphan exists is documented on pruneStaleReconcileRecords.
 		r.recordReconcile(name, OutcomeFailed,
-			"Sharko couldn't remove this orphaned ArgoCD cluster secret: "+err.Error())
+			"Sharko couldn't remove this orphaned ArgoCD cluster secret: "+err.Error(), nil)
 		return
 	}
 
@@ -1320,7 +1389,7 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 		Result:    "success",
 		RequestID: logging.RequestID(ctx),
 	})
-	r.recordReconcile(name, OutcomeSucceeded, "orphaned Secret removed")
+	r.recordReconcile(name, OutcomeSucceeded, "orphaned Secret removed", nil)
 }
 
 // emitSummaryAudit fires one audit entry per tick describing the net
