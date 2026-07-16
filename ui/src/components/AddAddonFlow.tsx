@@ -60,6 +60,7 @@ export interface DryRunPreviewProps {
 export function DryRunPreview({ result }: DryRunPreviewProps) {
   const files = result.files_to_write ?? result.files ?? []
   const secrets = result.secrets_to_create ?? []
+  const effectiveAddons = result.effective_addons ?? []
 
   return (
     <div className="rounded-md bg-[#e8f4ff] p-3 ring-2 ring-[#6aade0] dark:bg-gray-900 dark:ring-gray-700">
@@ -73,6 +74,14 @@ export function DryRunPreview({ result }: DryRunPreviewProps) {
           </span>{' '}
           {result.pr_title}
         </div>
+        {effectiveAddons.length > 0 && (
+          <div>
+            <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
+              Effective Addons:
+            </span>{' '}
+            {effectiveAddons.join(', ')}
+          </div>
+        )}
         {files.length > 0 && (
           <div>
             <span className="font-medium text-[#0a3a5a] dark:text-gray-300">

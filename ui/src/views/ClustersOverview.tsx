@@ -1444,49 +1444,7 @@ export function ClustersOverview() {
               .
             </p>
 
-            {/* Dry-run preview panel. Every array read is null-safe via
-              * `?? []` so a partial DryRunResult shape (missing field,
-              * null instead of [], JSON-tag mismatch like `files` vs
-              * `files_to_write`) renders sensibly instead of crashing
-              * with `Cannot read properties of null`. */}
-            {dryRunResult && (
-              <div className="rounded-md ring-2 ring-[#6aade0] bg-[#e8f4ff] p-3 dark:ring-gray-700 dark:bg-gray-900">
-                <h4 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">Dry Run Preview</h4>
-                <div className="space-y-2 text-xs text-[#2a5a7a] dark:text-gray-400">
-                  <div>
-                    <span className="font-medium text-[#0a3a5a] dark:text-gray-300">PR Title:</span>{' '}
-                    {dryRunResult.pr_title}
-                  </div>
-                  {(dryRunResult.effective_addons ?? []).length > 0 && (
-                    <div>
-                      <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Effective Addons:</span>{' '}
-                      {(dryRunResult.effective_addons ?? []).join(', ')}
-                    </div>
-                  )}
-                  {(dryRunResult.files_to_write ?? dryRunResult.files ?? []).length > 0 && (
-                    <div>
-                      <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Files:</span>
-                      <ul className="mt-1 space-y-0.5 font-mono">
-                        {(dryRunResult.files_to_write ?? dryRunResult.files ?? []).map((f) => (
-                          <li key={f.path}>
-                            <span className={f.action === 'create' ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}>
-                              {f.action === 'create' ? '+' : '~'}
-                            </span>{' '}
-                            {f.path}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {(dryRunResult.secrets_to_create ?? []).length > 0 && (
-                    <div>
-                      <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Addon Secrets to Create:</span>{' '}
-                      {(dryRunResult.secrets_to_create ?? []).join(', ')}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+            {dryRunResult && <DryRunPreview result={dryRunResult} />}
 
             {addClusterError && (
               <p className="text-sm text-red-600 dark:text-red-400">{addClusterError}</p>
