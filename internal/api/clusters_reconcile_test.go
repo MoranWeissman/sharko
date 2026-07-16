@@ -86,7 +86,8 @@ func reconcileTestServer(t *testing.T, gp gitprovider.GitProvider, argoURL strin
 	clusterSvc := service.NewClusterService("")
 	addonSvc := service.NewAddonService("")
 	dashboardSvc := service.NewDashboardService(connSvc, "")
-	observabilitySvc := service.NewObservabilityService()
+	clusterSvc := service.NewClusterService("")
+	observabilitySvc := service.NewObservabilityService(clusterSvc)
 	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}), nil, "")
 	srv := NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, ai.NewClient(ai.Config{}))
 

@@ -35,7 +35,8 @@ func newTestServer() *Server {
 	addonSvc := service.NewAddonService("")
 	dashboardSvc := service.NewDashboardService(connSvc, "")
 
-	observabilitySvc := service.NewObservabilityService()
+	clusterSvc := service.NewClusterService("")
+	observabilitySvc := service.NewObservabilityService(clusterSvc)
 	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}), nil, "")
 
 	aiClient := ai.NewClient(ai.Config{})

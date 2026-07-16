@@ -213,7 +213,7 @@ var serveCmd = &cobra.Command{
 		clusterSvc := service.NewClusterService(getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
 		addonSvc := service.NewAddonService(getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
 		dashboardSvc := service.NewDashboardService(connSvc, getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
-		observabilitySvc := service.NewObservabilityService()
+		observabilitySvc := service.NewObservabilityService(clusterSvc)
 		advSvc := advisories.NewService(nil) // nil = uses default http.Client with 5s timeout
 		upgradeSvc := service.NewUpgradeService(aiClient, advSvc, getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
 

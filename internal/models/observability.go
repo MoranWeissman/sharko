@@ -2,13 +2,15 @@ package models
 
 // ControlPlaneInfo contains ArgoCD control plane metadata and summary stats.
 type ControlPlaneInfo struct {
-	ArgocdVersion     string         `json:"argocd_version"`
-	HelmVersion       string         `json:"helm_version"`
-	KubectlVersion    string         `json:"kubectl_version"`
-	TotalApps         int            `json:"total_apps"`
-	TotalClusters     int            `json:"total_clusters"`
-	ConnectedClusters int            `json:"connected_clusters"`
-	HealthSummary     map[string]int `json:"health_summary"`
+	ArgocdVersion       string         `json:"argocd_version"`
+	HelmVersion         string         `json:"helm_version"`
+	KubectlVersion      string         `json:"kubectl_version"`
+	TotalApps           int            `json:"total_apps"`
+	TotalClusters       int            `json:"total_clusters"` // ArgoCD-known clusters
+	ConfiguredClusters  int            `json:"configured_clusters"` // Sharko-configured (Git)
+	ConnectedClusters   int            `json:"connected_clusters"`
+	TotalAppSets        int            `json:"total_appsets"` // ApplicationSets count
+	HealthSummary       map[string]int `json:"health_summary"`
 }
 
 // SyncActivityEntry represents a single sync/deploy event in the timeline.
