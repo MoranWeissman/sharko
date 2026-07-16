@@ -4,13 +4,11 @@
 
 Sharko emits Kubernetes Events to the cluster where it runs, making operational failures and successes visible without digging through pod logs. Events are written to the Sharko namespace and visible via `kubectl get events`.
 
-**What Sharko emits:**
-- AWS credential/service failures (IAM, Secrets Manager, EKS token generation)
+**What Sharko emits today:**
+- AWS credential/service failures (IAM assume-role, Secrets Manager reads, EKS token generation)
 - ArgoCD API connectivity and authentication failures
-- Remote cluster connection/test/doctor failures
-- Git provider and PR operation failures
-- Cluster reconciler drift detection and self-heal outcomes
-- Success milestones (cluster registered, PR merged, connection restored)
+- Remote cluster connectivity test failures
+- Git PR-open operation failures
 
 **What Sharko does NOT emit:**
 - Per-application ArgoCD sync events (those are ArgoCD's responsibility)
@@ -21,34 +19,49 @@ Sharko emits Kubernetes Events to the cluster where it runs, making operational 
 
 ## Event Reasons
 
-Every event has a stable `Reason` identifier in UpperCamelCase format. The table below lists all Reasons currently emitted by Sharko.
+Every event has a stable `Reason` identifier in UpperCamelCase format. The tables below show which Reasons are currently emitted (live today) and which are defined but not yet wired (reserved for future use).
+
+### Emitted Today
+
+These event Reasons are actively emitted by the running server.
 
 | Reason | Type | What it means | Triggered by |
 |--------|------|---------------|--------------|
 | **AWS Provider Failures** | | | |
-| `AWSAssumeRoleFailed` | Warning | IAM role assumption failed | Cluster registration, EKS discovery, doctor operations requiring cross-account access |
-| `AWSSecretsGetFailed` | Warning | Secrets Manager get operation failed | Cluster registration when credentials stored in AWS Secrets Manager |
-| `AWSTokenMintFailed` | Warning | EKS token generation (STS GetCallerIdentity) failed | EKS cluster discovery or registration |
-| `AWSConfigLoadFailed` | Warning | AWS SDK config load failed | Any AWS provider operation (credential chain resolution failure) |
-| `AWSCredentialsInvalid` | Warning | AWS credentials invalid or expired | Any AWS provider operation after initial config load |
+| `AWSAssumeRoleFailed` | Warning | IAM role assumption failed | Doctor check assume-role operation (`/api/v1/clusters/{name}/diagnose`) |
+| `AWSSecretsGetFailed` | Warning | Secrets Manager get operation failed | Doctor check addon-secret paths operation (`/api/v1/clusters/{name}/diagnose`) |
+| `AWSTokenMintFailed` | Warning | EKS token generation (STS GetCallerIdentity) failed | Cluster test operation requiring IAM credentials (`/api/v1/clusters/{name}/test`) |
 | **Host ArgoCD API Failures** | | | |
-| `ArgoCDUnreachable` | Warning | ArgoCD server unreachable (network/DNS) | Cluster discovery, any operation requiring ArgoCD API (list clusters, create Application, etc.) |
-| `ArgoCDAuthFailed` | Warning | ArgoCD authentication failed (403/401) | Cluster discovery, any authenticated ArgoCD API call |
-| `ArgoCDAPICallFailed` | Warning | ArgoCD API call failed (non-auth error) | Any ArgoCD API operation (create/update/delete Application, etc.) |
+| `ArgoCDUnreachable` | Warning | ArgoCD server unreachable (network/DNS) | Cluster discovery operation (`/api/v1/clusters/discover`) |
+| `ArgoCDAuthFailed` | Warning | ArgoCD authentication failed (403/401) | Cluster discovery operation (`/api/v1/clusters/discover`) |
 | **Remote Cluster Connection Failures** | | | |
-| `ClusterTestFailed` | Warning | Stage1 connectivity test failed | `/api/v1/clusters/{name}/test` or automatic test during registration |
-| `ClusterDoctorFailed` | Warning | Doctor diagnostic failed | `/api/v1/clusters/{name}/diagnose` operation |
-| `ClusterConnectionFailed` | Warning | General cluster connection failure | Any remote cluster operation (kubectl/client-go connection failure) |
-| `ClusterRBACDenied` | Warning | RBAC permission denied on remote cluster | Remote cluster operation where Sharko's ServiceAccount lacks required permissions |
+| `ClusterTestFailed` | Warning | Stage1 connectivity test failed | Cluster test operation (`/api/v1/clusters/{name}/test`) when Stage1 connectivity check fails |
 | **Git / PR Failures** | | | |
-| `PROpenFailed` | Warning | Failed to open PR via git provider | Cluster or addon configuration changes that should open a PR but git provider API call failed |
+| `PROpenFailed` | Warning | Failed to open PR via git provider | Cluster or addon configuration changes where PR open operation failed |
+
+### Defined But Not Yet Emitted
+
+These event Reasons are defined in the codebase and reserved for future wiring. They are **not emitted today** — the server will never produce these events in the current version.
+
+| Reason | Type | What it means | Future use |
+|--------|------|---------------|------------|
+| **AWS Provider Failures** | | | |
+| `AWSConfigLoadFailed` | Warning | AWS SDK config load failed | AWS provider operations (credential chain resolution failure) |
+| `AWSCredentialsInvalid` | Warning | AWS credentials invalid or expired | AWS provider operations after initial config load |
+| **Host ArgoCD API Failures** | | | |
+| `ArgoCDAPICallFailed` | Warning | ArgoCD API call failed (non-auth error) | ArgoCD API operations (create/update/delete Application, etc.) |
+| **Remote Cluster Connection Failures** | | | |
+| `ClusterDoctorFailed` | Warning | Doctor diagnostic failed | Doctor operation (`/api/v1/clusters/{name}/diagnose`) |
+| `ClusterConnectionFailed` | Warning | General cluster connection failure | Remote cluster operations (kubectl/client-go connection failure) |
+| `ClusterRBACDenied` | Warning | RBAC permission denied on remote cluster | Remote cluster operations where Sharko's ServiceAccount lacks required permissions |
+| **Git / PR Failures** | | | |
 | `PRMergeFailed` | Warning | Failed to merge PR | Auto-merge operation failed (conflict, branch protection, API failure) |
 | `GitPushFailed` | Warning | Git push failed | Local commit succeeded but push to remote failed (auth, network, ref conflict) |
 | `GitAuthFailed` | Warning | Git authentication failed | Clone, fetch, or push operation with invalid/expired credentials |
 | `GitCloneFailed` | Warning | Git clone/fetch failed | Initial clone or fetch of configuration repository (network, not-found, corrupted) |
 | **Reconciler** | | | |
-| `ReconcileFailed` | Warning | Cluster reconciler failed | Reconciler tick encountered an unrecoverable error (placeholder for future wiring) |
-| `DriftDetected` | Warning | Drift detected between Git and ArgoCD | Reconciler detected that ArgoCD cluster Secret differs from Git source of truth (placeholder for future wiring) |
+| `ReconcileFailed` | Warning | Cluster reconciler failed | Reconciler tick encountered an unrecoverable error |
+| `DriftDetected` | Warning | Drift detected between Git and ArgoCD | Reconciler detected that ArgoCD cluster Secret differs from Git source of truth |
 | **Success Events** | | | |
 | `ClusterRegistered` | Normal | Cluster successfully registered | Cluster registration completed (Secret created in ArgoCD, PR opened or committed) |
 | `ClusterReconciled` | Normal | Cluster reconciled successfully | Reconciler self-healed drift or verified no drift exists |
@@ -107,7 +120,6 @@ When investigating a Sharko operational issue:
 3. **Match events to runbooks:** Many event Reasons have corresponding P0/P1 runbooks in the Operator Manual. For example:
    - `ArgoCDUnreachable` → [P0 Runbook — ArgoCD Upstream Unreachable](argocd-upstream-unreachable.md)
    - `AWSSecretsGetFailed` → [P1 Runbook — AWS-SM Secret Not Found](aws-sm-secret-not-found.md)
-   - `ReconcilerCrashLoop` → [P0 Runbook — Reconciler Crash Loop](reconciler-crash-loop.md)
 
 ## Event Retention
 
