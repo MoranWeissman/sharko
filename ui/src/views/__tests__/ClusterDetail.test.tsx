@@ -189,10 +189,20 @@ describe('ClusterDetail', () => {
     mockDeregisterCluster.mockResolvedValue({});
     // V2-cleanup-31: default apply-addons returns an empty result (no PR).
     mockUpdateClusterAddons.mockResolvedValue({});
-    // V2-cleanup-32: default catalog returns empty (most tests don't exercise
-    // the picker's catalog fetch; per-test overrides in the 32 suite set up
-    // real catalog data).
-    mockGetAddonCatalog.mockResolvedValue({ addons: [] });
+    // V3-BUG-2: default catalog returns the addons present in comparisonResponse
+    // (which represents a cluster with 3 enabled addons). Before V3-BUG-2, the
+    // catalog fetch was lazy (triggered only when the picker opened), so tests
+    // that never opened the picker didn't need catalog data. Now the catalog is
+    // fetched eagerly on mount — if it returns empty, `noCatalog` becomes true
+    // and hides the "+ Enable addon" button + the enabled-addon rows, breaking
+    // most existing tests. Per-test overrides can still replace this default.
+    mockGetAddonCatalog.mockResolvedValue({
+      addons: [
+        { addon_name: 'ingress-nginx', version: '4.7.0' },
+        { addon_name: 'cert-manager', version: '1.12.0' },
+        { addon_name: 'prometheus', version: '2.45.0' },
+      ],
+    });
     // V2-cleanup-81.1: default to an empty change timeline so History-section
     // tests don't need to stub this unless they exercise the timeline itself.
     mockGetClusterHistory.mockResolvedValue({ history: [] });
@@ -1204,8 +1214,17 @@ describe('ClusterDetail', () => {
         ...baseResponse,
         addon_comparisons: [],
       });
+      // V3-BUG-2: the catalog is now fetched eagerly on mount and is the
+      // authoritative source for `noCatalog`. Before this fix, `noCatalog`
+      // keyed off per-cluster `addonToggles` (seeded from the comparison),
+      // so a 0-addon cluster showed "No addons" even when the catalog had
+      // addons. Now the catalog is the truth — to genuinely show "No
+      // addons", the CATALOG must be empty, not just the cluster.
+      mockGetAddonCatalog.mockResolvedValueOnce({ addons: [] });
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      // Wait for the catalog fetch to complete.
+      await waitFor(() => expect(mockGetAddonCatalog).toHaveBeenCalledTimes(1));
       expect(screen.getByText('No addons in catalog.')).toBeInTheDocument();
     });
 
@@ -2266,6 +2285,122 @@ describe('ClusterDetail', () => {
       await waitFor(() => {
         expect(mockGetClusterChanges.mock.calls.length).toBeGreaterThan(changesCallsBeforeMerge);
       });
+    });
+  });
+
+  // V3-BUG-2: managed cluster with 0 addons enabled + non-empty catalog →
+  // "+ Enable addon" button visible on load; "No addons in catalog." NOT shown.
+  describe('V3-BUG-2: enable-addon button visibility with 0 enabled addons', () => {
+    it('shows "+ Enable addon" button when cluster has 0 enabled addons but catalog is non-empty', async () => {
+      // Cluster with 0 catalog addons enabled (git_configured rows) — only
+      // junk rows (untracked/sharko_system) that don't seed addonToggles.
+      mockGetClusterComparison.mockResolvedValue({
+        ...comparisonResponse,
+        addon_comparisons: [
+          {
+            addon_name: 'connectivity-check',
+            git_configured: false,
+            git_enabled: false,
+            status: 'sharko_system',
+            issues: [],
+          },
+        ],
+        total_healthy: 0,
+        total_with_issues: 0,
+        total_missing_in_argocd: 0,
+        total_untracked_in_argocd: 0,
+        total_disabled_in_git: 0,
+      });
+      // Catalog has 3 addons available (fetched eagerly on mount).
+      mockGetAddonCatalog.mockResolvedValue({
+        addons: [
+          { addon_name: 'ingress-nginx', version: '4.7.0' },
+          { addon_name: 'cert-manager', version: '1.12.0' },
+          { addon_name: 'prometheus', version: '2.45.0' },
+        ],
+      });
+
+      renderView('addons');
+
+      // Wait for the page to load (cluster name appears).
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      // V3-BUG-2 fix: the "+ Enable addon" button is visible even though
+      // this cluster has 0 enabled addons — catalog was fetched eagerly,
+      // so `noCatalog` is false (catalog has 3 addons).
+      await waitFor(() => {
+        expect(screen.getByTestId('manage-addons-enable-btn')).toBeInTheDocument();
+      });
+
+      // "No addons in catalog." is NOT shown (catalog is non-empty).
+      expect(screen.queryByText('No addons in catalog.')).not.toBeInTheDocument();
+
+      // Catalog fetch was called eagerly on mount.
+      expect(mockGetAddonCatalog).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides "+ Enable addon" button and shows "No addons in catalog." when catalog is genuinely empty', async () => {
+      // Cluster with 0 enabled addons.
+      mockGetClusterComparison.mockResolvedValue({
+        ...comparisonResponse,
+        addon_comparisons: [],
+        total_healthy: 0,
+        total_with_issues: 0,
+        total_missing_in_argocd: 0,
+        total_untracked_in_argocd: 0,
+        total_disabled_in_git: 0,
+      });
+      // Catalog is genuinely empty (0 addons available).
+      mockGetAddonCatalog.mockResolvedValue({ addons: [] });
+
+      renderView('addons');
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      // Wait for catalog fetch to resolve.
+      await waitFor(() => {
+        expect(mockGetAddonCatalog).toHaveBeenCalledTimes(1);
+      });
+
+      // "+ Enable addon" button is hidden (catalog is empty).
+      expect(screen.queryByTestId('manage-addons-enable-btn')).not.toBeInTheDocument();
+
+      // "No addons in catalog." is shown (honest empty-state).
+      expect(screen.getByText('No addons in catalog.')).toBeInTheDocument();
+    });
+
+    it('does not regress: cluster with enabled addons shows "+ Enable addon" button and addon rows', async () => {
+      // Default comparisonResponse has 3 enabled addons.
+      mockGetAddonCatalog.mockResolvedValue({
+        addons: [
+          { addon_name: 'ingress-nginx', version: '4.7.0' },
+          { addon_name: 'cert-manager', version: '1.12.0' },
+          { addon_name: 'prometheus', version: '2.45.0' },
+        ],
+      });
+
+      renderView('addons');
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      // Button is visible.
+      await waitFor(() => {
+        expect(screen.getByTestId('manage-addons-enable-btn')).toBeInTheDocument();
+      });
+
+      // Enabled addon rows are rendered (Manage Addons list).
+      expect(screen.getByTestId('manage-addon-row-ingress-nginx')).toBeInTheDocument();
+      expect(screen.getByTestId('manage-addon-row-cert-manager')).toBeInTheDocument();
+      expect(screen.getByTestId('manage-addon-row-prometheus')).toBeInTheDocument();
+
+      // "No addons in catalog." is NOT shown.
+      expect(screen.queryByText('No addons in catalog.')).not.toBeInTheDocument();
     });
   });
 });

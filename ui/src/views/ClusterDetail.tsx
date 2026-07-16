@@ -302,10 +302,11 @@ export function ClusterDetail() {
 
   // Enable-addon picker (Manage Addons card)
   const [pickerOpen, setPickerOpen] = useState(false);
-  // Catalog names fetched lazily when the picker opens.
+  // Catalog names fetched eagerly on mount (V3-BUG-2 fix).
   const [pickerCatalogNames, setPickerCatalogNames] = useState<string[]>([]);
   const [pickerCatalogLoading, setPickerCatalogLoading] = useState(false);
   const [pickerCatalogError, setPickerCatalogError] = useState<string | null>(null);
+  const [catalogFetched, setCatalogFetched] = useState(false);
 
   // addon_secrets_ready pre-warn (V2-cleanup-88.5, L4): when this cluster
   // has no resolvable connection credentials, staging a secret-bearing
@@ -628,15 +629,14 @@ export function ClusterDetail() {
     setTestOpen(true);
   }, [name]);
 
-  // Open the enable-addon picker and lazily fetch the real catalog so the
-  // picker offers every catalog addon, not just the ones already in
-  // addonToggles. Reuses api.getAddonCatalog() — the same call AddonCatalog
-  // view uses (no new endpoint). Available = catalog names minus currently
-  // enabled+staged, which the picker computes from pickerEnabledNames.
+  // Open the enable-addon picker. The catalog is now fetched eagerly on mount
+  // (V3-BUG-2 fix) so this just opens the picker; the lazy-fetch fallback is
+  // kept as a no-op (the early-return when pickerCatalogNames is populated) for
+  // safety — it never runs in normal flow since the mount effect beat it.
   const handleOpenPicker = useCallback(async () => {
     setPickerOpen(true);
     setPickerCatalogError(null);
-    if (pickerCatalogNames.length > 0) return; // already fetched
+    if (pickerCatalogNames.length > 0) return; // already fetched (eagerly or fallback)
     setPickerCatalogLoading(true);
     try {
       const catalog = await api.getAddonCatalog();
@@ -710,6 +710,30 @@ export function ClusterDetail() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  // V3-BUG-2 fix: fetch the addon catalog eagerly on mount so `pickerCatalogNames`
+  // is populated independent of whether the "+ Enable addon" picker was ever opened.
+  // Before this, a 0-addon cluster hid the "+ Enable addon" button because `noCatalog`
+  // was true (derived from the empty per-cluster `addonToggles` map) — but the button's
+  // click was the only trigger for the catalog fetch, creating a catch-22. Now the
+  // catalog fetch runs once on load, and `noCatalog` is recomputed off the REAL catalog.
+  useEffect(() => {
+    if (catalogFetched) return;
+    setCatalogFetched(true);
+    setPickerCatalogLoading(true);
+    setPickerCatalogError(null);
+    api
+      .getAddonCatalog()
+      .then((catalog) => {
+        setPickerCatalogNames(catalog.addons.map((a) => a.addon_name));
+      })
+      .catch((e: unknown) => {
+        setPickerCatalogError(e instanceof Error ? e.message : 'Failed to load catalog');
+      })
+      .finally(() => {
+        setPickerCatalogLoading(false);
+      });
+  }, [catalogFetched]);
 
   // Fetch AI-enabled status once on mount. The AI assistant is OPT-IN and
   // hidden by default (V2-cleanup-55.4, master gate in Layout.tsx): every
@@ -921,11 +945,18 @@ export function ClusterDetail() {
   // Visible-row source: only catalog rows (git_configured=true) — junk
   // (untracked/sharko_system) was filtered out at toggle-map seeding time.
   const allCatalogNames = Object.keys(addonToggles).sort();
-  // noCatalog: true when addonToggles has no entries AND no catalog was
-  // fetched for the picker yet. After the picker fetch we have
-  // pickerCatalogNames, which is the authoritative source for what's
-  // available to enable. If even that is empty, there's nothing in the catalog.
-  const noCatalog = allCatalogNames.length === 0 && pickerCatalogNames.length === 0;
+  // noCatalog (V3-BUG-2 fix): true ONLY when the REAL catalog — fetched eagerly
+  // on mount — is genuinely empty. Before this fix, `noCatalog` keyed off
+  // `allCatalogNames` (seeded from per-cluster enabled addons), which was empty
+  // for a 0-addon cluster even when the catalog had addons available. That hid
+  // the "+ Enable addon" button whose click fetches the catalog (catch-22).
+  // Now: the catalog is the authoritative source. If the catalog fetch hasn't
+  // completed yet, fall back to the old logic (show button if cluster has addons)
+  // to avoid breaking existing behavior — but once the catalog loads, key off
+  // the real catalog count regardless of per-cluster enabled state.
+  const noCatalog = catalogFetched && !pickerCatalogLoading
+    ? pickerCatalogNames.length === 0
+    : allCatalogNames.length === 0 && pickerCatalogNames.length === 0;
   // Which addons are currently desired-true (original + staged enables)?
   // Excludes addons staged for removal (still in list, but they retain
   // their row with a pending-removal mark).
@@ -1339,6 +1370,9 @@ export function ClusterDetail() {
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Addons</h3>
                 <RoleGuard adminOnly>
+                  {/* V3-BUG-2 fix: show the "+ Enable addon" button whenever the
+                    * catalog is non-empty (keying off the real eagerly-fetched catalog
+                    * once loaded), regardless of whether this cluster has enabled addons. */}
                   {!noCatalog && (
                     <button
                       type="button"
@@ -1356,7 +1390,10 @@ export function ClusterDetail() {
               {/* Admin: enabled-addons list + searchable enable picker —
                 * sits directly under the Addons header, no separate card. */}
               <RoleGuard adminOnly>
-                {/* Empty catalog */}
+                {/* V3-BUG-2 fix: show "No addons in catalog." only when the real
+                  * catalog (eagerly fetched) is genuinely empty. Before the catalog
+                  * loads, `noCatalog` falls back to the old per-cluster logic to
+                  * avoid flashing empty-state on clusters with enabled addons. */}
                 {noCatalog && (
                   <p className="text-sm text-[#3a6a8a] dark:text-gray-500">
                     No addons in catalog.
