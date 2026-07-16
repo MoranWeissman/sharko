@@ -68,6 +68,7 @@ nav:
     - 'Managing Cluster Connections Yourself': operator/self-managed-connections.md
     - 'Reference — Connection Doctor': operator/connection-doctor.md
     - 'Reference — Cluster Reconciler (architecture + embedded troubleshooting)': operator/cluster-reconciler.md
+    - 'Reference — Git-Native Server Configuration (git wins)': operator/git-native-config.md
     - 'Reference — AI Configuration': operator/ai-config.md
     - 'Reference — Security': operator/security.md
     - 'Reference — Supply Chain': operator/supply-chain.md

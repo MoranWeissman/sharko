@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Most Sharko configuration is managed via Helm values, documented on this page. A small set of server-wide settings — `probe_mode` and `allow_inline_credentials` — are runtime toggles instead: stored in Sharko's in-cluster settings store, admin-only, editable from **Settings** in the UI (or their `/api/v1/settings/*` endpoints) with no restart or redeploy needed. See [Server Settings in the connections guide](../user-guide/connections.md#server-settings) for what each one does.
+Most Sharko configuration is managed via Helm values, documented on this page. A small set of server-wide settings — `probe_mode` and `allow_inline_credentials` — can be declared in Helm values as of v3.0.0 (git-wins precedence: a Helm-declared value is authoritative and Sharko reconciles toward it; a runtime UI edit is reclaimed within 60 seconds). When left undeclared (empty in Helm values), they are runtime toggles instead: stored in Sharko's in-cluster settings store, admin-only, editable from **Settings** in the UI (or their `/api/v1/settings/*` endpoints) with no restart or redeploy needed. See [Git-Native Server Configuration](git-native-config.md) for the full git-wins model and [Server Settings in the connections guide](../user-guide/connections.md#server-settings) for what each one does.
 
 > Sharko-owned YAML config files wrap content in an
 > `apiVersion: sharko.dev/v1` envelope with schema-validated structure.
