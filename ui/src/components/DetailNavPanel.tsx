@@ -38,7 +38,7 @@ export function DetailNavPanel({ sections, activeKey, onSelect }: DetailNavPanel
                   onClick={() => onSelect(item.key)}
                   className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition-colors ${
                     activeKey === item.key
-                      ? 'border-l-[3px] border-[#0a2a4a] bg-[#d6eeff] font-semibold text-[#0a2a4a] dark:border-blue-400 dark:bg-gray-700 dark:text-white'
+                      ? 'border-l-4 border-[#0a2a4a] bg-[#bee0ff] font-semibold text-[#0a2a4a] shadow-sm dark:border-blue-400 dark:bg-gray-700 dark:text-white'
                       : item.destructive
                         ? 'border-l-[3px] border-transparent text-red-600 hover:bg-[#d6eeff] dark:text-red-400 dark:hover:bg-red-900/20'
                         : 'border-l-[3px] border-transparent text-[#1a4a6a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700'
