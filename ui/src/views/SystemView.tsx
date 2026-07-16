@@ -40,7 +40,6 @@ import {
   ARGOCD_CONN_TOOLTIP,
   SHARKO_CONN_LABEL,
   SHARKO_CONN_TOOLTIP,
-  WhoseConnectionLabel,
 } from '@/components/WhoseConnectionLabel'
 import { ClusterIdentityPanel } from '@/components/ClusterIdentityPanel'
 import testedRange from '@/generated/argocd-tested-range.json'
@@ -256,26 +255,27 @@ export function testedRangeLabel(
 // ─────────────────────────────────────────────────────────────────────────────
 
 function StatusPill({ status, label }: { status: ArrowStatus; label?: string }) {
-  if (status === 'healthy') {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
-        <CheckCircle2 className="h-3.5 w-3.5" />
-        {label ?? 'Healthy'}
-      </span>
-    )
-  }
-  if (status === 'degraded') {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-        <XCircle className="h-3.5 w-3.5" />
-        {label ?? 'Problem'}
-      </span>
-    )
-  }
+  // V3 U3: source colors from clusterStatus.ts instead of hardcoding.
+  // Use more prominent sizing (text-sm, h-4 icon, larger padding) and the
+  // canonical severity→color mapping. ArrowStatus maps: healthy→green (good),
+  // degraded→red (problem), unknown→gray (unknown).
+  const Icon = status === 'healthy' ? CheckCircle2 : status === 'degraded' ? XCircle : HelpCircle
+
+  const colorClasses =
+    status === 'healthy'
+      ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+      : status === 'degraded'
+        ? 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+        : 'bg-gray-50 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400'
+
+  const defaultLabel = status === 'healthy' ? 'Healthy' : status === 'degraded' ? 'Problem' : 'Unknown'
+
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#d6eeff] px-2.5 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-blue-900/30 dark:text-blue-300">
-      <HelpCircle className="h-3.5 w-3.5" />
-      {label ?? 'Unknown'}
+    <span
+      className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium ${colorClasses}`}
+    >
+      <Icon className="h-4 w-4" />
+      {label ?? defaultLabel}
     </span>
   )
 }
@@ -428,8 +428,10 @@ export function SystemView() {
 
   const sharkoRepo = deriveSharkoRepoArrow(repoStatus)
   const argoRepo = deriveArgoRepoArrow(repoStatus)
-  const sharkoClusterAgg = aggregateStatuses(clusters.map(deriveSharkoClusterStatus))
-  const argoClusterAgg = aggregateStatuses(clusters.map(deriveArgoClusterStatus))
+  // Filter out the hub 'in-cluster' entry from health counts (V3 U3).
+  const managedClusters = clusters.filter((c) => c.name !== 'in-cluster')
+  const sharkoClusterAgg = aggregateStatuses(managedClusters.map(deriveSharkoClusterStatus))
+  const argoClusterAgg = aggregateStatuses(managedClusters.map(deriveArgoClusterStatus))
 
   const detectedMM = parseMajorMinor(argocdVersion)
   const outsideRange = versionOutsideTestedRange(argocdVersion)
@@ -533,7 +535,7 @@ export function SystemView() {
           <ArrowCard
             from="Sharko"
             to="Clusters"
-            caption={<WhoseConnectionLabel who="sharko" />}
+            caption={<span className="text-xs font-medium text-[#5a8aaa] dark:text-gray-500">{SHARKO_CONN_LABEL}</span>}
             status={sharkoClusterAgg.status}
             statusLabel={sharkoClusterAgg.label}
             detail={SHARKO_CONN_TOOLTIP}
@@ -541,7 +543,7 @@ export function SystemView() {
             actionLabel="Open the Clusters page"
           >
             <ClusterList
-              clusters={clusters}
+              clusters={managedClusters}
               derive={deriveSharkoClusterStatus}
               deriveLabel={deriveSharkoClusterLabel}
               toggleLabel={`Per-cluster status (${SHARKO_CONN_LABEL})`}
@@ -550,7 +552,7 @@ export function SystemView() {
           <ArrowCard
             from="ArgoCD"
             to="Clusters"
-            caption={<WhoseConnectionLabel who="argocd" />}
+            caption={<span className="text-xs font-medium text-[#5a8aaa] dark:text-gray-500">{ARGOCD_CONN_LABEL}</span>}
             status={argoClusterAgg.status}
             statusLabel={argoClusterAgg.label}
             detail={ARGOCD_CONN_TOOLTIP}
@@ -558,7 +560,7 @@ export function SystemView() {
             actionLabel="Open the Clusters page"
           >
             <ClusterList
-              clusters={clusters}
+              clusters={managedClusters}
               derive={deriveArgoClusterStatus}
               toggleLabel={`Per-cluster status (${ARGOCD_CONN_LABEL})`}
             />

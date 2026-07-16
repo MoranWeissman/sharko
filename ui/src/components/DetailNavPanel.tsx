@@ -27,7 +27,7 @@ export function DetailNavPanel({ sections, activeKey, onSelect }: DetailNavPanel
         {sections.map((group, gi) => (
           <div key={gi}>
             {group.label && (
-              <p className="mb-1 px-2 text-xs font-semibold uppercase tracking-wider text-[#3a6a8a] dark:text-gray-500">
+              <p className="mb-1 px-2 text-xs uppercase tracking-wider text-[#5a9ad0] dark:text-gray-500">
                 {group.label}
               </p>
             )}
