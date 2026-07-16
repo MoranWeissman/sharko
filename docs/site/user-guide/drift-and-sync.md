@@ -39,6 +39,8 @@ The drift diff uses the same rendering style as the [Preview Changes](clusters.m
 
 **Secret values are never shown.** The diff only exposes label keys and values — no secret Data, no kubeconfig, no credentials.
 
+**Who can see what:** The sync status pill and read-only drift diff are visible to all users (including viewers). Only the **Sync now** action button is restricted to admins and operators — viewers can see when a cluster is OutOfSync and what drifted, but cannot trigger the sync.
+
 ## The Sync action
 
 The **Sync** button (or the automatic reconciliation tick, if self-heal is enabled) re-applies the Git-desired addon labels to the cluster Secret. This mirrors [ArgoCD's own Sync action](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/), but for Sharko's cluster registration and addon labels rather than ArgoCD application manifests.
@@ -47,7 +49,9 @@ The **Sync** button (or the automatic reconciliation tick, if self-heal is enabl
 
 1. Reads the cluster entry from `configuration/managed-clusters.yaml` (the Git truth).
 2. Computes which addon labels should exist based on that entry.
-3. Merges those labels onto the live ArgoCD cluster Secret — **only Sharko's addon label keys are touched**. Secret Data, annotations, and other labels remain unchanged.
+3. Fully converges those labels onto the live ArgoCD cluster Secret — **only Sharko's addon label keys (bare, unqualified keys with no `/`) are touched**. This means addon labels that Git declares are added or updated, and addon labels that Git no longer declares are **deleted** from the live Secret (not left behind). Secret Data, annotations, and other labels remain unchanged.
+
+**Honest reporting:** After a Sync (manual or automatic), Sharko re-reads the cluster Secret to verify the live state actually converged. It only reports **Synced** (or "drift corrected") if the live addon labels genuinely match what Git declares. If any drift remains after the write — for example, if a parallel process reverted the change, or if the ownership label was lost — Sharko reports **Sync failed** with the residual drift, never a false success.
 
 **What Sync does NOT do:**
 
