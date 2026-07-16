@@ -48,6 +48,7 @@ nav:
     - Managing Connections: user-guide/connections.md
     - Secrets Provider: user-guide/secrets-provider.md
     - Managing Clusters: user-guide/clusters.md
+    - Drift Detection and Sync: user-guide/drift-and-sync.md
     - Managing Addons: user-guide/addons.md
     - Marketplace: user-guide/marketplace.md
     - Editing Values: user-guide/values-editing.md
@@ -67,6 +68,8 @@ nav:
     - 'Managing Cluster Connections Yourself': operator/self-managed-connections.md
     - 'Reference — Connection Doctor': operator/connection-doctor.md
     - 'Reference — Cluster Reconciler (architecture + embedded troubleshooting)': operator/cluster-reconciler.md
+    - 'Reference — Git-Native Server Configuration (git wins)': operator/git-native-config.md
+    - 'Reference — Sharko Events': operator/sharko-events.md
     - 'Reference — AI Configuration': operator/ai-config.md
     - 'Reference — Security': operator/security.md
     - 'Reference — Supply Chain': operator/supply-chain.md
