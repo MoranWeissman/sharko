@@ -102,7 +102,7 @@ export function DoctorResultView({ result }: { result: DoctorClusterResponse }) 
                 {CHECK_LABELS[check.id] ?? check.id}
               </span>
             </div>
-            <p className="ml-6 mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">{check.detail}</p>
+            <p className="ml-6 mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">{check.detail}</p>
             {(check.status === 'fail' || check.status === 'warn') && check.fix && (
               <p
                 data-testid={`doctor-fix-${check.id}`}

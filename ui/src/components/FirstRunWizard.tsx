@@ -191,7 +191,7 @@ function StepGit({
             onChange={(e) => onChange({ git_url: e.target.value })}
             placeholder="https://github.com/your-org/your-repo"
           />
-          <p className="mt-1 text-xs text-[#3a6a8a]">
+          <p className="mt-1 text-sm text-[#3a6a8a]">
             GitHub, GitHub Enterprise, or Azure DevOps (auto-detected from URL)
           </p>
         </div>
@@ -209,7 +209,7 @@ function StepGit({
                 : 'Personal access token (PAT)'
             }
           />
-          <p className="mt-1 text-xs text-[#3a6a8a]">
+          <p className="mt-1 text-sm text-[#3a6a8a]">
             {hasSavedToken
               ? 'Submitting blank keeps your saved credential. Enter a new value to replace it.'
               : 'Needs read and write access so Sharko can open pull requests.'}
@@ -232,12 +232,12 @@ function StepGit({
           Test Connection
         </button>
         {testStatus.git === 'ok' && (
-          <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+          <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
             <CheckCircle className="h-3.5 w-3.5" /> Connected
           </span>
         )}
         {testStatus.git === 'error' && (
-          <span className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
+          <span className="flex items-center gap-1 text-sm text-red-600 dark:text-red-400">
             <XCircle className="h-3.5 w-3.5" /> {testStatus.gitMessage || 'Failed'}
           </span>
         )}
@@ -255,7 +255,7 @@ function StepGit({
           >
             Clear all configuration and start over
           </button>
-          <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-500">
+          <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-500">
             Removes the saved connection so you can configure Sharko from scratch.
           </p>
         </div>
@@ -335,12 +335,12 @@ function StepArgoCD({
             placeholder="Auto-discovered from cluster"
           />
           {form.argocd_server_url.includes('.svc.cluster.local') && form.argocd_server_url.startsWith('https://') && (
-            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+            <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
               ⚠ In-cluster services typically use http://, not https://
             </p>
           )}
           {!(form.argocd_server_url.includes('.svc.cluster.local') && form.argocd_server_url.startsWith('https://')) && (
-            <p className="mt-1 text-xs text-[#3a6a8a]">
+            <p className="mt-1 text-sm text-[#3a6a8a]">
               Leave blank for in-cluster auto-discovery. Override for external ArgoCD.
             </p>
           )}
@@ -359,7 +359,7 @@ function StepArgoCD({
                 : 'ArgoCD API token (optional if in-cluster RBAC)'
             }
           />
-          <p className="mt-1 text-xs text-[#3a6a8a]">
+          <p className="mt-1 text-sm text-[#3a6a8a]">
             {hasSavedToken
               ? 'Submitting blank keeps your saved credential. Enter a new value to replace it.'
               : 'Falls back to ARGOCD_TOKEN env var if not provided.'}
@@ -392,12 +392,12 @@ function StepArgoCD({
           Test Connection
         </button>
         {testStatus.argocd === 'ok' && (
-          <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+          <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
             <CheckCircle className="h-3.5 w-3.5" /> Connected
           </span>
         )}
         {testStatus.argocd === 'error' && (
-          <span className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
+          <span className="flex items-center gap-1 text-sm text-red-600 dark:text-red-400">
             <XCircle className="h-3.5 w-3.5" /> {testStatus.argocdMessage || 'Failed'}
           </span>
         )}
@@ -693,7 +693,7 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
               </span>
             </p>
             {probeDetail && (
-              <p className="mt-2 pl-6 text-xs text-amber-700 dark:text-amber-400">
+              <p className="mt-2 pl-6 text-sm text-amber-700 dark:text-amber-400">
                 {probeDetail}
               </p>
             )}
@@ -730,7 +730,7 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
             and open a PR for your review.
           </p>
           {probeFailed && (
-            <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400">
+            <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">
               (Couldn't confirm the repository state — you can still initialize
               safely; Sharko skips files that already exist.)
             </p>

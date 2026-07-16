@@ -244,12 +244,12 @@ export function GitOpsSection() {
               placeholder={detectedClusterName || 'e.g. management'}
             />
           )}
-          <p className="mt-1 text-xs text-[#3a6a8a]">Name of the cluster running Sharko + ArgoCD</p>
+          <p className="mt-1 text-sm text-[#3a6a8a]">Name of the cluster running Sharko + ArgoCD</p>
           {isHostClusterDetected && (
             <button
               type="button"
               onClick={() => setDetectedClusterName(null)}
-              className="mt-1 text-xs text-[#3a6a8a] underline hover:text-[#1a4a6a]"
+              className="mt-1 text-sm text-[#3a6a8a] underline hover:text-[#1a4a6a]"
             >
               Override
             </button>
@@ -332,7 +332,7 @@ export function GitOpsSection() {
                 <p className="mt-2 text-sm text-red-600 dark:text-red-400">{saveDefaultsError}</p>
               )}
               {defaultsPRResult && (
-                <p className="mt-2 text-xs text-green-600 dark:text-green-400">
+                <p className="mt-2 text-sm text-green-600 dark:text-green-400">
                   Opened{' '}
                   <a
                     href={defaultsPRResult.pr_url}
@@ -392,7 +392,7 @@ export function GitOpsSection() {
           Save GitOps Settings
         </button>
         {justSaved && (
-          <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+          <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
             <CheckCircle className="h-3.5 w-3.5" /> Saved
           </span>
         )}

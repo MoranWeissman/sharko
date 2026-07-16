@@ -107,7 +107,7 @@ export function InlineCredentialsSection() {
             <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
               Allow pasting credentials
             </p>
-            <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">
+            <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">
               {allow
                 ? 'Operators can paste a kubeconfig at registration time.'
                 : 'The "Paste a kubeconfig" option is hidden — every registration must point at a secret store.'}

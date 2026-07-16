@@ -102,7 +102,7 @@ const CREDS_SOURCE_HINTS: Record<CredsSource, string> = {
   'secret-kubeconfig':
     'Sharko fetches the kubeconfig from your secrets backend by name/path. Works for any cluster; token lifetime is whatever you stored.',
   'eks-token':
-    'Sharko mints a short-lived AWS token on every connection using its own AWS identity — nothing to store or rotate. EKS only; Sharko needs AWS access to the cluster.',
+    'Sharko generates a short-lived AWS token on every connection using its own AWS identity — nothing to store or rotate. EKS only; Sharko needs AWS access to the cluster.',
 };
 
 // V2-cleanup-57.2: connection-ownership choice, in plain English. This is
@@ -654,7 +654,7 @@ export function ClustersOverview() {
     // "Unreachable" when only the test feature itself is unavailable.
     if (isTestClusterUnavailable(testResult)) {
       return (
-        <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-300" title={testResult.error}>
+        <span className="inline-flex items-center gap-1 text-sm text-amber-700 dark:text-amber-300" title={testResult.error}>
           <AlertTriangle className="h-3 w-3" />
           Test unavailable
         </span>
@@ -1067,7 +1067,7 @@ export function ClustersOverview() {
             type="button"
             onClick={() => setLegendOpen((o) => !o)}
             aria-expanded={legendOpen}
-            className="inline-flex items-center gap-1.5 text-xs text-[#3a6a8a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200"
+            className="inline-flex items-center gap-1.5 text-sm text-[#3a6a8a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200"
           >
             <HelpCircle className="h-3.5 w-3.5" />
             {legendOpen ? 'Hide status legend' : 'Status legend'}
@@ -1109,7 +1109,7 @@ export function ClustersOverview() {
               <p className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
                 Cluster location
               </p>
-              <p className="mt-0.5 text-xs text-[#2a5a7a] dark:text-gray-500">
+              <p className="mt-0.5 text-sm text-[#2a5a7a] dark:text-gray-500">
                 Connection credentials below are optional — add them later if you enable an addon with addon secrets.
               </p>
             </div>
@@ -1135,7 +1135,7 @@ export function ClustersOverview() {
                 <option value="sharko">Sharko (default)</option>
                 <option value="user">Manage a cluster ArgoCD already connects to</option>
               </select>
-              <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-400">
+              <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
                 {CONN_OWNERSHIP_HINTS[connManagedBy]}
               </p>
             </div>
@@ -1164,7 +1164,7 @@ export function ClustersOverview() {
                 <p className="text-sm font-medium text-[#0a3a5a] dark:text-gray-200">
                   Discovered clusters
                 </p>
-                <p className="mt-0.5 text-xs text-[#2a5a7a] dark:text-gray-500">
+                <p className="mt-0.5 text-sm text-[#2a5a7a] dark:text-gray-500">
                   ArgoCD already knows about {discoveredClusters.length} cluster{discoveredClusters.length === 1 ? '' : 's'} Sharko doesn't manage yet. Pick one to adopt {discoveredClusters.length === 1 ? 'it' : 'them'} instead of typing its coordinates by hand.
                 </p>
                 <div className="mt-2 relative">
@@ -1179,7 +1179,7 @@ export function ClustersOverview() {
                 </div>
                 {filteredDiscovered.length > 0 ? (
                   <>
-                    <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-500">
+                    <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
                       Showing {filteredDiscovered.length} of {discoveredClusters.length}
                     </p>
                     <div className="mt-1 max-h-40 space-y-1 overflow-y-auto rounded-md ring-1 ring-teal-200 bg-white p-2 dark:ring-teal-900 dark:bg-gray-900">
@@ -1197,7 +1197,7 @@ export function ClustersOverview() {
                           />
                           <span className="font-medium text-[#0a2a4a] dark:text-gray-100">{cluster.name}</span>
                           <span
-                            className="ml-auto max-w-[220px] truncate font-mono text-xs text-[#3a6a8a] dark:text-gray-400"
+                            className="ml-auto max-w-[220px] truncate font-mono text-sm text-[#3a6a8a] dark:text-gray-400"
                             title={cluster.server_url}
                           >
                             {cluster.server_url ?? '--'}
@@ -1207,7 +1207,7 @@ export function ClustersOverview() {
                     </div>
                   </>
                 ) : (
-                  <p className="mt-2 rounded-md bg-white px-3 py-2 text-xs text-[#3a6a8a] dark:bg-gray-900 dark:text-gray-500">
+                  <p className="mt-2 rounded-md bg-white px-3 py-2 text-sm text-[#3a6a8a] dark:bg-gray-900 dark:text-gray-500">
                     No clusters match your search.
                   </p>
                 )}
@@ -1220,7 +1220,7 @@ export function ClustersOverview() {
                   <GitMerge className="h-3.5 w-3.5" />
                   {pickedDiscovered ? `Adopt ${pickedDiscovered}` : 'Adopt cluster'}
                 </button>
-                <p className="mt-2 text-xs text-[#2a5a7a] dark:text-gray-500">
+                <p className="mt-2 text-sm text-[#2a5a7a] dark:text-gray-500">
                   Or enter details manually below for a cluster ArgoCD doesn't have yet.
                 </p>
               </div>
@@ -1241,7 +1241,7 @@ export function ClustersOverview() {
             {connManagedBy === 'user' && !loading && !argoCDUnreachable && discoveredClusters.length === 0 && (
               <p
                 data-testid="discovered-empty"
-                className="text-xs text-[#2a5a7a] dark:text-gray-500"
+                className="text-sm text-[#2a5a7a] dark:text-gray-500"
               >
                 Sharko checked ArgoCD — no other clusters there to adopt.
               </p>
@@ -1312,13 +1312,13 @@ export function ClustersOverview() {
                       <option value="inline-kubeconfig">Paste kubeconfig (stored)</option>
                     )}
                     <option value="secret-kubeconfig">Kubeconfig from a secrets backend</option>
-                    <option value="eks-token">EKS — auto-minted tokens (nothing stored)</option>
+                    <option value="eks-token">Amazon EKS — Use a short-lived token from AWS</option>
                   </select>
                   {/* Plain-English hint for the selected option (V2-cleanup-55.3).
                     * V2-cleanup-91.2 (F2): "Required" only fires when the selector
                     * is genuinely required (not in the "I do" + nothing-to-adopt
                     * case where credentials are optional). */}
-                  <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-500">
+                  <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
                     {credsSource === ''
                       ? userManagedWithNothingToAdopt
                         ? 'Pick a credential source if you want to test connectivity now.'
@@ -1364,7 +1364,7 @@ export function ClustersOverview() {
                         placeholder={'apiVersion: v1\nkind: Config\nclusters:\n- name: my-cluster\n  cluster:\n    server: https://...\n    certificate-authority-data: ...\nusers:\n- name: my-user\n  user:\n    token: ...'}
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 font-mono text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
-                      <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-500">
+                      <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
                         Sharko extracts the server URL, CA certificate, and bearer token (only bearer-token auth is supported). For kind, generate one with <code className="font-mono">kubectl create token &lt;serviceaccount&gt; --duration=24h</code>.
                       </p>
                     </div>
@@ -1389,7 +1389,7 @@ export function ClustersOverview() {
                         placeholder="e.g. k8s-my-cluster or secret/data/clusters/my-cluster"
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
-                      <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-500">
+                      <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
                         The secret in your configured backend holds this cluster's kubeconfig.
                       </p>
                     </div>
@@ -1435,7 +1435,7 @@ export function ClustersOverview() {
                         placeholder="e.g. arn:aws:iam::123456789012:role/sharko-access"
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
-                      <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-500">
+                      <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
                         Cross-account override — leave empty to use the identity shown above.
                       </p>
                     </div>
@@ -1450,7 +1450,7 @@ export function ClustersOverview() {
                         placeholder="Override AWS SM secret name (e.g., k8s-my-cluster)"
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
-                      <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-500">
+                      <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
                         Leave empty to use cluster name as the secret key
                       </p>
                     </div>
@@ -1458,7 +1458,7 @@ export function ClustersOverview() {
                 )}
 
             {/* Auto-merge is now a global setting — no per-flow checkbox. */}
-            <p className="text-xs text-[#2a5a7a] dark:text-gray-500">
+            <p className="text-sm text-[#2a5a7a] dark:text-gray-500">
               Auto-merge follows your{' '}
               <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
                 global GitOps setting
@@ -1836,10 +1836,10 @@ export function ClustersOverview() {
                     <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
                       {p.cluster_name}
                     </td>
-                    <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                    <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
                       {p.branch || '--'}
                     </td>
-                    <td className="px-6 py-3 text-xs text-[#2a5a7a] dark:text-gray-400">
+                    <td className="px-6 py-3 text-sm text-[#2a5a7a] dark:text-gray-400">
                       {p.opened_at || '--'}
                     </td>
                     <td className="px-6 py-3">
@@ -1854,7 +1854,7 @@ export function ClustersOverview() {
                           View PR
                         </a>
                       ) : (
-                        <span className="text-xs text-[#3a6a8a] dark:text-gray-500">PR URL unavailable</span>
+                        <span className="text-sm text-[#3a6a8a] dark:text-gray-500">PR URL unavailable</span>
                       )}
                     </td>
                   </tr>
@@ -1900,10 +1900,10 @@ export function ClustersOverview() {
                     <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
                       {o.cluster_name}
                     </td>
-                    <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                    <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
                       {o.server_url || '--'}
                     </td>
-                    <td className="px-6 py-3 text-xs text-[#2a5a7a] dark:text-gray-400">
+                    <td className="px-6 py-3 text-sm text-[#2a5a7a] dark:text-gray-400">
                       {o.last_seen_at || '--'}
                     </td>
                     <td className="px-6 py-3">
@@ -2008,7 +2008,7 @@ export function ClustersOverview() {
                           connectionManagedBy={cluster.connection_managed_by}
                         />
                       </td>
-                      <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                      <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
                         {cluster.server_version ?? '--'}
                       </td>
                       <td className="px-6 py-3 text-[#2a5a7a] dark:text-gray-400">
@@ -2127,7 +2127,7 @@ export function ClustersOverview() {
                       connectionManagedBy={cluster.connection_managed_by}
                     />
                   </div>
-                  <p className="mb-2 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                  <p className="mb-2 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
                     {cluster.server_version ? `v${cluster.server_version}` : '--'}
                   </p>
                   <div className="flex items-center justify-between">

@@ -11,7 +11,7 @@ import { AuthProvider } from '@/hooks/useAuth';
 // inline — no Test button hunt. On PR-pending (merged=false), no false test.
 //
 // CC2: connection-source option labels + hints state what-you-provide + expiry
-// + AWS/IAM requirement. eks-token conveys "auto-minted / nothing stored".
+// + AWS/IAM requirement. eks-token conveys "short-lived AWS tokens / nothing stored".
 
 const mockGetClusters = vi.fn();
 const mockGetAddonCatalog = vi.fn();
@@ -254,7 +254,7 @@ describe('ClustersOverview — V3-CC2: clearer connection-method names', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true } as Response)));
   });
 
-  it('renders the eks-token option label as "EKS — auto-minted tokens (nothing stored)"', async () => {
+  it('renders the eks-token option label as "Amazon EKS — Use a short-lived token from AWS"', async () => {
     renderView();
 
     await waitFor(() => {
@@ -266,8 +266,8 @@ describe('ClustersOverview — V3-CC2: clearer connection-method names', () => {
       expect(screen.getByText('Register New Cluster')).toBeInTheDocument();
     });
 
-    // Check the eks-token option text (V3-CC2)
-    const eksOption = screen.getByRole('option', { name: /EKS — auto-minted tokens \(nothing stored\)/i });
+    // Check the eks-token option text (V3-RW1.2)
+    const eksOption = screen.getByRole('option', { name: /Amazon EKS — Use a short-lived token from AWS/i });
     expect(eksOption).toBeInTheDocument();
   });
 
@@ -286,10 +286,10 @@ describe('ClustersOverview — V3-CC2: clearer connection-method names', () => {
     const credsSelect = screen.getByDisplayValue(/Choose where/i);
     fireEvent.change(credsSelect, { target: { value: 'eks-token' } });
 
-    // Check the hint text (V3-CC2)
+    // Check the hint text (V3-RW1.2)
     await waitFor(() => {
       expect(
-        screen.getByText(/Sharko mints a short-lived AWS token.*nothing to store or rotate.*EKS only.*Sharko needs AWS access/i)
+        screen.getByText(/Sharko generates a short-lived AWS token.*nothing to store or rotate.*EKS only.*Sharko needs AWS access/i)
       ).toBeInTheDocument();
     });
   });

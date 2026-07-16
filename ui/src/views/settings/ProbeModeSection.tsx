@@ -147,7 +147,7 @@ export function ProbeModeSection() {
                       <CheckCircle2 className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" aria-hidden />
                     )}
                   </span>
-                  <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">{opt.helper}</p>
+                  <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">{opt.helper}</p>
                 </div>
               </label>
             )

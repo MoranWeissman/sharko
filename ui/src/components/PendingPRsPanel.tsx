@@ -157,7 +157,7 @@ export function PendingPRsPanel({ cluster, onMergeDetected, onDataChange }: Pend
             {cluster ? 'Cluster PRs' : 'Pending PRs'}
           </h3>
         </div>
-        <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       </div>
     )
   }

@@ -1097,7 +1097,7 @@ export function ClusterDetail() {
             * this cluster's ArgoCD secret. ArgoCD shows a failed apply;
             * before this, a failed reconcile here was server-log-only. */}
           {data?.cluster?.last_reconcile && (
-            <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+            <p className="mt-1 text-sm text-[#5a8aaa] dark:text-gray-500">
               Last sync: {relativeTime(data.cluster.last_reconcile.time)}
               {data.cluster.last_reconcile.outcome === 'succeeded' && ' — succeeded'}
               {data.cluster.last_reconcile.outcome === 'skipped' && ' — skipped'}
@@ -1114,7 +1114,7 @@ export function ClusterDetail() {
             * can now turn off install-wide. A light nudge toward the
             * GitOps-clean alternative; not a warning or a blocker. */}
           {data?.cluster?.creds_source === 'inline-kubeconfig' && (
-            <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+            <p className="mt-1 text-sm text-[#5a8aaa] dark:text-gray-500">
               Registered with pasted credentials — consider migrating to a secret-store pointer.
             </p>
           )}
@@ -1183,7 +1183,7 @@ export function ClusterDetail() {
                 <p>{removePreviewError}</p>
               </div>
             )}
-            <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
+            <p className="text-sm text-[#5a8aaa] dark:text-gray-500">
               Auto-merge follows your{' '}
               <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
                 global GitOps setting
@@ -1254,9 +1254,9 @@ export function ClusterDetail() {
                 <div>
                   <span className="text-sm font-semibold">Cluster Unreachable — ArgoCD Connection Failed</span>
                   {data.argocd_connection_message && (
-                    <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
+                    <p className="mt-0.5 text-sm text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
                   )}
-                  <p className="mt-1 text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
+                  <p className="mt-1 text-sm text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
                 </div>
               </div>
               {/* Ask AI — hidden unless an AI provider is configured (opt-in, V2-cleanup-55.4) */}
@@ -1280,9 +1280,9 @@ export function ClusterDetail() {
               <div>
                 <span className="text-sm font-semibold">Cluster unreachable</span>
                 {data.cluster_connection_state && (
-                  <span className="ml-2 text-xs text-red-600 dark:text-red-400">({data.cluster_connection_state})</span>
+                  <span className="ml-2 text-sm text-red-600 dark:text-red-400">({data.cluster_connection_state})</span>
                 )}
-                <p className="text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
+                <p className="text-sm text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
               </div>
             </div>
             {/* Ask AI — hidden unless an AI provider is configured (opt-in, V2-cleanup-55.4) */}
@@ -1326,7 +1326,7 @@ export function ClusterDetail() {
               <AlertTriangle className="h-5 w-5 shrink-0 text-[#3a6a8a] dark:text-gray-300 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Not connected yet</p>
-                <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">Sharko hasn't reached this cluster through ArgoCD. Once it connects, its type, status and health will appear here.</p>
+                <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">Sharko hasn't reached this cluster through ArgoCD. Once it connects, its type, status and health will appear here.</p>
               </div>
             </div>
           );
@@ -1344,7 +1344,7 @@ export function ClusterDetail() {
               <AlertTriangle className="h-5 w-5 shrink-0 text-[#3a6a8a] dark:text-gray-300 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Status unknown</p>
-                <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">Sharko has not yet observed an ArgoCD response for this cluster.</p>
+                <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">Sharko has not yet observed an ArgoCD response for this cluster.</p>
               </div>
             </div>
           );
@@ -1356,7 +1356,7 @@ export function ClusterDetail() {
               <div>
                 <p className="text-sm font-semibold text-red-700 dark:text-red-400">ArgoCD Connection Failed</p>
                 {data.argocd_connection_message && (
-                  <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
+                  <p className="mt-0.5 text-sm text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
                 )}
               </div>
             </div>
@@ -1458,7 +1458,7 @@ export function ClusterDetail() {
                     <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">
                       Label Drift Detected
                     </p>
-                    <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
+                    <p className="mt-0.5 text-sm text-amber-600 dark:text-amber-400">
                       This cluster's addon labels drifted from Git. The diff below shows what changed.
                     </p>
                   </div>
@@ -1678,7 +1678,7 @@ export function ClusterDetail() {
                           {secretWarning && (
                             <p
                               data-testid={`manage-addon-secret-warning-${addonName}`}
-                              className="mx-1 rounded-md bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:ring-amber-800"
+                              className="mx-1 rounded-md bg-amber-50 px-2.5 py-1.5 text-sm text-amber-800 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:ring-amber-800"
                             >
                               {secretWarning}
                             </p>
@@ -2118,7 +2118,7 @@ export function ClusterDetail() {
                     </div>
                   )}
                   {secretPathPreviewError && (
-                    <p className="mt-1 text-xs text-red-600 dark:text-red-400">{secretPathPreviewError}</p>
+                    <p className="mt-1 text-sm text-red-600 dark:text-red-400">{secretPathPreviewError}</p>
                   )}
                 </div>
               </div>
@@ -2276,7 +2276,7 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
       </td>
       <td className="px-4 py-3">
         {addon.status === 'sharko_system' ? (
-          <span className="text-xs text-[#3a6a8a] dark:text-gray-400">
+          <span className="text-sm text-[#3a6a8a] dark:text-gray-400">
             A tiny test app Sharko deploys through ArgoCD to prove this cluster can receive
             deployments. It removes itself when the first addon is enabled.
           </span>
@@ -2355,11 +2355,11 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
             )}
           </div>
         ) : hasProblems ? (
-          <span className="text-xs text-amber-600 dark:text-amber-400">
+          <span className="text-sm text-amber-600 dark:text-amber-400">
             {addon.argocd_health_status || addon.status || 'Unknown'}
           </span>
         ) : (
-          <span className="text-xs text-green-600 dark:text-green-400">OK</span>
+          <span className="text-sm text-green-600 dark:text-green-400">OK</span>
         )}
         {/* V3-AM1: Remove control for enabled/managed addons. Rendered when
             onStageRemove is provided + addon is git_enabled + not untracked/system.

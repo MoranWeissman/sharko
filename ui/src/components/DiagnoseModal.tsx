@@ -88,7 +88,7 @@ export function DiagnoseResultView({ report }: { report: DiagnosticReport }) {
                   <span className="text-[#0a2a4a] dark:text-gray-200">{check.permission}</span>
                 </div>
                 {check.error && (
-                  <p className="ml-6 mt-1 text-xs text-red-600 dark:text-red-400">{check.error}</p>
+                  <p className="ml-6 mt-1 text-sm text-red-600 dark:text-red-400">{check.error}</p>
                 )}
               </div>
             ))}

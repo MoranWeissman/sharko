@@ -150,7 +150,7 @@ export function PRResultBanner({
         <p className="font-medium">{merged ? mergedMessage : openMessage}</p>
         <PRLink url={prUrl} id={prId} className="mt-1" />
         {hint && (
-          <p className="mt-1 text-xs text-green-700 dark:text-green-400">{hint}</p>
+          <p className="mt-1 text-sm text-green-700 dark:text-green-400">{hint}</p>
         )}
       </div>
     </div>

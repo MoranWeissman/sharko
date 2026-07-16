@@ -363,7 +363,7 @@ export function ValuesEditor({
         <div>
           <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">{title}</h3>
           {subtitle && (
-            <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">{subtitle}</p>
+            <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">{subtitle}</p>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -518,7 +518,7 @@ export function ValuesEditor({
               </div>
             )}
             {migratePreviewError && (
-              <p className="mt-2 text-xs text-red-600 dark:text-red-400">{migratePreviewError}</p>
+              <p className="mt-2 text-sm text-red-600 dark:text-red-400">{migratePreviewError}</p>
             )}
           </div>
         </div>
@@ -593,7 +593,7 @@ export function ValuesEditor({
               </div>
             )}
             {refreshPreviewError && (
-              <p className="mt-2 text-xs text-red-600 dark:text-red-400">{refreshPreviewError}</p>
+              <p className="mt-2 text-sm text-red-600 dark:text-red-400">{refreshPreviewError}</p>
             )}
           </div>
         </div>
@@ -849,7 +849,7 @@ export function ValuesEditor({
               </h4>
               <p
                 id="values-preview-merge-desc"
-                className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400"
+                className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400"
               >
                 Review the additions Sharko would make. Your existing values are preserved —
                 only keys that aren't in your file yet are added. Apply to open a PR.

@@ -169,7 +169,7 @@ export function DriftAlertsPanel() {
           <ShieldAlert className="h-4 w-4 text-amber-500" />
           <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Drift Alerts</h3>
         </div>
-        <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       </div>
     )
   }

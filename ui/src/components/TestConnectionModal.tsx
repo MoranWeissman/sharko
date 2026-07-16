@@ -62,8 +62,8 @@ function TestUnavailableBanner({ result }: { result: TestClusterUnavailable }) {
       data-error-code={result.error_code}
       className="rounded-lg ring-2 ring-amber-300 bg-amber-50 px-3 py-2 dark:ring-amber-700 dark:bg-amber-950/30"
     >
-      <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">{title}</p>
-      <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300">{body}</p>
+      <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">{title}</p>
+      <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-300">{body}</p>
       {actionTo && actionLabel && (
         <Link
           to={actionTo}
@@ -158,12 +158,12 @@ export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSe
             {/* Step-by-step test results */}
             {testResult.steps && testResult.steps.length > 0 && (
               <div className="rounded-lg bg-[#f8fbff] p-3 ring-1 ring-[#d0e4f5] dark:bg-gray-800 dark:ring-gray-700">
-                <p className="mb-2 cursor-help text-xs font-semibold text-[#0a2a4a] dark:text-gray-200" title={SHARKO_CONN_TOOLTIP}>
+                <p className="mb-2 cursor-help text-sm font-semibold text-[#0a2a4a] dark:text-gray-200" title={SHARKO_CONN_TOOLTIP}>
                   Connection test results ({SHARKO_CONN_LABEL}):
                 </p>
                 <div className="space-y-1">
                   {testResult.steps.map((step, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs">
+                    <div key={i} className="flex items-center gap-2 text-sm">
                       {step.status === 'pass' && (
                         <span className="text-green-600 dark:text-green-400">&#10003;</span>
                       )}
@@ -214,7 +214,7 @@ export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSe
             {/* Suggestions panel */}
             {!testResult.reachable && !testResult.success && testResult.suggestions && testResult.suggestions.length > 0 && (
               <div className="rounded-lg bg-[#e8f4ff] p-3 ring-2 ring-[#6aade0] dark:bg-gray-800 dark:ring-gray-700">
-                <p className="text-xs font-semibold text-[#0a2a4a] dark:text-gray-200">Similar secrets found:</p>
+                <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">Similar secrets found:</p>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                   {testResult.suggestions.map((s) => (
                     <button
@@ -230,7 +230,7 @@ export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSe
               </div>
             )}
             {!testResult.reachable && !testResult.success && (!testResult.suggestions || testResult.suggestions.length === 0) && (
-              <p className="text-xs text-[#3a6a8a] dark:text-gray-400">
+              <p className="text-sm text-[#3a6a8a] dark:text-gray-400">
                 Set the secret path manually in cluster settings.
               </p>
             )}

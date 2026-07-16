@@ -368,13 +368,13 @@ export function AdoptClustersDialog({
                           <span className="text-xs text-[#5a8aaa] dark:text-gray-500">Pending</span>
                         )}
                         {v.state === 'verifying' && (
-                          <span className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400">
+                          <span className="inline-flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400">
                             <Loader2 className="h-3 w-3 animate-spin" />
                             Verifying...
                           </span>
                         )}
                         {v.state === 'passed' && (
-                          <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                          <span className="inline-flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
                             <CheckCircle className="h-3 w-3" />
                             Reachable
                             {v.result?.server_version && (
@@ -385,13 +385,13 @@ export function AdoptClustersDialog({
                           </span>
                         )}
                         {v.state === 'not-verified' && (
-                          <span className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400">
+                          <span className="inline-flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400">
                             <CheckCircle className="h-3 w-3" />
                             Not verified
                           </span>
                         )}
                         {v.state === 'failed' && (
-                          <span className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
+                          <span className="inline-flex items-center gap-1 text-sm text-red-600 dark:text-red-400">
                             <XCircle className="h-3 w-3" />
                             Unreachable
                           </span>
