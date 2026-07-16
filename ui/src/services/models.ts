@@ -60,15 +60,29 @@ export interface Cluster {
   creds_source?: string
 }
 
+// ClusterLastReconcileLabelDrift mirrors internal/models.ClusterLastReconcileLabelDrift
+// (V3 G1 — drift detection). Only populated for Sharko-managed clusters when
+// labels don't match; nil otherwise.
+export interface ClusterLastReconcileLabelDrift {
+  added?: string[]   // keys in git but not on cluster
+  removed?: string[] // keys on cluster but not in git
+  changed?: string[] // keys in both but values differ
+}
+
 // ClusterLastReconcile mirrors internal/models.ClusterLastReconcile
 // (V2-cleanup-89.4). message is always set on 'failed' and 'skipped'; it is
 // normally empty on 'succeeded' but CAN be set there too, when the
 // reconciler detects a label fight (something outside Sharko re-applying
 // conflicting labels) — do not assume a succeeded reconcile has no message.
+//
+// label_drift (V3 G1) carries the git-vs-live label comparison for
+// Sharko-managed clusters; absent when labels are in sync or for self-managed
+// connections.
 export interface ClusterLastReconcile {
   time: string // RFC3339
   outcome: 'succeeded' | 'failed' | 'skipped'
   message?: string
+  label_drift?: ClusterLastReconcileLabelDrift
 }
 
 // SystemCapabilitiesResponse mirrors GET /api/v1/system/capabilities
