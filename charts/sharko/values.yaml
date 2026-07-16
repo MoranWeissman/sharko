@@ -76,6 +76,58 @@ settings:
   allowInlineCredentials: ""
 
 # ---------------------------------------------------------------------------
+# Connection — git-native NON-SECRET fields (V3 C2)
+# ---------------------------------------------------------------------------
+# Declare the NON-SECRET fields of the ACTIVE connection here and git wins:
+# Sharko reconciles the stored connection toward these values on boot and on a
+# periodic reclaim, so a runtime UI edit to a declared field is reverted to the
+# git value. Fields left empty/unset keep their runtime (UI-set) value.
+#
+# SECRET material is NEVER declared here — the git token/PAT and the ArgoCD
+# token stay in the encrypted sharko-connections Secret and are entered once
+# via the Settings UI. This block only carries identifiers and settings that
+# are safe to keep in git. The field-level merge overwrites the declared
+# non-secret fields while PRESERVING the encrypted tokens.
+#
+# Scope: the ACTIVE (or default) connection only. When no connection exists yet
+# (fresh install, token not entered), this block is a no-op — Sharko never
+# fabricates a connection without credentials.
+connection:
+  git:
+    provider: ""      # "github" | "azuredevops"
+    repoURL: ""       # full repo URL (parsed into owner/repo or org/project/repo)
+    owner: ""         # GitHub owner
+    repo: ""          # GitHub repo
+    organization: ""  # Azure DevOps organization
+    project: ""       # Azure DevOps project
+    repository: ""    # Azure DevOps repository
+  argocd:
+    serverURL: ""     # ArgoCD API server URL
+    namespace: ""     # namespace where ArgoCD is installed
+    insecure: ""      # true | false — skip TLS verify (leave empty to keep runtime value)
+  # Cluster-test / cluster-credentials provider (non-secret fields).
+  provider:
+    type: ""          # "aws-sm" | "k8s-secrets" | "argocd"
+    region: ""        # AWS region (aws-sm)
+    prefix: ""        # secret name prefix, e.g. "clusters/"
+    namespace: ""     # K8s namespace (k8s-secrets)
+    roleArn: ""       # default IAM role ARN for EKS token generation (identifier, not a credential)
+  # Separate addon-secret provider (non-secret fields).
+  addonSecretProvider:
+    type: ""
+    region: ""
+    prefix: ""
+    namespace: ""
+    roleArn: ""
+  gitops:
+    baseBranch: ""      # default: "main"
+    branchPrefix: ""    # default: "sharko/"
+    commitPrefix: ""    # default: "sharko:"
+    prAutoMerge: ""     # true | false (leave empty to keep runtime value)
+    hostClusterName: "" # cluster running ArgoCD (in-cluster)
+    defaultAddons: ""   # comma-separated addon names
+
+# ---------------------------------------------------------------------------
 # Connection Configuration
 # ---------------------------------------------------------------------------
 config:

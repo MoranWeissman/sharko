@@ -292,6 +292,15 @@ var serveCmd = &cobra.Command{
 
 		slog.Info("sharko starting", "version", version)
 
+		// V3 C2: reconcile the ACTIVE connection toward git-declared non-secret
+		// env fields (git wins) BEFORE ReinitializeFromConnection, so the single
+		// reinit below picks up the merged values. Field-level merge preserves
+		// the encrypted git Token/PAT and ArgoCD Token — secret material is
+		// never sourced from these env vars. No-op when no connection is active.
+		if _, err := config.ReconcileConnectionFromEnv(store); err != nil {
+			slog.Warn("connection boot reconcile failed, continuing with stored connection", "error", err)
+		}
+
 		// Initialize provider + gitops config from active connection (if exists).
 		// This ensures a pod restart doesn't leave the provider nil when a connection is already stored.
 		slog.Info("initializing from stored connection")
@@ -1101,6 +1110,17 @@ var serveCmd = &cobra.Command{
 								if err := settingsStore.Reconcile(context.Background()); err != nil {
 									slog.Warn("settings reclaim tick failed", "error", err)
 								}
+								// V3 C2: reclaim runtime edits to git-declared
+								// non-secret connection fields (git wins). The
+								// field-level merge preserves encrypted secret
+								// material; when it changes the stored connection
+								// we re-run ReinitializeFromConnection so live
+								// providers/gitops config pick up the merged value.
+								if changed, err := config.ReconcileConnectionFromEnv(store); err != nil {
+									slog.Warn("connection reclaim tick failed", "error", err)
+								} else if changed {
+									srv.ReinitializeFromConnection()
+								}
 							case <-settingsReclaimStop:
 								slog.Info("settings reclaim goroutine stopped")
 								return
@@ -1215,8 +1235,20 @@ var serveCmd = &cobra.Command{
 						if err := json.Unmarshal(savedJSON, &savedCfg); err != nil {
 							slog.Warn("could not decode ai config", "error", err)
 						} else if savedCfg.Provider != "" {
-							aiClient.SetConfig(savedCfg)
-							slog.Info("ai config loaded from k8s secret", "provider", savedCfg.Provider)
+							// V3 C2 (C2a): git wins on non-secret AI fields.
+							// Overlay git-declared env fields onto the persisted
+							// blob (provider/model/baseURL/authHeader/maxIterations/
+							// ollama.*), PRESERVING the encrypted APIKey and any
+							// UI-only field (e.g. AnnotateOnSeed). AI_API_KEY is a
+							// secret and is never merged here — it stays in the
+							// encrypted Secret / chart Secret envFrom.
+							mergedCfg, merged := ai.MergeGitNativeFromEnv(savedCfg)
+							aiClient.SetConfig(mergedCfg)
+							if merged {
+								slog.Info("ai config loaded from k8s secret; git-declared non-secret fields applied (git wins)", "provider", mergedCfg.Provider)
+							} else {
+								slog.Info("ai config loaded from k8s secret", "provider", mergedCfg.Provider)
+							}
 						}
 					}
 				}
