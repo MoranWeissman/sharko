@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -383,6 +384,109 @@ func TestComputeDerivedHealth(t *testing.T) {
 			got := computeDerivedHealth(tc.hasHealthyAddon, tc.verdict, tc.connectionStatus)
 			if got != tc.want {
 				t.Errorf("computeDerivedHealth() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDetectConnectivityCheckDrift covers W4a (V3 RW1.8): detecting when a
+// cluster is stuck at "check_pending" due to ApplicationSet label-selector
+// drift (sharko.io → sharko.dev rename).
+func TestDetectConnectivityCheckDrift(t *testing.T) {
+	t.Parallel()
+
+	const clusterName = "test-cluster"
+	checkAppName := "connectivity-check-" + clusterName
+
+	tests := []struct {
+		name         string
+		secretLabels map[string]string
+		apps         []models.ArgocdApplication
+		wantDrift    bool // true = drift detected, reason returned
+	}{
+		{
+			name:         "no connectivity-check label → not applicable",
+			secretLabels: map[string]string{},
+			apps:         []models.ArgocdApplication{},
+			wantDrift:    false,
+		},
+		{
+			name: "has canonical label, check app exists → no drift",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps: []models.ArgocdApplication{
+				{Name: checkAppName},
+			},
+			wantDrift: false,
+		},
+		{
+			name: "has legacy label, check app exists → no drift",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheckLegacy: models.LabelEnabled,
+			},
+			apps: []models.ArgocdApplication{
+				{Name: checkAppName},
+			},
+			wantDrift: false,
+		},
+		{
+			name: "has label, check app missing, real addon deployed → no drift (check app correctly yielded)",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps: []models.ArgocdApplication{
+				{Name: "velero-" + clusterName}, // real addon
+			},
+			wantDrift: false,
+		},
+		{
+			name: "W4a: has label, check app missing, NO real addons → DRIFT DETECTED",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps:      []models.ArgocdApplication{},
+			wantDrift: true,
+		},
+		{
+			name: "W4a: legacy label only, check app missing, no addons → DRIFT DETECTED",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheckLegacy: models.LabelEnabled,
+			},
+			apps:      []models.ArgocdApplication{},
+			wantDrift: true,
+		},
+		{
+			name: "system apps (bootstrap, other check apps) don't count as real addons",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps: []models.ArgocdApplication{
+				{Name: "sharko-bootstrap"},
+				{Name: "connectivity-check-other-cluster"},
+			},
+			wantDrift: true, // system apps ignored → still drift
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reason := detectConnectivityCheckDrift(clusterName, tc.secretLabels, tc.apps)
+			gotDrift := reason != ""
+
+			if gotDrift != tc.wantDrift {
+				t.Errorf("detectConnectivityCheckDrift() drift=%v (reason=%q), want drift=%v",
+					gotDrift, reason, tc.wantDrift)
+			}
+
+			// When drift is detected, the reason must be non-empty and mention the fix.
+			if tc.wantDrift && reason == "" {
+				t.Error("expected a non-empty drift reason when wantDrift=true")
+			}
+			if tc.wantDrift && !strings.Contains(strings.ToLower(reason), "selector") {
+				t.Errorf("expected drift reason to mention 'selector', got %q", reason)
 			}
 		})
 	}

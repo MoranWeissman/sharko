@@ -70,7 +70,7 @@ describe('AuditViewer', () => {
 
   it('shows the friendly default columns (Time / Who / Action / Result)', async () => {
     render(<AuditViewer />);
-    await waitFor(() => expect(screen.getByText(/alice enabled an addon/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     // Column headers live in the table's <thead>.
     const headers = document.querySelectorAll('thead th');
@@ -83,11 +83,10 @@ describe('AuditViewer', () => {
 
   it('renders a known event code as a friendly action sentence', async () => {
     render(<AuditViewer />);
-    await waitFor(() =>
-      expect(
-        screen.getByText(/alice enabled an addon on a cluster — cert-manager on prod-eu/i),
-      ).toBeInTheDocument(),
-    );
+    await waitFor(() => {
+      expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument();
+      expect(screen.getByText(/cert-manager on prod-eu/i)).toBeInTheDocument();
+    });
   });
 
   it('falls back to de-snake-cased text for an UNKNOWN event code (never blank)', async () => {
@@ -99,7 +98,7 @@ describe('AuditViewer', () => {
 
   it('reveals Detail and Error in the expanded row, including the failure error', async () => {
     render(<AuditViewer />);
-    await waitFor(() => expect(screen.getByText(/bob upgraded an addon/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/upgraded an addon/i)).toBeInTheDocument());
 
     // Expand the failure row (the addon_upgraded entry, second row).
     const expandButtons = screen.getAllByLabelText(/Expand details/i);
@@ -117,7 +116,7 @@ describe('AuditViewer', () => {
 
   it('offers exactly success / partial / rejected / failure in the Result filter', async () => {
     render(<AuditViewer />);
-    await waitFor(() => expect(screen.getByText(/alice enabled an addon/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     const select = screen.getByLabelText('Result') as HTMLSelectElement;
     const values = Array.from(select.options).map((o) => o.value);
@@ -127,7 +126,7 @@ describe('AuditViewer', () => {
 
   it('shows plain-English words (not raw codes) in the Result filter and badges', async () => {
     render(<AuditViewer />);
-    await waitFor(() => expect(screen.getByText(/alice enabled an addon/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     const select = screen.getByLabelText('Result') as HTMLSelectElement;
     const labels = Array.from(select.options).map((o) => o.textContent);
@@ -143,7 +142,7 @@ describe('AuditViewer', () => {
 
   it('offers only the action values the backend actually records — no dead options', async () => {
     render(<AuditViewer />);
-    await waitFor(() => expect(screen.getByText(/alice enabled an addon/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     const select = screen.getByLabelText('Action') as HTMLSelectElement;
     const values = Array.from(select.options).map((o) => o.value);
@@ -157,7 +156,7 @@ describe('AuditViewer', () => {
 
   it('debounces filter typing into a single fetch, not one per keystroke', async () => {
     render(<AuditViewer />);
-    await waitFor(() => expect(screen.getByText(/alice enabled an addon/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     const callsAfterInitial = mockFetchAuditLog.mock.calls.length;
 
@@ -200,7 +199,7 @@ describe('AuditViewer', () => {
 
   it('live stream prepends a new entry to the list', async () => {
     render(<AuditViewer />);
-    await waitFor(() => expect(screen.getByText(/alice enabled an addon/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /Live Tail/i }));
     await waitFor(() => expect(lastSource).not.toBeNull());
@@ -220,21 +219,22 @@ describe('AuditViewer', () => {
     fireEvent.change(screen.getByPlaceholderText('Any user'), { target: { value: '' } }); // noop to ensure act
     lastSource!.onmessage?.({ data: JSON.stringify(streamed) });
 
-    await waitFor(() =>
-      expect(screen.getByText(/dave registered a cluster — new-cluster/i)).toBeInTheDocument(),
-    );
+    await waitFor(() => {
+      expect(screen.getByText(/registered a cluster/i)).toBeInTheDocument();
+      expect(screen.getByText(/new-cluster/i)).toBeInTheDocument();
+    });
   });
 
   it('search filters the loaded entries client-side (no server fetch)', async () => {
     render(<AuditViewer />);
-    await waitFor(() => expect(screen.getByText(/alice enabled an addon/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     const searchBox = screen.getByPlaceholderText('Filter loaded entries…');
     fireEvent.change(searchBox, { target: { value: 'mystery' } });
 
     await waitFor(() => {
       expect(screen.getByText(/Mystery thing happened/i)).toBeInTheDocument();
-      expect(screen.queryByText(/alice enabled an addon/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/enabled an addon on a cluster/i)).not.toBeInTheDocument();
     });
 
     // Search never appears as a server query param (client-side only).

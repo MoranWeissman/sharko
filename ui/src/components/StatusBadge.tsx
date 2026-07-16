@@ -93,6 +93,20 @@ function getStatusColor(status: string): { dot: string; bg: string; text: string
     return { dot: def.dot, bg: def.bg, text: def.text };
   }
 
+  // Audit result statuses (from audit log)
+  if (s === 'success' || s === 'succeeded') {
+    return { dot: 'bg-green-500', bg: 'bg-green-50 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400' };
+  }
+  if (s === 'partial') {
+    return { dot: 'bg-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/30', text: 'text-amber-700 dark:text-amber-400' };
+  }
+  if (s === 'rejected') {
+    return { dot: 'bg-orange-500', bg: 'bg-orange-50 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-400' };
+  }
+  if (s === 'failure' || s === 'failed') {
+    return { dot: 'bg-red-500', bg: 'bg-red-50 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-400' };
+  }
+
   if (['healthy', 'synced', 'completed'].includes(s)) {
     return { dot: 'bg-green-500', bg: 'bg-green-50 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400' };
   }
@@ -136,6 +150,13 @@ const statusDisplayNames: Record<string, string> = {
   unknown_health: 'Unknown',
   sync_failing: 'Sync failing',
   deploying: 'Deploying',
+  // Audit result display names
+  success: 'Succeeded',
+  succeeded: 'Succeeded',
+  partial: 'Partly done',
+  rejected: 'Rejected',
+  failure: 'Failed',
+  failed: 'Failed',
 };
 
 export function statusDisplayName(status: string): string {

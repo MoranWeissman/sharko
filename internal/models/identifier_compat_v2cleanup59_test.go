@@ -147,15 +147,17 @@ func TestHasConnectivityCheckLabel_BothKeys(t *testing.T) {
 func TestApplyConnectivityCheckLabel_MigratesLegacyKey(t *testing.T) {
 	t.Parallel()
 
-	// Zero-addon cluster whose working labels still carry the legacy key:
-	// the writer must stamp ONLY the new key and drop the old one.
+	// W4b (V3 RW1.8): Zero-addon cluster whose working labels still carry the
+	// legacy key: the writer now stamps BOTH keys transitionally (sharko.dev +
+	// sharko.io) so ANY ApplicationSet selector (old or new) matches. This
+	// makes the label rename non-stranding.
 	labels := map[string]string{LabelConnectivityCheckLegacy: LabelEnabled}
 	ApplyConnectivityCheckLabel(labels, true)
 	if labels[LabelConnectivityCheck] != LabelEnabled {
-		t.Errorf("new key not stamped: %v", labels)
+		t.Errorf("canonical key not stamped: %v", labels)
 	}
-	if _, still := labels[LabelConnectivityCheckLegacy]; still {
-		t.Errorf("legacy key must be removed by the writer: %v", labels)
+	if labels[LabelConnectivityCheckLegacy] != LabelEnabled {
+		t.Errorf("legacy key must ALSO be stamped (W4b transitional): %v", labels)
 	}
 
 	// The legacy key must not count as an "enabled addon" (its value is

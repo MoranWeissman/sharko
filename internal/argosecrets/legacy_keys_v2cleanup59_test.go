@@ -195,7 +195,7 @@ func TestEnsure_SharkoCreated_LegacyCheckLabelMigrates(t *testing.T) {
 	}
 
 	// Desired labels as the post-rename reconciler computes them for a
-	// zero-addon cluster: the NEW check key.
+	// zero-addon cluster: W4b (V3 RW1.8) stamps BOTH keys transitionally.
 	desiredLabels := map[string]string{}
 	models.ApplyConnectivityCheckLabel(desiredLabels, true)
 
@@ -221,10 +221,12 @@ func TestEnsure_SharkoCreated_LegacyCheckLabelMigrates(t *testing.T) {
 		t.Fatalf("secret not found: %v", err)
 	}
 	if got.Labels[models.LabelConnectivityCheck] != models.LabelEnabled {
-		t.Errorf("new check label missing after migration; labels=%v", got.Labels)
+		t.Errorf("canonical check label missing after migration; labels=%v", got.Labels)
 	}
-	if _, still := got.Labels[models.LabelConnectivityCheckLegacy]; still {
-		t.Errorf("legacy check label must be removed by the full-label-replace update; labels=%v", got.Labels)
+	// W4b (V3 RW1.8): legacy key is now ALSO stamped transitionally so ANY
+	// ApplicationSet selector (old or new) matches.
+	if got.Labels[models.LabelConnectivityCheckLegacy] != models.LabelEnabled {
+		t.Errorf("legacy check label must ALSO be stamped (W4b transitional); labels=%v", got.Labels)
 	}
 }
 

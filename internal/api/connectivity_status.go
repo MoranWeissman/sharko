@@ -214,6 +214,60 @@ func clusterHasHealthyAddon(clusterName, serverURL string, apps []models.ArgocdA
 	return false
 }
 
+// detectConnectivityCheckDrift checks whether a cluster stuck at "check_pending"
+// is actually stranded due to connectivity-check ApplicationSet label-selector
+// drift (W4a — V3 RW1.8). Returns a plain-English reason + next step if drift
+// is detected, empty string otherwise.
+//
+// Logic (reuses the doctor check #6 signal):
+//   - If the cluster's Secret has the connectivity-check label (either key)
+//   - AND the expected connectivity-check-<cluster> Application does NOT exist
+//   - AND the cluster has NO real addon apps deployed (which would correctly
+//     suppress the check app)
+//   - THEN drift is detected → return a reason.
+//
+// This is a lighter version of doctorCheckConnectivityApp, focused on the
+// passive status enrichment case (no full doctor-check machinery).
+func detectConnectivityCheckDrift(clusterName string, secretLabels map[string]string, apps []models.ArgocdApplication) string {
+	// Only check if the cluster Secret has the connectivity-check label.
+	if !models.HasConnectivityCheckLabel(secretLabels) {
+		return ""
+	}
+
+	// Check if the expected connectivity-check app exists.
+	checkAppName := "connectivity-check-" + clusterName
+	checkAppFound := false
+	for i := range apps {
+		if apps[i].Name == checkAppName {
+			checkAppFound = true
+			break
+		}
+	}
+
+	if checkAppFound {
+		// App exists → no drift.
+		return ""
+	}
+
+	// The cluster is labeled but the app is missing. Check if any real addon
+	// app is deployed (which would correctly suppress the check app).
+	for i := range apps {
+		app := &apps[i]
+		// Skip system apps (bootstrap root, connectivity-check apps).
+		if orchestrator.IsSharkoSystemApp(app.Name) {
+			continue
+		}
+		// Check if this app targets our cluster via name-suffix matching.
+		if strings.HasSuffix(app.Name, "-"+clusterName) {
+			// Real addon found → check app correctly yielded, no drift.
+			return ""
+		}
+	}
+
+	// Drift detected: cluster is labeled, no check app, no real addons.
+	return "Connectivity-check ApplicationSet selector may be stale (sharko.io → sharko.dev label rename). Re-apply the current bootstrap templates to refresh the selector."
+}
+
 // applyObsFields fills the Sharko observability fields on cluster from obs.
 // obs may be nil (obsStore unavailable); in that case the fields are left
 // at their zero values (all omitempty, so they are absent from JSON).

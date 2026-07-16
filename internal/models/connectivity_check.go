@@ -115,9 +115,14 @@ func ApplyConnectivityCheckLabel(labels map[string]string, featureOn bool) {
 		}
 	}
 	if enabledCount == 0 {
+		// W4b (V3 RW1.8): Stamp BOTH the canonical AND the legacy key
+		// transitionally so ANY ApplicationSet selector (old or new) matches.
+		// This makes the sharko.io → sharko.dev label rename non-stranding:
+		// existing appsets with the old selector keep working, new appsets with
+		// the new selector work immediately, and once all appsets are upgraded
+		// this transitional double-stamp can be removed in a future cleanup.
 		labels[LabelConnectivityCheck] = LabelEnabled
-		// Never leave the legacy key alongside the new one.
-		delete(labels, LabelConnectivityCheckLegacy)
+		labels[LabelConnectivityCheckLegacy] = LabelEnabled
 	} else {
 		RemoveConnectivityCheckLabels(labels)
 	}

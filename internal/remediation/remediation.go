@@ -172,6 +172,7 @@ func (r *Remediator) act(ctx context.Context, app models.ArgocdApplication, pr p
 			r.deps.AuditFn(audit.Entry{
 				Level:    "error",
 				Event:    "argocd_auto_remediation_failed",
+				User:     "sharko",
 				Action:   "terminate_operation",
 				Resource: "app:" + app.Name,
 				Source:   "remediation",
@@ -188,6 +189,7 @@ func (r *Remediator) act(ctx context.Context, app models.ArgocdApplication, pr p
 		r.deps.AuditFn(audit.Entry{
 			Level:    "error",
 			Event:    "argocd_auto_remediation_failed",
+			User:     "sharko",
 			Action:   "sync_application",
 			Resource: "app:" + app.Name,
 			Source:   "remediation",
@@ -204,6 +206,7 @@ func (r *Remediator) act(ctx context.Context, app models.ArgocdApplication, pr p
 	r.deps.AuditFn(audit.Entry{
 		Level:    "info",
 		Event:    "argocd_auto_remediated",
+		User:     "sharko",
 		Action:   "terminate_and_sync",
 		Resource: "app:" + app.Name,
 		Source:   "remediation",
@@ -270,6 +273,7 @@ func (r *Remediator) OnMergeRefresh(ctx context.Context, pr prtracker.PRInfo) {
 		r.deps.AuditFn(audit.Entry{
 			Level:    "info",
 			Event:    "argocd_refreshed_after_merge",
+			User:     "sharko",
 			Action:   "refresh_application",
 			Resource: "app:" + bootstrapAppName,
 			Source:   "remediation",
@@ -290,6 +294,7 @@ func (r *Remediator) OnMergeRefresh(ctx context.Context, pr prtracker.PRInfo) {
 			r.deps.AuditFn(audit.Entry{
 				Level:    "info",
 				Event:    "argocd_refreshed_after_merge",
+				User:     "sharko",
 				Action:   "refresh_application",
 				Resource: "app:" + addonAppName,
 				Source:   "remediation",
