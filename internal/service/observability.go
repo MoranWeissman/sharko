@@ -218,29 +218,33 @@ func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Clien
 
 	// 9. Get Sharko-configured cluster count from Git (exclude in-cluster)
 	var configuredClusters int
+	var configuredClustersAvailable bool
 	if gp != nil && s.clusterSvc != nil {
 		gitClustersResp, err := s.clusterSvc.ListClusters(ctx, gp, ac)
 		if err != nil {
 			log.Warn("could not fetch git clusters for configured count", "error", err)
+			configuredClustersAvailable = false
 		} else {
 			// Clusters list from ClusterService already excludes in-cluster
 			configuredClusters = len(gitClustersResp.Clusters)
+			configuredClustersAvailable = true
 		}
 	}
 
-	// 10. Count ApplicationSets (1 per addon in catalog)
+	// 10. Count addon groups (1 per addon in catalog)
 	totalAppSets := len(addonGroups)
 
 	controlPlane := models.ControlPlaneInfo{
-		ArgocdVersion:      versionInfo["Version"],
-		HelmVersion:        versionInfo["HelmVersion"],
-		KubectlVersion:     versionInfo["KubectlVersion"],
-		TotalApps:          len(addonApps),
-		TotalClusters:      len(clusters),
-		ConfiguredClusters: configuredClusters,
-		ConnectedClusters:  connectedClusters,
-		TotalAppSets:       totalAppSets,
-		HealthSummary:      healthSummary,
+		ArgocdVersion:              versionInfo["Version"],
+		HelmVersion:                versionInfo["HelmVersion"],
+		KubectlVersion:             versionInfo["KubectlVersion"],
+		TotalApps:                  len(addonApps),
+		TotalClusters:              len(clusters),
+		ConfiguredClusters:         configuredClusters,
+		ConfiguredClustersAvailable: configuredClustersAvailable,
+		ConnectedClusters:          connectedClusters,
+		TotalAppSets:               totalAppSets,
+		HealthSummary:              healthSummary,
 	}
 
 	return &models.ObservabilityOverviewResponse{

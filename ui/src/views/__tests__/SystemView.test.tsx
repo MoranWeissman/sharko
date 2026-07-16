@@ -47,6 +47,7 @@ function obsWithVersion(version?: string) {
       total_apps: 0,
       total_clusters: 0,
       configured_clusters: 0,
+      configured_clusters_available: true,
       connected_clusters: 0,
       total_appsets: 0,
       health_summary: {},
