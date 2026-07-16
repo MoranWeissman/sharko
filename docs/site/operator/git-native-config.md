@@ -129,6 +129,11 @@ For each setting/field:
    - Sharko logs a `slog.Warn` and treats the key as **undeclared** (lenient fallback).
    - Boot never crashes on a settings typo.
 
+4. **If a provider block declares any field (region, prefix, namespace, roleArn) but omits `type`:**
+   - Sharko logs a `slog.Warn` listing which fields were declared and **skips that provider block entirely** (lenient fallback).
+   - The provider stays undeclared — Sharko never persists a typeless provider.
+   - `type` is required whenever any provider field is declared in Helm values.
+
 ## What Stays API/Secret-Only
 
 **Secret material is NEVER declared in Helm `values.yaml`** and is NEVER rendered as plaintext into a ConfigMap. The following stay in encrypted Secrets and are entered once via the Settings UI:
