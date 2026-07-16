@@ -815,6 +815,182 @@ func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels m
 	return true, true, nil
 }
 
+// IsAddonLabelKey reports whether a cluster-Secret label key is one of
+// Sharko's own addon-enablement keys — the keys Sharko is allowed to
+// ADD / UPDATE / DELETE when converging a Sharko-MANAGED cluster's addon
+// labels to match git (SyncManagedClusterLabels).
+//
+// The boundary is structural, not a fixed prefix: addon-enablement keys are
+// written as the BARE addon name (e.g. "datadog", "datadog-version") — see
+// the bootstrap template's `<addon-name>: enabled`, the gitops mutator's
+// `labels[addonName] = value`, and models.AddonLabelValue. EVERY system,
+// ownership, and foreign label Sharko or ArgoCD stamps is DNS-qualified and
+// therefore contains a "/":
+//
+//   - app.kubernetes.io/managed-by   (ownership)
+//   - argocd.argoproj.io/secret-type (ArgoCD cluster-secret type)
+//   - sharko.dev/connectivity-check  (derived, per-cluster)
+//   - app.kubernetes.io/instance     (ArgoCD tracking)
+//
+// So "no slash" == "an unqualified addon-enablement key Sharko owns", and
+// any key containing "/" is foreign/system and is PRESERVED verbatim by the
+// managed-cluster self-heal. This is the exact scope git is the source of
+// truth for; the connection credential material (Data/StringData) and every
+// annotation are outside it and never touched. An empty key is never an
+// addon key.
+func IsAddonLabelKey(key string) bool {
+	return key != "" && !strings.Contains(key, "/")
+}
+
+// ManagedLabelSyncResult reports the outcome of SyncManagedClusterLabels.
+type ManagedLabelSyncResult struct {
+	// Found is true when the named cluster Secret existed. false means no
+	// write was attempted (the caller treats it as a skip, not an error —
+	// same not-found contract as SyncLabelsOnly).
+	Found bool
+	// Changed is true when a label write actually occurred (the converged
+	// label set differed from the live one).
+	Changed bool
+	// Adopted records whether the Secret carried an adopted annotation
+	// (argosecrets.IsAdopted). Managed (non-adopted) Secrets get their
+	// ownership + secret-type labels defensively re-applied; adopted Secrets
+	// are guests and never have ownership stamped by self-heal.
+	Adopted bool
+	// Converged is the sorted set of Sharko addon-label keys present after
+	// convergence (== the git-desired addon keys). Returned so the caller can
+	// report honestly which keys are now in force.
+	Converged []string
+}
+
+// SyncManagedClusterLabels converges the Sharko addon-enablement labels on an
+// existing Sharko-OWNED ArgoCD cluster Secret so they EXACTLY match git —
+// the write primitive for opt-in managed-cluster self-heal (V3 GF1). Unlike
+// SyncLabelsOnly (the self-MANAGED / user-owned guest primitive, which merges
+// and can hand ownership BACK to the user by stripping managed-by), this
+// primitive is for Secrets Sharko owns and must KEEP owning:
+//
+//   - Full convergence over Sharko's own addon-label keys (IsAddonLabelKey —
+//     the unqualified, no-"/" keys): ADD keys git declares, UPDATE changed
+//     values, and DELETE addon keys git no longer declares. This is what
+//     makes "drift corrected -> Synced" honest — a removed-in-git addon
+//     label is actually removed, not left to flap forever.
+//   - managed-by=sharko + argocd.argoproj.io/secret-type=cluster are
+//     PRESERVED and, for a MANAGED (non-adopted) Secret, defensively
+//     RE-APPLIED — so a Secret that previously LOST its ownership label (the
+//     data-loss bug this story fixes) is repaired by the first heal and
+//     survives listManagedSecrets on the next tick.
+//   - An ADOPTED Secret (argosecrets.IsAdopted) is a guest of another owner:
+//     Sharko converges ONLY its own addon-label keys and NEVER stamps
+//     managed-by or secret-type. Whatever ownership/foreign labels the other
+//     owner set are preserved (they carry a "/", so IsAddonLabelKey excludes
+//     them from convergence automatically).
+//   - Foreign labels (any key with a "/"), Data, StringData, and Annotations
+//     are NEVER touched.
+//   - Legacy "true"/"false" addon values are normalized to the canonical
+//     "enabled"/"disabled" vocabulary before compare/write (same choke point
+//     as SyncLabelsOnly / createOne), so an old-style value converges instead
+//     of flip-flopping between the two writers.
+//
+// No churn: when the converged label set already equals the live one, no
+// K8s write is issued (Changed=false). Not-found is NOT an error
+// (Found=false) — the caller records a skip.
+func (m *Manager) SyncManagedClusterLabels(ctx context.Context, name string, desiredAddonLabels map[string]string) (ManagedLabelSyncResult, error) {
+	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(getErr) {
+		return ManagedLabelSyncResult{Found: false}, nil
+	}
+	if getErr != nil {
+		return ManagedLabelSyncResult{}, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, getErr)
+	}
+
+	adopted := IsAdopted(existing.Annotations)
+
+	// Desired addon labels in the canonical vocabulary. Only keys that are
+	// genuinely Sharko addon-label keys (unqualified) are honored — a
+	// stray "/"-qualified key in the git labels block is ignored here so it
+	// can never be written into the addon-key namespace.
+	desired := make(map[string]string, len(desiredAddonLabels))
+	for k, v := range desiredAddonLabels {
+		if !IsAddonLabelKey(k) {
+			continue
+		}
+		if normalized, changed := models.NormalizeAddonLabelValue(v); changed {
+			v = normalized
+		}
+		desired[k] = v
+	}
+
+	// Build the converged label set on a DeepCopy. Start from the live labels
+	// (so every foreign/system "/"-qualified label is preserved verbatim),
+	// then converge ONLY the addon-key namespace.
+	updated := existing.DeepCopy()
+	if updated.Labels == nil {
+		updated.Labels = make(map[string]string, len(desired)+2)
+	}
+	// DELETE Sharko addon keys git no longer declares (full convergence).
+	for k := range updated.Labels {
+		if IsAddonLabelKey(k) {
+			if _, want := desired[k]; !want {
+				delete(updated.Labels, k)
+			}
+		}
+	}
+	// ADD / UPDATE every git-desired addon key.
+	for k, v := range desired {
+		updated.Labels[k] = v
+	}
+	// Ownership + type: preserve for everyone (they carry "/", untouched by
+	// the loops above); defensively RE-APPLY for managed (non-adopted)
+	// Secrets so a Secret that lost its ownership label is repaired. Never
+	// stamp ownership on an adopted guest Secret.
+	if !adopted {
+		updated.Labels[LabelManagedBy] = ManagedByValue
+		updated.Labels[LabelSecretType] = "cluster"
+	}
+
+	// No-op when the converged set already matches — avoid needless churn.
+	if labelsEqual(existing.Labels, updated.Labels) {
+		slog.Debug("[argosecrets] managed cluster secret labels already converged, skipping",
+			"cluster", name, "namespace", m.namespace,
+		)
+		return ManagedLabelSyncResult{Found: true, Changed: false, Adopted: adopted, Converged: sortedKeys(desired)}, nil
+	}
+
+	// Data / StringData / Annotations are deliberately NOT touched — DeepCopy
+	// preserved them and the loops above only mutate updated.Labels.
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return ManagedLabelSyncResult{Found: true}, fmt.Errorf("converging managed cluster labels on secret %q in namespace %q: %w", name, m.namespace, updateErr)
+	}
+	slog.Info("[argosecrets] managed cluster secret addon labels converged — ownership preserved, connection data untouched",
+		"cluster", name, "namespace", m.namespace, "adopted", adopted,
+	)
+	return ManagedLabelSyncResult{Found: true, Changed: true, Adopted: adopted, Converged: sortedKeys(desired)}, nil
+}
+
+// labelsEqual reports whether two label maps have exactly the same keys and
+// values. nil and empty are treated as equal.
+func labelsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
+}
+
+// sortedKeys returns the map's keys in sorted order (deterministic reporting).
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // desiredLabelsSubset reports whether all key-value pairs in desired are
 // present in current. Foreign keys in current (not in desired) are ignored —
 // they are kept by the merge semantics of the adopted path.

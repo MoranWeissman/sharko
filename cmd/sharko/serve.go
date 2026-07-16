@@ -189,12 +189,12 @@ var serveCmd = &cobra.Command{
 			Provider:      aiProvider,
 			OllamaURL:     getEnvDefault("AI_OLLAMA_URL", "http://localhost:11434"),
 			OllamaModel:   getEnvDefault("AI_OLLAMA_MODEL", "llama3.2"),
-			AgentModel:     os.Getenv("AI_AGENT_MODEL"),
-			APIKey:         aiAPIKey,
-			CloudModel:     aiModel,
-			BaseURL:        aiBaseURL,
-			AuthHeader:     aiAuthHeader,
-			GitOpsEnabled:  os.Getenv("GITOPS_ACTIONS_ENABLED") == "true",
+			AgentModel:    os.Getenv("AI_AGENT_MODEL"),
+			APIKey:        aiAPIKey,
+			CloudModel:    aiModel,
+			BaseURL:       aiBaseURL,
+			AuthHeader:    aiAuthHeader,
+			GitOpsEnabled: os.Getenv("GITOPS_ACTIONS_ENABLED") == "true",
 		}
 		if v := os.Getenv("AI_MAX_ITERATIONS"); v != "" {
 			fmt.Sscanf(v, "%d", &aiCfg.MaxIterations)
@@ -957,10 +957,20 @@ var serveCmd = &cobra.Command{
 			// effectively stays at its "check-app" default out of cluster.
 			var settingsStore *settings.Store
 			var probeModeFn func(ctx context.Context) bool
+			// selfHealFn is the live reader the cluster reconciler consults
+			// when it detects drift on a Sharko-MANAGED cluster, to decide
+			// whether to converge git-desired addon labels (V3 GF1 — opt-in
+			// self-heal, default OFF). nil when there is no in-cluster settings
+			// store (local/dev) — the reconciler treats nil as "off", so the
+			// switch is dead by default out of cluster. Wiring this is what
+			// makes the managed_cluster_self_heal setting actually take effect
+			// in production (without it the setting was a no-op).
+			var selfHealFn func(ctx context.Context) bool
 			if inClusterK8sClient != nil {
 				settingsStore = settings.NewStore(inClusterK8sClient, prNamespace)
 				srv.SetSettingsStore(settingsStore)
 				probeModeFn = settingsStore.IsAPITest
+				selfHealFn = settingsStore.IsManagedClusterSelfHealEnabled
 				slog.Info("server settings persisted via configmap", "namespace", prNamespace, "name", "sharko-server-settings")
 
 				// V3 C1: boot reconcile — resolve desired state from env
@@ -1031,8 +1041,8 @@ var serveCmd = &cobra.Command{
 				}
 				auditLog := srv.AuditLog()
 				clusterRecon = clusterreconciler.New(clusterreconciler.Deps{
-					CMStore:             prCMStore,
-					GitProvider:         func() gitprovider.GitProvider {
+					CMStore: prCMStore,
+					GitProvider: func() gitprovider.GitProvider {
 						gp, err := connSvc.GetActiveGitProvider()
 						if err != nil {
 							return nil
@@ -1049,6 +1059,7 @@ var serveCmd = &cobra.Command{
 					DefaultRoleARN:           clusterReconRoleARN,
 					DisableConnectivityCheck: connectivityCheckDisabled(getEnvDefault("SHARKO_CONNECTIVITY_CHECK", "true")),
 					ProbeModeFn:              probeModeFn,
+					SelfHealFn:               selfHealFn,
 				})
 				// Wire the trigger onto the Server BEFORE Start() so the
 				// first request to the per-request orchestrator helper

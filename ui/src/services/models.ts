@@ -418,6 +418,7 @@ export interface ControlPlaneInfo {
   total_apps: number
   total_clusters: number
   configured_clusters: number
+  configured_clusters_available: boolean
   connected_clusters: number
   total_appsets: number
   health_summary: Record<string, number>

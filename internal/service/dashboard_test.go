@@ -58,6 +58,9 @@ func (s *inMemoryConnStore) SetActiveConnection(name string) error {
 	s.active = name
 	return nil
 }
+func (s *inMemoryConnStore) MergeConnectionFromEnvAtomic(name string) (bool, error) {
+	return false, nil // no-op for dashboard test
+}
 
 // argocdEmptyStub returns an httptest server that answers every ArgoCD list
 // endpoint with an empty `{"items":[]}` payload. Lets DashboardService.GetStats

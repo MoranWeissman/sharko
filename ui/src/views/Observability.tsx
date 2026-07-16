@@ -132,11 +132,15 @@ function ControlPlaneSection({
 
       <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatBlock label="Total Apps" value={data.total_apps} />
-        <StatBlock label="ApplicationSets" value={data.total_appsets} />
+        <StatBlock label="Addon groups" value={data.total_appsets} />
         <StatBlock
           label="Connected Clusters"
           value={data.connected_clusters}
-          sub={`/ ${data.configured_clusters} configured`}
+          sub={
+            data.configured_clusters_available
+              ? `/ ${data.configured_clusters} configured`
+              : '/ unavailable'
+          }
         />
         <StatBlock label="ArgoCD-known" value={data.total_clusters} />
       </div>

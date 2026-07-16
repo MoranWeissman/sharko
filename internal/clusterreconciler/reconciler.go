@@ -851,13 +851,17 @@ func labelsMatch(want, have map[string]string) bool {
 func computeLabelDrift(desired, have map[string]string) *LabelDrift {
 	drift := &LabelDrift{}
 
-	// Extract just the addon keys from the live Secret. Addon keys are those
-	// that are NOT the ownership bookkeeping labels. Use the same exclusion
-	// logic as desiredAddonLabels (see lines 778-789) — skip managed-by and
-	// connectivity-check labels.
+	// Extract just Sharko's addon-enablement keys from the live Secret.
+	// argosecrets.IsAddonLabelKey is the precise boundary: an addon key is
+	// the BARE (unqualified) addon name, while every ownership / type /
+	// derived / foreign label is DNS-qualified (contains "/") and is excluded
+	// — managed-by, argocd.argoproj.io/secret-type, sharko.dev/connectivity-
+	// check, app.kubernetes.io/instance. This keeps drift detection (read
+	// model) and the self-heal write primitive on the SAME definition of
+	// "what Sharko owns", so a converged Secret shows no residual drift.
 	liveAddonLabels := make(map[string]string)
 	for k, v := range have {
-		if k == LabelManagedBy || k == models.LabelConnectivityCheck {
+		if !argosecrets.IsAddonLabelKey(k) {
 			continue
 		}
 		liveAddonLabels[k] = v
@@ -1024,17 +1028,34 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 	r.recordReconcile(entry.Name, OutcomeSucceeded, fightWarning, nil)
 }
 
-// selfHealManagedCluster re-applies git-desired addon labels onto a drifted
-// Sharko-managed cluster Secret (V3 G3 — opt-in self-heal, default OFF).
-// Called from the drift-detection section when managed_cluster_self_heal is ON.
-// Mirrors syncSelfManaged's SyncLabelsOnly pattern: merge ONLY addon-label
-// keys, never touch Data/annotations/other labels. Per-cluster error isolation
+// selfHealManagedCluster converges the git-desired addon labels onto a
+// drifted Sharko-MANAGED cluster Secret (V3 GF1 — opt-in self-heal, default
+// OFF). Called from the drift-detection section when
+// managed_cluster_self_heal is ON, and ONLY for Sharko-owned Secrets
+// (self-managed / user-owned connections take the syncSelfManaged branch;
+// see reconcileDiff's UserManagedConnection partition).
+//
+// It uses argosecrets.SyncManagedClusterLabels — NOT SyncLabelsOnly. That
+// distinction is the whole fix: SyncLabelsOnly is the guest primitive for
+// user-owned Secrets and STRIPS managed-by from a non-adopted Secret (its
+// handover branch). Running it against a Sharko-managed Secret deleted the
+// ownership label, dropped the cluster out of listManagedSecrets, and
+// de-managed it. SyncManagedClusterLabels instead PRESERVES + defensively
+// re-applies managed-by + secret-type (managed path), converges FULLY
+// (add/update/DELETE Sharko's own addon keys), and never touches foreign
+// labels / Data / annotations.
+//
+// Reporting is honest: after the write, the Secret is re-read and the residual
+// addon-label drift is recomputed. Only a genuinely converged Secret (no
+// residual drift AND — for the managed path — ownership label still present)
+// is recorded Succeeded with drift=nil. Anything else is recorded Failed with
+// the residual drift, never a false "corrected". Per-cluster error isolation
 // matches createOne — failures log + audit + record, next cluster continues.
 func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, desiredLabels map[string]string, stats *reconcileStats) {
 	log := logging.LoggerFromContext(ctx)
 
 	mgr := argosecrets.NewManager(r.deps.ArgoClient, r.namespace)
-	changed, found, err := mgr.SyncLabelsOnly(ctx, name, desiredLabels)
+	res, err := mgr.SyncManagedClusterLabels(ctx, name, desiredLabels)
 	if err != nil {
 		stats.Errors++
 		log.Error("[clusterreconciler] managed cluster self-heal failed — continuing to next cluster",
@@ -1052,12 +1073,12 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(name, OutcomeFailed,
-			"Sharko couldn't re-apply git-desired addon labels to this drifted managed-cluster Secret: "+err.Error(), nil)
+			"Sharko couldn't converge git-desired addon labels on this drifted managed-cluster Secret: "+err.Error(), nil)
 		return
 	}
-	if !found {
+	if !res.Found {
 		// Should be impossible (we already verified the Secret exists in the
-		// drift-detection pass), but SyncLabelsOnly's contract allows
+		// drift-detection pass), but the primitive's contract allows
 		// NotFound. Treat as a skip rather than an error.
 		log.Warn("[clusterreconciler] managed cluster Secret disappeared between drift detection and self-heal — skipping",
 			"cluster", name, "namespace", r.namespace,
@@ -1066,9 +1087,53 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 			"cluster Secret disappeared between drift detection and self-heal attempt", nil)
 		return
 	}
-	if changed {
-		log.Info("[clusterreconciler] managed cluster self-heal: git-desired addon labels re-applied — drift corrected",
+
+	// Honest verification: re-read the Secret and confirm what actually
+	// converged. With full convergence a successful heal leaves NO residual
+	// addon-label drift; for a managed (non-adopted) Secret the ownership
+	// label must also still be present (the exact regression this story
+	// guards). If either check fails we report the truth, never a false
+	// "corrected".
+	fresh, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, name, metav1.GetOptions{})
+	if getErr != nil {
+		stats.Errors++
+		log.Error("[clusterreconciler] managed cluster self-heal post-write verify read failed",
+			"cluster", name, "namespace", r.namespace, "error", getErr,
+		)
+		r.recordReconcile(name, OutcomeFailed,
+			"Sharko wrote the self-heal but couldn't re-read the cluster Secret to confirm it converged: "+getErr.Error(), nil)
+		return
+	}
+	residual := computeLabelDrift(desiredLabels, fresh.Labels)
+	ownershipLost := !res.Adopted && !IsManagedBySharko(fresh)
+	if residual != nil || ownershipLost {
+		stats.Errors++
+		msg := "self-heal did not fully converge this managed-cluster Secret's addon labels"
+		if ownershipLost {
+			msg = "self-heal left this managed-cluster Secret WITHOUT its Sharko ownership label — refusing to report it healed"
+		}
+		log.Error("[clusterreconciler] managed cluster self-heal incomplete — reporting honestly, not corrected",
 			"cluster", name, "namespace", r.namespace,
+			"residual_drift", residual, "ownership_lost", ownershipLost,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     "cluster_secret_managed_self_heal",
+			User:      "sharko",
+			Action:    "self_heal",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     msg,
+			RequestID: logging.RequestID(ctx),
+		})
+		r.recordReconcile(name, OutcomeFailed, msg, residual)
+		return
+	}
+
+	if res.Changed {
+		log.Info("[clusterreconciler] managed cluster self-heal: git-desired addon labels converged — ownership preserved, drift corrected",
+			"cluster", name, "namespace", r.namespace, "adopted", res.Adopted,
 		)
 		r.audit(audit.Entry{
 			Level:     "info",
@@ -1081,10 +1146,9 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 			RequestID: logging.RequestID(ctx),
 		})
 	}
-	// Whether this tick re-applied labels or found them already converged
-	// (unlikely — we just detected drift), the managed cluster is in sync as
-	// of now. drift stays nil — the re-apply brought it back to sync.
-	r.recordReconcile(name, OutcomeSucceeded, "drift corrected — git-desired labels re-applied", nil)
+	// Verified converged: addon labels exactly match git AND (managed path)
+	// the ownership label survives. drift is genuinely nil.
+	r.recordReconcile(name, OutcomeSucceeded, "drift corrected — git-desired addon labels converged", nil)
 }
 
 // effectiveDisableConnectivityCheck resolves whether the connectivity-check

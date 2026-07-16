@@ -109,14 +109,41 @@ func setString(dst *string, env string, changed *bool) {
 // Returns the (possibly newly allocated) provider pointer and whether the set
 // of declared fields is non-empty. The pointer is allocated lazily so an
 // undeclared provider block stays nil (back-compat).
+//
+// M2 FIX: Require `type` when ANY provider field is declared. If `type` is
+// empty but other fields are set, warn and SKIP the provider block (lenient —
+// per the git-native malformed-value contract: warn + fall back, never persist
+// garbage, never crash boot).
 func mergeProviderFromEnv(pc *models.ProviderConfig, typeEnv, regionEnv, prefixEnv, namespaceEnv, roleARNEnv string, changed *bool) *models.ProviderConfig {
-	_, tD := desiredStringFromEnv(typeEnv)
+	typeVal, tD := desiredStringFromEnv(typeEnv)
 	_, rD := desiredStringFromEnv(regionEnv)
 	_, pD := desiredStringFromEnv(prefixEnv)
 	_, nD := desiredStringFromEnv(namespaceEnv)
 	_, aD := desiredStringFromEnv(roleARNEnv)
 	if !tD && !rD && !pD && !nD && !aD {
 		return pc // nothing declared — leave as-is (possibly nil)
+	}
+	// M2: Require type when any field is declared
+	if !tD || typeVal == "" {
+		// Partial provider block — warn with field names, skip entirely
+		var declaredFields []string
+		if rD {
+			declaredFields = append(declaredFields, "region")
+		}
+		if pD {
+			declaredFields = append(declaredFields, "prefix")
+		}
+		if nD {
+			declaredFields = append(declaredFields, "namespace")
+		}
+		if aD {
+			declaredFields = append(declaredFields, "role_arn")
+		}
+		if len(declaredFields) > 0 {
+			slog.Warn("partial provider block in connection git-native env (type missing), skipping provider merge",
+				"declared_fields", declaredFields)
+		}
+		return pc // skip — don't persist a typeless provider
 	}
 	if pc == nil {
 		pc = &models.ProviderConfig{}
@@ -218,6 +245,11 @@ func MergeConnectionFromEnv(conn *models.Connection) bool {
 // to merge onto, and Sharko never fabricates a connection without credentials.
 // A read error is returned so the caller can log it; a settings typo is NOT an
 // error (handled leniently inside MergeConnectionFromEnv).
+//
+// M1 FIX: The merge is now atomic via MergeConnectionFromEnvAtomic, so a
+// token rotated via the UI during this reconcile is NOT clobbered. The merge
+// operates on the freshest connection state (loaded inside the store's lock),
+// not on a stale earlier Get.
 func ReconcileConnectionFromEnv(store Store) (bool, error) {
 	if store == nil {
 		return false, nil
@@ -229,21 +261,19 @@ func ReconcileConnectionFromEnv(store Store) (bool, error) {
 	if activeName == "" {
 		return false, nil // no active connection — nothing to reconcile
 	}
-	conn, err := store.GetConnection(activeName)
+
+	// M1 FIX: Use the atomic merge method so the non-secret env fields are
+	// merged onto the FRESH connection load inside the store's lock, not onto
+	// a stale copy from an earlier Get. This prevents the lost-update race
+	// where a UI token rotation lands between our Get and our Save.
+	changed, err := store.MergeConnectionFromEnvAtomic(activeName)
 	if err != nil {
 		return false, err
 	}
-	if conn == nil {
-		return false, nil
-	}
-
-	if !MergeConnectionFromEnv(conn) {
+	if !changed {
 		return false, nil // already converged — no Secret write, no churn
 	}
 
-	if err := store.SaveConnection(*conn); err != nil {
-		return false, err
-	}
 	slog.Info("connection reconciled toward git-declared env values (git wins on non-secret fields)",
 		"connection", activeName)
 	return true, nil
