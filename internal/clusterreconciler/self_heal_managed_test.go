@@ -26,7 +26,7 @@ func TestManagedClusterSelfHeal_OFF_NoWrite(t *testing.T) {
 			Name:      "test-cluster",
 			Namespace: "argocd",
 			Labels: map[string]string{
-				LabelManagedBy:         LabelValueSharko,
+				LabelManagedBy:                   LabelValueSharko,
 				"argocd.argoproj.io/secret-type": "cluster",
 				// addon-foo is MISSING — drift
 			},
@@ -111,21 +111,32 @@ spec:
 	}
 }
 
-// TestManagedClusterSelfHeal_ON_ReApplies verifies that when self-heal is ON,
-// the reconciler re-applies git-desired addon labels onto a drifted managed
-// cluster, merging ONLY addon-label keys (V3 G3 acceptance criterion #2).
-func TestManagedClusterSelfHeal_ON_ReApplies(t *testing.T) {
+// TestManagedClusterSelfHeal_ON_Converges verifies that when self-heal is ON,
+// the reconciler FULLY converges the git-desired addon labels onto a drifted
+// Sharko-MANAGED cluster Secret (V3 GF1 acceptance criteria #1, #3):
+//
+//   - git-declared addon label ADDED
+//   - a removed-in-git Sharko addon label DELETED (full convergence — the
+//     honest "drift corrected" the old SyncLabelsOnly-based code could not do)
+//   - managed-by AND secret-type PRESERVED (the data-loss regression this
+//     story fixes — the old handover branch deleted managed-by)
+//   - foreign label + Data + annotations byte-for-byte UNTOUCHED
+//
+// The companion "next tick still managed" assertion lives in
+// TestManagedClusterSelfHeal_SurvivesNextTick.
+func TestManagedClusterSelfHeal_ON_Converges(t *testing.T) {
 	client := fake.NewSimpleClientset()
 
-	// Create a managed cluster Secret with drifted labels
+	// Create a managed cluster Secret with drifted labels + a foreign label.
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
 			Namespace: "argocd",
 			Labels: map[string]string{
-				LabelManagedBy:         LabelValueSharko,
+				LabelManagedBy:                   LabelValueSharko,
 				"argocd.argoproj.io/secret-type": "cluster",
-				"addon-old":           "enabled", // will be removed (not in git)
+				"example.com/team":               "platform", // foreign — must be untouched
+				"addon-old":                      "enabled",  // removed-in-git — must be DELETED
 				// addon-foo missing (will be added from git)
 			},
 			Annotations: map[string]string{
@@ -189,47 +200,59 @@ spec:
 
 	r.pollOnce(context.Background())
 
-	// Assert: Secret was UPDATED with git-desired addon labels
 	updated, err := client.CoreV1().Secrets("argocd").Get(context.Background(), "test-cluster", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Get updated secret: %v", err)
 	}
+
+	// git-desired addon label ADDED
 	if updated.Labels["addon-foo"] != "enabled" {
 		t.Errorf("addon-foo should be 'enabled' after self-heal, got %q", updated.Labels["addon-foo"])
 	}
-	// Note: addon-old stays on the Secret — SyncLabelsOnly merges desired keys
-	// but does NOT remove extra keys (by design — same as self-managed path).
-	// The "Removed" drift is detected but not auto-healed in this implementation.
-	//
-	// Note: managed-by label IS removed by SyncLabelsOnly for non-adopted Secrets
-	// (line 785-806 in manager.go) — this is the self-managed handover behavior.
-	// For a fully managed cluster self-heal, we might want different behavior in
-	// the future, but for V3 G3 MVP we use the same SyncLabelsOnly primitive.
-	// Annotations must stay untouched
+	// removed-in-git Sharko addon label DELETED (full convergence)
+	if _, has := updated.Labels["addon-old"]; has {
+		t.Errorf("addon-old should be DELETED by convergence, still present: %q", updated.Labels["addon-old"])
+	}
+	// managed-by PRESERVED — the regression this story fixes
+	if updated.Labels[LabelManagedBy] != LabelValueSharko {
+		t.Errorf("managed-by label MUST survive self-heal, got %q", updated.Labels[LabelManagedBy])
+	}
+	// secret-type PRESERVED
+	if updated.Labels["argocd.argoproj.io/secret-type"] != "cluster" {
+		t.Errorf("secret-type label MUST survive self-heal, got %q", updated.Labels["argocd.argoproj.io/secret-type"])
+	}
+	// foreign label UNTOUCHED
+	if updated.Labels["example.com/team"] != "platform" {
+		t.Errorf("foreign label example.com/team MUST be untouched, got %q", updated.Labels["example.com/team"])
+	}
+	// annotations UNTOUCHED
 	if updated.Annotations["user-annotation"] != "keep-this" {
 		t.Error("user annotations must be preserved")
 	}
-	// Data must stay untouched
+	// Data UNTOUCHED
 	if string(updated.Data["server"]) != "https://test.example.com" {
 		t.Error("Data must be preserved")
 	}
+	if string(updated.Data["config"]) != `{"execProviderConfig":{}}` {
+		t.Error("Data['config'] must be preserved byte-for-byte")
+	}
 
-	// Assert: reconcile record shows Succeeded (drift corrected)
+	// Reconcile record shows Succeeded (drift corrected) with drift cleared.
 	rec, ok := r.LastReconcile("test-cluster")
 	if !ok {
 		t.Fatal("expected a LastReconcile record for test-cluster")
 	}
 	if rec.Outcome != OutcomeSucceeded {
-		t.Errorf("expected OutcomeSucceeded (drift corrected), got %v", rec.Outcome)
+		t.Errorf("expected OutcomeSucceeded (drift corrected), got %v (msg=%q)", rec.Outcome, rec.Message)
 	}
 	if rec.LabelDrift != nil {
-		t.Errorf("expected LabelDrift to be nil after self-heal, got %+v", rec.LabelDrift)
+		t.Errorf("expected LabelDrift to be nil after full convergence, got %+v", rec.LabelDrift)
 	}
-	if rec.Message != "drift corrected — git-desired labels re-applied" {
+	if rec.Message != "drift corrected — git-desired addon labels converged" {
 		t.Errorf("unexpected message: %q", rec.Message)
 	}
 
-	// Assert: audit log contains a self-heal success event
+	// Audit log contains a self-heal success event.
 	var foundSelfHeal bool
 	for _, e := range auditLog {
 		if e.Event == "cluster_secret_managed_self_heal" && e.Result == "success" {
@@ -238,6 +261,194 @@ spec:
 	}
 	if !foundSelfHeal {
 		t.Error("expected a cluster_secret_managed_self_heal success audit entry")
+	}
+}
+
+// TestManagedClusterSelfHeal_SurvivesNextTick verifies GF1 acceptance
+// criterion #2: after a heal, the cluster is STILL managed on the next
+// reconcile tick (survives listManagedSecrets) and reports Synced with no
+// drift — proving the ownership label was preserved, not stripped.
+func TestManagedClusterSelfHeal_SurvivesNextTick(t *testing.T) {
+	client := fake.NewSimpleClientset()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cluster",
+			Namespace: "argocd",
+			Labels: map[string]string{
+				LabelManagedBy:                   LabelValueSharko,
+				"argocd.argoproj.io/secret-type": "cluster",
+				// addon-foo missing — drift
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"name":   []byte("test-cluster"),
+			"server": []byte("https://test.example.com"),
+			"config": []byte(`{"execProviderConfig":{}}`),
+		},
+	}
+	client.CoreV1().Secrets("argocd").Create(context.Background(), secret, metav1.CreateOptions{})
+
+	managedClustersBody := []byte(`
+apiVersion: sharko.io/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  clusters:
+    - name: test-cluster
+      secretPath: test-cluster
+      labels:
+        addon-foo: enabled
+`)
+
+	var gp fakeGit
+	gp.files = map[string][]byte{
+		"configuration/managed-clusters.yaml": managedClustersBody,
+	}
+	var vault fakeVault
+	vault.creds = map[string]*providers.Kubeconfig{
+		"test-cluster": {Server: "https://test.example.com", Token: "fake-token", CAData: []byte("fake-ca")},
+	}
+
+	r := New(Deps{
+		CMStore:     cmstore.NewStore(client, "sharko", "sharko-recon-state"),
+		GitProvider: func() gitprovider.GitProvider { return &gp },
+		ArgoClient:  client,
+		Vault:       &vault,
+		AuditFn:     func(audit.Entry) {},
+		Namespace:   "argocd",
+		SelfHealFn:  func(ctx context.Context) bool { return true },
+	})
+
+	// First tick: heals the drift.
+	r.pollOnce(context.Background())
+
+	// The cluster must still be visible to the ownership-filtered lister —
+	// i.e. it did NOT get de-managed by an ownership-label strip.
+	managed, err := r.listManagedSecrets(context.Background())
+	if err != nil {
+		t.Fatalf("listManagedSecrets: %v", err)
+	}
+	if _, ok := managed["test-cluster"]; !ok {
+		t.Fatal("cluster dropped out of listManagedSecrets after heal — ownership label was stripped (the data-loss bug)")
+	}
+
+	// Second tick: now in sync, must report Succeeded with no drift.
+	r.pollOnce(context.Background())
+	rec, ok := r.LastReconcile("test-cluster")
+	if !ok {
+		t.Fatal("expected a LastReconcile record on the second tick")
+	}
+	if rec.Outcome != OutcomeSucceeded {
+		t.Errorf("second tick: expected OutcomeSucceeded, got %v (msg=%q)", rec.Outcome, rec.Message)
+	}
+	if rec.LabelDrift != nil {
+		t.Errorf("second tick: expected no drift, got %+v", rec.LabelDrift)
+	}
+}
+
+// TestManagedClusterSelfHeal_Adopted verifies that self-heal on an ADOPTED
+// cluster Secret (owned by another controller; Sharko is a guest) converges
+// ONLY Sharko's own addon labels and never stamps ownership, while leaving the
+// other owner's labels, Data, and annotations untouched (coordinator's
+// adopted-vs-managed requirement).
+func TestManagedClusterSelfHeal_Adopted(t *testing.T) {
+	client := fake.NewSimpleClientset()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "adopted-cluster",
+			Namespace: "argocd",
+			Labels: map[string]string{
+				LabelManagedBy:                   LabelValueSharko, // present because adopted secrets carry it
+				"argocd.argoproj.io/secret-type": "cluster",
+				"app.kubernetes.io/instance":     "some-other-app", // the other owner's tracking label
+				"addon-stale":                    "enabled",        // removed-in-git — must be DELETED
+			},
+			Annotations: map[string]string{
+				"sharko.dev/adopted": "true", // adopted marker
+				"keep-me":            "yes",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"name":   []byte("adopted-cluster"),
+			"server": []byte("https://adopted.example.com"),
+			"config": []byte(`{"tlsClientConfig":{}}`),
+		},
+	}
+	client.CoreV1().Secrets("argocd").Create(context.Background(), secret, metav1.CreateOptions{})
+
+	managedClustersBody := []byte(`
+apiVersion: sharko.io/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  clusters:
+    - name: adopted-cluster
+      secretPath: adopted-cluster
+      labels:
+        addon-foo: enabled
+`)
+
+	var gp fakeGit
+	gp.files = map[string][]byte{
+		"configuration/managed-clusters.yaml": managedClustersBody,
+	}
+	var vault fakeVault
+	vault.creds = map[string]*providers.Kubeconfig{
+		"adopted-cluster": {Server: "https://adopted.example.com", Token: "fake-token", CAData: []byte("fake-ca")},
+	}
+
+	r := New(Deps{
+		CMStore:     cmstore.NewStore(client, "sharko", "sharko-recon-state"),
+		GitProvider: func() gitprovider.GitProvider { return &gp },
+		ArgoClient:  client,
+		Vault:       &vault,
+		AuditFn:     func(audit.Entry) {},
+		Namespace:   "argocd",
+		SelfHealFn:  func(ctx context.Context) bool { return true },
+	})
+
+	r.pollOnce(context.Background())
+
+	updated, err := client.CoreV1().Secrets("argocd").Get(context.Background(), "adopted-cluster", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get updated secret: %v", err)
+	}
+	// Sharko's own addon labels converge.
+	if updated.Labels["addon-foo"] != "enabled" {
+		t.Errorf("addon-foo should be added on adopted cluster, got %q", updated.Labels["addon-foo"])
+	}
+	if _, has := updated.Labels["addon-stale"]; has {
+		t.Error("addon-stale should be DELETED by convergence on adopted cluster")
+	}
+	// The other owner's tracking label is untouched.
+	if updated.Labels["app.kubernetes.io/instance"] != "some-other-app" {
+		t.Errorf("the other owner's app-instance label MUST be untouched, got %q", updated.Labels["app.kubernetes.io/instance"])
+	}
+	// secret-type untouched.
+	if updated.Labels["argocd.argoproj.io/secret-type"] != "cluster" {
+		t.Errorf("secret-type MUST be untouched on adopted cluster, got %q", updated.Labels["argocd.argoproj.io/secret-type"])
+	}
+	// Annotations (including the adopted marker) untouched.
+	if updated.Annotations["sharko.dev/adopted"] != "true" || updated.Annotations["keep-me"] != "yes" {
+		t.Errorf("annotations MUST be untouched on adopted cluster, got %+v", updated.Annotations)
+	}
+	// Data untouched.
+	if string(updated.Data["server"]) != "https://adopted.example.com" {
+		t.Error("Data must be preserved on adopted cluster")
+	}
+
+	rec, ok := r.LastReconcile("adopted-cluster")
+	if !ok {
+		t.Fatal("expected a LastReconcile record for adopted-cluster")
+	}
+	if rec.Outcome != OutcomeSucceeded || rec.LabelDrift != nil {
+		t.Errorf("expected Succeeded + nil drift on adopted heal, got %v drift=%+v", rec.Outcome, rec.LabelDrift)
 	}
 }
 
@@ -252,7 +463,7 @@ func TestManagedClusterSelfHeal_DefaultOFF(t *testing.T) {
 			Name:      "test-cluster",
 			Namespace: "argocd",
 			Labels: map[string]string{
-				LabelManagedBy:         LabelValueSharko,
+				LabelManagedBy:                   LabelValueSharko,
 				"argocd.argoproj.io/secret-type": "cluster",
 			},
 		},
