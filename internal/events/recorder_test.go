@@ -2,11 +2,13 @@ package events
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/record"
 )
 
 // TestNewRecorder_NilClient verifies that a nil client returns a nil-safe recorder.
@@ -22,7 +24,8 @@ func TestNewRecorder_NilClient(t *testing.T) {
 	recorder.AnnotatedEventf(nil, ReasonArgoCDUnreachable, "test", EventTypeWarning)
 }
 
-// TestNewRecorder_FakeClient verifies that events are emitted to the fake client.
+// TestNewRecorder_FakeClient verifies that the real (broadcaster-backed)
+// recorder constructs cleanly and does not panic on emit.
 func TestNewRecorder_FakeClient(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	recorder := NewRecorder(clientset, "sharko")
@@ -31,18 +34,66 @@ func TestNewRecorder_FakeClient(t *testing.T) {
 		t.Fatal("expected non-nil recorder")
 	}
 
-	// Emit a warning event.
+	// Emit a warning event — broadcaster flush is async, so we don't assert
+	// on the sink here (see TestEmit_FakeRecorder for the synchronous proof).
 	recorder.Event(ReasonClusterTestFailed, "Stage1 connectivity test failed: network timeout", EventTypeWarning)
+}
 
-	// Give the broadcaster a moment to flush (asynchronous recording).
-	// In production this isn't an issue (events are fire-and-forget), but tests need to wait.
-	// We verify by checking the fake client's Actions.
-	actions := clientset.Actions()
-	if len(actions) == 0 {
-		t.Logf("no actions recorded yet (broadcaster async); skipping validation")
-		// Note: fake client's EventRecorder integration is asynchronous and sometimes
-		// doesn't capture events in unit tests. The real recorder works fine in-cluster.
-		// This test primarily validates that the nil-safe wrapper compiles and doesn't panic.
+// TestEmit_FakeRecorder is the SYNCHRONOUS emission proof: record.FakeRecorder
+// captures events into a buffered channel formatted as "<type> <reason> <message>",
+// so we can assert exactly what was emitted.
+func TestEmit_FakeRecorder(t *testing.T) {
+	fake := record.NewFakeRecorder(10)
+	recorder := NewRecorderForTest(fake, "sharko")
+
+	recorder.Event(ReasonClusterTestFailed, "Connectivity test failed for cluster \"prod-eu\"", EventTypeWarning)
+
+	select {
+	case got := <-fake.Events:
+		if !strings.HasPrefix(got, "Warning ") {
+			t.Errorf("expected Warning event, got %q", got)
+		}
+		if !strings.Contains(got, ReasonClusterTestFailed) {
+			t.Errorf("expected reason %q in event, got %q", ReasonClusterTestFailed, got)
+		}
+		if !strings.Contains(got, "Connectivity test failed") {
+			t.Errorf("expected message in event, got %q", got)
+		}
+	default:
+		t.Fatal("expected an event on the fake recorder channel, got none")
+	}
+}
+
+// TestEmit_StringAPI verifies the Emit(string) convenience coerces types
+// correctly (unknown type → Warning fail-safe).
+func TestEmit_StringAPI(t *testing.T) {
+	fake := record.NewFakeRecorder(10)
+	recorder := NewRecorderForTest(fake, "sharko")
+
+	recorder.Emit(ReasonPROpenFailed, "PR open failed", "Warning")
+	assertEventContains(t, fake, "Warning", ReasonPROpenFailed)
+
+	recorder.Emit(ReasonClusterRegistered, "cluster registered", "Normal")
+	assertEventContains(t, fake, "Normal", ReasonClusterRegistered)
+
+	// Unknown type coerces to Warning (fail-safe).
+	recorder.Emit(ReasonDriftDetected, "drift", "Bogus")
+	assertEventContains(t, fake, "Warning", ReasonDriftDetected)
+}
+
+// assertEventContains drains one event and asserts its type + reason.
+func assertEventContains(t *testing.T, fake *record.FakeRecorder, wantType, wantReason string) {
+	t.Helper()
+	select {
+	case got := <-fake.Events:
+		if !strings.HasPrefix(got, wantType+" ") {
+			t.Errorf("expected type %q, got %q", wantType, got)
+		}
+		if !strings.Contains(got, wantReason) {
+			t.Errorf("expected reason %q, got %q", wantReason, got)
+		}
+	default:
+		t.Fatalf("expected an event (type=%s reason=%s), got none", wantType, wantReason)
 	}
 }
 

@@ -51,6 +51,22 @@ func NewRecorder(clientset kubernetes.Interface, namespace string) *EventRecorde
 	}
 }
 
+// newRecorderWithSink wraps an already-constructed record.EventRecorder.
+// It is the shared core behind NewRecorder and the test-only NewRecorderForTest —
+// keeping the ObjectReference + method bodies identical across production and tests.
+func newRecorderWithSink(recorder record.EventRecorder, namespace string) *EventRecorder {
+	return &EventRecorder{recorder: recorder, namespace: namespace}
+}
+
+// NewRecorderForTest builds an EventRecorder backed by the given
+// record.EventRecorder (typically record.NewFakeRecorder(n)) so tests can
+// assert emissions without an API server. Exported for cross-package tests
+// (internal/api, internal/orchestrator) that need to verify their wired
+// surfaces actually emit.
+func NewRecorderForTest(recorder record.EventRecorder, namespace string) *EventRecorder {
+	return newRecorderWithSink(recorder, namespace)
+}
+
 // Event emits a normal or warning event. Reason should be a stable UpperCamelCase
 // constant from reasons.go. Message is human-readable plain English.
 //
@@ -119,6 +135,22 @@ func (r *EventRecorder) AnnotatedEventf(annotations map[string]string, reason, m
 // IsNil returns true if the recorder is nil (not in-cluster / disabled).
 func (r *EventRecorder) IsNil() bool {
 	return r == nil || r.recorder == nil
+}
+
+// Emit is a string-typed convenience that satisfies decoupled consumer
+// interfaces (e.g. orchestrator.EventEmitter) which cannot import this
+// package's EventType. eventType is "Normal" or "Warning"; any other value is
+// coerced to "Warning" (fail-safe: an unknown type should never silently drop
+// to Normal). Nil-safe.
+func (r *EventRecorder) Emit(reason, message, eventType string) {
+	if r == nil || r.recorder == nil {
+		return
+	}
+	et := EventTypeWarning
+	if eventType == string(EventTypeNormal) {
+		et = EventTypeNormal
+	}
+	r.Event(reason, message, et)
 }
 
 // WithContext is a convenience to pass the recorder through a context.

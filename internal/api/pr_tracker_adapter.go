@@ -81,6 +81,15 @@ func (s *Server) attachPRTracker(orch *orchestrator.Orchestrator) *orchestrator.
 	if s.reconcilerTrigger != nil {
 		orch.SetReconcilerTrigger(s.reconcilerTrigger)
 	}
+	// V3 E1: wire the k8s event emitter so orchestrator failures (PR-open
+	// failure) surface as Warning events. The *events.EventRecorder satisfies
+	// orchestrator.EventEmitter via its Emit(reason, message, eventType)
+	// method. nil (out-of-cluster / dev mode) is a silent no-op — the recorder
+	// itself is nil-safe, and passing a typed-nil here would break the
+	// interface nil-check, so only wire when non-nil.
+	if s.eventRecorder != nil {
+		orch.SetEventEmitter(s.eventRecorder)
+	}
 	// Per-cluster credential-fetch routing (V2-cleanup-60.4): share the
 	// server-lifetime router so orchestrator-side fetches (addon ops,
 	// adopt/unadopt, cluster updates) route inline-registered clusters via

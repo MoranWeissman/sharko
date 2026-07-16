@@ -1,13 +1,34 @@
-# V3 E1 Event Wiring TODO
+# V3 E1 Event Wiring — Status
 
-This file documents where Kubernetes events should be emitted once the EventRecorder is fully integrated.
+This file documents where Kubernetes events are emitted, and what remains.
 
 ## Wiring Status
 
 - ✅ **EventRecorder initialized** in `cmd/sharko/serve.go` (in-cluster only; nil-safe no-op otherwise)
 - ✅ **EventRecorder attached to Server** via `srv.SetEventRecorder()` and accessible via `s.EventRecorder()`
 - ✅ **RBAC permissions granted** (`events` create in release namespace)
-- ⏸️ **Handler-level event emissions** — TODOs below
+- ✅ **Handler-level event emissions WIRED** for all four surfaces (see "Wired Emissions" below)
+- ⏸️ **Reconciler drift events** — deferred to EPIC-1 G1/G3 (TODO in reconcile_status.go)
+
+## Wired Emissions (live today — visible via `kubectl get events -n <ns>`)
+
+| Surface | Reason | Emit site |
+|---------|--------|-----------|
+| AWS assume-role failure | `ReasonAWSAssumeRoleFailed` | `internal/api/clusters_doctor.go` `doctorCheckAssumeRole` |
+| AWS Secrets Manager read failure | `ReasonAWSSecretsGetFailed` | `internal/api/clusters_doctor.go` `doctorCheckAddonSecretPaths` |
+| AWS EKS token mint failure | `ReasonAWSTokenMintFailed` | `internal/api/clusters_discover.go` `handleTestCluster` (IAM-required branch) |
+| Host ArgoCD unreachable | `ReasonArgoCDUnreachable` | `internal/api/clusters_discover.go` `handleDiscoverClusters` |
+| Host ArgoCD auth failure | `ReasonArgoCDAuthFailed` | `internal/api/clusters_discover.go` `handleDiscoverClusters` |
+| Remote-cluster connectivity test failure | `ReasonClusterTestFailed` | `internal/api/clusters_discover.go` `handleTestCluster` (Stage1 fail) |
+| PR-open failure | `ReasonPROpenFailed` | `internal/orchestrator/git_helpers.go` `commitChangesWithMeta` |
+
+How the recorder is reached at each site:
+- **API handlers** — `s.emitWarning(reason, msg)` on `*Server` (nil-safe; recorder set at boot).
+- **Orchestrator** — `orchestrator.EventEmitter` interface (local, no import cycle); the
+  `*events.EventRecorder` satisfies it via its `Emit(reason, msg, type)` method; wired in
+  `attachPRTracker` via `orch.SetEventEmitter(s.eventRecorder)`.
+
+## Remaining / future surfaces (nice-to-have, not blocking)
 
 ## Surfaces to Wire (in priority order)
 

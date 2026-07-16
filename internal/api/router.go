@@ -481,6 +481,15 @@ func (s *Server) EventRecorder() *events.EventRecorder {
 	return s.eventRecorder
 }
 
+// emitWarning records one k8s Warning event, nil-safe (V3 E1). reason must be
+// a stable events.Reason* constant; message must be plain-English with NO
+// secret material (no tokens, kubeconfigs, credentials, secret values, or AWS
+// account ids). Safe to call when the recorder is nil (out-of-cluster / dev
+// mode) — *events.EventRecorder.Event is itself nil-receiver-safe.
+func (s *Server) emitWarning(reason, message string) {
+	s.eventRecorder.Event(reason, message, events.EventTypeWarning)
+}
+
 // SetPRTracker wires in the PR tracker for polling and API access.
 func (s *Server) SetPRTracker(tracker *prtracker.Tracker) {
 	s.prTracker = tracker
