@@ -87,6 +87,11 @@ export const EVENT_LABELS: Record<string, string> = {
   ai_annotate_blocked: 'was blocked from an AI annotation',
   ai_opt_out_toggled: 'changed their AI opt-out setting',
 
+  // --- ArgoCD / remediation ---
+  argocd_refreshed_after_merge: 'refreshed ArgoCD after a PR merged',
+  argocd_auto_remediated: 'auto-remediated a failing ArgoCD sync',
+  argocd_auto_remediation_failed: 'failed to auto-remediate an ArgoCD sync',
+
   // --- Misc / security ---
   upgrade_analyzed: 'analyzed an upgrade',
   dashboards_saved: 'saved dashboards',
@@ -157,19 +162,25 @@ export function parseResource(resource: string | undefined | null): string {
 }
 
 /**
- * actionSentence composes the human-readable Action sentence for a row:
- *   "<Who> <event phrase>[ — <target>]"
+ * actionSentence composes the human-readable Action sentence for a row.
+ * When used in the audit table where Who is already a column, pass onlyPhrase: true
+ * to skip prepending the user. Otherwise includes: "<Who> <event phrase>[ — <target>]"
  * e.g. "alice enabled an addon on a cluster — cert-manager on prod-eu".
- * The target (parsed resource) is appended when it adds information.
  */
 export function actionSentence(opts: {
   user?: string | null;
   event?: string | null;
   resource?: string | null;
+  onlyPhrase?: boolean;
 }): string {
-  const who = opts.user && opts.user !== 'anonymous' ? opts.user : 'Someone';
   const phrase = eventPhrase(opts.event);
   const target = parseResource(opts.resource);
+
+  if (opts.onlyPhrase) {
+    return target ? `${phrase} — ${target}` : phrase;
+  }
+
+  const who = opts.user && opts.user !== 'anonymous' ? opts.user : 'Someone';
   const base = `${who} ${phrase}`;
   return target ? `${base} — ${target}` : base;
 }

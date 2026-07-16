@@ -12,18 +12,18 @@ import {
   ChevronDown,
   ChevronRight,
   CalendarClock,
+  Download,
 } from 'lucide-react';
 import { fetchAuditLog, createAuditStream } from '@/services/api';
 import type { AuditEntry } from '@/services/models';
 import { useDebouncedValue } from '@/views/audit/useDebouncedValue';
 import {
-  actionSentence,
   eventPhrase,
   parseResource,
   RESULT_OPTIONS,
-  resultBadgeClass,
-  resultLabel,
 } from '@/views/audit/auditLabels';
+import { relativeTime } from '@/lib/time';
+import { StatusBadge } from '@/components/StatusBadge';
 
 /** Renders the small attribution-mode icon + label for an audit entry's detail. */
 function AttributionBadge({ mode }: { mode?: AuditEntry['attribution_mode'] }) {
@@ -239,6 +239,37 @@ export function AuditViewer() {
     });
   }, [combined, dSearch]);
 
+  const exportCSV = useCallback(() => {
+    // CSV export of currently displayed entries
+    const headers = ['Timestamp', 'Who', 'Event', 'Action', 'Resource', 'Result', 'Source', 'Detail', 'Error'];
+    const csvRows = [headers.join(',')];
+
+    displayEntries.forEach((e) => {
+      const row = [
+        e.timestamp ? new Date(e.timestamp).toISOString() : '',
+        e.user || '',
+        e.event || '',
+        e.action || '',
+        e.resource || '',
+        e.result || '',
+        e.source || '',
+        (e.detail || '').replace(/"/g, '""'),
+        (e.error || '').replace(/"/g, '""'),
+      ];
+      csvRows.push(row.map((v) => `"${v}"`).join(','));
+    });
+
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sharko-audit-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [displayEntries]);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -250,6 +281,16 @@ export function AuditViewer() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={exportCSV}
+            disabled={displayEntries.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] px-3 py-2 text-xs text-[#2a5a7a] hover:bg-[#d6eeff] disabled:opacity-50 dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700"
+            title="Export displayed entries as CSV"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export CSV
+          </button>
           <button
             type="button"
             onClick={() => setLiveTail((v) => !v)}
@@ -475,22 +516,29 @@ export function AuditViewer() {
                           {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                         </button>
                       </td>
-                      <td className="whitespace-nowrap px-4 py-2 text-xs text-[#2a5a7a] dark:text-gray-400">
-                        {entry.timestamp ? new Date(entry.timestamp).toLocaleString() : '-'}
+                      <td className="whitespace-nowrap px-4 py-2 text-xs text-[#2a5a7a] dark:text-gray-400" title={entry.timestamp ? new Date(entry.timestamp).toLocaleString() : ''}>
+                        {entry.timestamp ? relativeTime(entry.timestamp) : '—'}
                       </td>
                       <td className="px-4 py-2 text-xs font-medium text-[#0a2a4a] dark:text-gray-200">
-                        {entry.user || 'anonymous'}
+                        {entry.user === 'sharko' || entry.user === 'system' ? (
+                          <span className="text-[#0a3a5a] dark:text-gray-400">{entry.user}</span>
+                        ) : (
+                          <span>{entry.user || 'anonymous'}</span>
+                        )}
                       </td>
                       <td className="px-4 py-2 text-xs text-[#2a5a7a] dark:text-gray-300">
-                        {actionSentence({ user: entry.user, event: entry.event, resource: entry.resource })}
+                        <span className="font-medium text-[#0a2a4a] dark:text-gray-200">
+                          {eventPhrase(entry.event)}
+                        </span>
+                        {parseResource(entry.resource) && (
+                          <span className="text-[#3a6a8a] dark:text-gray-400"> — {parseResource(entry.resource)}</span>
+                        )}
                         {isFailure && entry.error ? (
-                          <span className="text-red-600 dark:text-red-400"> — {resultLabel(entry.result)}: {entry.error}</span>
+                          <span className="block mt-0.5 text-red-600 dark:text-red-400 text-xs">{entry.error}</span>
                         ) : null}
                       </td>
                       <td className="px-4 py-2">
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${resultBadgeClass(entry.result)}`}>
-                          {resultLabel(entry.result)}
-                        </span>
+                        <StatusBadge status={entry.result || 'unknown'} />
                       </td>
                     </tr>
                     {isOpen && (
