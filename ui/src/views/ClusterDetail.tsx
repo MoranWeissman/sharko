@@ -67,6 +67,8 @@ import { CompletedChangesPanel } from '@/components/CompletedChangesPanel';
 import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOverridesEditor';
 import { HelperText } from '@/components/HelperText';
 import { showToast } from '@/components/ToastNotification';
+import { RowActionsMenu } from '@/components/RowActionsMenu';
+import { InfoBanner } from '@/components/InfoBanner';
 import { prettyOperation } from '@/lib/utils';
 import type { StatusSeverity } from '@/lib/clusterStatus';
 import type { ConnectionsListResponse, TrackedPR, DiagnosticReport, DoctorClusterResponse } from '@/services/models';
@@ -1071,6 +1073,15 @@ export function ClusterDetail() {
     connStatus === 'verified_check' ||
     connStatus === 'check_pending' ||
     connStatus === 'check_failed';
+  // W8 (V3 RW1.4): The connectivity check surfaces two ways — the admin
+  // manage-list synthetic row (gated on connectivity_status above) AND a
+  // comparison-table row (an addon_comparisons entry with status
+  // 'sharko_system'). The explaining InfoBanner should appear whenever EITHER
+  // is present, so the "what is this?" copy lives in exactly one place no
+  // matter which representation is on screen.
+  const hasSystemCheckAddon =
+    data?.addon_comparisons?.some((a) => a.status === 'sharko_system') ?? false;
+  const showConnectivityCheckBanner = showCheckRow || hasSystemCheckAddon;
 
   return (
     <div className="space-y-6">
@@ -1596,9 +1607,9 @@ export function ClusterDetail() {
                               Sharko system — automatic
                             </span>
                           </div>
-                          <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-400">
-                            A tiny test app Sharko deploys through ArgoCD to prove this cluster can receive deployments. It removes itself when the first addon is enabled.
-                          </p>
+                          {/* W7 (V3 RW1.4): the explanation paragraph was removed here —
+                              it now lives in exactly ONE place, the InfoBanner above the
+                              addon list, so the description is never rendered twice. */}
                         </div>
                       </div>
                     )}
@@ -1777,6 +1788,20 @@ export function ClusterDetail() {
                 />
               </RoleGuard>
 
+              {/* W8: Connectivity-check InfoBanner — explains the test app so it's
+                  not mistaken for a user addon. Renders ABOVE the stat cards whenever
+                  the connectivity check is present in EITHER representation (the
+                  manage-list synthetic row or a sharko_system comparison row). This
+                  is the single home for the explanation copy (W7). */}
+              {showConnectivityCheckBanner && (
+                <InfoBanner
+                  variant="info"
+                  title="Connectivity check"
+                >
+                  A tiny test app Sharko deploys through ArgoCD to confirm this cluster can receive deployments. It removes itself once you enable your first addon.
+                </InfoBanner>
+              )}
+
               {/* Status filter cards — hide zero-count categories */}
               <div className="flex flex-wrap gap-4">
                 {statItems
@@ -1806,6 +1831,7 @@ export function ClusterDetail() {
                       <th className="px-4 py-3">ArgoCD Version</th>
                       <th className="px-4 py-3">Namespace</th>
                       <th className="px-4 py-3">Issues</th>
+                      <th className="px-4 py-3"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
@@ -1829,7 +1855,7 @@ export function ClusterDetail() {
                     {filteredAddons.length === 0 && (
                       <tr>
                         <td
-                          colSpan={6}
+                          colSpan={7}
                           className="px-6 py-8 text-center text-[#3a6a8a] dark:text-gray-500"
                         >
                           No addons match the current filter.
@@ -2264,23 +2290,24 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
         </div>
       </td>
       <td className="px-4 py-3 font-mono text-xs text-[#1a4a6a] dark:text-gray-400">
-        {addon.has_version_override
-          ? (addon.custom_version ?? addon.environment_version ?? addon.git_version ?? '--')
-          : (addon.environment_version ?? addon.git_version ?? '--')}
+        {/* W8: Suppress version columns for connectivity-check (they're not applicable) */}
+        {addon.status === 'sharko_system' ? '—' : (
+          addon.has_version_override
+            ? (addon.custom_version ?? addon.environment_version ?? addon.git_version ?? '--')
+            : (addon.environment_version ?? addon.git_version ?? '--')
+        )}
       </td>
       <td className="px-4 py-3 font-mono text-xs text-[#1a4a6a] dark:text-gray-400">
-        {addon.argocd_deployed_version ?? '--'}
+        {/* W8: Suppress ArgoCD version for connectivity-check */}
+        {addon.status === 'sharko_system' ? '—' : (addon.argocd_deployed_version ?? '--')}
       </td>
       <td className="px-4 py-3 text-[#1a4a6a] dark:text-gray-400">
         {addon.argocd_namespace ?? '--'}
       </td>
+      {/* W7+W10: Issues column shows real issues or "—", never descriptions or "OK".
+          The connectivity-check description moved to the W8 InfoBanner above the table. */}
       <td className="px-4 py-3">
-        {addon.status === 'sharko_system' ? (
-          <span className="text-sm text-[#3a6a8a] dark:text-gray-400">
-            A tiny test app Sharko deploys through ArgoCD to prove this cluster can receive
-            deployments. It removes itself when the first addon is enabled.
-          </span>
-        ) : allIssues.length > 0 ? (
+        {allIssues.length > 0 ? (
           <div>
             <ul className="space-y-0.5 text-xs text-[#1a4a6a] dark:text-gray-400">
               {displayedIssues.map((issue, i) => (
@@ -2359,29 +2386,26 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
             {addon.argocd_health_status || addon.status || 'Unknown'}
           </span>
         ) : (
-          <span className="text-sm text-green-600 dark:text-green-400">OK</span>
+          /* W10: Replace green "OK" noise with "—" (no issues = nothing to report) */
+          <span className="text-sm text-[#3a6a8a] dark:text-gray-500">—</span>
         )}
-        {/* V3-AM1: Remove control for enabled/managed addons. Rendered when
-            onStageRemove is provided + addon is git_enabled + not untracked/system.
-            Clicking stages a pending-remove (setAddonToggles false). Placed outside
-            the issues conditional so it's visible on ALL enabled rows. */}
+      </td>
+      {/* W10: Remove moved to row-end kebab menu (RowActionsMenu) — destructive
+          actions belong in the actions column, not in the Issues column. */}
+      <td className="px-4 py-3">
         {onStageRemove && addon.git_enabled && addon.status !== 'untracked_in_argocd' && addon.status !== 'sharko_system' && (
-          <div className="mt-2">
-            <RoleGuard adminOnly>
-              <button
-                type="button"
-                data-testid="comparison-row-remove-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onStageRemove(addon.addon_name);
-                }}
-                className="inline-flex items-center gap-1 rounded-md border border-red-400 bg-[#f0f7ff] px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-700 dark:text-red-400 dark:hover:bg-red-900/20"
-              >
-                <X className="h-3 w-3" />
-                Remove
-              </button>
-            </RoleGuard>
-          </div>
+          <RoleGuard adminOnly>
+            <RowActionsMenu
+              actions={[
+                {
+                  label: 'Remove',
+                  onSelect: () => onStageRemove(addon.addon_name),
+                  destructive: true,
+                },
+              ]}
+              label={`Actions for ${addon.addon_name}`}
+            />
+          </RoleGuard>
         )}
       </td>
     </tr>

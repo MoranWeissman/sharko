@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
@@ -204,36 +205,35 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
     });
   });
 
-  it('each enabled comparison-table row has a "Remove" control', async () => {
-    renderView();
-
-    await waitFor(async () => {
-      // Wait for the comparison table to load
-      expect(screen.getByText('ingress-nginx')).toBeInTheDocument();
-
-      // Find all Remove buttons in the comparison table
-      const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
-      // We have 2 enabled addons → 2 Remove buttons
-      expect(removeButtons.length).toBe(2);
-
-      // Each button should have text "Remove"
-      removeButtons.forEach((btn) => {
-        expect(btn).toHaveTextContent('Remove');
-      });
-    });
-  });
-
-  it('clicking Remove on an enabled row stages a pending-remove (top strip shows it + Undo) + Apply footer appears', async () => {
+  it('each enabled comparison-table row has a "Remove" control (in the row-actions kebab)', async () => {
+    const user = userEvent.setup();
     renderView();
 
     await waitFor(() => {
       expect(screen.getByText('ingress-nginx')).toBeInTheDocument();
     });
 
-    // Click the Remove button on the ingress-nginx row
-    const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
-    const nginxRemoveBtn = removeButtons[0]; // First row
-    fireEvent.click(nginxRemoveBtn);
+    // W10 (V3 RW1.4): Remove moved into a per-row RowActionsMenu kebab. Each
+    // enabled addon row has its own kebab trigger, labelled "Actions for <name>".
+    const kebabs = screen.getAllByRole('button', { name: /actions for/i });
+    expect(kebabs.length).toBe(2); // ingress-nginx + cert-manager
+
+    // Opening a kebab reveals a destructive "Remove" menuitem.
+    await user.click(screen.getByRole('button', { name: /actions for ingress-nginx/i }));
+    expect(await screen.findByRole('menuitem', { name: /remove/i })).toBeInTheDocument();
+  });
+
+  it('clicking Remove on an enabled row stages a pending-remove (top strip shows it + Undo) + Apply footer appears', async () => {
+    const user = userEvent.setup();
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('ingress-nginx')).toBeInTheDocument();
+    });
+
+    // W10 (V3 RW1.4): open the ingress-nginx row's kebab and click Remove.
+    await user.click(screen.getByRole('button', { name: /actions for ingress-nginx/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /remove/i }));
 
     // Now the top manage strip should appear with the pending-remove row
     await waitFor(() => {
@@ -252,15 +252,16 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
   });
 
   it('clicking Apply after staging a remove calls updateClusterAddons with the batch (one PR path)', async () => {
+    const user = userEvent.setup();
     renderView();
 
     await waitFor(() => {
       expect(screen.getByText('ingress-nginx')).toBeInTheDocument();
     });
 
-    // Stage a remove
-    const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
-    fireEvent.click(removeButtons[0]);
+    // W10 (V3 RW1.4): stage a remove via the row-actions kebab.
+    await user.click(screen.getByRole('button', { name: /actions for ingress-nginx/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /remove/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/removing/i)).toBeInTheDocument();
@@ -284,15 +285,16 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
   });
 
   it('clicking Undo clears the staged pending-remove (top strip disappears)', async () => {
+    const user = userEvent.setup();
     renderView();
 
     await waitFor(() => {
       expect(screen.getByText('ingress-nginx')).toBeInTheDocument();
     });
 
-    // Stage a remove
-    const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
-    fireEvent.click(removeButtons[0]);
+    // W10 (V3 RW1.4): stage a remove via the row-actions kebab.
+    await user.click(screen.getByRole('button', { name: /actions for ingress-nginx/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /remove/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/removing/i)).toBeInTheDocument();
@@ -313,15 +315,16 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
   });
 
   it('clicking Discard clears all staged changes (same as Undo, but for multiple changes)', async () => {
+    const user = userEvent.setup();
     renderView();
 
     await waitFor(() => {
       expect(screen.getByText('ingress-nginx')).toBeInTheDocument();
     });
 
-    // Stage a remove
-    const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
-    fireEvent.click(removeButtons[0]);
+    // W10 (V3 RW1.4): stage a remove via the row-actions kebab.
+    await user.click(screen.getByRole('button', { name: /actions for ingress-nginx/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /remove/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/removing/i)).toBeInTheDocument();
@@ -342,15 +345,16 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
   });
 
   it('regression: AP1 preview gate (preview always carries Apply/Discard) still works', async () => {
+    const user = userEvent.setup();
     renderView();
 
     await waitFor(() => {
       expect(screen.getByText('ingress-nginx')).toBeInTheDocument();
     });
 
-    // Stage a remove
-    const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
-    fireEvent.click(removeButtons[0]);
+    // W10 (V3 RW1.4): stage a remove via the row-actions kebab.
+    await user.click(screen.getByRole('button', { name: /actions for ingress-nginx/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /remove/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/removing/i)).toBeInTheDocument();
@@ -437,9 +441,12 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
     // The orphan-app row should be in the comparison table
     expect(screen.getByText('orphan-app')).toBeInTheDocument();
 
-    // But it should NOT have a Remove button (not git_configured)
-    const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
-    // Only 2 buttons (for the 2 git_configured enabled addons), not 3
-    expect(removeButtons.length).toBe(2);
+    // W10 (V3 RW1.4): Remove now lives in a per-row kebab. Only git_configured
+    // enabled addons get a kebab — the untracked orphan-app has none.
+    const kebabs = screen.getAllByRole('button', { name: /actions for/i });
+    expect(kebabs.length).toBe(2); // ingress-nginx + cert-manager, not orphan-app
+    expect(
+      screen.queryByRole('button', { name: /actions for orphan-app/i }),
+    ).not.toBeInTheDocument();
   });
 });
