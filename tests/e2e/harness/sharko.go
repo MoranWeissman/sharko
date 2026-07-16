@@ -246,7 +246,7 @@ func startSharkoInProcess(t *testing.T, cfg SharkoConfig, user, pass string) *Sh
 	clusterSvc := service.NewClusterService("")
 	addonSvc := service.NewAddonService("")
 	dashboardSvc := service.NewDashboardService(connSvc, "")
-	observabilitySvc := service.NewObservabilityService()
+	observabilitySvc := service.NewObservabilityService(clusterSvc)
 
 	// AI off — pass an empty Config; ai.Client returns IsEnabled()=false.
 	aiClient := ai.NewClient(ai.Config{})

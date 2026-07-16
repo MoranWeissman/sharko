@@ -15,11 +15,15 @@ import (
 )
 
 // ObservabilityService provides aggregated observability data from ArgoCD.
-type ObservabilityService struct{}
+type ObservabilityService struct {
+	clusterSvc *ClusterService
+}
 
 // NewObservabilityService creates a new ObservabilityService.
-func NewObservabilityService() *ObservabilityService {
-	return &ObservabilityService{}
+func NewObservabilityService(clusterSvc *ClusterService) *ObservabilityService {
+	return &ObservabilityService{
+		clusterSvc: clusterSvc,
+	}
 }
 
 // GetOverview returns the full observability dashboard data.
@@ -212,14 +216,31 @@ func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Clien
 	// 8. Check resource alerts via Git values
 	resourceAlerts := s.checkResourceAlerts(ctx, gp, addonGroups)
 
+	// 9. Get Sharko-configured cluster count from Git (exclude in-cluster)
+	var configuredClusters int
+	if gp != nil && s.clusterSvc != nil {
+		gitClustersResp, err := s.clusterSvc.ListClusters(ctx, gp, ac)
+		if err != nil {
+			log.Warn("could not fetch git clusters for configured count", "error", err)
+		} else {
+			// Clusters list from ClusterService already excludes in-cluster
+			configuredClusters = len(gitClustersResp.Clusters)
+		}
+	}
+
+	// 10. Count ApplicationSets (1 per addon in catalog)
+	totalAppSets := len(addonGroups)
+
 	controlPlane := models.ControlPlaneInfo{
-		ArgocdVersion:     versionInfo["Version"],
-		HelmVersion:       versionInfo["HelmVersion"],
-		KubectlVersion:    versionInfo["KubectlVersion"],
-		TotalApps:         len(addonApps),
-		TotalClusters:     len(clusters),
-		ConnectedClusters: connectedClusters,
-		HealthSummary:     healthSummary,
+		ArgocdVersion:      versionInfo["Version"],
+		HelmVersion:        versionInfo["HelmVersion"],
+		KubectlVersion:     versionInfo["KubectlVersion"],
+		TotalApps:          len(addonApps),
+		TotalClusters:      len(clusters),
+		ConfiguredClusters: configuredClusters,
+		ConnectedClusters:  connectedClusters,
+		TotalAppSets:       totalAppSets,
+		HealthSummary:      healthSummary,
 	}
 
 	return &models.ObservabilityOverviewResponse{

@@ -65,8 +65,9 @@ var ActionRequirements = map[string]Role{
 	"addon-secret.delete":               RoleAdmin,
 	"pr.delete":                         RoleAdmin,
 	"catalog.sources.refresh":           RoleAdmin,
-	"settings.probe-mode":               RoleAdmin,
-	"settings.allow-inline-credentials": RoleAdmin,
+	"settings.probe-mode":                  RoleAdmin,
+	"settings.allow-inline-credentials":    RoleAdmin,
+	"settings.managed-cluster-self-heal":   RoleAdmin,
 
 	// Operator+ actions
 	"addon.enable":                  RoleOperator,

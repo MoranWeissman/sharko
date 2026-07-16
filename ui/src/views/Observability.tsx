@@ -20,6 +20,10 @@ import {
   ShieldAlert,
   ExternalLink,
   Heart,
+  LayoutGrid,
+  LayoutList,
+  Search,
+  X,
 } from 'lucide-react';
 import { api } from '@/services/api';
 import type {
@@ -32,6 +36,7 @@ import type {
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
+import { PaginationControls, PageSizeSelector, type PageSize } from '@/components/PaginationControls';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -125,14 +130,15 @@ function ControlPlaneSection({
         </span>
       </div>
 
-      <div className="mb-5 grid grid-cols-3 gap-4">
+      <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatBlock label="Total Apps" value={data.total_apps} />
-        <StatBlock label="Total Clusters" value={data.total_clusters} />
+        <StatBlock label="ApplicationSets" value={data.total_appsets} />
         <StatBlock
-          label="Connected"
+          label="Connected Clusters"
           value={data.connected_clusters}
-          sub={`/ ${data.total_clusters}`}
+          sub={`/ ${data.configured_clusters} configured`}
         />
+        <StatBlock label="ArgoCD-known" value={data.total_clusters} />
       </div>
 
       {/* Health bar */}
@@ -273,7 +279,10 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sortMode, setSortMode] = useState<'issues' | 'alpha'>('issues');
   const [groupBy, setGroupBy] = useState<GroupBy>('addon');
-  const [visibleCount, setVisibleCount] = useState(10);
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [pageSize, setPageSize] = useState<PageSize>(20);
+  const [page, setPage] = useState(1);
 
   // Pivot data: group by cluster instead of addon
   const clusterGroups = useMemo((): ClusterGroup[] => {
@@ -300,8 +309,17 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
     return Array.from(map.values());
   }, [groups]);
 
-  const sortedAddonGroups = useMemo(() => {
+  // Filter by search term
+  const filteredAddonGroups = useMemo(() => {
     const copy = [...(groups ?? [])];
+    if (!searchTerm) return copy;
+    const term = searchTerm.toLowerCase();
+    return copy.filter((g) => g.addon_name.toLowerCase().includes(term));
+  }, [groups, searchTerm]);
+
+  // Sort filtered groups
+  const sortedAddonGroups = useMemo(() => {
+    const copy = [...filteredAddonGroups];
     if (sortMode === 'alpha') {
       copy.sort((a, b) => a.addon_name.localeCompare(b.addon_name));
     } else {
@@ -312,10 +330,19 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
       });
     }
     return copy;
-  }, [groups, sortMode]);
+  }, [filteredAddonGroups, sortMode]);
 
-  const sortedClusterGroups = useMemo(() => {
+  // Filter cluster groups by search term
+  const filteredClusterGroups = useMemo(() => {
     const copy = [...clusterGroups];
+    if (!searchTerm) return copy;
+    const term = searchTerm.toLowerCase();
+    return copy.filter((cg) => cg.cluster_name.toLowerCase().includes(term));
+  }, [clusterGroups, searchTerm]);
+
+  // Sort filtered cluster groups
+  const sortedClusterGroups = useMemo(() => {
+    const copy = [...filteredClusterGroups];
     if (sortMode === 'alpha') {
       copy.sort((a, b) => a.cluster_name.localeCompare(b.cluster_name));
     } else {
@@ -327,7 +354,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
       });
     }
     return copy;
-  }, [clusterGroups, sortMode]);
+  }, [filteredClusterGroups, sortMode]);
 
   const toggle = (name: string) => {
     setExpanded((prev) => {
@@ -345,8 +372,26 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
   const handleGroupByChange = (mode: GroupBy) => {
     setGroupBy(mode);
     setExpanded(new Set());
+    setPage(1);
   };
 
+  // Reset page when search/sort/pageSize changes
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, sortMode, pageSize, groupBy]);
+
+  // Paginate the sorted groups
+  const totalPages = Math.ceil(
+    (groupBy === 'addon' ? sortedAddonGroups.length : sortedClusterGroups.length) / pageSize
+  );
+  const paginatedAddonGroups = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return sortedAddonGroups.slice(start, start + pageSize);
+  }, [sortedAddonGroups, page, pageSize]);
+  const paginatedClusterGroups = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return sortedClusterGroups.slice(start, start + pageSize);
+  }, [sortedClusterGroups, page, pageSize]);
 
   if (!groups || groups.length === 0) {
     return null;
@@ -359,7 +404,54 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
           <Server className="h-5 w-5 text-teal-500" />
           Addon Health
         </h2>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Search */}
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#3a6a8a]" />
+            <input
+              type="text"
+              placeholder={groupBy === 'addon' ? 'Search addons...' : 'Search clusters...'}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-48 rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] py-1 pl-8 pr-8 text-sm text-[#0a3a5a] placeholder:text-[#5a8aaa] focus:outline-none focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[#3a6a8a] hover:text-[#0a2a4a]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          {/* View mode toggle */}
+          <div className="flex gap-1 rounded-md border border-[#5a9dd0] dark:border-gray-600">
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className={`rounded-l-md p-1.5 transition-colors ${
+                viewMode === 'list'
+                  ? 'bg-teal-600 text-white'
+                  : 'text-[#2a5a7a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800'
+              }`}
+              aria-label="List view"
+            >
+              <LayoutList className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('grid')}
+              className={`rounded-r-md p-1.5 transition-colors ${
+                viewMode === 'grid'
+                  ? 'bg-teal-600 text-white'
+                  : 'text-[#2a5a7a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800'
+              }`}
+              aria-label="Grid view"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </button>
+          </div>
           {/* Group by toggle */}
           <div className="flex rounded-md border border-[#5a9dd0] dark:border-gray-600">
             {(['addon', 'cluster'] as const).map((m) => (
@@ -392,13 +484,15 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
               </button>
             ))}
           </div>
+          {/* Page size selector */}
+          <PageSizeSelector pageSize={pageSize} onChange={setPageSize} />
         </div>
       </div>
 
-      <div className="space-y-3">
+      <div className={viewMode === 'grid' ? 'grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3' : 'space-y-3'}>
         {groupBy === 'addon' ? (
           /* ---- Group by Addon ---- */
-          sortedAddonGroups.slice(0, visibleCount).map((group) => {
+          paginatedAddonGroups.map((group) => {
             const isExpanded = expanded.has(group.addon_name);
             const healthEntries = Object.entries(group.health_counts);
             const total = group.total_apps;
@@ -514,12 +608,12 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
           })
         ) : (
           /* ---- Group by Cluster ---- */
-          sortedClusterGroups.length === 0 ? (
+          paginatedClusterGroups.length === 0 ? (
             <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-400">
-              No cluster data available.
+              {searchTerm ? `No clusters matching "${searchTerm}"` : 'No cluster data available.'}
             </div>
           ) : (
-            sortedClusterGroups.map((cg) => {
+            paginatedClusterGroups.map((cg) => {
               const isExpanded = expanded.has(cg.cluster_name);
               const healthEntries = Object.entries(cg.health_counts);
               const total = cg.addons.length;
@@ -637,14 +731,21 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
         )}
       </div>
 
-      {/* Show more / less for addon groups */}
-      {groupBy === 'addon' && sortedAddonGroups.length > visibleCount && (
-        <button
-          onClick={() => setVisibleCount(v => v + 10)}
-          className="w-full rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] py-2 text-center text-sm text-teal-600 hover:bg-[#d6eeff] dark:ring-gray-700 dark:bg-gray-800 dark:text-teal-400"
-        >
-          Show more ({sortedAddonGroups.length - visibleCount} remaining)
-        </button>
+      {/* Pagination controls */}
+      {totalPages > 1 && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-3 dark:ring-gray-700 dark:bg-gray-900">
+          <div className="text-xs text-[#2a5a7a] dark:text-gray-400">
+            Showing{' '}
+            {(page - 1) * pageSize + 1}-
+            {Math.min(
+              page * pageSize,
+              groupBy === 'addon' ? sortedAddonGroups.length : sortedClusterGroups.length
+            )}{' '}
+            of{' '}
+            {groupBy === 'addon' ? sortedAddonGroups.length : sortedClusterGroups.length}
+          </div>
+          <PaginationControls page={page} totalPages={totalPages} onPageChange={setPage} />
+        </div>
       )}
     </section>
   );

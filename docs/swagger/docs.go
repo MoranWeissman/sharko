@@ -6130,6 +6130,103 @@ const docTemplate = `{
                 }
             }
         },
+        "/settings/managed-cluster-self-heal": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns whether the reconciler re-applies git-desired labels to drifted Sharko-managed clusters (V3 G3, default false — drift detection only)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Get managed-cluster self-heal setting",
+                "responses": {
+                    "200": {
+                        "description": "Current setting",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.managedClusterSelfHealResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Settings store not available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets whether the reconciler re-applies git-desired labels to drifted Sharko-managed clusters (V3 G3). Admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Set managed-cluster self-heal setting",
+                "parameters": [
+                    {
+                        "description": "Desired setting",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.managedClusterSelfHealResponse"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Setting saved",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.managedClusterSelfHealResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — admin role required",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Settings store not available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/settings/probe-mode": {
             "get": {
                 "security": [
@@ -8762,6 +8859,10 @@ const docTemplate = `{
                 "allow_inline_credentials": {
                     "description": "AllowInlineCredentials is true (the default) when the \"Paste a\nkubeconfig\" registration path is available. An admin sets this to\nfalse to forbid inline credential paste install-wide — registration\nrequests that actually supply inline kubeconfig bytes are then\nrejected with a 403; connection-only registrations are unaffected.\nSharko has no user RBAC today (single admin login); when V2.x scoped\nRBAC lands this is expected to become a per-role permission.",
                     "type": "boolean"
+                },
+                "managed_by_git": {
+                    "description": "ManagedByGit (V3 C1) is true when the setting is Helm/git-declared\n(authoritative, git wins). When true, a runtime PUT edit will be\nreclaimed on the next reconcile. Omitted (false) when the key is NOT\ndeclared → runtime ConfigMap value persists (API authoritative).",
+                    "type": "boolean"
                 }
             }
         },
@@ -9161,6 +9262,15 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api.managedClusterSelfHealResponse": {
+            "type": "object",
+            "properties": {
+                "managed_cluster_self_heal": {
+                    "description": "ManagedClusterSelfHeal is false (the default) when the reconciler\ndetects drift on Sharko-managed clusters but does NOT re-apply\ngit-desired labels (drift detection only, surfaces OutOfSync state).\nWhen set to true, the reconciler re-applies git-desired addon labels\nonto drifted managed-cluster Secrets every tick (enforcement-by-\nreconcile, same mechanism as the self-managed path).",
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_api.meResponse": {
             "type": "object",
             "properties": {
@@ -9226,6 +9336,10 @@ const docTemplate = `{
         "internal_api.probeModeResponse": {
             "type": "object",
             "properties": {
+                "managed_by_git": {
+                    "description": "ManagedByGit (V3 C1) is true when the setting is Helm/git-declared\n(authoritative, git wins). When true, a runtime PUT edit will be\nreclaimed on the next reconcile. Omitted (false) when the key is NOT\ndeclared → runtime ConfigMap value persists (API authoritative).",
+                    "type": "boolean"
+                },
                 "probe_mode": {
                     "description": "ProbeMode is one of \"check-app\" (default — Sharko auto-deploys a\ntransient connectivity-check application to new zero-addon clusters)\nor \"api-test\" (no app is ever auto-deployed; reachability comes\npurely from ArgoCD's own connection state).",
                     "type": "string"

@@ -18,6 +18,12 @@ type probeModeResponse struct {
 	// or "api-test" (no app is ever auto-deployed; reachability comes
 	// purely from ArgoCD's own connection state).
 	ProbeMode string `json:"probe_mode"`
+
+	// ManagedByGit (V3 C1) is true when the setting is Helm/git-declared
+	// (authoritative, git wins). When true, a runtime PUT edit will be
+	// reclaimed on the next reconcile. Omitted (false) when the key is NOT
+	// declared → runtime ConfigMap value persists (API authoritative).
+	ManagedByGit bool `json:"managed_by_git,omitempty"`
 }
 
 // handleGetProbeMode godoc
@@ -42,7 +48,10 @@ func (s *Server) handleGetProbeMode(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, http.StatusInternalServerError, "get_probe_mode", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, probeModeResponse{ProbeMode: mode})
+	writeJSON(w, http.StatusOK, probeModeResponse{
+		ProbeMode:    mode,
+		ManagedByGit: settings.IsManagedByGit("probe_mode"),
+	})
 }
 
 // handleSetProbeMode godoc
@@ -103,6 +112,12 @@ type allowInlineCredentialsResponse struct {
 	// Sharko has no user RBAC today (single admin login); when V2.x scoped
 	// RBAC lands this is expected to become a per-role permission.
 	AllowInlineCredentials bool `json:"allow_inline_credentials"`
+
+	// ManagedByGit (V3 C1) is true when the setting is Helm/git-declared
+	// (authoritative, git wins). When true, a runtime PUT edit will be
+	// reclaimed on the next reconcile. Omitted (false) when the key is NOT
+	// declared → runtime ConfigMap value persists (API authoritative).
+	ManagedByGit bool `json:"managed_by_git,omitempty"`
 }
 
 // handleGetAllowInlineCredentials godoc
@@ -127,7 +142,10 @@ func (s *Server) handleGetAllowInlineCredentials(w http.ResponseWriter, r *http.
 		writeServerError(w, http.StatusInternalServerError, "get_allow_inline_credentials", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, allowInlineCredentialsResponse{AllowInlineCredentials: allow})
+	writeJSON(w, http.StatusOK, allowInlineCredentialsResponse{
+		AllowInlineCredentials: allow,
+		ManagedByGit:           settings.IsManagedByGit("allow_inline_credentials"),
+	})
 }
 
 // handleSetAllowInlineCredentials godoc
@@ -172,4 +190,83 @@ func (s *Server) handleSetAllowInlineCredentials(w http.ResponseWriter, r *http.
 	})
 
 	writeJSON(w, http.StatusOK, allowInlineCredentialsResponse{AllowInlineCredentials: req.AllowInlineCredentials})
+}
+
+// managedClusterSelfHealResponse is the response/request body shape for the
+// managed-cluster-self-heal setting endpoints (V3 G3).
+type managedClusterSelfHealResponse struct {
+	// ManagedClusterSelfHeal is false (the default) when the reconciler
+	// detects drift on Sharko-managed clusters but does NOT re-apply
+	// git-desired labels (drift detection only, surfaces OutOfSync state).
+	// When set to true, the reconciler re-applies git-desired addon labels
+	// onto drifted managed-cluster Secrets every tick (enforcement-by-
+	// reconcile, same mechanism as the self-managed path).
+	ManagedClusterSelfHeal bool `json:"managed_cluster_self_heal"`
+}
+
+// handleGetManagedClusterSelfHeal godoc
+//
+// @Summary Get managed-cluster self-heal setting
+// @Description Returns whether the reconciler re-applies git-desired labels to drifted Sharko-managed clusters (V3 G3, default false — drift detection only)
+// @Tags system
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} managedClusterSelfHealResponse "Current setting"
+// @Failure 503 {object} map[string]interface{} "Settings store not available"
+// @Router /settings/managed-cluster-self-heal [get]
+func (s *Server) handleGetManagedClusterSelfHeal(w http.ResponseWriter, r *http.Request) {
+	if s.settingsStore == nil {
+		writeJSON(w, http.StatusOK, managedClusterSelfHealResponse{ManagedClusterSelfHeal: false})
+		return
+	}
+	selfHeal, err := s.settingsStore.GetManagedClusterSelfHeal(r.Context())
+	if err != nil {
+		writeServerError(w, http.StatusInternalServerError, "get_managed_cluster_self_heal", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, managedClusterSelfHealResponse{ManagedClusterSelfHeal: selfHeal})
+}
+
+// handleSetManagedClusterSelfHeal godoc
+//
+// @Summary Set managed-cluster self-heal setting
+// @Description Sets whether the reconciler re-applies git-desired labels to drifted Sharko-managed clusters (V3 G3). Admin only.
+// @Tags system
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body managedClusterSelfHealResponse true "Desired setting"
+// @Success 200 {object} managedClusterSelfHealResponse "Setting saved"
+// @Failure 400 {object} map[string]interface{} "Invalid request body"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden — admin role required"
+// @Failure 503 {object} map[string]interface{} "Settings store not available"
+// @Router /settings/managed-cluster-self-heal [put]
+func (s *Server) handleSetManagedClusterSelfHeal(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "settings.managed-cluster-self-heal") {
+		return
+	}
+	if s.settingsStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "settings store is not available (no in-cluster ConfigMap access)")
+		return
+	}
+
+	var req managedClusterSelfHealResponse
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	if err := s.settingsStore.SetManagedClusterSelfHeal(r.Context(), req.ManagedClusterSelfHeal); err != nil {
+		writeServerError(w, http.StatusInternalServerError, "set_managed_cluster_self_heal", err)
+		return
+	}
+
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "managed_cluster_self_heal_updated",
+		Resource: "settings:managed_cluster_self_heal",
+		Detail:   fmt.Sprintf("%t", req.ManagedClusterSelfHeal),
+	})
+
+	writeJSON(w, http.StatusOK, managedClusterSelfHealResponse{ManagedClusterSelfHeal: req.ManagedClusterSelfHeal})
 }

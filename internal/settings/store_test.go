@@ -297,3 +297,110 @@ func TestIsAPITest_ErrorBeforeAnyRead_DefaultsFalse(t *testing.T) {
 		t.Error("expected the static default (false / check-app) when no successful read has ever happened, got true")
 	}
 }
+
+// V3 G3 — managed_cluster_self_heal opt-in self-heal for managed clusters.
+
+func TestGetManagedClusterSelfHeal_DefaultsToFalse(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	selfHeal, err := store.GetManagedClusterSelfHeal(ctx)
+	if err != nil {
+		t.Fatalf("GetManagedClusterSelfHeal: %v", err)
+	}
+	if selfHeal {
+		t.Error("GetManagedClusterSelfHeal = true, want default false (drift detection only)")
+	}
+}
+
+func TestSetManagedClusterSelfHeal_RoundTrip(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if err := store.SetManagedClusterSelfHeal(ctx, true); err != nil {
+		t.Fatalf("SetManagedClusterSelfHeal(true): %v", err)
+	}
+	selfHeal, err := store.GetManagedClusterSelfHeal(ctx)
+	if err != nil {
+		t.Fatalf("GetManagedClusterSelfHeal: %v", err)
+	}
+	if !selfHeal {
+		t.Error("GetManagedClusterSelfHeal = false after SetManagedClusterSelfHeal(true), want true")
+	}
+
+	// Flip back — the ConfigMap is updated, not recreated.
+	if err := store.SetManagedClusterSelfHeal(ctx, false); err != nil {
+		t.Fatalf("SetManagedClusterSelfHeal(false): %v", err)
+	}
+	selfHeal, err = store.GetManagedClusterSelfHeal(ctx)
+	if err != nil {
+		t.Fatalf("GetManagedClusterSelfHeal (after revert): %v", err)
+	}
+	if selfHeal {
+		t.Error("GetManagedClusterSelfHeal (after revert) = true, want false")
+	}
+}
+
+func TestIsManagedClusterSelfHealEnabled(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if store.IsManagedClusterSelfHealEnabled(ctx) {
+		t.Error("IsManagedClusterSelfHealEnabled should be false by default")
+	}
+
+	if err := store.SetManagedClusterSelfHeal(ctx, true); err != nil {
+		t.Fatalf("SetManagedClusterSelfHeal: %v", err)
+	}
+	if !store.IsManagedClusterSelfHealEnabled(ctx) {
+		t.Error("IsManagedClusterSelfHealEnabled should be true after SetManagedClusterSelfHeal(true)")
+	}
+}
+
+func TestIsManagedClusterSelfHealEnabled_NilStoreIsSafe(t *testing.T) {
+	var store *Store
+	if store.IsManagedClusterSelfHealEnabled(context.Background()) {
+		t.Error("IsManagedClusterSelfHealEnabled on a nil *Store must default to false, never panic or report true")
+	}
+}
+
+func TestIsManagedClusterSelfHealEnabled_ErrorAfterTrueWasRead_StaysTrue(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	// Admin turns self-heal on, and it is successfully read back once — cache
+	// seeded with true.
+	if err := store.SetManagedClusterSelfHeal(ctx, true); err != nil {
+		t.Fatalf("SetManagedClusterSelfHeal: %v", err)
+	}
+	if !store.IsManagedClusterSelfHealEnabled(ctx) {
+		t.Fatal("expected IsManagedClusterSelfHealEnabled to be true before injecting any read error")
+	}
+
+	// Now every subsequent ConfigMap read fails. The setting must keep
+	// reporting true (serve from cache), never fail to the static default (false).
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+
+	for i := 0; i < 3; i++ {
+		if !store.IsManagedClusterSelfHealEnabled(ctx) {
+			t.Fatalf("iteration %d: IsManagedClusterSelfHealEnabled must stay true (cached) on a read error after true was successfully read, got false", i)
+		}
+	}
+}
+
+func TestIsManagedClusterSelfHealEnabled_ErrorBeforeAnyRead_DefaultsFalse(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	// No successful read has ever happened on this Store — the cache is
+	// empty, so the static default (false, disabled) applies.
+	if store.IsManagedClusterSelfHealEnabled(ctx) {
+		t.Error("expected the static default (false) when no successful read has ever happened, got true")
+	}
+}

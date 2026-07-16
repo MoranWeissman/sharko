@@ -537,7 +537,7 @@ func newIsolatedTestServer(t *testing.T) *Server {
 	clusterSvc := service.NewClusterService("")
 	addonSvc := service.NewAddonService("")
 	dashboardSvc := service.NewDashboardService(connSvc, "")
-	observabilitySvc := service.NewObservabilityService()
+	observabilitySvc := service.NewObservabilityService(clusterSvc)
 	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}), nil, "")
 	aiClient := ai.NewClient(ai.Config{})
 	return NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)

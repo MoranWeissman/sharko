@@ -403,7 +403,9 @@ export interface ControlPlaneInfo {
   kubectl_version: string
   total_apps: number
   total_clusters: number
+  configured_clusters: number
   connected_clusters: number
+  total_appsets: number
   health_summary: Record<string, number>
 }
 
