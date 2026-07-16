@@ -85,9 +85,12 @@ interface TestConnectionModalProps {
   open: boolean;
   onClose: () => void;
   onSuggestionSelect: (suggestion: string) => void;
+  // HD1 (V3): the parent (ClusterDetail) persists the last test result in the
+  // Diagnostics section, so the modal reports each result back as it lands.
+  onResult?: (result: TestResult) => void;
 }
 
-export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSelect }: TestConnectionModalProps) {
+export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSelect, onResult }: TestConnectionModalProps) {
   const [result, setResult] = useState<TestResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -101,9 +104,15 @@ export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSe
     setLoading(true);
     setError(null);
     testClusterConnection(clusterName)
-      .then(setResult)
+      .then((r) => {
+        setResult(r);
+        onResult?.(r);
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Test failed'))
       .finally(() => setLoading(false));
+    // onResult is a stable useCallback from the parent; excluded to keep this
+    // effect keyed only on open+clusterName (the fetch trigger).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, clusterName]);
 
   const handleSuggestionClick = (suggestion: string) => {

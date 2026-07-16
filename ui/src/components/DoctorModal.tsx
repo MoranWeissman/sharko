@@ -49,6 +49,75 @@ function CheckIcon({ status }: { status: DoctorCheck['status'] }) {
   return <MinusCircle className="h-4 w-4 shrink-0 text-[#5a8aaa] dark:text-gray-500" aria-label="Not applicable" />;
 }
 
+/**
+ * DoctorResultView — the doctor's overall-summary + 6-check body, extracted
+ * so the same rendering can be reused both inside DoctorModal (fetch-on-open)
+ * and inline in the cluster-detail Diagnostics section, where the result must
+ * PERSIST instead of fading with a modal (HD1, V3). Presentational only.
+ */
+export function DoctorResultView({ result }: { result: DoctorClusterResponse }) {
+  const hasFail = result.checks.some((c) => c.status === 'fail');
+
+  const overallCopy =
+    result.overall === 'pass'
+      ? 'All checks passed — this cluster’s connection looks healthy.'
+      : result.overall === 'partial'
+        ? hasFail
+          ? 'Some checks passed and some failed — see the fixes below.'
+          : 'Everything checked out, but one or more checks raised a warning — see the details below.'
+        : 'Every check that ran failed — see the fixes below.';
+  const overallClasses =
+    result.overall === 'pass'
+      ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+      : result.overall === 'partial'
+        ? 'bg-amber-50 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300'
+        : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400';
+
+  return (
+    <div className="space-y-4">
+      <div className={`flex items-center gap-2 rounded-md px-4 py-3 text-sm font-medium ${overallClasses}`}>
+        <Stethoscope className="h-5 w-5 shrink-0" />
+        {overallCopy}
+      </div>
+
+      <div className="space-y-2" data-testid="doctor-checks">
+        {result.checks.map((check) => (
+          <div
+            key={check.id}
+            data-testid={`doctor-check-${check.id}`}
+            data-status={check.status}
+            className={`rounded-md px-3 py-2.5 text-sm ${
+              check.status === 'fail'
+                ? 'bg-red-50 dark:bg-red-900/10'
+                : check.status === 'warn'
+                  ? 'bg-amber-50 dark:bg-amber-900/10'
+                  : check.status === 'pass'
+                    ? 'bg-green-50 dark:bg-green-900/10'
+                    : 'bg-[#f0f7ff] dark:bg-gray-800'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <CheckIcon status={check.status} />
+              <span className="font-medium text-[#0a2a4a] dark:text-gray-200">
+                {CHECK_LABELS[check.id] ?? check.id}
+              </span>
+            </div>
+            <p className="ml-6 mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">{check.detail}</p>
+            {(check.status === 'fail' || check.status === 'warn') && check.fix && (
+              <p
+                data-testid={`doctor-fix-${check.id}`}
+                className="ml-6 mt-1.5 rounded-md bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:ring-amber-800"
+              >
+                Fix: {check.fix}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function DoctorModal({ clusterName, open, onClose }: DoctorModalProps) {
   const [result, setResult] = useState<DoctorClusterResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -67,23 +136,6 @@ export function DoctorModal({ clusterName, open, onClose }: DoctorModalProps) {
       .catch((e) => setError(e instanceof Error ? e.message : 'Connection doctor failed'))
       .finally(() => setLoading(false));
   }, [open, clusterName]);
-
-  const hasFail = result?.checks.some((c) => c.status === 'fail') ?? false;
-
-  const overallCopy =
-    result?.overall === 'pass'
-      ? 'All checks passed — this cluster’s connection looks healthy.'
-      : result?.overall === 'partial'
-        ? hasFail
-          ? 'Some checks passed and some failed — see the fixes below.'
-          : 'Everything checked out, but one or more checks raised a warning — see the details below.'
-        : 'Every check that ran failed — see the fixes below.';
-  const overallClasses =
-    result?.overall === 'pass'
-      ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
-      : result?.overall === 'partial'
-        ? 'bg-amber-50 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300'
-        : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400';
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -106,49 +158,7 @@ export function DoctorModal({ clusterName, open, onClose }: DoctorModalProps) {
           </div>
         )}
 
-        {result && !loading && (
-          <div className="space-y-4">
-            <div className={`flex items-center gap-2 rounded-md px-4 py-3 text-sm font-medium ${overallClasses}`}>
-              <Stethoscope className="h-5 w-5 shrink-0" />
-              {overallCopy}
-            </div>
-
-            <div className="space-y-2" data-testid="doctor-checks">
-              {result.checks.map((check) => (
-                <div
-                  key={check.id}
-                  data-testid={`doctor-check-${check.id}`}
-                  data-status={check.status}
-                  className={`rounded-md px-3 py-2.5 text-sm ${
-                    check.status === 'fail'
-                      ? 'bg-red-50 dark:bg-red-900/10'
-                      : check.status === 'warn'
-                        ? 'bg-amber-50 dark:bg-amber-900/10'
-                        : check.status === 'pass'
-                          ? 'bg-green-50 dark:bg-green-900/10'
-                          : 'bg-[#f0f7ff] dark:bg-gray-800'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <CheckIcon status={check.status} />
-                    <span className="font-medium text-[#0a2a4a] dark:text-gray-200">
-                      {CHECK_LABELS[check.id] ?? check.id}
-                    </span>
-                  </div>
-                  <p className="ml-6 mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">{check.detail}</p>
-                  {(check.status === 'fail' || check.status === 'warn') && check.fix && (
-                    <p
-                      data-testid={`doctor-fix-${check.id}`}
-                      className="ml-6 mt-1.5 rounded-md bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:ring-amber-800"
-                    >
-                      Fix: {check.fix}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {result && !loading && <DoctorResultView result={result} />}
       </DialogContent>
     </Dialog>
   );
