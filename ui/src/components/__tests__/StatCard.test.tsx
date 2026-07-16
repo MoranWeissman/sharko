@@ -26,4 +26,17 @@ describe('StatCard', () => {
     expect(card.className).toContain('ring-2');
     expect(card.className).toContain('ring-teal-500');
   });
+
+  it('large variant renders with larger text and padding', () => {
+    render(<StatCard title="Total Clusters" value={127} size="large" />);
+    const valueElement = screen.getByText('127');
+    expect(valueElement.className).toContain('text-5xl');
+    expect(valueElement.className).toContain('font-bold');
+  });
+
+  it('default size unchanged when size not specified', () => {
+    render(<StatCard title="Apps" value={42} />);
+    const valueElement = screen.getByText('42');
+    expect(valueElement.className).toContain('text-2xl');
+  });
 });

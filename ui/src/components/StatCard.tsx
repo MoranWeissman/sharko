@@ -8,6 +8,7 @@ interface StatCardProps {
   onClick?: () => void;
   selected?: boolean;
   subtitle?: string;
+  size?: 'default' | 'large';
 }
 
 const borderColorMap: Record<string, string> = {
@@ -25,6 +26,7 @@ export function StatCard({
   onClick,
   selected = false,
   subtitle,
+  size = 'default',
 }: StatCardProps) {
   const borderClass = borderColorMap[color];
   const isClickable = Boolean(onClick);
@@ -37,6 +39,38 @@ export function StatCard({
     ? 'cursor-pointer transition-shadow hover:shadow-md'
     : '';
 
+  // Large variant: big bold numeral + small muted label (Akuity-style)
+  if (size === 'large') {
+    return (
+      <div
+        role={isClickable ? 'button' : undefined}
+        tabIndex={isClickable ? 0 : undefined}
+        onClick={onClick}
+        onKeyDown={
+          isClickable
+            ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onClick?.();
+                }
+              }
+            : undefined
+        }
+        className={`relative rounded-lg ring-2 ring-[#6aade0] border-l-4 bg-[#f0f7ff] p-6 shadow-sm dark:ring-gray-700 dark:bg-gray-800 ${borderClass} ${selectedClass} ${interactiveClass}`}
+      >
+        {icon && (
+          <div className="absolute right-6 top-6 text-[#3a6a8a] dark:text-gray-500">{icon}</div>
+        )}
+        <div className="text-5xl font-bold text-[#0a2a4a] dark:text-gray-100">{value}</div>
+        <div className="mt-2 text-sm text-[#5a8aaa] dark:text-gray-500">{title}</div>
+        {subtitle && (
+          <div className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">{subtitle}</div>
+        )}
+      </div>
+    );
+  }
+
+  // Default variant (unchanged)
   return (
     <div
       role={isClickable ? 'button' : undefined}

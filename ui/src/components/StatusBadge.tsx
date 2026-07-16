@@ -164,7 +164,7 @@ export function StatusBadge({ status, size = 'sm', testFailing }: StatusBadgePro
         <Tooltip>
           <TooltipTrigger asChild>
             <span
-              className={`inline-flex items-center gap-1.5 rounded-full font-medium ${colors.bg} ${colors.text} ${sizeClasses} cursor-help`}
+              className={`inline-flex items-center gap-1.5 rounded-full font-medium whitespace-nowrap ${colors.bg} ${colors.text} ${sizeClasses} cursor-help`}
             >
               <span className={`inline-block h-2 w-2 rounded-full ${colors.dot}`} />
               {statusDisplayName(status)}
@@ -183,7 +183,7 @@ export function StatusBadge({ status, size = 'sm', testFailing }: StatusBadgePro
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full font-medium ${colors.bg} ${colors.text} ${sizeClasses}`}
+      className={`inline-flex items-center gap-1.5 rounded-full font-medium whitespace-nowrap ${colors.bg} ${colors.text} ${sizeClasses}`}
     >
       <span className={`inline-block h-2 w-2 rounded-full ${colors.dot}`} />
       {statusDisplayName(status)}
