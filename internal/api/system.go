@@ -245,10 +245,10 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			"bootstrap":      s.repoPaths.Bootstrap,
 		},
 		"gitops": map[string]interface{}{
-			"pr_auto_merge": s.gitopsCfg.PRAutoMerge,
-			"branch_prefix": s.gitopsCfg.BranchPrefix,
-			"commit_prefix": s.gitopsCfg.CommitPrefix,
-			"base_branch":   s.gitopsCfg.BaseBranch,
+			"pr_auto_merge": s.gitopsConfig().PRAutoMerge,
+			"branch_prefix": s.gitopsConfig().BranchPrefix,
+			"commit_prefix": s.gitopsConfig().CommitPrefix,
+			"base_branch":   s.gitopsConfig().BaseBranch,
 		},
 	}
 

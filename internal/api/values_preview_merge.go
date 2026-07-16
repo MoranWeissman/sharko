@@ -143,7 +143,7 @@ func (s *Server) handlePreviewMergeAddonValues(w http.ResponseWriter, r *http.Re
 		dir = "configuration/addons-global-values"
 	}
 	valuesFile := dir + "/" + name + ".yaml"
-	current, _ := gp.GetFileContent(r.Context(), valuesFile, s.gitopsCfg.BaseBranch)
+	current, _ := gp.GetFileContent(r.Context(), valuesFile, s.gitopsConfig().BaseBranch)
 
 	// Pull the chart's upstream values.yaml at the catalog-pinned version.
 	upstreamRaw, ferr := helm.NewFetcher().FetchValues(r.Context(), repoURL, chart, version)

@@ -56,7 +56,7 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if len(s.defaultAddons) > 0 {
@@ -172,7 +172,7 @@ func (s *Server) handleUnadoptCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if s.argoSecretManager != nil {

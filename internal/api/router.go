@@ -132,6 +132,23 @@ func (s *Server) publishProviders(
 	})
 }
 
+// gitopsConfig returns the currently-published GitOps config BY VALUE (a
+// consistent immutable snapshot). Returns zero value when none has been
+// published yet. Race-safe (GF2).
+func (s *Server) gitopsConfig() orchestrator.GitOpsConfig {
+	if p := s.gitopsState.Load(); p != nil {
+		return *p
+	}
+	return orchestrator.GitOpsConfig{}
+}
+
+// publishGitopsCfg atomically publishes a new GitOps config snapshot. The
+// ONLY writer path for gitops config (SetWriteAPIDeps at boot,
+// ReinitializeFromConnection on hot-reload, tests via their seams). GF2.
+func (s *Server) publishGitopsCfg(cfg orchestrator.GitOpsConfig) {
+	s.gitopsState.Store(&cfg)
+}
+
 // SecretReconciler is the interface the server uses to trigger and query the reconciler.
 // It is implemented by internal/secrets.Reconciler but defined here to avoid an import cycle.
 type SecretReconciler interface {
@@ -167,8 +184,14 @@ type Server struct {
 	// writes through publishProviders(). Never add a direct field back.
 	providerState atomic.Pointer[providerSet]
 	repoPaths     orchestrator.RepoPathsConfig
-	gitopsCfg     orchestrator.GitOpsConfig
-	gitMu         sync.Mutex // shared mutex serializing all Git operations across requests
+	// gitopsState is the RACE-SAFE publication point for the GitOps config
+	// (GF2): the V3 C1 always-on 60s settings-reclaim goroutine calls
+	// ReinitializeFromConnection, which hot-swaps gitops config fields while
+	// request handlers read them concurrently. ALL reads go through
+	// gitopsConfig() accessor, all writes through publishGitopsCfg().
+	// Never add a direct field back.
+	gitopsState atomic.Pointer[orchestrator.GitOpsConfig]
+	gitMu       sync.Mutex // shared mutex serializing all Git operations across requests
 
 	// Remote secret management (optional — set via SetAddonSecretDefs).
 	addonSecretDefs   map[string]orchestrator.AddonSecretDefinition
@@ -437,7 +460,7 @@ func (s *Server) SetWriteAPIDeps(
 ) {
 	s.publishProviders(credProvider, addonSecretCfg, clusterTestCfg)
 	s.repoPaths = paths
-	s.gitopsCfg = gitops
+	s.publishGitopsCfg(gitops)
 }
 
 // SetAddonSecretDefs sets the addon secret definitions (loaded from env/config).
@@ -655,31 +678,33 @@ func (s *Server) ReinitializeFromConnection() {
 		slog.Info("[startup] provider reinitialized from connection", "addon_type", addonCfg.Type, "addon_region", addonCfg.Region, "addon_prefix", addonCfg.Prefix)
 	}
 
-	// Reinit GitOps config from connection.
+	// Reinit GitOps config from connection (GF2 race-safe: load, mutate local copy, publish once).
+	cfg := s.gitopsConfig()
 	if gitops := conn.GitOps; gitops != nil {
 		if gitops.BaseBranch != "" {
-			s.gitopsCfg.BaseBranch = gitops.BaseBranch
+			cfg.BaseBranch = gitops.BaseBranch
 		}
 		if gitops.BranchPrefix != "" {
-			s.gitopsCfg.BranchPrefix = gitops.BranchPrefix
+			cfg.BranchPrefix = gitops.BranchPrefix
 		}
 		if gitops.CommitPrefix != "" {
-			s.gitopsCfg.CommitPrefix = gitops.CommitPrefix
+			cfg.CommitPrefix = gitops.CommitPrefix
 		}
 		if gitops.PRAutoMerge != nil {
-			s.gitopsCfg.PRAutoMerge = *gitops.PRAutoMerge
+			cfg.PRAutoMerge = *gitops.PRAutoMerge
 		}
 		slog.Info("gitops config reinitialized from connection",
-			"base_branch", s.gitopsCfg.BaseBranch,
-			"branch_prefix", s.gitopsCfg.BranchPrefix,
-			"pr_auto_merge", s.gitopsCfg.PRAutoMerge,
+			"base_branch", cfg.BaseBranch,
+			"branch_prefix", cfg.BranchPrefix,
+			"pr_auto_merge", cfg.PRAutoMerge,
 		)
 	}
 
 	// Populate RepoURL from Git connection if not already set.
-	if s.gitopsCfg.RepoURL == "" && conn.Git.RepoURL != "" {
-		s.gitopsCfg.RepoURL = conn.Git.RepoURL
+	if cfg.RepoURL == "" && conn.Git.RepoURL != "" {
+		cfg.RepoURL = conn.Git.RepoURL
 	}
+	s.publishGitopsCfg(cfg)
 
 	// Reinit default addons from git (V3-P2.1a hot-reload).
 	// Reuses the same read+fallback logic boot and GET handler use.
@@ -703,7 +728,7 @@ func (s *Server) ReinitializeFromConnection() {
 		}
 
 		cfg := s.argoReconcilerConfig
-		baseBranch := s.gitopsCfg.BaseBranch
+		baseBranch := s.gitopsConfig().BaseBranch
 		if baseBranch == "" {
 			baseBranch = "main"
 		}

@@ -45,7 +45,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	// registrations" surface AND the "Discovered clusters / not_in_git"
 	// surface (the argosecrets reconciler can create the ArgoCD cluster
 	// secret BEFORE the values-file PR merges).
-	pending := resolvePendingRegistrations(r.Context(), gp, s.gitopsCfg.CommitPrefix)
+	pending := resolvePendingRegistrations(r.Context(), gp, s.gitopsConfig().CommitPrefix)
 	resp.PendingRegistrations = pending
 	pendingNames := make(map[string]struct{}, len(pending))
 	for _, p := range pending {

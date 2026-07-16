@@ -104,7 +104,7 @@ func (s *Server) handlePutDefaultAddons(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 
 	files := map[string][]byte{DefaultAddonsPath: fileBody}
@@ -155,7 +155,7 @@ func (s *Server) ReadDefaultAddons(ctx context.Context) ([]string, error) {
 	}
 
 	// Attempt to read default-addons.yaml from git.
-	body, err := git.GetFileContent(ctx, DefaultAddonsPath, s.gitopsCfg.BaseBranch)
+	body, err := git.GetFileContent(ctx, DefaultAddonsPath, s.gitopsConfig().BaseBranch)
 	if err == nil && len(body) > 0 {
 		// File exists — parse it.
 		addons, parseErr := parseDefaultAddons(body)

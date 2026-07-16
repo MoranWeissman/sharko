@@ -78,7 +78,7 @@ func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	orch.SetAllowInlineCredentialsFn(s.settingsStore.IsInlineCredentialsAllowed)

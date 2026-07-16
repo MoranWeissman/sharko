@@ -44,7 +44,7 @@ func forbiddenBootstrapArgocd() *initFakeArgocd {
 func initStatusBody(t *testing.T, gp *handlerFakeGitProvider, ac orchestrator.ArgocdClient) InitStatusResponse {
 	t.Helper()
 	srv := newTestServer()
-	srv.gitopsCfg = orchestrator.GitOpsConfig{BaseBranch: "main"}
+	srv.publishGitopsCfg(orchestrator.GitOpsConfig{BaseBranch: "main"})
 	srv.connSvc.SetGitProviderOverride(gp)
 	if ac != nil {
 		srv.connSvc.SetArgocdClientOverride(ac)

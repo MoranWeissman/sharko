@@ -110,7 +110,7 @@ func (s *Server) handleUnwrapGlobalValues(w http.ResponseWriter, r *http.Request
 	}
 
 	// Step 1: enumerate global values files.
-	entries, lerr := git.ListDirectory(ctx, dir, s.gitopsCfg.BaseBranch)
+	entries, lerr := git.ListDirectory(ctx, dir, s.gitopsConfig().BaseBranch)
 	if lerr != nil {
 		writeError(w, http.StatusBadGateway, "listing global values directory: "+lerr.Error())
 		return
@@ -144,7 +144,7 @@ func (s *Server) handleUnwrapGlobalValues(w http.ResponseWriter, r *http.Request
 			continue
 		}
 		fullPath := dir + "/" + name
-		content, gerr := git.GetFileContent(ctx, fullPath, s.gitopsCfg.BaseBranch)
+		content, gerr := git.GetFileContent(ctx, fullPath, s.gitopsConfig().BaseBranch)
 		if gerr != nil || len(content) == 0 {
 			continue
 		}
@@ -197,12 +197,12 @@ func (s *Server) handleUnwrapGlobalValues(w http.ResponseWriter, r *http.Request
 	// Dry-run: return preview without side effects.
 	if dryRun {
 		// Create a temporary orchestrator for diff computation (no credentials needed)
-		tempOrch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+		tempOrch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil)
 
 		filePreviews := []orchestrator.FilePreview{}
 		for path, newContent := range files {
 			// Read old content for diff (already read during unwrap check above)
-			oldContent, _ := git.GetFileContent(ctx, path, s.gitopsCfg.BaseBranch)
+			oldContent, _ := git.GetFileContent(ctx, path, s.gitopsConfig().BaseBranch)
 			diff := tempOrch.BuildFileDiff(path, oldContent, newContent, "update")
 			filePreviews = append(filePreviews, orchestrator.FilePreview{
 				Path:   path,
@@ -235,7 +235,7 @@ func (s *Server) handleUnwrapGlobalValues(w http.ResponseWriter, r *http.Request
 	// Route through CommitFilesAsPRWithMeta so the PR tracks under the
 	// values-edit dashboard bucket (it's a global-values rewrite,
 	// semantically the same family as a manual edit).
-	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	prResult, perr := orch.CommitFilesAsPRWithMeta(ctx, files,
 		fmt.Sprintf("unwrap legacy global values (%d file(s))", migratedCount),

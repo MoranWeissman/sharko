@@ -69,7 +69,7 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve effective GitOps config — fall back to active connection's repo URL if not set via env.
-	gitopsCfg := s.gitopsCfg
+	gitopsCfg := s.gitopsConfig()
 	conn, connErr := s.connSvc.GetActiveConnectionInfo()
 	if connErr == nil {
 		// Populate Git credentials for ArgoCD repository registration.

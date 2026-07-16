@@ -145,7 +145,7 @@ func (s *Server) handleInitStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	baseBranch := s.gitopsCfg.BaseBranch
+	baseBranch := s.gitopsConfig().BaseBranch
 	if baseBranch == "" {
 		baseBranch = "main"
 	}

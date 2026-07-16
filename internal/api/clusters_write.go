@@ -183,7 +183,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	orch.SetAllowInlineCredentialsFn(s.settingsStore.IsInlineCredentialsAllowed)
@@ -325,7 +325,7 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 	}
 	req.Name = name
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if s.argoSecretManager != nil {
@@ -430,7 +430,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 
@@ -448,7 +448,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 		if managedPath == "" {
 			managedPath = "configuration/managed-clusters.yaml"
 		}
-		mcData, err := git.GetFileContent(ctx, managedPath, s.gitopsCfg.BaseBranch)
+		mcData, err := git.GetFileContent(ctx, managedPath, s.gitopsConfig().BaseBranch)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "reading managed-clusters.yaml: "+err.Error())
 			return
@@ -602,7 +602,7 @@ func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, nil, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, nil, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	if err := orch.RefreshClusterCredentials(r.Context(), name, serverURL); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())

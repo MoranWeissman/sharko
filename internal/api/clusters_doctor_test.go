@@ -74,7 +74,7 @@ clusters:
 func newDoctorTestServer(t *testing.T) *Server {
 	t.Helper()
 	srv := newIsolatedTestServer(t)
-	srv.gitopsCfg = orchestrator.GitOpsConfig{BaseBranch: "main"}
+	srv.publishGitopsCfg(orchestrator.GitOpsConfig{BaseBranch: "main"})
 	srv.repoPaths = orchestrator.RepoPathsConfig{
 		Catalog:         "configuration/addons-catalog.yaml",
 		ManagedClusters: "configuration/managed-clusters.yaml",
