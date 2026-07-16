@@ -4322,7 +4322,7 @@ paths:
   /clusters/{name}/doctor:
     post:
       description: |-
-        Runs up to five real-attempt checks against the named cluster's
+        Runs up to six real-attempt checks against the named cluster's
         connection and returns a structured pass/fail/warn/not-applicable
         verdict per check, each with a plain-English fix on failure or
         warning: (1) can Sharko read the cluster's connection credentials,
@@ -4336,7 +4336,11 @@ paths:
         Secret fails the check, a weaker signal (a mismatched
         tracking-id or only the app.kubernetes.io/instance label, which
         a plain Helm release also stamps) warns instead of failing —
-        not-applicable for Sharko-managed connections. Every check is a
+        not-applicable for Sharko-managed connections, and (6) for a
+        cluster labeled sharko.dev/connectivity-check: enabled, does the
+        expected connectivity-check Application exist in ArgoCD — missing
+        when labeled is the signature of a stale ApplicationSet selector
+        (sharko.io → sharko.dev label rename drift). Every check is a
         real attempt, never IAM policy simulation, and read-only except
         check 4, which reuses Stage-1's existing create/read/delete
         canary secret. The whole run is bounded to about 30 seconds.
