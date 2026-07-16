@@ -337,6 +337,11 @@ func (r *Reconciler) recordFightCheck(name string, desired, observedLive map[str
 			"something else keeps overwriting Sharko's addon labels on this cluster's self-managed ArgoCD secret (reverted %d checks in a row) — likely the ArgoCD application that renders this secret from Git fighting with Sharko over it. Sharko will keep re-applying its labels every tick; see https://sharko.readthedocs.io/en/latest/operator/self-managed-connections/.",
 			state.reverts,
 		)
+		// TODO(V3 E1 follow-up): Emit events.ReasonDriftDetected Warning event
+		// here once the reconciler has access to an EventRecorder. The event
+		// should be emitted at most once per fight (not every tick) — track
+		// state.fightEventEmitted to avoid spam. Clear the flag when reverts
+		// drops back to 0.
 	}
 	return warning
 }

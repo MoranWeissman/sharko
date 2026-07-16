@@ -26,6 +26,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/demo"
+	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
@@ -965,8 +966,19 @@ var serveCmd = &cobra.Command{
 				if legacyRecon := srv.ArgoSecretReconciler(); legacyRecon != nil {
 					legacyRecon.SetProbeModeFn(probeModeFn)
 				}
-			}
+				// Kubernetes EventRecorder (V3 E1) — emits operational events
+				// for Sharko's own failures and successes. Only active when
+				// in-cluster; nil-safe no-op otherwise (local/dev mode).
+				var eventRecorder *events.EventRecorder
+				if inClusterK8sClient != nil {
+					eventRecorder = events.NewRecorder(inClusterK8sClient, prNamespace)
+					slog.Info("k8s event recorder initialized", "namespace", prNamespace, "component", events.ComponentName)
+				} else {
+					slog.Info("k8s event recorder disabled (no in-cluster k8s client)")
+				}
+				srv.SetEventRecorder(eventRecorder)
 
+			}
 			// Construct + start the cluster Secret reconciler alongside the
 			// prtracker so its post-merge fan-out can nudge the reconciler
 			// immediately. The reconciler requires the same preconditions
