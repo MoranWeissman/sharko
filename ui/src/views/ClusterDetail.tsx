@@ -396,14 +396,21 @@ export function ClusterDetail() {
       // must never enter the toggle map — if they did, they'd appear in the
       // picker and could be sent to the PATCH endpoint as labels, producing
       // an inconsistent gitops state (V2-cleanup-32 fix).
-      const toggleMap: Record<string, boolean> = {};
-      result.addon_comparisons.forEach((a: { addon_name: string; git_enabled: boolean; git_configured: boolean; status?: string }) => {
-        if (!a.git_configured) return;
-        if (a.status === 'untracked_in_argocd' || a.status === 'sharko_system') return;
-        toggleMap[a.addon_name] = a.git_enabled;
-      });
-      setAddonToggles(toggleMap);
-      setOriginalToggles(toggleMap);
+      //
+      // V3-AP1: DO NOT reseed toggles on a background refetch when there are
+      // unsaved changes or an open preview — the background poll would silently
+      // discard the user's pending toggle edit and strand the preview. Only
+      // seed toggles on the foreground/first load (background === false).
+      if (!background) {
+        const toggleMap: Record<string, boolean> = {};
+        result.addon_comparisons.forEach((a: { addon_name: string; git_enabled: boolean; git_configured: boolean; status?: string }) => {
+          if (!a.git_configured) return;
+          if (a.status === 'untracked_in_argocd' || a.status === 'sharko_system') return;
+          toggleMap[a.addon_name] = a.git_enabled;
+        });
+        setAddonToggles(toggleMap);
+        setOriginalToggles(toggleMap);
+      }
       if (connections) {
         const active = (connections as ConnectionsListResponse).connections.find(
           (c) => c.name === (connections as ConnectionsListResponse).active_connection || c.is_active
@@ -1516,8 +1523,10 @@ export function ClusterDetail() {
                   </div>
                 )}
 
-                {/* Apply / Discard footer */}
-                {hasToggleChanges && (
+                {/* Apply / Discard footer — V3-AP1: render whenever there are pending
+                    changes OR an open preview so a shown preview ALWAYS carries its Apply
+                    + Discard buttons (even if a background poll tried to reseed toggles). */}
+                {(hasToggleChanges || togglePreview) && (
                   <div className="mt-4 flex items-center gap-3">
                     <button
                       type="button"
