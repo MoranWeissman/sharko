@@ -63,19 +63,19 @@ export function DryRunPreview({ result }: DryRunPreviewProps) {
   const effectiveAddons = result.effective_addons ?? []
 
   return (
-    <div className="rounded-md bg-[#e8f4ff] p-3 ring-2 ring-[#6aade0] dark:bg-gray-900 dark:ring-gray-700">
+    <div className="rounded-md bg-[#e8f4ff] p-3 ring-2 ring-[#6aade0] dark:bg-gray-900 dark:ring-gray-700 min-w-0">
       <h4 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
         Preview
       </h4>
-      <div className="space-y-2 text-xs text-[#2a5a7a] dark:text-gray-400">
-        <div>
+      <div className="space-y-2 text-xs text-[#2a5a7a] dark:text-gray-400 min-w-0">
+        <div className="min-w-0">
           <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
             PR Title:
           </span>{' '}
           {result.pr_title}
         </div>
         {effectiveAddons.length > 0 && (
-          <div>
+          <div className="min-w-0">
             <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
               Effective Addons:
             </span>{' '}
@@ -83,15 +83,15 @@ export function DryRunPreview({ result }: DryRunPreviewProps) {
           </div>
         )}
         {files.length > 0 && (
-          <div>
+          <div className="min-w-0">
             <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
               Files:
             </span>
-            <ul className="mt-1 space-y-1 font-mono">
+            <ul className="mt-1 space-y-1 font-mono min-w-0">
               {files.map((f) => {
                 if (f.action === 'create') {
                   return (
-                    <li key={f.path} className="flex items-start gap-1">
+                    <li key={f.path} className="flex items-start gap-1 min-w-0">
                       <span className="text-green-600 dark:text-green-400">+</span>{' '}
                       <span className="break-all">{f.path}</span>
                       <span className="ml-1 text-[#5a8aaa] dark:text-gray-500">
@@ -103,7 +103,7 @@ export function DryRunPreview({ result }: DryRunPreviewProps) {
 
                 if (f.action === 'delete') {
                   return (
-                    <li key={f.path} className="flex items-start gap-1">
+                    <li key={f.path} className="flex items-start gap-1 min-w-0">
                       <span className="text-red-600 dark:text-red-400">-</span>{' '}
                       <span className="break-all">{f.path}</span>
                       <span className="ml-1 text-[#5a8aaa] dark:text-gray-500">
@@ -116,13 +116,13 @@ export function DryRunPreview({ result }: DryRunPreviewProps) {
                 // action === 'update'
                 const hasDiff = f.diff && f.diff.trim().length > 0
                 return (
-                  <li key={f.path}>
-                    <div className="flex items-start gap-1">
+                  <li key={f.path} className="min-w-0">
+                    <div className="flex items-start gap-1 min-w-0">
                       <span className="text-amber-600 dark:text-amber-400">~</span>{' '}
                       <span className="break-all">{f.path}</span>
                     </div>
                     {hasDiff && f.diff && (
-                      <div className="ml-4 mt-1 overflow-x-auto rounded border border-[#6aade0] bg-white p-2 dark:border-gray-600 dark:bg-gray-800">
+                      <div className="ml-4 mt-1 overflow-x-auto rounded border border-[#6aade0] bg-white p-2 dark:border-gray-600 dark:bg-gray-800 min-w-0">
                         <pre className="whitespace-pre text-xs">
                           {f.diff.split('\n').map((line, idx) => {
                             const lineColor = line.startsWith('+')
@@ -146,7 +146,7 @@ export function DryRunPreview({ result }: DryRunPreviewProps) {
           </div>
         )}
         {secrets.length > 0 && (
-          <div>
+          <div className="min-w-0">
             <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
               Secrets:
             </span>{' '}
