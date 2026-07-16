@@ -1367,6 +1367,85 @@ export function ClusterDetail() {
         );
       })()}
 
+      {/* Label Drift Diff (V3 G2) — READ-ONLY live git-desired vs live-cluster
+        * label comparison for Sharko-managed clusters. Rendered when
+        * label_drift is present (OutOfSync state from G1). Reuses DryRunPreview
+        * diff styling (green/red lines) but this is a LIVE drift view, not a PR
+        * preview. Shows "In sync" when no drift. */}
+      {(() => {
+        const lastRec = data?.cluster?.last_reconcile;
+        const drift = lastRec?.label_drift;
+        const hasDrift = drift && (drift.added?.length || drift.removed?.length || drift.changed?.length);
+
+        if (!lastRec) return null; // No reconcile data yet
+
+        if (!hasDrift) {
+          // In sync — show brief confirmation
+          return (
+            <div className="flex items-center gap-2 rounded-lg ring-2 ring-green-600 bg-green-50 px-4 py-2.5 dark:ring-green-700 dark:bg-green-950/20">
+              <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+              <p className="text-sm font-medium text-green-700 dark:text-green-400">
+                Labels in sync — Git matches live cluster state
+              </p>
+            </div>
+          );
+        }
+
+        // OutOfSync — show the drift diff
+        return (
+          <div className="space-y-2 rounded-lg ring-2 ring-amber-600 bg-amber-50 px-4 py-3 dark:ring-amber-700 dark:bg-amber-950/20">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+                  Label Drift Detected
+                </p>
+                <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
+                  This cluster's addon labels drifted from Git. The diff below shows what changed.
+                </p>
+              </div>
+            </div>
+            <div className="rounded-md bg-white ring-2 ring-[#6aade0] p-3 dark:bg-gray-900 dark:ring-gray-700">
+              <h4 className="mb-2 text-xs font-semibold text-[#0a2a4a] dark:text-gray-200">
+                Git vs Live Label Diff
+              </h4>
+              <div className="space-y-1 text-xs font-mono text-[#2a5a7a] dark:text-gray-400">
+                {drift.added && drift.added.length > 0 && (
+                  <div>
+                    <span className="font-semibold text-green-600 dark:text-green-400">Added in Git (missing on cluster):</span>
+                    {drift.added.map((key) => (
+                      <div key={key} className="ml-4 text-green-600 dark:text-green-400">
+                        + {key}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {drift.removed && drift.removed.length > 0 && (
+                  <div>
+                    <span className="font-semibold text-red-600 dark:text-red-400">Removed in Git (present on cluster):</span>
+                    {drift.removed.map((key) => (
+                      <div key={key} className="ml-4 text-red-600 dark:text-red-400">
+                        - {key}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {drift.changed && drift.changed.length > 0 && (
+                  <div>
+                    <span className="font-semibold text-amber-600 dark:text-amber-400">Changed (values differ):</span>
+                    {drift.changed.map((key) => (
+                      <div key={key} className="ml-4 text-amber-600 dark:text-amber-400">
+                        ~ {key}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Main layout: nav panel + content */}
       <div className="flex gap-6">
         <RoleGuard
