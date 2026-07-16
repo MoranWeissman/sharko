@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/observations"
 )
@@ -124,6 +126,21 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		verdict := computeConnectivityVerdict(c.Name, c.ConnectionStatus, allApps)
 		c.ConnectivityStatus = verdict.Status
 		c.ConnectivityDetail = verdict.Detail
+		// W4a (V3 RW1.8): For clusters stuck at "check_pending", detect
+		// connectivity-check ApplicationSet label-selector drift and augment
+		// ConnectivityDetail with a plain reason + next step. Best-effort: if
+		// the k8s client is unavailable or the Secret fetch fails, degrade
+		// gracefully by leaving the baseline ConnectivityDetail as-is.
+		if verdict.Status == "check_pending" && allApps != nil {
+			if k8sClient, namespace, ok := s.k8sClientAndNamespace(); ok {
+				secret, err := k8sClient.CoreV1().Secrets(namespace).Get(r.Context(), c.Name, metav1.GetOptions{})
+				if err == nil && secret != nil {
+					if driftReason := detectConnectivityCheckDrift(c.Name, secret.Labels, allApps); driftReason != "" {
+						c.ConnectivityDetail = driftReason
+					}
+				}
+			}
+		}
 		// V2-cleanup-85.4: auto-derived health, independent of any manual
 		// "Test connection" click — see computeDerivedHealth.
 		hasHealthyAddon := clusterHasHealthyAddon(c.Name, c.ServerURL, allApps)
