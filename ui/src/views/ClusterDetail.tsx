@@ -27,12 +27,14 @@ import {
   RefreshCw,
   RotateCcw,
   X,
+  XCircle,
   ShieldCheck,
   Sparkles,
   Settings,
   Stethoscope,
+  Activity,
 } from 'lucide-react';
-import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs, previewEnableAddon, reconcileCluster } from '@/services/api';
+import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs, previewEnableAddon, reconcileCluster, diagnoseCluster, doctorCluster } from '@/services/api';
 import type { TestClusterUnavailable, PRWriteResult } from '@/services/api';
 import { PRResultBanner, extractPR } from '@/components/PRFeedback';
 import { DryRunPreview } from '@/components/AddAddonFlow';
@@ -57,15 +59,15 @@ import { YamlViewer } from '@/components/YamlViewer';
 import { RoleGuard } from '@/components/RoleGuard';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
-import { DiagnoseModal } from '@/components/DiagnoseModal';
-import { DoctorModal, DOCTOR_LABEL, DOCTOR_HINT } from '@/components/DoctorModal';
+import { DiagnoseResultView } from '@/components/DiagnoseModal';
+import { DoctorResultView, DOCTOR_LABEL, DOCTOR_HINT } from '@/components/DoctorModal';
 import { TestConnectionModal } from '@/components/TestConnectionModal';
 import { PendingPRsPanel } from '@/components/PendingPRsPanel';
 import { CompletedChangesPanel } from '@/components/CompletedChangesPanel';
 import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOverridesEditor';
 import { showToast } from '@/components/ToastNotification';
 import { prettyOperation } from '@/lib/utils';
-import type { ConnectionsListResponse, TrackedPR } from '@/services/models';
+import type { ConnectionsListResponse, TrackedPR, DiagnosticReport, DoctorClusterResponse } from '@/services/models';
 
 type StatusFilter =
   | 'all'
@@ -176,7 +178,6 @@ export function ClusterDetail() {
   // cluster's separate PR panel.
   const [pendingPRsByAddon, setPendingPRsByAddon] = useState<Record<string, TrackedPR[]>>({});
   const [loading, setLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -243,11 +244,17 @@ export function ClusterDetail() {
     | 'testing'
     | null
   >(null);
-  const [diagnoseOpen, setDiagnoseOpen] = useState(false);
-  // Connection doctor (V2-cleanup-88.4/88.5) — four real-attempt checks
-  // against this cluster's connection, next to Test connection / Check
-  // permissions.
-  const [doctorOpen, setDoctorOpen] = useState(false);
+  // Check permissions (HD1, V3) — result now lives in the Diagnostics
+  // section and PERSISTS until re-run or leaving, instead of a fading modal.
+  const [diagnoseReport, setDiagnoseReport] = useState<DiagnosticReport | null>(null);
+  const [diagnoseLoading, setDiagnoseLoading] = useState(false);
+  const [diagnoseError, setDiagnoseError] = useState<string | null>(null);
+  // Connection doctor (V2-cleanup-88.4/88.5, persisted in-section HD1) — the
+  // six real-attempt checks against this cluster's connection. Result
+  // persists in the Diagnostics section.
+  const [doctorResult, setDoctorResult] = useState<DoctorClusterResponse | null>(null);
+  const [doctorLoading, setDoctorLoading] = useState(false);
+  const [doctorError, setDoctorError] = useState<string | null>(null);
   // Test connection modal (V2-cleanup-91.1/F5) — replaces inline results panel.
   const [testOpen, setTestOpen] = useState(false);
 
@@ -358,9 +365,7 @@ export function ClusterDetail() {
   const fetchData = useCallback(async (background = false): Promise<ClusterComparisonResponse | undefined> => {
     if (!name) return undefined;
     try {
-      if (background) {
-        setIsRefreshing(true);
-      } else {
+      if (!background) {
         setLoading(true);
       }
       setError(null);
@@ -441,13 +446,8 @@ export function ClusterDetail() {
       return undefined;
     } finally {
       setLoading(false);
-      setIsRefreshing(false);
     }
   }, [name]);
-
-  const handleRefresh = useCallback(() => {
-    void fetchData(true);
-  }, [fetchData]);
 
   // Stable onSaved for the per-cluster overrides editor — passing a fresh
   // arrow function on every render would defeat the editor's React.memo
@@ -634,6 +634,39 @@ export function ClusterDetail() {
     if (!name) return;
     // F5 (V2-cleanup-91.1): open the modal instead of rendering inline.
     setTestOpen(true);
+  }, [name]);
+
+  // HD1 (V3): run Check permissions and render the result in the Diagnostics
+  // section. Same POST /clusters/{name}/diagnose call the old modal made; only
+  // WHERE the result renders (in-section) and its LIFETIME (persists) changed.
+  const handleCheckPermissions = useCallback(async () => {
+    if (!name) return;
+    setDiagnoseLoading(true);
+    setDiagnoseError(null);
+    try {
+      const report = await diagnoseCluster(name);
+      setDiagnoseReport(report);
+    } catch (e: unknown) {
+      setDiagnoseError(e instanceof Error ? e.message : 'Diagnosis failed');
+    } finally {
+      setDiagnoseLoading(false);
+    }
+  }, [name]);
+
+  // HD1 (V3): run the connection doctor and render its six checks in the
+  // Diagnostics section (persists). Same POST /clusters/{name}/doctor call.
+  const handleRunDoctor = useCallback(async () => {
+    if (!name) return;
+    setDoctorLoading(true);
+    setDoctorError(null);
+    try {
+      const result = await doctorCluster(name);
+      setDoctorResult(result);
+    } catch (e: unknown) {
+      setDoctorError(e instanceof Error ? e.message : 'Connection doctor failed');
+    } finally {
+      setDoctorLoading(false);
+    }
   }, [name]);
 
   // Open the enable-addon picker. The catalog is now fetched eagerly on mount
@@ -936,6 +969,7 @@ export function ClusterDetail() {
         { key: 'addons', label: 'Addons', badge: data ? data.addon_comparisons.length : undefined, icon: Package },
         { key: 'config', label: 'Config', icon: FileCode },
         { key: 'history', label: 'Changes', icon: Clock },
+        { key: 'diagnostics', label: 'Diagnostics', icon: Activity },
         { key: 'settings', label: 'Settings', icon: Settings },
       ],
     },
@@ -1039,19 +1073,52 @@ export function ClusterDetail() {
               Registered with pasted credentials — consider migrating to a secret-store pointer.
             </p>
           )}
-          {/* F5 (V2-cleanup-91.1): Test-connection results — including the
-            * per-error-code guidance banners — now live in TestConnectionModal,
-            * opened by the "Test connection" button below. */}
+          {/* HD1 (V3): header redesign — dropped the bare refresh button (auto-poll
+            * + Sync-now's refetch cover it), moved Check permissions + Diagnose to
+            * the new Diagnostics section, made Sync now the primary action with an
+            * ArgoCD-familiar status pill. Test connection stays light here. */}
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleRefresh}
-            className="rounded-md p-2 text-[#3a6a8a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700"
-            title="Refresh"
-          >
-            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </button>
+        <div className="flex items-center gap-3">
           <RoleGuard roles={['admin', 'operator']}>
+            {/* Sync now — primary action */}
+            <button
+              onClick={handleSyncNow}
+              disabled={syncingNow}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+            >
+              {syncingNow ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Sync now
+            </button>
+            <InfoHint
+              text="Re-applies the desired state from Git to this cluster's connection labels in ArgoCD. Sharko keeps a label listing which addons belong here. Out of sync means those labels drifted from what Git says (rare)."
+              label="What does Sync now do?"
+            />
+            {/* Sync status pill */}
+            {(() => {
+              const lastRec = data?.cluster?.last_reconcile;
+              let label = 'Not synced yet';
+              let bgClass = 'bg-[#5a8aaa] dark:bg-gray-600';
+              let textClass = 'text-white';
+              if (syncingNow) {
+                label = 'Reconciling…';
+                bgClass = 'bg-[#3a6a8a] dark:bg-gray-500';
+              } else if (lastRec?.outcome === 'succeeded') {
+                label = 'In sync';
+                bgClass = 'bg-green-600 dark:bg-green-700';
+              } else if (lastRec?.outcome === 'failed') {
+                label = 'Sync failed';
+                bgClass = 'bg-red-600 dark:bg-red-700';
+              } else if (lastRec?.outcome === 'skipped') {
+                label = 'In sync';
+                bgClass = 'bg-green-600 dark:bg-green-700';
+              }
+              return (
+                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${bgClass} ${textClass}`}>
+                  {label}
+                </span>
+              );
+            })()}
+            {/* Test connection — light button */}
             <button
               onClick={handleTestConnection}
               title={SHARKO_CONN_TOOLTIP}
@@ -1061,35 +1128,6 @@ export function ClusterDetail() {
               {TEST_CONNECTION_LABEL}
             </button>
             <InfoHint text={TEST_CONNECTION_HINT} label="What does Test connection do?" />
-            <button
-              onClick={() => setDiagnoseOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-            >
-              <ScanSearch className="h-3.5 w-3.5" />
-              {CHECK_PERMISSIONS_LABEL}
-            </button>
-            <InfoHint text={CHECK_PERMISSIONS_HINT} label="What does Check permissions do?" />
-            <button
-              data-testid="run-connection-doctor"
-              onClick={() => setDoctorOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-            >
-              <Stethoscope className="h-3.5 w-3.5" />
-              {DOCTOR_LABEL}
-            </button>
-            <InfoHint text={DOCTOR_HINT} label="What does the connection doctor do?" />
-            <button
-              onClick={handleSyncNow}
-              disabled={syncingNow}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-            >
-              {syncingNow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              Sync now
-            </button>
-            <InfoHint
-              text="Sharko keeps a label on each cluster's connection listing which addons belong there, matching what's in Git. This re-checks and fixes those labels now instead of waiting. Out of sync means the live labels drifted from what Git says (rare)."
-              label="What does Sync now do?"
-            />
           </RoleGuard>
         </div>
       </div>
@@ -1148,21 +1186,12 @@ export function ClusterDetail() {
           </div>
         }
       />
-      <DiagnoseModal
-        clusterName={name ?? ''}
-        open={diagnoseOpen}
-        onClose={() => setDiagnoseOpen(false)}
-      />
-      <DoctorModal
-        clusterName={name ?? ''}
-        open={doctorOpen}
-        onClose={() => setDoctorOpen(false)}
-      />
       <TestConnectionModal
         clusterName={name ?? ''}
         open={testOpen}
         onClose={() => setTestOpen(false)}
         onSuggestionSelect={handleSelectSuggestion}
+        onResult={(r) => setTestResult(r)}
       />
       {removeError && (
         <p className="text-sm text-red-600 dark:text-red-400">{removeError}</p>
@@ -1730,6 +1759,113 @@ export function ClusterDetail() {
                 void fetchData()
               }}
             />
+          )}
+
+          {/* Diagnostics section (HD1, V3) — persistent diagnostic results.
+            * Check permissions, Diagnose connection (the doctor), and Test
+            * connection all show their LAST result here until re-run or leaving.
+            * Replaces the fading modals that used to live in the header. */}
+          {activeSection === 'diagnostics' && (
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Diagnostics</h3>
+              <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
+                Run connection and permissions checks for this cluster. Results persist here until re-run.
+              </p>
+              <RoleGuard roles={['admin', 'operator']}>
+                <div className="space-y-3">
+                  {/* Test connection result (also triggered from header) */}
+                  {testResult && testResult !== 'testing' && (
+                    <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Wifi className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                        <h4 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Test Connection Result</h4>
+                      </div>
+                      {isTestClusterUnavailable(testResult) ? (
+                        <p className="text-sm text-amber-700 dark:text-amber-400">
+                          {testResult.error}
+                        </p>
+                      ) : testResult.reachable || testResult.success ? (
+                        <div className="flex items-center gap-2 text-sm text-green-700 dark:text-green-400">
+                          <CheckCircle className="h-4 w-4" />
+                          <span>Cluster reachable{testResult.server_version ? ` — ${testResult.server_version}` : ''}</span>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 text-sm text-red-700 dark:text-red-400">
+                            <XCircle className="h-4 w-4" />
+                            <span>Connection failed</span>
+                          </div>
+                          {testResult.error_message && (
+                            <p className="text-xs text-[#2a5a7a] dark:text-gray-400">{testResult.error_message}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {/* Check permissions — runs POST /clusters/{name}/diagnose;
+                    * the report renders below and PERSISTS until re-run (HD1). */}
+                  <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <ScanSearch className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                        <h4 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{CHECK_PERMISSIONS_LABEL}</h4>
+                      </div>
+                      <button
+                        data-testid="run-check-permissions"
+                        onClick={() => { void handleCheckPermissions(); }}
+                        disabled={diagnoseLoading}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                      >
+                        {diagnoseLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ScanSearch className="h-3.5 w-3.5" />}
+                        {diagnoseReport || diagnoseError ? 'Re-run' : 'Run'}
+                      </button>
+                    </div>
+                    <p className="text-xs text-[#5a8aaa] dark:text-gray-400">{CHECK_PERMISSIONS_HINT}</p>
+                    {diagnoseError && (
+                      <div className="mt-3 rounded-md bg-red-50 p-4 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">
+                        {diagnoseError}
+                      </div>
+                    )}
+                    {diagnoseReport && !diagnoseLoading && (
+                      <div className="mt-3">
+                        <DiagnoseResultView report={diagnoseReport} />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Diagnose connection (the doctor) — runs POST /clusters/{name}/doctor;
+                    * the six checks render below and PERSIST until re-run (HD1). */}
+                  <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <Stethoscope className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                        <h4 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{DOCTOR_LABEL}</h4>
+                      </div>
+                      <button
+                        data-testid="run-connection-doctor"
+                        onClick={() => { void handleRunDoctor(); }}
+                        disabled={doctorLoading}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                      >
+                        {doctorLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Stethoscope className="h-3.5 w-3.5" />}
+                        {doctorResult || doctorError ? 'Re-run' : 'Run'}
+                      </button>
+                    </div>
+                    <p className="text-xs text-[#5a8aaa] dark:text-gray-400">{DOCTOR_HINT}</p>
+                    {doctorError && (
+                      <div className="mt-3 rounded-md bg-red-50 p-4 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">
+                        {doctorError}
+                      </div>
+                    )}
+                    {doctorResult && !doctorLoading && (
+                      <div className="mt-3">
+                        <DoctorResultView result={doctorResult} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </RoleGuard>
+            </div>
           )}
 
           {/* Settings section — houses admin troubleshooting controls that

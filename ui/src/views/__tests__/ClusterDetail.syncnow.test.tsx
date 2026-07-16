@@ -4,14 +4,12 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
 
-// V2-cleanup-89.4 — "Last sync" line + "Sync now" button on the cluster
-// detail page. Before this, a failed reconcile for a cluster's ArgoCD
-// secret was server-log-only; ArgoCD shows a failed apply, Sharko showed
-// nothing. Pins:
-//  1. "Sync now" renders next to Test connection / Run connection doctor.
-//  2. Clicking it calls POST /clusters/{name}/reconcile for THIS cluster.
-//  3. The "Last sync" line renders relative time + outcome.
-//  4. A failed outcome renders the plain-English message.
+// HD1 (V3) — "Sync now" button redesign + sync-status pill. Moved to
+// primary action styling in the header. Pins:
+//  1. "Sync now" renders as a prominent primary button next to Test connection.
+//  2. A status pill shows the reconcile outcome (In sync / Sync failed / Reconciling… / Not synced yet).
+//  3. Clicking Sync now calls POST /clusters/{name}/reconcile for THIS cluster.
+//  4. The "Last sync" line still renders relative time + outcome (kept from V2-cleanup-89.4).
 
 const adminAuth = {
   token: 'test-token',
@@ -105,7 +103,7 @@ function renderView() {
   );
 }
 
-describe('ClusterDetail — last sync + sync now (V2-cleanup-89.4)', () => {
+describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
@@ -113,7 +111,7 @@ describe('ClusterDetail — last sync + sync now (V2-cleanup-89.4)', () => {
     mockReconcileCluster.mockResolvedValue({ status: 'accepted', message: 'reconcile triggered for cluster prod-eu' });
   });
 
-  it('renders "Sync now" next to Test connection and Run connection doctor', async () => {
+  it('renders "Sync now" as a primary button next to Test connection', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse());
     renderView();
 
@@ -122,8 +120,50 @@ describe('ClusterDetail — last sync + sync now (V2-cleanup-89.4)', () => {
     });
 
     expect(screen.getByRole('button', { name: /^Test connection$/ })).toBeInTheDocument();
-    expect(screen.getByTestId('run-connection-doctor')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Sync now$/ })).toBeInTheDocument();
+    const syncBtn = screen.getByRole('button', { name: /^Sync now$/ });
+    expect(syncBtn).toBeInTheDocument();
+    expect(syncBtn).toHaveClass('bg-teal-600'); // Primary button style
+  });
+
+  it('renders "Not synced yet" status pill when last_reconcile is absent', async () => {
+    mockGetClusterComparison.mockResolvedValue(baseComparisonResponse());
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Not synced yet')).toBeInTheDocument();
+  });
+
+  it('renders "In sync" status pill when last_reconcile outcome is succeeded', async () => {
+    mockGetClusterComparison.mockResolvedValue(
+      baseComparisonResponse({ time: new Date(Date.now() - 5 * 60 * 1000).toISOString(), outcome: 'succeeded' }),
+    );
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('In sync')).toBeInTheDocument();
+  });
+
+  it('renders "Sync failed" status pill when last_reconcile outcome is failed', async () => {
+    mockGetClusterComparison.mockResolvedValue(
+      baseComparisonResponse({
+        time: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+        outcome: 'failed',
+        message: 'Connection failed',
+      }),
+    );
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Sync failed')).toBeInTheDocument();
   });
 
   it('clicking "Sync now" triggers a reconcile for this cluster', async () => {

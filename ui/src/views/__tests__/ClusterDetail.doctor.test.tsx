@@ -4,13 +4,12 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
 
-// V2-cleanup-88.5 — the connection doctor button ("Diagnose connection",
-// renamed in V2-cleanup-91.1/F6) on the cluster detail page, next to Test
-// connection / Check permissions. The doctor's own
-// check-rendering (all three statuses + fix line) is pinned in
-// DoctorModal.test.tsx; this file pins the integration: the button exists
-// in the right place, is wired to the right cluster name, and opens the
-// modal which then renders real check data end-to-end.
+// HD1 (V3) — the connection doctor button ("Diagnose connection") moved
+// from the header to the Diagnostics section. The doctor's own check-rendering
+// (all three statuses + fix line) is pinned in DoctorModal.test.tsx; this file
+// pins the integration: the button exists in the Diagnostics section, is wired
+// to the right cluster name, and opens the modal which then renders real check
+// data end-to-end.
 
 const adminAuth = {
   token: 'test-token',
@@ -97,7 +96,7 @@ function renderView() {
   );
 }
 
-describe('ClusterDetail — connection doctor button (V2-cleanup-88.5)', () => {
+describe('ClusterDetail — connection doctor button (HD1, V3)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetClusterComparison.mockResolvedValue(comparisonResponse);
@@ -105,20 +104,24 @@ describe('ClusterDetail — connection doctor button (V2-cleanup-88.5)', () => {
     mockGetAddonCatalog.mockResolvedValue({ addons: [] });
   });
 
-  it('renders "Diagnose connection" next to Test connection and Check permissions', async () => {
+  it('renders "Diagnose connection" in the Diagnostics section', async () => {
     renderView();
 
     await waitFor(() => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    expect(screen.getByRole('button', { name: /^Test connection$/ })).toBeInTheDocument();
-    const doctorButton = screen.getByTestId('run-connection-doctor');
-    expect(doctorButton).toBeInTheDocument();
-    expect(doctorButton).toHaveTextContent('Diagnose connection');
+    // Navigate to Diagnostics section
+    const diagnosticsTab = screen.getByRole('button', { name: 'Diagnostics' });
+    expect(diagnosticsTab).toBeInTheDocument();
+    fireEvent.click(diagnosticsTab);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('run-connection-doctor')).toBeInTheDocument();
+    });
   });
 
-  it('opens the doctor modal for this cluster and renders real check data on click', async () => {
+  it('runs the doctor for this cluster and renders real check data in-section', async () => {
     mockDoctorCluster.mockResolvedValue({
       overall: 'pass',
       checks: [
@@ -134,6 +137,13 @@ describe('ClusterDetail — connection doctor button (V2-cleanup-88.5)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
+    // Navigate to Diagnostics section
+    fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('run-connection-doctor')).toBeInTheDocument();
+    });
+
     expect(mockDoctorCluster).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('run-connection-doctor'));
 
@@ -141,10 +151,46 @@ describe('ClusterDetail — connection doctor button (V2-cleanup-88.5)', () => {
       expect(mockDoctorCluster).toHaveBeenCalledWith('prod-eu');
     });
     await waitFor(() => {
-      expect(screen.getByText('Diagnose connection: prod-eu')).toBeInTheDocument();
-    });
-    await waitFor(() => {
       expect(screen.getByText('All checks passed — this cluster’s connection looks healthy.')).toBeInTheDocument();
     });
+    // The six-check body renders (data-testid from DoctorResultView)
+    expect(screen.getByTestId('doctor-checks')).toBeInTheDocument();
+  });
+
+  it('doctor result PERSISTS in-section — it does not auto-dismiss after resolving', async () => {
+    mockDoctorCluster.mockResolvedValue({
+      overall: 'pass',
+      checks: [
+        { id: 'connection-credentials', status: 'pass', detail: 'creds ok' },
+        { id: 'addon-secret-paths', status: 'pass', detail: 'paths ok' },
+        { id: 'assume-role', status: 'not-applicable', detail: 'no role' },
+        { id: 'cluster-access', status: 'pass', detail: 'canary ok' },
+        { id: 'secret-ownership', status: 'pass', detail: 'ownership ok' },
+      ],
+    });
+
+    renderView();
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('run-connection-doctor')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('run-connection-doctor'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('doctor-checks')).toBeInTheDocument();
+    });
+
+    // Give the DOM time to settle — the result must NOT fade like a modal.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByTestId('doctor-checks')).toBeInTheDocument();
+    expect(screen.getByText('All checks passed — this cluster’s connection looks healthy.')).toBeInTheDocument();
+    // All six checks are still present
+    expect(screen.getByTestId('doctor-check-connection-credentials')).toBeInTheDocument();
+    expect(screen.getByTestId('doctor-check-secret-ownership')).toBeInTheDocument();
   });
 });
