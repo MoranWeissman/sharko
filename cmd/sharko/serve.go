@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	catalogembed "github.com/MoranWeissman/sharko/catalog"
@@ -952,6 +953,16 @@ var serveCmd = &cobra.Command{
 				srv.SetSettingsStore(settingsStore)
 				probeModeFn = settingsStore.IsAPITest
 				slog.Info("server settings persisted via configmap", "namespace", prNamespace, "name", "sharko-server-settings")
+
+				// V3 C1: boot reconcile — resolve desired state from env
+				// (when declared) and reconcile the ConfigMap toward it
+				// (git wins) BEFORE probeModeFn is wired into reconcilers,
+				// so they read the git-authoritative value.
+				if err := settingsStore.Reconcile(context.Background()); err != nil {
+					slog.Warn("settings boot reconcile failed, continuing with stale ConfigMap state", "error", err)
+				} else {
+					slog.Info("settings boot reconcile completed (git-declared values applied)")
+				}
 			} else {
 				slog.Info("server settings running at defaults only (no in-cluster k8s client) — probe_mode reads as check-app")
 			}
@@ -1059,6 +1070,46 @@ var serveCmd = &cobra.Command{
 				} else if credProvider == nil {
 					slog.Info("cluster reconciler skipped: no credentials provider configured")
 				}
+			}
+
+			// V3 C1: periodic settings reclaim goroutine (60s default)
+			// — reclaims runtime API edits on git-declared keys so git wins.
+			// Only when settingsStore is wired (in-cluster). Mirrors
+			// prtracker/clusterreconciler shape: sync.Once Start + ticker.
+			if settingsStore != nil {
+				settingsReclaimInterval := 60 * time.Second
+				if envInterval := os.Getenv("SHARKO_SETTINGS_RECONCILE_INTERVAL"); envInterval != "" {
+					if parsed, err := time.ParseDuration(envInterval); err == nil {
+						settingsReclaimInterval = parsed
+					} else {
+						slog.Warn("invalid SHARKO_SETTINGS_RECONCILE_INTERVAL, using default 60s", "value", envInterval)
+					}
+				}
+
+				var settingsReclaimOnce sync.Once
+				var settingsReclaimStop chan struct{}
+				settingsReclaimStop = make(chan struct{})
+				defer close(settingsReclaimStop)
+
+				settingsReclaimOnce.Do(func() {
+					go func() {
+						ticker := time.NewTicker(settingsReclaimInterval)
+						defer ticker.Stop()
+						for {
+							select {
+							case <-ticker.C:
+								if err := settingsStore.Reconcile(context.Background()); err != nil {
+									slog.Warn("settings reclaim tick failed", "error", err)
+								}
+							case <-settingsReclaimStop:
+								slog.Info("settings reclaim goroutine stopped")
+								return
+							}
+						}
+					}()
+				})
+
+				slog.Info("settings reclaim goroutine started", "interval", settingsReclaimInterval)
 			}
 
 			if prCMStore != nil {

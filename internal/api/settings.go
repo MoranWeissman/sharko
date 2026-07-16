@@ -18,6 +18,12 @@ type probeModeResponse struct {
 	// or "api-test" (no app is ever auto-deployed; reachability comes
 	// purely from ArgoCD's own connection state).
 	ProbeMode string `json:"probe_mode"`
+
+	// ManagedByGit (V3 C1) is true when the setting is Helm/git-declared
+	// (authoritative, git wins). When true, a runtime PUT edit will be
+	// reclaimed on the next reconcile. Omitted (false) when the key is NOT
+	// declared → runtime ConfigMap value persists (API authoritative).
+	ManagedByGit bool `json:"managed_by_git,omitempty"`
 }
 
 // handleGetProbeMode godoc
@@ -42,7 +48,10 @@ func (s *Server) handleGetProbeMode(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, http.StatusInternalServerError, "get_probe_mode", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, probeModeResponse{ProbeMode: mode})
+	writeJSON(w, http.StatusOK, probeModeResponse{
+		ProbeMode:    mode,
+		ManagedByGit: settings.IsManagedByGit("probe_mode"),
+	})
 }
 
 // handleSetProbeMode godoc
@@ -103,6 +112,12 @@ type allowInlineCredentialsResponse struct {
 	// Sharko has no user RBAC today (single admin login); when V2.x scoped
 	// RBAC lands this is expected to become a per-role permission.
 	AllowInlineCredentials bool `json:"allow_inline_credentials"`
+
+	// ManagedByGit (V3 C1) is true when the setting is Helm/git-declared
+	// (authoritative, git wins). When true, a runtime PUT edit will be
+	// reclaimed on the next reconcile. Omitted (false) when the key is NOT
+	// declared → runtime ConfigMap value persists (API authoritative).
+	ManagedByGit bool `json:"managed_by_git,omitempty"`
 }
 
 // handleGetAllowInlineCredentials godoc
@@ -127,7 +142,10 @@ func (s *Server) handleGetAllowInlineCredentials(w http.ResponseWriter, r *http.
 		writeServerError(w, http.StatusInternalServerError, "get_allow_inline_credentials", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, allowInlineCredentialsResponse{AllowInlineCredentials: allow})
+	writeJSON(w, http.StatusOK, allowInlineCredentialsResponse{
+		AllowInlineCredentials: allow,
+		ManagedByGit:           settings.IsManagedByGit("allow_inline_credentials"),
+	})
 }
 
 // handleSetAllowInlineCredentials godoc

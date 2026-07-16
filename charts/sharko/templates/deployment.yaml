@@ -134,6 +134,31 @@ spec:
             - name: SHARKO_AUTO_REMEDIATE
               value: "false"
             {{- end }}
+            {{- /*
+              V3 C1: git-native server settings (probe_mode, allow_inline_credentials).
+              Emit only when operator explicitly sets the value (tri-state: set → git wins,
+              unset → runtime ConfigMap authoritative). Empty string ⇒ no env var ⇒ undeclared.
+              For allowInlineCredentials, check both bool and string paths since --set treats it as bool.
+            */}}
+            {{- with .Values.settings }}
+            {{- if .probeMode }}
+            - name: SHARKO_PROBE_MODE
+              value: {{ .probeMode | quote }}
+            {{- end }}
+            {{- $allowInlineSet := false }}
+            {{- $allowInlineValue := "" }}
+            {{- if kindIs "bool" .allowInlineCredentials }}
+              {{- $allowInlineSet = true }}
+              {{- $allowInlineValue = ternary "true" "false" .allowInlineCredentials }}
+            {{- else if ne .allowInlineCredentials "" }}
+              {{- $allowInlineSet = true }}
+              {{- $allowInlineValue = ternary "true" "false" (eq .allowInlineCredentials "true") }}
+            {{- end }}
+            {{- if $allowInlineSet }}
+            - name: SHARKO_ALLOW_INLINE_CREDENTIALS
+              value: {{ $allowInlineValue | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.gitops.actions.enabled }}
             - name: GITOPS_ACTIONS_ENABLED
               value: "true"

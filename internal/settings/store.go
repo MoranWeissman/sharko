@@ -2,16 +2,22 @@
 // configuration toggles in a ConfigMap via internal/cmstore — the same
 // K8s-object-state pattern internal/observations and internal/notifications
 // use. It intentionally stays narrow: a handful of keys so far (probe_mode,
-// V2-cleanup-85.4; allow_inline_credentials, V2-cleanup-89.6). Do not grow
-// this into a generic multi-tenant settings framework — add new typed
-// getters/setters here the same way GetProbeMode/SetProbeMode are added,
-// one setting at a time.
+// V2-cleanup-85.4; allow_inline_credentials, V2-cleanup-89.6).
+//
+// V3 C1: settings are now git-native — Helm env values are authoritative
+// (git wins), Sharko reconciles the ConfigMap toward the env-declared value,
+// and runtime PUT edits are reclaimed for declared keys. When a key is NOT
+// env-declared (unset), the runtime ConfigMap value persists (API
+// authoritative, back-compat). Keep adding typed getters one at a time;
+// store stays install-scoped (not multi-tenant). Exposes desired-from-env
+// resolution + a reconcile entry point.
 package settings
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 
 	"k8s.io/client-go/kubernetes"
@@ -235,4 +241,89 @@ func (s *Store) IsInlineCredentialsAllowed(ctx context.Context) bool {
 		return cached
 	}
 	return defaultAllowInlineCredentials
+}
+
+// V3 C1: git-native settings reconcile — resolves desired state from env
+// and reconciles the ConfigMap toward it (git wins).
+
+// desiredSettingFromEnv is a reusable helper for reading a declared setting
+// from an env var. Returns (value, isDeclared). When isDeclared is false,
+// the key is NOT env-declared → runtime ConfigMap value persists (API
+// authoritative). When true, the returned value is authoritative (git wins).
+//
+// For bool settings, malformed env values (non "true"/"false") are treated
+// as undeclared + warn (lenient, never crash boot on a typo).
+func desiredSettingFromEnv(envKey string, isBool bool) (interface{}, bool) {
+	raw := os.Getenv(envKey)
+	if raw == "" {
+		return nil, false // undeclared
+	}
+
+	if !isBool {
+		// String setting — declared, value is raw string
+		return raw, true
+	}
+
+	// Bool setting — parse, warn on malformed
+	switch raw {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	default:
+		slog.Warn("malformed bool setting in env, treating as undeclared",
+			"env_key", envKey, "value", raw)
+		return nil, false
+	}
+}
+
+// Reconcile reads the desired state from env (when declared) and reconciles
+// the ConfigMap toward it. Keys NOT env-declared are skipped (runtime value
+// persists). Called at boot (before reconcilers start) and periodically (60s)
+// to reclaim runtime API edits on declared keys. Lenient on malformed env
+// values (warn + fallback, never crash).
+func (s *Store) Reconcile(ctx context.Context) error {
+	// Resolve desired state for all git-native settings
+	desiredProbeMode, probeModeIsDeclared := desiredSettingFromEnv("SHARKO_PROBE_MODE", false)
+	desiredAllowInline, allowInlineIsDeclared := desiredSettingFromEnv("SHARKO_ALLOW_INLINE_CREDENTIALS", true)
+
+	// If nothing is declared, no-op (back-compat — all settings API-authoritative)
+	if !probeModeIsDeclared && !allowInlineIsDeclared {
+		return nil
+	}
+
+	// Reconcile declared keys toward env values (git wins)
+	return s.cm.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
+		if probeModeIsDeclared {
+			mode := desiredProbeMode.(string)
+			if !isValidProbeMode(mode) {
+				// Malformed declared value → warn + skip (lenient)
+				slog.Warn("invalid probe_mode in env, skipping reconcile", "value", mode)
+			} else {
+				data[keyProbeMode] = mode
+			}
+		}
+
+		if allowInlineIsDeclared {
+			data[keyAllowInlineCredentials] = desiredAllowInline.(bool)
+		}
+
+		return nil
+	})
+}
+
+// IsManagedByGit reports whether the given setting key is env-declared
+// (git-native, authoritative). Used by GET endpoints to populate the
+// `managed_by_git` response field.
+func IsManagedByGit(key string) bool {
+	switch key {
+	case keyProbeMode:
+		_, declared := desiredSettingFromEnv("SHARKO_PROBE_MODE", false)
+		return declared
+	case keyAllowInlineCredentials:
+		_, declared := desiredSettingFromEnv("SHARKO_ALLOW_INLINE_CREDENTIALS", true)
+		return declared
+	default:
+		return false
+	}
 }

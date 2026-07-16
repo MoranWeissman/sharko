@@ -52,6 +52,30 @@ clusterTest:
   argocdNamespace: ""
 
 # ---------------------------------------------------------------------------
+# Server Settings (V3 C1 — git-native configuration)
+# ---------------------------------------------------------------------------
+# Settings declared here are authoritative (git wins). A runtime API edit via
+# PUT /settings/* is accepted but reclaimed on the next reconcile. When a
+# setting is left empty/unset, the runtime ConfigMap value persists (API
+# authoritative, back-compat). GET responses include `managed_by_git: true`
+# for keys declared in Helm/git.
+settings:
+  # probe_mode: Connectivity probe mode ("check-app" | "api-test").
+  #   check-app (default): Sharko auto-deploys a transient connectivity-check
+  #     application to new zero-addon clusters for end-to-end proof.
+  #   api-test: No app is ever auto-deployed; reachability comes purely from
+  #     ArgoCD's own connection state.
+  # Leave empty to keep runtime API value authoritative (today's behavior).
+  probeMode: ""
+
+  # allowInlineCredentials: Whether the "Paste a kubeconfig" registration path
+  # is enabled server-wide (true | false, default true when unset).
+  # Set to false to forbid inline credential paste install-wide; connection-only
+  # registrations are unaffected.
+  # Leave empty to keep runtime API value authoritative (today's behavior).
+  allowInlineCredentials: ""
+
+# ---------------------------------------------------------------------------
 # Connection Configuration
 # ---------------------------------------------------------------------------
 config:

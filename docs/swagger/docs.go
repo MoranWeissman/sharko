@@ -8762,6 +8762,10 @@ const docTemplate = `{
                 "allow_inline_credentials": {
                     "description": "AllowInlineCredentials is true (the default) when the \"Paste a\nkubeconfig\" registration path is available. An admin sets this to\nfalse to forbid inline credential paste install-wide — registration\nrequests that actually supply inline kubeconfig bytes are then\nrejected with a 403; connection-only registrations are unaffected.\nSharko has no user RBAC today (single admin login); when V2.x scoped\nRBAC lands this is expected to become a per-role permission.",
                     "type": "boolean"
+                },
+                "managed_by_git": {
+                    "description": "ManagedByGit (V3 C1) is true when the setting is Helm/git-declared\n(authoritative, git wins). When true, a runtime PUT edit will be\nreclaimed on the next reconcile. Omitted (false) when the key is NOT\ndeclared → runtime ConfigMap value persists (API authoritative).",
+                    "type": "boolean"
                 }
             }
         },
@@ -9226,6 +9230,10 @@ const docTemplate = `{
         "internal_api.probeModeResponse": {
             "type": "object",
             "properties": {
+                "managed_by_git": {
+                    "description": "ManagedByGit (V3 C1) is true when the setting is Helm/git-declared\n(authoritative, git wins). When true, a runtime PUT edit will be\nreclaimed on the next reconcile. Omitted (false) when the key is NOT\ndeclared → runtime ConfigMap value persists (API authoritative).",
+                    "type": "boolean"
+                },
                 "probe_mode": {
                     "description": "ProbeMode is one of \"check-app\" (default — Sharko auto-deploys a\ntransient connectivity-check application to new zero-addon clusters)\nor \"api-test\" (no app is ever auto-deployed; reachability comes\npurely from ArgoCD's own connection state).",
                     "type": "string"
