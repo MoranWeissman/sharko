@@ -1075,49 +1075,11 @@ export function ClusterDetail() {
           )}
           {/* HD1 (V3): header redesign — dropped the bare refresh button (auto-poll
             * + Sync-now's refetch cover it), moved Check permissions + Diagnose to
-            * the new Diagnostics section, made Sync now the primary action with an
-            * ArgoCD-familiar status pill. Test connection stays light here. */}
+            * the new Diagnostics section. Test connection stays light here.
+            * G4 (V3): Sync-related controls moved to dedicated GitOps area below. */}
         </div>
         <div className="flex items-center gap-3">
           <RoleGuard roles={['admin', 'operator']}>
-            {/* Sync now — primary action */}
-            <button
-              onClick={handleSyncNow}
-              disabled={syncingNow}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-            >
-              {syncingNow ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              Sync now
-            </button>
-            <InfoHint
-              text="Re-applies the desired state from Git to this cluster's connection labels in ArgoCD. Sharko keeps a label listing which addons belong here. Out of sync means those labels drifted from what Git says (rare)."
-              label="What does Sync now do?"
-            />
-            {/* Sync status pill */}
-            {(() => {
-              const lastRec = data?.cluster?.last_reconcile;
-              let label = 'Not synced yet';
-              let bgClass = 'bg-[#5a8aaa] dark:bg-gray-600';
-              let textClass = 'text-white';
-              if (syncingNow) {
-                label = 'Reconciling…';
-                bgClass = 'bg-[#3a6a8a] dark:bg-gray-500';
-              } else if (lastRec?.outcome === 'succeeded') {
-                label = 'In sync';
-                bgClass = 'bg-green-600 dark:bg-green-700';
-              } else if (lastRec?.outcome === 'failed') {
-                label = 'Sync failed';
-                bgClass = 'bg-red-600 dark:bg-red-700';
-              } else if (lastRec?.outcome === 'skipped') {
-                label = 'In sync';
-                bgClass = 'bg-green-600 dark:bg-green-700';
-              }
-              return (
-                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${bgClass} ${textClass}`}>
-                  {label}
-                </span>
-              );
-            })()}
             {/* Test connection — light button */}
             <button
               onClick={handleTestConnection}
@@ -1367,84 +1329,136 @@ export function ClusterDetail() {
         );
       })()}
 
-      {/* Label Drift Diff (V3 G2) — READ-ONLY live git-desired vs live-cluster
-        * label comparison for Sharko-managed clusters. Rendered when
-        * label_drift is present (OutOfSync state from G1). Reuses DryRunPreview
-        * diff styling (green/red lines) but this is a LIVE drift view, not a PR
-        * preview. Shows "In sync" when no drift. */}
-      {(() => {
-        const lastRec = data?.cluster?.last_reconcile;
-        const drift = lastRec?.label_drift;
-        const hasDrift = drift && (drift.added?.length || drift.removed?.length || drift.changed?.length);
-
-        if (!lastRec) return null; // No reconcile data yet
-
-        if (!hasDrift) {
-          // In sync — show brief confirmation
-          return (
-            <div className="flex items-center gap-2 rounded-lg ring-2 ring-green-600 bg-green-50 px-4 py-2.5 dark:ring-green-700 dark:bg-green-950/20">
-              <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
-              <p className="text-sm font-medium text-green-700 dark:text-green-400">
-                Labels in sync — Git matches live cluster state
-              </p>
-            </div>
-          );
-        }
-
-        // OutOfSync — show the drift diff
-        return (
-          <div className="space-y-2 rounded-lg ring-2 ring-amber-600 bg-amber-50 px-4 py-3 dark:ring-amber-700 dark:bg-amber-950/20">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">
-                  Label Drift Detected
-                </p>
-                <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
-                  This cluster's addon labels drifted from Git. The diff below shows what changed.
-                </p>
-              </div>
-            </div>
-            <div className="rounded-md bg-white ring-2 ring-[#6aade0] p-3 dark:bg-gray-900 dark:ring-gray-700">
-              <h4 className="mb-2 text-xs font-semibold text-[#0a2a4a] dark:text-gray-200">
-                Git vs Live Label Diff
-              </h4>
-              <div className="space-y-1 text-xs font-mono text-[#2a5a7a] dark:text-gray-400">
-                {drift.added && drift.added.length > 0 && (
-                  <div>
-                    <span className="font-semibold text-green-600 dark:text-green-400">Added in Git (missing on cluster):</span>
-                    {drift.added.map((key) => (
-                      <div key={key} className="ml-4 text-green-600 dark:text-green-400">
-                        + {key}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {drift.removed && drift.removed.length > 0 && (
-                  <div>
-                    <span className="font-semibold text-red-600 dark:text-red-400">Removed in Git (present on cluster):</span>
-                    {drift.removed.map((key) => (
-                      <div key={key} className="ml-4 text-red-600 dark:text-red-400">
-                        - {key}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {drift.changed && drift.changed.length > 0 && (
-                  <div>
-                    <span className="font-semibold text-amber-600 dark:text-amber-400">Changed (values differ):</span>
-                    {drift.changed.map((key) => (
-                      <div key={key} className="ml-4 text-amber-600 dark:text-amber-400">
-                        ~ {key}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+      {/* GitOps Sync Area (V3 G4) — dedicated section consolidating sync status,
+        * sync action, and live drift diff. Uses ArgoCD-familiar vocabulary:
+        * Synced / OutOfSync / Sync failed / Reconciling. Colors from clusterStatus.ts. */}
+      <RoleGuard roles={['admin', 'operator']}>
+        <div className="space-y-3 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-5 py-4 dark:ring-gray-700 dark:bg-gray-800">
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+              GitOps Sync
+            </h3>
+            {/* Sync status pill (ArgoCD-familiar words) */}
+            {(() => {
+              const lastRec = data?.cluster?.last_reconcile;
+              const drift = lastRec?.label_drift;
+              const hasDrift = drift && (drift.added?.length || drift.removed?.length || drift.changed?.length);
+              let label = 'Not synced yet';
+              let bgClass = 'bg-[#5a8aaa] dark:bg-gray-600';
+              let textClass = 'text-white';
+              if (syncingNow) {
+                label = 'Reconciling';
+                bgClass = 'bg-[#3a6a8a] dark:bg-gray-500';
+              } else if (lastRec?.outcome === 'succeeded') {
+                label = hasDrift ? 'OutOfSync' : 'Synced';
+                bgClass = hasDrift ? 'bg-amber-500' : 'bg-green-600 dark:bg-green-700';
+              } else if (lastRec?.outcome === 'failed') {
+                label = 'Sync failed';
+                bgClass = 'bg-red-600 dark:bg-red-700';
+              } else if (lastRec?.outcome === 'skipped') {
+                label = 'Synced';
+                bgClass = 'bg-green-600 dark:bg-green-700';
+              }
+              return (
+                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${bgClass} ${textClass}`}>
+                  {label}
+                </span>
+              );
+            })()}
           </div>
-        );
-      })()}
+
+          {/* Sync-now action */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSyncNow}
+              disabled={syncingNow}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+            >
+              {syncingNow ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Sync now
+            </button>
+            <InfoHint
+              text="Re-applies the desired state from Git to this cluster's connection labels in ArgoCD. Sharko keeps a label listing which addons belong here. Out of sync means those labels drifted from what Git says (rare)."
+              label="What does Sync now do?"
+            />
+          </div>
+
+          {/* Drift diff — integrated into the GitOps area (V3 G2 + G4) */}
+          {(() => {
+            const lastRec = data?.cluster?.last_reconcile;
+            const drift = lastRec?.label_drift;
+            const hasDrift = drift && (drift.added?.length || drift.removed?.length || drift.changed?.length);
+
+            if (!lastRec) return null; // No reconcile data yet
+
+            if (!hasDrift) {
+              // Synced — show brief confirmation
+              return (
+                <div className="flex items-center gap-2 rounded-md bg-green-50 px-3 py-2 dark:bg-green-950/20">
+                  <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+                  <p className="text-sm font-medium text-green-700 dark:text-green-400">
+                    Labels in sync — Git matches live cluster state
+                  </p>
+                </div>
+              );
+            }
+
+            // OutOfSync — show the drift diff
+            return (
+              <div className="space-y-2 rounded-md bg-amber-50 px-3 py-2.5 dark:bg-amber-950/20">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+                      Label Drift Detected
+                    </p>
+                    <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
+                      This cluster's addon labels drifted from Git. The diff below shows what changed.
+                    </p>
+                  </div>
+                </div>
+                <div className="rounded-md bg-white ring-2 ring-[#6aade0] p-3 dark:bg-gray-900 dark:ring-gray-700">
+                  <h4 className="mb-2 text-xs font-semibold text-[#0a2a4a] dark:text-gray-200">
+                    Git vs Live Label Diff
+                  </h4>
+                  <div className="space-y-1 text-xs font-mono text-[#2a5a7a] dark:text-gray-400">
+                    {drift.added && drift.added.length > 0 && (
+                      <div>
+                        <span className="font-semibold text-green-600 dark:text-green-400">Added in Git (missing on cluster):</span>
+                        {drift.added.map((key) => (
+                          <div key={key} className="ml-4 text-green-600 dark:text-green-400">
+                            + {key}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {drift.removed && drift.removed.length > 0 && (
+                      <div>
+                        <span className="font-semibold text-red-600 dark:text-red-400">Removed in Git (present on cluster):</span>
+                        {drift.removed.map((key) => (
+                          <div key={key} className="ml-4 text-red-600 dark:text-red-400">
+                            - {key}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {drift.changed && drift.changed.length > 0 && (
+                      <div>
+                        <span className="font-semibold text-amber-600 dark:text-amber-400">Changed (values differ):</span>
+                        {drift.changed.map((key) => (
+                          <div key={key} className="ml-4 text-amber-600 dark:text-amber-400">
+                            ~ {key}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      </RoleGuard>
 
       {/* Main layout: nav panel + content */}
       <div className="flex gap-6">
