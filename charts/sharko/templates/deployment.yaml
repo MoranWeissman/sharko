@@ -164,6 +164,137 @@ spec:
               value: "true"
             {{- end }}
             {{- /*
+              V3 C2: git-native connection config (NON-SECRET fields only).
+              Each env var is emitted ONLY when the operator explicitly sets the
+              value (tri-state: set → git wins on that field, unset → runtime
+              connection value authoritative). SECRET material (git token/PAT,
+              ArgoCD token) is NEVER declared here — it stays in the encrypted
+              sharko-connections Secret, entered via the UI. Scope is the ACTIVE
+              connection; a runtime UI edit to a declared field is reclaimed.
+            */}}
+            {{- with .Values.connection }}
+            {{- with .git }}
+            {{- if .provider }}
+            - name: SHARKO_CONN_GIT_PROVIDER
+              value: {{ .provider | quote }}
+            {{- end }}
+            {{- if .repoURL }}
+            - name: SHARKO_CONN_GIT_REPO_URL
+              value: {{ .repoURL | quote }}
+            {{- end }}
+            {{- if .owner }}
+            - name: SHARKO_CONN_GIT_OWNER
+              value: {{ .owner | quote }}
+            {{- end }}
+            {{- if .repo }}
+            - name: SHARKO_CONN_GIT_REPO
+              value: {{ .repo | quote }}
+            {{- end }}
+            {{- if .organization }}
+            - name: SHARKO_CONN_GIT_ORGANIZATION
+              value: {{ .organization | quote }}
+            {{- end }}
+            {{- if .project }}
+            - name: SHARKO_CONN_GIT_PROJECT
+              value: {{ .project | quote }}
+            {{- end }}
+            {{- if .repository }}
+            - name: SHARKO_CONN_GIT_REPOSITORY
+              value: {{ .repository | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .argocd }}
+            {{- if .serverURL }}
+            - name: SHARKO_CONN_ARGOCD_SERVER_URL
+              value: {{ .serverURL | quote }}
+            {{- end }}
+            {{- if .namespace }}
+            - name: SHARKO_CONN_ARGOCD_NAMESPACE
+              value: {{ .namespace | quote }}
+            {{- end }}
+            {{- if kindIs "bool" .insecure }}
+            - name: SHARKO_CONN_ARGOCD_INSECURE
+              value: {{ ternary "true" "false" .insecure | quote }}
+            {{- else if ne (toString .insecure) "" }}
+            - name: SHARKO_CONN_ARGOCD_INSECURE
+              value: {{ ternary "true" "false" (eq (toString .insecure) "true") | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .provider }}
+            {{- if .type }}
+            - name: SHARKO_CONN_PROVIDER_TYPE
+              value: {{ .type | quote }}
+            {{- end }}
+            {{- if .region }}
+            - name: SHARKO_CONN_PROVIDER_REGION
+              value: {{ .region | quote }}
+            {{- end }}
+            {{- if .prefix }}
+            - name: SHARKO_CONN_PROVIDER_PREFIX
+              value: {{ .prefix | quote }}
+            {{- end }}
+            {{- if .namespace }}
+            - name: SHARKO_CONN_PROVIDER_NAMESPACE
+              value: {{ .namespace | quote }}
+            {{- end }}
+            {{- if .roleArn }}
+            - name: SHARKO_CONN_PROVIDER_ROLE_ARN
+              value: {{ .roleArn | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .addonSecretProvider }}
+            {{- if .type }}
+            - name: SHARKO_CONN_ADDON_SECRET_PROVIDER_TYPE
+              value: {{ .type | quote }}
+            {{- end }}
+            {{- if .region }}
+            - name: SHARKO_CONN_ADDON_SECRET_PROVIDER_REGION
+              value: {{ .region | quote }}
+            {{- end }}
+            {{- if .prefix }}
+            - name: SHARKO_CONN_ADDON_SECRET_PROVIDER_PREFIX
+              value: {{ .prefix | quote }}
+            {{- end }}
+            {{- if .namespace }}
+            - name: SHARKO_CONN_ADDON_SECRET_PROVIDER_NAMESPACE
+              value: {{ .namespace | quote }}
+            {{- end }}
+            {{- if .roleArn }}
+            - name: SHARKO_CONN_ADDON_SECRET_PROVIDER_ROLE_ARN
+              value: {{ .roleArn | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .gitops }}
+            {{- if .baseBranch }}
+            - name: SHARKO_CONN_GITOPS_BASE_BRANCH
+              value: {{ .baseBranch | quote }}
+            {{- end }}
+            {{- if .branchPrefix }}
+            - name: SHARKO_CONN_GITOPS_BRANCH_PREFIX
+              value: {{ .branchPrefix | quote }}
+            {{- end }}
+            {{- if .commitPrefix }}
+            - name: SHARKO_CONN_GITOPS_COMMIT_PREFIX
+              value: {{ .commitPrefix | quote }}
+            {{- end }}
+            {{- if .hostClusterName }}
+            - name: SHARKO_CONN_GITOPS_HOST_CLUSTER_NAME
+              value: {{ .hostClusterName | quote }}
+            {{- end }}
+            {{- if .defaultAddons }}
+            - name: SHARKO_CONN_GITOPS_DEFAULT_ADDONS
+              value: {{ .defaultAddons | quote }}
+            {{- end }}
+            {{- if kindIs "bool" .prAutoMerge }}
+            - name: SHARKO_CONN_GITOPS_PR_AUTO_MERGE
+              value: {{ ternary "true" "false" .prAutoMerge | quote }}
+            {{- else if ne (toString .prAutoMerge) "" }}
+            - name: SHARKO_CONN_GITOPS_PR_AUTO_MERGE
+              value: {{ ternary "true" "false" (eq (toString .prAutoMerge) "true") | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- /*
               E2E TEST HARNESS ONLY (V125-1-13.x.4). When .Values.e2e.gitHostsAllowlist
               is non-empty, surface it as SHARKO_E2E_GIT_HOSTS_ALLOWLIST so the
               connection validator (internal/service/connection.go::deriveProviderFromURL)
