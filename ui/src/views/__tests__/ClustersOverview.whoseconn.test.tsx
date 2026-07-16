@@ -220,9 +220,10 @@ describe('ClustersOverview — whose-connection labels (V2-cleanup-55.3)', () =>
 
       fireEvent.change(credsSourceSelect(), { target: { value: 'eks-token' } });
 
+      // V3-CC2: updated hint text
       expect(
         screen.getByText(
-          'No stored kubeconfig — Sharko generates short-lived AWS tokens using its own AWS identity.',
+          'Sharko mints a short-lived AWS token on every connection using its own AWS identity — nothing to store or rotate. EKS only; Sharko needs AWS access to the cluster.',
         ),
       ).toBeInTheDocument();
     });
@@ -233,8 +234,9 @@ describe('ClustersOverview — whose-connection labels (V2-cleanup-55.3)', () =>
 
       fireEvent.change(credsSourceSelect(), { target: { value: 'inline-kubeconfig' } });
 
+      // V3-CC2: updated hint text
       expect(
-        screen.getByText('Paste the file contents here once — Sharko stores it for this cluster.'),
+        screen.getByText('Paste the file once — Sharko stores it. Works for any cluster. The token inside can expire; re-paste when it does.'),
       ).toBeInTheDocument();
       expect(
         screen.queryByText(/short-lived AWS tokens/),
@@ -247,9 +249,10 @@ describe('ClustersOverview — whose-connection labels (V2-cleanup-55.3)', () =>
 
       fireEvent.change(credsSourceSelect(), { target: { value: 'secret-kubeconfig' } });
 
+      // V3-CC2: updated hint text
       expect(
         screen.getByText(
-          'Sharko fetches the kubeconfig from your configured secrets backend (the secret name/path below).',
+          'Sharko fetches the kubeconfig from your secrets backend by name/path. Works for any cluster; token lifetime is whatever you stored.',
         ),
       ).toBeInTheDocument();
     });

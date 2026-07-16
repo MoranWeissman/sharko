@@ -33,6 +33,12 @@ vi.mock('@/services/api', () => ({
     getAllowInlineCredentials: (...args: unknown[]) => mockGetAllowInlineCredentials(...args),
   },
   registerCluster: (...args: unknown[]) => mockRegisterCluster(...args),
+  // V3-CC1: auto-test after register needs these mocked
+  testClusterConnection: vi.fn(() => Promise.resolve({ reachable: true, success: true })),
+  unadoptCluster: vi.fn(),
+  deleteOrphanCluster: vi.fn(),
+  isTestClusterUnavailable: vi.fn(() => false),
+  getSystemCapabilities: vi.fn(() => Promise.resolve({ aws: { detected: false, method: 'none' }, hub_platform: 'unknown' })),
 }));
 
 const baseClusters = {

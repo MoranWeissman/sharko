@@ -95,13 +95,14 @@ interface Filters {
 // V2-cleanup-55.3: one plain-English line per credential-source option,
 // shown under the dropdown so a non-expert knows what each choice means
 // before the option-specific fields appear.
+// V3-CC2: clarified to state what-you-provide + expiry + AWS/IAM requirement.
 const CREDS_SOURCE_HINTS: Record<CredsSource, string> = {
   'inline-kubeconfig':
-    'Paste the file contents here once — Sharko stores it for this cluster.',
+    'Paste the file once — Sharko stores it. Works for any cluster. The token inside can expire; re-paste when it does.',
   'secret-kubeconfig':
-    'Sharko fetches the kubeconfig from your configured secrets backend (the secret name/path below).',
+    'Sharko fetches the kubeconfig from your secrets backend by name/path. Works for any cluster; token lifetime is whatever you stored.',
   'eks-token':
-    'No stored kubeconfig — Sharko generates short-lived AWS tokens using its own AWS identity.',
+    'Sharko mints a short-lived AWS token on every connection using its own AWS identity — nothing to store or rotate. EKS only; Sharko needs AWS access to the cluster.',
 };
 
 // V2-cleanup-57.2: connection-ownership choice, in plain English. This is
@@ -577,6 +578,7 @@ export function ClustersOverview() {
       const result = await registerCluster(buildRegisterPayload(addClusterName.trim()));
       const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
       const merged = result?.git?.merged ?? false;
+      const clusterName = addClusterName.trim();
       // Manual-mode register opens a PR but the cluster is NOT actually
       // registered until merge. Branch on `merged` so the toast tells
       // the user the truth.
@@ -586,6 +588,24 @@ export function ClustersOverview() {
         setAddClusterResultMsg(prUrl
           ? `__merged__|${prUrl}`
           : 'Cluster registered successfully.');
+        // V3-CC1: auto-test the just-registered cluster now that it's
+        // truly connected (merged=true path ONLY — not the PR-pending path,
+        // which would test an unwired cluster → false failure).
+        void fetchData().then(() => {
+          testClusterConnection(clusterName)
+            .then((testResult) => {
+              setTestResults((prev) => ({ ...prev, [clusterName]: testResult }));
+            })
+            .catch((err) => {
+              setTestResults((prev) => ({
+                ...prev,
+                [clusterName]: {
+                  reachable: false,
+                  error: err instanceof Error ? err.message : 'Connection test failed',
+                },
+              }));
+            });
+        });
       } else if (prUrl) {
         // Manual mode (or auto-merge requested but not yet merged):
         // values-file PR is open. The cluster won't appear as managed
@@ -601,7 +621,9 @@ export function ClustersOverview() {
       }
       setAddClusterResult(result);
       setAddClusterOpen(false);
-      void fetchData();
+      if (!merged) {
+        void fetchData();
+      }
     } catch (e: unknown) {
       setAddClusterError(e instanceof Error ? e.message : 'Failed to register cluster');
     } finally {
@@ -1287,10 +1309,10 @@ export function ClustersOverview() {
                       * (V2-cleanup-89.6) — the server rejects it anyway, so don't
                       * offer an option that will only 403. */}
                     {allowInlineCredentials && (
-                      <option value="inline-kubeconfig">Paste a kubeconfig (quick, not GitOps-clean)</option>
+                      <option value="inline-kubeconfig">Paste kubeconfig (stored)</option>
                     )}
-                    <option value="secret-kubeconfig">Point at your secret store (recommended — GitOps-clean)</option>
-                    <option value="eks-token">Amazon EKS — generate a token from cloud identity (no stored credentials)</option>
+                    <option value="secret-kubeconfig">Kubeconfig from a secrets backend</option>
+                    <option value="eks-token">EKS — auto-minted tokens (nothing stored)</option>
                   </select>
                   {/* Plain-English hint for the selected option (V2-cleanup-55.3).
                     * V2-cleanup-91.2 (F2): "Required" only fires when the selector
