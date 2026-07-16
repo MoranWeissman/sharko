@@ -65,6 +65,7 @@ import { TestConnectionModal } from '@/components/TestConnectionModal';
 import { PendingPRsPanel } from '@/components/PendingPRsPanel';
 import { CompletedChangesPanel } from '@/components/CompletedChangesPanel';
 import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOverridesEditor';
+import { HelperText } from '@/components/HelperText';
 import { showToast } from '@/components/ToastNotification';
 import { prettyOperation } from '@/lib/utils';
 import type { ConnectionsListResponse, TrackedPR, DiagnosticReport, DoctorClusterResponse } from '@/services/models';
@@ -1913,7 +1914,7 @@ export function ClusterDetail() {
                         {diagnoseReport || diagnoseError ? 'Re-run' : 'Run'}
                       </button>
                     </div>
-                    <p className="text-xs text-[#5a8aaa] dark:text-gray-400">{CHECK_PERMISSIONS_HINT}</p>
+                    <HelperText className="mt-1">{CHECK_PERMISSIONS_HINT}</HelperText>
                     {diagnoseError && (
                       <div className="mt-3 rounded-md bg-red-50 p-4 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">
                         {diagnoseError}
@@ -1944,7 +1945,7 @@ export function ClusterDetail() {
                         {doctorResult || doctorError ? 'Re-run' : 'Run'}
                       </button>
                     </div>
-                    <p className="text-xs text-[#5a8aaa] dark:text-gray-400">{DOCTOR_HINT}</p>
+                    <HelperText className="mt-1">{DOCTOR_HINT}</HelperText>
                     {doctorError && (
                       <div className="mt-3 rounded-md bg-red-50 p-4 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">
                         {doctorError}
@@ -1972,7 +1973,7 @@ export function ClusterDetail() {
               <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
                 <KeyRound className="h-4 w-4 text-teal-500" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Secret Path</p>
+                  <HelperText className="text-xs">Secret Path</HelperText>
                   {editingSecretPath ? (
                     <div className="flex items-center gap-2 mt-0.5">
                       <input
