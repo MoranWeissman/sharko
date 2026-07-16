@@ -136,7 +136,7 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
     expect(screen.getByText('Not synced yet')).toBeInTheDocument();
   });
 
-  it('renders "In sync" status pill when last_reconcile outcome is succeeded', async () => {
+  it('renders "Synced" status pill when last_reconcile outcome is succeeded', async () => {
     mockGetClusterComparison.mockResolvedValue(
       baseComparisonResponse({ time: new Date(Date.now() - 5 * 60 * 1000).toISOString(), outcome: 'succeeded' }),
     );
@@ -146,7 +146,7 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('In sync')).toBeInTheDocument();
+    expect(screen.getByText('Synced')).toBeInTheDocument();
   });
 
   it('renders "Sync failed" status pill when last_reconcile outcome is failed', async () => {
