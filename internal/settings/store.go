@@ -41,9 +41,10 @@ const (
 )
 
 const (
-	configMapName             = "sharko-server-settings"
-	keyProbeMode              = "probe_mode"
-	keyAllowInlineCredentials = "allow_inline_credentials"
+	configMapName                = "sharko-server-settings"
+	keyProbeMode                 = "probe_mode"
+	keyAllowInlineCredentials    = "allow_inline_credentials"
+	keyManagedClusterSelfHeal    = "managed_cluster_self_heal"
 )
 
 // Store persists server-wide settings in a ConfigMap via cmstore.
@@ -69,6 +70,9 @@ type Store struct {
 
 	cachedAllowInlineCredentials      bool
 	cachedAllowInlineCredentialsValid bool
+
+	cachedManagedClusterSelfHeal      bool
+	cachedManagedClusterSelfHealValid bool
 }
 
 // NewStore creates a new settings store backed by a ConfigMap named
@@ -326,4 +330,82 @@ func IsManagedByGit(key string) bool {
 	default:
 		return false
 	}
+}
+
+// managed_cluster_self_heal (V3 G3) — opt-in self-heal for Sharko-managed
+// clusters when drift is detected. Defaults to false (today's behavior —
+// drift detection only, no automatic re-apply): the reconciler detects label
+// drift and surfaces it via the OutOfSync state + LabelDrift field, but does
+// NOT modify the cluster Secret. When set to true, the reconciler re-applies
+// git-desired addon labels onto drifted managed-cluster Secrets every tick
+// (enforcement-by-reconcile, same mechanism as the self-managed path's
+// SyncLabelsOnly).
+//
+// This is a temporary API-mutable setting for v3.0.0. EPIC-2 C1 (Helm value →
+// env → git wins) will make it git-native afterward — the setting will stay in
+// this store as the runtime-resolved value, but the source-of-truth will move
+// to a GitOps file (sharko-config.yaml or similar). C1 wires the git-native
+// layer on top; G3 just adds the setting to the store the standard way.
+const defaultManagedClusterSelfHeal = false
+
+// GetManagedClusterSelfHeal returns the persisted managed_cluster_self_heal
+// value, defaulting to false (self-heal disabled — drift detection only) when
+// the ConfigMap does not exist yet, the key was never set, or the stored value
+// is not a bool.
+func (s *Store) GetManagedClusterSelfHeal(ctx context.Context) (bool, error) {
+	data, err := s.cm.Read(ctx)
+	if err != nil {
+		return defaultManagedClusterSelfHeal, err
+	}
+	selfHeal, ok := data[keyManagedClusterSelfHeal].(bool)
+	if !ok {
+		selfHeal = defaultManagedClusterSelfHeal
+	}
+	s.cacheMu.Lock()
+	s.cachedManagedClusterSelfHeal = selfHeal
+	s.cachedManagedClusterSelfHealValid = true
+	s.cacheMu.Unlock()
+	return selfHeal, nil
+}
+
+// SetManagedClusterSelfHeal persists the self-heal setting. On a successful
+// write it also seeds the read cache (same pattern as SetAllowInlineCredentials).
+func (s *Store) SetManagedClusterSelfHeal(ctx context.Context, selfHeal bool) error {
+	err := s.cm.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
+		data[keyManagedClusterSelfHeal] = selfHeal
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	s.cacheMu.Lock()
+	s.cachedManagedClusterSelfHeal = selfHeal
+	s.cachedManagedClusterSelfHealValid = true
+	s.cacheMu.Unlock()
+	return nil
+}
+
+// IsManagedClusterSelfHealEnabled is a nil-safe convenience wrapper for the
+// reconciler's non-HTTP drift-detection path. On a read error it falls back to
+// the last successfully-read value; only before any successful read has ever
+// happened, or when s is nil (settings store not wired, e.g. out-of-cluster
+// dev mode), does it fall back to the static default (false, disabled).
+func (s *Store) IsManagedClusterSelfHealEnabled(ctx context.Context) bool {
+	if s == nil {
+		return defaultManagedClusterSelfHeal
+	}
+	selfHeal, err := s.GetManagedClusterSelfHeal(ctx)
+	if err == nil {
+		return selfHeal
+	}
+
+	s.cacheMu.RLock()
+	cached, valid := s.cachedManagedClusterSelfHeal, s.cachedManagedClusterSelfHealValid
+	s.cacheMu.RUnlock()
+	if valid {
+		slog.Warn("managed_cluster_self_heal: settings read failed, serving last-known value from cache",
+			"error", err, "cached_managed_cluster_self_heal", cached)
+		return cached
+	}
+	return defaultManagedClusterSelfHeal
 }

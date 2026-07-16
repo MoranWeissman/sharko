@@ -6124,6 +6124,103 @@
                 }
             }
         },
+        "/settings/managed-cluster-self-heal": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns whether the reconciler re-applies git-desired labels to drifted Sharko-managed clusters (V3 G3, default false — drift detection only)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Get managed-cluster self-heal setting",
+                "responses": {
+                    "200": {
+                        "description": "Current setting",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.managedClusterSelfHealResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Settings store not available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets whether the reconciler re-applies git-desired labels to drifted Sharko-managed clusters (V3 G3). Admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Set managed-cluster self-heal setting",
+                "parameters": [
+                    {
+                        "description": "Desired setting",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.managedClusterSelfHealResponse"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Setting saved",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.managedClusterSelfHealResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — admin role required",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Settings store not available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/settings/probe-mode": {
             "get": {
                 "security": [
@@ -9156,6 +9253,15 @@
                 },
                 "ref": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.managedClusterSelfHealResponse": {
+            "type": "object",
+            "properties": {
+                "managed_cluster_self_heal": {
+                    "description": "ManagedClusterSelfHeal is false (the default) when the reconciler\ndetects drift on Sharko-managed clusters but does NOT re-apply\ngit-desired labels (drift detection only, surfaces OutOfSync state).\nWhen set to true, the reconciler re-applies git-desired addon labels\nonto drifted managed-cluster Secrets every tick (enforcement-by-\nreconcile, same mechanism as the self-managed path).",
+                    "type": "boolean"
                 }
             }
         },

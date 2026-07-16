@@ -197,6 +197,15 @@ type Deps struct {
 	// already swallows read errors and defaults to false (check-app) —
 	// this reconciler never blocks on a settings-store outage.
 	ProbeModeFn func(ctx context.Context) bool
+
+	// SelfHealFn, when non-nil, is consulted when drift is detected on a
+	// Sharko-managed cluster to decide whether to re-apply git-desired
+	// addon labels (V3 G3 — opt-in self-heal for managed clusters, default
+	// OFF). Returns true when the managed_cluster_self_heal setting is ON.
+	// nil means "no settings store wired" — defaults to false (drift
+	// detection only, no automatic re-apply). Wired from
+	// settings.Store.IsManagedClusterSelfHealEnabled in cmd/sharko/serve.go.
+	SelfHealFn func(ctx context.Context) bool
 }
 
 // Reconciler is a background reconciler that converges ArgoCD cluster Secret
@@ -618,6 +627,18 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 				drift = computeLabelDrift(desiredLabels, secret.Labels)
 				// msg stays "cluster Secret present" — not claiming "verified"
 				// when they don't match (honest reporting, same as before G1)
+
+				// V3 G3: opt-in self-heal for managed clusters. When the
+				// managed_cluster_self_heal setting is ON, re-apply git-desired
+				// addon labels (enforcement-by-reconcile, same mechanism as
+				// syncSelfManaged). Default OFF — drift detection only.
+				if r.deps.SelfHealFn != nil && r.deps.SelfHealFn(ctx) {
+					r.selfHealManagedCluster(ctx, name, desiredLabels, stats)
+					// selfHealManagedCluster already called recordReconcile with
+					// the outcome (succeeded/failed), so skip the default record
+					// below that would overwrite it.
+					continue
+				}
 			}
 		}
 		r.recordReconcile(name, OutcomeSucceeded, msg, drift)
@@ -1001,6 +1022,69 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 	// IS successfully re-applying its labels every tick; the warning is
 	// visibility into a fight, not a sync failure).
 	r.recordReconcile(entry.Name, OutcomeSucceeded, fightWarning, nil)
+}
+
+// selfHealManagedCluster re-applies git-desired addon labels onto a drifted
+// Sharko-managed cluster Secret (V3 G3 — opt-in self-heal, default OFF).
+// Called from the drift-detection section when managed_cluster_self_heal is ON.
+// Mirrors syncSelfManaged's SyncLabelsOnly pattern: merge ONLY addon-label
+// keys, never touch Data/annotations/other labels. Per-cluster error isolation
+// matches createOne — failures log + audit + record, next cluster continues.
+func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, desiredLabels map[string]string, stats *reconcileStats) {
+	log := logging.LoggerFromContext(ctx)
+
+	mgr := argosecrets.NewManager(r.deps.ArgoClient, r.namespace)
+	changed, found, err := mgr.SyncLabelsOnly(ctx, name, desiredLabels)
+	if err != nil {
+		stats.Errors++
+		log.Error("[clusterreconciler] managed cluster self-heal failed — continuing to next cluster",
+			"cluster", name, "namespace", r.namespace, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     "cluster_secret_managed_self_heal",
+			User:      "sharko",
+			Action:    "self_heal",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     err.Error(),
+			RequestID: logging.RequestID(ctx),
+		})
+		r.recordReconcile(name, OutcomeFailed,
+			"Sharko couldn't re-apply git-desired addon labels to this drifted managed-cluster Secret: "+err.Error(), nil)
+		return
+	}
+	if !found {
+		// Should be impossible (we already verified the Secret exists in the
+		// drift-detection pass), but SyncLabelsOnly's contract allows
+		// NotFound. Treat as a skip rather than an error.
+		log.Warn("[clusterreconciler] managed cluster Secret disappeared between drift detection and self-heal — skipping",
+			"cluster", name, "namespace", r.namespace,
+		)
+		r.recordReconcile(name, OutcomeSkipped,
+			"cluster Secret disappeared between drift detection and self-heal attempt", nil)
+		return
+	}
+	if changed {
+		log.Info("[clusterreconciler] managed cluster self-heal: git-desired addon labels re-applied — drift corrected",
+			"cluster", name, "namespace", r.namespace,
+		)
+		r.audit(audit.Entry{
+			Level:     "info",
+			Event:     "cluster_secret_managed_self_heal",
+			User:      "sharko",
+			Action:    "self_heal",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "success",
+			RequestID: logging.RequestID(ctx),
+		})
+	}
+	// Whether this tick re-applied labels or found them already converged
+	// (unlikely — we just detected drift), the managed cluster is in sync as
+	// of now. drift stays nil — the re-apply brought it back to sync.
+	r.recordReconcile(name, OutcomeSucceeded, "drift corrected — git-desired labels re-applied", nil)
 }
 
 // effectiveDisableConnectivityCheck resolves whether the connectivity-check

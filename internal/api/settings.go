@@ -191,3 +191,82 @@ func (s *Server) handleSetAllowInlineCredentials(w http.ResponseWriter, r *http.
 
 	writeJSON(w, http.StatusOK, allowInlineCredentialsResponse{AllowInlineCredentials: req.AllowInlineCredentials})
 }
+
+// managedClusterSelfHealResponse is the response/request body shape for the
+// managed-cluster-self-heal setting endpoints (V3 G3).
+type managedClusterSelfHealResponse struct {
+	// ManagedClusterSelfHeal is false (the default) when the reconciler
+	// detects drift on Sharko-managed clusters but does NOT re-apply
+	// git-desired labels (drift detection only, surfaces OutOfSync state).
+	// When set to true, the reconciler re-applies git-desired addon labels
+	// onto drifted managed-cluster Secrets every tick (enforcement-by-
+	// reconcile, same mechanism as the self-managed path).
+	ManagedClusterSelfHeal bool `json:"managed_cluster_self_heal"`
+}
+
+// handleGetManagedClusterSelfHeal godoc
+//
+// @Summary Get managed-cluster self-heal setting
+// @Description Returns whether the reconciler re-applies git-desired labels to drifted Sharko-managed clusters (V3 G3, default false — drift detection only)
+// @Tags system
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} managedClusterSelfHealResponse "Current setting"
+// @Failure 503 {object} map[string]interface{} "Settings store not available"
+// @Router /settings/managed-cluster-self-heal [get]
+func (s *Server) handleGetManagedClusterSelfHeal(w http.ResponseWriter, r *http.Request) {
+	if s.settingsStore == nil {
+		writeJSON(w, http.StatusOK, managedClusterSelfHealResponse{ManagedClusterSelfHeal: false})
+		return
+	}
+	selfHeal, err := s.settingsStore.GetManagedClusterSelfHeal(r.Context())
+	if err != nil {
+		writeServerError(w, http.StatusInternalServerError, "get_managed_cluster_self_heal", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, managedClusterSelfHealResponse{ManagedClusterSelfHeal: selfHeal})
+}
+
+// handleSetManagedClusterSelfHeal godoc
+//
+// @Summary Set managed-cluster self-heal setting
+// @Description Sets whether the reconciler re-applies git-desired labels to drifted Sharko-managed clusters (V3 G3). Admin only.
+// @Tags system
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body managedClusterSelfHealResponse true "Desired setting"
+// @Success 200 {object} managedClusterSelfHealResponse "Setting saved"
+// @Failure 400 {object} map[string]interface{} "Invalid request body"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden — admin role required"
+// @Failure 503 {object} map[string]interface{} "Settings store not available"
+// @Router /settings/managed-cluster-self-heal [put]
+func (s *Server) handleSetManagedClusterSelfHeal(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "settings.managed-cluster-self-heal") {
+		return
+	}
+	if s.settingsStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "settings store is not available (no in-cluster ConfigMap access)")
+		return
+	}
+
+	var req managedClusterSelfHealResponse
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	if err := s.settingsStore.SetManagedClusterSelfHeal(r.Context(), req.ManagedClusterSelfHeal); err != nil {
+		writeServerError(w, http.StatusInternalServerError, "set_managed_cluster_self_heal", err)
+		return
+	}
+
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "managed_cluster_self_heal_updated",
+		Resource: "settings:managed_cluster_self_heal",
+		Detail:   fmt.Sprintf("%t", req.ManagedClusterSelfHeal),
+	})
+
+	writeJSON(w, http.StatusOK, managedClusterSelfHealResponse{ManagedClusterSelfHeal: req.ManagedClusterSelfHeal})
+}

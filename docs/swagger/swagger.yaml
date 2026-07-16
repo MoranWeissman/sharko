@@ -1527,6 +1527,18 @@ definitions:
       ref:
         type: string
     type: object
+  internal_api.managedClusterSelfHealResponse:
+    properties:
+      managed_cluster_self_heal:
+        description: |-
+          ManagedClusterSelfHeal is false (the default) when the reconciler
+          detects drift on Sharko-managed clusters but does NOT re-apply
+          git-desired labels (drift detection only, surfaces OutOfSync state).
+          When set to true, the reconciler re-applies git-desired addon labels
+          onto drifted managed-cluster Secrets every tick (enforcement-by-
+          reconcile, same mechanism as the self-managed path).
+        type: boolean
+    type: object
   internal_api.meResponse:
     properties:
       has_github_token:
@@ -6131,6 +6143,71 @@ paths:
       security:
       - BearerAuth: []
       summary: Set allow-inline-credentials setting
+      tags:
+      - system
+  /settings/managed-cluster-self-heal:
+    get:
+      description: Returns whether the reconciler re-applies git-desired labels to
+        drifted Sharko-managed clusters (V3 G3, default false — drift detection only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Current setting
+          schema:
+            $ref: '#/definitions/internal_api.managedClusterSelfHealResponse'
+        "503":
+          description: Settings store not available
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get managed-cluster self-heal setting
+      tags:
+      - system
+    put:
+      consumes:
+      - application/json
+      description: Sets whether the reconciler re-applies git-desired labels to drifted
+        Sharko-managed clusters (V3 G3). Admin only.
+      parameters:
+      - description: Desired setting
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.managedClusterSelfHealResponse'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Setting saved
+          schema:
+            $ref: '#/definitions/internal_api.managedClusterSelfHealResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden — admin role required
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Settings store not available
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set managed-cluster self-heal setting
       tags:
       - system
   /settings/probe-mode:
