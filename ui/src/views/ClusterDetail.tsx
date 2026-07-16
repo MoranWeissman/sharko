@@ -964,16 +964,19 @@ export function ClusterDetail() {
   const noCatalog = catalogFetched && !pickerCatalogLoading
     ? pickerCatalogNames.length === 0
     : allCatalogNames.length === 0 && pickerCatalogNames.length === 0;
-  // Which addons are currently desired-true (original + staged enables)?
-  // Excludes addons staged for removal (still in list, but they retain
-  // their row with a pending-removal mark).
-  const enabledRows = allCatalogNames.filter((n) => addonToggles[n]);
-  const removedRows = allCatalogNames.filter(
+  // V3-AM1: The top manage strip now shows ONLY pending changes
+  // (staged enables + staged removes), not all enabled addons.
+  // A pending-enable = addon wasn't originally enabled but is now toggled true.
+  // A pending-remove = addon was originally enabled but is now toggled false.
+  const pendingEnableRows = allCatalogNames.filter(
+    (n) => !originalToggles[n] && addonToggles[n],
+  );
+  const pendingRemoveRows = allCatalogNames.filter(
     (n) => originalToggles[n] && !addonToggles[n],
   );
-  // Rows to show: currently enabled OR staged for removal.
+  // Rows to show in the top strip: only addons with pending deltas.
   const visibleRows = Array.from(
-    new Set([...enabledRows, ...removedRows]),
+    new Set([...pendingEnableRows, ...pendingRemoveRows]),
   ).sort();
   // The picker must not show addons that are already enabled OR staged for
   // enable (i.e. addonToggles[n] === true).
@@ -1388,7 +1391,7 @@ export function ClusterDetail() {
                       className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
                     >
                       <Plus className="h-4 w-4" />
-                      Enable addon
+                      Manage addons
                     </button>
                   )}
                 </RoleGuard>
@@ -1433,14 +1436,11 @@ export function ClusterDetail() {
                       </div>
                     )}
 
-                    {/* Enabled / pending addon rows */}
-                    {visibleRows.length === 0 ? (
-                      <div className="py-2">
-                        <p className="text-sm text-[#3a6a8a] dark:text-gray-400">
-                          No addons enabled on this cluster yet.
-                        </p>
-                      </div>
-                    ) : (
+                    {/* V3-AM1: Pending addon rows (staged enables + staged removes).
+                        When no pending changes, this strip is empty — the "No addons"
+                        message does NOT appear here (enabled addons are in the comparison
+                        table, not duplicated here). */}
+                    {visibleRows.length > 0 && (
                       visibleRows.map((addonName) => {
                         const isPendingEnable =
                           !originalToggles[addonName] && addonToggles[addonName];
@@ -1654,6 +1654,9 @@ export function ClusterDetail() {
                         pendingPRs={pendingPRsByAddon[addon.addon_name] ?? []}
                         onRefresh={() => void fetchData(true)}
                         aiEnabled={aiEnabled}
+                        onStageRemove={(addonName) => {
+                          setAddonToggles((prev) => ({ ...prev, [addonName]: false }));
+                        }}
                       />
                     ))}
                     {filteredAddons.length === 0 && (
@@ -1869,9 +1872,13 @@ interface ComparisonRowProps {
   // When true the "Ask AI" button is rendered next to "Restart sync" on
   // sync_failing rows.  False/absent → button is absent.
   aiEnabled?: boolean;
+  // V3-AM1: Optional callback to stage a pending-remove. When present + addon
+  // is enabled/managed (git_enabled && not untracked/system), a labeled
+  // "Remove" control is rendered.
+  onStageRemove?: (addonName: string) => void;
 }
 
-function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdBaseURL, highlighted, pendingPRs = [], onRefresh, aiEnabled = false }: ComparisonRowProps) {
+function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdBaseURL, highlighted, pendingPRs = [], onRefresh, aiEnabled = false, onStageRemove }: ComparisonRowProps) {
   const [restartLoading, setRestartLoading] = useState(false);
   const allIssues = addon.issues;
   const isTruncated = shouldTruncateIssues(allIssues);
@@ -2076,6 +2083,28 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
           </span>
         ) : (
           <span className="text-xs text-green-600 dark:text-green-400">OK</span>
+        )}
+        {/* V3-AM1: Remove control for enabled/managed addons. Rendered when
+            onStageRemove is provided + addon is git_enabled + not untracked/system.
+            Clicking stages a pending-remove (setAddonToggles false). Placed outside
+            the issues conditional so it's visible on ALL enabled rows. */}
+        {onStageRemove && addon.git_enabled && addon.status !== 'untracked_in_argocd' && addon.status !== 'sharko_system' && (
+          <div className="mt-2">
+            <RoleGuard adminOnly>
+              <button
+                type="button"
+                data-testid="comparison-row-remove-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStageRemove(addon.addon_name);
+                }}
+                className="inline-flex items-center gap-1 rounded-md border border-red-400 bg-[#f0f7ff] px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-700 dark:text-red-400 dark:hover:bg-red-900/20"
+              >
+                <X className="h-3 w-3" />
+                Remove
+              </button>
+            </RoleGuard>
+          </div>
         )}
       </td>
     </tr>

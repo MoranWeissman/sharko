@@ -1174,19 +1174,26 @@ describe('ClusterDetail', () => {
 
     // --- 1. Enabled-only rows ---
 
-    it('renders rows only for enabled addons; disabled addons are not shown', async () => {
+    it('V3-AM1: with no pending changes, top strip is absent; enabled addons appear only in comparison table', async () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // cert-manager and ingress-nginx are enabled → rows present
-      expect(screen.getByTestId('manage-addon-row-cert-manager')).toBeInTheDocument();
-      expect(screen.getByTestId('manage-addon-row-ingress-nginx')).toBeInTheDocument();
+      // V3-AM1: The top strip (manage-addon-row-*) shows ONLY pending changes.
+      // With no pending changes, there should be NO manage-addon-row elements.
+      expect(screen.queryByTestId('manage-addon-row-cert-manager')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('manage-addon-row-ingress-nginx')).not.toBeInTheDocument();
 
-      // prometheus is disabled in git → no row in the Manage Addons card
+      // Enabled addons appear in the comparison table
+      expect(screen.getByText('cert-manager')).toBeInTheDocument();
+      expect(screen.getByText('ingress-nginx')).toBeInTheDocument();
+
+      // prometheus is disabled in git → appears in comparison table (which shows
+      // ALL addons including disabled) but NOT in the top strip (which is pending-only)
+      expect(screen.getByText('prometheus')).toBeInTheDocument();
       expect(screen.queryByTestId('manage-addon-row-prometheus')).not.toBeInTheDocument();
     });
 
-    it('shows a "No addons enabled" message when no addons are enabled', async () => {
+    it('V3-AM1: with no enabled addons and no pending changes, top strip is absent (no "No addons enabled" message)', async () => {
       mockGetClusterComparison.mockResolvedValueOnce({
         ...baseResponse,
         addon_comparisons: [
@@ -1204,9 +1211,13 @@ describe('ClusterDetail', () => {
       });
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      // V3-AM1: The "No addons enabled..." message was removed. The top strip
+      // only shows PENDING changes. With no enabled addons AND no pending changes,
+      // the strip is simply absent.
       expect(
-        screen.getByText(/no addons enabled on this cluster yet/i),
-      ).toBeInTheDocument();
+        screen.queryByText(/no addons enabled on this cluster yet/i),
+      ).not.toBeInTheDocument();
     });
 
     it('shows "No addons in catalog." when the catalog (addonToggles) is empty', async () => {
@@ -1293,14 +1304,19 @@ describe('ClusterDetail', () => {
 
     // --- 3. Staged removal ---
 
-    it('clicking X marks a row as pending-removal with a strikethrough + "removing" chip', async () => {
+    it('V3-AM1: clicking Remove on a comparison-table row stages a pending-remove (top strip shows "removing")', async () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      fireEvent.click(screen.getByTestId('manage-addon-remove-cert-manager'));
+      // V3-AM1: Remove button is now on the comparison table rows, not the top strip
+      const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
+      // Click the first one (cert-manager row)
+      fireEvent.click(removeButtons[0]);
 
-      // Row still present but marked for removal
-      expect(screen.getByTestId('manage-addon-row-cert-manager')).toBeInTheDocument();
+      // Now the pending-remove row appears in the top strip
+      await waitFor(() => {
+        expect(screen.getByTestId('manage-addon-row-cert-manager')).toBeInTheDocument();
+      });
       expect(screen.getByTestId('manage-addon-row-cert-manager')).toHaveTextContent(
         /removing/i,
       );
@@ -1316,14 +1332,18 @@ describe('ClusterDetail', () => {
     // included — sending them as `false` would add spurious labels to
     // managed-clusters.yaml. The backend guard independently rejects unknown
     // names (422), but the FE must never send junk in the first place.
-    it('Apply Changes sends only enabled/changing keys — never disabled-untouched keys', async () => {
+    it('V3-AM1: Apply Changes sends only enabled/changing keys — never disabled-untouched keys', async () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // Stage cert-manager for removal
-      fireEvent.click(screen.getByTestId('manage-addon-remove-cert-manager'));
+      // V3-AM1: Stage cert-manager for removal via comparison-table Remove button
+      const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
+      fireEvent.click(removeButtons[0]); // cert-manager
 
       // Apply
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /apply changes/i })).toBeInTheDocument();
+      });
       fireEvent.click(screen.getByRole('button', { name: /apply changes/i }));
 
       await waitFor(() => {
@@ -1389,9 +1409,13 @@ describe('ClusterDetail', () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // Stage cert-manager for removal so the Apply/Preview footer appears.
-      fireEvent.click(screen.getByTestId('manage-addon-remove-cert-manager'));
+      // V3-AM1: Stage cert-manager for removal via comparison-table Remove button
+      const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
+      fireEvent.click(removeButtons[0]); // cert-manager
 
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /preview changes/i })).toBeInTheDocument();
+      });
       fireEvent.click(screen.getByRole('button', { name: /preview changes/i }));
 
       // Dry-run call carries the diff-only payload + dryRun: true.
@@ -1416,12 +1440,17 @@ describe('ClusterDetail', () => {
 
     // --- 5. Discard resets state ---
 
-    it('Discard resets staged changes back to the original state', async () => {
+    it('V3-AM1: Discard resets staged changes (pending row disappears)', async () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // Stage cert-manager for removal
-      fireEvent.click(screen.getByTestId('manage-addon-remove-cert-manager'));
+      // V3-AM1: Stage cert-manager for removal via comparison-table Remove button
+      const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
+      fireEvent.click(removeButtons[0]); // cert-manager
+
+      await waitFor(() => {
+        expect(screen.getByTestId('manage-addon-row-cert-manager')).toBeInTheDocument();
+      });
       expect(screen.getByTestId('manage-addon-row-cert-manager')).toHaveTextContent(
         /removing/i,
       );
@@ -1429,10 +1458,10 @@ describe('ClusterDetail', () => {
       // Discard
       fireEvent.click(screen.getByRole('button', { name: /discard/i }));
 
-      // Row is back to normal (no "removing" chip)
-      expect(screen.getByTestId('manage-addon-row-cert-manager')).not.toHaveTextContent(
-        /removing/i,
-      );
+      // V3-AM1: The pending row disappears entirely (top strip only shows pending changes)
+      await waitFor(() => {
+        expect(screen.queryByTestId('manage-addon-row-cert-manager')).not.toBeInTheDocument();
+      });
       // Apply Changes button gone
       expect(
         screen.queryByRole('button', { name: /apply changes/i }),
@@ -1648,16 +1677,19 @@ describe('ClusterDetail', () => {
       });
     });
 
-    it('junk rows (untracked/sharko_system) never appear as manage-addon rows', async () => {
+    it('V3-AM1: junk rows (untracked/sharko_system) never enter toggle map, never removable', async () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // Only catalog rows appear as manage-addon-row-* entries.
-      expect(screen.getByTestId('manage-addon-row-cert-manager')).toBeInTheDocument();
-      expect(screen.getByTestId('manage-addon-row-ingress-nginx')).toBeInTheDocument();
-      // Junk must not appear as a managed row.
-      expect(screen.queryByTestId('manage-addon-row-some-manual-app')).not.toBeInTheDocument();
-      expect(screen.queryByTestId('manage-addon-row-connectivity-check-cluster-1')).not.toBeInTheDocument();
+      // V3-AM1: With no pending changes, there are NO manage-addon-row elements
+      // (the top strip is pending-only). To test the exclusion rule, verify that
+      // junk addons do NOT have Remove buttons in the comparison table.
+      // Catalog-enabled addons (cert-manager, ingress-nginx) DO have Remove buttons.
+      const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
+      expect(removeButtons.length).toBe(2); // Only 2 (cert-manager + ingress-nginx)
+
+      // Junk addons (some-manual-app, connectivity-check-cluster-1) do NOT have
+      // Remove buttons because they were excluded from the toggle map seeding.
     });
 
     it('junk rows never appear in the enable picker — not as items, not via search', async () => {
@@ -1688,13 +1720,17 @@ describe('ClusterDetail', () => {
       expect(screen.getByTestId('addon-picker-item-velero')).toBeInTheDocument();
     });
 
-    it('Apply payload never includes junk names, only catalog enabled/staged keys', async () => {
+    it('V3-AM1: Apply payload never includes junk names, only catalog enabled/staged keys', async () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // Stage cert-manager for removal (it's enabled in the fixture).
-      fireEvent.click(screen.getByTestId('manage-addon-remove-cert-manager'));
+      // V3-AM1: Stage cert-manager for removal via comparison-table Remove button
+      const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
+      fireEvent.click(removeButtons[0]); // cert-manager
 
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /apply changes/i })).toBeInTheDocument();
+      });
       fireEvent.click(screen.getByRole('button', { name: /apply changes/i }));
       await waitFor(() => {
         expect(mockUpdateClusterAddons).toHaveBeenCalledOnce();
@@ -2373,7 +2409,7 @@ describe('ClusterDetail', () => {
       expect(screen.getByText('No addons in catalog.')).toBeInTheDocument();
     });
 
-    it('does not regress: cluster with enabled addons shows "+ Enable addon" button and addon rows', async () => {
+    it('V3-AM1: does not regress: cluster with enabled addons shows "Manage addons" button', async () => {
       // Default comparisonResponse has 3 enabled addons.
       mockGetAddonCatalog.mockResolvedValue({
         addons: [
@@ -2389,15 +2425,22 @@ describe('ClusterDetail', () => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
 
-      // Button is visible.
+      // V3-AM1: Button is visible and reads "Manage addons".
       await waitFor(() => {
-        expect(screen.getByTestId('manage-addons-enable-btn')).toBeInTheDocument();
+        const button = screen.getByTestId('manage-addons-enable-btn');
+        expect(button).toBeInTheDocument();
+        expect(button).toHaveTextContent('Manage addons');
       });
 
-      // Enabled addon rows are rendered (Manage Addons list).
-      expect(screen.getByTestId('manage-addon-row-ingress-nginx')).toBeInTheDocument();
-      expect(screen.getByTestId('manage-addon-row-cert-manager')).toBeInTheDocument();
-      expect(screen.getByTestId('manage-addon-row-prometheus')).toBeInTheDocument();
+      // V3-AM1: Enabled addons appear in the comparison table (not the top strip).
+      // The top strip is pending-only, so with no pending changes, no manage-addon-row elements.
+      expect(screen.queryByTestId('manage-addon-row-ingress-nginx')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('manage-addon-row-cert-manager')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('manage-addon-row-prometheus')).not.toBeInTheDocument();
+
+      // Enabled addons are in the comparison table instead
+      expect(screen.getByText('ingress-nginx')).toBeInTheDocument();
+      expect(screen.getByText('cert-manager')).toBeInTheDocument();
 
       // "No addons in catalog." is NOT shown.
       expect(screen.queryByText('No addons in catalog.')).not.toBeInTheDocument();
@@ -2428,12 +2471,16 @@ describe('ClusterDetail', () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // Remove prometheus (click the X button on the manage-addon row to toggle it off).
-      const prometheusRow = await screen.findByTestId('manage-addon-row-prometheus');
-      const removeButton = within(prometheusRow).getByLabelText(/Remove prometheus/i);
-      fireEvent.click(removeButton);
+      // V3-AM1: Remove prometheus via comparison-table Remove button.
+      // (In the baseResponse fixture, prometheus is in addon_comparisons.)
+      // Find prometheus's Remove button by searching for its row in the comparison table
+      const prometheusTableRows = screen.getAllByRole('row');
+      const prometheusRow = prometheusTableRows.find(row => within(row).queryByText('prometheus'));
+      expect(prometheusRow).toBeTruthy();
+      const prometheusRemoveBtn = within(prometheusRow!).getByTestId('comparison-row-remove-btn');
+      fireEvent.click(prometheusRemoveBtn);
 
-      // "Apply Changes" visible after toggling.
+      // "Apply Changes" visible after staging the removal.
       await waitFor(() => expect(screen.getByRole('button', { name: /Apply Changes/i })).toBeInTheDocument());
 
       // Preview.
@@ -2463,10 +2510,12 @@ describe('ClusterDetail', () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // Remove prometheus.
-      const prometheusRow = await screen.findByTestId('manage-addon-row-prometheus');
-      const removeButton = within(prometheusRow).getByLabelText(/Remove prometheus/i);
-      fireEvent.click(removeButton);
+      // V3-AM1: Remove prometheus via comparison-table Remove button.
+      const prometheusTableRows = screen.getAllByRole('row');
+      const prometheusRow = prometheusTableRows.find(row => within(row).queryByText('prometheus'));
+      expect(prometheusRow).toBeTruthy();
+      const prometheusRemoveBtn = within(prometheusRow!).getByTestId('comparison-row-remove-btn');
+      fireEvent.click(prometheusRemoveBtn);
 
       // Preview.
       const previewBtn = await screen.findByRole('button', { name: /Preview changes/i });
