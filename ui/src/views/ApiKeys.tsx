@@ -283,7 +283,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                   {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
                 </button>
               </div>
-              <p className="text-xs text-amber-600 dark:text-amber-400">
+              <p className="text-sm text-amber-600 dark:text-amber-400">
                 Store this token securely. It cannot be retrieved after closing this dialog.
               </p>
             </div>

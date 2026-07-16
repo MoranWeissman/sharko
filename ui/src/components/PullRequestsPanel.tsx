@@ -326,7 +326,7 @@ function PendingTabBody({
     )
   }
   if (error) {
-    return <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+    return <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
   }
   if (prs.length === 0) {
     return (
@@ -523,7 +523,7 @@ function MergedTabBody({
     )
   }
   if (error) {
-    return <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+    return <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
   }
   if (prs.length === 0) {
     return (

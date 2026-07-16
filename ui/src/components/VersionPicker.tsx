@@ -202,7 +202,7 @@ export function VersionPicker({
       )}
 
       {error && (
-        <p className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
+        <p className="flex items-center gap-1 text-sm text-red-600 dark:text-red-400">
           <AlertCircle className="h-3 w-3" aria-hidden="true" />
           {error}
         </p>
@@ -211,7 +211,7 @@ export function VersionPicker({
       {invalid && !error && (
         <p
           id={errorId}
-          className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400"
+          className="flex items-center gap-1 text-sm text-red-600 dark:text-red-400"
         >
           <AlertCircle className="h-3 w-3" aria-hidden="true" />
           Version not found in index.yaml

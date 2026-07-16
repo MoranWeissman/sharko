@@ -97,10 +97,10 @@ export function ClusterIdentityPanel({ capabilities, loading }: ClusterIdentityP
         {howOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
       </button>
       {howOpen && (
-        <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-400" data-testid="identity-how-it-works">
+        <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="identity-how-it-works">
           Sharko runs with one IAM role on the hub cluster. Every spoke cluster that opts in trusts
           that one role — nothing per-cluster to set up on Sharko's side. When Sharko needs to
-          reach a cluster, it mints a short-lived token on demand; nothing is stored.{' '}
+          reach a cluster, it generates a short-lived token on demand; nothing is stored.{' '}
           <a
             href={IDENTITY_DOCS_URL}
             target="_blank"

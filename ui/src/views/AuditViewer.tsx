@@ -451,7 +451,7 @@ export function AuditViewer() {
               placeholder="Filter loaded entries…"
               className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-1.5 text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-[#5a8aaa]"
             />
-            <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+            <p className="mt-1 text-sm text-[#5a8aaa] dark:text-gray-500">
               Searches the entries already loaded below (event, who, resource, detail).
             </p>
           </div>

@@ -267,7 +267,7 @@ function UpgradeVersionList({
       <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5">
         <h3 className="text-base font-semibold text-[#0a2a4a]">Available Upgrades</h3>
         <p className="mt-2 text-sm text-[#2a5a7a]">{error}</p>
-        <p className="mt-1 text-xs text-[#3a6a8a]">
+        <p className="mt-1 text-sm text-[#3a6a8a]">
           The upgrade versions API may not be configured.
         </p>
       </div>
@@ -534,7 +534,7 @@ function InlineUpgradeResults({
             <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
               ⚠ This is a downgrade.
             </p>
-            <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">
+            <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">
               Helm values from a newer version may not be backward-compatible with <span className="font-mono">{targetVersion}</span>. Review the changes carefully before proceeding.
             </p>
           </div>
@@ -549,7 +549,7 @@ function InlineUpgradeResults({
             <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
               Current version not available in Helm repo
             </p>
-            <p className="mt-0.5 text-xs text-blue-700 dark:text-blue-400">
+            <p className="mt-0.5 text-sm text-blue-700 dark:text-blue-400">
               {result.baseline_note || 'Showing target version details only. Diff comparison is not available.'}
             </p>
           </div>
@@ -636,7 +636,7 @@ function InlineUpgradeResults({
                 <div className="min-w-0 flex-1">
                   <code className="text-xs font-medium text-[#0a2a4a] dark:text-gray-100">{entry.path}</code>
                   {entry.new_value != null && (
-                    <p className="mt-0.5 text-xs text-green-600 dark:text-green-400">
+                    <p className="mt-0.5 text-sm text-green-600 dark:text-green-400">
                       Default: <code className="rounded bg-green-100 px-1 dark:bg-green-900/40">{entry.new_value}</code>
                     </p>
                   )}
@@ -653,7 +653,7 @@ function InlineUpgradeResults({
                 <div className="min-w-0 flex-1">
                   <code className="text-xs font-medium text-[#0a2a4a] dark:text-gray-100">{entry.path}</code>
                   {entry.old_value != null && (
-                    <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">
+                    <p className="mt-0.5 text-sm text-red-600 dark:text-red-400">
                       Was: <code className="rounded bg-red-100 px-1 line-through dark:bg-red-900/40">{entry.old_value}</code>
                     </p>
                   )}
@@ -784,7 +784,7 @@ function InlineUpgradeResults({
                   Upgrade {addonName} to {targetVersion}?
                 </p>
               )}
-              <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">This will create a pull request with the version change.</p>
+              <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">This will create a pull request with the version change.</p>
               <div className="mt-3 flex items-center gap-2">
                 <button
                   type="button"
@@ -964,7 +964,7 @@ function PerClusterUpgradeRow({
         </div>
         {isDrifted ? (
           state === 'done' ? (
-            <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+            <div className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
               <CheckCircle className="h-3.5 w-3.5" />
               {clusterMerged
                 ? `${isDowngradingCluster ? 'Downgrade' : 'Upgrade'} applied`
@@ -1000,13 +1000,13 @@ function PerClusterUpgradeRow({
             </RoleGuard>
           )
         ) : (
-          <span className="text-xs text-green-600">✓ Current</span>
+          <span className="text-sm text-green-600">✓ Current</span>
         )}
       </div>
       {state === 'confirm' && !isDowngradingCluster && (
         <div className="mt-2 flex items-center gap-2 rounded-md bg-amber-50 px-3 py-1.5 dark:bg-amber-950/40">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
-          <span className="text-xs text-amber-800 dark:text-amber-300">
+          <span className="text-sm text-amber-800 dark:text-amber-300">
             Upgrade {clusterName} to {catalogVersion}?
           </span>
           <button
@@ -1026,7 +1026,7 @@ function PerClusterUpgradeRow({
         </div>
       )}
       {upgradeError && (
-        <p className="mt-1 text-xs text-red-600 dark:text-red-400">{upgradeError}</p>
+        <p className="mt-1 text-sm text-red-600 dark:text-red-400">{upgradeError}</p>
       )}
     </div>
   )
@@ -2468,7 +2468,7 @@ export function AddonDetail() {
                     <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
                       ApplicationSet
                     </h3>
-                    <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">
+                    <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">
                       How ArgoCD deploys this addon across your clusters. Advanced — the defaults work for most addons.
                     </p>
                   </div>

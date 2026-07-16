@@ -38,7 +38,7 @@ export function InfoHint({ text, label = 'More info', className }: InfoHintProps
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="w-72 text-xs"
+        className="w-72 text-sm"
         onClick={(e) => e.stopPropagation()}
       >
         {text}

@@ -96,7 +96,7 @@ export function RecentPRsPanel({ load, title = 'Recent changes', refreshKey = 0 
       )}
 
       {error && (
-        <div className="flex items-start gap-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+        <div className="flex items-start gap-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
           <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
           <span className="flex-1 truncate" title={error}>
             Couldn't load recent PRs — {error.slice(0, 80)}

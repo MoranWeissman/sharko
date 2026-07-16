@@ -447,7 +447,7 @@ export function Dashboard() {
               )}
               {versionDrifts.length > 0 && (
                 <button onClick={() => navigate('/version-matrix?drift=true')}
-                  className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400">
+                  className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400">
                   <div className="h-2 w-2 rounded-full bg-amber-500" />
                   {versionDrifts.length} addon{versionDrifts.length !== 1 ? 's' : ''} with drift
                 </button>
@@ -516,7 +516,7 @@ export function Dashboard() {
             <button
               onClick={() => setShowProgressing(!showProgressing)}
               aria-expanded={showProgressing}
-              className="flex items-center gap-2 rounded-lg border border-blue-200 bg-white/70 px-3 py-1.5 text-xs text-blue-700 hover:bg-white dark:border-blue-700 dark:bg-gray-800 dark:text-blue-300"
+              className="flex items-center gap-2 rounded-lg border border-blue-200 bg-white/70 px-3 py-1.5 text-sm text-blue-700 hover:bg-white dark:border-blue-700 dark:bg-gray-800 dark:text-blue-300"
             >
               <div className="h-2 w-2 rounded-full bg-blue-500" />
               {progressingItems.length} app{progressingItems.length !== 1 ? 's' : ''} progressing
@@ -525,7 +525,7 @@ export function Dashboard() {
           </div>
           {showProgressing && (
             <div className="border-t border-blue-200/70 p-3 dark:border-blue-800/60">
-              <p className="mb-2 text-xs text-blue-700/80 dark:text-blue-300/80">
+              <p className="mb-2 text-sm text-blue-700/80 dark:text-blue-300/80">
                 Apps in this state are still considered healthy. ArgoCD is rolling out a change or waiting on a workload.
                 Click an addon to investigate on its cluster page.
               </p>
@@ -679,7 +679,7 @@ export function Dashboard() {
             </button>
           </div>
           {versionDrifts.length === 0 ? (
-            <div className="flex items-center gap-2 py-4 text-center text-xs text-green-600 dark:text-green-400">
+            <div className="flex items-center gap-2 py-4 text-center text-sm text-green-600 dark:text-green-400">
               <CheckCircle2 className="mx-auto h-4 w-4" />
               <span>No version drift detected</span>
             </div>

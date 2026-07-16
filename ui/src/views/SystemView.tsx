@@ -321,7 +321,7 @@ function ArrowCard({
       </div>
       <p className="text-sm text-[#2a5a7a] dark:text-gray-300">{detail}</p>
       {alertDetail && (
-        <p className="text-xs text-amber-700 dark:text-amber-400">{alertDetail}</p>
+        <p className="text-sm text-amber-700 dark:text-amber-400">{alertDetail}</p>
       )}
       {children}
       <Link

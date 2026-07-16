@@ -142,7 +142,7 @@ function ControlPlaneSection({
               : '/ unavailable'
           }
         />
-        <StatBlock label="ArgoCD-known" value={data.total_clusters} />
+        <StatBlock label="Known to ArgoCD" value={data.total_clusters} />
       </div>
 
       {/* Health bar */}
@@ -166,7 +166,7 @@ function ControlPlaneSection({
           {healthData.map((d) => (
             <span
               key={d.name}
-              className="flex items-center gap-1.5 text-xs text-[#1a4a6a] dark:text-gray-400"
+              className="flex items-center gap-1.5 text-sm text-[#1a4a6a] dark:text-gray-400"
             >
               <span
                 className="inline-block h-2.5 w-2.5 rounded-full"
@@ -240,7 +240,7 @@ function ResourceAlertsSection({ alerts }: { alerts: ResourceAlert[] }) {
                 <span className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
                   {alert.addon_name}
                 </span>
-                <p className="text-xs text-[#2a5a7a] dark:text-gray-400">
+                <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
                   {alert.details}
                 </p>
               </div>
@@ -536,7 +536,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                       {healthEntries.map(([status, count]) => (
                         <span
                           key={status}
-                          className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400"
+                          className="flex items-center gap-1 text-sm text-[#2a5a7a] dark:text-gray-400"
                         >
                           <span
                             className="inline-block h-2 w-2 rounded-full"
@@ -657,7 +657,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                         {healthEntries.map(([status, count]) => (
                           <span
                             key={status}
-                            className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400"
+                            className="flex items-center gap-1 text-sm text-[#2a5a7a] dark:text-gray-400"
                           >
                             <span
                               className="inline-block h-2 w-2 rounded-full"
@@ -738,7 +738,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
       {/* Pagination controls */}
       {totalPages > 1 && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-3 dark:ring-gray-700 dark:bg-gray-900">
-          <div className="text-xs text-[#2a5a7a] dark:text-gray-400">
+          <div className="text-sm text-[#2a5a7a] dark:text-gray-400">
             Showing{' '}
             {(page - 1) * pageSize + 1}-
             {Math.min(
@@ -868,7 +868,7 @@ function SyncActivitySection({
             className="flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-[#d6eeff] dark:hover:bg-gray-800"
           >
             {statusIcon(s.status)}
-            <span className="w-16 shrink-0 text-xs text-[#3a6a8a]">
+            <span className="w-16 shrink-0 text-sm text-[#3a6a8a]">
               {timeAgo(s.timestamp)}
             </span>
             <span className="min-w-0 flex-1 truncate text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
@@ -877,7 +877,7 @@ function SyncActivitySection({
             <span className="hidden truncate text-xs text-[#2a5a7a] sm:inline dark:text-gray-400">
               {s.cluster_name}
             </span>
-            <span className="flex items-center gap-1 text-xs text-[#3a6a8a]">
+            <span className="flex items-center gap-1 text-sm text-[#3a6a8a]">
               <Clock className="h-3 w-3" />
               {s.duration}
             </span>

@@ -248,7 +248,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold text-green-800 dark:text-green-300">Temporary Password</h3>
-              <p className="mt-1 text-xs text-green-600 dark:text-green-400">Share this with the user. They must change it on first login.</p>
+              <p className="mt-1 text-sm text-green-600 dark:text-green-400">Share this with the user. They must change it on first login.</p>
               <code className="mt-2 block rounded bg-green-100 px-3 py-2 font-mono text-lg font-bold text-green-900 dark:bg-green-800 dark:text-green-100">
                 {tempPassword}
               </code>
@@ -432,7 +432,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                   {tokenCopied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
                 </button>
               </div>
-              <p className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+              <p className="flex items-center gap-1.5 text-sm text-red-600 dark:text-red-400">
                 <AlertTriangle className="h-3.5 w-3.5" />
                 This token will not be shown again. Copy it now and store it securely.
               </p>

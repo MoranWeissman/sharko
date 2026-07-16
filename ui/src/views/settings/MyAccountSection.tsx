@@ -118,7 +118,7 @@ export function MyAccountSection() {
             <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
               Personal GitHub Token
             </h3>
-            <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400">
+            <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">
               Used for Tier 2 (configuration) commits — editing addon catalog metadata or values —
               so the resulting Git commit is authored by you instead of the Sharko service account.
               Stored encrypted at rest. Operational actions (cluster ops, addon enable/disable,
@@ -162,7 +162,7 @@ export function MyAccountSection() {
                     {revealToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-                <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-500">
+                <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-500">
                   Needs <code>repo</code> scope (or fine-grained equivalent: contents read/write,
                   pull requests read/write) on the GitOps repository.
                 </p>

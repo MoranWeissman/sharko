@@ -295,7 +295,7 @@ export function ConnectionSection() {
                         {step.name}
                       </span>
                       {step.detail && (
-                        <span className="text-xs text-amber-600 dark:text-amber-400">— {step.detail}</span>
+                        <span className="text-sm text-amber-600 dark:text-amber-400">— {step.detail}</span>
                       )}
                     </div>
                   ))}
@@ -309,7 +309,7 @@ export function ConnectionSection() {
                       href={prUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs text-amber-700 underline hover:text-amber-900 dark:text-amber-400"
+                      className="text-sm text-amber-700 underline hover:text-amber-900 dark:text-amber-400"
                     >
                       Review and merge the PR →
                     </a>
@@ -346,7 +346,7 @@ export function ConnectionSection() {
                   <button
                     type="button"
                     onClick={() => setInitState('idle')}
-                    className="text-xs text-amber-700 underline hover:text-amber-900 dark:text-amber-400 shrink-0"
+                    className="text-sm text-amber-700 underline hover:text-amber-900 dark:text-amber-400 shrink-0"
                   >
                     Retry
                   </button>
@@ -416,7 +416,7 @@ export function ConnectionSection() {
                   placeholder="https://github.com/org/repo"
                   required
                 />
-                <p className="mt-1 text-xs text-[#3a6a8a]">GitHub, GitHub Enterprise, or Azure DevOps (auto-detected from URL)</p>
+                <p className="mt-1 text-sm text-[#3a6a8a]">GitHub, GitHub Enterprise, or Azure DevOps (auto-detected from URL)</p>
               </div>
               <div>
                 <label className={labelCls}>Token</label>
@@ -440,13 +440,13 @@ export function ConnectionSection() {
                 Test Git
               </button>
               {testStatus.git === 'ok' && (
-                <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
                   <CheckCircle className="h-3.5 w-3.5" />
                   Connected{testStatus.gitAuth && testStatus.gitAuth !== 'provided' ? ` (via ${testStatus.gitAuth})` : ''}
                 </span>
               )}
               {testStatus.git === 'error' && (
-                <span className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
+                <span className="flex items-center gap-1 text-sm text-red-600 dark:text-red-400">
                   <XCircle className="h-3.5 w-3.5" />
                   {testStatus.gitMessage || 'Failed'}
                 </span>
@@ -469,7 +469,7 @@ export function ConnectionSection() {
                   onChange={(e) => { setForm(prev => ({ ...prev, argocd_server_url: e.target.value })); setTestStatus({ git: 'idle', argocd: 'idle' }) }}
                   placeholder="Auto-discovered from cluster"
                 />
-                <p className="mt-1 text-xs text-[#3a6a8a]">Auto-filled for in-cluster. Override for external ArgoCD.</p>
+                <p className="mt-1 text-sm text-[#3a6a8a]">Auto-filled for in-cluster. Override for external ArgoCD.</p>
               </div>
               <div>
                 <label className={labelCls}>Token</label>
@@ -480,7 +480,7 @@ export function ConnectionSection() {
                   onChange={(e) => { setForm(prev => ({ ...prev, argocd_token: e.target.value })); setTestStatus({ git: 'idle', argocd: 'idle' }) }}
                   placeholder={isEdit ? 'Leave blank to keep existing' : 'ArgoCD API token'}
                 />
-                <p className="mt-1 text-xs text-[#3a6a8a]">ArgoCD account token (e.g. sharko-api-user). Falls back to ARGOCD_TOKEN env var.</p>
+                <p className="mt-1 text-sm text-[#3a6a8a]">ArgoCD account token (e.g. sharko-api-user). Falls back to ARGOCD_TOKEN env var.</p>
               </div>
               <div>
                 <label className={labelCls}>Namespace</label>
@@ -504,13 +504,13 @@ export function ConnectionSection() {
                 Test ArgoCD
               </button>
               {testStatus.argocd === 'ok' && (
-                <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
                   <CheckCircle className="h-3.5 w-3.5" />
                   Connected{testStatus.argocdAuth && testStatus.argocdAuth !== 'provided' ? ` (via ${testStatus.argocdAuth})` : ''}
                 </span>
               )}
               {testStatus.argocd === 'error' && (
-                <span className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
+                <span className="flex items-center gap-1 text-sm text-red-600 dark:text-red-400">
                   <XCircle className="h-3.5 w-3.5" />
                   {testStatus.argocdMessage || 'Failed'}
                 </span>
@@ -533,7 +533,7 @@ export function ConnectionSection() {
             {isEdit ? 'Update Connection' : 'Save Connection'}
           </button>
           {justSaved && (
-            <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+            <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
               <CheckCircle className="h-3.5 w-3.5" /> Saved
             </span>
           )}

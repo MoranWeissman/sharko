@@ -413,19 +413,19 @@ export function SecretsProviderSection() {
                   ))}
                 </select>
                 {form.provider_type === 'argocd' ? (
-                  <p className="mt-1 text-xs text-[#3a6a8a]">
+                  <p className="mt-1 text-sm text-[#3a6a8a]">
                     Sharko reads credentials from the ArgoCD cluster Secret it creates during register-cluster. No additional setup required when Sharko runs in-cluster.
                   </p>
                 ) : form.provider_type === UNKNOWN_PROVIDER ? (
-                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
                     This connection's stored provider type ("{unknownRawType}") isn't one Sharko's UI recognizes. Saving now keeps it unchanged — pick a different option above to replace it.
                   </p>
                 ) : form.provider_type !== '' && !isSupported(form.provider_type) ? (
-                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
                     This provider is not yet supported — Sharko can't retrieve cluster credentials with it. Pick AWS Secrets Manager, Kubernetes Secrets, or ArgoCD.
                   </p>
                 ) : (
-                  <p className="mt-1 text-xs text-[#3a6a8a]">How Sharko retrieves cluster credentials.</p>
+                  <p className="mt-1 text-sm text-[#3a6a8a]">How Sharko retrieves cluster credentials.</p>
                 )}
               </div>
               {form.provider_type !== '' && form.provider_type !== UNKNOWN_PROVIDER && REGION_PROVIDERS.has(form.provider_type) && (
@@ -458,7 +458,7 @@ export function SecretsProviderSection() {
                         onChange={(e) => setForm(prev => ({ ...prev, provider_prefix: e.target.value }))}
                         placeholder="e.g. k8s- (prepended to cluster name for SM lookup)"
                       />
-                      <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400">Prepended to cluster name when looking up the secret.</p>
+                      <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">Prepended to cluster name when looking up the secret.</p>
                     </div>
                   )}
                 </div>
@@ -496,22 +496,22 @@ export function SecretsProviderSection() {
                   ))}
                 </select>
                 {form.provider_type === 'argocd' && !form.addon_secret_provider_type ? (
-                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
                     ArgoCD only tells Sharko how to reach your clusters. Choose where addon secret values come from.
                   </p>
                 ) : form.addon_secret_provider_type === UNKNOWN_PROVIDER ? (
-                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
                     This connection's stored addon-secret provider type ("{unknownAddonSecretRawType}") isn't one Sharko's UI recognizes. Saving now keeps it unchanged — pick a different option above to replace it.
                   </p>
                 ) : form.addon_secret_provider_type !== '' && !isSupported(form.addon_secret_provider_type) ? (
-                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
                     This provider is not yet supported — Sharko can't retrieve addon secrets with it. Pick AWS Secrets Manager or Kubernetes Secrets.
                   </p>
                 ) : (
-                  <p className="mt-1 text-xs text-[#3a6a8a]">Where Sharko fetches addon secret values (credentials, API keys, etc.).</p>
+                  <p className="mt-1 text-sm text-[#3a6a8a]">Where Sharko fetches addon secret values (credentials, API keys, etc.).</p>
                 )}
                 {providerInfo?.addon_secret_status && providerInfo.addon_secret_status !== 'ok' && providerInfo.addon_secret_message && (
-                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
                     {providerInfo.addon_secret_message}
                   </p>
                 )}
@@ -546,7 +546,7 @@ export function SecretsProviderSection() {
                         onChange={(e) => setForm(prev => ({ ...prev, addon_secret_provider_prefix: e.target.value }))}
                         placeholder="e.g. addon- (prepended to secret name for SM lookup)"
                       />
-                      <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400">Prepended to secret name when looking up addon secrets.</p>
+                      <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">Prepended to secret name when looking up addon secrets.</p>
                     </div>
                   )}
                 </div>
@@ -570,7 +570,7 @@ export function SecretsProviderSection() {
                 Save Provider
               </button>
               {justSaved && (
-                <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
                   <CheckCircle className="h-3.5 w-3.5" /> Saved
                 </span>
               )}

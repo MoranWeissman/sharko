@@ -64,7 +64,7 @@ export function StatCard({
         <div className="text-5xl font-bold text-[#0a2a4a] dark:text-gray-100">{value}</div>
         <div className="mt-2 text-sm text-[#5a8aaa] dark:text-gray-500">{title}</div>
         {subtitle && (
-          <div className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">{subtitle}</div>
+          <div className="mt-1 text-sm text-[#5a8aaa] dark:text-gray-500">{subtitle}</div>
         )}
       </div>
     );
@@ -94,7 +94,7 @@ export function StatCard({
       <div className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{value}</div>
       <div className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">{title}</div>
       {subtitle && (
-        <div className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-500">{subtitle}</div>
+        <div className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-500">{subtitle}</div>
       )}
     </div>
   );

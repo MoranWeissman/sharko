@@ -158,7 +158,7 @@ function renderSecondary(
 
   if (testFailing) {
     return (
-      <span className="text-xs text-amber-600 dark:text-amber-400">
+      <span className="text-sm text-amber-600 dark:text-amber-400">
         Sharko test failed{testErrorCode ? ` (${testErrorCode})` : ''}
         {timeStr && ` · ${timeStr}`}
       </span>

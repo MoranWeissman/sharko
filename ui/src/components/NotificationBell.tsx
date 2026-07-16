@@ -161,8 +161,8 @@ export function NotificationBell() {
                     <p className={`text-sm ${!n.read ? 'font-semibold text-[#0a2a4a] dark:text-white' : 'text-[#1a4a6a] dark:text-gray-300'}`}>
                       {n.title}
                     </p>
-                    <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">{n.description}</p>
-                    <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">{timeAgo(n.timestamp)}</p>
+                    <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">{n.description}</p>
+                    <p className="mt-1 text-sm text-[#5a8aaa] dark:text-gray-500">{timeAgo(n.timestamp)}</p>
                     {actionable && (
                       <p className="mt-1 text-xs font-medium text-teal-600 dark:text-teal-400">
                         Open Settings → Connection

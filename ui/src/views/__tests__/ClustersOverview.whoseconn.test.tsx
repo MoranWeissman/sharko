@@ -223,7 +223,7 @@ describe('ClustersOverview — whose-connection labels (V2-cleanup-55.3)', () =>
       // V3-CC2: updated hint text
       expect(
         screen.getByText(
-          'Sharko mints a short-lived AWS token on every connection using its own AWS identity — nothing to store or rotate. EKS only; Sharko needs AWS access to the cluster.',
+          'Sharko generates a short-lived AWS token on every connection using its own AWS identity — nothing to store or rotate. EKS only; Sharko needs AWS access to the cluster.',
         ),
       ).toBeInTheDocument();
     });
