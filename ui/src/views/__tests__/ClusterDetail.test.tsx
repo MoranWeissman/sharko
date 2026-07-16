@@ -2544,4 +2544,21 @@ describe('ClusterDetail', () => {
       expect(screen.queryByRole('button', { name: /Discard/i })).not.toBeInTheDocument();
     });
   });
+
+  // V3 U2: Diagnostics plain-English overview
+  describe('V3 U2: Diagnostics section overview', () => {
+    it('shows plain-English overview stating Sharko-own-connection + ArgoCD caveat', async () => {
+      renderView('diagnostics');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      // Overview text must state:
+      // 1. Tests Sharko's own connection (using registered credentials)
+      // 2. NOT testing ArgoCD's connection
+      // 3. Honest caveat: some checks read ArgoCD-side state
+      expect(screen.getByText(/Sharko itself/i)).toBeInTheDocument();
+      expect(screen.getByText(/using the credentials you registered/i)).toBeInTheDocument();
+      expect(screen.getByText(/not testing ArgoCD's connection/i)).toBeInTheDocument();
+      expect(screen.getByText(/Two checks read ArgoCD-side state/i)).toBeInTheDocument();
+    });
+  });
 });

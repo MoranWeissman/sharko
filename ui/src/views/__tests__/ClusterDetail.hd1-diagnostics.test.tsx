@@ -122,7 +122,8 @@ describe('ClusterDetail — HD1 Diagnostics section (V3)', () => {
     fireEvent.click(diagnosticsTab);
 
     await waitFor(() => {
-      expect(screen.getByText(/Run connection and permissions checks for this cluster/)).toBeInTheDocument();
+      // V3 U2: updated overview text
+      expect(screen.getByText(/Sharko itself/)).toBeInTheDocument();
     });
   });
 

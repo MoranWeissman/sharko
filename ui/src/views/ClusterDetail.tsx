@@ -1862,9 +1862,12 @@ export function ClusterDetail() {
           {activeSection === 'diagnostics' && (
             <div className="space-y-4">
               <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Diagnostics</h3>
-              <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
-                Run connection and permissions checks for this cluster. Results persist here until re-run.
-              </p>
+              <HelperText>
+                Diagnostics tests whether <strong>Sharko itself</strong> can reach and operate on this cluster, using the credentials you registered. This is not testing ArgoCD's connection — it's testing Sharko's ability to read addons, write secrets, and manage the cluster. (Two checks read ArgoCD-side state to verify configuration consistency.)
+              </HelperText>
+              <HelperText className="text-xs">
+                Run these checks when troubleshooting connectivity issues or after rotating credentials. Results persist here until you re-run.
+              </HelperText>
               <RoleGuard roles={['admin', 'operator']}>
                 <div className="space-y-3">
                   {/* Test connection result (also triggered from header) */}
