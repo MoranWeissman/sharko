@@ -18,6 +18,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/capabilities"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -408,6 +409,12 @@ func (s *Server) doctorCheckAddonSecretPaths(ctx context.Context, clusterName st
 		}
 	}
 	if failures > 0 {
+		// V3 E1: surface the secrets-backend read failure as a k8s Warning
+		// event. The message names the cluster and the addon and a count —
+		// never the secret path or key (those can leak the layout of the
+		// backend) and never the secret value.
+		s.emitWarning(events.ReasonAWSSecretsGetFailed,
+			fmt.Sprintf("Secrets backend read failed for cluster %q: Sharko could not read %d of %d addon secret path(s) (first failing addon: %q).", clusterName, failures, len(refs), firstFailure.addon))
 		return doctorCheck{
 			ID:     doctorCheckAddonSecretPaths,
 			Status: doctorStatusFail,
@@ -470,6 +477,11 @@ func (s *Server) doctorCheckAssumeRole(ctx context.Context, clusterName string) 
 	}
 
 	if err := s.getDoctorAssumeRoleFn()(cctx, roleARN, region); err != nil {
+		// V3 E1: surface the AWS assume-role failure as a k8s Warning event.
+		// The message names the cluster only — never the role ARN (it embeds
+		// an AWS account id) and never the raw error string.
+		s.emitWarning(events.ReasonAWSAssumeRoleFailed,
+			fmt.Sprintf("AWS assume-role failed while checking cluster %q: Sharko's identity could not assume the cluster's IAM role.", clusterName))
 		return doctorCheck{
 			ID:     doctorCheckAssumeRole,
 			Status: doctorStatusFail,

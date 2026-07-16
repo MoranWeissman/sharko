@@ -88,6 +88,19 @@ type PRTracker interface {
 	TrackPR(ctx context.Context, pr TrackedPR) error
 }
 
+// EventEmitter is the subset of events.EventRecorder the orchestrator needs
+// to emit a Kubernetes Warning event on a genuine operational failure (V3 E1).
+// Defined locally (not importing internal/events) to keep the orchestrator
+// decoupled, mirroring the PRTracker / ArgoSecretManager adapter pattern.
+// The API layer wires the concrete recorder in via SetEventEmitter; nil is a
+// silent no-op (out-of-cluster / dev mode), so every call site is nil-safe.
+type EventEmitter interface {
+	// Emit records one event. eventType is "Normal" or "Warning"; reason is a
+	// stable UpperCamelCase constant; message is plain-English (NEVER any
+	// secret material).
+	Emit(reason, message, eventType string)
+}
+
 // TrackedPR is the orchestrator-side mirror of prtracker.PRInfo. We
 // declare it locally so the orchestrator stays free of an import on
 // internal/prtracker. The API-side adapter converts this to PRInfo.
@@ -145,6 +158,7 @@ type Orchestrator struct {
 	defaultRoleARN    string            // connection-level default RoleARN, held for SetArgoSecretManager back-compat
 	prTracker         PRTracker         // optional — tracks every commitChanges-created PR
 	triggerFn         func()            // optional — invoked after Sharko writes managed-clusters.yaml to nudge the reconciler; nil disables
+	eventEmitter      EventEmitter      // optional — emits k8s Warning events on genuine failures (V3 E1); nil is a silent no-op
 
 	// credsRouter routes per-cluster credential fetches by the cluster's
 	// stored creds source (V2-cleanup-60.4): inline-registered clusters are
@@ -223,6 +237,24 @@ func (o *Orchestrator) fireReconcilerTrigger() {
 // clusters_write.go).
 func (o *Orchestrator) SetPRTracker(t PRTracker) {
 	o.prTracker = t
+}
+
+// SetEventEmitter wires in the Kubernetes event emitter (V3 E1) so the
+// orchestrator can surface a Warning event when a genuine operational failure
+// occurs (e.g. a PR fails to open). Pass nil (or skip the call) to disable
+// event emission entirely — every emit site is nil-safe via emitWarning.
+func (o *Orchestrator) SetEventEmitter(e EventEmitter) {
+	o.eventEmitter = e
+}
+
+// emitWarning records one Warning event, nil-safe. Reason must be a stable
+// UpperCamelCase constant; message must be plain-English with NO secret
+// material (no tokens, kubeconfigs, credentials, secret values, or account
+// ids). Safe to call when eventEmitter is nil (out-of-cluster / dev mode).
+func (o *Orchestrator) emitWarning(reason, message string) {
+	if o.eventEmitter != nil {
+		o.eventEmitter.Emit(reason, message, "Warning")
+	}
 }
 
 // New creates an Orchestrator with the given dependencies.

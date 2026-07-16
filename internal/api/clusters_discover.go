@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 	"github.com/MoranWeissman/sharko/internal/verify"
@@ -45,7 +47,11 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ac, err := s.connSvc.GetActiveArgocdClient()
+	// Use the orchestrator-interface accessor (honours the test override) so
+	// this handler's ArgoCD-failure event path (V3 E1) is unit-testable with a
+	// fake client — behaviourally identical to GetActiveArgocdClient in
+	// production (same underlying *argocd.Client).
+	ac, err := s.connSvc.GetActiveOrchestratorArgocdClient()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
 		return
@@ -61,6 +67,17 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 	// Get all clusters registered in ArgoCD.
 	argoClusters, err := ac.ListClusters(r.Context())
 	if err != nil {
+		// V3 E1: surface the host-ArgoCD API failure as a k8s Warning event.
+		// A 403 (ErrPermissionDenied) means the token lacks RBAC permission
+		// (auth failure); anything else is treated as unreachable. The message
+		// carries no token or URL — only the operational condition.
+		if errors.Is(err, argocd.ErrPermissionDenied) {
+			s.emitWarning(events.ReasonArgoCDAuthFailed,
+				"Host ArgoCD rejected Sharko's token: the account does not have permission to list clusters.")
+		} else {
+			s.emitWarning(events.ReasonArgoCDUnreachable,
+				"Host ArgoCD is unreachable: Sharko could not list clusters from the ArgoCD API.")
+		}
 		writeError(w, http.StatusBadGateway, "failed to list ArgoCD clusters: "+err.Error())
 		return
 	}
@@ -191,6 +208,14 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &argoErr) {
 			slog.Warn("[cluster-test] argocd provider unavailable shape",
 				"name", name, "code", argoErr.Code, "cluster", argoErr.ClusterName, "server", argoErr.Server)
+			// V3 E1: the IAM-required code is returned when Sharko parsed the
+			// cluster's AWS-IAM connection shape but could not MINT an EKS
+			// token with its own identity — surface that as a Warning event.
+			// The message names the cluster only (no server URL, no role ARN).
+			if argoErr.Code == providers.ArgoCDProviderCodeIAMRequired {
+				s.emitWarning(events.ReasonAWSTokenMintFailed,
+					fmt.Sprintf("EKS token mint failed for cluster %q: Sharko has no usable AWS identity to authenticate to this cluster.", name))
+			}
 			writeStructuredError(w, http.StatusServiceUnavailable, argoErr.Code, argoErr.Detail)
 			return
 		}
@@ -265,6 +290,12 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		slog.Info("[cluster-test] Stage 1 passed", "name", name, "version", result.ServerVersion)
 	} else {
 		slog.Error("[cluster-test] Stage 1 failed", "name", name, "error", result.ErrorMessage)
+		// V3 E1: surface the connectivity-test failure as a k8s Warning event.
+		// The message names the cluster and the verify error CODE (an
+		// enum like ERR_NETWORK / ERR_RBAC), never the raw error string —
+		// keeps secret material and internal detail out of the event.
+		s.emitWarning(events.ReasonClusterTestFailed,
+			fmt.Sprintf("Connectivity test failed for cluster %q (%s): Sharko could not complete the secret read/write probe.", name, result.ErrorCode))
 	}
 
 	// Stage 2: ArgoCD round-trip (stub).

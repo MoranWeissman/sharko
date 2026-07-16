@@ -36,6 +36,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/notifications"
@@ -238,6 +239,12 @@ type Server struct {
 	// is ready; nil in out-of-cluster / dev mode, in which case probe_mode
 	// reads as its default "check-app" and writes are rejected with 503).
 	settingsStore *settings.Store
+
+	// eventRecorder emits Kubernetes events for Sharko operational failures
+	// and successes (V3 E1). Optional — set via SetEventRecorder once the
+	// in-cluster K8s client is ready; nil in out-of-cluster / dev mode,
+	// in which case all Event() calls are no-ops.
+	eventRecorder *events.EventRecorder
 
 	// awsDetector / hubPlatformDetector back GET /system/capabilities
 	// (V2-cleanup-88.1). Both lazily built on first use (see
@@ -460,6 +467,27 @@ func (s *Server) SetObservationsStore(store *observations.Store) {
 // listener.
 func (s *Server) SetSettingsStore(store *settings.Store) {
 	s.settingsStore = store
+}
+
+// SetEventRecorder wires in the Kubernetes event recorder for operational
+// events (V3 E1). Call this after NewServer, before starting the HTTP listener.
+// Optional — when nil (out-of-cluster / dev mode), all Event() calls are no-ops.
+func (s *Server) SetEventRecorder(recorder *events.EventRecorder) {
+	s.eventRecorder = recorder
+}
+
+// EventRecorder returns the current event recorder (may be nil if not in-cluster).
+func (s *Server) EventRecorder() *events.EventRecorder {
+	return s.eventRecorder
+}
+
+// emitWarning records one k8s Warning event, nil-safe (V3 E1). reason must be
+// a stable events.Reason* constant; message must be plain-English with NO
+// secret material (no tokens, kubeconfigs, credentials, secret values, or AWS
+// account ids). Safe to call when the recorder is nil (out-of-cluster / dev
+// mode) — *events.EventRecorder.Event is itself nil-receiver-safe.
+func (s *Server) emitWarning(reason, message string) {
+	s.eventRecorder.Event(reason, message, events.EventTypeWarning)
 }
 
 // SetPRTracker wires in the PR tracker for polling and API access.

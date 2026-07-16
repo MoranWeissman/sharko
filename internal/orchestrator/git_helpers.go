@@ -8,8 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/logging"
 )
 
 // readFileIfExists attempts to read a file from the base branch. Returns the
@@ -144,6 +145,12 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 
 	pr, err := o.git.CreatePullRequest(ctx, commitMsg, operation, branchName, o.gitops.BaseBranch)
 	if err != nil {
+		// V3 E1: surface the PR-open failure as a k8s Warning event so
+		// operators see it via `kubectl get events`. Message is a plain-English
+		// operational statement — the operation name is a Sharko-internal label
+		// (e.g. "register cluster prod-eu"), never any secret material.
+		o.emitWarning(events.ReasonPROpenFailed,
+			fmt.Sprintf("Failed to open a pull request for operation %q: the Git provider rejected the request.", operation))
 		return nil, fmt.Errorf("creating pull request: %w", err)
 	}
 

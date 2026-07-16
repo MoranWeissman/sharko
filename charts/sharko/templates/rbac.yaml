@@ -114,6 +114,10 @@ rules:
     resources: ["configmaps"]
     resourceNames: [{{ printf "%s-users" (include "sharko.fullname" .) | quote }}]
     verbs: ["get"]
+  # V3 E1: Kubernetes events for Sharko operational failures/successes
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create"]
 ---
 # Bind auth role to the service account
 apiVersion: rbac.authorization.k8s.io/v1
