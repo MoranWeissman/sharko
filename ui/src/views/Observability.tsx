@@ -131,17 +131,20 @@ function ControlPlaneSection({
       </div>
 
       <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <StatBlock label="Total Apps" value={data.total_apps} />
-        <StatBlock label="Addon groups" value={data.total_appsets} />
-        <StatBlock
-          label="Connected Clusters"
-          value={data.connected_clusters}
-          sub={
-            data.configured_clusters_available
-              ? `/ ${data.configured_clusters} configured`
-              : '/ unavailable'
-          }
-        />
+        <StatBlock label="Applications" value={data.total_apps} />
+        <StatBlock label="ApplicationSets" value={data.total_appsets} />
+        {data.configured_clusters_available ? (
+          <StatBlock label="Clusters configured" value={data.configured_clusters} sub={`of ${data.total_clusters}`} />
+        ) : (
+          <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#d0e8f8] p-4 dark:ring-gray-700 dark:bg-gray-800" title="Cluster count from Git is not available">
+            <p className="text-xs font-medium uppercase tracking-wide text-[#2a5a7a] dark:text-gray-400">
+              Clusters configured
+            </p>
+            <p className="mt-1 text-2xl font-bold text-[#3a6a8a] dark:text-gray-500">
+              unavailable
+            </p>
+          </div>
+        )}
         <StatBlock label="Known to ArgoCD" value={data.total_clusters} />
       </div>
 
@@ -517,7 +520,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                         {group.addon_name}
                       </span>
                       <span className="rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-400">
-                        {total} app{total !== 1 ? 's' : ''}
+                        {total} Application{total !== 1 ? 's' : ''}
                       </span>
                     </div>
                     <div className="mt-2 flex h-2 overflow-hidden rounded-full">

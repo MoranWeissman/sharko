@@ -163,7 +163,7 @@ describe('Observability', () => {
     });
 
     // The addon group card for 'istio' should be shown with app count
-    expect(screen.getByText('10 apps')).toBeInTheDocument();
+    expect(screen.getByText('10 Applications')).toBeInTheDocument();
   });
 
   it('renders resource alerts section', async () => {
