@@ -17,6 +17,8 @@ vi.mock('recharts', () => {
     PieChart: C,
     Pie: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
     Legend: () => null,
+    LineChart: C,
+    Line: () => null,
   };
 });
 
@@ -212,5 +214,57 @@ describe('Observability', () => {
 
     // Chart should show total from addon_groups child_apps (1 in mock data)
     expect(screen.getByText(/Total: 1 application/)).toBeInTheDocument();
+  });
+
+  it('renders deployment frequency chart', async () => {
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Deployment frequency')).toBeInTheDocument();
+    });
+
+    // Chart should be rendered (not the empty state)
+    expect(screen.queryByText('No sync activity yet')).not.toBeInTheDocument();
+  });
+
+  it('renders sync duration chart', async () => {
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sync duration')).toBeInTheDocument();
+    });
+
+    // Chart should be rendered (not the empty state)
+    expect(screen.queryByText('No sync activity yet')).not.toBeInTheDocument();
+  });
+
+  it('renders empty state for deployment frequency when no syncs', async () => {
+    const { api } = await import('@/services/api');
+    vi.mocked(api.getObservability).mockResolvedValueOnce({
+      control_plane: {
+        argocd_version: 'v3.2.2',
+        helm_version: 'v3.14.0',
+        kubectl_version: 'v1.29.0',
+        total_apps: 5,
+        total_clusters: 2,
+        connected_clusters: 2,
+        configured_clusters: 2,
+        configured_clusters_available: true,
+        total_appsets: 1,
+        health_summary: { Healthy: 5 },
+      },
+      recent_syncs: [],
+      addon_health: [],
+      addon_groups: [],
+      resource_alerts: [],
+    });
+
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Deployment frequency')).toBeInTheDocument();
+    });
+
+    expect(screen.getAllByText('No sync activity yet').length).toBeGreaterThan(0);
   });
 });
