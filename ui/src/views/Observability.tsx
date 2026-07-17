@@ -7,6 +7,10 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
 } from 'recharts';
 import {
   Activity,
@@ -81,6 +85,13 @@ const HEALTH_COLORS: Record<string, string> = {
   Degraded: '#ef4444',
   Progressing: '#3b82f6',
   Missing: '#f59e0b',
+  Unknown: '#9ca3af',
+  Suspended: '#9ca3af',
+};
+
+const SYNC_COLORS: Record<string, string> = {
+  Synced: '#22c55e',
+  OutOfSync: '#f59e0b',
   Unknown: '#9ca3af',
 };
 
@@ -209,7 +220,179 @@ function StatBlock({
 }
 
 // ---------------------------------------------------------------------------
-// Section 2: Resource Alerts
+// Section 2: Health and Sync Distribution Donuts
+// ---------------------------------------------------------------------------
+
+function HealthDistributionSection({
+  data,
+}: {
+  data: ObservabilityOverviewResponse['control_plane'];
+}) {
+  const healthData = useMemo(
+    () =>
+      Object.entries(data?.health_summary ?? {})
+        .map(([name, value]) => ({
+          name,
+          value,
+        }))
+        .filter((d) => d.value > 0),
+    [data?.health_summary],
+  );
+
+  const total = healthData.reduce((sum, d) => sum + d.value, 0);
+
+  if (total === 0) {
+    return (
+      <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 dark:ring-gray-700 dark:bg-gray-800">
+        <h3 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+          Application Health Distribution
+        </h3>
+        <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
+          No applications yet
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
+      <h3 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+        Application Health Distribution
+      </h3>
+      <div style={{ width: '100%', height: 240 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={healthData}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              innerRadius={60}
+              outerRadius={90}
+              paddingAngle={2}
+            >
+              {healthData.map((entry) => (
+                <Cell
+                  key={entry.name}
+                  fill={HEALTH_COLORS[entry.name] ?? '#9ca3af'}
+                />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={{
+                backgroundColor: '#f0f7ff',
+                border: '2px solid #6aade0',
+                borderRadius: '8px',
+              }}
+            />
+            <Legend
+              wrapperStyle={{ fontSize: '14px' }}
+              iconType="circle"
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="mt-2 text-center text-sm font-medium text-[#2a5a7a] dark:text-gray-400">
+        Total: {total} application{total !== 1 ? 's' : ''}
+      </div>
+    </div>
+  );
+}
+
+function SyncDistributionSection({
+  addonGroups,
+}: {
+  addonGroups: AddonGroupHealth[];
+}) {
+  const syncData = useMemo(() => {
+    const counts: Record<string, number> = {
+      Synced: 0,
+      OutOfSync: 0,
+      Unknown: 0,
+    };
+
+    for (const group of addonGroups ?? []) {
+      for (const child of group.child_apps ?? []) {
+        const status = (child.sync_status ?? '').toLowerCase();
+        if (status === 'synced') {
+          counts.Synced++;
+        } else if (status === 'outofsync' || status === 'out_of_sync') {
+          counts.OutOfSync++;
+        } else {
+          counts.Unknown++;
+        }
+      }
+    }
+
+    return Object.entries(counts)
+      .map(([name, value]) => ({ name, value }))
+      .filter((d) => d.value > 0);
+  }, [addonGroups]);
+
+  const total = syncData.reduce((sum, d) => sum + d.value, 0);
+
+  if (total === 0) {
+    return (
+      <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 dark:ring-gray-700 dark:bg-gray-800">
+        <h3 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+          Application Sync Distribution
+        </h3>
+        <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
+          No applications yet
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
+      <h3 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+        Application Sync Distribution
+      </h3>
+      <div style={{ width: '100%', height: 240 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={syncData}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              innerRadius={60}
+              outerRadius={90}
+              paddingAngle={2}
+            >
+              {syncData.map((entry) => (
+                <Cell
+                  key={entry.name}
+                  fill={SYNC_COLORS[entry.name] ?? '#9ca3af'}
+                />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={{
+                backgroundColor: '#f0f7ff',
+                border: '2px solid #6aade0',
+                borderRadius: '8px',
+              }}
+            />
+            <Legend
+              wrapperStyle={{ fontSize: '14px' }}
+              iconType="circle"
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="mt-2 text-center text-sm font-medium text-[#2a5a7a] dark:text-gray-400">
+        Total: {total} application{total !== 1 ? 's' : ''}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Section 3: Resource Alerts
 // ---------------------------------------------------------------------------
 
 function ResourceAlertsSection({ alerts }: { alerts: ResourceAlert[] }) {
@@ -259,7 +442,7 @@ function ResourceAlertsSection({ alerts }: { alerts: ResourceAlert[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Section 3: Addon Health Groups
+// Section 4: Addon Health Groups
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -759,7 +942,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Section 4: Sync Activity Timeline
+// Section 5: Sync Activity Timeline
 // ---------------------------------------------------------------------------
 
 function SyncActivitySection({
@@ -892,7 +1075,7 @@ function SyncActivitySection({
 }
 
 // ---------------------------------------------------------------------------
-// Section 5: Bootstrap Application Health
+// Section 6: Bootstrap Application Health
 // ---------------------------------------------------------------------------
 
 function bootstrapHealthColor(health: string): { dot: string; badge: string } {
@@ -1080,6 +1263,10 @@ export function Observability() {
       </div>
       <BootstrapAppSection stats={stats} argoCDUrl={argoCDUrl} />
       <ControlPlaneSection data={data.control_plane ?? { health_summary: {}, total_applications: 0, synced: 0, out_of_sync: 0 }} />
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        <HealthDistributionSection data={data.control_plane} />
+        <SyncDistributionSection addonGroups={data.addon_groups ?? []} />
+      </div>
       <ResourceAlertsSection alerts={data.resource_alerts ?? []} />
       <AddonGroupsSection groups={data.addon_groups ?? []} />
       <SyncActivitySection syncs={data.recent_syncs ?? []} />
