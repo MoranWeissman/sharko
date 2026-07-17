@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
@@ -1096,19 +1097,48 @@ describe('ClusterDetail', () => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
 
-      expect(screen.getByText('Connectivity check')).toBeInTheDocument();
+      // W8 (V3 RW1.4): "Connectivity check" now appears both as the comparison-row
+      // display name AND as the InfoBanner title. Assert the row's own cell shows
+      // the friendly name, scoped so the banner title doesn't collide.
+      const banner = screen.getByRole('alert');
+      const rowName = screen
+        .getAllByText('Connectivity check')
+        .find((el) => !banner.contains(el));
+      expect(rowName).toBeTruthy();
       // Raw app name should NOT appear as link text
       expect(screen.queryByText('Connectivity-check-prod-eu')).not.toBeInTheDocument();
     });
 
-    it('renders the descriptive system explanation in the issues cell', async () => {
+    it('W7 (V3 RW1.4): the explanation lives in the InfoBanner, and the Issues cell shows "—" (not the description)', async () => {
       renderView('addons');
 
       await waitFor(() => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
 
-      expect(screen.getByText(/tiny test app Sharko deploys through ArgoCD/)).toBeInTheDocument();
+      // W7: the connectivity-check explanation now lives in exactly ONE place —
+      // the InfoBanner above the addon list (role="alert") — not the Issues cell.
+      const banner = screen.getByRole('alert');
+      expect(
+        within(banner).getByText(/tiny test app Sharko deploys through ArgoCD/i),
+      ).toBeInTheDocument();
+
+      // The connectivity-check comparison-table row shows "—" (no real issues,
+      // and W8 suppresses the non-applicable version columns) and never renders
+      // the description text inside the row. "Connectivity check" appears twice
+      // (banner title + row name) — pick the row-name element, not the banner.
+      const rowName = screen
+        .getAllByText('Connectivity check')
+        .find((el) => !banner.contains(el) && el.closest('tr'));
+      const checkRow = rowName?.closest('tr');
+      expect(checkRow).toBeTruthy();
+      const dashes = within(checkRow!).getAllByText('—');
+      // Git Version + ArgoCD Version (W8-suppressed) + Issues (W7) → at least the Issues "—".
+      expect(dashes.length).toBeGreaterThanOrEqual(1);
+      expect(
+        within(checkRow!).queryByText(/tiny test app Sharko deploys through ArgoCD/i),
+      ).not.toBeInTheDocument();
+
       // Must NOT show the untracked "not configured in Git" issue text
       expect(
         screen.queryByText(/Application exists in ArgoCD but not configured in Git/),
@@ -1305,13 +1335,16 @@ describe('ClusterDetail', () => {
     // --- 3. Staged removal ---
 
     it('V3-AM1: clicking Remove on a comparison-table row stages a pending-remove (top strip shows "removing")', async () => {
+      const user = userEvent.setup();
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // V3-AM1: Remove button is now on the comparison table rows, not the top strip
-      const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
-      // Click the first one (cert-manager row)
-      fireEvent.click(removeButtons[0]);
+      // W10 (V3 RW1.4): Remove moved into the RowActionsMenu kebab. Use userEvent
+      // for proper Radix UI dropdown interaction.
+      const certManagerKebab = screen.getAllByLabelText(/actions for cert-manager/i)[0];
+      await user.click(certManagerKebab);
+      const removeItem = await screen.findByRole('menuitem', { name: /remove/i });
+      await user.click(removeItem);
 
       // Now the pending-remove row appears in the top strip
       await waitFor(() => {
@@ -1333,12 +1366,15 @@ describe('ClusterDetail', () => {
     // managed-clusters.yaml. The backend guard independently rejects unknown
     // names (422), but the FE must never send junk in the first place.
     it('V3-AM1: Apply Changes sends only enabled/changing keys — never disabled-untouched keys', async () => {
+      const user = userEvent.setup();
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // V3-AM1: Stage cert-manager for removal via comparison-table Remove button
-      const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
-      fireEvent.click(removeButtons[0]); // cert-manager
+      // W10 (V3 RW1.4): Remove moved into kebab menu
+      const certManagerKebab = screen.getAllByLabelText(/actions for cert-manager/i)[0];
+      await user.click(certManagerKebab);
+      const removeItem = await screen.findByRole('menuitem', { name: /remove/i });
+      await user.click(removeItem);
 
       // Apply
       await waitFor(() => {
@@ -1406,12 +1442,15 @@ describe('ClusterDetail', () => {
         },
       );
 
+      const user = userEvent.setup();
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // V3-AM1: Stage cert-manager for removal via comparison-table Remove button
-      const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
-      fireEvent.click(removeButtons[0]); // cert-manager
+      // W10 (V3 RW1.4): Remove moved into kebab menu
+      const certManagerKebab = screen.getAllByLabelText(/actions for cert-manager/i)[0];
+      await user.click(certManagerKebab);
+      const removeItem = await screen.findByRole('menuitem', { name: /remove/i });
+      await user.click(removeItem);
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /preview changes/i })).toBeInTheDocument();
@@ -1441,12 +1480,15 @@ describe('ClusterDetail', () => {
     // --- 5. Discard resets state ---
 
     it('V3-AM1: Discard resets staged changes (pending row disappears)', async () => {
+      const user = userEvent.setup();
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // V3-AM1: Stage cert-manager for removal via comparison-table Remove button
-      const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
-      fireEvent.click(removeButtons[0]); // cert-manager
+      // W10 (V3 RW1.4): Remove moved into kebab menu
+      const certManagerKebab = screen.getAllByLabelText(/actions for cert-manager/i)[0];
+      await user.click(certManagerKebab);
+      const removeItem = await screen.findByRole('menuitem', { name: /remove/i });
+      await user.click(removeItem);
 
       await waitFor(() => {
         expect(screen.getByTestId('manage-addon-row-cert-manager')).toBeInTheDocument();
@@ -1483,9 +1525,12 @@ describe('ClusterDetail', () => {
         });
         renderView('addons');
         await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+        // W8 (V3 RW1.4): Connectivity check now appears in BOTH an InfoBanner
+        // (above the table) AND the old system row (opacity-80, inside the table).
         expect(screen.getByTestId('connectivity-check-row')).toBeInTheDocument();
-        expect(screen.getByText('Connectivity check')).toBeInTheDocument();
+        expect(screen.getAllByText('Connectivity check')).toHaveLength(2); // InfoBanner title + row name
         expect(screen.getByText(/Sharko system — automatic/i)).toBeInTheDocument();
+        // The description moved from the Issues column to the InfoBanner body
         expect(
           screen.getByText(/tiny test app Sharko deploys through ArgoCD/i),
         ).toBeInTheDocument();
@@ -1681,15 +1726,18 @@ describe('ClusterDetail', () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // V3-AM1: With no pending changes, there are NO manage-addon-row elements
-      // (the top strip is pending-only). To test the exclusion rule, verify that
-      // junk addons do NOT have Remove buttons in the comparison table.
-      // Catalog-enabled addons (cert-manager, ingress-nginx) DO have Remove buttons.
-      const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
-      expect(removeButtons.length).toBe(2); // Only 2 (cert-manager + ingress-nginx)
+      // W10 (V3 RW1.4): Remove moved into kebab menu. Verify that only catalog-
+      // enabled addons (cert-manager, ingress-nginx) have kebab menus with Remove
+      // actions. Junk addons (untracked/sharko_system) were excluded from toggle
+      // map seeding and have NO kebab menus.
+      const certManagerKebab = screen.queryByLabelText(/actions for cert-manager/i);
+      const ingressKebab = screen.queryByLabelText(/actions for ingress-nginx/i);
+      expect(certManagerKebab).toBeInTheDocument();
+      expect(ingressKebab).toBeInTheDocument();
 
-      // Junk addons (some-manual-app, connectivity-check-cluster-1) do NOT have
-      // Remove buttons because they were excluded from the toggle map seeding.
+      // Junk addons must NOT have kebab menus
+      expect(screen.queryByLabelText(/actions for some-manual-app/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/actions for connectivity-check-cluster-1/i)).not.toBeInTheDocument();
     });
 
     it('junk rows never appear in the enable picker — not as items, not via search', async () => {
@@ -1721,12 +1769,15 @@ describe('ClusterDetail', () => {
     });
 
     it('V3-AM1: Apply payload never includes junk names, only catalog enabled/staged keys', async () => {
+      const user = userEvent.setup();
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // V3-AM1: Stage cert-manager for removal via comparison-table Remove button
-      const removeButtons = screen.getAllByTestId('comparison-row-remove-btn');
-      fireEvent.click(removeButtons[0]); // cert-manager
+      // W10 (V3 RW1.4): Remove moved into kebab menu
+      const certManagerKebab = screen.getAllByLabelText(/actions for cert-manager/i)[0];
+      await user.click(certManagerKebab);
+      const removeItem = await screen.findByRole('menuitem', { name: /remove/i });
+      await user.click(removeItem);
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /apply changes/i })).toBeInTheDocument();
@@ -2468,17 +2519,15 @@ describe('ClusterDetail', () => {
         return Promise.resolve({ git: { merged: false, pr_id: 42 } });
       });
 
+      const user = userEvent.setup();
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // V3-AM1: Remove prometheus via comparison-table Remove button.
-      // (In the baseResponse fixture, prometheus is in addon_comparisons.)
-      // Find prometheus's Remove button by searching for its row in the comparison table
-      const prometheusTableRows = screen.getAllByRole('row');
-      const prometheusRow = prometheusTableRows.find(row => within(row).queryByText('prometheus'));
-      expect(prometheusRow).toBeTruthy();
-      const prometheusRemoveBtn = within(prometheusRow!).getByTestId('comparison-row-remove-btn');
-      fireEvent.click(prometheusRemoveBtn);
+      // W10 (V3 RW1.4): Remove moved into kebab menu
+      const prometheusKebab = screen.getByLabelText(/actions for prometheus/i);
+      await user.click(prometheusKebab);
+      const removeItem = await screen.findByRole('menuitem', { name: /remove/i });
+      await user.click(removeItem);
 
       // "Apply Changes" visible after staging the removal.
       await waitFor(() => expect(screen.getByRole('button', { name: /Apply Changes/i })).toBeInTheDocument());
@@ -2510,12 +2559,12 @@ describe('ClusterDetail', () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // V3-AM1: Remove prometheus via comparison-table Remove button.
-      const prometheusTableRows = screen.getAllByRole('row');
-      const prometheusRow = prometheusTableRows.find(row => within(row).queryByText('prometheus'));
-      expect(prometheusRow).toBeTruthy();
-      const prometheusRemoveBtn = within(prometheusRow!).getByTestId('comparison-row-remove-btn');
-      fireEvent.click(prometheusRemoveBtn);
+      // W10 (V3 RW1.4): Remove moved into kebab menu
+      const user = userEvent.setup();
+      const prometheusKebab = screen.getByLabelText(/actions for prometheus/i);
+      await user.click(prometheusKebab);
+      const removeItem = await screen.findByRole('menuitem', { name: /remove/i });
+      await user.click(removeItem);
 
       // Preview.
       const previewBtn = await screen.findByRole('button', { name: /Preview changes/i });
