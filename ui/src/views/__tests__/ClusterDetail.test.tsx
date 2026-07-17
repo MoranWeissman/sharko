@@ -1353,8 +1353,9 @@ describe('ClusterDetail', () => {
       expect(screen.getByTestId('manage-addon-row-cert-manager')).toHaveTextContent(
         /removing/i,
       );
-      // Apply Changes button appears
-      expect(screen.getByRole('button', { name: /apply changes/i })).toBeInTheDocument();
+      // W9 (V3 RW1.7): the primary action reads "Review & open PR" before a
+      // preview exists (it triggers the dry-run preview, not a blind apply).
+      expect(screen.getByRole('button', { name: /review & open pr/i })).toBeInTheDocument();
     });
 
     // --- 4. Payload identity ---
@@ -1376,23 +1377,35 @@ describe('ClusterDetail', () => {
       const removeItem = await screen.findByRole('menuitem', { name: /remove/i });
       await user.click(removeItem);
 
-      // Apply
+      // W9 (V3 RW1.7): preview-then-confirm — "Review & open PR" fires the
+      // dry-run, then "Open PR" fires the real apply.
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /apply changes/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /review & open pr/i })).toBeInTheDocument();
       });
-      fireEvent.click(screen.getByRole('button', { name: /apply changes/i }));
+      fireEvent.click(screen.getByRole('button', { name: /review & open pr/i }));
+      const applyBtn = await screen.findByRole('button', { name: /^open pr$/i });
+      fireEvent.click(applyBtn);
 
       await waitFor(() => {
-        expect(mockUpdateClusterAddons).toHaveBeenCalledOnce();
+        // One dry-run (true) + one real apply — the real apply carries the payload.
+        expect(mockUpdateClusterAddons).toHaveBeenCalledWith('prod-eu', {
+          'cert-manager': false,
+          'ingress-nginx': true,
+        });
       });
 
       // cert-manager: was enabled → include as false (being removed)
       // ingress-nginx: currently enabled → include as true
-      // prometheus: disabled in git and never staged → must NOT be in payload
-      expect(mockUpdateClusterAddons).toHaveBeenCalledWith('prod-eu', {
+      // prometheus: disabled in git and never staged → must NOT be in payload.
+      // The real (non-dry-run) apply fires exactly once.
+      const realApplyCalls = mockUpdateClusterAddons.mock.calls.filter(
+        (c) => c[2] !== true,
+      );
+      expect(realApplyCalls).toHaveLength(1);
+      expect(realApplyCalls[0]).toEqual(['prod-eu', {
         'cert-manager': false,
         'ingress-nginx': true,
-      });
+      }]);
     });
 
     it('Apply Changes after staging a new enable emits true for the staged addon', async () => {
@@ -1407,21 +1420,32 @@ describe('ClusterDetail', () => {
       fireEvent.click(screen.getByTestId('addon-picker-item-prometheus'));
       fireEvent.click(screen.getByTestId('addon-picker-done'));
 
-      // Apply
+      // W9 (V3 RW1.7): preview-then-confirm — "Review & open PR" then "Open PR".
       await waitFor(() =>
-        expect(screen.getByRole('button', { name: /apply changes/i })).toBeInTheDocument(),
+        expect(screen.getByRole('button', { name: /review & open pr/i })).toBeInTheDocument(),
       );
-      fireEvent.click(screen.getByRole('button', { name: /apply changes/i }));
+      fireEvent.click(screen.getByRole('button', { name: /review & open pr/i }));
+      const applyBtn = await screen.findByRole('button', { name: /^open pr$/i });
+      fireEvent.click(applyBtn);
 
       await waitFor(() => {
-        expect(mockUpdateClusterAddons).toHaveBeenCalledOnce();
+        expect(mockUpdateClusterAddons).toHaveBeenCalledWith('prod-eu', {
+          'cert-manager': true,
+          'ingress-nginx': true,
+          prometheus: true,
+        });
       });
 
-      expect(mockUpdateClusterAddons).toHaveBeenCalledWith('prod-eu', {
+      // The real (non-dry-run) apply fires exactly once with the staged payload.
+      const realApplyCalls = mockUpdateClusterAddons.mock.calls.filter(
+        (c) => c[2] !== true,
+      );
+      expect(realApplyCalls).toHaveLength(1);
+      expect(realApplyCalls[0]).toEqual(['prod-eu', {
         'cert-manager': true,
         'ingress-nginx': true,
         prometheus: true,
-      });
+      }]);
     });
 
     // --- 4b. V3-TX-A3: Preview changes (Surface 6) ---
@@ -1452,10 +1476,13 @@ describe('ClusterDetail', () => {
       const removeItem = await screen.findByRole('menuitem', { name: /remove/i });
       await user.click(removeItem);
 
+      // W9 (V3 RW1.7): "Review & open PR" is the preview trigger; it fires the
+      // dry-run and renders the diff. The real apply only fires on a follow-up
+      // "Open PR" click, which this test intentionally does NOT do.
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /preview changes/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /review & open pr/i })).toBeInTheDocument();
       });
-      fireEvent.click(screen.getByRole('button', { name: /preview changes/i }));
+      fireEvent.click(screen.getByRole('button', { name: /review & open pr/i }));
 
       // Dry-run call carries the diff-only payload + dryRun: true.
       await waitFor(() =>
@@ -1504,9 +1531,9 @@ describe('ClusterDetail', () => {
       await waitFor(() => {
         expect(screen.queryByTestId('manage-addon-row-cert-manager')).not.toBeInTheDocument();
       });
-      // Apply Changes button gone
+      // W9 (V3 RW1.7): footer's primary button ("Review & open PR") is gone.
       expect(
-        screen.queryByRole('button', { name: /apply changes/i }),
+        screen.queryByRole('button', { name: /review & open pr/i }),
       ).not.toBeInTheDocument();
     });
 
@@ -1779,15 +1806,21 @@ describe('ClusterDetail', () => {
       const removeItem = await screen.findByRole('menuitem', { name: /remove/i });
       await user.click(removeItem);
 
+      // W9 (V3 RW1.7): preview-then-confirm — "Review & open PR" then "Open PR".
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /apply changes/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /review & open pr/i })).toBeInTheDocument();
       });
-      fireEvent.click(screen.getByRole('button', { name: /apply changes/i }));
+      fireEvent.click(screen.getByRole('button', { name: /review & open pr/i }));
+      const applyBtn = await screen.findByRole('button', { name: /^open pr$/i });
+      fireEvent.click(applyBtn);
       await waitFor(() => {
-        expect(mockUpdateClusterAddons).toHaveBeenCalledOnce();
+        expect(mockUpdateClusterAddons.mock.calls.filter((c) => c[2] !== true)).toHaveLength(1);
       });
 
-      const [, payload] = mockUpdateClusterAddons.mock.calls[0] as [string, Record<string, boolean>];
+      // Inspect the real (non-dry-run) apply payload. The dry-run preview
+      // carries the identical payload, so this also proves the two paths agree.
+      const realApplyCall = mockUpdateClusterAddons.mock.calls.find((c) => c[2] !== true);
+      const payload = realApplyCall![1] as Record<string, boolean>;
       // cert-manager: was enabled → include as false
       expect(payload['cert-manager']).toBe(false);
       // ingress-nginx: currently enabled → include as true
@@ -1810,15 +1843,19 @@ describe('ClusterDetail', () => {
       fireEvent.click(screen.getByTestId('addon-picker-item-velero'));
       fireEvent.click(screen.getByTestId('addon-picker-done'));
 
+      // W9 (V3 RW1.7): preview-then-confirm — "Review & open PR" then "Open PR".
       await waitFor(() =>
-        expect(screen.getByRole('button', { name: /apply changes/i })).toBeInTheDocument(),
+        expect(screen.getByRole('button', { name: /review & open pr/i })).toBeInTheDocument(),
       );
-      fireEvent.click(screen.getByRole('button', { name: /apply changes/i }));
+      fireEvent.click(screen.getByRole('button', { name: /review & open pr/i }));
+      const applyBtn = await screen.findByRole('button', { name: /^open pr$/i });
+      fireEvent.click(applyBtn);
       await waitFor(() => {
-        expect(mockUpdateClusterAddons).toHaveBeenCalledOnce();
+        expect(mockUpdateClusterAddons.mock.calls.filter((c) => c[2] !== true)).toHaveLength(1);
       });
 
-      const [, payload] = mockUpdateClusterAddons.mock.calls[0] as [string, Record<string, boolean>];
+      const realApplyCall = mockUpdateClusterAddons.mock.calls.find((c) => c[2] !== true);
+      const payload = realApplyCall![1] as Record<string, boolean>;
       // velero: newly staged → true
       expect(payload['velero']).toBe(true);
       // Junk must still not appear.
@@ -2529,19 +2566,20 @@ describe('ClusterDetail', () => {
       const removeItem = await screen.findByRole('menuitem', { name: /remove/i });
       await user.click(removeItem);
 
-      // "Apply Changes" visible after staging the removal.
-      await waitFor(() => expect(screen.getByRole('button', { name: /Apply Changes/i })).toBeInTheDocument());
+      // W9 (V3 RW1.7): "Review & open PR" visible after staging the removal.
+      await waitFor(() => expect(screen.getByRole('button', { name: /review & open pr/i })).toBeInTheDocument());
 
-      // Preview.
-      const previewBtn = screen.getByRole('button', { name: /Preview changes/i });
+      // Preview — clicking "Review & open PR" fires the dry-run.
+      const previewBtn = screen.getByRole('button', { name: /review & open pr/i });
       fireEvent.click(previewBtn);
 
       // Wait for preview to render.
       await waitFor(() => expect(mockUpdateClusterAddons).toHaveBeenCalledWith('prod-eu', expect.anything(), true));
       await waitFor(() => expect(screen.getByText(/Remove prometheus from prod-eu/i)).toBeInTheDocument());
 
-      // "Apply Changes" + "Discard" STILL visible with the preview.
-      expect(screen.getByRole('button', { name: /Apply Changes/i })).toBeInTheDocument();
+      // W9 (V3 RW1.7): once the preview is shown the primary button becomes
+      // "Open PR" (the confirm); "Discard" is STILL visible with the preview.
+      expect(screen.getByRole('button', { name: /^open pr$/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /Discard/i })).toBeInTheDocument();
     });
 
@@ -2566,8 +2604,8 @@ describe('ClusterDetail', () => {
       const removeItem = await screen.findByRole('menuitem', { name: /remove/i });
       await user.click(removeItem);
 
-      // Preview.
-      const previewBtn = await screen.findByRole('button', { name: /Preview changes/i });
+      // W9 (V3 RW1.7): "Review & open PR" is the preview trigger.
+      const previewBtn = await screen.findByRole('button', { name: /review & open pr/i });
       fireEvent.click(previewBtn);
       await waitFor(() => expect(screen.getByText(/Remove prometheus from prod-eu/i)).toBeInTheDocument());
 
@@ -2575,10 +2613,12 @@ describe('ClusterDetail', () => {
       const discardBtn = screen.getByRole('button', { name: /Discard/i });
       fireEvent.click(discardBtn);
 
-      // Footer is gone (no pending changes, no preview).
+      // Footer is gone (no pending changes, no preview) — neither the confirm
+      // ("Open PR") nor the pre-preview trigger ("Review & open PR") remains.
       await waitFor(() => {
-        expect(screen.queryByRole('button', { name: /Apply Changes/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /open pr/i })).not.toBeInTheDocument();
       });
+      expect(screen.queryByRole('button', { name: /review & open pr/i })).not.toBeInTheDocument();
 
       // Preview is gone.
       expect(screen.queryByText(/Remove prometheus from prod-eu/i)).not.toBeInTheDocument();
@@ -2588,8 +2628,8 @@ describe('ClusterDetail', () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      // No pending changes, no preview → footer is not rendered.
-      expect(screen.queryByRole('button', { name: /Apply Changes/i })).not.toBeInTheDocument();
+      // W9 (V3 RW1.7): no pending changes, no preview → footer is not rendered.
+      expect(screen.queryByRole('button', { name: /open pr/i })).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /Discard/i })).not.toBeInTheDocument();
     });
   });
