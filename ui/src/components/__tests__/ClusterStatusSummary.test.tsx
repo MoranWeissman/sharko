@@ -69,7 +69,7 @@ describe('clusterStatusParts', () => {
     expect(parts[0].severity).toBe('good');
   });
 
-  it('adds a deploy-check part and a Sharko-test part when the data exists', () => {
+  it('adds pending/failed deploy-check parts when they apply', () => {
     const parts = clusterStatusParts({
       connectionStatus: 'Successful',
       connectivityStatus: 'check_failed',
@@ -82,6 +82,38 @@ describe('clusterStatusParts', () => {
     expect(parts.map((p) => p.label)).toEqual(['Connected', 'Failed', 'Test failing']);
     expect(parts[1].meaning).toBe('pod stuck');
     expect(parts[2].meaning).toContain('ERR_NETWORK');
+  });
+
+  it('does NOT add a standing "Verified" success row when the cluster is simply connected', () => {
+    // W11: the always-on "Deploy check / Verified" row was redundant with the
+    // ArgoCD-connection part. A connected cluster shows the one fact.
+    const partsWithoutSharko = clusterStatusParts({
+      connectionStatus: 'Successful',
+      connectivityStatus: 'verified_argocd',
+    });
+    expect(partsWithoutSharko).toHaveLength(1);
+    expect(partsWithoutSharko[0].label).toBe('Connected');
+    expect(partsWithoutSharko.every((p) => p.label !== 'Verified')).toBe(true);
+
+    const partsWithSharko = clusterStatusParts({
+      connectionStatus: 'Successful',
+      connectivityStatus: 'verified_check',
+      sharkoStatus: 'Connected',
+      lastTestAt: new Date().toISOString(),
+    });
+    expect(partsWithSharko).toHaveLength(2); // ArgoCD-connection + Sharko-direct
+    expect(partsWithSharko.map((p) => p.label)).toEqual(['Connected', 'Reachable']);
+    expect(partsWithSharko.every((p) => p.label !== 'Verified')).toBe(true);
+  });
+
+  it('still surfaces pending deploy-check state', () => {
+    const parts = clusterStatusParts({
+      connectionStatus: 'Successful',
+      connectivityStatus: 'check_pending',
+      connectivityDetail: 'waiting for pod',
+    });
+    expect(parts.map((p) => p.label)).toEqual(['Connected', 'Running…']);
+    expect(parts[1].meaning).toBe('waiting for pod');
   });
 
   it('never uses internal Stage vocabulary in any meaning', () => {
