@@ -14,6 +14,9 @@ vi.mock('recharts', () => {
     Tooltip: () => null,
     CartesianGrid: () => null,
     Cell: () => null,
+    PieChart: C,
+    Pie: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+    Legend: () => null,
   };
 });
 
@@ -187,5 +190,27 @@ describe('Observability', () => {
     await waitFor(() => {
       expect(screen.getByText('Network error')).toBeInTheDocument();
     });
+  });
+
+  it('renders health distribution donut chart', async () => {
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Application Health Distribution')).toBeInTheDocument();
+    });
+
+    // Chart should show total applications
+    expect(screen.getByText(/Total: 120 applications/)).toBeInTheDocument();
+  });
+
+  it('renders sync distribution donut chart', async () => {
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Application Sync Distribution')).toBeInTheDocument();
+    });
+
+    // Chart should show total from addon_groups child_apps (1 in mock data)
+    expect(screen.getByText(/Total: 1 application/)).toBeInTheDocument();
   });
 });
