@@ -1703,27 +1703,33 @@ export function ClusterDetail() {
 
                 {/* Apply / Discard footer — V3-AP1: render whenever there are pending
                     changes OR an open preview so a shown preview ALWAYS carries its Apply
-                    + Discard buttons (even if a background poll tried to reseed toggles). */}
+                    + Discard buttons (even if a background poll tried to reseed toggles).
+                    W9 (V3 RW1.7): preview-then-confirm flow — when no preview yet, primary
+                    button triggers preview; once preview is shown, primary button confirms. */}
                 {(hasToggleChanges || togglePreview) && (
                   <div className="mt-4 flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={handlePreviewToggles}
-                      disabled={applyingToggles || togglePreviewLoading}
-                      className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-                    >
-                      {togglePreviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
-                      Preview changes
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleApplyToggles}
-                      disabled={applyingToggles}
-                      className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-                    >
-                      {applyingToggles && <Loader2 className="h-4 w-4 animate-spin" />}
-                      Apply Changes
-                    </button>
+                    {!togglePreview && (
+                      <button
+                        type="button"
+                        onClick={handlePreviewToggles}
+                        disabled={applyingToggles || togglePreviewLoading}
+                        className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                      >
+                        {togglePreviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitPullRequest className="h-4 w-4" />}
+                        Review & open PR
+                      </button>
+                    )}
+                    {togglePreview && (
+                      <button
+                        type="button"
+                        onClick={handleApplyToggles}
+                        disabled={applyingToggles}
+                        className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                      >
+                        {applyingToggles && <Loader2 className="h-4 w-4 animate-spin" />}
+                        Open PR
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => {

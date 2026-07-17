@@ -11,6 +11,8 @@ import {
   Pie,
   Cell,
   Legend,
+  LineChart,
+  Line,
 } from 'recharts';
 import {
   Activity,
@@ -1075,7 +1077,155 @@ function SyncActivitySection({
 }
 
 // ---------------------------------------------------------------------------
-// Section 6: Bootstrap Application Health
+// Section 6: Deployment Frequency (stacked bar: Succeeded/Failed over time)
+// ---------------------------------------------------------------------------
+
+function DeploymentFrequencySection({
+  syncs,
+}: {
+  syncs: SyncActivityEntry[];
+}) {
+  const frequencyData = useMemo(() => {
+    if (!syncs || syncs.length === 0) return [];
+
+    const now = Date.now();
+    const buckets: Record<number, { succeeded: number; failed: number }> = {};
+    for (let i = 0; i < 24; i++) buckets[i] = { succeeded: 0, failed: 0 };
+
+    for (const s of syncs) {
+      const hoursAgo = Math.floor((now - new Date(s.timestamp).getTime()) / 3600000);
+      if (hoursAgo >= 0 && hoursAgo < 24) {
+        const status = (s.status ?? '').toLowerCase();
+        if (status === 'succeeded') {
+          buckets[hoursAgo].succeeded++;
+        } else if (status === 'failed') {
+          buckets[hoursAgo].failed++;
+        }
+      }
+    }
+
+    return Array.from({ length: 24 }, (_, i) => ({
+      label: i === 0 ? 'now' : `${i}h`,
+      succeeded: buckets[i].succeeded,
+      failed: buckets[i].failed,
+    })).reverse();
+  }, [syncs]);
+
+  const hasSyncs = syncs && syncs.length > 0;
+
+  return (
+    <section className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
+      <h3 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+        Deployment frequency
+      </h3>
+      {!hasSyncs ? (
+        <p className="py-8 text-center text-sm text-[#2a5a7a] dark:text-gray-400">
+          No sync activity yet
+        </p>
+      ) : (
+        <ResponsiveContainer width="100%" height={200}>
+          <BarChart data={frequencyData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
+            <XAxis dataKey="label" tick={{ fontSize: 12 }} interval={3} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 12 }} width={35} />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: '#f0f7ff',
+                border: '2px solid #6aade0',
+                borderRadius: '8px',
+                fontSize: '14px',
+              }}
+            />
+            <Legend wrapperStyle={{ fontSize: '14px' }} iconType="square" />
+            <Bar dataKey="succeeded" stackId="a" fill="#22c55e" name="Succeeded" radius={[0, 0, 0, 0]} />
+            <Bar dataKey="failed" stackId="a" fill="#ef4444" name="Failed" radius={[2, 2, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Section 7: Sync Duration (line chart over time)
+// ---------------------------------------------------------------------------
+
+function SyncDurationSection({
+  syncs,
+}: {
+  syncs: SyncActivityEntry[];
+}) {
+  const durationData = useMemo(() => {
+    if (!syncs || syncs.length === 0) return [];
+
+    // Sort by timestamp ascending (oldest first) for a proper timeline
+    const sorted = [...syncs].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    return sorted.map((s, idx) => ({
+      index: idx + 1,
+      duration_secs: s.duration_secs,
+      duration: s.duration,
+      timestamp: s.timestamp,
+    }));
+  }, [syncs]);
+
+  const hasSyncs = syncs && syncs.length > 0;
+
+  return (
+    <section className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
+      <h3 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+        Sync duration
+      </h3>
+      {!hasSyncs ? (
+        <p className="py-8 text-center text-sm text-[#2a5a7a] dark:text-gray-400">
+          No sync activity yet
+        </p>
+      ) : (
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart data={durationData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
+            <XAxis
+              dataKey="index"
+              tick={{ fontSize: 12 }}
+              label={{ value: 'Sync events (ordered by time)', position: 'insideBottom', offset: -5, fontSize: 12 }}
+            />
+            <YAxis
+              tick={{ fontSize: 12 }}
+              width={45}
+              label={{ value: 'seconds', angle: -90, position: 'insideLeft', fontSize: 12 }}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: '#f0f7ff',
+                border: '2px solid #6aade0',
+                borderRadius: '8px',
+                fontSize: '14px',
+              }}
+              labelFormatter={(value) => `Sync #${value}`}
+              formatter={(_val, _name, item) => {
+                const dur = item?.payload?.duration;
+                return [dur ?? `${item?.value ?? ''}s`, 'Duration'];
+              }}
+            />
+            <Line
+              type="monotone"
+              dataKey="duration_secs"
+              stroke="#06b6d4"
+              strokeWidth={2}
+              dot={{ r: 3 }}
+              activeDot={{ r: 5 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Section 8: Bootstrap Application Health
 // ---------------------------------------------------------------------------
 
 function bootstrapHealthColor(health: string): { dot: string; badge: string } {
@@ -1270,6 +1420,10 @@ export function Observability() {
       <ResourceAlertsSection alerts={data.resource_alerts ?? []} />
       <AddonGroupsSection groups={data.addon_groups ?? []} />
       <SyncActivitySection syncs={data.recent_syncs ?? []} />
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        <DeploymentFrequencySection syncs={data.recent_syncs ?? []} />
+        <SyncDurationSection syncs={data.recent_syncs ?? []} />
+      </div>
     </div>
   );
 }

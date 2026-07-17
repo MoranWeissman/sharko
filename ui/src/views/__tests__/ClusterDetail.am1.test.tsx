@@ -244,10 +244,10 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
       const undoButtons = screen.getAllByText('Undo');
       expect(undoButtons.length).toBeGreaterThan(0);
 
-      // Apply/Discard/Preview footer should appear
-      expect(screen.getByText('Apply Changes')).toBeInTheDocument();
+      // Apply/Discard footer should appear — W9 (RW1.7): primary button reads
+      // "Review & open PR" before preview, "Open PR" after.
+      expect(screen.getByText('Review & open PR')).toBeInTheDocument();
       expect(screen.getByText('Discard')).toBeInTheDocument();
-      expect(screen.getByText('Preview changes')).toBeInTheDocument();
     });
   });
 
@@ -267,9 +267,18 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
       expect(screen.getByText(/removing/i)).toBeInTheDocument();
     });
 
-    // Click Apply
-    const applyButton = screen.getByText('Apply Changes');
-    fireEvent.click(applyButton);
+    // W9 (RW1.7): preview-then-confirm flow — click "Review & open PR" to get
+    // the preview, then "Open PR" to confirm (skip waiting for preview render
+    // since the mock returns synchronously in this test).
+    const reviewButton = screen.getByText('Review & open PR');
+    fireEvent.click(reviewButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Open PR')).toBeInTheDocument();
+    });
+
+    const openPRButton = screen.getByText('Open PR');
+    fireEvent.click(openPRButton);
 
     await waitFor(() => {
       // Should have called updateClusterAddons with the toggle map showing
@@ -308,8 +317,8 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
       // The "removing" badge should disappear
       expect(screen.queryByText(/removing/i)).not.toBeInTheDocument();
 
-      // Apply/Discard footer should disappear
-      expect(screen.queryByText('Apply Changes')).not.toBeInTheDocument();
+      // Apply/Discard footer should disappear — W9 (RW1.7): button was "Review & open PR"
+      expect(screen.queryByText('Review & open PR')).not.toBeInTheDocument();
       expect(screen.queryByText('Discard')).not.toBeInTheDocument();
     });
   });
@@ -338,8 +347,8 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
       // The "removing" badge should disappear
       expect(screen.queryByText(/removing/i)).not.toBeInTheDocument();
 
-      // Apply/Discard footer should disappear
-      expect(screen.queryByText('Apply Changes')).not.toBeInTheDocument();
+      // Apply/Discard footer should disappear — W9 (RW1.7): button was "Review & open PR"
+      expect(screen.queryByText('Review & open PR')).not.toBeInTheDocument();
       expect(screen.queryByText('Discard')).not.toBeInTheDocument();
     });
   });
@@ -360,15 +369,15 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
       expect(screen.getByText(/removing/i)).toBeInTheDocument();
     });
 
-    // Click Preview
-    const previewButton = screen.getByText('Preview changes');
-    fireEvent.click(previewButton);
+    // W9 (RW1.7): Click "Review & open PR" to trigger the preview
+    const reviewButton = screen.getByText('Review & open PR');
+    fireEvent.click(reviewButton);
 
     // V3-AP1 fix: preview always carries Apply/Discard, even if the toggle
-    // edit is later cleared by background poll.
+    // edit is later cleared by background poll. W9 (RW1.7): once the preview
+    // is shown, the primary button becomes "Open PR".
     await waitFor(() => {
-      // Apply/Discard should still be visible during preview
-      expect(screen.getByText('Apply Changes')).toBeInTheDocument();
+      expect(screen.getByText('Open PR')).toBeInTheDocument();
       expect(screen.getByText('Discard')).toBeInTheDocument();
     });
   });

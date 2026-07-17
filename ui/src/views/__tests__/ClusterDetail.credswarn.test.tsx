@@ -179,10 +179,24 @@ describe('ClusterDetail — addon_secrets_ready pre-warn (V2-cleanup-88.5)', () 
     expect(screen.queryByTestId('manage-addon-secret-warning-datadog')).not.toBeInTheDocument();
   });
 
-  it('renders the real 422 verbatim on Apply Changes if the operator proceeds past the pre-warn', async () => {
+  it('renders the real 422 verbatim on the real apply if the operator proceeds past the pre-warn', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparison(false));
     mockPreviewEnableAddon.mockRejectedValue(new Error(MISSING_CREDS_MESSAGE));
-    mockUpdateClusterAddons.mockRejectedValue(new Error(MISSING_CREDS_MESSAGE));
+    // W9 (V3 RW1.7): the apply now runs through a preview-then-confirm flow.
+    // The dry-run preview (dryRun === true) succeeds so the confirm button
+    // appears; the REAL apply (dryRun falsy) is where the backend 422 lands —
+    // exactly the "operator proceeded past the pre-warn" case this pins.
+    mockUpdateClusterAddons.mockImplementation(
+      (_name: string, _payload: unknown, dryRun?: boolean) => {
+        if (dryRun) {
+          return Promise.resolve({
+            pr_title: 'Enable datadog on prod-eu',
+            files_to_write: [{ path: 'configuration/managed-clusters.yaml', action: 'update' }],
+          });
+        }
+        return Promise.reject(new Error(MISSING_CREDS_MESSAGE));
+      },
+    );
 
     renderView();
     await stageDatadog();
@@ -198,10 +212,14 @@ describe('ClusterDetail — addon_secrets_ready pre-warn (V2-cleanup-88.5)', () 
       expect(screen.queryByTestId('addon-picker-done')).not.toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /apply changes/i }));
+    // Proceed: "Review & open PR" fires the dry-run preview, then "Open PR"
+    // fires the real apply that the backend rejects with the 422.
+    fireEvent.click(screen.getByRole('button', { name: /review & open pr/i }));
+    const openPRBtn = await screen.findByRole('button', { name: /^open pr$/i });
+    fireEvent.click(openPRBtn);
 
     await waitFor(() => {
-      expect(mockUpdateClusterAddons).toHaveBeenCalled();
+      expect(mockUpdateClusterAddons).toHaveBeenCalledWith('prod-eu', expect.anything());
     });
     // The same verbatim message renders again via the existing
     // toggleError path — pre-warn and the real gate agree.
