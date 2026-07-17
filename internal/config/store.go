@@ -45,10 +45,9 @@ func NewFileStore(path string) *FileStore {
 	return &FileStore{path: path}
 }
 
-func (s *FileStore) load() (*configFile, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
+// loadLocked reads and parses the config file. Assumes the caller already
+// holds s.mu for read or write. Used internally to avoid lock re-entrancy.
+func (s *FileStore) loadLocked() (*configFile, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -76,10 +75,15 @@ func (s *FileStore) load() (*configFile, error) {
 	return &cfg, nil
 }
 
-func (s *FileStore) save(cfg *configFile) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *FileStore) load() (*configFile, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loadLocked()
+}
 
+// saveLocked marshals and writes the config file. Assumes the caller already
+// holds s.mu for write. Used internally to avoid lock re-entrancy.
+func (s *FileStore) saveLocked(cfg *configFile) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
@@ -90,6 +94,12 @@ func (s *FileStore) save(cfg *configFile) error {
 	}
 
 	return nil
+}
+
+func (s *FileStore) save(cfg *configFile) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveLocked(cfg)
 }
 
 func (s *FileStore) ListConnections() ([]models.Connection, error) {
@@ -246,7 +256,7 @@ func (s *FileStore) MergeConnectionFromEnvAtomic(name string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	cfg, err := s.load()
+	cfg, err := s.loadLocked()
 	if err != nil {
 		return false, err
 	}
@@ -269,7 +279,7 @@ func (s *FileStore) MergeConnectionFromEnvAtomic(name string) (bool, error) {
 	}
 
 	// Save — the merge operated on the fresh load
-	if err := s.save(cfg); err != nil {
+	if err := s.saveLocked(cfg); err != nil {
 		return false, err
 	}
 

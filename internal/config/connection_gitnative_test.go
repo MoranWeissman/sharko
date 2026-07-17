@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/models"
 )
@@ -392,6 +393,85 @@ func (t *tokenRotatingStore) MergeConnectionFromEnvAtomic(name string) (bool, er
 	}
 	t.conns[name] = c
 	return true, nil
+}
+
+// TestReconcileConnectionFromEnv_NoBootDeadlock is the regression test for the
+// V3 C2 boot deadlock (v3.0.0 blocker). When an active connection is stored,
+// MergeConnectionFromEnvAtomic must NOT self-deadlock (the bug was calling
+// s.load()/s.save() while already holding s.mu.Lock — RWMutex is not reentrant).
+// This test exercises the full boot flow with a real FileStore and a declared
+// env var, and ensures ReconcileConnectionFromEnv completes within a timeout
+// (not hanging forever). Before the fix, this would fail via timeout.
+func TestReconcileConnectionFromEnv_NoBootDeadlock(t *testing.T) {
+	// Use a non-secret env var that MergeConnectionFromEnv reads, so the
+	// changed=true branch is exercised (envConnGitOwner is a simple one).
+	t.Setenv(envConnGitOwner, "deadlock-test-owner")
+
+	// Create a real FileStore with an active connection in a temp dir.
+	dir := t.TempDir()
+	path := dir + "/config.yaml"
+	store := NewFileStore(path)
+
+	conn := models.Connection{
+		Name: "active",
+		Git: models.GitRepoConfig{
+			Provider: models.GitProviderGitHub,
+			Owner:    "old-owner", // will be overwritten by env
+			Repo:     "test-repo",
+			Token:    "ghp_secret_must_be_preserved",
+		},
+		Argocd: models.ArgocdConfig{
+			ServerURL: "https://argocd.example.com",
+			Token:     "argocd_secret_also_preserved",
+		},
+	}
+	if err := store.SaveConnection(conn); err != nil {
+		t.Fatalf("SaveConnection: %v", err)
+	}
+	if err := store.SetActiveConnection("active"); err != nil {
+		t.Fatalf("SetActiveConnection: %v", err)
+	}
+
+	// Regression test: call ReconcileConnectionFromEnv under a timeout guard.
+	// OLD CODE: this would hang forever (goroutine 1 waits on RLock while
+	// already holding Lock). NEW CODE: completes immediately, no re-entrancy.
+	done := make(chan struct{})
+	var changed bool
+	var err error
+	go func() {
+		changed, err = ReconcileConnectionFromEnv(store)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success: no deadlock
+		if err != nil {
+			t.Fatalf("ReconcileConnectionFromEnv: %v", err)
+		}
+		if !changed {
+			t.Error("expected changed=true (env var was different)")
+		}
+		// Verify the non-secret field was merged from env, and the secrets preserved.
+		updated, err := store.GetConnection("active")
+		if err != nil {
+			t.Fatalf("GetConnection: %v", err)
+		}
+		if updated == nil {
+			t.Fatal("connection disappeared")
+		}
+		if updated.Git.Owner != "deadlock-test-owner" {
+			t.Errorf("non-secret field (owner) not merged, got %q", updated.Git.Owner)
+		}
+		if updated.Git.Token != "ghp_secret_must_be_preserved" {
+			t.Errorf("secret token clobbered, got %q", updated.Git.Token)
+		}
+		if updated.Argocd.Token != "argocd_secret_also_preserved" {
+			t.Errorf("argocd secret token clobbered, got %q", updated.Argocd.Token)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ReconcileConnectionFromEnv deadlocked (boot hang regression)")
+	}
 }
 
 var _ Store = (*fakeStore)(nil)
