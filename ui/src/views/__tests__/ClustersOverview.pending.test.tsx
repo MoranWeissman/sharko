@@ -207,6 +207,8 @@ describe('ClustersOverview — V125-1.5 manual-mode register toast (BUG-050)', (
     // so we don't need to mock additional discovery calls). creds-reframe-2:
     // the creds-source <select> replaced the old Provider dropdown.
     fireEvent.change(screen.getByDisplayValue(/Choose where this cluster's credentials come from/i), { target: { value: 'inline-kubeconfig' } });
+    // V3-RW3.1: expand Advanced settings to access the kubeconfig textarea.
+    fireEvent.click(screen.getByRole('button', { name: /advanced settings/i }));
     fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), { target: { value: 'kind-local' } });
     fireEvent.change(screen.getByPlaceholderText(/apiVersion: v1/i), {
       target: { value: 'apiVersion: v1\nkind: Config\nusers:\n- name: u\n  user:\n    token: abc' },
