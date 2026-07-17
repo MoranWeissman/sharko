@@ -294,6 +294,10 @@ export function ClustersOverview() {
   // when true, it expands.
   const [showOptionalCreds, setShowOptionalCreds] = useState(false);
 
+  // V3-RW3.1: progressive disclosure for the register dialog. Advanced settings
+  // (region, role ARN, secret path, kubeconfig textarea) are collapsed by default.
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+
   // Legacy `provider` value, kept in sync with `credsSource` so anything
   // that still reads `provider` (audit trails, persisted state) sees a
   // sensible value. The backend keys on `creds_source` (it wins), so this
@@ -475,6 +479,8 @@ export function ClustersOverview() {
     setDiscoveredFilter('');
     // V2-cleanup-91.2 (F2): reset optional-creds toggle when dialog reopens.
     setShowOptionalCreds(false);
+    // V3-RW3.1: reset advanced-settings toggle when dialog reopens.
+    setShowAdvancedSettings(false);
     setDryRunResult(null);
     setDryRunLoading(false);
     // Fetch Layer 1 identity info once per dialog session (V2-cleanup-88.5).
@@ -1089,7 +1095,7 @@ export function ClustersOverview() {
 
       {/* Add Cluster Dialog */}
       <Dialog open={addClusterOpen} onOpenChange={(v) => { if (!v) setAddClusterOpen(false) }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Register New Cluster</DialogTitle>
             <DialogDescription>
@@ -1346,6 +1352,30 @@ export function ClustersOverview() {
               />
             </div>
             )}
+
+            {/* V3-RW3.1: Progressive disclosure — advanced/optional credential
+              * fields are collapsed by default. The essential decision (creds
+              * source) is always visible above; the actual values go here. */}
+            {credsSource !== '' && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedSettings((prev) => !prev)}
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-[#0a3a5a] hover:text-[#2a5a7a] dark:text-gray-300 dark:hover:text-gray-100"
+                >
+                  {showAdvancedSettings ? (
+                    <ChevronUp className="h-4 w-4" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4" />
+                  )}
+                  Advanced settings
+                </button>
+                <p className="mt-0.5 text-xs text-[#2a5a7a] dark:text-gray-500">
+                  Connection credentials are optional — you can add them later if needed for addon secrets.
+                </p>
+
+                {showAdvancedSettings && (
+                  <div className="mt-3 space-y-4 rounded-md border border-[#6aade0] bg-[#f8fbff] p-3 dark:border-gray-700 dark:bg-gray-800/50">
                 {credsSource === 'inline-kubeconfig' && (
                   <>
                     {/* Paste a kubeconfig — inline YAML. Optional for every
@@ -1355,7 +1385,7 @@ export function ClustersOverview() {
                     <div>
                       <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                         Kubeconfig{' '}
-                        <span className="font-normal text-[#2a5a7a] dark:text-gray-500">(optional — you can add connection credentials later)</span>
+                        <span className="font-normal text-[#2a5a7a] dark:text-gray-500">(optional)</span>
                       </label>
                       <textarea
                         value={addClusterKubeconfig}
@@ -1380,7 +1410,7 @@ export function ClustersOverview() {
                     <div>
                       <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                         Secret name / path{' '}
-                        <span className="font-normal text-[#2a5a7a] dark:text-gray-500">(optional — you can add connection credentials later)</span>
+                        <span className="font-normal text-[#2a5a7a] dark:text-gray-500">(optional)</span>
                       </label>
                       <input
                         type="text"
@@ -1456,6 +1486,10 @@ export function ClustersOverview() {
                     </div>
                   </>
                 )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Auto-merge is now a global setting — no per-flow checkbox. */}
             <p className="text-sm text-[#2a5a7a] dark:text-gray-500">

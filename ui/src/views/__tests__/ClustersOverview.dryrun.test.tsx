@@ -100,6 +100,8 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     // the creds-source <select> replaced the old Provider dropdown.
     const select = screen.getByDisplayValue(/Choose where this cluster's credentials come from/i) as HTMLSelectElement;
     fireEvent.change(select, { target: { value: 'inline-kubeconfig' } });
+    // V3-RW3.1: expand Advanced settings to access the kubeconfig textarea.
+    fireEvent.click(screen.getByRole('button', { name: /advanced settings/i }));
     fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), {
       target: { value: 'kind-test' },
     });
