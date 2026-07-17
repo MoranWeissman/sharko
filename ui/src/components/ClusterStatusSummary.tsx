@@ -121,18 +121,9 @@ export function clusterStatusParts(props: ClusterStatusSummaryProps): ClusterSta
   });
 
   // 2. Deploy-path check (a test workload deployed through ArgoCD).
+  // Only surface when pending or failed — not the standing success/"Verified" row.
   const cs = props.connectivityStatus ?? '';
-  if (cs === 'verified_argocd' || cs === 'verified_check') {
-    parts.push({
-      who: 'Deploy check',
-      label: 'Verified',
-      severity: 'good',
-      meaning:
-        cs === 'verified_argocd'
-          ? 'ArgoCD successfully connected to this cluster.'
-          : 'A test workload deployed through ArgoCD succeeded — the full deploy path works.',
-    });
-  } else if (cs === 'check_pending') {
+  if (cs === 'check_pending') {
     parts.push({
       who: 'Deploy check',
       label: 'Running…',
