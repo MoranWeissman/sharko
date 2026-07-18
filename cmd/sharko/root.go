@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "1.25.0-pre.0"
-var commit = "none"
+var version = "3.0.0-dev"
+var commit = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:     "sharko",
