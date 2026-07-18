@@ -156,6 +156,8 @@ var demoAddons = []Addon{
 }
 
 // demoUnregisteredClusters are clusters visible to the provider but not yet in ArgoCD.
+// LW-18: only dr-eu is pending (has a seeded PR). Removed sandbox-us to match the
+// "1 pending registration" demo story.
 var demoUnregisteredClusters = []Cluster{
 	{
 		Name:       "dr-eu",
@@ -163,14 +165,6 @@ var demoUnregisteredClusters = []Cluster{
 		Region:     "eu-central-1",
 		Env:        "disaster-recovery",
 		K8sVersion: "1.29.3",
-		ConnStatus: "Successful",
-	},
-	{
-		Name:       "sandbox-us",
-		Server:     "https://k8s.sandbox-us.demo.example.com",
-		Region:     "us-east-2",
-		Env:        "sandbox",
-		K8sVersion: "1.28.7",
 		ConnStatus: "Successful",
 	},
 }
