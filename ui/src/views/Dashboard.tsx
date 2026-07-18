@@ -599,7 +599,6 @@ export function Dashboard() {
                 key={cluster.name}
                 name={cluster.name}
                 connectionStatus={cluster.connectionStatus}
-                addonSummary={cluster.addons}
                 healthyCount={cluster.healthy}
                 totalCount={cluster.total}
               />

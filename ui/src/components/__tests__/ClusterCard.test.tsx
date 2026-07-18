@@ -7,17 +7,15 @@ interface RenderCardOpts {
   connectionStatus: string
   healthyCount?: number
   totalCount?: number
-  addonSummary?: Array<{ name: string; health: string }>
 }
 
 function renderCard(opts: RenderCardOpts) {
-  const { connectionStatus, healthyCount = 0, totalCount = 0, addonSummary = [] } = opts
+  const { connectionStatus, healthyCount = 0, totalCount = 0 } = opts
   return render(
     <MemoryRouter>
       <ClusterCard
         name="prod-eu"
         connectionStatus={connectionStatus}
-        addonSummary={addonSummary}
         healthyCount={healthyCount}
         totalCount={totalCount}
       />
@@ -92,22 +90,44 @@ describe('ClusterCard connection pill (LW-5 collapsed)', () => {
   });
 });
 
-// LW-4: honest addon count label — "N of M addons healthy"
-describe('ClusterCard addon count label (LW-4)', () => {
-  it('renders "N of M addons healthy" — NOT "N/M healthy"', () => {
-    renderCard({ connectionStatus: 'Successful', healthyCount: 2, totalCount: 5 });
-    expect(screen.getByText('2 of 5 addons healthy')).toBeInTheDocument();
-    expect(screen.queryByText('2/5 healthy')).not.toBeInTheDocument();
+// LW-17: single colored addon-health ratio — "X of Y addons healthy"
+// (replaces LW-4's plain text + LW-2's dots)
+describe('ClusterCard addon health ratio (LW-17)', () => {
+  it('renders "N of M addons healthy" with red color when 0 healthy', () => {
+    renderCard({ connectionStatus: 'Successful', healthyCount: 0, totalCount: 5 });
+    const text = screen.getByText('0 of 5 addons healthy');
+    expect(text).toBeInTheDocument();
+    expect(text.className).toContain('text-red-700');
+    expect(text.className).toContain('dark:text-red-400');
   });
 
-  it('renders "No addons" when totalCount is 0', () => {
+  it('renders "N of M addons healthy" with orange color when partially healthy', () => {
+    renderCard({ connectionStatus: 'Successful', healthyCount: 2, totalCount: 5 });
+    const text = screen.getByText('2 of 5 addons healthy');
+    expect(text).toBeInTheDocument();
+    expect(text.className).toContain('text-amber-700');
+    expect(text.className).toContain('dark:text-amber-400');
+  });
+
+  it('renders "N of M addons healthy" with green color when all healthy', () => {
+    renderCard({ connectionStatus: 'Successful', healthyCount: 5, totalCount: 5 });
+    const text = screen.getByText('5 of 5 addons healthy');
+    expect(text).toBeInTheDocument();
+    expect(text.className).toContain('text-green-700');
+    expect(text.className).toContain('dark:text-green-400');
+  });
+
+  it('renders "No addons" with neutral color when totalCount is 0', () => {
     renderCard({ connectionStatus: 'Successful', healthyCount: 0, totalCount: 0 });
-    expect(screen.getByText('No addons')).toBeInTheDocument();
+    const text = screen.getByText('No addons');
+    expect(text).toBeInTheDocument();
+    expect(text.className).toContain('text-[#2a5a7a]');
   });
 });
 
-// LW-3: inline reason for why this cluster needs attention
-describe('ClusterCard attention reason (LW-3)', () => {
+// LW-3 + LW-17: inline reason for CONNECTION problems only
+// (addon health is now shown via the colored ratio line, not a separate reason text)
+describe('ClusterCard attention reason (LW-3, refined by LW-17)', () => {
   it('shows "Disconnected" reason for Failed status', () => {
     renderCard({ connectionStatus: 'Failed', healthyCount: 0, totalCount: 0 });
     expect(screen.getByText('Disconnected')).toBeInTheDocument();
@@ -123,12 +143,14 @@ describe('ClusterCard attention reason (LW-3)', () => {
     expect(screen.getByText('Not reporting')).toBeInTheDocument();
   });
 
-  it('shows "All addons unhealthy" reason for Connected with 0 healthy out of N', () => {
+  it('does NOT show "All addons unhealthy" — addon health is via colored ratio (LW-17)', () => {
     renderCard({ connectionStatus: 'Successful', healthyCount: 0, totalCount: 3 });
-    expect(screen.getByText('All addons unhealthy')).toBeInTheDocument();
+    expect(screen.queryByText('All addons unhealthy')).not.toBeInTheDocument();
+    // Instead, the colored ratio shows the health
+    expect(screen.getByText('0 of 3 addons healthy')).toBeInTheDocument();
   });
 
-  it('does NOT show a reason for Connected with at least one healthy addon', () => {
+  it('does NOT show a connection reason for Connected with healthy addon', () => {
     renderCard({ connectionStatus: 'Successful', healthyCount: 1, totalCount: 3 });
     expect(screen.queryByText('Disconnected')).not.toBeInTheDocument();
     expect(screen.queryByText('Not reporting')).not.toBeInTheDocument();
