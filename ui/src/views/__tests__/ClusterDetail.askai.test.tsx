@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
@@ -131,49 +132,82 @@ describe('V2-cleanup-39: Ask AI button on sync_failing rows', () => {
     mockRestartAddonSync.mockResolvedValue({ terminated: true, synced: true });
   });
 
-  it('renders Ask AI button on sync_failing row when AI is enabled', async () => {
+  // LW-20: The Ask AI (and Restart sync) buttons for a sync_failing row moved
+  // INTO the Issues popover. They are no longer rendered inline — the operator
+  // opens the row's count+severity chip (e.g. "1 error") to reveal them. These
+  // tests open the popover first, then assert on the button, keeping the
+  // original intent (Ask AI shows for sync_failing + AI enabled; not otherwise).
+  it('renders Ask AI button on sync_failing row when AI is enabled (inside issues popover)', async () => {
+    const user = userEvent.setup();
     mockGetAIStatus.mockResolvedValue({ enabled: true });
 
     renderView();
     await screen.findByText('prod-eu', {}, { timeout: 5000 });
+
+    // keda (sync_failing) has 1 issue → "1 error" chip opens the popover.
+    const chip = await screen.findByText('1 error');
+    await user.click(chip);
 
     await waitFor(() => {
       expect(screen.getByTestId('ask-ai-btn')).toBeInTheDocument();
     });
   });
 
-  it('does NOT render Ask AI button on a non-failing (healthy) row', async () => {
+  it('does NOT offer Ask AI on a non-failing (healthy) row', async () => {
     mockGetAIStatus.mockResolvedValue({ enabled: true });
 
     renderView();
     await screen.findByText('prod-eu', {}, { timeout: 5000 });
 
-    // Only one "Ask AI" button — only keda (sync_failing) gets it.
+    // A healthy row (cert-manager) has NO issues, so it shows "—" with no
+    // issues chip — there is no popover to open and thus no Ask AI path.
+    // The only issues chip on the page is keda's "1 error"; cert-manager has none.
     await waitFor(() => {
-      const btns = screen.queryAllByTestId('ask-ai-btn');
-      expect(btns).toHaveLength(1);
+      expect(screen.getByText('1 error')).toBeInTheDocument();
     });
+    const table = screen.getByRole('table');
+    const certRow = within(table)
+      .getAllByRole('row')
+      .find((row) => within(row).queryByText('cert-manager'));
+    expect(certRow).toBeTruthy();
+    // No issues chip in the healthy row, so no way to reach Ask AI.
+    expect(within(certRow as HTMLElement).queryByText(/error/i)).not.toBeInTheDocument();
+    expect(within(certRow as HTMLElement).getByText('—')).toBeInTheDocument();
+
+    // Only keda's popover carries Ask AI — exactly one issues chip exists.
+    expect(screen.getAllByText(/^\d+ errors?$/)).toHaveLength(1);
   });
 
-  it('does NOT render Ask AI button when AI is disabled', async () => {
+  it('does NOT render Ask AI button when AI is disabled (even after opening the issues popover)', async () => {
+    const user = userEvent.setup();
     mockGetAIStatus.mockResolvedValue({ enabled: false });
 
     renderView();
     await screen.findByText('prod-eu', {}, { timeout: 5000 });
 
-    // Give the AI status effect time to resolve.
+    // Open keda's issues popover — with AI disabled the Ask AI button must
+    // still be absent (Restart sync may still be there, but no Ask AI).
+    const chip = await screen.findByText('1 error');
+    await user.click(chip);
+
     await waitFor(() => {
-      expect(screen.queryByTestId('ask-ai-btn')).not.toBeInTheDocument();
+      expect(screen.getByTestId('restart-sync-btn')).toBeInTheDocument();
     });
+    expect(screen.queryByTestId('ask-ai-btn')).not.toBeInTheDocument();
   });
 
-  it('dispatches open-assistant event with addon name and error text when clicked', async () => {
+  it('dispatches open-assistant event with addon name and error text when clicked (from popover)', async () => {
+    const user = userEvent.setup();
     mockGetAIStatus.mockResolvedValue({ enabled: true });
 
     const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
 
     renderView();
     await screen.findByText('prod-eu', {}, { timeout: 5000 });
+
+    // Open keda's issues popover, then click Ask AI inside it.
+    const chip = await screen.findByText('1 error');
+    await user.click(chip);
 
     const btn = await screen.findByTestId('ask-ai-btn');
     fireEvent.click(btn);

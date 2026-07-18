@@ -358,7 +358,7 @@ func buildMockApps() []mockApp {
 				repoURL = addon.RepoURL
 			}
 
-			appName := fmt.Sprintf("%s-%s", cluster.Name, addonName)
+			appName := fmt.Sprintf("%s-%s", addonName, cluster.Name)
 			apps = append(apps, mockApp{
 				Metadata: mockAppMetadata{
 					Name:              appName,

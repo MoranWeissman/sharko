@@ -181,3 +181,57 @@ func TestPerfAsiaInGit(t *testing.T) {
 		t.Errorf("perf-asia ConnStatus = %q, want Failed (disconnected cluster)", found.ConnStatus)
 	}
 }
+
+// TestMockAppNamesMatchServiceMatcher verifies the mock ArgoCD app names follow
+// the {addon}-{cluster} pattern that the real cluster service expects (LW-19).
+// Before this fix, the mock used the REVERSED {cluster}-{addon} order, causing
+// every addon on the cluster-detail page to show "Missing from ArgoCD".
+func TestMockAppNamesMatchServiceMatcher(t *testing.T) {
+	srv, err := NewMockArgocdServer()
+	if err != nil {
+		t.Fatalf("starting mock argocd: %v", err)
+	}
+	defer srv.Close()
+
+	srv.mu.RLock()
+	apps := srv.apps
+	srv.mu.RUnlock()
+
+	// Find a representative addon app (e.g., cert-manager on prod-eu)
+	// The expected name is {addon}-{cluster}, e.g., "cert-manager-prod-eu"
+	var foundCertManagerProdEu *mockApp
+	for i := range apps {
+		if apps[i].Metadata.Name == "cert-manager-prod-eu" {
+			foundCertManagerProdEu = &apps[i]
+			break
+		}
+	}
+
+	if foundCertManagerProdEu == nil {
+		// List all app names to help diagnose
+		var names []string
+		for _, app := range apps {
+			names = append(names, app.Metadata.Name)
+		}
+		t.Fatalf("cert-manager-prod-eu not found; app names: %v\nExpected {addon}-{cluster} format, got something else", names)
+	}
+
+	// Sanity: the app should target the prod-eu cluster and the cert-manager chart
+	if foundCertManagerProdEu.Spec.Source.Chart != "cert-manager" {
+		t.Errorf("cert-manager-prod-eu chart = %q, want cert-manager",
+			foundCertManagerProdEu.Spec.Source.Chart)
+	}
+
+	// The destination server should match prod-eu's server URL
+	var prodEuServer string
+	for _, c := range demoClusters {
+		if c.Name == "prod-eu" {
+			prodEuServer = c.Server
+			break
+		}
+	}
+	if foundCertManagerProdEu.Spec.Destination.Server != prodEuServer {
+		t.Errorf("cert-manager-prod-eu destination server = %q, want %q (prod-eu)",
+			foundCertManagerProdEu.Spec.Destination.Server, prodEuServer)
+	}
+}
