@@ -8,8 +8,6 @@ import {
   CloudOff,
   Eye,
   Ban,
-  ChevronDown,
-  ChevronUp,
   ExternalLink,
   WifiOff,
   MessageSquare,
@@ -69,6 +67,7 @@ import { HelperText } from '@/components/HelperText';
 import { showToast } from '@/components/ToastNotification';
 import { RowActionsMenu } from '@/components/RowActionsMenu';
 import { InfoBanner } from '@/components/InfoBanner';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { prettyOperation } from '@/lib/utils';
 import type { StatusSeverity } from '@/lib/clusterStatus';
 import type { ConnectionsListResponse, TrackedPR, DiagnosticReport, DoctorClusterResponse } from '@/services/models';
@@ -141,10 +140,6 @@ function ClusterChangesSection({
       />
     </div>
   );
-}
-
-function shouldTruncateIssues(issues: string[]): boolean {
-  return issues.join(' ').length > 100;
 }
 
 // Format a UTC ISO-8601 timestamp as a relative "X ago" string. Mirrors the
@@ -227,7 +222,6 @@ export function ClusterDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [searchParams, setSearchParams] = useSearchParams();
   const activeSection = searchParams.get('section') || 'addons';
   // When switching section, preserve other query params (notably ?addon=…
@@ -895,18 +889,6 @@ export function ClusterDetail() {
     setStatusFilter(statusFilter === filter ? 'all' : filter);
   };
 
-  const toggleExpanded = (addonName: string) => {
-    setExpandedRows((prev) => {
-      const next = new Set(prev);
-      if (next.has(addonName)) {
-        next.delete(addonName);
-      } else {
-        next.add(addonName);
-      }
-      return next;
-    });
-  };
-
   if (loading) {
     return <LoadingState message="Loading cluster details..." />;
   }
@@ -1569,7 +1551,7 @@ export function ClusterDetail() {
                       className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
                     >
                       <Plus className="h-4 w-4" />
-                      Manage addons
+                      + Enable addon
                     </button>
                   )}
                 </RoleGuard>
@@ -1829,12 +1811,12 @@ export function ClusterDetail() {
               {/* Comparison table */}
               <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
                 <table className="w-full text-left text-sm">
-                  <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+                  <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
                     <tr>
+                      <th className="px-4 py-3">Addon name</th>
                       <th className="px-4 py-3">Status</th>
-                      <th className="px-4 py-3">Addon Name</th>
-                      <th className="px-4 py-3">Git Version</th>
-                      <th className="px-4 py-3">ArgoCD Version</th>
+                      <th className="px-4 py-3">Declared (Git)</th>
+                      <th className="px-4 py-3">Running (in cluster)</th>
                       <th className="px-4 py-3">Namespace</th>
                       <th className="px-4 py-3">Issues</th>
                       <th className="px-4 py-3"></th>
@@ -1846,8 +1828,6 @@ export function ClusterDetail() {
                         key={addon.addon_name}
                         addon={addon}
                         clusterName={name ?? ''}
-                        isExpanded={expandedRows.has(addon.addon_name)}
-                        onToggleExpand={() => toggleExpanded(addon.addon_name)}
                         argocdBaseURL={argocdBaseURL}
                         highlighted={highlightedAddon === addon.addon_name}
                         pendingPRs={pendingPRsByAddon[addon.addon_name] ?? []}
@@ -2167,8 +2147,6 @@ export function ClusterDetail() {
 interface ComparisonRowProps {
   addon: AddonComparisonStatus;
   clusterName: string;
-  isExpanded: boolean;
-  onToggleExpand: () => void;
   argocdBaseURL: string;
   highlighted?: boolean;
   // Pending PRs targeting this addon on the current cluster. Rendered as
@@ -2187,11 +2165,9 @@ interface ComparisonRowProps {
   onStageRemove?: (addonName: string) => void;
 }
 
-function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdBaseURL, highlighted, pendingPRs = [], onRefresh, aiEnabled = false, onStageRemove }: ComparisonRowProps) {
+function ComparisonRow({ addon, clusterName, argocdBaseURL, highlighted, pendingPRs = [], onRefresh, aiEnabled = false, onStageRemove }: ComparisonRowProps) {
   const [restartLoading, setRestartLoading] = useState(false);
   const allIssues = addon.issues;
-  const isTruncated = shouldTruncateIssues(allIssues);
-  const displayedIssues = isExpanded ? allIssues : allIssues.slice(0, 2);
 
   const handleRestartSync = async () => {
     setRestartLoading(true);
@@ -2235,13 +2211,6 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
         highlighted ? 'ring-2 ring-inset ring-blue-500 bg-blue-50/60 dark:bg-blue-950/30 transition-colors duration-500' : ''
       }`}
     >
-      <td className="px-4 py-3">
-        {addon.status ? (
-          <StatusBadge status={addon.status} />
-        ) : (
-          <span className="text-[#3a6a8a] dark:text-gray-500">--</span>
-        )}
-      </td>
       <td className="px-4 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
         <div className="flex flex-wrap items-center gap-2">
           {addon.status === 'sharko_system' ? (
@@ -2295,6 +2264,13 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
           ))}
         </div>
       </td>
+      <td className="px-4 py-3">
+        {addon.status ? (
+          <StatusBadge status={addon.status} />
+        ) : (
+          <span className="text-[#3a6a8a] dark:text-gray-500">--</span>
+        )}
+      </td>
       <td className="px-4 py-3 font-mono text-xs text-[#1a4a6a] dark:text-gray-400">
         {/* W8: Suppress version columns for connectivity-check (they're not applicable) */}
         {addon.status === 'sharko_system' ? '—' : (
@@ -2311,82 +2287,75 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
         {addon.argocd_namespace ?? '--'}
       </td>
       {/* W7+W10: Issues column shows real issues or "—", never descriptions or "OK".
-          The connectivity-check description moved to the W8 InfoBanner above the table. */}
+          The connectivity-check description moved to the W8 InfoBanner above the table.
+          LW-20: When issues exist, show count+severity chip that opens a popover with details. */}
       <td className="px-4 py-3">
         {allIssues.length > 0 ? (
-          <div>
-            <ul className="space-y-0.5 text-xs text-[#1a4a6a] dark:text-gray-400">
-              {displayedIssues.map((issue, i) => (
-                <li key={i}>{issue}</li>
-              ))}
-            </ul>
-            {/* When the row is expanded AND there is a full operation message,
-                show it as a scrollable monospace block. The full message comes
-                from argocd_operation_message (up to 4000 chars, full text
-                including all lines) — the issues[] list above only has the
-                short first-line version. */}
-            {isExpanded && addon.argocd_operation_message && (
-              <pre
-                data-testid="full-operation-message"
-                className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-[#e8f4ff] p-2 font-mono text-xs text-[#0a2a4a] ring-2 ring-[#6aade0] dark:bg-gray-900 dark:text-gray-200"
-              >
-                {addon.argocd_operation_message}
-              </pre>
-            )}
-            {(isTruncated || (addon.argocd_operation_message && !isExpanded)) && (
+          <Popover>
+            <PopoverTrigger asChild>
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleExpand();
-                }}
-                className="mt-1 inline-flex items-center gap-0.5 text-xs font-medium text-teal-600 hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-300"
+                className="inline-flex items-center gap-1.5 rounded-full bg-red-100 px-2.5 py-1 text-xs font-medium text-red-800 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/50"
               >
-                {isExpanded ? (
-                  <>
-                    <ChevronUp className="h-3 w-3" /> Show less
-                  </>
-                ) : (
-                  <>
-                    <ChevronDown className="h-3 w-3" /> Show more
-                  </>
-                )}
+                <AlertTriangle className="h-3.5 w-3.5" />
+                {allIssues.length} {allIssues.length === 1 ? 'error' : 'errors'}
               </button>
-            )}
-            {addon.status === 'sync_failing' && (
-              <div className="mt-2 flex flex-wrap gap-1">
-                <RoleGuard roles={['admin', 'operator']}>
-                  <button
-                    type="button"
-                    data-testid="restart-sync-btn"
-                    onClick={(e) => { e.stopPropagation(); void handleRestartSync(); }}
-                    disabled={restartLoading}
-                    className="inline-flex items-center gap-1 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-0.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-96">
+              <div className="space-y-2">
+                <h4 className="font-semibold text-sm text-[#0a2a4a] dark:text-gray-100">Issues</h4>
+                <ul className="space-y-1.5 text-xs text-[#1a4a6a] dark:text-gray-400">
+                  {allIssues.map((issue, i) => (
+                    <li key={i} className="flex items-start gap-1.5">
+                      <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
+                      <span>{issue}</span>
+                    </li>
+                  ))}
+                </ul>
+                {addon.argocd_operation_message && (
+                  <pre
+                    data-testid="full-operation-message"
+                    className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-[#e8f4ff] p-2 font-mono text-xs text-[#0a2a4a] ring-1 ring-[#6aade0] dark:bg-gray-900 dark:text-gray-200 dark:ring-gray-700"
                   >
-                    {restartLoading
-                      ? <Loader2 className="h-3 w-3 animate-spin" />
-                      : <RotateCcw className="h-3 w-3" />}
-                    Restart sync
-                  </button>
-                </RoleGuard>
-                {aiEnabled && (
-                  <button
-                    type="button"
-                    data-testid="ask-ai-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const message = `Addon "${addon.addon_name}" on cluster "${clusterName}" is failing to sync in ArgoCD. Here is the error:\n\n${addon.argocd_operation_message ?? '(no operation message available)'}\n\nWhat's wrong and how do I fix it?`;
-                      window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message, nonce: crypto.randomUUID() } }));
-                    }}
-                    className="inline-flex items-center gap-1 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-0.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-                  >
-                    <Sparkles className="h-3 w-3" />
-                    Ask AI
-                  </button>
+                    {addon.argocd_operation_message}
+                  </pre>
+                )}
+                {addon.status === 'sync_failing' && (
+                  <div className="mt-3 pt-3 border-t border-[#6aade0] dark:border-gray-700 flex flex-wrap gap-2">
+                    <RoleGuard roles={['admin', 'operator']}>
+                      <button
+                        type="button"
+                        data-testid="restart-sync-btn"
+                        onClick={(e) => { e.stopPropagation(); void handleRestartSync(); }}
+                        disabled={restartLoading}
+                        className="inline-flex items-center gap-1 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-1 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                      >
+                        {restartLoading
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <RotateCcw className="h-3 w-3" />}
+                        Restart sync
+                      </button>
+                    </RoleGuard>
+                    {aiEnabled && (
+                      <button
+                        type="button"
+                        data-testid="ask-ai-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const message = `Addon "${addon.addon_name}" on cluster "${clusterName}" is failing to sync in ArgoCD. Here is the error:\n\n${addon.argocd_operation_message ?? '(no operation message available)'}\n\nWhat's wrong and how do I fix it?`;
+                          window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message, nonce: crypto.randomUUID() } }));
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-1 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        Ask AI
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
-            )}
-          </div>
+            </PopoverContent>
+          </Popover>
         ) : hasProblems ? (
           <span className="text-sm text-amber-600 dark:text-amber-400">
             {addon.argocd_health_status || addon.status || 'Unknown'}

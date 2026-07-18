@@ -283,11 +283,11 @@ describe('ClusterDetail', () => {
     expect(screen.getAllByText('cert-manager').length).toBeGreaterThan(0);
     expect(screen.getAllByText('prometheus').length).toBeGreaterThan(0);
 
-    // Version override shown as Git Version
+    // Version override shown as Declared (Git) (LW-20)
     expect(screen.getByText('4.6.0')).toBeInTheDocument();
 
-    // Issues
-    expect(screen.getByText('Health status is Degraded')).toBeInTheDocument();
+    // LW-20: Issues are now in a popover, shows "1 error" chip for prometheus
+    expect(screen.getByText('1 error')).toBeInTheDocument();
   });
 
   it('calls API with cluster name from route params', async () => {
@@ -333,17 +333,30 @@ describe('ClusterDetail', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/clusters');
   });
 
-  it('shows expand/collapse for long issues', async () => {
+  it('LW-20: issues appear in popover when clicking the error chip', async () => {
+    const user = userEvent.setup();
     renderView('addons');
 
     await waitFor(() => {
       expect(screen.getAllByText('cert-manager').length).toBeGreaterThan(0);
     });
 
-    // cert-manager has 2 issues with long text, should show expand button
-    expect(
-      screen.getByText('Addon is configured in Git but not deployed in ArgoCD'),
-    ).toBeInTheDocument();
+    // LW-20: cert-manager has 2 issues, should show "2 errors" chip
+    const chip = screen.getByText('2 errors');
+    expect(chip).toBeInTheDocument();
+
+    // Click the chip to open the popover
+    await user.click(chip);
+
+    // Issues should now be visible in the popover
+    await waitFor(() => {
+      expect(
+        screen.getByText('Addon is configured in Git but not deployed in ArgoCD'),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText('This may indicate a deployment issue'),
+      ).toBeInTheDocument();
+    });
   });
 
   // V2-cleanup-78.1: the Overview tab is dissolved — Addons, Config, History,
@@ -1902,45 +1915,66 @@ describe('ClusterDetail', () => {
       total_missing_in_argocd: 0,
     };
 
-    it('renders Restart sync button only on sync_failing rows', async () => {
+    it('LW-20: renders Restart sync button only on sync_failing rows (inside issues popover)', async () => {
+      const user = userEvent.setup();
       mockGetClusterComparison.mockResolvedValue(syncFailingResponse);
       mockRestartAddonSync.mockResolvedValue({ terminated: true, synced: true });
 
       renderView('addons');
       await screen.findByText('prod-eu', {}, { timeout: 5000 });
 
-      // Exactly one "Restart sync" button — only for keda.
-      const buttons = screen.getAllByTestId('restart-sync-btn');
-      expect(buttons).toHaveLength(1);
+      // LW-20: keda with issues shows error chip
+      const errorChip = screen.getByText('1 error');
+      expect(errorChip).toBeInTheDocument();
 
-      // cert-manager (healthy) should NOT have the button.
-      expect(screen.queryAllByTestId('restart-sync-btn')).toHaveLength(1);
+      // Open the popover to see the restart button
+      await user.click(errorChip);
+
+      // Wait for popover and find restart button inside it
+      await waitFor(() => {
+        expect(screen.getByTestId('restart-sync-btn')).toBeInTheDocument();
+      });
     });
 
-    it('calls api.restartAddonSync when Restart sync is clicked', async () => {
+    it('LW-20: calls api.restartAddonSync when Restart sync is clicked (inside popover)', async () => {
+      const user = userEvent.setup();
       mockGetClusterComparison.mockResolvedValue(syncFailingResponse);
       mockRestartAddonSync.mockResolvedValue({ terminated: true, synced: true });
 
       renderView('addons');
       await screen.findByText('prod-eu', {}, { timeout: 5000 });
 
-      const btn = screen.getByTestId('restart-sync-btn');
-      fireEvent.click(btn);
+      // Open the issues popover
+      const errorChip = screen.getByText('1 error');
+      await user.click(errorChip);
+
+      // Find and click the restart button inside the popover
+      await waitFor(() => {
+        const btn = screen.getByTestId('restart-sync-btn');
+        fireEvent.click(btn);
+      });
 
       await waitFor(() => {
         expect(mockRestartAddonSync).toHaveBeenCalledWith('prod-eu', 'keda');
       });
     });
 
-    it('shows success toast after successful restart', async () => {
+    it('LW-20: shows success toast after successful restart (popover)', async () => {
+      const user = userEvent.setup();
       mockGetClusterComparison.mockResolvedValue(syncFailingResponse);
       mockRestartAddonSync.mockResolvedValue({ terminated: true, synced: true });
 
       renderView('addons');
       await screen.findByText('prod-eu', {}, { timeout: 5000 });
 
-      const btn = screen.getByTestId('restart-sync-btn');
-      fireEvent.click(btn);
+      // Open popover and click restart
+      const errorChip = screen.getByText('1 error');
+      await user.click(errorChip);
+
+      await waitFor(() => {
+        const btn = screen.getByTestId('restart-sync-btn');
+        fireEvent.click(btn);
+      });
 
       await waitFor(() => {
         expect(mockShowToast).toHaveBeenCalledWith(
@@ -1950,15 +1984,22 @@ describe('ClusterDetail', () => {
       });
     });
 
-    it('shows error toast when restart fails', async () => {
+    it('LW-20: shows error toast when restart fails (popover)', async () => {
+      const user = userEvent.setup();
       mockGetClusterComparison.mockResolvedValue(syncFailingResponse);
       mockRestartAddonSync.mockRejectedValue(new Error('ArgoCD unavailable'));
 
       renderView('addons');
       await screen.findByText('prod-eu', {}, { timeout: 5000 });
 
-      const btn = screen.getByTestId('restart-sync-btn');
-      fireEvent.click(btn);
+      // Open popover and click restart
+      const errorChip = screen.getByText('1 error');
+      await user.click(errorChip);
+
+      await waitFor(() => {
+        const btn = screen.getByTestId('restart-sync-btn');
+        fireEvent.click(btn);
+      });
 
       await waitFor(() => {
         expect(mockShowToast).toHaveBeenCalledWith(
@@ -2077,31 +2118,30 @@ describe('ClusterDetail', () => {
       total_missing_in_argocd: 0,
     };
 
-    it('collapsed row: full-message block is NOT visible', async () => {
+    it('LW-20: popover closed by default, full message not visible', async () => {
       mockGetClusterComparison.mockResolvedValue(responseWithFullMsg);
       renderView('addons');
       await screen.findByText('prod-eu', {}, { timeout: 5000 });
 
-      // The short issue text appears in the list.
-      expect(screen.getByText(shortIssue)).toBeInTheDocument();
-
-      // The full-message block must not be visible in collapsed state.
+      // Error chip should be visible, but not the full message
+      expect(screen.getByText('1 error')).toBeInTheDocument();
       expect(screen.queryByTestId('full-operation-message')).not.toBeInTheDocument();
     });
 
-    it('expanded row: full-message block is visible with complete text', async () => {
+    it('LW-20: opening popover shows full-message block with complete text', async () => {
+      const user = userEvent.setup();
       mockGetClusterComparison.mockResolvedValue(responseWithFullMsg);
       renderView('addons');
       await screen.findByText('prod-eu', {}, { timeout: 5000 });
 
-      // Expand the row by clicking "Show more".
-      const showMoreBtn = screen.getByText('Show more');
-      fireEvent.click(showMoreBtn);
+      // Open the popover by clicking the error chip
+      const errorChip = screen.getByText('1 error');
+      await user.click(errorChip);
 
-      // The full-message block should now be visible.
+      // The full-message block should now be visible in the popover
       const block = await screen.findByTestId('full-operation-message');
       expect(block).toBeInTheDocument();
-      // It must contain the tail of the error that was previously cut off.
+      // It must contain the tail of the error
       expect(block.textContent).toContain('field not declared in schema');
     });
   });
@@ -2110,7 +2150,8 @@ describe('ClusterDetail', () => {
    * V2-cleanup-38.4: adaptive polling and refetch after restart-sync.
    */
   describe('V2-cleanup-38.4: restart-sync triggers immediate refetch', () => {
-    it('calls getClusterComparison again after a successful restart-sync', async () => {
+    it('LW-20: calls getClusterComparison again after a successful restart-sync (popover)', async () => {
+      const user = userEvent.setup();
       const syncFailingResponse = {
         ...comparisonResponse,
         addon_comparisons: [
@@ -2138,8 +2179,12 @@ describe('ClusterDetail', () => {
 
       const initialCallCount = mockGetClusterComparison.mock.calls.length;
 
-      // Click restart-sync.
-      const btn = screen.getByTestId('restart-sync-btn');
+      // Open popover to access restart-sync button
+      const errorChip = screen.getByText('1 error');
+      await user.click(errorChip);
+
+      // Click restart-sync inside popover
+      const btn = await screen.findByTestId('restart-sync-btn');
       fireEvent.click(btn);
 
       // Wait for the success toast, which fires after the API call resolves.
@@ -2497,7 +2542,7 @@ describe('ClusterDetail', () => {
       expect(screen.getByText('No addons in catalog.')).toBeInTheDocument();
     });
 
-    it('V3-AM1: does not regress: cluster with enabled addons shows "Manage addons" button', async () => {
+    it('V3-AM1: does not regress: cluster with enabled addons shows "+ Enable addon" button', async () => {
       // Default comparisonResponse has 3 enabled addons.
       mockGetAddonCatalog.mockResolvedValue({
         addons: [
@@ -2513,11 +2558,11 @@ describe('ClusterDetail', () => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
 
-      // V3-AM1: Button is visible and reads "Manage addons".
+      // LW-21: Button is visible and reads "+ Enable addon".
       await waitFor(() => {
         const button = screen.getByTestId('manage-addons-enable-btn');
         expect(button).toBeInTheDocument();
-        expect(button).toHaveTextContent('Manage addons');
+        expect(button).toHaveTextContent('+ Enable addon');
       });
 
       // V3-AM1: Enabled addons appear in the comparison table (not the top strip).

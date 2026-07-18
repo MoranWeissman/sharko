@@ -7,7 +7,7 @@ import { AuthContext } from '@/hooks/useAuth';
 
 // V3-AM1: Tests for the redesigned cluster Addons page interaction:
 // - Top strip shows ONLY pending changes (not all enabled addons)
-// - Button renamed "Manage addons"
+// - Button renamed "+ Enable addon" (LW-21)
 // - Remove control on enabled comparison-table rows
 
 const adminAuth = {
@@ -127,7 +127,7 @@ function renderView() {
   );
 }
 
-describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addons")', () => {
+describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "+ Enable addon" LW-21)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetClusterComparison.mockResolvedValue(comparisonResponse);
@@ -142,14 +142,13 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
     });
   });
 
-  it('button reads "Manage addons" (not "+ Enable addon")', async () => {
+  it('button reads "+ Enable addon" (LW-21)', async () => {
     renderView();
 
     await waitFor(() => {
       const button = screen.getByTestId('manage-addons-enable-btn');
       expect(button).toBeInTheDocument();
-      expect(button).toHaveTextContent('Manage addons');
-      expect(button).not.toHaveTextContent('Enable addon');
+      expect(button).toHaveTextContent('+ Enable addon');
     });
   });
 
@@ -157,9 +156,9 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
     renderView();
 
     await waitFor(() => {
-      // Should see the comparison table
-      expect(screen.getByText('Status')).toBeInTheDocument(); // table header
-      expect(screen.getByText('Addon Name')).toBeInTheDocument();
+      // Should see the comparison table (LW-20: sentence case headers, name before status)
+      expect(screen.getByText('Addon name')).toBeInTheDocument(); // table header
+      expect(screen.getByText('Status')).toBeInTheDocument();
 
       // Find the comparison table row for ingress-nginx
       const tableRows = screen.getAllByRole('row');
@@ -414,10 +413,10 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Manage addon
     renderView();
 
     await waitFor(() => {
-      // Button should be visible
+      // Button should be visible (LW-21: "+ Enable addon")
       const button = screen.getByTestId('manage-addons-enable-btn');
       expect(button).toBeInTheDocument();
-      expect(button).toHaveTextContent('Manage addons');
+      expect(button).toHaveTextContent('+ Enable addon');
     });
   });
 
