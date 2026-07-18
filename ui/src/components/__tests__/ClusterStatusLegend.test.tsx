@@ -24,7 +24,7 @@ describe('ClusterStatusLegend', () => {
     // "Connecting…" (neutral) — ArgoCD has no connection at all vs. the
     // normal post-registration wait.
     expect(screen.getByText('Not connected')).toBeInTheDocument();
-    expect(screen.getByText('Not managed')).toBeInTheDocument();
+    expect(screen.getByText('Available to manage')).toBeInTheDocument();
     expect(screen.getByText('Disconnected')).toBeInTheDocument();
   });
 
@@ -52,7 +52,7 @@ describe('ClusterStatusLegend', () => {
     const dotClasses = Array.from(dots).map((d) => d.className);
     expect(dotClasses.some((c) => c.includes('bg-green-500'))).toBe(true); // Connected
     expect(dotClasses.some((c) => c.includes('bg-[#3a6a8a]'))).toBe(true); // Connecting…
-    expect(dotClasses.some((c) => c.includes('bg-amber-500'))).toBe(true); // Not managed
+    expect(dotClasses.some((c) => c.includes('bg-amber-500'))).toBe(true); // Available to manage
     expect(dotClasses.some((c) => c.includes('bg-red-500'))).toBe(true); // Disconnected
     // Purple is retired (V2-cleanup-61.2, D3).
     expect(dotClasses.some((c) => c.includes('purple'))).toBe(false);

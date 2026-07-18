@@ -83,28 +83,9 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Filter the `not_in_git` lane to remove BOTH pending and orphan
-	// cluster names. A pending cluster belongs in PendingRegistrations
-	// only; an orphan belongs in OrphanRegistrations only. Without this
-	// prune the same cluster could appear in two surfaces at once.
-	if len(pendingNames) > 0 || len(orphanNames) > 0 {
-		filtered := resp.Clusters[:0]
-		for _, c := range resp.Clusters {
-			// Only prune clusters that are in the "not_in_git" lane. A
-			// managed cluster that happens to share a name with an open
-			// register-PR (idempotent retry case) is legitimately on the
-			// managed list and must not disappear.
-			if !c.Managed && c.ConnectionStatus == "not_in_git" {
-				if _, hit := pendingNames[c.Name]; hit {
-					continue
-				}
-				if _, hit := orphanNames[c.Name]; hit {
-					continue
-				}
-			}
-			filtered = append(filtered, c)
-		}
-		resp.Clusters = filtered
-	}
+	// cluster names, and correct HealthStats.NotInGit by the same amount
+	// (see prunePendingAndOrphanFromNotInGit for the full contract).
+	prunePendingAndOrphanFromNotInGit(resp, pendingNames, orphanNames)
 
 	// Enrich clusters with connectivity status + Sharko obs fields.
 	// Fetch the full application list once (no N+1 per cluster).
@@ -173,6 +154,56 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	resp.Clusters = applyPagination(resp.Clusters, p)
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// prunePendingAndOrphanFromNotInGit drops clusters that are in the
+// "not_in_git" lane but actually belong to the Pending or Orphan
+// registration surfaces, and corrects resp.HealthStats.NotInGit by the
+// exact number pruned.
+//
+// A pending cluster belongs in PendingRegistrations only; an orphan belongs
+// in OrphanRegistrations only. Without this prune the same cluster could
+// appear in two surfaces at once (the argosecrets reconciler can create the
+// ArgoCD cluster Secret BEFORE the values-file PR merges).
+//
+// LW-10: resp.HealthStats.NotInGit was computed by the service layer
+// (computeHealthStats) BEFORE this prune, so it counts every cluster that
+// was in the "not_in_git" lane — including the pending/orphan ones we drop
+// here. We decrement it by exactly the number pruned so the stat card
+// ("Available to manage") and any derived total match the pruned cluster
+// list. Fixing NotInGit at the source also fixes the FE's "All Clusters"
+// total, which is total_in_git + not_in_git. Guards against a nil
+// HealthStats and never underflows below zero. Only clusters genuinely in
+// the not_in_git lane (!Managed && ConnectionStatus == "not_in_git") are
+// counted, so a managed cluster that shares a name with an open register PR
+// (idempotent-retry case) is neither dropped nor decremented.
+func prunePendingAndOrphanFromNotInGit(resp *models.ClustersResponse, pendingNames, orphanNames map[string]struct{}) {
+	if resp == nil || (len(pendingNames) == 0 && len(orphanNames) == 0) {
+		return
+	}
+	prunedNotInGit := 0
+	filtered := resp.Clusters[:0]
+	for _, c := range resp.Clusters {
+		if !c.Managed && c.ConnectionStatus == "not_in_git" {
+			if _, hit := pendingNames[c.Name]; hit {
+				prunedNotInGit++
+				continue
+			}
+			if _, hit := orphanNames[c.Name]; hit {
+				prunedNotInGit++
+				continue
+			}
+		}
+		filtered = append(filtered, c)
+	}
+	resp.Clusters = filtered
+
+	if resp.HealthStats != nil && prunedNotInGit > 0 {
+		resp.HealthStats.NotInGit -= prunedNotInGit
+		if resp.HealthStats.NotInGit < 0 {
+			resp.HealthStats.NotInGit = 0
+		}
+	}
 }
 
 // filterClusters filters a cluster slice by the given filter expression.

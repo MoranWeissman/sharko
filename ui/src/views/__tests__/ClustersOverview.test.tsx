@@ -182,18 +182,19 @@ describe('ClustersOverview', () => {
       expect(screen.getByText('Clusters')).toBeInTheDocument();
     });
 
-    // Stat cards — canonical connection vocabulary (V2-cleanup-61.2, D2):
-    // Connected / Disconnected / Connecting / Not managed.
+    // Stat cards — canonical connection vocabulary (V2-cleanup-61.2, D2;
+    // LW-11: "Not managed" reframed as "Available to manage").
     expect(screen.getByText('All Clusters')).toBeInTheDocument();
     expect(screen.getAllByText('Connected').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Disconnected').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Connecting')).toBeInTheDocument();
-    // "Not managed" appears in both the stat card and the legend.
-    expect(screen.getAllByText('Not managed').length).toBeGreaterThanOrEqual(1);
-    // The old competing names are gone.
+    // "Available to manage" appears in both the stat card and the legend.
+    expect(screen.getAllByText('Available to manage').length).toBeGreaterThanOrEqual(1);
+    // The old competing names are gone (including pre-LW-11 "Not managed").
     expect(screen.queryByText('Failed')).not.toBeInTheDocument();
     expect(screen.queryByText('Not Deployed')).not.toBeInTheDocument();
     expect(screen.queryByText('Unmanaged')).not.toBeInTheDocument();
+    expect(screen.queryByText('Not managed')).not.toBeInTheDocument();
 
     // Stat values - total = total_in_git + not_in_git = 5
     // Use getAllByText because '5' may appear in both the stat card and a count badge

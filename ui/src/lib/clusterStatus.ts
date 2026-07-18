@@ -97,7 +97,7 @@ export const CLUSTER_CONNECTION_STATES: Record<ClusterConnectionKind, ClusterCon
     text: 'text-amber-700 dark:text-amber-400',
   },
   unmanaged: {
-    label: 'Not managed',
+    label: 'Available to manage',
     meaning:
       "In ArgoCD but not in Sharko's Git catalog — adopt it to let Sharko manage its addons.",
     severity: 'attention',
