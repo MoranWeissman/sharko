@@ -76,7 +76,14 @@ describe('PullRequestsPanel V125-1-6', () => {
   })
 
   it('clicking the Clusters filter chip sends the cluster operation CSV', async () => {
-    vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: [] })
+    // Seed one pending PR so the panel STAYS on the Pending tab. With the
+    // LW-8 auto-default, an empty pending list switches to Merged (which
+    // fetches via fetchMergedPRs, not fetchTrackedPRs), so this test — which
+    // asserts the Pending tab's operation-CSV wiring — needs the Pending tab
+    // to actually be the visible tab.
+    vi.mocked(api.fetchTrackedPRs).mockResolvedValue({
+      prs: [trackedPR({ pr_id: 1, pr_title: 'Keeps pending tab active' })],
+    })
 
     renderPanel()
 
@@ -154,5 +161,75 @@ describe('PullRequestsPanel V125-1-6', () => {
 
     // Title says "Cluster PRs" rather than "Pull Requests".
     expect(screen.getByText('Cluster PRs')).toBeInTheDocument()
+  })
+
+  describe('LW-8: Auto-show Merged when Pending is empty', () => {
+    it('shows Merged tab when pending=0 and no explicit URL selection', async () => {
+      // pending=0, merged has content
+      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: [] })
+      vi.mocked(api.fetchMergedPRs).mockResolvedValue({
+        prs: [
+          {
+            pr_id: 100,
+            pr_url: 'https://github.com/test/repo/pull/100',
+            pr_branch: 'sharko/example',
+            pr_title: 'Merged PR example',
+            merged_at: new Date().toISOString(),
+            author: 'admin',
+          },
+        ],
+        limit: 100,
+      })
+
+      renderPanel()
+
+      // Should auto-switch to the Merged tab. The merged-row title renders
+      // inside an anchor next to "#100", so the title text is split across
+      // nodes — assert via the Merged tab being selected and the merged row
+      // link (aria-label carries the PR id) being present. findByRole waits
+      // for the async fetchMergedPRs render to settle (avoids a race where
+      // the tab has flipped but the merged rows haven't fetched yet).
+      await waitFor(() => {
+        const mergedTab = screen.getByRole('tab', { name: 'Merged' })
+        expect(mergedTab).toHaveAttribute('aria-selected', 'true')
+      })
+      expect(
+        await screen.findByRole('link', { name: 'Open merged PR #100 on GitHub' }),
+      ).toBeInTheDocument()
+    })
+
+    it('still shows Pending when pending>0', async () => {
+      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({
+        prs: [trackedPR({ pr_id: 1, pr_title: 'Pending work' })],
+      })
+
+      renderPanel()
+
+      await waitFor(() => {
+        expect(screen.getByText('Pending work')).toBeInTheDocument()
+      })
+
+      // Pending tab should be active (default behavior unchanged)
+      const pendingButton = screen.getByRole('tab', { name: 'Pending' })
+      expect(pendingButton).toHaveAttribute('aria-selected', 'true')
+    })
+
+    it('honors explicit ?prs_state=pending even when pending=0', async () => {
+      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: [] })
+
+      render(
+        <MemoryRouter initialEntries={['/?prs_state=pending']}>
+          <PullRequestsPanel />
+        </MemoryRouter>,
+      )
+
+      // Explicit URL selection wins; should show "No tracked PRs" on pending tab
+      await waitFor(() => {
+        expect(screen.getByText('No tracked PRs')).toBeInTheDocument()
+      })
+
+      const pendingButton = screen.getByRole('tab', { name: 'Pending' })
+      expect(pendingButton).toHaveAttribute('aria-selected', 'true')
+    })
   })
 })

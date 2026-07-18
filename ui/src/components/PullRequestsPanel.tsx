@@ -232,12 +232,14 @@ function PendingTabBody({
   search,
   repoIdentifier,
   onMergeDetected,
+  onPendingCountChange,
 }: {
   cluster?: string
   category: CategoryKey
   search: string
   repoIdentifier: string | undefined
   onMergeDetected?: (pr: TrackedPR) => void
+  onPendingCountChange?: (count: number) => void
 }) {
   const [prs, setPrs] = useState<TrackedPR[]>([])
   const [serverLimit, setServerLimit] = useState<number>(0)
@@ -278,13 +280,14 @@ function PendingTabBody({
         previousStatusRef.current = next
 
         setPrs(newPrs)
+        onPendingCountChange?.(newPrs.length)
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Failed to load tracked PRs')
       } finally {
         setLoading(false)
       }
     },
-    [cluster, onMergeDetected, operationCSV],
+    [cluster, onMergeDetected, onPendingCountChange, operationCSV],
   )
 
   useEffect(() => {
@@ -619,10 +622,14 @@ export interface PullRequestsPanelProps {
 
 export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPanelProps) {
   const [searchParams, setSearchParams] = useSearchParams()
+  // Determine initial tab: honor explicit URL selection, otherwise default to pending
+  const explicitUrlSelection = searchParams.has('prs_state')
   const initial: TabKey = searchParams.get('prs_state') === 'merged' ? 'merged' : 'pending'
   const [tab, setTab] = useState<TabKey>(initial)
   const [category, setCategory] = useState<CategoryKey>('all')
   const [search, setSearch] = useState('')
+  // Track whether we've applied the auto-default logic (to avoid loops)
+  const [autoDefaultApplied, setAutoDefaultApplied] = useState(false)
   // Optional context — the panel renders fine without a connection
   // provider (e.g. in unit tests that mount it under MemoryRouter only).
   const connCtx = useConnectionsOptional()
@@ -636,11 +643,28 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
     return conn?.git_repo_identifier
   }, [connCtx])
 
+  // Auto-default to Merged when pending=0 and no explicit selection
+  const handlePendingCountChange = useCallback(
+    (count: number) => {
+      // Only apply auto-default once, when:
+      // - pending count is 0
+      // - user hasn't explicitly selected a tab via URL or click
+      // - we haven't already applied the auto-default
+      if (count === 0 && !explicitUrlSelection && !autoDefaultApplied && tab === 'pending') {
+        setTab('merged')
+        setAutoDefaultApplied(true)
+      }
+    },
+    [explicitUrlSelection, autoDefaultApplied, tab],
+  )
+
   // Keep ?prs_state= in sync when the user clicks. We use replace so back
   // navigation goes to the previous page rather than the previous tab.
   const switchTab = useCallback(
     (next: TabKey) => {
       setTab(next)
+      // Mark that an explicit selection has been made
+      setAutoDefaultApplied(true)
       setSearchParams(
         (prev) => {
           const np = new URLSearchParams(prev)
@@ -722,6 +746,7 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
             search={search}
             repoIdentifier={repoIdentifier}
             onMergeDetected={onMergeDetected}
+            onPendingCountChange={handlePendingCountChange}
           />
         ) : (
           <MergedTabBody cluster={cluster} category={category} search={search} repoIdentifier={repoIdentifier} />
