@@ -67,7 +67,9 @@ build: ui-build build-go ## Build Go binary + UI
 
 build-go: ## Build Go binary
 	@mkdir -p bin
-	CGO_ENABLED=0 go build -o bin/sharko ./cmd/sharko
+	CGO_ENABLED=0 go build \
+		-ldflags "-X main.version=$$(cat version.txt) -X main.commit=$$(git rev-parse --short HEAD 2>/dev/null || echo dev)" \
+		-o bin/sharko ./cmd/sharko
 	@echo "Built: bin/sharko"
 
 ui-build: ## Build the React UI

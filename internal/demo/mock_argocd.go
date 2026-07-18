@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // MockArgocdServer is an HTTP server that mimics the ArgoCD REST API.
@@ -301,6 +303,35 @@ func buildMockApps() []mockApp {
 	var apps []mockApp
 	createdAt := "2024-11-15T10:00:00Z"
 	reconciledAt := "2025-01-20T14:30:00Z"
+
+	// Seed the bootstrap root app so ProbeBootstrapApp returns healthy and the
+	// first-run wizard does not nag (LW-9, Story LW-F gap #1). The app name
+	// must match orchestrator.BootstrapRootAppName exactly so init.go's
+	// ProbeBootstrapApp finds it.
+	apps = append(apps, mockApp{
+		Metadata: mockAppMetadata{
+			Name:              orchestrator.BootstrapRootAppName,
+			Namespace:         "argocd",
+			CreationTimestamp: createdAt,
+		},
+		Spec: mockAppSpec{
+			Project: "sharko",
+			Source: mockSource{
+				RepoURL:        "https://github.com/demo/sharko-addons",
+				Chart:          "",
+				TargetRevision: "HEAD",
+			},
+			Destination: mockDestination{
+				Server:    "https://kubernetes.default.svc",
+				Namespace: "argocd",
+			},
+		},
+		Status: mockAppStatus{
+			Sync:         mockSyncStatus{Status: "Synced"},
+			Health:       mockHealthStatus{Status: "Healthy", LastTransitionTime: reconciledAt},
+			ReconciledAt: reconciledAt,
+		},
+	})
 
 	for _, cluster := range demoClusters {
 		for addonName, version := range cluster.Addons {

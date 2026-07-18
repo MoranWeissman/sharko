@@ -293,3 +293,111 @@ describe('Dashboard bootstrap banner gating (connhealth-2)', () => {
     expect(screen.queryByText(BOOTSTRAP_BANNER_TEXT)).not.toBeInTheDocument();
   });
 });
+
+// LW-1: Dashboard needs-attention filter — correct rule (addon health ≠ cluster health)
+describe('Dashboard needs-attention filter (LW-1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // The locked rule:
+  // 1. connection_status == Failed → needs attention
+  // 2. connection_status == Unknown AND total > 0 → needs attention
+  // 3. connection_status == Connected but healthy == 0 AND total > 0 → needs attention
+  // 4. Otherwise NOT needs attention (addon health ≠ cluster health)
+
+  it('Connected with 29/30 healthy → NOT in needs-attention', async () => {
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
+      clusters: [{ name: 'prod', connection_status: 'Successful', server_url: 'https://prod' }],
+    });
+    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
+      addons: Array.from({ length: 30 }, (_, i) => ({
+        addon_name: `addon-${i}`,
+        cells: { prod: { health: i === 0 ? 'Degraded' : 'Healthy' } },
+      })),
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+
+    // The card for "prod" should NOT appear under "Clusters Needing Attention"
+    // because connection is Successful and 29/30 healthy ≠ needs attention.
+    // The "Clusters Needing Attention" section won't render at all when the list is empty.
+    // Verify the cluster card does NOT appear in the attention section by checking
+    // that the "Clusters Needing Attention" heading is not present (empty list).
+    expect(screen.queryByText('Clusters Needing Attention')).not.toBeInTheDocument();
+  });
+
+  it('Failed → IN needs-attention', async () => {
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
+      clusters: [{ name: 'prod', connection_status: 'Failed', server_url: 'https://prod' }],
+    });
+    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
+      addons: [{ addon_name: 'addon-1', cells: { prod: { health: 'Healthy' } } }],
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+
+    // The cluster card should appear under "Clusters Needing Attention" because
+    // connection is Failed (regardless of addon health).
+    expect(screen.getByText('Clusters Needing Attention')).toBeInTheDocument();
+  });
+
+  it('Unknown with addons → IN needs-attention', async () => {
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
+      clusters: [{ name: 'prod', connection_status: 'Unknown', server_url: 'https://prod' }],
+    });
+    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
+      addons: [{ addon_name: 'addon-1', cells: { prod: { health: 'Healthy' } } }],
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Clusters Needing Attention')).toBeInTheDocument();
+  });
+
+  it('Unknown with zero addons → NOT in needs-attention', async () => {
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
+      clusters: [{ name: 'prod', connection_status: 'Unknown', server_url: 'https://prod' }],
+    });
+    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
+      addons: [],
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+
+    // Unknown with total == 0 → NOT needs attention (nothing to infer from)
+    expect(screen.queryByText('Clusters Needing Attention')).not.toBeInTheDocument();
+  });
+
+  it('Connected with 0 healthy out of N → IN needs-attention', async () => {
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
+      clusters: [{ name: 'prod', connection_status: 'Successful', server_url: 'https://prod' }],
+    });
+    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
+      addons: [
+        { addon_name: 'addon-1', cells: { prod: { health: 'Degraded' } } },
+        { addon_name: 'addon-2', cells: { prod: { health: 'Degraded' } } },
+      ],
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+
+    // Connected but 0/2 healthy → IN needs attention (all addons unhealthy)
+    expect(screen.getByText('Clusters Needing Attention')).toBeInTheDocument();
+  });
+});

@@ -128,67 +128,20 @@ function AddonsTabBar({
   )
 }
 
-function HealthProgressBar({ healthy, total }: { healthy: number; total: number }) {
-  if (total === 0) return null
-  const pct = (healthy / total) * 100
-  const barColor =
-    pct === 100 ? 'bg-green-500' : pct > 50 ? 'bg-yellow-500' : 'bg-red-500'
-
-  return (
-    <div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-[#c0ddf0] dark:bg-gray-700">
-        <div
-          className={`h-full rounded-full transition-all ${barColor}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-400">
-        {healthy}/{total} healthy ({Math.round(pct)}%)
-      </p>
-    </div>
-  )
-}
-
-function StatusChip({
-  label,
-  count,
-  color,
-}: {
-  label: string
-  count: number
-  color: 'green' | 'red' | 'yellow'
-}) {
-  if (count === 0) return null
-  const colors = {
-    green: 'bg-green-50 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700',
-    red: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-700',
-    yellow: 'bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-700',
-  }
-  return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${colors[color]}`}
-    >
-      {count} {label}
-    </span>
-  )
-}
-
 /**
- * Tile badge that distinguishes "in catalog" from "running on N clusters".
- * Renders one of these copies based on (deployed, target) — names follow
- * the V2-cleanup-61.2 vocabulary (one name per state, one state per name):
+ * Tile badge that shows deployment status. LW-13: on the catalog, remove the
+ * "Waiting to deploy" amber deploy-progress state (deployed==0 && target>0).
+ * Deploy progress is a fleet concern, not a catalog concern. States that remain:
  *
- *   target = 0           → "Not deployed yet"        (neutral — in the catalog,
- *                                                     not enabled on any cluster;
- *                                                     benign, was "Catalog Only")
- *   deployed = 0, M > 0  → "Waiting to deploy"       (amber — enabled on clusters
- *                                                     but nothing running yet)
- *   0 < N < M            → "Running on N/M clusters" (project-blue, partial)
- *   N == M, M > 0        → "Running on N clusters"   (green, fully covered)
+ *   target = 0           → "Not deployed yet"        (neutral — in catalog,
+ *                                                     not enabled on any cluster)
+ *   Sync failing         → "Sync failing"            (red — any enabled app failing)
+ *   Deploying (first)    → "Deploying…"              (blue — active first rollout)
+ *   N == M, M > 0        → "Running on N clusters"   (green — fully covered)
+ *   0 < N < M            → "Running on N/M clusters" (blue — partial coverage)
  *
- * Reads deployed_cluster_count + total_target_cluster_count from the addon
- * row; both default to 0 when missing, degrading gracefully to "Not
- * deployed yet" rather than crashing.
+ * The amber "Waiting to deploy" state for deployed==0 && target>0 is dropped per
+ * LW-13; the coverage count below the badge is the signal for that case.
  */
 function DeploymentBadge({ addon }: { addon: AddonCatalogItem }) {
   const deployed = addon.deployed_cluster_count ?? 0
@@ -200,7 +153,7 @@ function DeploymentBadge({ addon }: { addon: AddonCatalogItem }) {
   const hasDeploying = addon.applications.some((a) => a.enabled && a.status === 'deploying')
 
   let label: string
-  let tone: 'neutral' | 'amber' | 'blue' | 'green' | 'red'
+  let tone: 'neutral' | 'blue' | 'green' | 'red'
 
   if (hasSyncFailing) {
     label = 'Sync failing'
@@ -214,9 +167,11 @@ function DeploymentBadge({ addon }: { addon: AddonCatalogItem }) {
     label = 'Deploying…'
     tone = 'blue'
   } else if (deployed === 0) {
-    // Clusters opted in but ArgoCD hasn't produced a synced+healthy app yet.
-    label = 'Waiting to deploy'
-    tone = 'amber'
+    // LW-13: Drop the "Waiting to deploy" amber state. When deployed==0 but
+    // target>0 and nothing is actively deploying, don't show an amber badge.
+    // The coverage count below the badge is the signal.
+    label = 'Not deployed yet'
+    tone = 'neutral'
   } else if (deployed === target) {
     // N == M, M > 0 — cleaner copy than "Running on N/N clusters"
     label = `Running on ${deployed} ${deployed === 1 ? 'cluster' : 'clusters'}`
@@ -232,8 +187,6 @@ function DeploymentBadge({ addon }: { addon: AddonCatalogItem }) {
       // Neutral blue-tinted "inactive" tokens — matches the Unknown /
       // Connecting… styling elsewhere.
       'bg-[#d6eeff] text-[#1a4a6a] ring-[#a0d0f0] dark:bg-gray-700 dark:text-gray-300 dark:ring-gray-600',
-    amber:
-      'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:ring-amber-700',
     blue:
       // Sharko project-blue tokens, matches the existing tile chrome.
       'bg-[#d0e8f8] text-[#0a3a5a] ring-[#6aade0] dark:bg-blue-900/30 dark:text-blue-300 dark:ring-blue-700',
@@ -257,11 +210,13 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
   const [expanded, setExpanded] = useState(false)
   const navigate = useNavigate()
 
-  const enabledApps = addon.applications.filter((a) => a.enabled).length
   const namespace =
     addon.applications.find((a) => a.enabled && a.namespace)?.namespace ??
     addon.namespace ??
     addon.addon_name
+
+  const deployed = addon.deployed_cluster_count ?? 0
+  const target = addon.total_target_cluster_count ?? 0
 
   const handleCardClick = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, a')) return
@@ -281,9 +236,15 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
               {addon.addon_name}
             </h3>
             <p className="truncate text-xs text-[#2a5a7a] dark:text-gray-400">
-              Namespace: {namespace}
+              Version: {addon.version} · Namespace: {namespace}
             </p>
             <DeploymentBadge addon={addon} />
+            {/* Fleet coverage count — welcome here (distinct from per-cluster health) */}
+            {target > 0 && (
+              <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-400">
+                Installed on {deployed}/{target} {target === 1 ? 'cluster' : 'clusters'}
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -300,19 +261,6 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
               <ChevronDown className="h-5 w-5" />
             )}
           </button>
-        </div>
-
-        <HealthProgressBar healthy={addon.healthy_applications} total={enabledApps} />
-
-        {/* Status chips. Problem states are red (V2-cleanup-61.2, D1+D3):
-            Degraded matches its red rendering everywhere else, and
-            "Missing from ArgoCD" is the PROBLEM name — enabled in the
-            catalog but ArgoCD has no Application for it (distinct from the
-            benign "Not deployed yet"). */}
-        <div className="mt-2 flex flex-wrap gap-1">
-          <StatusChip label="Healthy" count={addon.healthy_applications} color="green" />
-          <StatusChip label="Degraded" count={addon.degraded_applications} color="red" />
-          <StatusChip label="Missing from ArgoCD" count={addon.missing_applications} color="red" />
         </div>
 
         {/* Version drift indicator */}
@@ -474,10 +422,10 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
             <th className="px-6 py-3">Deployed</th>
             <th className="px-6 py-3">Healthy</th>
             <th className="px-6 py-3">Degraded</th>
-            {/* The PROBLEM column (V2-cleanup-61.2, D1): enabled in the
-                catalog but ArgoCD has no Application. Was "Catalog Only",
-                which collided with the benign not-deployed badge. */}
-            <th className="px-6 py-3">Missing from ArgoCD</th>
+            {/* The PROBLEM column (V2-cleanup-61.2, D1 + LW-12): enabled
+                in the catalog but ArgoCD has no Application. Reworded per
+                LW-12 to be unambiguous. */}
+            <th className="px-6 py-3">Enabled but not created in ArgoCD</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
@@ -502,7 +450,7 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
                   </span>
                 ) : (
                   <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                    {addon.enabled_clusters} {addon.enabled_clusters === 1 ? 'cluster' : 'clusters'}
+                    Installed on {addon.deployed_cluster_count ?? 0}/{addon.total_target_cluster_count ?? 0} {(addon.total_target_cluster_count ?? 0) === 1 ? 'cluster' : 'clusters'}
                   </span>
                 )}
               </td>

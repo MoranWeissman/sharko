@@ -318,9 +318,20 @@ describe('AddonCatalog — DeploymentBadge (V126-3.1)', () => {
     expect(screen.getByText('Running on 3/5 clusters')).toBeInTheDocument()
   })
 
-  it('renders "Waiting to deploy" when N == 0 and M > 0 (enabled but nothing running)', async () => {
+  // LW-13: "Waiting to deploy" amber state removed from catalog tile when
+  // deployed==0 && target>0 (deploy-progress is a fleet concern, not a catalog
+  // concern). The badge shows "Not deployed yet" instead; the coverage count
+  // below is the signal.
+  it('does NOT render "Waiting to deploy" on the catalog tile when N == 0 and M > 0', async () => {
     await renderInGridView()
-    expect(screen.getByText('Waiting to deploy')).toBeInTheDocument()
+    expect(screen.queryByText('Waiting to deploy')).not.toBeInTheDocument()
+    // addon-target-only fixture: deployed=0, target=4 → shows "Not deployed yet"
+    const badges = screen
+      .getAllByTestId('addon-deployment-badge')
+      .filter((b) => b.textContent === 'Not deployed yet')
+    // Should have more than one "Not deployed yet" badge now (addon-nowhere +
+    // addon-target-only both show the neutral badge).
+    expect(badges.length).toBeGreaterThan(1)
   })
 
   it('renders the benign "Not deployed yet" badge when M == 0 (enabled nowhere)', async () => {
@@ -328,7 +339,42 @@ describe('AddonCatalog — DeploymentBadge (V126-3.1)', () => {
     const badges = screen
       .getAllByTestId('addon-deployment-badge')
       .filter((b) => b.textContent === 'Not deployed yet')
-    expect(badges).toHaveLength(1)
+    // LW-13: both addon-nowhere (M=0) AND addon-target-only (deployed=0, M=4)
+    // now show "Not deployed yet" because we dropped the amber "Waiting to deploy".
+    expect(badges).toHaveLength(2)
+  })
+
+  // LW-16: grid card MUST show version (previously only list + expanded table had it)
+  it('grid card shows addon version in the header', async () => {
+    await renderInGridView()
+    // ingress-nginx fixture has version 4.8.0
+    expect(screen.getByText(/Version: 4\.8\.0/)).toBeInTheDocument()
+    // cert-manager fixture has version 1.13.0
+    expect(screen.getByText(/Version: 1\.13\.0/)).toBeInTheDocument()
+  })
+
+  // LW-15: coverage count wording consistent across grid and list
+  it('grid card shows "Installed on N/M clusters" coverage count', async () => {
+    await renderInGridView()
+    // cert-manager fixture: deployed=3, target=5
+    expect(screen.getByText(/Installed on 3\/5 clusters/)).toBeInTheDocument()
+  })
+
+  // LW-14: per-cluster health removed from catalog tile
+  it('grid card does NOT render per-cluster health bar or health chips', async () => {
+    await renderInGridView()
+    // No "healthy" text in the health progress bar (the bar is removed)
+    expect(screen.queryByText(/\/.*healthy/)).not.toBeInTheDocument()
+    // No StatusChip labels ("Healthy", "Degraded", "Missing from ArgoCD")
+    // in the tile body (these chips were removed from the tile)
+    const cards = screen.getAllByText('ingress-nginx').map(el => el.closest('div.group'))
+    const firstCard = cards[0]
+    if (firstCard) {
+      // The card should NOT contain the per-cluster health chips that were
+      // previously at lines 313-315. The expanded detail table (line 366) may
+      // still show health, but the unexpanded tile does not.
+      expect(firstCard.textContent).not.toMatch(/Healthy.*Degraded/)
+    }
   })
 })
 
@@ -357,23 +403,58 @@ describe('AddonCatalog — D1 vocabulary split (V2-cleanup-61.2)', () => {
     return card
   }
 
-  it('an addon enabled nowhere shows "Not deployed yet" and NEVER "Missing from ArgoCD"', async () => {
+  // LW-14: per-cluster health chips removed from the catalog tile, so these
+  // labels no longer render on the tile at all. The list-view column header
+  // at line 480 was reworded per LW-12, but the card body chips are gone.
+  it('an addon enabled nowhere shows "Not deployed yet" badge and no health chips', async () => {
     await renderInGridView()
     const card = cardOf('addon-nowhere') // enabled_clusters=0, missing=0
     expect(within(card).getByText('Not deployed yet')).toBeInTheDocument()
-    expect(within(card).queryByText('Missing from ArgoCD')).not.toBeInTheDocument()
+    // LW-14: StatusChips removed from tile, so no "Missing from ArgoCD" chip.
+    expect(within(card).queryByText(/Missing from ArgoCD/)).not.toBeInTheDocument()
   })
 
-  it('an addon with apps missing from ArgoCD shows "Missing from ArgoCD" and NEVER "Not deployed yet"', async () => {
+  it('an addon with apps missing from ArgoCD does NOT show health chips on the tile', async () => {
     await renderInGridView()
     const card = cardOf('addon-target-only') // enabled_clusters=4, missing=4
-    expect(within(card).getByText(/Missing from ArgoCD/)).toBeInTheDocument()
-    expect(within(card).queryByText('Not deployed yet')).not.toBeInTheDocument()
+    // LW-14: the per-cluster health StatusChips are removed from the tile,
+    // so "Missing from ArgoCD" (or its LW-12 rewording) doesn't render here.
+    expect(within(card).queryByText(/Missing from ArgoCD/)).not.toBeInTheDocument()
+    expect(within(card).queryByText(/Enabled but not created in ArgoCD/)).not.toBeInTheDocument()
   })
 
   it('the retired "Catalog Only" spelling never renders anywhere on the page', async () => {
     await renderInGridView()
     expect(screen.queryByText(/Catalog Only/i)).not.toBeInTheDocument()
+  })
+
+  // LW-12: "Missing from ArgoCD" column header reworded to be unambiguous
+  it('list view shows "Enabled but not created in ArgoCD" column header (LW-12)', async () => {
+    renderCatalog()
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
+    })
+    // Switch to list view to see the table header
+    const listViewBtn = screen.getByRole('button', { name: /list view/i })
+    fireEvent.click(listViewBtn)
+    await waitFor(() => {
+      expect(screen.getByText(/Enabled but not created in ArgoCD/)).toBeInTheDocument()
+    })
+  })
+
+  // LW-15: list view coverage text matches grid ("Installed on N/M clusters")
+  it('list view shows "Installed on N/M clusters" in the Deployed column', async () => {
+    renderCatalog()
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
+    })
+    // Switch to list view
+    const listViewBtn = screen.getByRole('button', { name: /list view/i })
+    fireEvent.click(listViewBtn)
+    await waitFor(() => {
+      // cert-manager fixture: deployed=3, target=5
+      expect(screen.getByText(/Installed on 3\/5 clusters/)).toBeInTheDocument()
+    })
   })
 })
 

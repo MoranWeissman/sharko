@@ -1,9 +1,13 @@
 import { useNavigate } from 'react-router-dom'
-import { Server } from 'lucide-react'
+import { Server, Info } from 'lucide-react'
 import { AddonDots } from '@/components/AddonDots'
-import { ClusterTypeBadge } from '@/components/ClusterTypeBadge'
-import { WhoseConnectionLabel } from '@/components/WhoseConnectionLabel'
-import { getClusterConnectionState } from '@/lib/clusterStatus'
+import { getClusterConnectionState, classifyClusterConnection, isClusterNeedsAttention } from '@/lib/clusterStatus'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 interface ClusterAddonSummary {
   name: string
@@ -12,9 +16,6 @@ interface ClusterAddonSummary {
 
 interface ClusterCardProps {
   name: string
-  /** Optional API server URL — when present, renders a cosmetic
-   *  ClusterTypeBadge inline with the cluster name. */
-  serverUrl?: string
   connectionStatus: string
   addonSummary: ClusterAddonSummary[]
   healthyCount: number
@@ -28,10 +29,12 @@ interface ClusterCardProps {
 // has not yet produced a probe result) renders as a neutral "Connecting…"
 // pill rather than a red "Disconnected" failure — the ArgoCD probe window
 // can be ~10-60s on real installs.
+//
+// LW-3..LW-6: collapsed connection indicator (one line), named reason,
+// honest addon count label, no self-hosted badge.
 
 export function ClusterCard({
   name,
-  serverUrl,
   connectionStatus,
   addonSummary,
   healthyCount,
@@ -39,6 +42,17 @@ export function ClusterCard({
 }: ClusterCardProps) {
   const navigate = useNavigate()
   const pill = getClusterConnectionState(connectionStatus)
+  const kind = classifyClusterConnection(connectionStatus)
+
+  // LW-3: derive a plain-English reason for why this cluster needs attention
+  let attentionReason = ''
+  if (isClusterNeedsAttention(connectionStatus)) {
+    attentionReason = pill.label // "Disconnected", "Not connected"
+  } else if (kind === 'pending' && totalCount > 0) {
+    attentionReason = 'Not reporting'
+  } else if (kind === 'connected' && totalCount > 0 && healthyCount === 0) {
+    attentionReason = 'All addons unhealthy'
+  }
 
   return (
     <div
@@ -51,19 +65,32 @@ export function ClusterCard({
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <Server className="h-4 w-4 text-teal-600 dark:text-teal-400" />
         <h3 className="truncate text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{name}</h3>
-        {/* Cosmetic type pill derived from server hostname. */}
-        {serverUrl !== undefined && <ClusterTypeBadge server={serverUrl} compact />}
+        {/* LW-6: removed ClusterTypeBadge — cosmetic guess from hostname, weak signal on cramped card */}
       </div>
-      <div className="mb-2 flex flex-col gap-0.5">
-        {/* connection_status is ArgoCD's own connection — say so (V2-cleanup-55.3/55.5). */}
-        <WhoseConnectionLabel who="argocd" />
-        <div className="flex items-center gap-1.5" title={pill.meaning}>
+      {/* LW-5: collapsed connection indicator — ONE line with state label + dot + optional "i" for explanation */}
+      <TooltipProvider delayDuration={200}>
+        <div className="mb-2 flex items-center gap-1.5">
           <div className={`h-2 w-2 rounded-full ${pill.dot}`} />
-          <span className={`text-xs ${pill.text}`}>{pill.label}</span>
+          <span className={`text-xs ${pill.text}`}>{pill.label} to ArgoCD</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Info className="h-3 w-3 text-[#5a8aaa] dark:text-gray-400" />
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs max-w-xs">
+              {pill.meaning}
+            </TooltipContent>
+          </Tooltip>
         </div>
-      </div>
+      </TooltipProvider>
+      {/* LW-3: name the reason inline when this is on the needs-attention list */}
+      {attentionReason && (
+        <p className="mb-2 text-xs font-medium text-red-700 dark:text-red-400">
+          {attentionReason}
+        </p>
+      )}
+      {/* LW-4: honest addon count label — "N of M addons healthy" */}
       <p className="mb-2 text-xs text-[#2a5a7a] dark:text-gray-400">
-        {totalCount > 0 ? `${healthyCount}/${totalCount} healthy` : 'No addons'}
+        {totalCount > 0 ? `${healthyCount} of ${totalCount} addons healthy` : 'No addons'}
       </p>
       <AddonDots addons={addonSummary} />
     </div>
