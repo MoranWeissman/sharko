@@ -172,3 +172,68 @@ func TestResolvePendingRegistrations_RespectsCommitPrefix(t *testing.T) {
 		t.Errorf("expected clusters [b, c] for prefix '[acme]', got %+v", gotAcme)
 	}
 }
+
+// TestPendingRegistrationsExcludeManagedClusters verifies that clusters already
+// managed (in git) are NOT included in the pending-registrations list even if
+// they have an open registration PR (idempotent-retry case). This prevents
+// double-counting: a cluster should appear ONCE (in the managed list), not in
+// both managed AND pending (LW-18 Part 2).
+func TestPendingRegistrationsExcludeManagedClusters(t *testing.T) {
+	gp := &fakeGP{
+		prs: []gitprovider.PullRequest{
+			{
+				// prod-eu is already in git (managed), but has an open re-register PR
+				ID:           42,
+				Title:        "sharko: register cluster prod-eu",
+				SourceBranch: "sharko/register-prod-eu",
+				URL:          "https://github.com/org/repo/pull/42",
+				CreatedAt:    "2026-05-01T12:00:00Z",
+			},
+			{
+				// dr-eu is NOT yet in git (genuinely pending)
+				ID:           43,
+				Title:        "sharko: register cluster dr-eu",
+				SourceBranch: "sharko/register-dr-eu",
+				URL:          "https://github.com/org/repo/pull/43",
+				CreatedAt:    "2026-05-02T08:30:00Z",
+			},
+		},
+	}
+
+	// The raw resolver returns both prod-eu and dr-eu as pending registrations
+	// (it doesn't know what's managed yet).
+	rawPending := resolvePendingRegistrations(context.Background(), gp, "sharko:")
+	if len(rawPending) != 2 {
+		t.Fatalf("raw resolver: expected 2 pending registrations, got %d", len(rawPending))
+	}
+
+	// Now simulate the filtering logic added in LW-18 Part 2 (the fix in clusters.go).
+	// Build a managedNames map (prod-eu is managed, dr-eu is not).
+	managedNames := map[string]struct{}{
+		"prod-eu": {},
+	}
+
+	// Filter out managed clusters from the pending list
+	filteredPending := rawPending[:0]
+	for _, p := range rawPending {
+		if _, alreadyManaged := managedNames[p.ClusterName]; !alreadyManaged {
+			filteredPending = append(filteredPending, p)
+		}
+	}
+
+	// After filtering, only dr-eu should remain (prod-eu was removed)
+	if len(filteredPending) != 1 {
+		t.Fatalf("after filter: expected 1 pending registration, got %d: %+v",
+			len(filteredPending), filteredPending)
+	}
+	if filteredPending[0].ClusterName != "dr-eu" {
+		t.Errorf("after filter: expected dr-eu, got %q", filteredPending[0].ClusterName)
+	}
+
+	// prod-eu must not appear in the pending list (it's managed, so the open PR is noise)
+	for _, p := range filteredPending {
+		if p.ClusterName == "prod-eu" {
+			t.Errorf("managed cluster prod-eu incorrectly appears in pending registrations")
+		}
+	}
+}

@@ -49,7 +49,7 @@ func TestBootstrapRootAppSeeded(t *testing.T) {
 }
 
 // TestPendingRegistrationPRSeeded verifies the mock Git provider includes
-// an open PR matching a pending cluster registration (Story LW-F gap #2).
+// an open PR matching a pending cluster registration (Story LW-F gap #2, updated LW-18).
 func TestPendingRegistrationPRSeeded(t *testing.T) {
 	p := NewMockGitProvider()
 
@@ -64,9 +64,9 @@ func TestPendingRegistrationPRSeeded(t *testing.T) {
 		// Title must follow the pattern "sharko: register cluster dr-eu"
 		if pr.Title == "sharko: register cluster dr-eu" && pr.Status == "open" {
 			foundDrEu = true
-			// Sanity: PR 43 is the third seeded PR
-			if pr.ID != 43 {
-				t.Errorf("dr-eu pending registration PR ID = %d, want 43", pr.ID)
+			// Sanity: PR 42 is the second seeded PR (LW-18: removed perf-asia phantom PR)
+			if pr.ID != 42 {
+				t.Errorf("dr-eu pending registration PR ID = %d, want 42", pr.ID)
 			}
 			break
 		}
@@ -111,5 +111,73 @@ func TestPendingRegistrationMatchesUnregisteredCluster(t *testing.T) {
 
 	if !foundPR {
 		t.Fatal("pending PR for dr-eu not seeded even though dr-eu is in demoUnregisteredClusters")
+	}
+}
+
+// TestPerfAsiaNotPending verifies perf-asia does NOT have a pending registration PR
+// (LW-18 Part 1: perf-asia is the disconnected in-git cluster, not a pending registration).
+func TestPerfAsiaNotPending(t *testing.T) {
+	p := NewMockGitProvider()
+
+	prs, err := p.ListPullRequests(context.Background(), "open")
+	if err != nil {
+		t.Fatalf("listing open PRs: %v", err)
+	}
+
+	for _, pr := range prs {
+		if pr.Title == "sharko: register cluster perf-asia" {
+			t.Fatalf("found phantom perf-asia pending PR (ID=%d); should not exist per LW-18", pr.ID)
+		}
+	}
+}
+
+// TestExactlyOnePendingRegistration verifies the demo seeds exactly 1 pending registration
+// (dr-eu only; sandbox-us removed, perf-asia is in-git not pending).
+func TestExactlyOnePendingRegistration(t *testing.T) {
+	p := NewMockGitProvider()
+
+	prs, err := p.ListPullRequests(context.Background(), "open")
+	if err != nil {
+		t.Fatalf("listing open PRs: %v", err)
+	}
+
+	var pendingRegistrations []string
+	for _, pr := range prs {
+		if pr.Title == "sharko: register cluster dr-eu" {
+			pendingRegistrations = append(pendingRegistrations, "dr-eu")
+		} else if pr.Title == "sharko: register cluster perf-asia" {
+			pendingRegistrations = append(pendingRegistrations, "perf-asia")
+		} else if pr.Title == "sharko: register cluster sandbox-us" {
+			pendingRegistrations = append(pendingRegistrations, "sandbox-us")
+		}
+	}
+
+	if len(pendingRegistrations) != 1 {
+		t.Fatalf("expected exactly 1 pending registration (dr-eu), got %d: %v",
+			len(pendingRegistrations), pendingRegistrations)
+	}
+
+	if pendingRegistrations[0] != "dr-eu" {
+		t.Fatalf("expected pending registration for dr-eu, got %s", pendingRegistrations[0])
+	}
+}
+
+// TestPerfAsiaInGit verifies perf-asia is seeded as an in-git (managed) cluster
+// with Failed connection status.
+func TestPerfAsiaInGit(t *testing.T) {
+	var found *Cluster
+	for i := range demoClusters {
+		if demoClusters[i].Name == "perf-asia" {
+			found = &demoClusters[i]
+			break
+		}
+	}
+
+	if found == nil {
+		t.Fatal("perf-asia not found in demoClusters (should be the disconnected in-git cluster)")
+	}
+
+	if found.ConnStatus != "Failed" {
+		t.Errorf("perf-asia ConnStatus = %q, want Failed (disconnected cluster)", found.ConnStatus)
 	}
 }

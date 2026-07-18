@@ -23,7 +23,7 @@ func NewMockGitProvider() *MockGitProvider {
 	p := &MockGitProvider{
 		files:    make(map[string][]byte),
 		branches: map[string]bool{"main": true},
-		nextPRID: 44, // start after the 3 pre-seeded PRs
+		nextPRID: 43, // start after the 2 pre-seeded PRs (LW-18: removed perf-asia phantom PR)
 	}
 	p.seedFiles()
 	p.seedPRs()
@@ -120,33 +120,23 @@ func (p *MockGitProvider) seedPRs() {
 			CreatedAt:    "2025-01-18T09:00:00Z",
 			UpdatedAt:    "2025-01-18T09:00:00Z",
 		},
+		// Pending registration PR matching the seeded unregistered cluster dr-eu
+		// (LW-9, Story LW-F gap #2, fixed LW-18). Title follows the orchestrator's
+		// registration pattern "<CommitPrefix> register cluster <name>" so
+		// resolvePendingRegistrations parses it correctly. This is the ONLY pending
+		// registration in the demo (LW-18: perf-asia is the disconnected in-git
+		// cluster, NOT a pending registration).
 		{
 			ID:           42,
-			Title:        "sharko: register cluster perf-asia",
-			Description:  "Automated cluster registration by Sharko",
-			Author:       "sharko-bot",
-			Status:       "open",
-			SourceBranch: "sharko/register-perf-asia",
-			TargetBranch: "main",
-			URL:          "https://github.com/demo/sharko-addons/pull/42",
-			CreatedAt:    "2025-01-19T14:22:00Z",
-			UpdatedAt:    "2025-01-19T14:22:00Z",
-		},
-		// Pending registration PR matching the seeded unregistered cluster dr-eu
-		// (LW-9, Story LW-F gap #2). Title follows the orchestrator's registration
-		// pattern "<CommitPrefix> register cluster <name>" so resolvePendingRegistrations
-		// parses it correctly.
-		{
-			ID:           43,
 			Title:        "sharko: register cluster dr-eu",
 			Description:  "Automated cluster registration by Sharko",
 			Author:       "sharko-bot",
 			Status:       "open",
 			SourceBranch: "sharko/register-dr-eu",
 			TargetBranch: "main",
-			URL:          "https://github.com/demo/sharko-addons/pull/43",
-			CreatedAt:    "2025-01-20T08:15:00Z",
-			UpdatedAt:    "2025-01-20T08:15:00Z",
+			URL:          "https://github.com/demo/sharko-addons/pull/42",
+			CreatedAt:    "2025-01-19T14:22:00Z",
+			UpdatedAt:    "2025-01-19T14:22:00Z",
 		},
 	}
 }

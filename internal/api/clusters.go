@@ -48,9 +48,29 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	// surface (the argosecrets reconciler can create the ArgoCD cluster
 	// secret BEFORE the values-file PR merges).
 	pending := resolvePendingRegistrations(r.Context(), gp, s.gitopsConfig().CommitPrefix)
-	resp.PendingRegistrations = pending
-	pendingNames := make(map[string]struct{}, len(pending))
+
+	// LW-18 (Part 2): Filter out any pending-registration PRs for clusters
+	// that are already managed (in git). This handles the idempotent-retry
+	// case where someone re-runs `register` on an already-registered cluster,
+	// opening a redundant PR. Without this filter, the cluster would appear
+	// BOTH in the managed list AND in PendingRegistrations, inflating the
+	// "All Clusters" total and confusing the UI. The managed cluster is the
+	// source of truth — the open PR is noise.
+	managedNames := make(map[string]struct{}, len(resp.Clusters))
+	for _, c := range resp.Clusters {
+		if c.Managed {
+			managedNames[c.Name] = struct{}{}
+		}
+	}
+	filteredPending := pending[:0]
 	for _, p := range pending {
+		if _, alreadyManaged := managedNames[p.ClusterName]; !alreadyManaged {
+			filteredPending = append(filteredPending, p)
+		}
+	}
+	resp.PendingRegistrations = filteredPending
+	pendingNames := make(map[string]struct{}, len(filteredPending))
+	for _, p := range filteredPending {
 		pendingNames[p.ClusterName] = struct{}{}
 	}
 
