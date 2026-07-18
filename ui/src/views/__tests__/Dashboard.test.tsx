@@ -103,7 +103,7 @@ describe('Dashboard', () => {
 
     // Health bars
     expect(screen.getByText('Application Health')).toBeInTheDocument();
-    expect(screen.getByText('Cluster Connectivity')).toBeInTheDocument();
+    // LW-7: Cluster Connectivity bar removed — connectivity is now shown in Total Clusters stat
   });
 
   // BUG-040: clicking the "N disconnected cluster(s)" button under
@@ -399,5 +399,93 @@ describe('Dashboard needs-attention filter (LW-1)', () => {
 
     // Connected but 0/2 healthy → IN needs attention (all addons unhealthy)
     expect(screen.getByText('Clusters Needing Attention')).toBeInTheDocument();
+  });
+});
+
+// LW-7: Dashboard connectivity widget — fold disconnected count into Total Clusters stat,
+// drop redundant "Cluster Connectivity" bar
+describe('Dashboard connectivity widget (LW-7)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('when disconnected == 0, Total Clusters stat shows no subtitle and Cluster Connectivity bar does not render', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 5, connected_to_argocd: 5, disconnected_from_argocd: 0 },
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+
+    // Total Clusters stat should be visible with value 5
+    expect(screen.getByText('Total Clusters')).toBeInTheDocument();
+    expect(screen.getByText('5')).toBeInTheDocument();
+
+    // No subtitle about disconnected clusters
+    expect(screen.queryByText(/disconnected/i)).not.toBeInTheDocument();
+
+    // The full-width "Cluster Connectivity" HealthBar should not render
+    expect(screen.queryByText('Cluster Connectivity')).not.toBeInTheDocument();
+  });
+
+  it('when disconnected > 0, Total Clusters stat shows disconnected count as subtitle', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 10, connected_to_argocd: 8, disconnected_from_argocd: 2 },
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+
+    // Total Clusters stat should show the count
+    expect(screen.getByText('Total Clusters')).toBeInTheDocument();
+    expect(screen.getByText('10')).toBeInTheDocument();
+
+    // The subtitle "2 disconnected" should be visible
+    expect(screen.getByText('2 disconnected')).toBeInTheDocument();
+
+    // Still no full-width "Cluster Connectivity" bar
+    expect(screen.queryByText('Cluster Connectivity')).not.toBeInTheDocument();
+  });
+
+  it('clicking Total Clusters stat when disconnected > 0 deep-links to /clusters?status=disconnected', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 10, connected_to_argocd: 8, disconnected_from_argocd: 2 },
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('2 disconnected')).toBeInTheDocument();
+    });
+
+    // The StatCard with "Total Clusters" should be clickable
+    const statCard = screen.getByText('Total Clusters').closest('[role="button"]');
+    expect(statCard).toBeInTheDocument();
+    fireEvent.click(statCard!);
+
+    expect(mockNavigate).toHaveBeenCalledWith('/clusters?status=disconnected');
+  });
+
+  it('clicking Total Clusters stat when disconnected == 0 navigates to /clusters (no filter)', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 5, connected_to_argocd: 5, disconnected_from_argocd: 0 },
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Total Clusters')).toBeInTheDocument();
+    });
+
+    const statCard = screen.getByText('Total Clusters').closest('[role="button"]');
+    fireEvent.click(statCard!);
+
+    expect(mockNavigate).toHaveBeenCalledWith('/clusters');
   });
 });

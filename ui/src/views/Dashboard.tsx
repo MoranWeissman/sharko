@@ -563,8 +563,14 @@ export function Dashboard() {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard title="Total Clusters" value={stats.clusters.total} icon={<Server className="h-6 w-6" />}
-          color="default" onClick={() => navigate('/clusters')} />
+        <StatCard
+          title="Total Clusters"
+          value={stats.clusters.total}
+          icon={<Server className="h-6 w-6" />}
+          color={disconnectedCount > 0 ? 'error' : 'default'}
+          subtitle={disconnectedCount > 0 ? `${disconnectedCount} disconnected` : undefined}
+          onClick={() => navigate(disconnectedCount > 0 ? '/clusters?status=disconnected' : '/clusters')}
+        />
         <StatCard title="Applications" value={`${healthyCount}/${appTotal} healthy`} icon={<AppWindow className="h-6 w-6" />}
           color={degradedCount > 0 ? 'error' : 'success'} onClick={() => navigate('/addons')} />
         <StatCard title="Available Addons" value={stats.addons.total_available} icon={<Package className="h-6 w-6" />}
@@ -603,20 +609,13 @@ export function Dashboard() {
       )}
 
       {/* Health Bars */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <HealthBar title="Application Health" subtitle="Operational health of deployed applications"
-          segments={[
-            { label: 'Healthy', value: stats.applications.by_health_status.healthy, color: '#22c55e' },
-            { label: 'Progressing', value: stats.applications.by_health_status.progressing, color: '#3b82f6' },
-            { label: 'Degraded', value: stats.applications.by_health_status.degraded, color: '#ef4444' },
-            { label: 'Unknown', value: stats.applications.by_health_status.unknown, color: '#9ca3af' },
-          ]} />
-        <HealthBar title="Cluster Connectivity" subtitle="Cluster connection status to ArgoCD"
-          segments={[
-            { label: 'Connected', value: stats.clusters.connected_to_argocd, color: '#22c55e' },
-            { label: 'Disconnected', value: stats.clusters.disconnected_from_argocd, color: '#ef4444' },
-          ]} />
-      </div>
+      <HealthBar title="Application Health" subtitle="Operational health of deployed applications"
+        segments={[
+          { label: 'Healthy', value: stats.applications.by_health_status.healthy, color: '#22c55e' },
+          { label: 'Progressing', value: stats.applications.by_health_status.progressing, color: '#3b82f6' },
+          { label: 'Degraded', value: stats.applications.by_health_status.degraded, color: '#ef4444' },
+          { label: 'Unknown', value: stats.applications.by_health_status.unknown, color: '#9ca3af' },
+        ]} />
 
       {/* Pull Requests — Pending/Merged toggle. */}
       <PullRequestsPanel onMergeDetected={handlePRMerged} />
