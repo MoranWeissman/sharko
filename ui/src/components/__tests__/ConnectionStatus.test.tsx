@@ -47,9 +47,9 @@ describe('ConnectionStatus', () => {
     expect(wrapper.className).toContain('text-amber-700');
   });
 
-  it('"not_in_git" shows "Not managed" with amber attention color', () => {
+  it('"not_in_git" shows "Available to manage" with amber attention color', () => {
     const { container } = render(<ConnectionStatus status="not_in_git" />);
-    expect(screen.getByText('Not managed')).toBeInTheDocument();
+    expect(screen.getByText('Available to manage')).toBeInTheDocument();
 
     const wrapper = container.firstChild as HTMLElement;
     expect(wrapper.className).toContain('text-amber-700');

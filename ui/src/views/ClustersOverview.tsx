@@ -969,6 +969,11 @@ export function ClustersOverview() {
     return <ErrorState message={error} onRetry={fetchData} />;
   }
 
+  // LW-10: the backend now excludes pending/orphan registrations from
+  // healthStats.not_in_git at the source (internal/api/clusters.go), so the
+  // FE consumes the value directly — no client-side subtraction. Fixing
+  // not_in_git at the backend also fixes this total (total_in_git +
+  // not_in_git).
   const totalClusters = healthStats
     ? healthStats.total_in_git + healthStats.not_in_git
     : allClusters.length;
@@ -1022,7 +1027,7 @@ export function ClustersOverview() {
     },
     {
       key: 'not_in_git',
-      title: 'Not managed',
+      title: 'Available to manage',
       value: healthStats?.not_in_git ?? 0,
       color: 'warning',
       icon: <AlertTriangle className="h-5 w-5" />,
