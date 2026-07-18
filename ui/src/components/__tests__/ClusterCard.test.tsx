@@ -2,40 +2,47 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ClusterCard } from '@/components/ClusterCard';
-import { ARGOCD_CONN_LABEL, ARGOCD_CONN_TOOLTIP } from '@/components/WhoseConnectionLabel';
 
-function renderCard(connectionStatus: string) {
+interface RenderCardOpts {
+  connectionStatus: string
+  healthyCount?: number
+  totalCount?: number
+  addonSummary?: Array<{ name: string; health: string }>
+}
+
+function renderCard(opts: RenderCardOpts) {
+  const { connectionStatus, healthyCount = 0, totalCount = 0, addonSummary = [] } = opts
   return render(
     <MemoryRouter>
       <ClusterCard
         name="prod-eu"
         connectionStatus={connectionStatus}
-        addonSummary={[]}
-        healthyCount={0}
-        totalCount={0}
+        addonSummary={addonSummary}
+        healthyCount={healthyCount}
+        totalCount={totalCount}
       />
     </MemoryRouter>,
   );
 }
 
-describe('ClusterCard connection pill', () => {
-  it('renders green "Connected" for ArgoCD status "Successful"', () => {
-    const { container } = renderCard('Successful');
-    expect(screen.getByText('Connected')).toBeInTheDocument();
+describe('ClusterCard connection pill (LW-5 collapsed)', () => {
+  it('renders green "Connected to ArgoCD" for ArgoCD status "Successful"', () => {
+    const { container } = renderCard({ connectionStatus: 'Successful' });
+    expect(screen.getByText('Connected to ArgoCD')).toBeInTheDocument();
 
     const dot = container.querySelector('div.h-2.w-2.rounded-full');
     expect(dot).not.toBeNull();
     expect(dot!.className).toContain('bg-green-500');
   });
 
-  it('renders green "Connected" for ArgoCD status "Connected"', () => {
-    renderCard('Connected');
-    expect(screen.getByText('Connected')).toBeInTheDocument();
+  it('renders green "Connected to ArgoCD" for ArgoCD status "Connected"', () => {
+    renderCard({ connectionStatus: 'Connected' });
+    expect(screen.getByText('Connected to ArgoCD')).toBeInTheDocument();
   });
 
-  it('renders red "Disconnected" for ArgoCD status "Failed"', () => {
-    const { container } = renderCard('Failed');
-    expect(screen.getByText('Disconnected')).toBeInTheDocument();
+  it('renders red "Disconnected to ArgoCD" for ArgoCD status "Failed"', () => {
+    const { container } = renderCard({ connectionStatus: 'Failed' });
+    expect(screen.getByText('Disconnected to ArgoCD')).toBeInTheDocument();
 
     const dot = container.querySelector('div.h-2.w-2.rounded-full');
     expect(dot!.className).toContain('bg-red-500');
@@ -47,10 +54,10 @@ describe('ClusterCard connection pill', () => {
   // The old binary predicate (`status === 'Successful' || === 'Connected'`)
   // flashed red for the entire ~10-60s probe window, making registration
   // look broken even though it had completed successfully.
-  it('renders neutral "Connecting…" — NOT red Disconnected — for empty status (BUG-033)', () => {
-    const { container } = renderCard('');
-    expect(screen.getByText('Connecting…')).toBeInTheDocument();
-    expect(screen.queryByText('Disconnected')).not.toBeInTheDocument();
+  it('renders neutral "Connecting… to ArgoCD" — NOT red Disconnected — for empty status (BUG-033)', () => {
+    const { container } = renderCard({ connectionStatus: '' });
+    expect(screen.getByText('Connecting… to ArgoCD')).toBeInTheDocument();
+    expect(screen.queryByText('Disconnected to ArgoCD')).not.toBeInTheDocument();
 
     const dot = container.querySelector('div.h-2.w-2.rounded-full');
     expect(dot!.className).not.toContain('bg-red-500');
@@ -58,10 +65,10 @@ describe('ClusterCard connection pill', () => {
     expect(dot!.className).toContain('bg-[#3a6a8a]');
   });
 
-  it('renders neutral "Connecting…" for status "Unknown" (BUG-033)', () => {
-    renderCard('Unknown');
-    expect(screen.getByText('Connecting…')).toBeInTheDocument();
-    expect(screen.queryByText('Disconnected')).not.toBeInTheDocument();
+  it('renders neutral "Connecting… to ArgoCD" for status "Unknown" (BUG-033)', () => {
+    renderCard({ connectionStatus: 'Unknown' });
+    expect(screen.getByText('Connecting… to ArgoCD')).toBeInTheDocument();
+    expect(screen.queryByText('Disconnected to ArgoCD')).not.toBeInTheDocument();
   });
 
   // V2-cleanup-75.1: "missing" (ArgoCD has NO connection for this cluster
@@ -69,38 +76,62 @@ describe('ClusterCard connection pill', () => {
   // neutral "Connecting…" pending window above. Showing it as "Connecting…"
   // left a cluster ArgoCD can't reach (e.g. a local/kind cluster an EKS hub
   // can't see) looking like it was about to work, forever.
-  it('renders amber "Not connected" — NOT "Connecting…" — for status "missing"', () => {
-    const { container } = renderCard('missing');
-    expect(screen.getByText('Not connected')).toBeInTheDocument();
-    expect(screen.queryByText('Connecting…')).not.toBeInTheDocument();
-    expect(screen.queryByText('Disconnected')).not.toBeInTheDocument();
+  it('renders amber "Not connected to ArgoCD" — NOT "Connecting…" — for status "missing"', () => {
+    const { container } = renderCard({ connectionStatus: 'missing' });
+    expect(screen.getByText('Not connected to ArgoCD')).toBeInTheDocument();
+    expect(screen.queryByText('Connecting… to ArgoCD')).not.toBeInTheDocument();
+    expect(screen.queryByText('Disconnected to ArgoCD')).not.toBeInTheDocument();
 
     const dot = container.querySelector('div.h-2.w-2.rounded-full');
     expect(dot!.className).toContain('bg-amber-500');
   });
 
-  it('renders amber "Not connected" for status "missing_from_argocd" too', () => {
-    renderCard('missing_from_argocd');
-    expect(screen.getByText('Not connected')).toBeInTheDocument();
+  it('renders amber "Not connected to ArgoCD" for status "missing_from_argocd" too', () => {
+    renderCard({ connectionStatus: 'missing_from_argocd' });
+    expect(screen.getByText('Not connected to ArgoCD')).toBeInTheDocument();
   });
 });
 
-// V2-cleanup-55.5 — whose-connection attribution on the dashboard cluster
-// cards. The connection pill renders `connection_status`, which is ArgoCD's
-// OWN connection to the cluster (from its cluster secret) — not Sharko's.
-// The card must carry the same "ArgoCD → cluster" caption + tooltip used
-// on ClustersOverview (V2-cleanup-55.3) so the two pages read consistently.
-describe('ClusterCard whose-connection attribution', () => {
-  it('captions the connection pill "ArgoCD → cluster" with the explanatory tooltip', () => {
-    renderCard('Successful');
-    const caption = screen.getByText(ARGOCD_CONN_LABEL);
-    expect(caption).toBeInTheDocument();
-    expect(caption).toHaveAttribute('title', ARGOCD_CONN_TOOLTIP);
+// LW-4: honest addon count label — "N of M addons healthy"
+describe('ClusterCard addon count label (LW-4)', () => {
+  it('renders "N of M addons healthy" — NOT "N/M healthy"', () => {
+    renderCard({ connectionStatus: 'Successful', healthyCount: 2, totalCount: 5 });
+    expect(screen.getByText('2 of 5 addons healthy')).toBeInTheDocument();
+    expect(screen.queryByText('2/5 healthy')).not.toBeInTheDocument();
   });
 
-  it('shows the attribution regardless of connection state (failed too)', () => {
-    renderCard('Failed');
-    expect(screen.getByText(ARGOCD_CONN_LABEL)).toBeInTheDocument();
+  it('renders "No addons" when totalCount is 0', () => {
+    renderCard({ connectionStatus: 'Successful', healthyCount: 0, totalCount: 0 });
+    expect(screen.getByText('No addons')).toBeInTheDocument();
+  });
+});
+
+// LW-3: inline reason for why this cluster needs attention
+describe('ClusterCard attention reason (LW-3)', () => {
+  it('shows "Disconnected" reason for Failed status', () => {
+    renderCard({ connectionStatus: 'Failed', healthyCount: 0, totalCount: 0 });
     expect(screen.getByText('Disconnected')).toBeInTheDocument();
+  });
+
+  it('shows "Not connected" reason for missing status', () => {
+    renderCard({ connectionStatus: 'missing', healthyCount: 0, totalCount: 0 });
+    expect(screen.getByText('Not connected')).toBeInTheDocument();
+  });
+
+  it('shows "Not reporting" reason for Unknown with addons', () => {
+    renderCard({ connectionStatus: 'Unknown', healthyCount: 0, totalCount: 3 });
+    expect(screen.getByText('Not reporting')).toBeInTheDocument();
+  });
+
+  it('shows "All addons unhealthy" reason for Connected with 0 healthy out of N', () => {
+    renderCard({ connectionStatus: 'Successful', healthyCount: 0, totalCount: 3 });
+    expect(screen.getByText('All addons unhealthy')).toBeInTheDocument();
+  });
+
+  it('does NOT show a reason for Connected with at least one healthy addon', () => {
+    renderCard({ connectionStatus: 'Successful', healthyCount: 1, totalCount: 3 });
+    expect(screen.queryByText('Disconnected')).not.toBeInTheDocument();
+    expect(screen.queryByText('Not reporting')).not.toBeInTheDocument();
+    expect(screen.queryByText('All addons unhealthy')).not.toBeInTheDocument();
   });
 });

@@ -22,7 +22,7 @@ import {
   useAddonStates,
   deepLinkToAddonOnCluster,
 } from '@/hooks/useAddonStates';
-import { isClusterNeedsAttention } from '@/lib/clusterStatus';
+import { isClusterNeedsAttention, classifyClusterConnection } from '@/lib/clusterStatus';
 
 // --- Health Bar with totals ---
 
@@ -177,7 +177,7 @@ export function Dashboard() {
   const { byApp: addonStateMap, refresh: refreshAddonStates } = useAddonStates();
   const [showAttention, setShowAttention] = useState(false);
   const [showProgressing, setShowProgressing] = useState(false);
-  const [clusters, setClusters] = useState<{ name: string; serverUrl?: string; connectionStatus: string; addons: { name: string; health: string }[]; healthy: number; total: number }[]>([]);
+  const [clusters, setClusters] = useState<{ name: string; connectionStatus: string; addons: { name: string; health: string }[]; healthy: number; total: number }[]>([]);
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
 
   const fetchData = useCallback(async (background = false) => {
@@ -254,20 +254,29 @@ export function Dashboard() {
                 addons.push({ name: row.addon_name, health })
               }
             }
-            return { name: c.name, serverUrl: c.server_url, connectionStatus: c.connection_status || 'Unknown', addons, healthy, total }
+            return { name: c.name, connectionStatus: c.connection_status || 'Unknown', addons, healthy, total }
           })
         // A freshly-registered cluster sits in a pending connection state
         // for ~10-60s (until ArgoCD's cluster-info refresher produces a
         // probe result) — that's a normal part of the registration
         // lifecycle, not an issue. Surface a cluster in "Needs Attention"
-        // when ArgoCD reports an explicit failure OR has NO connection for
-        // the cluster at all (V2-cleanup-75.1 — a "missing" cluster often
-        // has zero addon rows to compare health against, so it would
-        // otherwise never trip `healthy < total` and would silently never
-        // appear here) OR the cluster has unhealthy addons.
-        const problemClusters = cards.filter(c =>
-          isClusterNeedsAttention(c.connectionStatus) || c.healthy < c.total
-        )
+        // per the LW-1 locked rule:
+        // 1. connection_status == Failed → needs attention
+        // 2. connection_status == Unknown AND total > 0 → needs attention
+        //    (ArgoCD manages addons but can't report status)
+        // 3. connection_status == Connected but healthy == 0 AND total > 0
+        //    → needs attention (all addons down = weak cluster-wide signal)
+        // 4. Otherwise NOT needs attention (addon health ≠ cluster health)
+        const problemClusters = cards.filter(c => {
+          const kind = classifyClusterConnection(c.connectionStatus)
+          // Failed/missing (covered by isClusterNeedsAttention)
+          if (isClusterNeedsAttention(c.connectionStatus)) return true
+          // Unknown with addons deployed
+          if (kind === 'pending' && c.total > 0) return true
+          // Connected but ALL addons unhealthy (0 of N)
+          if (kind === 'connected' && c.total > 0 && c.healthy === 0) return true
+          return false
+        })
         setClusters(problemClusters)
       }
     } catch (e: unknown) {
@@ -583,7 +592,6 @@ export function Dashboard() {
               <ClusterCard
                 key={cluster.name}
                 name={cluster.name}
-                serverUrl={cluster.serverUrl}
                 connectionStatus={cluster.connectionStatus}
                 addonSummary={cluster.addons}
                 healthyCount={cluster.healthy}
