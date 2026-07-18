@@ -1,6 +1,5 @@
 import { useNavigate } from 'react-router-dom'
 import { Server, Info } from 'lucide-react'
-import { AddonDots } from '@/components/AddonDots'
 import { getClusterConnectionState, classifyClusterConnection, isClusterNeedsAttention } from '@/lib/clusterStatus'
 import {
   Tooltip,
@@ -9,15 +8,9 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-interface ClusterAddonSummary {
-  name: string
-  health: string
-}
-
 interface ClusterCardProps {
   name: string
   connectionStatus: string
-  addonSummary: ClusterAddonSummary[]
   healthyCount: number
   totalCount: number
 }
@@ -36,7 +29,6 @@ interface ClusterCardProps {
 export function ClusterCard({
   name,
   connectionStatus,
-  addonSummary,
   healthyCount,
   totalCount,
 }: ClusterCardProps) {
@@ -45,13 +37,12 @@ export function ClusterCard({
   const kind = classifyClusterConnection(connectionStatus)
 
   // LW-3: derive a plain-English reason for why this cluster needs attention
+  // (CONNECTION problems only — addon health is shown below via the colored ratio)
   let attentionReason = ''
   if (isClusterNeedsAttention(connectionStatus)) {
     attentionReason = pill.label // "Disconnected", "Not connected"
   } else if (kind === 'pending' && totalCount > 0) {
     attentionReason = 'Not reporting'
-  } else if (kind === 'connected' && totalCount > 0 && healthyCount === 0) {
-    attentionReason = 'All addons unhealthy'
   }
 
   return (
@@ -82,17 +73,30 @@ export function ClusterCard({
           </Tooltip>
         </div>
       </TooltipProvider>
-      {/* LW-3: name the reason inline when this is on the needs-attention list */}
+      {/* LW-3: name the reason inline when this is on the needs-attention list
+          (connection problems only — addon health is shown below) */}
       {attentionReason && (
         <p className="mb-2 text-xs font-medium text-red-700 dark:text-red-400">
           {attentionReason}
         </p>
       )}
-      {/* LW-4: honest addon count label — "N of M addons healthy" */}
-      <p className="mb-2 text-xs text-[#2a5a7a] dark:text-gray-400">
-        {totalCount > 0 ? `${healthyCount} of ${totalCount} addons healthy` : 'No addons'}
-      </p>
-      <AddonDots addons={addonSummary} />
+      {/* LW-17: single colored addon-health ratio — "X of Y addons healthy"
+          Color by ratio: 0/N → red, partial → orange, N/N → green, 0 → neutral */}
+      {totalCount > 0 ? (
+        <p
+          className={`text-xs font-medium ${
+            healthyCount === 0
+              ? 'text-red-700 dark:text-red-400'
+              : healthyCount < totalCount
+                ? 'text-amber-700 dark:text-amber-400'
+                : 'text-green-700 dark:text-green-400'
+          }`}
+        >
+          {healthyCount} of {totalCount} addons healthy
+        </p>
+      ) : (
+        <p className="text-xs text-[#2a5a7a] dark:text-gray-400">No addons</p>
+      )}
     </div>
   )
 }
