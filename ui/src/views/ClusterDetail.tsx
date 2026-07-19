@@ -793,8 +793,8 @@ export function ClusterDetail() {
   }, [fetchData]);
 
   // V3-BUG-2 fix: fetch the addon catalog eagerly on mount so `pickerCatalogNames`
-  // is populated independent of whether the "+ Enable addon" picker was ever opened.
-  // Before this, a 0-addon cluster hid the "+ Enable addon" button because `noCatalog`
+  // is populated independent of whether the "Add addon" picker was ever opened.
+  // Before this, a 0-addon cluster hid the "Add addon" button because `noCatalog`
   // was true (derived from the empty per-cluster `addonToggles` map) — but the button's
   // click was the only trigger for the catalog fetch, creating a catch-22. Now the
   // catalog fetch runs once on load, and `noCatalog` is recomputed off the REAL catalog.
@@ -1010,7 +1010,7 @@ export function ClusterDetail() {
   ];
 
   // Manage-Addons list state (V2-cleanup-81.1) — computed once here so both
-  // the "+ Enable addon" button in the Addons section header and the
+  // the "Add addon" button in the Addons section header and the
   // enabled-list body below can share it without duplicating the logic.
   // Visible-row source: only catalog rows (git_configured=true) — junk
   // (untracked/sharko_system) was filtered out at toggle-map seeding time.
@@ -1019,7 +1019,7 @@ export function ClusterDetail() {
   // on mount — is genuinely empty. Before this fix, `noCatalog` keyed off
   // `allCatalogNames` (seeded from per-cluster enabled addons), which was empty
   // for a 0-addon cluster even when the catalog had addons available. That hid
-  // the "+ Enable addon" button whose click fetches the catalog (catch-22).
+  // the "Add addon" button whose click fetches the catalog (catch-22).
   // Now: the catalog is the authoritative source. If the catalog fetch hasn't
   // completed yet, fall back to the old logic (show button if cluster has addons)
   // to avoid breaking existing behavior — but once the catalog loads, key off
@@ -1540,7 +1540,7 @@ export function ClusterDetail() {
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Addons</h3>
                 <RoleGuard adminOnly>
-                  {/* V3-BUG-2 fix: show the "+ Enable addon" button whenever the
+                  {/* V3-BUG-2 fix: show the "Add addon" button whenever the
                     * catalog is non-empty (keying off the real eagerly-fetched catalog
                     * once loaded), regardless of whether this cluster has enabled addons. */}
                   {!noCatalog && (
@@ -1551,7 +1551,7 @@ export function ClusterDetail() {
                       className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
                     >
                       <Plus className="h-4 w-4" />
-                      + Enable addon
+                      Add addon
                     </button>
                   )}
                 </RoleGuard>

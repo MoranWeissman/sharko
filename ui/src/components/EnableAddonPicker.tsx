@@ -70,7 +70,7 @@ export function EnableAddonPicker({
       >
         <DialogHeader>
           <DialogTitle className="text-[#0a2a4a] dark:text-gray-100">
-            Enable addon
+            Add addon
           </DialogTitle>
         </DialogHeader>
 
