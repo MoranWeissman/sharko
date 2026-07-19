@@ -83,7 +83,7 @@ function baseComparison(addonSecretsReady: boolean) {
         issues: [],
       },
       {
-        // Disabled-in-git so it's a candidate the "Enable addon" picker
+        // Disabled-in-git so it's a candidate the "Add addon" picker
         // offers, not already staged.
         addon_name: 'datadog',
         git_configured: true,

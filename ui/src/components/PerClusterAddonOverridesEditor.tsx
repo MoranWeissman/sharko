@@ -109,7 +109,7 @@ function PerClusterAddonOverridesEditorImpl({
     return (
       <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 text-sm text-[#2a5a7a] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-400">
         This cluster has no addons configured yet, so there's nothing to
-        override. Enable an addon from the Addons tab first.
+        override. Add an addon from the Addons tab first.
       </div>
     )
   }

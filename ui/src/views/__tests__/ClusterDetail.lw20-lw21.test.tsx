@@ -10,7 +10,7 @@ import { AuthContext } from '@/hooks/useAuth';
 // - Headers NOT all-caps (sentence case)
 // - Version column labels: "Declared (Git)" and "Running (in cluster)"
 // - Issues column: with issues → count+severity chip that opens popover; with none → "—"
-// - Button label: "+ Enable addon" not "Manage addons"
+// - Button label: "Add addon" (single plus from icon, pairs with Remove)
 
 const adminAuth = {
   token: 'test-token',
@@ -256,17 +256,18 @@ describe('ClusterDetail — LW-20 + LW-21', () => {
     });
   });
 
-  it('LW-21: button is labeled "+ Enable addon" not "Manage addons"', async () => {
+  it('LW-22: button is labeled "Add addon" (single plus from icon, pairs with Remove)', async () => {
     renderView();
 
     await waitFor(() => {
       expect(screen.getByText('ingress-nginx')).toBeInTheDocument();
     });
 
-    // New label should be present
-    expect(screen.getByRole('button', { name: /enable addon/i })).toBeInTheDocument();
+    // Current label should be present
+    expect(screen.getByRole('button', { name: /add addon/i })).toBeInTheDocument();
 
-    // Old label should NOT be present
+    // Old labels should NOT be present
+    expect(screen.queryByRole('button', { name: /enable addon/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /manage addons/i })).not.toBeInTheDocument();
   });
 });

@@ -7,7 +7,7 @@ import { AuthContext } from '@/hooks/useAuth';
 
 // V3-AM1: Tests for the redesigned cluster Addons page interaction:
 // - Top strip shows ONLY pending changes (not all enabled addons)
-// - Button renamed "+ Enable addon" (LW-21)
+// - Button renamed "Add addon" (LW-22, single plus from icon)
 // - Remove control on enabled comparison-table rows
 
 const adminAuth = {
@@ -127,7 +127,7 @@ function renderView() {
   );
 }
 
-describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "+ Enable addon" LW-21)', () => {
+describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "Add addon" LW-22)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetClusterComparison.mockResolvedValue(comparisonResponse);
@@ -142,13 +142,13 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "+ Enable add
     });
   });
 
-  it('button reads "+ Enable addon" (LW-21)', async () => {
+  it('button reads "Add addon" (LW-22, single plus from icon)', async () => {
     renderView();
 
     await waitFor(() => {
       const button = screen.getByTestId('manage-addons-enable-btn');
       expect(button).toBeInTheDocument();
-      expect(button).toHaveTextContent('+ Enable addon');
+      expect(button).toHaveTextContent('Add addon');
     });
   });
 
@@ -413,10 +413,10 @@ describe('ClusterDetail - V3-AM1 (one list + discoverable remove + "+ Enable add
     renderView();
 
     await waitFor(() => {
-      // Button should be visible (LW-21: "+ Enable addon")
+      // Button should be visible (LW-22: "Add addon")
       const button = screen.getByTestId('manage-addons-enable-btn');
       expect(button).toBeInTheDocument();
-      expect(button).toHaveTextContent('+ Enable addon');
+      expect(button).toHaveTextContent('Add addon');
     });
   });
 

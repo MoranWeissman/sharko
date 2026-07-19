@@ -195,7 +195,7 @@ describe('ClusterDetail', () => {
     // catalog fetch was lazy (triggered only when the picker opened), so tests
     // that never opened the picker didn't need catalog data. Now the catalog is
     // fetched eagerly on mount — if it returns empty, `noCatalog` becomes true
-    // and hides the "+ Enable addon" button + the enabled-addon rows, breaking
+    // and hides the "Add addon" button + the enabled-addon rows, breaking
     // most existing tests. Per-test overrides can still replace this default.
     mockGetAddonCatalog.mockResolvedValue({
       addons: [
@@ -1284,7 +1284,7 @@ describe('ClusterDetail', () => {
 
     // --- 2. Enable-addon picker ---
 
-    it('opens the picker when "+ Enable addon" is clicked', async () => {
+    it('opens the picker when "Add addon" is clicked', async () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
@@ -1648,7 +1648,7 @@ describe('ClusterDetail', () => {
 
     // --- 7. RoleGuard behavior unchanged ---
 
-    it('enabled-addons list and "+ Enable addon" button are hidden for non-admin users', async () => {
+    it('enabled-addons list and "Add addon" button are hidden for non-admin users', async () => {
       const viewerAuth = {
         token: 'viewer-token',
         username: 'viewer',
@@ -2458,9 +2458,9 @@ describe('ClusterDetail', () => {
   });
 
   // V3-BUG-2: managed cluster with 0 addons enabled + non-empty catalog →
-  // "+ Enable addon" button visible on load; "No addons in catalog." NOT shown.
+  // "Add addon" button visible on load; "No addons in catalog." NOT shown.
   describe('V3-BUG-2: enable-addon button visibility with 0 enabled addons', () => {
-    it('shows "+ Enable addon" button when cluster has 0 enabled addons but catalog is non-empty', async () => {
+    it('shows "Add addon" button when cluster has 0 enabled addons but catalog is non-empty', async () => {
       // Cluster with 0 catalog addons enabled (git_configured rows) — only
       // junk rows (untracked/sharko_system) that don't seed addonToggles.
       mockGetClusterComparison.mockResolvedValue({
@@ -2496,7 +2496,7 @@ describe('ClusterDetail', () => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
 
-      // V3-BUG-2 fix: the "+ Enable addon" button is visible even though
+      // V3-BUG-2 fix: the "Add addon" button is visible even though
       // this cluster has 0 enabled addons — catalog was fetched eagerly,
       // so `noCatalog` is false (catalog has 3 addons).
       await waitFor(() => {
@@ -2510,7 +2510,7 @@ describe('ClusterDetail', () => {
       expect(mockGetAddonCatalog).toHaveBeenCalledTimes(1);
     });
 
-    it('hides "+ Enable addon" button and shows "No addons in catalog." when catalog is genuinely empty', async () => {
+    it('hides "Add addon" button and shows "No addons in catalog." when catalog is genuinely empty', async () => {
       // Cluster with 0 enabled addons.
       mockGetClusterComparison.mockResolvedValue({
         ...comparisonResponse,
@@ -2535,14 +2535,14 @@ describe('ClusterDetail', () => {
         expect(mockGetAddonCatalog).toHaveBeenCalledTimes(1);
       });
 
-      // "+ Enable addon" button is hidden (catalog is empty).
+      // "Add addon" button is hidden (catalog is empty).
       expect(screen.queryByTestId('manage-addons-enable-btn')).not.toBeInTheDocument();
 
       // "No addons in catalog." is shown (honest empty-state).
       expect(screen.getByText('No addons in catalog.')).toBeInTheDocument();
     });
 
-    it('V3-AM1: does not regress: cluster with enabled addons shows "+ Enable addon" button', async () => {
+    it('V3-AM1: does not regress: cluster with enabled addons shows "Add addon" button', async () => {
       // Default comparisonResponse has 3 enabled addons.
       mockGetAddonCatalog.mockResolvedValue({
         addons: [
@@ -2558,11 +2558,11 @@ describe('ClusterDetail', () => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
 
-      // LW-21: Button is visible and reads "+ Enable addon".
+      // LW-22: Button is visible and reads "Add addon" (single plus from icon).
       await waitFor(() => {
         const button = screen.getByTestId('manage-addons-enable-btn');
         expect(button).toBeInTheDocument();
-        expect(button).toHaveTextContent('+ Enable addon');
+        expect(button).toHaveTextContent('Add addon');
       });
 
       // V3-AM1: Enabled addons appear in the comparison table (not the top strip).
