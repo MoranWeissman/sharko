@@ -143,10 +143,22 @@ describe('Observability', () => {
       expect(screen.getByText('Observability')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Control Plane')).toBeInTheDocument();
+    expect(screen.getByText('ArgoCD Control Plane')).toBeInTheDocument();
+    expect(screen.queryByText('Control Plane')).not.toBeInTheDocument();
     expect(screen.getByText('ArgoCD v3.2.2')).toBeInTheDocument();
     expect(screen.getByText('Helm v3.14.0')).toBeInTheDocument();
     expect(screen.getByText('120')).toBeInTheDocument();
+  });
+
+  it('renders cluster inventory stat with new label', async () => {
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('In ArgoCD')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('Known to ArgoCD')).not.toBeInTheDocument();
+    expect(screen.getByText('15')).toBeInTheDocument();
   });
 
   it('renders sync activity section', async () => {

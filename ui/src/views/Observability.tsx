@@ -130,7 +130,7 @@ function ControlPlaneSection({
     <section className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:ring-gray-700 dark:bg-gray-900">
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h2 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
-          Control Plane
+          ArgoCD Control Plane
         </h2>
         <span className="rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-medium text-teal-800 dark:bg-teal-900/40 dark:text-teal-300">
           ArgoCD {data.argocd_version}
@@ -158,7 +158,14 @@ function ControlPlaneSection({
             </p>
           </div>
         )}
-        <StatBlock label="Known to ArgoCD" value={data.total_clusters} />
+        <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#d0e8f8] p-4 dark:ring-gray-700 dark:bg-gray-800" title="Total clusters ArgoCD knows about (Sharko manages the configured subset)">
+          <p className="text-xs font-medium uppercase tracking-wide text-[#2a5a7a] dark:text-gray-400">
+            In ArgoCD
+          </p>
+          <p className="mt-1 text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">
+            {data.total_clusters}
+          </p>
+        </div>
       </div>
 
       {/* Health bar */}
