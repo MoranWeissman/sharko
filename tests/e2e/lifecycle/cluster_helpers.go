@@ -447,7 +447,7 @@ func registerClusterInArgoCDDirect(t *testing.T, argoAccess *argocdAccess, targe
 			"bearerToken": token,
 			"tlsClientConfig": map[string]any{
 				"caData":   caDataB64, // already base64; Sharko also passes base64 here
-				"insecure": false,
+				"insecure": true,
 			},
 		},
 	}
