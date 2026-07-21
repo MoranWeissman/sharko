@@ -14,6 +14,14 @@ the PR. Append new releases at the TOP of the v2.x stream so the most
 recent release is the first thing readers see.
 -->
 
+## Unreleased
+
+### Internal
+
+- Consolidated ArgoCD cluster Secret writer to a single reconciler (`internal/clusterreconciler`). The legacy 3-minute `argosecrets.Reconciler` loop was retired. The `argosecrets.Manager` (pure CRUD writer for direct kubeconfig writes) remains. No user action needed; convergence behavior is unchanged. (Operator Phase 0: PR #588)
+
+---
+
 ## v3.0.0 — First public release
 
 **Status:** released 2026-07-21 (current release)

@@ -408,12 +408,10 @@ Sharko manages ArgoCD cluster secrets directly, replacing the need for External 
 - **Adoption path:** if an existing secret lacks the `app.kubernetes.io/managed-by: sharko` label, `Ensure` adopts it by overwriting labels and data.
 - **Hash-based idempotency:** skips the K8s API write when labels + data are unchanged (SHA-256 over sorted keys/values).
 
-**Reconciler** (`reconciler.go`) — background sync loop that keeps ArgoCD cluster secrets in sync with `configuration/cluster-addons.yaml` in Git:
-- Default interval: 3 minutes (configurable via `SHARKO_ARGOCD_RECONCILE_INTERVAL`).
-- On each pass: reads cluster-addons.yaml from Git, compares content hash, parses clusters, calls `Manager.Ensure()` per cluster, deletes orphan secrets for clusters removed from Git.
-- Skip optimization: if cluster-addons.yaml content hash is unchanged since the last successful pass, the reconcile is skipped entirely.
+**Reconciler** — background sync loop that keeps ArgoCD cluster secrets in sync with `configuration/managed-clusters.yaml` in Git. As of v3.0.0, the canonical reconciler is `internal/clusterreconciler/reconciler.go` (30-second safety-net tick + sub-5s post-merge trigger via `prTracker`). The legacy 3-minute `argosecrets.Reconciler` loop was retired in v3.0.0. The reconciler:
+- Reads `managed-clusters.yaml` from Git, parses clusters, calls `Manager.Ensure()` per cluster, deletes orphan secrets for clusters removed from Git.
 - Orphan cleanup: any Sharko-managed secret not present in Git is deleted.
-- Partial failure tolerance: per-cluster errors are logged and counted; the loop continues for remaining clusters and does not update the content hash (ensuring a retry on the next tick).
+- Partial failure tolerance: per-cluster errors are logged and counted; the loop continues for remaining clusters.
 
 ### Secret Format
 
@@ -449,15 +447,15 @@ All secrets written by Sharko carry two system labels that are always applied la
 ### Reconciliation Flow
 
 ```
-Git (cluster-addons.yaml)
+Git (managed-clusters.yaml)
   |
   v
-argosecrets.Reconciler (background, every 3m)
+clusterreconciler.Reconciler (background, 30s tick + post-merge trigger)
   |
   +-- parse clusters
   +-- for each cluster:
   |     providers.GetCredentials(name) → server URL
-  |     Manager.Ensure(ClusterSecretSpec) → create/update/skip
+  |     argosecrets.Manager.Ensure(ClusterSecretSpec) → create/update/skip
   +-- delete orphan managed secrets
   |
   v
@@ -469,9 +467,9 @@ ArgoCD ApplicationSet cluster generator discovers clusters automatically
 
 ### Integration Points
 
-**Server wiring** (`cmd/sharko/serve.go`): `Manager` and `Reconciler` are created on startup when a connection is active. `ReinitializeFromConnection` restarts them when the connection changes.
+**Server wiring** (`cmd/sharko/serve.go`): The canonical `clusterreconciler.Reconciler` is started on server boot. Connection changes are picked up on the next tick via lazy provider resolution (no restart needed).
 
-**Orchestrator integration** (`internal/orchestrator/cluster.go`): `RegisterCluster` calls `argoSecretManager.Ensure()` as an additional step after ArgoCD registration.
+**Orchestrator integration** (`internal/orchestrator/cluster.go`): `RegisterCluster` calls `argoSecretManager.Ensure()` (via `argosecrets.Manager`) as a direct-write for Stage 1 of registration.
 
 **Adapter pattern** (`internal/api/argo_adapter.go`): `argoManagerAdapter` bridges `*argosecrets.Manager` to `orchestrator.ArgoSecretManager`. The adapter lives in the `api` package — the only layer that can import both `argosecrets` and `orchestrator` without creating an import cycle. The `orchestrator` package defines its own local `ArgoSecretManager` interface and `ArgoSecretSpec` struct and does not import `internal/argosecrets`.
 
