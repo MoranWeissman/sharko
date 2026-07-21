@@ -179,6 +179,7 @@ export function Dashboard() {
   const [showProgressing, setShowProgressing] = useState(false);
   const [clusters, setClusters] = useState<{ name: string; connectionStatus: string; addons: { name: string; health: string }[]; healthy: number; total: number }[]>([]);
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
+  const [homeCluster, setHomeCluster] = useState<{ available: boolean; message?: string; kubernetes_version?: string; node_count?: number; nodes_ready?: number; nodes_not_ready?: number } | null>(null);
 
   const fetchData = useCallback(async (background = false) => {
     try {
@@ -188,13 +189,15 @@ export function Dashboard() {
         setLoading(true);
       }
       setError(null);
-      const [statsData, obsData, matrixData, clustersData] = await Promise.all([
+      const [statsData, obsData, matrixData, clustersData, homeClusterData] = await Promise.all([
         api.getDashboardStats(),
         api.getObservability().catch(() => null),
         api.getVersionMatrix().catch(() => null),
         api.getClusters().catch(() => null),
+        api.getHomeCluster().catch(() => null),
       ]);
       setStats(statsData);
+      setHomeCluster(homeClusterData);
       // Trigger an extra refresh of the unified state so Dashboard reflects
       // any attention items that arrived between the provider's polls.
       refreshAddonStates();
@@ -580,6 +583,55 @@ export function Dashboard() {
         <StatCard title="Active Deployments" value={`${stats.addons.enabled_deployments}/${stats.addons.total_deployments}`}
           icon={<Rocket className="h-6 w-6" />} color="default" onClick={() => navigate('/version-matrix')} />
       </div>
+
+      {/* Sharko's Home Cluster Card */}
+      {homeCluster && (
+        <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
+          <div className="flex items-start justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+                Sharko's home cluster
+              </h3>
+              <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">
+                where Sharko & ArgoCD run
+              </p>
+            </div>
+            <Server className="h-5 w-5 text-[#3a6a8a] dark:text-gray-500" />
+          </div>
+          {homeCluster.available ? (
+            <div className="mt-3 grid grid-cols-3 gap-3">
+              <div>
+                <div className="text-xs text-[#5a8aaa] dark:text-gray-500">Kubernetes version</div>
+                <div className="mt-1 text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
+                  {homeCluster.kubernetes_version || 'unknown'}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-[#5a8aaa] dark:text-gray-500">Nodes</div>
+                <div className="mt-1 text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
+                  {homeCluster.node_count || 0}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-[#5a8aaa] dark:text-gray-500">Health</div>
+                <div className="mt-1 text-sm font-medium">
+                  {homeCluster.nodes_ready === homeCluster.node_count ? (
+                    <span className="text-green-600 dark:text-green-400">All ready</span>
+                  ) : (
+                    <span className="text-[#0a2a4a] dark:text-gray-100">
+                      {homeCluster.nodes_ready}/{homeCluster.node_count} ready
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-3 text-xs text-[#3a6a8a] dark:text-gray-400">
+              {homeCluster.message || 'Not available'}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Cluster Cards — problem clusters only */}
       {clusters.length > 0 && (

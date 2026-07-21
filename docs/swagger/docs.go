@@ -2522,6 +2522,38 @@ const docTemplate = `{
                 }
             }
         },
+        "/cluster/home": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns information about Sharko's home cluster (where Sharko and ArgoCD run): Kubernetes version, node count, and health summary. Only available when running in-cluster; gracefully degrades to a message when not available.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Get home cluster info",
+                "responses": {
+                    "200": {
+                        "description": "Home cluster information",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.HomeClusterInfo"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/cluster/nodes": {
             "get": {
                 "security": [
@@ -8650,6 +8682,29 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "internal_api.HomeClusterInfo": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "kubernetes_version": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "node_count": {
+                    "type": "integer"
+                },
+                "nodes_not_ready": {
+                    "type": "integer"
+                },
+                "nodes_ready": {
+                    "type": "integer"
                 }
             }
         },

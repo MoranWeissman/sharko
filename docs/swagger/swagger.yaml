@@ -1079,6 +1079,21 @@ definitions:
           type: string
         type: array
     type: object
+  internal_api.HomeClusterInfo:
+    properties:
+      available:
+        type: boolean
+      kubernetes_version:
+        type: string
+      message:
+        type: string
+      node_count:
+        type: integer
+      nodes_not_ready:
+        type: integer
+      nodes_ready:
+        type: integer
+    type: object
   internal_api.InitStatusResponse:
     properties:
       detail:
@@ -3626,6 +3641,29 @@ paths:
       summary: Validate a Helm chart at an arbitrary repo URL
       tags:
       - catalog
+  /cluster/home:
+    get:
+      description: 'Returns information about Sharko''s home cluster (where Sharko
+        and ArgoCD run): Kubernetes version, node count, and health summary. Only
+        available when running in-cluster; gracefully degrades to a message when not
+        available.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Home cluster information
+          schema:
+            $ref: '#/definitions/internal_api.HomeClusterInfo'
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get home cluster info
+      tags:
+      - system
   /cluster/nodes:
     get:
       description: Returns Kubernetes node capacity, allocatable resources, and readiness

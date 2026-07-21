@@ -1082,6 +1082,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 
 	// Cluster info
 	mux.HandleFunc("GET /api/v1/cluster/nodes", srv.handleGetNodeInfo)
+	mux.HandleFunc("GET /api/v1/cluster/home", srv.handleGetHomeCluster)
 
 	// Webhooks (no user auth — signature verified inside the handler)
 	mux.HandleFunc("POST /api/v1/webhooks/git", srv.handleGitWebhook)
