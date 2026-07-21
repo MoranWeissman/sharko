@@ -499,19 +499,23 @@ deploy: ## Apply controller RBAC + Deployment (no-op in Phase 0 — manifests po
 undeploy: ## Delete controller RBAC + Deployment (no-op in Phase 0)
 	@echo "==> undeploy: Phase 0 no-op (controller not wired until Phase 1)"
 
-manifests: ## Generate CRD YAML + RBAC from Go markers (Phase 0: installs controller-gen, no-op otherwise)
+manifests: ## Generate CRD YAML + RBAC from Go markers
 	@if [ ! -x "$(CONTROLLER_GEN)" ]; then \
 		echo "==> Installing controller-gen (sigs.k8s.io/controller-tools)"; \
 		go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest; \
 		echo "    Installed to $(shell go env GOPATH)/bin/controller-gen"; \
 	fi
 	@echo "==> manifests: controller-gen available at $(CONTROLLER_GEN)"
-	@if [ ! -d internal/controllers ] || [ -z "$$(find internal -name '*_controller.go' 2>/dev/null)" ]; then \
-		echo "==> manifests: no controller Go files present yet (populated in Phase 1)"; \
-		echo "    When controller code lands, this target will run:"; \
-		echo "      $(CONTROLLER_GEN) crd rbac:roleName=sharko-manager-role paths=./... output:crd:artifacts:config=config/crd"; \
-		exit 0; \
+	@if [ ! -d api/v1alpha1 ]; then \
+		echo "==> manifests: no API types present yet"; \
+		exit 1; \
 	fi
-	@echo "==> Generating CRD YAML + RBAC from Go markers"
-	@$(CONTROLLER_GEN) crd rbac:roleName=sharko-manager-role paths=./... output:crd:artifacts:config=config/crd
-	@echo "    Output: config/crd/*.yaml, config/rbac/*.yaml"
+	@echo "==> Generating deepcopy code + CRD YAML from Go markers"
+	@$(CONTROLLER_GEN) object:headerFile=hack/boilerplate.go.txt paths="./api/..."
+	@$(CONTROLLER_GEN) crd paths="./api/..." output:crd:artifacts:config=config/crd
+	@echo "    Generated: api/v1alpha1/zz_generated.deepcopy.go"
+	@echo "    Generated: config/crd/*.yaml"
+	@echo "==> Copying CRDs to Helm chart"
+	@mkdir -p charts/sharko/crds
+	@cp config/crd/*.yaml charts/sharko/crds/ 2>/dev/null || true
+	@echo "    Copied to: charts/sharko/crds/"
