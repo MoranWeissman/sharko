@@ -17,20 +17,19 @@
 //  4. Per-cluster + per-secret error isolation: a vault failure on one
 //     cluster does NOT block reconciliation of the others.
 //
-// Coexistence with the legacy argosecrets.Reconciler (V2-cleanup-28):
+// Single-writer reconciler (Operator Phase 0):
 //
-// In a standard in-cluster install BOTH this reconciler AND the legacy
-// argosecrets.Reconciler run concurrently (see cmd/sharko/serve.go for the
-// wiring). After V2-cleanup-28 their adoption-safety semantics are aligned:
+// This reconciler is the SOLE writer of ArgoCD cluster Secrets driven by
+// managed-clusters.yaml. The legacy argosecrets.Reconciler loop (dual-writer
+// until V2-cleanup-28) was retired in Operator Phase 0. Adoption-safety
+// semantics remain:
 //
-//   - Orphan sweeps in both reconcilers skip secrets that carry the
-//     sharko.sharko.dev/adopted annotation — those secrets are owned by the
-//     Adopt flow and can only be removed via an explicit Unadopt call.
-//   - internal/argosecrets.Manager.Ensure preserves the connection Data of
-//     adopted secrets and only converges their labels.
-//
-// Single-writer consolidation (retiring the legacy argosecrets reconciler)
-// is a tracked follow-up item.
+//   - Orphan sweeps skip secrets that carry the sharko.sharko.dev/adopted
+//     annotation — those secrets are owned by the Adopt flow and can only be
+//     removed via an explicit Unadopt call.
+//   - internal/argosecrets.Manager.Ensure (still used for the kubeconfig
+//     direct-write path by adopt/remove/providers/API handlers) preserves
+//     the connection Data of adopted secrets and only converges their labels.
 //
 // See:
 //   - docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md
@@ -38,8 +37,7 @@
 //     git read; failure modes).
 //   - internal/prtracker/tracker.go (lifecycle pattern this package mirrors).
 //   - internal/argosecrets/manager.go (the Secret payload shape — execProvider
-//     config — that the legacy reconciler writes; this reconciler writes the
-//     same shape so ArgoCD's auth code path is unchanged across writers).
+//     config — that this reconciler writes via shared wrappers).
 package clusterreconciler
 
 import (
@@ -171,9 +169,7 @@ type Deps struct {
 
 	// DefaultRoleARN is the AWS IAM role ARN passed to argocd-k8s-auth via
 	// --role-arn for clusters whose entry does NOT specify one. Empty means
-	// "no --role-arn flag" (parity with argosecrets.Reconciler's behavior so
-	// the Secret payload shape matches across both writers during the
-	// transition window).
+	// "no --role-arn flag".
 	DefaultRoleARN string
 
 	// DisableConnectivityCheck opts out of the connectivity-check label
@@ -337,6 +333,19 @@ func (r *Reconciler) Trigger() {
 	case r.triggerCh <- struct{}{}:
 	default:
 	}
+}
+
+// ClientAndNamespace exposes the reconciler's k8s client and target
+// namespace for external code that needs to check orphan-ownership labels.
+// Returns (nil, "") when the reconciler's ArgoClient dep is nil (e.g.
+// out-of-cluster mode, or tests without a fake clientset). Operator Phase 0
+// addition — the orphan-verification code needs a k8s client, and the
+// clusterRecon is now the canonical holder of the in-cluster client.
+func (r *Reconciler) ClientAndNamespace() (kubernetes.Interface, string) {
+	if r.deps.ArgoClient == nil {
+		return nil, ""
+	}
+	return r.deps.ArgoClient, r.namespace
 }
 
 // run is the reconcile loop. Internal — the only entry point is Start.
@@ -1317,9 +1326,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	}
 
 	// Resolve credentials. SecretPath overrides Name for the vault lookup
-	// (matches argosecrets.Reconciler — same contract so a single repo's
-	// managed-clusters.yaml works across both writers during the
-	// transition window; shared resolver — V2-cleanup-55.1).
+	// (shared resolver — V2-cleanup-55.1).
 	credKey := entry.CredentialLookupKey()
 	// Forward the entry's per-cluster roleArn (V2-cleanup-62.2) so EKS token
 	// minting for a cross-account cluster assumes the cluster's own role.
@@ -1642,9 +1649,9 @@ func normalizeLabels(raw interface{}) map[string]string {
 // the §9 ownership policy).
 //
 // The Secret shape (labels, stringData keys, execProviderConfig JSON)
-// MUST stay byte-identical to argosecrets.Manager's output — both
-// writers coexist until the legacy argosecrets.Reconciler is retired,
-// and ArgoCD's auth code path resolves the same way for both.
+// MUST stay byte-identical to argosecrets.Manager's output (the Manager
+// is still used for the kubeconfig direct-write path by adopt/remove/
+// providers/API handlers), so ArgoCD's auth code path works identically.
 func buildClusterSecret(spec argosecrets.ClusterSecretSpec, namespace string) (*corev1.Secret, error) {
 	configJSON, err := argosecrets.BuildSecretConfigJSON(spec)
 	if err != nil {

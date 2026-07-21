@@ -18,6 +18,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -202,16 +203,19 @@ func orphanTestServer(t *testing.T, gp gitprovider.GitProvider, argoURL string, 
 
 	connSvc.SetGitProviderOverride(gp)
 
-	// V125-1-8.2 ownership-label gate — the handler reads
-	// argoReconcilerConfig.K8sClient via Server.k8sClientAndNamespace().
-	// We deliberately wire ONLY the fields the gate needs (K8sClient +
-	// ArgocdNamespace) so this test fixture doesn't accidentally pull in
-	// the rest of the secrets-reconciler bootstrap.
+	// V125-1-8.2 ownership-label gate — the handler reads the k8s client
+	// via Server.k8sClientAndNamespace(), which now reads from the
+	// canonical clusterRecon (Operator Phase 0). We wire a minimal fake
+	// reconciler with ONLY the k8s client + namespace so the test fixture
+	// doesn't accidentally pull in the rest of the reconciler bootstrap.
 	if k8sClient != nil {
-		srv.SetArgoReconcilerConfig(&ArgoReconcilerCfg{
-			K8sClient:       k8sClient,
-			ArgocdNamespace: "argocd",
+		fakeRecon := clusterreconciler.New(clusterreconciler.Deps{
+			GitProvider: func() gitprovider.GitProvider { return nil },
+			ArgoClient:  k8sClient,
+			Vault:       nil,
+			AuditFn:     func(_ audit.Entry) {},
 		})
+		srv.SetClusterReconciler(fakeRecon)
 	}
 	return srv, NewRouter(srv, nil)
 }

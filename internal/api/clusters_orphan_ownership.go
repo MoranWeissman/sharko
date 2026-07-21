@@ -36,8 +36,8 @@ import (
 //     apierrors.
 //
 // Both helpers are k8s-client-availability-aware: when the server has no
-// wired k8s client (test fixtures without argoReconcilerConfig, or a dev
-// mode running without an in-cluster K8s connection), they degrade in the
+// wired k8s client (test fixtures without clusterRecon, or a dev mode
+// running without an in-cluster K8s connection), they degrade in the
 // safest direction. The list helper returns (nil, nil) with a warn log so
 // the resolver returns an empty orphan list; the get helper returns
 // (nil, errNoK8sClient) so the delete handler fails closed rather than
@@ -47,24 +47,25 @@ import (
 // k8s client wired. The orphan-delete handler maps this to a 503
 // (service-unavailable) response with a clear remediation hint, rather
 // than proceeding with the delete sans label check.
-var errNoK8sClient = fmt.Errorf("no k8s client wired (argoReconcilerConfig is nil); cannot verify ownership label")
+var errNoK8sClient = fmt.Errorf("no k8s client wired (clusterRecon not started); cannot verify ownership label")
 
-// k8sClientAndNamespace pulls the K8s client + argocd namespace out of
-// the Server's argoReconcilerConfig. Returns (nil, "", false) when the
-// config is not wired — callers must branch on the returned bool.
+// k8sClientAndNamespace pulls the K8s client + argocd namespace from the
+// canonical cluster reconciler. Returns (nil, "", false) when the
+// reconciler is not wired (out-of-cluster, or no credentials provider) —
+// callers must branch on the returned bool.
 //
-// argoReconcilerConfig is the existing startup-time wiring that holds
-// both the k8s clientset and the argocd namespace — reusing it avoids
-// adding a new Server field for two values that naturally co-vary.
+// Operator Phase 0: the legacy argosecrets.Reconciler was retired; the
+// clusterRecon is the sole writer and sole k8s client holder for orphan
+// verification.
 func (s *Server) k8sClientAndNamespace() (kubernetes.Interface, string, bool) {
-	if s.argoReconcilerConfig == nil || s.argoReconcilerConfig.K8sClient == nil {
+	if s.clusterRecon == nil {
 		return nil, "", false
 	}
-	ns := s.argoReconcilerConfig.ArgocdNamespace
-	if ns == "" {
-		ns = "argocd"
+	client, ns := s.clusterRecon.ClientAndNamespace()
+	if client == nil {
+		return nil, "", false
 	}
-	return s.argoReconcilerConfig.K8sClient, ns, true
+	return client, ns, true
 }
 
 // listSharkoOwnedSecretNames returns the set of cluster names whose

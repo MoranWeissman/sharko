@@ -744,21 +744,13 @@ var serveCmd = &cobra.Command{
 		//     credentials never live in a secrets backend, so the reconciler can
 		//     never create the Secret for them — the manager must.
 		//
-		//   - The *reconciler* (argosecrets.NewReconciler) reads credentials from
-		//     credProvider (a secrets backend) on a timer. It stays gated on
-		//     credProvider != nil because without a backend it has nothing to read.
-		//
-		// Dual-writer coexistence (V2-cleanup-28): in a standard in-cluster install
-		// BOTH this (legacy) reconciler AND the clusterreconciler below run
-		// concurrently. After V2-cleanup-28 their adoption-safety semantics are
-		// aligned — orphan sweeps in both reconcilers skip secrets that carry the
-		// sharko.sharko.dev/adopted annotation, and Manager.Ensure preserves the
-		// connection Data of adopted secrets. Single-writer consolidation is a
-		// tracked follow-up.
+		//   - The *reconciler* (argosecrets.NewReconciler) was retired in
+		//     Operator Phase 0. internal/clusterreconciler is the canonical
+		//     reconciler for managed-clusters.yaml.
 		if inClusterCfg, inClusterErr := rest.InClusterConfig(); inClusterErr != nil {
-			slog.Warn("not running in-cluster, skipping argocd cluster-secret manager and reconciler", "error", inClusterErr)
+			slog.Warn("not running in-cluster, skipping argocd cluster-secret manager", "error", inClusterErr)
 		} else if k8sClient, k8sErr := kubernetes.NewForConfig(inClusterCfg); k8sErr != nil {
-			slog.Warn("could not create in-cluster k8s client, skipping argocd cluster-secret manager and reconciler", "error", k8sErr)
+			slog.Warn("could not create in-cluster k8s client, skipping argocd cluster-secret manager", "error", k8sErr)
 		} else {
 			// Canonical source for the argocd namespace is the typed
 			// ClusterTestProviderConfig (when populated from the
@@ -773,102 +765,13 @@ var serveCmd = &cobra.Command{
 			}
 
 			// Manager: always wired in-cluster, regardless of credProvider.
+			// The Manager is a pure writer for kubeconfig direct-write path
+			// (adopt, remove, providers, API handlers). The legacy reconciler
+			// loop has been retired (Operator Phase 0); internal/clusterreconciler
+			// is the canonical reconciler for managed-clusters.yaml.
 			argoManager := argosecrets.NewManager(k8sClient, argocdNamespace)
 			srv.SetArgoSecretManager(argoManager)
 			slog.Info("argocd cluster-secret manager wired", "namespace", argocdNamespace)
-
-			// Reconciler: only when a credentials backend is configured.
-			if credProvider != nil {
-				argoIntervalStr := getEnvDefault("SHARKO_ARGOCD_RECONCILE_INTERVAL", "3m")
-				argoDur, argoParseErr := time.ParseDuration(argoIntervalStr)
-				if argoParseErr != nil {
-					slog.Warn("invalid argocd reconcile interval, using 3m", "interval", argoIntervalStr)
-					argoDur = 3 * time.Minute
-				}
-
-				argoParser := config.NewParser()
-				argoBaseBranch := gitopsCfg.BaseBranch
-				if argoBaseBranch == "" {
-					argoBaseBranch = "main"
-				}
-
-				argoGitReaderFn := func() argosecrets.GitReader {
-					gp, err := connSvc.GetActiveGitProvider()
-					if err != nil {
-						return nil
-					}
-					return gp
-				}
-
-				argoDefaultRoleARN := ""
-				if addonCfgPtr != nil {
-					argoDefaultRoleARN = addonCfgPtr.RoleARN
-				}
-
-				argoReconciler := argosecrets.NewReconciler(
-					argoManager,
-					credProvider,
-					argoGitReaderFn,
-					argoParser,
-					argoBaseBranch,
-					argoDefaultRoleARN,
-					repoPaths.ManagedClusters,
-					argoDur,
-				)
-				// Wire the connectivity-check feature toggle. On by default;
-				// disabled only when SHARKO_CONNECTIVITY_CHECK is explicitly
-				// "false" or "0".
-				if connectivityCheckDisabled(getEnvDefault("SHARKO_CONNECTIVITY_CHECK", "true")) {
-					argoReconciler.SetConnectivityCheck(false)
-					slog.Info("connectivity check feature disabled via SHARKO_CONNECTIVITY_CHECK")
-				}
-
-				auditLog := srv.AuditLog()
-				argoReconciler.SetAuditFunc(func(created, updated, deleted int) {
-					auditLog.Add(audit.Entry{
-						Level:    "info",
-						Event:    "cluster_secret_sync",
-						User:     "sharko",
-						Action:   "sync",
-						Resource: fmt.Sprintf("ArgoCD secrets reconciled — created: %d, updated: %d, deleted: %d", created, updated, deleted),
-						Source:   "reconciler",
-						Result:   "success",
-					})
-				})
-				// Structured single-entry audit events (V2-cleanup-60 L11) —
-				// currently just cluster_secret_user_pending, the self-managed
-				// "waiting for the user" state SetAuditFunc's aggregate counters
-				// can't express.
-				argoReconciler.SetEntryAuditFunc(func(entry audit.Entry) {
-					auditLog.Add(entry)
-				})
-
-				srv.SetArgoSecretReconciler(argoReconciler)
-
-				// Store stable config for ReinitializeFromConnection to use.
-				srv.SetArgoReconcilerConfig(&api.ArgoReconcilerCfg{
-					K8sClient:           k8sClient,
-					ArgocdNamespace:     argocdNamespace,
-					Interval:            argoDur,
-					GitReaderFn:         argoGitReaderFn,
-					Parser:              argoParser,
-					ManagedClustersPath: repoPaths.ManagedClusters,
-				})
-
-				argoReconciler.Start(context.Background())
-				// Use a closure that reads through the getter so that if
-				// ReinitializeFromConnection replaces the reconciler the correct
-				// (current) instance is stopped on shutdown, not the one captured
-				// at startup time.
-				defer func() {
-					if r := srv.ArgoSecretReconciler(); r != nil {
-						r.Stop()
-					}
-				}()
-				slog.Info("argocd secrets reconciler started", "namespace", argocdNamespace, "interval", argoDur)
-			} else {
-				slog.Info("credProvider not configured — argocd secrets reconciler not started (manager still active for kubeconfig direct-writes)")
-			}
 		}
 
 		// PR Tracker — polls Git provider for PR status changes and emits
@@ -988,27 +891,17 @@ var serveCmd = &cobra.Command{
 
 			// Wire the live probe_mode reader into the legacy argosecrets
 			// reconciler (started earlier in this function, before prCMStore
-			// existed) so BOTH writers honor api-test mode — otherwise the
-			// legacy reconciler would keep applying the connectivity-check
-			// label even after an operator flips probe_mode to api-test via
-			// the canonical reconciler alone.
-			if probeModeFn != nil {
-				if legacyRecon := srv.ArgoSecretReconciler(); legacyRecon != nil {
-					legacyRecon.SetProbeModeFn(probeModeFn)
-				}
-				// Kubernetes EventRecorder (V3 E1) — emits operational events
-				// for Sharko's own failures and successes. Only active when
-				// in-cluster; nil-safe no-op otherwise (local/dev mode).
-				var eventRecorder *events.EventRecorder
-				if inClusterK8sClient != nil {
-					eventRecorder = events.NewRecorder(inClusterK8sClient, prNamespace)
-					slog.Info("k8s event recorder initialized", "namespace", prNamespace, "component", events.ComponentName)
-				} else {
-					slog.Info("k8s event recorder disabled (no in-cluster k8s client)")
-				}
-				srv.SetEventRecorder(eventRecorder)
-
+			// Kubernetes EventRecorder (V3 E1) — emits operational events
+			// for Sharko's own failures and successes. Only active when
+			// in-cluster; nil-safe no-op otherwise (local/dev mode).
+			var eventRecorder *events.EventRecorder
+			if inClusterK8sClient != nil {
+				eventRecorder = events.NewRecorder(inClusterK8sClient, prNamespace)
+				slog.Info("k8s event recorder initialized", "namespace", prNamespace, "component", events.ComponentName)
+			} else {
+				slog.Info("k8s event recorder disabled (no in-cluster k8s client)")
 			}
+			srv.SetEventRecorder(eventRecorder)
 			// Construct + start the cluster Secret reconciler alongside the
 			// prtracker so its post-merge fan-out can nudge the reconciler
 			// immediately. The reconciler requires the same preconditions
@@ -1016,15 +909,12 @@ var serveCmd = &cobra.Command{
 			// API access; an active git provider eventually becomes
 			// available via connSvc lazy getter) PLUS credProvider for
 			// vault credential resolution at create time. When any
-			// precondition is missing we log + skip — the legacy
-			// argosecrets reconciler still runs above and covers the gap.
+			// precondition is missing we log + skip.
 			//
-			// Dual-writer coexistence (V2-cleanup-28): when all preconditions
-			// are met BOTH this reconciler AND the legacy argosecrets.Reconciler
-			// above run concurrently in the same process. After V2-cleanup-28
-			// their adoption-safety semantics are aligned — adopted-exempt orphan
-			// sweeps, no foreign-data rewrite. Single-writer consolidation
-			// (retiring the legacy reconciler) is a tracked follow-up.
+			// Operator Phase 0: this reconciler is the SOLE writer of
+			// ArgoCD cluster Secrets driven by managed-clusters.yaml.
+			// The legacy argosecrets.Reconciler loop (dual-writer until
+			// V2-cleanup-28) has been retired.
 			var clusterRecon *clusterreconciler.Reconciler
 			if prCMStore != nil && inClusterK8sClient != nil && credProvider != nil {
 				clusterReconNamespace := getEnvDefault("SHARKO_ARGOCD_NAMESPACE", "argocd")
@@ -1157,15 +1047,18 @@ var serveCmd = &cobra.Command{
 					auditLog.Add(e)
 				})
 
-				// Post-merge fan-out hits BOTH triggers so either reconciler
-				// converges sub-5s after a PR merge.
-				//   - srv.ArgoSecretReconciler(): the legacy writer.
-				//   - clusterRecon.Trigger(): the new writer. Idempotent +
+				// Post-merge fan-out: PR merge triggers both the canonical
+				// cluster-Secret reconciler and the auto-remediator.
+				//   - clusterRecon.Trigger(): low-latency convergence (sub-5s)
+				//     after a managed-clusters.yaml PR merge. Idempotent +
 				//     lock-free Trigger() means it is safe to call even
 				//     when no reconciler is wired (the buffered-1 channel
 				//     drops the redundant nudge).
 				//   - remediator.OnMerge(): auto-terminates stale failing
 				//     ArgoCD sync ops caused by the merged change.
+				//
+				// Operator Phase 0: the legacy argosecrets.Reconciler trigger
+				// was removed; clusterRecon is the sole writer.
 
 				// Build the auto-remediator. It only acts when an active
 				// ArgoCD connection exists at merge time (lazy lookup via
@@ -1185,9 +1078,6 @@ var serveCmd = &cobra.Command{
 				}
 
 				prTracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
-					if r := srv.ArgoSecretReconciler(); r != nil {
-						r.Trigger()
-					}
 					if clusterRecon != nil {
 						clusterRecon.Trigger()
 					}
