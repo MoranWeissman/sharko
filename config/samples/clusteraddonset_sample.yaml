@@ -1,0 +1,63 @@
+# ALPHA — ClusterAddonSet sample CR (not wired until Phase 2.5)
+#
+# Defines a multi-cluster addon family. One CR can target multiple clusters
+# with cluster-specific values overlays. The Sharko operator reconciler
+# watches these and generates a single ArgoCD ApplicationSet that fans out
+# to all target clusters.
+#
+# Replace placeholder cluster names ('prod-eu', 'staging-us') with your real
+# cluster names. See docs/site/operator/marketplace-architecture.md for the
+# full model.
+
+apiVersion: sharko.io/v1alpha1
+kind: ClusterAddonSet
+metadata:
+  name: prometheus-stack
+  namespace: sharko
+spec:
+  # Base chart definition (shared across all clusters)
+  chart:
+    repo: https://prometheus-community.github.io/helm-charts
+    name: kube-prometheus-stack
+    version: 55.0.0
+
+  # Base values (applied to all clusters unless overridden)
+  values:
+    grafana:
+      enabled: true
+      adminPassword: changeme  # Override per-cluster in production
+    prometheus:
+      prometheusSpec:
+        retention: 30d
+
+  # Cluster-specific overrides
+  clusters:
+    - name: prod-eu
+      values:
+        prometheus:
+          prometheusSpec:
+            retention: 90d  # Longer retention in production
+            resources:
+              requests:
+                memory: 4Gi
+                cpu: 2
+        grafana:
+          adminPassword: ${GRAFANA_ADMIN_PASSWORD_PROD}  # Inject from secret
+
+    - name: staging-us
+      values:
+        prometheus:
+          prometheusSpec:
+            retention: 14d  # Shorter retention in staging
+            resources:
+              requests:
+                memory: 2Gi
+                cpu: 1
+        grafana:
+          adminPassword: ${GRAFANA_ADMIN_PASSWORD_STAGING}
+
+  # Sync policy (applies to all clusters)
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

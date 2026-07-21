@@ -1,0 +1,62 @@
+# ALPHA — ClusterAddons sample CR (not wired until Phase 1)
+#
+# Defines a per-cluster addon inventory. One CR per cluster. The Sharko
+# operator reconciler watches these and generates an ArgoCD ApplicationSet
+# for each addon entry.
+#
+# Replace placeholder cluster name 'prod-eu' with your real cluster name.
+# See docs/site/operator/marketplace-architecture.md for the full model.
+
+apiVersion: sharko.io/v1alpha1
+kind: ClusterAddons
+metadata:
+  name: prod-eu
+  namespace: sharko
+spec:
+  # The target cluster (must match a cluster name in managed-clusters.yaml)
+  cluster: prod-eu
+
+  # List of addons installed on this cluster
+  addons:
+    - name: cert-manager
+      # Helm chart source (registry OCI or git repo)
+      chart:
+        repo: https://charts.jetstack.io
+        name: cert-manager
+        version: v1.13.0
+      # Values overlay (inline YAML)
+      values:
+        installCRDs: true
+      # ArgoCD sync policy
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+
+    - name: external-secrets
+      chart:
+        repo: https://charts.external-secrets.io
+        name: external-secrets
+        version: 0.9.9
+      values:
+        installCRDs: true
+        webhook:
+          port: 9443
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+
+    - name: ingress-nginx
+      chart:
+        repo: https://kubernetes.github.io/ingress-nginx
+        name: ingress-nginx
+        version: 4.8.3
+      values:
+        controller:
+          service:
+            type: LoadBalancer
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: false  # Manual sync for infra-critical resources

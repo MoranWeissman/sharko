@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image operator-dev-up operator-dev-down install uninstall deploy undeploy manifests
 
 PORT ?= 8080
 
@@ -33,6 +33,15 @@ help: ## Show available targets
 	@echo "    make install-test-tools    Install test tooling (gotestsum)"
 	@echo "    make kind-up               Provision a sharko-e2e kind topology"
 	@echo "    make kind-down             Destroy stale sharko-e2e-* kind clusters"
+	@echo ""
+	@echo "  Operator Development (Phase 0 scaffold):"
+	@echo "    make operator-dev-up       Provision persistent dev cluster + ArgoCD + Sharko"
+	@echo "    make operator-dev-down     Delete ONLY sharko-operator-dev cluster (safe)"
+	@echo "    make manifests             Generate CRD YAML + RBAC from Go markers (installs controller-gen)"
+	@echo "    make install               Apply CRDs to cluster (no-op until Phase 1)"
+	@echo "    make uninstall             Delete CRDs from cluster"
+	@echo "    make deploy                Apply controller RBAC + Deployment (no-op until Phase 1)"
+	@echo "    make undeploy              Delete controller RBAC + Deployment"
 	@echo ""
 
 demo: ## Build UI + start server in demo mode
@@ -397,3 +406,112 @@ release: ## Tag and push a release (usage: make release VERSION=1.0.0)
 	@echo "  ✅ Tagged v$(VERSION). Push the tag:"
 	@echo "    git push origin v$(VERSION)"
 	@echo ""
+
+# =====================================================================
+# Operator Development Tooling (Phase 0)
+# =====================================================================
+#
+# Phase 0 scaffolds the local operator development loop. Targets below are
+# idempotent no-ops today (CRDs + controller code land in Phase 1+). They
+# install controller-gen if missing and print honest "no CRDs yet" messages.
+#
+# The persistent dev cluster (sharko-operator-dev) is DISTINCT from the
+# throwaway e2e clusters (sharko-e2e-*) so test-e2e-clean / kind-down never
+# delete it. operator-dev-down guards by exact cluster name (same safety
+# discipline as test-e2e-clean).
+
+OPERATOR_DEV_CLUSTER_NAME := sharko-operator-dev
+
+operator-dev-up: ## Provision persistent operator dev cluster + install Sharko
+	@echo "==> Provisioning persistent operator dev cluster '$(OPERATOR_DEV_CLUSTER_NAME)'"
+	@if kind get clusters 2>/dev/null | grep -qx "$(OPERATOR_DEV_CLUSTER_NAME)"; then \
+		echo "    Cluster already exists — upgrading Sharko"; \
+	else \
+		echo "    Creating kind cluster"; \
+		kind create cluster --name $(OPERATOR_DEV_CLUSTER_NAME) --wait 60s; \
+	fi
+	@echo "==> Installing ArgoCD"
+	@kubectl --context kind-$(OPERATOR_DEV_CLUSTER_NAME) create namespace argocd 2>/dev/null || true
+	@kubectl --context kind-$(OPERATOR_DEV_CLUSTER_NAME) apply --server-side --force-conflicts -n argocd \
+		-f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml >/dev/null
+	@kubectl --context kind-$(OPERATOR_DEV_CLUSTER_NAME) wait --for=condition=available --timeout=180s \
+		deployment/argocd-server -n argocd
+	@echo "==> Installing Sharko via scripts/helm-install.sh"
+	@KIND_CLUSTER_NAME=$(OPERATOR_DEV_CLUSTER_NAME) bash scripts/helm-install.sh || \
+		echo "    helm-install.sh failed — check secrets.env is present with GITHUB_TOKEN"
+	@echo ""
+	@echo "  ✅ Operator dev cluster ready"
+	@echo "     Cluster: kind-$(OPERATOR_DEV_CLUSTER_NAME)"
+	@echo "     To access Sharko: kubectl --context kind-$(OPERATOR_DEV_CLUSTER_NAME) port-forward -n sharko svc/sharko 8080:80"
+	@echo "     To access ArgoCD: kubectl --context kind-$(OPERATOR_DEV_CLUSTER_NAME) port-forward -n argocd svc/argocd-server 18080:443"
+
+operator-dev-down: ## Delete ONLY the sharko-operator-dev cluster (safe — never touches other clusters)
+	@echo "==> Deleting persistent operator dev cluster '$(OPERATOR_DEV_CLUSTER_NAME)'"
+	@if kind get clusters 2>/dev/null | grep -qx "$(OPERATOR_DEV_CLUSTER_NAME)"; then \
+		kind delete cluster --name $(OPERATOR_DEV_CLUSTER_NAME); \
+		echo "    Cluster deleted"; \
+	else \
+		echo "    Cluster '$(OPERATOR_DEV_CLUSTER_NAME)' not found (already torn down)"; \
+	fi
+
+# Kubebuilder-standard targets. Phase 0: all are clean no-ops (exit 0 with a note).
+# Phase 1+: these will generate/apply CRDs + RBAC + controller Deployment.
+
+CONTROLLER_GEN := $(shell command -v controller-gen 2>/dev/null || echo "$(shell go env GOPATH)/bin/controller-gen")
+
+install: ## Apply CRDs to the cluster (no-op in Phase 0 — CRDs populated in Phase 1)
+	@if [ ! -d config/crd ]; then \
+		echo "==> install: config/crd/ does not exist"; \
+		exit 1; \
+	fi; \
+	CRD_COUNT=$$(find config/crd -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l | tr -d ' '); \
+	if [ "$$CRD_COUNT" -eq 0 ]; then \
+		echo "==> install: no CRDs present yet (populated in Phase 1)"; \
+	else \
+		echo "==> Applying CRDs from config/crd/"; \
+		kubectl apply -f config/crd/; \
+	fi
+
+uninstall: ## Delete CRDs from the cluster (no-op in Phase 0)
+	@if [ ! -d config/crd ]; then \
+		echo "==> uninstall: config/crd/ does not exist"; \
+		exit 1; \
+	fi; \
+	CRD_COUNT=$$(find config/crd -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l | tr -d ' '); \
+	if [ "$$CRD_COUNT" -eq 0 ]; then \
+		echo "==> uninstall: no CRDs to delete (populated in Phase 1)"; \
+	else \
+		echo "==> Deleting CRDs from config/crd/"; \
+		kubectl delete -f config/crd/; \
+	fi
+
+deploy: ## Apply controller RBAC + Deployment (no-op in Phase 0 — manifests populated in Phase 1)
+	@RBAC_COUNT=$$(find config/rbac -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l); \
+	if [ "$$RBAC_COUNT" -eq 0 ]; then \
+		echo "==> deploy: no RBAC manifests yet (populated in Phase 1)"; \
+	fi
+	@MGR_COUNT=$$(find config/manager -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l); \
+	if [ "$$MGR_COUNT" -eq 0 ]; then \
+		echo "==> deploy: no manager Deployment yet (populated in Phase 1)"; \
+	fi
+	@echo "==> deploy: Phase 0 no-op complete (controller not wired until Phase 1)"
+
+undeploy: ## Delete controller RBAC + Deployment (no-op in Phase 0)
+	@echo "==> undeploy: Phase 0 no-op (controller not wired until Phase 1)"
+
+manifests: ## Generate CRD YAML + RBAC from Go markers (Phase 0: installs controller-gen, no-op otherwise)
+	@if [ ! -x "$(CONTROLLER_GEN)" ]; then \
+		echo "==> Installing controller-gen (sigs.k8s.io/controller-tools)"; \
+		go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest; \
+		echo "    Installed to $(shell go env GOPATH)/bin/controller-gen"; \
+	fi
+	@echo "==> manifests: controller-gen available at $(CONTROLLER_GEN)"
+	@if [ ! -d internal/controllers ] || [ -z "$$(find internal -name '*_controller.go' 2>/dev/null)" ]; then \
+		echo "==> manifests: no controller Go files present yet (populated in Phase 1)"; \
+		echo "    When controller code lands, this target will run:"; \
+		echo "      $(CONTROLLER_GEN) crd rbac:roleName=sharko-manager-role paths=./... output:crd:artifacts:config=config/crd"; \
+		exit 0; \
+	fi
+	@echo "==> Generating CRD YAML + RBAC from Go markers"
+	@$(CONTROLLER_GEN) crd rbac:roleName=sharko-manager-role paths=./... output:crd:artifacts:config=config/crd
+	@echo "    Output: config/crd/*.yaml, config/rbac/*.yaml"

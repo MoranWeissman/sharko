@@ -138,6 +138,7 @@ nav:
     - Overview: developer-guide.md
     - 'Architecture & Design History': developer-guide/design-history.md
     - API Stability Contract: developer-guide/api-stability.md
+    - Operator Development: developer-guide/operator-development.md
     - Catalog Scan Runbook: developer-guide/catalog-scan-runbook.md
     - Catalog Sources Smoke Runbook: developer-guide/catalog-sources-smoke.md
     - EKS Live-Test Runbook: developer-guide/eks-live-test-runbook.md
