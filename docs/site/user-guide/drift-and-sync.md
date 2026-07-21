@@ -28,7 +28,7 @@ For a Sharko-managed cluster, Sharko reads the cluster entry from `configuration
 
 ## Seeing drift in the UI
 
-The cluster detail page has a **GitOps Sync** area (added in v3.0.0) that consolidates the sync status, the Sync action, and the drift diff:
+The cluster detail page has a **Cluster secret sync** area (added in v3.0.0) that consolidates the sync status, the Sync action, and the drift diff:
 
 - **Synced** (green): Git and live labels match. No drift to show.
 - **OutOfSync** (amber): Git and live labels differ. A read-only diff appears below the status pill, showing which label keys were added (green lines), removed (red lines), or changed (both).

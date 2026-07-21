@@ -1373,7 +1373,7 @@ export function ClusterDetail() {
       <div className="space-y-3 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-5 py-4 dark:ring-gray-700 dark:bg-gray-800">
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-            GitOps Sync
+            Cluster secret sync
           </h3>
           {/* Sync status pill (ArgoCD-familiar words, colors from clusterStatus severity contract) */}
           {(() => {
@@ -1416,7 +1416,7 @@ export function ClusterDetail() {
               Sync now
             </button>
             <InfoHint
-              text="Re-applies the desired state from Git to this cluster's connection labels in ArgoCD. Sharko keeps a label listing which addons belong here. Out of sync means those labels drifted from what Git says (rare)."
+              text="Keeps each cluster's ArgoCD Secret matching Git. The addon labels on that Secret tell ArgoCD's ApplicationSet which addons to install or remove on this cluster."
               label="What does Sync now do?"
             />
           </div>

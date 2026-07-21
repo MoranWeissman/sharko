@@ -40,6 +40,7 @@ vi.mock('@/services/api', () => ({
     getVersionMatrix: vi.fn().mockResolvedValue(null),
     getAttentionItems: vi.fn().mockResolvedValue([]),
     getClusters: vi.fn().mockResolvedValue({ clusters: [] }),
+    getHomeCluster: vi.fn().mockResolvedValue({ available: false, message: 'only available when running in-cluster' }),
     getDashboardStats: vi.fn().mockResolvedValue({
       connections: { total: 1, active: 'dev' },
       clusters: { total: 10, connected_to_argocd: 8, disconnected_from_argocd: 2 },
