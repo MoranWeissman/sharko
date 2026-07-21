@@ -14,9 +14,60 @@ the PR. Append new releases at the TOP of the v2.x stream so the most
 recent release is the first thing readers see.
 -->
 
+## v3.0.0 — First public release
+
+**Status:** released 2026-07-21 (current release)
+
+v3.0.0 is Sharko's **first public release** — the addon-management server for
+Kubernetes clusters, built on ArgoCD. Sharko is a guest on your ArgoCD: Git stays
+the source of truth, ArgoCD deploys the workloads, and Sharko owns the
+assignment-and-secrets layer between Git and your clusters, with a UI/API/CLI, an
+addon catalog, preview-before-change, and an audit trail on top.
+
+### Breaking changes
+
+None applicable — this is the first public release. Prior v2.x tags were
+pre-public development milestones.
+
+### What's new
+
+- **GitOps agent** — drift detection + OutOfSync for Sharko-managed clusters, a
+  read-only live label diff, and opt-in self-heal (default off).
+- **Git-native config** — server settings and connection/AI non-secret fields are
+  declarable from Git (Helm → env → git-wins), while encrypted secrets are always
+  preserved and never written to Git.
+- **Kubernetes events** — Sharko emits Warning/Normal events for AWS/ArgoCD/cluster/
+  PR/reconciler activity so failures surface in `kubectl get events`.
+- **Addons Marketplace** — searchable catalog with git-native sources and verified
+  discovery.
+- **"Cluster secret sync"** — the cluster-detail area that keeps each cluster's
+  ArgoCD Secret matching Git (addon labels drive ArgoCD's ApplicationSet), renamed
+  from the vaguer "GitOps Sync" with an honest explanation.
+- **"Why Sharko" guide** — a new docs page explaining the two GitOps loops,
+  guest-not-owner positioning, and how Sharko relates to ArgoCD.
+- **"Sharko's home cluster" card** — the dashboard now shows where Sharko & ArgoCD
+  run (Kubernetes version, node count, health).
+- Dozens of first-impression UI fixes across the dashboard, clusters page, and
+  addon catalog (the local-walk polish bundle).
+
+### Security
+
+- Secret values are never written to Git — only references/paths.
+- Cluster connection credentials are encrypted at rest; the git-native config merge
+  preserves encrypted material and emits zero secret env vars.
+
+### Known limitations (honest)
+
+- Status is visible via Sharko's UI/API + Kubernetes events today; a kubectl-native
+  desired-state object (an operator) is on the roadmap, not in this release.
+- ESO integration is optional and on the near-term roadmap; Sharko manages secrets
+  directly today.
+
+---
+
 ## v2.3.0 — UX overhaul + cross-account EKS identity
 
-**Status:** released 2026-07-06 (current release)
+**Status:** released 2026-07-06
 
 v2.3.0 is a UX-focused release that unifies how Sharko talks about status
 across the whole UI, fixes the misleading first-run experience, and closes
