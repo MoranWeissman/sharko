@@ -76,9 +76,9 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trigger reconciler after adoption.
-	if !req.DryRun && s.argoSecretReconciler != nil {
-		s.argoSecretReconciler.Trigger()
+	// Trigger canonical reconciler after adoption.
+	if !req.DryRun && s.clusterRecon != nil {
+		s.clusterRecon.Trigger()
 	}
 
 	// Enrich the audit entry. For batches we summarise all adopted clusters.
@@ -194,9 +194,9 @@ func (s *Server) handleUnadoptCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trigger reconciler.
-	if !req.DryRun && s.argoSecretReconciler != nil {
-		s.argoSecretReconciler.Trigger()
+	// Trigger canonical reconciler.
+	if !req.DryRun && s.clusterRecon != nil {
+		s.clusterRecon.Trigger()
 	}
 
 	audit.Enrich(r.Context(), audit.Fields{

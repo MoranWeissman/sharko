@@ -236,8 +236,8 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.argoSecretReconciler != nil {
-		s.argoSecretReconciler.Trigger()
+	if s.clusterRecon != nil {
+		s.clusterRecon.Trigger()
 	}
 
 	// Record verification observation if Stage1 ran.
@@ -354,8 +354,8 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Trigger reconciler after removal.
-	if s.argoSecretReconciler != nil {
-		s.argoSecretReconciler.Trigger()
+	if s.clusterRecon != nil {
+		s.clusterRecon.Trigger()
 	}
 
 	audit.Enrich(ctx, audit.Fields{
@@ -539,8 +539,8 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	// would produce a malformed execProviderConfig in the ArgoCD cluster secret.
 	// The reconciler reads the full cluster spec from cluster-addons.yaml (including region)
 	// and will update the secret within its next cycle (default: 3 minutes).
-	if s.argoSecretReconciler != nil {
-		s.argoSecretReconciler.Trigger()
+	if s.clusterRecon != nil {
+		s.clusterRecon.Trigger()
 	}
 
 	audit.Enrich(ctx, audit.Fields{

@@ -137,9 +137,9 @@ func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trigger reconciler after addon enable.
-	if s.argoSecretReconciler != nil {
-		s.argoSecretReconciler.Trigger()
+	// Trigger canonical reconciler after addon enable.
+	if s.clusterRecon != nil {
+		s.clusterRecon.Trigger()
 	}
 
 	audit.Enrich(r.Context(), audit.Fields{
@@ -254,9 +254,9 @@ func (s *Server) handleDisableAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trigger reconciler after addon disable.
-	if s.argoSecretReconciler != nil {
-		s.argoSecretReconciler.Trigger()
+	// Trigger canonical reconciler after addon disable.
+	if s.clusterRecon != nil {
+		s.clusterRecon.Trigger()
 	}
 
 	audit.Enrich(r.Context(), audit.Fields{
