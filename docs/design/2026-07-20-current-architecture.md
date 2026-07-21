@@ -278,8 +278,7 @@ All started in `cmd/sharko/serve.go` line ~118-1225:
 | Goroutine | Default Interval | Purpose | Triggered By |
 |-----------|-----------------|---------|--------------|
 | **Addon Secret Reconciler** | 5 min (`SHARKO_SECRET_RECONCILE_INTERVAL`) | Pushes addon secret values to spoke clusters | Timer + webhook trigger + `Trigger()` call |
-| **Cluster Reconciler** | 30 sec (safety net) | Writes ArgoCD cluster Secrets from Git | Timer + `prTracker.SetOnMergeFn` (sub-5s post-merge) |
-| **Legacy ArgoCD Reconciler** | 3 min (`SHARKO_ARGOCD_RECONCILE_INTERVAL`) | Legacy writer (dual-writer with cluster reconciler) | Timer + trigger |
+| **Cluster Reconciler** | 30 sec (safety net) | Writes ArgoCD cluster Secrets from Git (sole writer as of v3.0.0) | Timer + `prTracker.SetOnMergeFn` (sub-5s post-merge) |
 | **Connection Poller** | 60 sec (`SHARKO_CONNECTION_CHECK_INTERVAL`) | Probes Sharko→Git and ArgoCD→repo health | Timer |
 | **Notification Checker** | 30 min | Checks for addon upgrades, drift, security advisories | Timer |
 | **Third-party Catalog Fetcher** | Configurable (`refresh_interval` in config) | Fetches + verifies third-party addon catalogs | Timer |
@@ -306,7 +305,7 @@ This is the same pattern across `internal/secrets/reconciler.go`, `internal/clus
 ## Contradictions with architect.md
 
 1. **Envelope apiVersion:** `architect.md` line 90 says `sharko.io/v1`. The CODE says `sharko.dev/v1` is canonical (with `sharko.io/v1` as a legacy fallback for backward compat). The real apiVersion is **`sharko.dev/v1`**.
-2. **Dual reconcilers:** `architect.md` mentions the legacy `argosecrets.Reconciler` coexisting with the new `clusterreconciler.Reconciler`. This is TRUE per `cmd/sharko/serve.go` lines 758-872 and 1028-1093. Both run in-cluster, both write ArgoCD cluster Secrets, and both honor the same ownership label. The consolidation (retiring the legacy reconciler) is tracked as a follow-up but NOT yet done.
+2. **Single reconciler writer:** As of v3.0.0, `internal/clusterreconciler` is the SOLE writer of ArgoCD cluster Secrets. The legacy 3-minute `argosecrets.Reconciler` loop was retired. The `argosecrets.Manager` (the pure CRUD writer for kubeconfig direct-writes, used by the canonical reconciler and by orchestrator direct-write paths) remains.
 
 ## Summary
 

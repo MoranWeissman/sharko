@@ -424,9 +424,9 @@ prs, _ := tracker.ListPRs(ctx, "open", "prod-eu", "", "")
 // Wait for a specific PR
 pr, _ := tracker.PollSinglePR(ctx, 42)
 
-// Register a callback for merged PRs (e.g., trigger reconciler)
+// Register a callback for merged PRs (e.g., trigger cluster reconciler)
 tracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
-    // trigger argosecrets reconciler
+    // trigger clusterreconciler.Trigger()
 })
 ```
 

@@ -493,13 +493,7 @@ If a cluster secret already exists in the `argocd` namespace but was not created
 
 ### Reconcile Interval
 
-The reconciler interval defaults to 3 minutes. Override via environment variable:
-
-```yaml
-extraEnv:
-  - name: SHARKO_ARGOCD_RECONCILE_INTERVAL
-    value: "5m"
-```
+As of v3.0.0, the cluster reconciler uses a 30-second safety-net tick plus sub-5-second post-merge triggers (via `prTracker`). The legacy `SHARKO_ARGOCD_RECONCILE_INTERVAL` env var was retired.
 
 ---
 
@@ -982,7 +976,6 @@ If ArgoCD or Git connections fail:
 | `SHARKO_GITOPS_BASE_BRANCH` | Target branch for PRs | `main` |
 | `SHARKO_GITOPS_REPO_URL` | Git repo URL for template placeholders | (none) |
 | `SHARKO_ADDON_SECRETS` | JSON-encoded addon secret definitions (see Addon Secrets section) | (none) |
-| `SHARKO_ARGOCD_RECONCILE_INTERVAL` | Interval for ArgoCD cluster secret reconciliation (e.g. `3m`, `5m`) | `3m` |
 | `SHARKO_DEFAULT_ADDONS` | Comma-separated default addons applied to new clusters | (none) |
 | `SHARKO_HOST_CLUSTER_NAME` | Name of the host cluster running Sharko (for in-cluster deployment) | (none) |
 | `SHARKO_INIT_AUTO_BOOTSTRAP` | Auto-bootstrap ArgoCD during init (not yet implemented, post-v1) | `false` |

@@ -95,7 +95,7 @@ CI runs `go test -coverprofile=coverage.out -covermode=atomic ./...` in the `go-
 | `internal/api/` | HTTP handler tests via `httptest.NewRequest` + `httptest.NewRecorder` (24 test files) |
 | `internal/orchestrator/` | The two-operation catalog/deploy model end-to-end with mocks (16 test files) |
 | `internal/argocd/` | ArgoCD client with `httptest.Server` impersonating the ArgoCD API |
-| `internal/argosecrets/` | Cluster-secret manager + reconciler |
+| `internal/argosecrets/` | Cluster-secret manager (used by clusterreconciler + direct-write paths) |
 | `internal/audit/` | Audit log writer / reader |
 | `internal/auth/` | Tokens (admin + per-user PAT) |
 | `internal/authz/` | Tier-based authorization |
