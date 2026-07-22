@@ -202,6 +202,19 @@ type Deps struct {
 	// detection only, no automatic re-apply). Wired from
 	// settings.Store.IsManagedClusterSelfHealEnabled in cmd/sharko/serve.go.
 	SelfHealFn func(ctx context.Context) bool
+
+	// DrivesLabelsToOperator, when true, means the ClusterAddons operator
+	// controller (internal/operator) is the writer of managed-cluster addon
+	// labels — so this reconciler YIELDS its managed-cluster label WRITE
+	// (createOne convergence + selfHealManagedCluster). When false (the
+	// zero value, i.e. the default), the reconciler writes managed-cluster
+	// labels as today (Phase 1 behavior). This is the single-writer handoff
+	// for Operator Phase 2, Story 2.2. Read from the SAME
+	// SHARKO_OPERATOR_DRIVES_LABELS env flag that gates the controller's
+	// drive path (Story 2.1) — both components read one source, threaded
+	// through serve.go. Scope: MANAGED clusters' ongoing convergence only
+	// (self-managed + register-time bootstrap untouched). Default OFF.
+	DrivesLabelsToOperator bool
 }
 
 // Reconciler is a background reconciler that converges ArgoCD cluster Secret
@@ -641,7 +654,12 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 				// managed_cluster_self_heal setting is ON, re-apply git-desired
 				// addon labels (enforcement-by-reconcile, same mechanism as
 				// syncSelfManaged). Default OFF — drift detection only.
-				if r.deps.SelfHealFn != nil && r.deps.SelfHealFn(ctx) {
+				//
+				// Operator Phase 2 handoff: when DrivesLabelsToOperator is ON,
+				// the operator controller is the writer; skip self-heal here
+				// (the controller reconciles drift). When OFF, reconciler owns
+				// the write as today.
+				if !r.deps.DrivesLabelsToOperator && r.deps.SelfHealFn != nil && r.deps.SelfHealFn(ctx) {
 					r.selfHealManagedCluster(ctx, name, desiredLabels, stats)
 					// selfHealManagedCluster already called recordReconcile with
 					// the outcome (succeeded/failed), so skip the default record
@@ -720,8 +738,23 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 	}
 
 	// Create missing Secrets (in-git ∖ in-argocd).
-	for _, entry := range toCreate {
-		r.createOne(ctx, entry, stats)
+	// Operator Phase 2 handoff: when DrivesLabelsToOperator is ON, the
+	// operator controller creates managed-cluster Secrets (the controller
+	// reconciles the ClusterAddons CR → Secret). When OFF, reconciler owns
+	// the create as today. Register-time bootstrap (orchestrator Ensure) is
+	// UNCHANGED in both modes — this gates only the ongoing CONVERGENCE
+	// create (Phase 2 scoped to ongoing convergence, not bootstrap).
+	if !r.deps.DrivesLabelsToOperator {
+		for _, entry := range toCreate {
+			r.createOne(ctx, entry, stats)
+		}
+	} else {
+		// Operator drives: skip reconciler creates, record deferred outcome
+		// for status visibility (operator controller will converge).
+		for _, entry := range toCreate {
+			r.recordReconcile(entry.Name, OutcomeSkipped,
+				"operator controller owns managed-cluster convergence (SHARKO_OPERATOR_DRIVES_LABELS is on) — reconciler skipped create", nil)
+		}
 	}
 
 	// Orphan-sweep sanity guard (H2 forward guard, V2-cleanup-60.2): when

@@ -922,6 +922,16 @@ var serveCmd = &cobra.Command{
 			// ArgoCD cluster Secrets driven by managed-clusters.yaml.
 			// The legacy argosecrets.Reconciler loop (dual-writer until
 			// V2-cleanup-28) has been retired.
+			//
+			// Operator Phase 2, Story 2.2: Read SHARKO_OPERATOR_DRIVES_LABELS
+			// (default "false") ONCE here (OUTSIDE the reconciler-construction
+			// block) so BOTH the reconciler and the operator controller (wired
+			// below in the operator block) can read the SAME parsed bool. This
+			// is the single-writer handoff flag: when ON, the controller writes
+			// managed-cluster addon labels and the reconciler yields; when OFF,
+			// reconciler writes as today (Phase 1 behavior).
+			operatorDrivesLabelsEnv := getEnvDefault("SHARKO_OPERATOR_DRIVES_LABELS", "false")
+			operatorDrivesLabels := (operatorDrivesLabelsEnv == "true" || operatorDrivesLabelsEnv == "1")
 			var clusterRecon *clusterreconciler.Reconciler
 			if prCMStore != nil && inClusterK8sClient != nil && credProvider != nil {
 				clusterReconNamespace := getEnvDefault("SHARKO_ARGOCD_NAMESPACE", "argocd")
@@ -957,6 +967,7 @@ var serveCmd = &cobra.Command{
 					DisableConnectivityCheck: connectivityCheckDisabled(getEnvDefault("SHARKO_CONNECTIVITY_CHECK", "true")),
 					ProbeModeFn:              probeModeFn,
 					SelfHealFn:               selfHealFn,
+					DrivesLabelsToOperator:   operatorDrivesLabels,
 				})
 				// Wire the trigger onto the Server BEFORE Start() so the
 				// first request to the per-request orchestrator helper
@@ -1154,9 +1165,9 @@ var serveCmd = &cobra.Command{
 							// in the in-cluster block above) and argoManager != nil.
 							if clusterRecon != nil && argoManager != nil {
 								reconciler := &operator.ClusterAddonsReconciler{Client: mgr.GetClient()}
-								// Read SHARKO_OPERATOR_DRIVES_LABELS (default "false").
-								operatorDrivesLabelsEnv := getEnvDefault("SHARKO_OPERATOR_DRIVES_LABELS", "false")
-								operatorDrivesLabels := (operatorDrivesLabelsEnv == "true" || operatorDrivesLabelsEnv == "1")
+								// Operator Phase 2, Story 2.2: Reuse the SAME parsed
+								// operatorDrivesLabels bool that was threaded into the
+								// reconciler above — both components read one source.
 								reconciler.DrivesLabels = operatorDrivesLabels
 
 								// Wire the label writer (argoManager satisfies
