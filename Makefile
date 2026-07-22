@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image operator-dev-up operator-dev-down install uninstall deploy undeploy manifests
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image operator-dev-up operator-dev-down operator-playground-up operator-playground-status operator-playground-drive-on operator-playground-drive-off operator-playground-down install uninstall deploy undeploy manifests
 
 PORT ?= 8080
 
@@ -42,6 +42,14 @@ help: ## Show available targets
 	@echo "    make uninstall             Delete CRDs from cluster"
 	@echo "    make deploy                Apply controller RBAC + Deployment (no-op until Phase 1)"
 	@echo "    make undeploy              Delete controller RBAC + Deployment"
+	@echo ""
+	@echo "  Operator Local Playground (Phase 2 prove-then-flip):"
+	@echo "    make operator-playground-up         Spin up hub + N spokes + ArgoCD + Sharko + GitFake"
+	@echo "    make operator-playground-status     Show current state (drive mode, CR status, labels)"
+	@echo "    make operator-playground-drive-on   Flip operator drive ON (operator writes labels)"
+	@echo "    make operator-playground-drive-off  Flip operator drive OFF (reconciler writes labels)"
+	@echo "    make operator-playground-down       Tear down all playground clusters (safe)"
+	@echo "    (Set PLAYGROUND_SPOKES=N to override default 2 spokes)"
 	@echo ""
 
 demo: ## Build UI + start server in demo mode
@@ -452,6 +460,75 @@ operator-dev-down: ## Delete ONLY the sharko-operator-dev cluster (safe — neve
 		echo "    Cluster deleted"; \
 	else \
 		echo "    Cluster '$(OPERATOR_DEV_CLUSTER_NAME)' not found (already torn down)"; \
+	fi
+
+# Operator Local Playground (Phase 2 prove-then-flip tooling — Epic Operator-Local-Playground)
+# One-command kind topology to prove the operator driving addon labels without EKS or cloud secrets.
+
+PLAYGROUND_SPOKES ?= 2
+PLAYGROUND_HUB_CONTEXT := kind-sharko-play-hub
+PLAYGROUND_NAMESPACE := sharko
+PLAYGROUND_RELEASE := sharko
+
+operator-playground-up: ## Provision playground (hub + N spokes + ArgoCD + Sharko + GitFake) — Story 1
+	@echo "==> Starting operator playground (hub + $(PLAYGROUND_SPOKES) spokes)"
+	@PLAYGROUND_SPOKES=$(PLAYGROUND_SPOKES) go run ./cmd/playground up
+
+operator-playground-status: ## Show operator playground status — ClusterAddons Ready + converged addon labels per spoke
+	@bash scripts/operator-playground-status.sh
+
+operator-playground-drive-on: ## Flip operator drive ON — controller writes addon labels
+	@echo "==> Flipping operator drive ON (SHARKO_OPERATOR_DRIVES_LABELS=true)"
+	@if ! helm --kube-context $(PLAYGROUND_HUB_CONTEXT) list -n $(PLAYGROUND_NAMESPACE) | grep -q "^$(PLAYGROUND_RELEASE)"; then \
+		echo "ERROR: Helm release '$(PLAYGROUND_RELEASE)' not found in namespace '$(PLAYGROUND_NAMESPACE)' on $(PLAYGROUND_HUB_CONTEXT)"; \
+		echo "       Run 'make operator-playground-up' first."; \
+		exit 1; \
+	fi
+	@helm --kube-context $(PLAYGROUND_HUB_CONTEXT) upgrade $(PLAYGROUND_RELEASE) charts/sharko \
+		--namespace $(PLAYGROUND_NAMESPACE) \
+		--reuse-values \
+		--set operator.drivesLabels=true
+	@echo "    Restarting Sharko deployment to pick up env change..."
+	@kubectl --context $(PLAYGROUND_HUB_CONTEXT) -n $(PLAYGROUND_NAMESPACE) rollout restart deploy/sharko
+	@kubectl --context $(PLAYGROUND_HUB_CONTEXT) -n $(PLAYGROUND_NAMESPACE) rollout status deploy/sharko --timeout=120s
+	@echo ""
+	@echo "  ✅ Operator is now DRIVING labels."
+	@echo "     The controller writes addon labels from the ClusterAddons CR spec."
+	@echo "     Watch convergence: make operator-playground-status"
+
+operator-playground-drive-off: ## Flip operator drive OFF — reconciler resumes writing addon labels
+	@echo "==> Flipping operator drive OFF (SHARKO_OPERATOR_DRIVES_LABELS=false)"
+	@if ! helm --kube-context $(PLAYGROUND_HUB_CONTEXT) list -n $(PLAYGROUND_NAMESPACE) | grep -q "^$(PLAYGROUND_RELEASE)"; then \
+		echo "ERROR: Helm release '$(PLAYGROUND_RELEASE)' not found in namespace '$(PLAYGROUND_NAMESPACE)' on $(PLAYGROUND_HUB_CONTEXT)"; \
+		echo "       Run 'make operator-playground-up' first."; \
+		exit 1; \
+	fi
+	@helm --kube-context $(PLAYGROUND_HUB_CONTEXT) upgrade $(PLAYGROUND_RELEASE) charts/sharko \
+		--namespace $(PLAYGROUND_NAMESPACE) \
+		--reuse-values \
+		--set operator.drivesLabels=false
+	@echo "    Restarting Sharko deployment to pick up env change..."
+	@kubectl --context $(PLAYGROUND_HUB_CONTEXT) -n $(PLAYGROUND_NAMESPACE) rollout restart deploy/sharko
+	@kubectl --context $(PLAYGROUND_HUB_CONTEXT) -n $(PLAYGROUND_NAMESPACE) rollout status deploy/sharko --timeout=120s
+	@echo ""
+	@echo "  ✅ Operator drive OFF — reconciler resumes as the label writer."
+	@echo "     This is the one-line rollback. Labels remain correct."
+	@echo "     Watch state: make operator-playground-status"
+
+operator-playground-down: ## Delete ONLY sharko-play-* clusters (Story 4: name-guarded teardown)
+	@echo "==> Deleting operator playground clusters (sharko-play-* prefix only)"
+	@CLUSTERS=$$(kind get clusters 2>/dev/null | grep -E '^sharko-play-' || true); \
+	if [ -z "$$CLUSTERS" ]; then \
+		echo "    (none found — already clean)"; \
+	else \
+		echo "    Will delete:"; \
+		echo "$$CLUSTERS" | sed 's/^/      - /'; \
+		echo "$$CLUSTERS" | xargs -I{} kind delete cluster --name {}; \
+		echo "    Clusters deleted"; \
+	fi
+	@if [ "$(PRUNE_IMAGES)" = "1" ]; then \
+		echo "==> Pruning sharko-gitfake image (PRUNE_IMAGES=1)"; \
+		docker rmi sharko-gitfake:e2e-* 2>/dev/null || echo "    (no gitfake images to prune)"; \
 	fi
 
 # Kubebuilder-standard targets. Phase 0: all are clean no-ops (exit 0 with a note).
