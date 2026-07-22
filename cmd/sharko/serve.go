@@ -732,6 +732,11 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
+		// ArgoCD Manager — hoisted for operator wiring (Story 2.1).
+		// Declare here so it's accessible in both the argocd-secrets block (below)
+		// and the operator block (further down). Will be nil unless Sharko runs in-cluster.
+		var argoManager *argosecrets.Manager
+
 		// ArgoCD cluster secrets — writes ArgoCD cluster secrets into the argocd namespace
 		// so that ArgoCD's ApplicationSet cluster generator can discover Sharko-managed clusters.
 		//
@@ -769,8 +774,9 @@ var serveCmd = &cobra.Command{
 			// The Manager is a pure writer for kubeconfig direct-write path
 			// (adopt, remove, providers, API handlers). The legacy reconciler
 			// loop has been retired (Operator Phase 0); internal/clusterreconciler
-			// is the canonical reconciler for managed-clusters.yaml.
-			argoManager := argosecrets.NewManager(k8sClient, argocdNamespace)
+			// is the canonical reconciler for managed-clusters.yaml. Hoist
+			// argoManager to package-scope for operator wiring (Story 2.1).
+			argoManager = argosecrets.NewManager(k8sClient, argocdNamespace)
 			srv.SetArgoSecretManager(argoManager)
 			slog.Info("argocd cluster-secret manager wired", "namespace", argocdNamespace)
 		}
@@ -1138,18 +1144,31 @@ var serveCmd = &cobra.Command{
 						if err != nil {
 							slog.Warn("operator manager creation failed", "error", err)
 						} else {
-							// Story 1.3: Register the ClusterAddons reconciler.
+							// Story 1.3 + 2.1: Register the ClusterAddons reconciler.
 							// Pass the canonical cluster reconciler (clusterRecon) as
 							// the status reader — it implements the ReconcileStatusReader
-							// interface (single method: LastReconcile). Only register
-							// when clusterRecon != nil (the reconciler is wired in the
-							// in-cluster block above).
-							if clusterRecon != nil {
+							// interface (single method: LastReconcile). Pass the
+							// argosecrets.Manager as the label writer (Story 2.1 — gated
+							// via SHARKO_OPERATOR_DRIVES_LABELS, default OFF). Only
+							// register when clusterRecon != nil (the reconciler is wired
+							// in the in-cluster block above) and argoManager != nil.
+							if clusterRecon != nil && argoManager != nil {
 								reconciler := &operator.ClusterAddonsReconciler{Client: mgr.GetClient()}
-								if err := reconciler.SetupWithManager(mgr, clusterRecon); err != nil {
+								// Read SHARKO_OPERATOR_DRIVES_LABELS (default "false").
+								operatorDrivesLabelsEnv := getEnvDefault("SHARKO_OPERATOR_DRIVES_LABELS", "false")
+								operatorDrivesLabels := (operatorDrivesLabelsEnv == "true" || operatorDrivesLabelsEnv == "1")
+								reconciler.DrivesLabels = operatorDrivesLabels
+
+								// Wire the label writer (argoManager satisfies
+								// ManagedClusterLabelWriter interface — it has
+								// SyncManagedClusterLabels). Pass it even when flag OFF
+								// (the controller won't call it unless DrivesLabels=true).
+								if err := reconciler.SetupWithManager(mgr, clusterRecon, argoManager); err != nil {
 									slog.Warn("failed to setup ClusterAddons reconciler", "error", err)
 								} else {
-									slog.Info("ClusterAddons reconciler registered")
+									slog.Info("ClusterAddons reconciler registered",
+										"drives_labels", operatorDrivesLabels,
+									)
 								}
 							}
 
