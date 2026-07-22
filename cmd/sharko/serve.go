@@ -1134,24 +1134,39 @@ var serveCmd = &cobra.Command{
 						if operatorNamespace == "" {
 							operatorNamespace = "sharko"
 						}
-						mgr, err := operator.NewManager(operatorCfg, operatorNamespace)
-						if err != nil {
-							slog.Warn("operator manager creation failed", "error", err)
-						} else {
-							// Start the manager in a goroutine so it does NOT block
-							// the HTTP server. The manager's context will be canceled
-							// on shutdown (via the same signal path as the existing
-							// server shutdown).
-							operatorCtx, operatorCancel := context.WithCancel(context.Background())
-							defer operatorCancel() // Clean shutdown on process exit
-							go func() {
-								slog.Info("operator manager starting", "namespace", operatorNamespace)
-								if err := mgr.Start(operatorCtx); err != nil {
-									slog.Error("operator manager stopped with error", "error", err)
+							mgr, err := operator.NewManager(operatorCfg, operatorNamespace)
+							if err != nil {
+								slog.Warn("operator manager creation failed", "error", err)
+							} else {
+								// Story 1.3: Register the ClusterAddons reconciler.
+								// Pass the canonical cluster reconciler (clusterRecon) as
+								// the status reader — it implements the ReconcileStatusReader
+								// interface (single method: LastReconcile). Only register
+								// when clusterRecon != nil (the reconciler is wired in the
+								// in-cluster block above).
+								if clusterRecon != nil {
+									reconciler := &operator.ClusterAddonsReconciler{Client: mgr.GetClient()}
+									if err := reconciler.SetupWithManager(mgr, clusterRecon); err != nil {
+										slog.Warn("failed to setup ClusterAddons reconciler", "error", err)
+									} else {
+										slog.Info("ClusterAddons reconciler registered")
+									}
 								}
-							}()
-							slog.Info("operator manager started (no reconcilers yet — Story 1.2)", "namespace", operatorNamespace)
-						}
+
+								// Start the manager in a goroutine so it does NOT block
+								// the HTTP server. The manager's context will be canceled
+								// on shutdown (via the same signal path as the existing
+								// server shutdown).
+								operatorCtx, operatorCancel := context.WithCancel(context.Background())
+								defer operatorCancel() // Clean shutdown on process exit
+								go func() {
+									slog.Info("operator manager starting", "namespace", operatorNamespace)
+									if err := mgr.Start(operatorCtx); err != nil {
+										slog.Error("operator manager stopped with error", "error", err)
+									}
+								}()
+								slog.Info("operator manager started (1 reconciler: ClusterAddons)", "namespace", operatorNamespace)
+							}
 					}
 				} else {
 					slog.Info("operator manager disabled via SHARKO_OPERATOR_ENABLED", "value", operatorEnabled)
