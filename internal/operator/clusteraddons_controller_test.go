@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	v1alpha1 "github.com/MoranWeissman/sharko/api/v1alpha1"
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 )
 
@@ -534,5 +535,154 @@ func TestClusterAddonsReconciler_StatusMapping_LabelDrift(t *testing.T) {
 	cond := updated.Status.Conditions[0]
 	if cond.Status != metav1.ConditionTrue {
 		t.Errorf("condition status: got %s, want True (drift should not affect Ready status)", cond.Status)
+	}
+}
+
+// fakeLabelWriter is a test fake that implements ManagedClusterLabelWriter
+// and returns a controlled ManagedLabelSyncResult.
+type fakeLabelWriter struct {
+	result argosecrets.ManagedLabelSyncResult
+	err    error
+}
+
+func (f *fakeLabelWriter) SyncManagedClusterLabels(ctx context.Context, name string, desiredLabels map[string]string) (argosecrets.ManagedLabelSyncResult, error) {
+	return f.result, f.err
+}
+
+// TestClusterAddonsReconciler_DrivesLabels_StatusFromWriter verifies that when
+// DrivesLabels=true (flag ON, Phase 2), the controller sets .status fields from
+// the labelWriter's result, NOT from the statusReader's LastReconcile.
+func TestClusterAddonsReconciler_DrivesLabels_StatusFromWriter(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	tests := []struct {
+		name             string
+		enabledAddons    []v1alpha1.AddonAssignment
+		writerResult     argosecrets.ManagedLabelSyncResult
+		writerErr        error
+		wantSyncedAddons int
+		wantReadyStatus  metav1.ConditionStatus
+		wantReadyReason  string
+		wantMessageHas   string // substring match for message
+	}{
+		{
+			name:          "Secret found, labels changed, 2 addons",
+			enabledAddons: []v1alpha1.AddonAssignment{{Name: "foo"}, {Name: "bar"}},
+			writerResult: argosecrets.ManagedLabelSyncResult{
+				Found:     true,
+				Changed:   true,
+				Converged: []string{"foo", "bar"},
+			},
+			wantSyncedAddons: 2,
+			wantReadyStatus:  metav1.ConditionTrue,
+			wantReadyReason:  "LabelsApplied",
+			wantMessageHas:   "2 addon labels applied",
+		},
+		{
+			name:          "Secret found, labels already converged, 1 addon",
+			enabledAddons: []v1alpha1.AddonAssignment{{Name: "foo"}},
+			writerResult: argosecrets.ManagedLabelSyncResult{
+				Found:     true,
+				Changed:   false,
+				Converged: []string{"foo"},
+			},
+			wantSyncedAddons: 1,
+			wantReadyStatus:  metav1.ConditionTrue,
+			wantReadyReason:  "LabelsApplied",
+			wantMessageHas:   "already in sync",
+		},
+		{
+			name:          "Secret not found (cluster not registered)",
+			enabledAddons: []v1alpha1.AddonAssignment{{Name: "foo"}},
+			writerResult: argosecrets.ManagedLabelSyncResult{
+				Found: false,
+			},
+			wantSyncedAddons: 0,
+			wantReadyStatus:  metav1.ConditionFalse,
+			wantReadyReason:  "SecretNotFound",
+			wantMessageHas:   "not found or not managed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cr := &v1alpha1.ClusterAddons{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-cluster",
+					Namespace:  "default",
+					Generation: 5,
+				},
+				Spec: v1alpha1.ClusterAddonsSpec{
+					Cluster: "prod-eu",
+					Addons:  tt.enabledAddons,
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(cr).
+				WithStatusSubresource(cr).
+				Build()
+
+			reconciler := &ClusterAddonsReconciler{
+				Client: fakeClient,
+				labelWriter: &fakeLabelWriter{
+					result: tt.writerResult,
+					err:    tt.writerErr,
+				},
+				DrivesLabels: true, // FLAG ON
+			}
+
+			req := ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-cluster",
+					Namespace: "default",
+				},
+			}
+
+			_, err := reconciler.Reconcile(context.Background(), req)
+			if err != nil && tt.writerErr == nil {
+				t.Fatalf("reconcile failed: %v", err)
+			}
+
+			var updated v1alpha1.ClusterAddons
+			if err := fakeClient.Get(context.Background(), req.NamespacedName, &updated); err != nil {
+				t.Fatalf("Get updated CR: %v", err)
+			}
+
+			// Verify status fields.
+			if updated.Status.ObservedGeneration != cr.Generation {
+				t.Errorf("observedGeneration: got %d, want %d", updated.Status.ObservedGeneration, cr.Generation)
+			}
+
+			if updated.Status.SyncedAddons != tt.wantSyncedAddons {
+				t.Errorf("syncedAddons: got %d, want %d", updated.Status.SyncedAddons, tt.wantSyncedAddons)
+			}
+
+			if updated.Status.LastReconcileTime == nil {
+				t.Error("lastReconcileTime should be set")
+			}
+
+			if len(updated.Status.Conditions) != 1 {
+				t.Fatalf("expected 1 condition, got %d", len(updated.Status.Conditions))
+			}
+
+			cond := updated.Status.Conditions[0]
+			if cond.Status != tt.wantReadyStatus {
+				t.Errorf("Ready status: got %s, want %s", cond.Status, tt.wantReadyStatus)
+			}
+
+			if cond.Reason != tt.wantReadyReason {
+				t.Errorf("Ready reason: got %s, want %s", cond.Reason, tt.wantReadyReason)
+			}
+
+			if tt.wantMessageHas != "" {
+				if !contains(cond.Message, tt.wantMessageHas) {
+					t.Errorf("Ready message: got %q, want substring %q", cond.Message, tt.wantMessageHas)
+				}
+			}
+		})
 	}
 }

@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -281,6 +282,8 @@ func (r *ClusterAddonsReconciler) reconcilePhase2(ctx context.Context, cr *v1alp
 	}
 
 	// Step 3: Interpret the SyncManagedClusterLabels result and write .status.
+	// Status reflects the controller's own write outcome — NOT the canonical
+	// reconciler's LastReconcile (that's reconcilePhase1 only).
 	cr.Status.ObservedGeneration = cr.Generation
 	cr.Status.LastReconcileTime = &metav1.Time{Time: time.Now()}
 
@@ -300,8 +303,11 @@ func (r *ClusterAddonsReconciler) reconcilePhase2(ctx context.Context, cr *v1alp
 		}
 		logger.Info("cluster Secret not found or not managed — skipped label write", "cluster", clusterName)
 	} else {
-		// Secret found and write succeeded (result.Changed = true) or was already converged (false).
-		// Count the enabled addons in the spec as syncedAddons (the labels we applied).
+		// Secret found and write succeeded or was already converged.
+		// SyncedAddons = count of enabled addons in spec (the labels we applied or verified).
+		// The Converged field from result tells us which addon keys are live after the
+		// write — use len(result.Converged) if we want the actual count of keys present,
+		// but the spec's enabled count is clearer (shows intent vs drift).
 		syncedCount := 0
 		for _, addon := range cr.Spec.Addons {
 			if addon.Enabled == nil || *addon.Enabled {
@@ -310,18 +316,16 @@ func (r *ClusterAddonsReconciler) reconcilePhase2(ctx context.Context, cr *v1alp
 		}
 		cr.Status.SyncedAddons = syncedCount
 
+		// Ready=True, reason LabelsApplied. Message reflects Changed state and count.
 		readyCond = metav1.Condition{
 			Type:               "Ready",
 			Status:             metav1.ConditionTrue,
 			ObservedGeneration: cr.Generation,
 			LastTransitionTime: metav1.Now(),
 			Reason:             "LabelsApplied",
-			Message:            "addon labels applied to cluster Secret",
+			Message:            formatLabelSyncMessage(syncedCount, result.Changed),
 		}
-		if !result.Changed {
-			readyCond.Message = "addon labels already converged (no change needed)"
-		}
-		logger.Info("addon labels synced to cluster Secret", "cluster", clusterName, "changed", result.Changed, "syncedAddons", syncedCount)
+		logger.Info("addon labels synced to cluster Secret", "cluster", clusterName, "changed", result.Changed, "syncedAddons", syncedCount, "convergedKeys", len(result.Converged))
 	}
 
 	meta.SetStatusCondition(&cr.Status.Conditions, readyCond)
@@ -335,6 +339,21 @@ func (r *ClusterAddonsReconciler) reconcilePhase2(ctx context.Context, cr *v1alp
 	// Requeue immediately on success (no RequeueAfter) — standard controller-runtime
 	// pattern for a writer controller (the next event will re-trigger if the CR changes).
 	return ctrl.Result{}, nil
+}
+
+// formatLabelSyncMessage builds an honest message for the Ready condition
+// after a successful label write. Distinguishes between "applied N labels"
+// (a write occurred) and "already in sync" (converged, no write needed).
+func formatLabelSyncMessage(enabledCount int, changed bool) string {
+	if changed {
+		// A write occurred — labels were applied.
+		if enabledCount == 1 {
+			return "1 addon label applied to ArgoCD cluster Secret"
+		}
+		return fmt.Sprintf("%d addon labels applied to ArgoCD cluster Secret", enabledCount)
+	}
+	// No write needed — labels already matched desired state.
+	return "addon labels already in sync with cluster Secret"
 }
 
 // SetupWithManager registers this controller with the manager and configures
