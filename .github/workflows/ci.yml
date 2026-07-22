@@ -162,6 +162,41 @@ jobs:
             exit 1
           fi
 
+  # Drift gate for the operator CRD manifests.
+  # The kubebuilder controller-gen tool generates CRD YAML from Go type
+  # definitions (api/v1alpha1/*_types.go) via kubebuilder markers. Any
+  # contributor who edits the Go type definitions or markers without
+  # re-running `make manifests` (which calls controller-gen AND copies
+  # the output to charts/sharko/crds/) gets a red build. This catches
+  # stale CRD YAML in config/crd/ and charts/sharko/crds/, and also
+  # stale deepcopy code (zz_generated.deepcopy.go).
+  # Mirrors the swagger-check + schemas-up-to-date + provider-types-up-to-date
+  # shape.
+  crds-up-to-date:
+    name: CRDs Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Regenerate CRD manifests and deepcopy code
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          make manifests
+
+      - name: Check for diff
+        run: |
+          if ! git diff --exit-code config/crd/ charts/sharko/crds/ api/v1alpha1/zz_generated.deepcopy.go; then
+            echo "CRD manifests or deepcopy code are out of date."
+            echo "Run 'make manifests' and commit the result (both config/crd/ and charts/sharko/crds/ are regenerated)."
+            exit 1
+          fi
+
   # PR-time Sharko YAML validation.
   # On every pull request, this job builds the sharko CLI binary and
   # runs `sharko validate-config` against every changed *.yaml / *.yml
