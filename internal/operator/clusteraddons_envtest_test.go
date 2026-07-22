@@ -98,12 +98,14 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	// Set up the ClusterAddonsReconciler ONCE.
+	// Set up the ClusterAddonsReconciler ONCE. Pass nil labelWriter and
+	// DrivesLabels=false (default Phase 1 mode) — Phase 1 tests use this setup.
 	reconciler := &ClusterAddonsReconciler{
 		Client:       testMgr.GetClient(),
 		statusReader: sharedStatusReader,
+		DrivesLabels: false, // Phase 1 (flag OFF, default)
 	}
-	if err := reconciler.SetupWithManager(testMgr, sharedStatusReader); err != nil {
+	if err := reconciler.SetupWithManager(testMgr, sharedStatusReader, nil); err != nil {
 		_ = testEnv.Stop()
 		panic(err)
 	}

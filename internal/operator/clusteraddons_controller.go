@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -12,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1alpha1 "github.com/MoranWeissman/sharko/api/v1alpha1"
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 )
 
@@ -26,36 +28,62 @@ type ReconcileStatusReader interface {
 	LastReconcile(name string) (clusterreconciler.ClusterReconcileRecord, bool)
 }
 
-// ClusterAddonsReconciler reconciles ClusterAddons objects by reading the
-// canonical cluster reconciler's last-known outcome and projecting it into
-// the CR's .status subresource. This is Story 1.3 — the READ-ONLY status
-// projection controller.
+// ManagedClusterLabelWriter is the minimal interface for writing addon labels
+// to ArgoCD cluster Secrets. This is Story 2.1 — the controller gains the
+// (gated) ability to DRIVE addon labels from the CR spec. The interface mirrors
+// the Phase-1 ReconcileStatusReader pattern: a thin seam so the controller stays
+// testable and does NOT import the full argosecrets.Manager tightly.
 //
-// CRITICAL INVARIANT (the safety contract for Operator Phase 1):
-//   This controller MUST NOT write addon labels, ArgoCD cluster Secrets, or
-//   call any methods on the reconciler/argosecrets.Manager that mutate state.
-//   It ONLY reads via the ReconcileStatusReader interface and ONLY writes the
-//   .status subresource via client.Status().Update. The canonical reconciler
-//   (internal/clusterreconciler) remains the sole writer of addon labels and
-//   cluster Secrets during Phase 1. Any code path that violates this invariant
-//   breaks the Phase 1 contract and risks dual-writer conflicts.
+// The single method matches argosecrets.Manager.SyncManagedClusterLabels exactly
+// (the G3-safe primitive that PRESERVES managed-by + foreign labels + Secret Data).
+type ManagedClusterLabelWriter interface {
+	SyncManagedClusterLabels(ctx context.Context, name string, desiredAddonLabels map[string]string) (argosecrets.ManagedLabelSyncResult, error)
+}
+
+// ClusterAddonsReconciler reconciles ClusterAddons objects. In Phase 1 (flag OFF,
+// default), it projects the canonical cluster reconciler's last-known outcome into
+// the CR's .status subresource — read-only status projection. In Phase 2 (flag ON),
+// it DRIVES addon labels from the CR spec: compute desired labels → write them to
+// the ArgoCD cluster Secret → report the write outcome in .status.
+//
+// PHASE 1 INVARIANT (flag OFF, default): This controller MUST NOT write addon
+// labels or ArgoCD cluster Secrets. It ONLY reads via ReconcileStatusReader and
+// ONLY writes the .status subresource. The canonical reconciler
+// (internal/clusterreconciler) remains the sole writer.
+//
+// PHASE 2 CONTRACT (flag ON, gated via SHARKO_OPERATOR_DRIVES_LABELS):
+//   - The controller computes desired addon labels from cr.Spec.Addons via
+//     AddonAssignmentsToLabels (the inverse of the generator's mapper).
+//   - It calls labelWriter.SyncManagedClusterLabels (the G3-safe primitive
+//     that PRESERVES managed-by + foreign labels + Secret Data).
+//   - Ownership gate: only writes Secrets already `managed-by: sharko`
+//     (SyncManagedClusterLabels gates internally; a missing/foreign Secret is
+//     a clean no-op, NOT a create). The controller NEVER creates a cluster
+//     Secret and NEVER writes Secret Data — labels only.
+//   - Status source flips: .status.conditions[Ready] = LabelsApplied/True on
+//     success, or False + error reason on failure; syncedAddons = count actually
+//     applied; observedGeneration + lastReconcileTime from the controller's own run.
 //
 // The controller:
 //   1. Gets the ClusterAddons CR (if NotFound, returns clean no-op — deletion case).
-//   2. Looks up the last reconcile record for cr.Spec.Cluster from the status reader.
-//   3. Builds .status fields: ObservedGeneration, LastReconcileTime, SyncedAddons, Conditions.
-//   4. Writes ONLY the status subresource via r.Status().Update(ctx, cr).
-//   5. Requeues on a 60s safety interval so status stays fresh even without CR events.
+//   2. Flag OFF: looks up the last reconcile record from the status reader and
+//      projects it into .status (Phase 1 behavior, byte-for-byte unchanged).
+//   3. Flag ON: computes desired addon labels from cr.Spec.Addons → calls
+//      labelWriter.SyncManagedClusterLabels → writes .status from the write outcome.
+//   4. Requeues on a 60s safety interval (flag OFF) or immediate on success (flag ON).
 //
 // +kubebuilder:rbac:groups=sharko.dev,resources=clusteraddons,verbs=get;list;watch
 // +kubebuilder:rbac:groups=sharko.dev,resources=clusteraddons/status,verbs=get;update;patch
 type ClusterAddonsReconciler struct {
 	client.Client
 	statusReader ReconcileStatusReader
+	labelWriter  ManagedClusterLabelWriter
+	DrivesLabels bool // Set from SHARKO_OPERATOR_DRIVES_LABELS at wiring time (default false)
 }
 
 // Reconcile implements the controller-runtime reconcile.Reconciler interface.
-// It projects the canonical reconciler's last-known outcome into the CR's .status.
+// Flag OFF (default): projects the canonical reconciler's last-known outcome into .status.
+// Flag ON: drives addon labels from CR spec → writes them to the Secret → reports outcome.
 func (r *ClusterAddonsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -70,6 +98,21 @@ func (r *ClusterAddonsReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
+	// Step 2: Branch on the flag — flag OFF = Phase 1 (read-only status projection),
+	// flag ON = Phase 2 (drive labels from spec).
+	if !r.DrivesLabels {
+		// Phase 1 path (flag OFF, default): project reconciler status into CR status.
+		return r.reconcilePhase1(ctx, &cr, logger)
+	}
+
+	// Phase 2 path (flag ON): drive labels from CR spec → write to Secret → report outcome.
+	return r.reconcilePhase2(ctx, &cr, logger)
+}
+
+// reconcilePhase1 is the Phase-1 (flag OFF, default) reconcile path: read-only
+// status projection from the canonical cluster reconciler. Byte-for-byte unchanged
+// from the original Phase-1 controller (Story 1.3).
+func (r *ClusterAddonsReconciler) reconcilePhase1(ctx context.Context, cr *v1alpha1.ClusterAddons, logger logr.Logger) (ctrl.Result, error) {
 	// Step 2: Look up the last reconcile record for this cluster from the status reader.
 	clusterName := cr.Spec.Cluster
 	rec, ok := r.statusReader.LastReconcile(clusterName)
@@ -164,13 +207,13 @@ func (r *ClusterAddonsReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	meta.SetStatusCondition(&cr.Status.Conditions, readyCond)
 
 	// Step 4: Write the status subresource ONLY. This is the only write operation
-	// this controller performs — no spec/label/secret writes.
-	if err := r.Status().Update(ctx, &cr); err != nil {
+	// this controller performs in Phase 1 — no spec/label/secret writes.
+	if err := r.Status().Update(ctx, cr); err != nil {
 		logger.Error(err, "failed to update ClusterAddons status")
 		return ctrl.Result{}, err
 	}
 
-	logger.V(1).Info("status updated", "cluster", clusterName, "outcome", rec.Outcome, "syncedAddons", syncedCount)
+	logger.V(1).Info("status updated (phase 1 read-only)", "cluster", clusterName, "outcome", rec.Outcome, "syncedAddons", syncedCount)
 
 	// Step 5: Requeue on a 60s safety interval so status stays fresh even without
 	// a CR event (e.g., the canonical reconciler runs and updates its internal state,
@@ -178,14 +221,132 @@ func (r *ClusterAddonsReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 }
 
+// reconcilePhase2 is the Phase-2 (flag ON, gated) reconcile path: drive addon labels
+// from CR spec → write them to the ArgoCD cluster Secret → report the write outcome
+// in .status. This is Story 2.1 — the controller becomes the writer when the flag is ON.
+func (r *ClusterAddonsReconciler) reconcilePhase2(ctx context.Context, cr *v1alpha1.ClusterAddons, logger logr.Logger) (ctrl.Result, error) {
+	clusterName := cr.Spec.Cluster
+
+	// Precondition: labelWriter must be wired (non-nil). If it's nil, we can't write.
+	// This should never happen (wiring guarantees it when DrivesLabels=true), but
+	// defensive check.
+	if r.labelWriter == nil {
+		logger.Error(nil, "SHARKO_OPERATOR_DRIVES_LABELS=true but labelWriter is nil — cannot drive labels")
+		// Set status to NotReady with a config error reason.
+		cr.Status.ObservedGeneration = cr.Generation
+		cr.Status.LastReconcileTime = &metav1.Time{Time: time.Now()}
+		cr.Status.SyncedAddons = 0
+		readyCond := metav1.Condition{
+			Type:               "Ready",
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: cr.Generation,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "ConfigError",
+			Message:            "label writer not configured (internal error)",
+		}
+		meta.SetStatusCondition(&cr.Status.Conditions, readyCond)
+		_ = r.Status().Update(ctx, cr) // Best-effort status write
+		return ctrl.Result{}, nil       // Don't requeue — config error won't self-heal
+	}
+
+	// Step 1: Compute desired addon labels from CR spec via AddonAssignmentsToLabels.
+	desiredLabels := AddonAssignmentsToLabels(cr.Spec.Addons)
+
+	// Step 2: Write the labels to the ArgoCD cluster Secret via SyncManagedClusterLabels.
+	// This is the G3-safe primitive: PRESERVES managed-by + foreign labels + Secret Data,
+	// converges ONLY addon keys. Ownership gate: only writes Secrets already
+	// `managed-by: sharko` (missing/foreign Secret → Found=false, no write, no create).
+	result, err := r.labelWriter.SyncManagedClusterLabels(ctx, clusterName, desiredLabels)
+	if err != nil {
+		// Write error (e.g., Secret get/update failed, not a not-found).
+		logger.Error(err, "failed to sync addon labels to cluster Secret", "cluster", clusterName)
+		// Set status to NotReady with the error.
+		cr.Status.ObservedGeneration = cr.Generation
+		cr.Status.LastReconcileTime = &metav1.Time{Time: time.Now()}
+		cr.Status.SyncedAddons = 0
+		readyCond := metav1.Condition{
+			Type:               "Ready",
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: cr.Generation,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "LabelSyncFailed",
+			Message:            err.Error(),
+		}
+		meta.SetStatusCondition(&cr.Status.Conditions, readyCond)
+		if statusErr := r.Status().Update(ctx, cr); statusErr != nil {
+			logger.Error(statusErr, "failed to update status after label sync error")
+		}
+		// Requeue on error (standard controller-runtime error-return behavior).
+		return ctrl.Result{}, err
+	}
+
+	// Step 3: Interpret the SyncManagedClusterLabels result and write .status.
+	cr.Status.ObservedGeneration = cr.Generation
+	cr.Status.LastReconcileTime = &metav1.Time{Time: time.Now()}
+
+	var readyCond metav1.Condition
+	if !result.Found {
+		// Secret not found or not managed-by=sharko — no write occurred.
+		// This is NOT an error (per the design: bootstrap creates the Secret at
+		// register time; a CR for a non-existent cluster is a clean no-op + NotReady status).
+		cr.Status.SyncedAddons = 0
+		readyCond = metav1.Condition{
+			Type:               "Ready",
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: cr.Generation,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "SecretNotFound",
+			Message:            "ArgoCD cluster Secret not found or not managed by Sharko",
+		}
+		logger.Info("cluster Secret not found or not managed — skipped label write", "cluster", clusterName)
+	} else {
+		// Secret found and write succeeded (result.Changed = true) or was already converged (false).
+		// Count the enabled addons in the spec as syncedAddons (the labels we applied).
+		syncedCount := 0
+		for _, addon := range cr.Spec.Addons {
+			if addon.Enabled == nil || *addon.Enabled {
+				syncedCount++
+			}
+		}
+		cr.Status.SyncedAddons = syncedCount
+
+		readyCond = metav1.Condition{
+			Type:               "Ready",
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: cr.Generation,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "LabelsApplied",
+			Message:            "addon labels applied to cluster Secret",
+		}
+		if !result.Changed {
+			readyCond.Message = "addon labels already converged (no change needed)"
+		}
+		logger.Info("addon labels synced to cluster Secret", "cluster", clusterName, "changed", result.Changed, "syncedAddons", syncedCount)
+	}
+
+	meta.SetStatusCondition(&cr.Status.Conditions, readyCond)
+
+	// Write the status subresource.
+	if err := r.Status().Update(ctx, cr); err != nil {
+		logger.Error(err, "failed to update ClusterAddons status")
+		return ctrl.Result{}, err
+	}
+
+	// Requeue immediately on success (no RequeueAfter) — standard controller-runtime
+	// pattern for a writer controller (the next event will re-trigger if the CR changes).
+	return ctrl.Result{}, nil
+}
+
 // SetupWithManager registers this controller with the manager and configures
 // it to watch ClusterAddons resources.
 //
 // statusReader is the thin adapter to the canonical cluster reconciler's
-// last-reconcile read side. Pass the reconciler instance (or a thin adapter
-// implementing ReconcileStatusReader) from the serve.go operator wiring block.
-func (r *ClusterAddonsReconciler) SetupWithManager(mgr ctrl.Manager, statusReader ReconcileStatusReader) error {
+// last-reconcile read side (required for Phase 1 path, even when flag ON).
+// labelWriter is the thin adapter to argosecrets.Manager.SyncManagedClusterLabels
+// (required for Phase 2 path, may be nil when flag OFF).
+func (r *ClusterAddonsReconciler) SetupWithManager(mgr ctrl.Manager, statusReader ReconcileStatusReader, labelWriter ManagedClusterLabelWriter) error {
 	r.statusReader = statusReader
+	r.labelWriter = labelWriter
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.ClusterAddons{}).
 		Named("clusteraddons").
