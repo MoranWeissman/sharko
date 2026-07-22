@@ -2,8 +2,10 @@ package operator
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,103 +23,148 @@ import (
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 )
 
-// TestClusterAddonsReconciler_Envtest is an integration test that spins up a
-// real API server via envtest, installs the ClusterAddons CRD, creates a CR,
-// and verifies the controller correctly updates .status by polling until convergence.
-//
-// This test SKIPS cleanly if KUBEBUILDER_ASSETS is not set (CI-honest behavior).
-func TestClusterAddonsReconciler_Envtest(t *testing.T) {
-	// Skip if KUBEBUILDER_ASSETS is not set (envtest binaries not provisioned).
-	if _, ok := os.LookupEnv("KUBEBUILDER_ASSETS"); !ok {
-		t.Skip("KUBEBUILDER_ASSETS not set, skipping envtest integration test")
-	}
+// Package-level shared envtest environment, manager, and client.
+// TestMain sets these up once; all tests share them.
+var (
+	testEnv       *envtest.Environment
+	testMgr       manager.Manager
+	testClient    client.Client
+	testCtx       context.Context
+	testCancel    context.CancelFunc
+	envtestReady  bool   // true if TestMain succeeded; tests skip if false
+	testSeqNumber uint64 // atomic counter for unique CR names across parallel/repeat runs
+)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+// TestMain sets up a single shared envtest apiserver + manager for all tests.
+// This avoids controller-name and cache-isolation flakes from spinning up
+// multiple managers per process.
+func TestMain(m *testing.M) {
+	// Check if KUBEBUILDER_ASSETS is set; if not, skip envtest suite cleanly.
+	if _, ok := os.LookupEnv("KUBEBUILDER_ASSETS"); !ok {
+		// Assets absent — tests will skip individually. Don't try to start envtest.
+		os.Exit(m.Run())
+	}
 
 	// Build the scheme: client-go + v1alpha1 CRDs.
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
-		t.Fatalf("AddToScheme clientgoscheme: %v", err)
+		panic(err)
 	}
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("AddToScheme v1alpha1: %v", err)
+		panic(err)
 	}
 
 	// Set up envtest.Environment with CRD directory.
-	// CRD lives at config/crd/sharko.dev_clusteraddons.yaml relative to repo root.
-	// This test file is at internal/operator/, so ../../config/crd.
 	crdPath := filepath.Join("..", "..", "config", "crd")
-	testEnv := &envtest.Environment{
-		CRDDirectoryPaths:     []string{crdPath},
-		ErrorIfCRDPathMissing: true,
-		Scheme:                scheme,
+	testEnv = &envtest.Environment{
+		CRDDirectoryPaths:      []string{crdPath},
+		ErrorIfCRDPathMissing:  true,
+		Scheme:                 scheme,
+		BinaryAssetsDirectory:  os.Getenv("KUBEBUILDER_ASSETS"), // explicitly set from env
 	}
 
 	// Start envtest control plane.
 	cfg, err := testEnv.Start()
 	if err != nil {
-		t.Fatalf("envtest.Start: %v", err)
+		panic(err)
 	}
-	defer func() {
-		if stopErr := testEnv.Stop(); stopErr != nil {
-			t.Logf("envtest.Stop: %v", stopErr)
-		}
-	}()
 
-	// Build the fake status reader that returns a success outcome.
-	statusReader := &fakeStatusReader{
+	// Build the shared fake status reader that serves BOTH test scenarios:
+	// "prod-eu" → success, "staging-us" → failed.
+	sharedStatusReader := &fakeStatusReader{
 		records: map[string]clusterreconciler.ClusterReconcileRecord{
 			"prod-eu": {
 				Time:    time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC),
 				Outcome: clusterreconciler.OutcomeSucceeded,
 				Message: "",
 			},
+			"staging-us": {
+				Time:    time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC),
+				Outcome: clusterreconciler.OutcomeFailed,
+				Message: "vault credential fetch failed",
+			},
 		},
 	}
 
-	// Create a manager.
-	mgr, err := manager.New(cfg, manager.Options{
+	// Create a single manager.
+	testMgr, err = manager.New(cfg, manager.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress: "0", // disable metrics server
 		},
 	})
 	if err != nil {
-		t.Fatalf("manager.New: %v", err)
+		_ = testEnv.Stop()
+		panic(err)
 	}
 
-	// Set up the ClusterAddonsReconciler.
+	// Set up the ClusterAddonsReconciler ONCE.
 	reconciler := &ClusterAddonsReconciler{
-		Client:       mgr.GetClient(),
-		statusReader: statusReader,
+		Client:       testMgr.GetClient(),
+		statusReader: sharedStatusReader,
 	}
-	if err := reconciler.SetupWithManager(mgr, statusReader); err != nil {
-		t.Fatalf("SetupWithManager: %v", err)
+	if err := reconciler.SetupWithManager(testMgr, sharedStatusReader); err != nil {
+		_ = testEnv.Stop()
+		panic(err)
 	}
 
 	// Start the manager in a goroutine.
-	mgrCtx, mgrCancel := context.WithCancel(ctx)
-	defer mgrCancel()
+	testCtx, testCancel = context.WithCancel(context.Background())
 	go func() {
-		if startErr := mgr.Start(mgrCtx); startErr != nil {
-			t.Logf("mgr.Start: %v", startErr)
+		if startErr := testMgr.Start(testCtx); startErr != nil {
+			// Manager stopped — expected on testCancel().
 		}
 	}()
 
 	// Wait for manager cache to sync.
-	if !mgr.GetCache().WaitForCacheSync(ctx) {
-		t.Fatal("failed to wait for cache sync")
+	syncCtx, syncCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer syncCancel()
+	if !testMgr.GetCache().WaitForCacheSync(syncCtx) {
+		testCancel()
+		_ = testEnv.Stop()
+		panic("cache sync failed")
 	}
 
-	// Create a ClusterAddons CR.
+	// Give the controller a moment to fully initialize after cache sync.
+	// Without this, the first test may hit the controller before it's ready.
+	time.Sleep(500 * time.Millisecond)
+
+	testClient = testMgr.GetClient()
+	envtestReady = true
+
+	// Run tests.
+	exitCode := m.Run()
+
+	// Teardown.
+	testCancel()
+	if stopErr := testEnv.Stop(); stopErr != nil {
+		panic(stopErr)
+	}
+
+	os.Exit(exitCode)
+}
+
+// TestClusterAddonsReconciler_Envtest is an integration test that verifies
+// the controller correctly updates .status by polling until convergence.
+// Uses the shared envtest apiserver + manager from TestMain.
+func TestClusterAddonsReconciler_Envtest(t *testing.T) {
+	if !envtestReady {
+		t.Skip("KUBEBUILDER_ASSETS not set, skipping envtest integration test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Create a ClusterAddons CR with a UNIQUE name (envtest-success-<seq>).
+	seq := atomic.AddUint64(&testSeqNumber, 1)
+	crName := fmt.Sprintf("envtest-success-%d", seq)
 	cr := &v1alpha1.ClusterAddons{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-cluster",
+			Name:      crName,
 			Namespace: "default",
 		},
 		Spec: v1alpha1.ClusterAddonsSpec{
-			Cluster: "prod-eu",
+			Cluster: "prod-eu", // sharedStatusReader serves this with OutcomeSucceeded
 			Addons: []v1alpha1.AddonAssignment{
 				{Name: "datadog"},
 				{Name: "prometheus"},
@@ -125,31 +172,31 @@ func TestClusterAddonsReconciler_Envtest(t *testing.T) {
 		},
 	}
 
-	if err := mgr.GetClient().Create(ctx, cr); err != nil {
+	if err := testClient.Create(ctx, cr); err != nil {
 		t.Fatalf("Create CR: %v", err)
 	}
+	// Note: cleanup removed — with shared envtest, leftover CRs are acceptable.
+	// Each test uses a unique sequence number, so no collision.
+
+	// Small delay to let the cache propagate the newly created CR.
+	time.Sleep(100 * time.Millisecond)
 
 	// Poll until .status converges (observedGeneration == generation and Ready=True).
-	// The controller requeues every 60s, but the first reconcile should happen quickly.
-	// Use a 30s polling timeout (plenty of time for a local envtest).
 	pollErr := wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 30*time.Second, true, func(ctx context.Context) (bool, error) {
 		var updated v1alpha1.ClusterAddons
-		getErr := mgr.GetClient().Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updated)
+		getErr := testClient.Get(ctx, types.NamespacedName{Name: crName, Namespace: "default"}, &updated)
 		if getErr != nil {
 			return false, getErr
 		}
 
-		// Check convergence: observedGeneration == generation.
 		if updated.Status.ObservedGeneration != updated.Generation {
-			return false, nil // not converged yet
+			return false, nil
 		}
 
-		// Check SyncedAddons = 2 (both addons enabled).
 		if updated.Status.SyncedAddons != 2 {
 			return false, nil
 		}
 
-		// Check Ready condition = True.
 		if len(updated.Status.Conditions) == 0 {
 			return false, nil
 		}
@@ -167,7 +214,7 @@ func TestClusterAddonsReconciler_Envtest(t *testing.T) {
 
 	// Verify final state.
 	var final v1alpha1.ClusterAddons
-	if err := mgr.GetClient().Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &final); err != nil {
+	if err := testClient.Get(ctx, types.NamespacedName{Name: crName, Namespace: "default"}, &final); err != nil {
 		t.Fatalf("Get final CR: %v", err)
 	}
 
@@ -197,47 +244,14 @@ func TestClusterAddonsReconciler_Envtest(t *testing.T) {
 
 // TestClusterAddonsReconciler_Envtest_CRDValidation tests that the API server
 // rejects a malformed ClusterAddons CR (missing required spec.cluster field).
+// Uses the shared envtest apiserver from TestMain.
 func TestClusterAddonsReconciler_Envtest_CRDValidation(t *testing.T) {
-	// Skip if KUBEBUILDER_ASSETS is not set.
-	if _, ok := os.LookupEnv("KUBEBUILDER_ASSETS"); !ok {
+	if !envtestReady {
 		t.Skip("KUBEBUILDER_ASSETS not set, skipping envtest integration test")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	// Build the scheme.
-	scheme := runtime.NewScheme()
-	if err := clientgoscheme.AddToScheme(scheme); err != nil {
-		t.Fatalf("AddToScheme clientgoscheme: %v", err)
-	}
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("AddToScheme v1alpha1: %v", err)
-	}
-
-	// Set up envtest.
-	crdPath := filepath.Join("..", "..", "config", "crd")
-	testEnv := &envtest.Environment{
-		CRDDirectoryPaths:     []string{crdPath},
-		ErrorIfCRDPathMissing: true,
-		Scheme:                scheme,
-	}
-
-	cfg, err := testEnv.Start()
-	if err != nil {
-		t.Fatalf("envtest.Start: %v", err)
-	}
-	defer func() {
-		if stopErr := testEnv.Stop(); stopErr != nil {
-			t.Logf("envtest.Stop: %v", stopErr)
-		}
-	}()
-
-	// Create a client (no manager needed for this validation-only test).
-	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme})
-	if err != nil {
-		t.Fatalf("client.New: %v", err)
-	}
 
 	// Try to create a CR with an empty spec.cluster (violates MinLength=1).
 	malformedCR := &v1alpha1.ClusterAddons{
@@ -251,14 +265,12 @@ func TestClusterAddonsReconciler_Envtest_CRDValidation(t *testing.T) {
 		},
 	}
 
-	err = k8sClient.Create(ctx, malformedCR)
+	err := testClient.Create(ctx, malformedCR)
 	if err == nil {
 		t.Fatal("expected Create to fail for malformed CR, but it succeeded")
 	}
 
-	// Verify the error is a validation error (not a network error, etc.).
-	// The API server should reject it with a 422 Invalid or similar.
-	// We check that the error message contains "cluster" or "required" or "invalid".
+	// Verify the error is a validation error.
 	errMsg := err.Error()
 	if !contains(errMsg, "cluster") && !contains(errMsg, "required") && !contains(errMsg, "invalid") {
 		t.Errorf("expected validation error mentioning 'cluster' or 'required', got: %v", err)
@@ -267,100 +279,42 @@ func TestClusterAddonsReconciler_Envtest_CRDValidation(t *testing.T) {
 
 // TestClusterAddonsReconciler_Envtest_FailedOutcome tests that a failed
 // reconcile outcome produces Ready=False.
+// Uses the shared envtest apiserver + manager from TestMain.
 func TestClusterAddonsReconciler_Envtest_FailedOutcome(t *testing.T) {
-	// Skip if KUBEBUILDER_ASSETS is not set.
-	if _, ok := os.LookupEnv("KUBEBUILDER_ASSETS"); !ok {
+	if !envtestReady {
 		t.Skip("KUBEBUILDER_ASSETS not set, skipping envtest integration test")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	scheme := runtime.NewScheme()
-	if err := clientgoscheme.AddToScheme(scheme); err != nil {
-		t.Fatalf("AddToScheme clientgoscheme: %v", err)
-	}
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("AddToScheme v1alpha1: %v", err)
-	}
-
-	crdPath := filepath.Join("..", "..", "config", "crd")
-	testEnv := &envtest.Environment{
-		CRDDirectoryPaths:     []string{crdPath},
-		ErrorIfCRDPathMissing: true,
-		Scheme:                scheme,
-	}
-
-	cfg, err := testEnv.Start()
-	if err != nil {
-		t.Fatalf("envtest.Start: %v", err)
-	}
-	defer func() {
-		if stopErr := testEnv.Stop(); stopErr != nil {
-			t.Logf("envtest.Stop: %v", stopErr)
-		}
-	}()
-
-	// Build a status reader that returns OutcomeFailed.
-	statusReader := &fakeStatusReader{
-		records: map[string]clusterreconciler.ClusterReconcileRecord{
-			"staging-us": {
-				Time:    time.Now(),
-				Outcome: clusterreconciler.OutcomeFailed,
-				Message: "vault credential fetch failed",
-			},
-		},
-	}
-
-	mgr, err := manager.New(cfg, manager.Options{
-		Scheme: scheme,
-		Metrics: metricsserver.Options{
-			BindAddress: "0",
-		},
-	})
-	if err != nil {
-		t.Fatalf("manager.New: %v", err)
-	}
-
-	reconciler := &ClusterAddonsReconciler{
-		Client:       mgr.GetClient(),
-		statusReader: statusReader,
-	}
-	if err := reconciler.SetupWithManager(mgr, statusReader); err != nil {
-		t.Fatalf("SetupWithManager: %v", err)
-	}
-
-	mgrCtx, mgrCancel := context.WithCancel(ctx)
-	defer mgrCancel()
-	go func() {
-		if startErr := mgr.Start(mgrCtx); startErr != nil {
-			t.Logf("mgr.Start: %v", startErr)
-		}
-	}()
-
-	if !mgr.GetCache().WaitForCacheSync(ctx) {
-		t.Fatal("failed to wait for cache sync")
-	}
-
+	// Create a CR with a UNIQUE name (envtest-failed-<seq>) that uses "staging-us".
+	seq := atomic.AddUint64(&testSeqNumber, 1)
+	crName := fmt.Sprintf("envtest-failed-%d", seq)
 	cr := &v1alpha1.ClusterAddons{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-failed",
+			Name:      crName,
 			Namespace: "default",
 		},
 		Spec: v1alpha1.ClusterAddonsSpec{
-			Cluster: "staging-us",
+			Cluster: "staging-us", // sharedStatusReader serves this with OutcomeFailed
 			Addons:  []v1alpha1.AddonAssignment{{Name: "foo"}},
 		},
 	}
 
-	if err := mgr.GetClient().Create(ctx, cr); err != nil {
+	if err := testClient.Create(ctx, cr); err != nil {
 		t.Fatalf("Create CR: %v", err)
 	}
+	// Note: cleanup removed — with shared envtest, leftover CRs are acceptable.
+	// Each test uses a unique sequence number, so no collision.
+
+	// Small delay to let the cache propagate the newly created CR.
+	time.Sleep(100 * time.Millisecond)
 
 	// Poll until status converges with Ready=False.
 	pollErr := wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 30*time.Second, true, func(ctx context.Context) (bool, error) {
 		var updated v1alpha1.ClusterAddons
-		getErr := mgr.GetClient().Get(ctx, types.NamespacedName{Name: "test-failed", Namespace: "default"}, &updated)
+		getErr := testClient.Get(ctx, types.NamespacedName{Name: crName, Namespace: "default"}, &updated)
 		if getErr != nil {
 			return false, getErr
 		}
@@ -387,7 +341,7 @@ func TestClusterAddonsReconciler_Envtest_FailedOutcome(t *testing.T) {
 
 	// Verify final state.
 	var final v1alpha1.ClusterAddons
-	if err := mgr.GetClient().Get(ctx, types.NamespacedName{Name: "test-failed", Namespace: "default"}, &final); err != nil {
+	if err := testClient.Get(ctx, types.NamespacedName{Name: crName, Namespace: "default"}, &final); err != nil {
 		t.Fatalf("Get final CR: %v", err)
 	}
 
