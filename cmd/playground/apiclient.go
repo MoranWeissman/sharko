@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 )
@@ -94,4 +95,49 @@ func (c *apiClient) registerCluster(name, kubeconfig string, addons []string) er
 	}
 
 	return nil
+}
+
+// waitForSharkoReady polls the Sharko health endpoint until it returns a successful
+// response (any non-connection-refused response), or the timeout expires.
+func waitForSharkoReady(baseURL string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	healthURL := baseURL + "/api/v1/health"
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(healthURL)
+		if err != nil {
+			// Check if it's a connection-refused error — if so, keep polling.
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			// For connection-refused, the error message contains "connection refused".
+			// Keep polling for those as well.
+			if isConnectionRefused(err) {
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			// Other errors (e.g. DNS, routing) are unexpected — fail fast.
+			return fmt.Errorf("GET %s: %w", healthURL, err)
+		}
+		resp.Body.Close()
+
+		// Any response (even non-200) means the server is up.
+		if resp.StatusCode == http.StatusOK {
+			return nil
+		}
+		// Non-200 but server responded — consider it ready (might be a transient issue).
+		return nil
+	}
+
+	return fmt.Errorf("Sharko health endpoint did not become ready within %s", timeout)
+}
+
+// isConnectionRefused returns true if the error is a connection-refused error.
+func isConnectionRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	return bytes.Contains([]byte(err.Error()), []byte("connection refused"))
 }

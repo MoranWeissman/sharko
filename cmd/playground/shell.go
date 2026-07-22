@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -118,4 +119,30 @@ func kubectlWait(kubeconfig, namespace, resourceType, resourceName, condition st
 		return fmt.Errorf("kubectl wait: %w (stderr=%s)", err, stderr)
 	}
 	return nil
+}
+
+// startBackground starts a command in the background (does not wait for it to finish).
+// The process is placed in its own process group so it can be reliably killed via
+// the negative PGID. Returns the *exec.Cmd handle so the caller can kill it later.
+func startBackground(name string, args ...string) (*exec.Cmd, error) {
+	cmd := exec.Command(name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start %s: %w", name, err)
+	}
+	return cmd, nil
+}
+
+// killProcessGroup kills the process and its entire process group.
+func killProcessGroup(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	// Kill the entire process group (negative PID).
+	pgid, err := syscall.Getpgid(cmd.Process.Pid)
+	if err != nil {
+		// Process already gone or not in a group; fallback to killing just the process.
+		return cmd.Process.Kill()
+	}
+	return syscall.Kill(-pgid, syscall.SIGKILL)
 }
