@@ -252,6 +252,25 @@ gitops:
     enabled: false  # Set to true to enable write operations (PR creation)
 
 # ---------------------------------------------------------------------------
+# Operator (Phase 2)
+# ---------------------------------------------------------------------------
+# The ClusterAddons controller runs embedded in the Sharko server when
+# SHARKO_OPERATOR_ENABLED (default true) is set. Phase 2 adds the drive flag:
+# when drivesLabels is true, the controller DRIVES addon labels on ArgoCD
+# cluster Secrets (the ClusterAddons CR spec becomes the writer; the
+# reconciler yields its managed-cluster label write). When false (default),
+# the reconciler writes labels as today (Phase 1 behavior).
+#
+# Git remains the source of truth in both modes: managed-clusters.yaml is
+# rendered into ClusterAddons CRs by the generator. Phase 2 only changes WHO
+# reads the desired state and writes the labels (reconciler vs controller).
+#
+# DEFAULT FALSE — flip only after proving the controller drive on a real
+# cluster. Rollback = flip back to false. See docs/site/operator/clusteraddons-crd.md.
+operator:
+  drivesLabels: false  # Phase 2: when true, the operator DRIVES addon labels
+
+# ---------------------------------------------------------------------------
 # Cluster Registration Source
 # ---------------------------------------------------------------------------
 # Pre-wire for the cluster reconciler. No consumer today; safe defaults.
