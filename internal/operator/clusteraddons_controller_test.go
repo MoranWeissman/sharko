@@ -376,3 +376,163 @@ func TestClusterAddonsReconciler_ReadOnlyGuard(t *testing.T) {
 		}
 	}
 }
+
+// TestClusterAddonsReconciler_ReadOnlyGuard_AllOutcomes extends the read-only
+// guard test to verify that ALL reconcile outcomes (succeeded, failed, skipped,
+// no record) result in exactly one StatusUpdate and no other writes.
+func TestClusterAddonsReconciler_ReadOnlyGuard_AllOutcomes(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	tests := []struct {
+		name      string
+		outcome   clusterreconciler.ReconcileOutcome
+		hasRecord bool
+	}{
+		{name: "succeeded", outcome: clusterreconciler.OutcomeSucceeded, hasRecord: true},
+		{name: "failed", outcome: clusterreconciler.OutcomeFailed, hasRecord: true},
+		{name: "skipped", outcome: clusterreconciler.OutcomeSkipped, hasRecord: true},
+		{name: "no record", outcome: "", hasRecord: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cr := &v1alpha1.ClusterAddons{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-cluster",
+					Namespace:  "default",
+					Generation: 1,
+				},
+				Spec: v1alpha1.ClusterAddonsSpec{
+					Cluster: "prod-eu",
+					Addons:  []v1alpha1.AddonAssignment{{Name: "foo"}},
+				},
+			}
+
+			statusReader := &fakeStatusReader{
+				records: make(map[string]clusterreconciler.ClusterReconcileRecord),
+			}
+			if tt.hasRecord {
+				statusReader.records["prod-eu"] = clusterreconciler.ClusterReconcileRecord{
+					Time:    time.Now(),
+					Outcome: tt.outcome,
+					Message: "test message",
+				}
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(cr).
+				WithStatusSubresource(cr).
+				Build()
+
+			recordingClient := &recordingClient{Client: fakeClient}
+
+			reconciler := &ClusterAddonsReconciler{
+				Client:       recordingClient,
+				statusReader: statusReader,
+			}
+
+			req := ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-cluster",
+					Namespace: "default",
+				},
+			}
+
+			_, err := reconciler.Reconcile(context.Background(), req)
+			if err != nil {
+				t.Fatalf("reconcile failed: %v", err)
+			}
+
+			// Verify exactly 1 StatusUpdate and nothing else.
+			if len(recordingClient.writes) != 1 {
+				t.Errorf("expected exactly 1 write, got %d: %+v", len(recordingClient.writes), recordingClient.writes)
+			}
+
+			if len(recordingClient.writes) > 0 {
+				write := recordingClient.writes[0]
+				if write.method != "StatusUpdate" {
+					t.Errorf("expected StatusUpdate, got %s", write.method)
+				}
+			}
+		})
+	}
+}
+
+// TestClusterAddonsReconciler_StatusMapping_LabelDrift tests that label drift
+// information (if present in the ClusterReconcileRecord) is safely ignored by
+// the controller (it's a V3 G1 feature for the API layer, not for the CR status).
+func TestClusterAddonsReconciler_StatusMapping_LabelDrift(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	cr := &v1alpha1.ClusterAddons{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-cluster",
+			Namespace:  "default",
+			Generation: 1,
+		},
+		Spec: v1alpha1.ClusterAddonsSpec{
+			Cluster: "prod-eu",
+			Addons:  []v1alpha1.AddonAssignment{{Name: "foo"}},
+		},
+	}
+
+	// Build a record with LabelDrift populated (V3 G1 feature).
+	statusReader := &fakeStatusReader{
+		records: map[string]clusterreconciler.ClusterReconcileRecord{
+			"prod-eu": {
+				Time:    time.Now(),
+				Outcome: clusterreconciler.OutcomeSucceeded,
+				Message: "",
+				LabelDrift: &clusterreconciler.LabelDrift{
+					Added:   []string{"bar"},
+					Removed: []string{"baz"},
+					Changed: []string{"qux"},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(cr).
+		Build()
+
+	reconciler := &ClusterAddonsReconciler{
+		Client:       fakeClient,
+		statusReader: statusReader,
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "test-cluster",
+			Namespace: "default",
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Fatalf("reconcile failed: %v", err)
+	}
+
+	// Verify the controller still sets Ready=True (drift is informational only,
+	// not a failure condition for the CR).
+	var updated v1alpha1.ClusterAddons
+	if err := fakeClient.Get(context.Background(), req.NamespacedName, &updated); err != nil {
+		t.Fatalf("Get updated CR: %v", err)
+	}
+
+	if len(updated.Status.Conditions) != 1 {
+		t.Fatalf("expected 1 condition, got %d", len(updated.Status.Conditions))
+	}
+
+	cond := updated.Status.Conditions[0]
+	if cond.Status != metav1.ConditionTrue {
+		t.Errorf("condition status: got %s, want True (drift should not affect Ready status)", cond.Status)
+	}
+}

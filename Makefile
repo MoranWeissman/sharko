@@ -550,3 +550,34 @@ manifests: ## Generate CRD YAML + deepcopy + RBAC from Go markers (Story 1.5: no
 	@mkdir -p charts/sharko/crds
 	@cp config/crd/*.yaml charts/sharko/crds/ 2>/dev/null || true
 	@echo "    Copied to: charts/sharko/crds/"
+
+SETUP_ENVTEST := $(shell command -v setup-envtest 2>/dev/null || echo "$(shell go env GOPATH)/bin/setup-envtest")
+
+setup-envtest: ## Install setup-envtest binary (for provisioning envtest assets)
+	@if [ -x "$(SETUP_ENVTEST)" ]; then \
+		echo "==> setup-envtest already installed at $(SETUP_ENVTEST)"; \
+	else \
+		echo "==> Installing setup-envtest (sigs.k8s.io/controller-runtime/tools/setup-envtest)"; \
+		go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest; \
+		echo "    Installed to $(shell go env GOPATH)/bin/setup-envtest"; \
+	fi
+
+test-operator: setup-envtest ## Run operator tests (unit + envtest integration)
+	@echo "==> Running operator unit tests (non-envtest)"
+	@go test ./internal/operator/... -v -run='Test.*' -skip='Envtest'
+	@echo ""
+	@echo "==> Provisioning envtest assets for integration tests"
+	@if ! command -v $(SETUP_ENVTEST) >/dev/null 2>&1; then \
+		echo "ERROR: setup-envtest not found. Run 'make setup-envtest' first."; \
+		exit 1; \
+	fi
+	@ASSETS_PATH=$$($(SETUP_ENVTEST) use -p path 2>/dev/null | tail -1); \
+	if [ -z "$$ASSETS_PATH" ]; then \
+		echo "    No envtest assets found — downloading latest"; \
+		ASSETS_PATH=$$($(SETUP_ENVTEST) use -p path --bin-dir $(shell go env GOPATH)/bin 2>&1 | tail -1); \
+	fi; \
+	echo "    Using KUBEBUILDER_ASSETS=$$ASSETS_PATH"; \
+	export KUBEBUILDER_ASSETS="$$ASSETS_PATH"; \
+	export PATH="$$PATH:$(shell go env GOPATH)/bin"; \
+	echo "==> Running operator envtest integration tests"; \
+	go test ./internal/operator/... -v -run='.*Envtest.*'
