@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -67,7 +68,17 @@ func cmdUp(ctx context.Context) error {
 	}
 
 	// 9. Print access instructions and next steps.
-	printSuccessMessage()
+	if err := printSuccessMessage(); err != nil {
+		// Non-fatal — just log the error and continue.
+		fmt.Printf("    Warning: could not retrieve all credentials: %v\n", err)
+	}
+
+	// 10. Show the status snapshot.
+	if err := showStatusSnapshot(); err != nil {
+		// Non-fatal — just log the warning.
+		fmt.Printf("    Warning: status snapshot unavailable: %v\n", err)
+	}
+
 	return nil
 }
 
@@ -253,12 +264,13 @@ func installSharko(gitfakeURL string) error {
 
 	// Call scripts/helm-install.sh with environment overrides.
 	// We pass a dummy GITHUB_TOKEN since GitFake needs none.
+	// Set bootstrapAdmin.password=admin for deterministic login.
 	cmd := fmt.Sprintf(`
 KIND_CLUSTER_NAME=%s \
 SHARKO_IMAGE=%s \
 GITHUB_TOKEN=dummy-token-for-gitfake \
 GIT_REPO_URL=%s \
-./scripts/helm-install.sh --set operator.enabled=true --set operator.drivesLabels=false
+./scripts/helm-install.sh --set operator.enabled=true --set operator.drivesLabels=false --set bootstrapAdmin.password=admin
 `, ClusterHub, sharkoImage, gitfakeURL)
 
 	if _, stderr, err := runCmd(5*time.Minute, "sh", "-c", cmd); err != nil {
@@ -292,22 +304,28 @@ func registerSpokes(numSpokes int, spokeNames []string) error {
 		kubeconfigs[i] = kc
 	}
 
-	// Port-forward to Sharko API (background process).
-	// TODO: For now, assume Sharko is reachable at localhost:8080 after helm-install.sh
-	// (helm-install.sh does NOT start a port-forward). We'll manually port-forward or
-	// update this to shell out to `kubectl port-forward` in the background.
-	//
-	// For MVP, we can document that the user must run:
-	//   kubectl --context kind-sharko-play-hub port-forward -n sharko svc/sharko 8080:80
-	// before calling `make operator-playground-up`.
-	//
-	// Alternatively, we can start the port-forward here and keep it running.
+	// Start background port-forward to Sharko API.
+	fmt.Println("    Starting port-forward to Sharko API...")
+	pfCmd, err := startBackground("kubectl", "--context", ContextHub,
+		"-n", Namespace, "port-forward", "svc/"+Release, "8080:80")
+	if err != nil {
+		return fmt.Errorf("start port-forward: %w", err)
+	}
+	// Ensure the port-forward is killed when we're done (even on error).
+	defer func() {
+		_ = killProcessGroup(pfCmd)
+	}()
 
-	// For now, assume Sharko API is at http://localhost:8080.
+	// Wait for Sharko API to become ready.
 	sharkoURL := "http://localhost:8080"
+	fmt.Println("    Waiting for Sharko API to be ready...")
+	if err := waitForSharkoReady(sharkoURL, 60*time.Second); err != nil {
+		return fmt.Errorf("wait for Sharko API: %w", err)
+	}
+
 	client := newAPIClient(sharkoURL)
 
-	// Login with default admin credentials (admin/admin — Helm chart default).
+	// Login with default admin credentials (admin/admin — now deterministic via Fix 0).
 	fmt.Println("    Logging in to Sharko API...")
 	if err := client.login("admin", "admin"); err != nil {
 		return fmt.Errorf("login to Sharko: %w", err)
@@ -331,9 +349,41 @@ func registerSpokes(numSpokes int, spokeNames []string) error {
 }
 
 // printSuccessMessage prints access instructions and next steps.
-func printSuccessMessage() {
+func printSuccessMessage() error {
 	fmt.Println("")
 	fmt.Println("==> Playground is ready!")
+	fmt.Println("")
+
+	// Retrieve ArgoCD initial admin password.
+	argoCDPassword := ""
+	kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
+	out, _, err := runCmd(10*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
+		"--context", ContextHub, "-n", ArgoCDNamespace,
+		"get", "secret", "argocd-initial-admin-secret",
+		"-o", "jsonpath={.data.password}")
+	if err != nil {
+		// Secret not found or other error — provide fallback instruction.
+		argoCDPassword = "(secret not found — retrieve with: kubectl --context " + ContextHub +
+			" -n " + ArgoCDNamespace + " get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)"
+	} else {
+		// Decode the base64-encoded password.
+		decoded, err := base64.StdEncoding.DecodeString(out)
+		if err != nil {
+			argoCDPassword = "(base64 decode failed)"
+		} else {
+			argoCDPassword = string(decoded)
+		}
+	}
+
+	fmt.Println("Credentials (local dev only):")
+	fmt.Println("")
+	fmt.Println("  Sharko:")
+	fmt.Println("    Username: admin")
+	fmt.Println("    Password: admin")
+	fmt.Println("")
+	fmt.Println("  ArgoCD:")
+	fmt.Println("    Username: admin")
+	fmt.Printf("    Password: %s\n", argoCDPassword)
 	fmt.Println("")
 	fmt.Println("Access Sharko UI:")
 	fmt.Printf("  kubectl --context %s port-forward -n %s svc/%s 8080:80\n", ContextHub, Namespace, Release)
@@ -348,6 +398,20 @@ func printSuccessMessage() {
 	fmt.Println("  make operator-playground-drive-on   # Flip operator drive ON")
 	fmt.Println("  make operator-playground-drive-off  # Flip operator drive OFF")
 	fmt.Println("  make operator-playground-down       # Tear down playground")
+
+	return nil
+}
+
+// showStatusSnapshot shells out to scripts/operator-playground-status.sh to
+// display the current state of the playground (clusters, ClusterAddons, drive mode).
+func showStatusSnapshot() error {
+	fmt.Println("")
+	fmt.Println("==> Running status snapshot...")
+	_, stderr, err := runCmd(30*time.Second, "sh", "./scripts/operator-playground-status.sh")
+	if err != nil {
+		return fmt.Errorf("operator-playground-status.sh: %w (stderr=%s)", err, stderr)
+	}
+	return nil
 }
 
 // generateManagedClustersSeed generates a managed-clusters.yaml seed content
