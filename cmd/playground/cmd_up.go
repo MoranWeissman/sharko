@@ -260,26 +260,40 @@ spec:
 	return serviceURL, nil
 }
 
-// installSharko installs Sharko on the hub via scripts/helm-install.sh.
+// installSharko installs Sharko on the hub via direct helm upgrade --install.
+// The image (sharko:playground-<sha>) was already built + kind-loaded earlier.
 func installSharko(gitfakeURL string) error {
 	fmt.Println("==> Installing Sharko on hub")
 
 	gitSHA := mustRunCmd(10*time.Second, "git", "rev-parse", "--short", "HEAD")
-	sharkoImage := "sharko:playground-" + gitSHA
+	imageTag := "playground-" + gitSHA
 
-	// Call scripts/helm-install.sh with environment overrides.
-	// We pass a dummy GITHUB_TOKEN since GitFake needs none.
-	// Set bootstrapAdmin.password=admin for deterministic login.
-	cmd := fmt.Sprintf(`
-KIND_CLUSTER_NAME=%s \
-SHARKO_IMAGE=%s \
-GITHUB_TOKEN=dummy-token-for-gitfake \
-GIT_REPO_URL=%s \
-./scripts/helm-install.sh --set operator.enabled=true --set operator.drivesLabels=false --set bootstrapAdmin.password=admin
-`, ClusterHub, sharkoImage, gitfakeURL)
+	// Install via helm directly, pinned to the hub context.
+	// Image: sharko:playground-<sha> (pre-loaded into kind, pullPolicy=Never).
+	// Operator: enabled but inert (drivesLabels=false — Phase-2 drive OFF).
+	// Connection: point at in-cluster GitFake (values.yaml lines 92-94 say this
+	// is a no-op on fresh install without credentials, but setting the fields is
+	// harmless and correct if a connection is later created).
+	args := []string{
+		"upgrade", "--install", Release, "charts/sharko",
+		"--kube-context", ContextHub,
+		"--namespace", Namespace,
+		"--create-namespace",
+		"-f", "charts/sharko/values.yaml",
+		"--set", "image.repository=sharko",
+		"--set", "image.tag=" + imageTag,
+		"--set", "image.pullPolicy=Never",
+		"--set", "operator.enabled=true",
+		"--set", "operator.drivesLabels=false",
+		"--set", "bootstrapAdmin.password=admin",
+		"--set", "connection.git.provider=github",
+		"--set", "connection.git.repoURL=" + gitfakeURL,
+		"--wait",
+		"--timeout", "3m",
+	}
 
-	if _, stderr, err := runCmd(5*time.Minute, "sh", "-c", cmd); err != nil {
-		return fmt.Errorf("helm-install.sh: %w (stderr=%s)", err, stderr)
+	if _, stderr, err := runCmd(5*time.Minute, "helm", args...); err != nil {
+		return fmt.Errorf("helm upgrade: %w (stderr=%s)", err, stderr)
 	}
 
 	fmt.Println("    Sharko installed")
