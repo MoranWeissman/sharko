@@ -135,102 +135,134 @@ kubectl logs -n sharko -l app.kubernetes.io/name=sharko -f
 
 ---
 
-## Testing Phase 2 Drive Mode (Prove-Then-Flip Loop)
+## Testing Phase 2 Drive Mode: Local Playground
 
-This workflow verifies that enabling `SHARKO_OPERATOR_DRIVES_LABELS` flips the controller from read-only status (Phase 1) to driving addon labels (Phase 2), without recreating the cluster or repo.
+The **operator playground** is a one-command local kind topology that provisions a hub cluster running ArgoCD + Sharko, plus N spoke clusters (default 2), all connected via GitFake. This lets you prove the Phase 2 label-drive mechanic end-to-end on your laptop — flip the `SHARKO_OPERATOR_DRIVES_LABELS` flag on and off, watch the `ClusterAddons` CR converge, and confirm the operator is writing addon labels to each spoke's ArgoCD cluster Secret.
 
-**Prerequisite:** A running operator dev cluster with at least one managed cluster registered (so a `ClusterAddons` CR exists and an ArgoCD cluster Secret exists in the `argocd` namespace).
+**What this proves:** The operator driving addon labels from the CR spec when the flag is ON; the reconciler resuming ownership when the flag is OFF. Single-writer handoff, seen live.
 
-### Step 1: Verify Phase 1 (flag off, default)
+**What it honestly can't prove:** Fetching real credential *values* from a cloud secrets backend (AWS Secrets Manager / Vault) — that code path needs a real cloud backend and is not exercisable locally yet. This playground uses GitFake (which only serves reads; no PR-opening path), so it also needs no real GitHub token. The addon-secret-values path stays an EKS/live concern. This is a laptop proof of the label-drive mechanic (which is what Phase 2 owns), not a full ArgoCD-deploys-workloads run.
 
-```bash
-# Context: kind-sharko-operator-dev
-kubectl config use-context kind-sharko-operator-dev
-
-# Get the ClusterAddons CR (replace `prod-eu` with your cluster name)
-kubectl get clusteraddons prod-eu -o yaml
-
-# Observe: status.conditions[Ready].reason is one of Phase 1's reasons
-# (ReconcileSucceeded, ReconcileFailed, NoReconcileRecord)
-
-# Get the ArgoCD cluster Secret labels
-kubectl get secret -n argocd cluster-prod-eu -o jsonpath='{.metadata.labels}' | jq
-
-# Observe: addon labels are present (e.g., prometheus: "enabled", datadog: "enabled")
-# but they were written by the canonical reconciler, NOT the operator controller.
-```
-
-### Step 2: Flip the flag to enable drive mode
+### Step 1: Spin up the playground
 
 ```bash
-# Helm upgrade with the drive flag ON
-helm upgrade sharko charts/sharko/ \
-  --namespace sharko \
-  --set operator.drivesLabels=true \
-  --reuse-values
-
-# Wait for the controller pod to restart
-kubectl rollout status -n sharko deployment/sharko
+make operator-playground-up
 ```
 
-### Step 3: Verify Phase 2 (flag on)
+This command:
+1. Creates or reuses a persistent hub kind cluster (`sharko-play-hub`) and N spoke clusters (`sharko-play-spoke-1..N`, default N=2).
+2. Installs ArgoCD on the hub.
+3. Installs Sharko on the hub via Helm with `operator.enabled=true`, `operator.drivesLabels=false` (starts inert), and a dummy git token (no real GITHUB_TOKEN required).
+4. Deploys an in-cluster GitFake Pod seeded with `configuration/managed-clusters.yaml` (assigns ~2 addons across `spoke-eu` / `spoke-us`) plus the config files Sharko needs (`addons-catalog.yaml`, `default-addons.yaml`).
+5. Registers the 2 spokes as **Sharko-managed** clusters via the REST API so each spoke's ArgoCD cluster Secret exists and carries `app.kubernetes.io/managed-by: sharko`.
+
+**Override spoke count:** `PLAYGROUND_SPOKES=3 make operator-playground-up` to add more spokes.
+
+**Idempotent:** Re-running on an existing playground upgrades in place.
+
+At the end, the command prints access instructions (port-forward for Sharko UI + ArgoCD) and the exact next-step commands (`make operator-playground-status`, `make operator-playground-drive-on`).
+
+### Step 2: Check the drive-OFF baseline
 
 ```bash
-# Get the ClusterAddons CR again
-kubectl get clusteraddons prod-eu -o yaml
-
-# Observe: status.conditions[Ready].reason is now one of Phase 2's reasons
-# (LabelsApplied, SecretNotFound, LabelSyncFailed)
-
-# Check the controller logs for the Phase 2 reconcile path
-kubectl logs -n sharko -l app.kubernetes.io/name=sharko -f | grep "addon labels synced"
-
-# Observe a log line like:
-# "addon labels synced to cluster Secret" cluster="prod-eu" changed=false syncedAddons=2 convergedKeys=2
-# (changed=false means the labels were already correct; changed=true would appear if the controller wrote a diff)
+make operator-playground-status
 ```
 
-### Step 4: Edit the CR spec and observe convergence
+This command prints:
+- `ClusterAddons` CRs (name, cluster, SYNCED, Ready) and the Ready condition detail.
+- Each spoke's ArgoCD cluster Secret addon labels (addon-key labels only — the labels with no `/` or `:` in the key).
+- Current drive mode (operator vs reconciler as the label writer).
+- A one-line summary: "DRIVE OFF — the reconciler is the label writer (operator is read-only status only)."
+
+**Expected state with drive OFF:** The operator writes read-only `.status` updates to the `ClusterAddons` CRs. The reconciler (`internal/clusterreconciler`) writes addon labels to the ArgoCD cluster Secrets. The Ready condition reason is `ReconcileSucceeded` or `NoReconcileRecord` (Phase 1 reasons), NOT `LabelsApplied`.
+
+### Step 3: Flip the switch ON — operator drives labels
 
 ```bash
-# Manually edit the ClusterAddons CR to enable a new addon (e.g., grafana)
-kubectl edit clusteraddons prod-eu
-
-# Add an addon entry:
-#   - name: grafana
-#     enabled: true
-
-# Save and exit. The controller will reconcile immediately.
-
-# Watch the Secret labels update in real time
-kubectl get secret -n argocd cluster-prod-eu -o jsonpath='{.metadata.labels}' | jq -r '.grafana'
-# Observe: "enabled" (the controller added it)
-
-# Check the CR status
-kubectl describe clusteraddons prod-eu
-# Observe: Ready=True, reason=LabelsApplied, message includes "addon labels applied" or "already in sync"
+make operator-playground-drive-on
 ```
 
-This proves the controller is driving the labels from the CR spec. The convergence settles within a few seconds (not instant — eventually consistent).
+This command:
+1. Helm-upgrades the Sharko release with `--set operator.drivesLabels=true`.
+2. Restarts the Sharko deployment to pick up the env change.
+3. Waits for the rollout to complete.
 
-### Step 5: Roll back to Phase 1 (one-line rollback)
+At the end, it prints: "Operator is now DRIVING labels. The controller writes addon labels from the ClusterAddons CR spec. Watch convergence: `make operator-playground-status`."
+
+**Watch convergence:**
 
 ```bash
-# Helm upgrade with the flag back to OFF
-helm upgrade sharko charts/sharko/ \
-  --namespace sharko \
-  --set operator.drivesLabels=false \
-  --reuse-values
-
-# Wait for rollout
-kubectl rollout status -n sharko deployment/sharko
-
-# Verify: the CR status.conditions[Ready].reason reverts to Phase 1 reasons
-kubectl get clusteraddons prod-eu -o jsonpath='{.status.conditions[?(@.type=="Ready")].reason}'
-# Observe: ReconcileSucceeded (not LabelsApplied)
+make operator-playground-status
 ```
 
-The addon labels on the Secret remain as-is (the controller does not delete them on flag flip). The canonical reconciler resumes writing labels on the next merge to `managed-clusters.yaml`.
+Now observe:
+- The Ready condition reason is `LabelsApplied` (Phase 2 reason), not `ReconcileSucceeded`.
+- The addon-key labels on each spoke's ArgoCD cluster Secret match the `ClusterAddons` spec.
+- The summary line reads: "DRIVE ON — the operator is the label writer; addon labels present on N/N spokes."
+
+The convergence settles within a few seconds (eventually consistent, not instant).
+
+### Step 4: Flip the switch OFF — reconciler resumes (one-line rollback)
+
+```bash
+make operator-playground-drive-off
+```
+
+This command:
+1. Helm-upgrades the Sharko release with `--set operator.drivesLabels=false`.
+2. Restarts the Sharko deployment.
+3. Waits for the rollout to complete.
+
+At the end, it prints: "Operator drive OFF — reconciler resumes as the label writer. This is the one-line rollback. Labels remain correct. Watch state: `make operator-playground-status`."
+
+**Verify:**
+
+```bash
+make operator-playground-status
+```
+
+Observe:
+- The Ready condition reason reverts to `ReconcileSucceeded` (Phase 1 reason).
+- The addon labels on the Secrets remain as-is (the operator does not delete them on flag flip).
+- The summary line reads: "DRIVE OFF — the reconciler is the label writer (operator is read-only status only)."
+
+The reconciler resumes ownership; the operator yields.
+
+### Step 5: Tear down the playground
+
+```bash
+make operator-playground-down
+```
+
+This command deletes ONLY `sharko-play-*` kind clusters (hub + all spokes). It guards by exact name-prefix match so it can NEVER touch `sharko-e2e-*`, `sharko-operator-dev`, or any other cluster. Safe to run with nothing present (no-op clean exit).
+
+---
+
+### Advanced: Inspect the Kubernetes resources directly
+
+The playground exposes the full Kubernetes state. Use these commands to inspect the resources directly:
+
+```bash
+# Switch to the hub context
+kubectl config use-context kind-sharko-play-hub
+
+# List all ClusterAddons CRs
+kubectl get clusteraddons -A
+
+# Describe a specific ClusterAddons CR (e.g., spoke-eu)
+kubectl describe clusteraddons -n sharko spoke-eu
+
+# Get the ArgoCD cluster Secret labels for a spoke
+kubectl -n argocd get secret -l argocd.argoproj.io/secret-type=cluster --show-labels
+
+# Check the controller logs
+kubectl logs -n sharko -l app.kubernetes.io/name=sharko -f | grep "addon labels"
+
+# Watch ClusterAddons CRs converge in real time
+kubectl get clusteraddons -A -w
+```
+
+**Label-drive mechanic:** When drive is ON, the controller reads the `ClusterAddons` CR spec, computes desired addon labels via `internal/operator/labels.go` (`AddonAssignmentsToLabels`), and writes those labels to the spoke's ArgoCD cluster Secret via `argosecrets.SyncManagedClusterLabels` (a safe merge primitive that preserves the `app.kubernetes.io/managed-by: sharko` ownership label, Secret Data, and any foreign labels). ArgoCD's ApplicationSet (unchanged) reads those labels and deploys addons. Sharko stays a **guest on ArgoCD** — Sharko writes labels, ArgoCD owns ApplicationSets and deployment.
 
 **ClusterAddonSet:** The sample `config/samples/clusteraddonset_sample.yaml` is for a future phase (Phase 2+) and is not yet wired. You can ignore it for now.
 
