@@ -686,3 +686,345 @@ func TestClusterAddonsReconciler_DrivesLabels_StatusFromWriter(t *testing.T) {
 		})
 	}
 }
+
+// recordingLabelWriter is a test fake that records every SyncManagedClusterLabels
+// call and returns a controlled result. Used to verify the single-writer invariant
+// (Story 2.4 — the controller writes zero labels when flag OFF, writes exactly the
+// desired labels when flag ON).
+type recordingLabelWriter struct {
+	calls  []labelWriteCall
+	result argosecrets.ManagedLabelSyncResult
+	err    error
+}
+
+type labelWriteCall struct {
+	clusterName   string
+	desiredLabels map[string]string
+}
+
+func (r *recordingLabelWriter) SyncManagedClusterLabels(ctx context.Context, name string, desiredLabels map[string]string) (argosecrets.ManagedLabelSyncResult, error) {
+	// Deep-copy desiredLabels so the test can safely inspect the captured state.
+	labelsCopy := make(map[string]string, len(desiredLabels))
+	for k, v := range desiredLabels {
+		labelsCopy[k] = v
+	}
+	r.calls = append(r.calls, labelWriteCall{
+		clusterName:   name,
+		desiredLabels: labelsCopy,
+	})
+	return r.result, r.err
+}
+
+// TestClusterAddonsReconciler_DrivesLabelsOFF_WritesZeroLabels verifies the
+// flag-OFF half of the single-writer invariant (Story 2.4): when DrivesLabels=false,
+// the controller writes ZERO addon labels (read-only mode, Phase 1 behavior).
+func TestClusterAddonsReconciler_DrivesLabelsOFF_WritesZeroLabels(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	cr := &v1alpha1.ClusterAddons{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-cluster",
+			Namespace:  "default",
+			Generation: 1,
+		},
+		Spec: v1alpha1.ClusterAddonsSpec{
+			Cluster: "prod-eu",
+			Addons:  []v1alpha1.AddonAssignment{{Name: "foo"}, {Name: "bar"}},
+		},
+	}
+
+	statusReader := &fakeStatusReader{
+		records: map[string]clusterreconciler.ClusterReconcileRecord{
+			"prod-eu": {
+				Time:    time.Now(),
+				Outcome: clusterreconciler.OutcomeSucceeded,
+				Message: "",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(cr).
+		Build()
+
+	recorder := &recordingLabelWriter{
+		result: argosecrets.ManagedLabelSyncResult{Found: true, Changed: false},
+	}
+
+	reconciler := &ClusterAddonsReconciler{
+		Client:       fakeClient,
+		statusReader: statusReader,
+		labelWriter:  recorder, // Wired, but should never be called when flag OFF
+		DrivesLabels: false,    // FLAG OFF (Phase 1 mode)
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "test-cluster",
+			Namespace: "default",
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Fatalf("reconcile failed: %v", err)
+	}
+
+	// Assert ZERO label writes occurred (the single-writer invariant).
+	if len(recorder.calls) != 0 {
+		t.Errorf("flag OFF: expected ZERO label writes, got %d calls: %+v", len(recorder.calls), recorder.calls)
+	}
+}
+
+// TestClusterAddonsReconciler_DrivesLabelsON_DrivesLabelsSafely verifies the
+// flag-ON half of the drives-labels-safely guard (Story 2.4): when DrivesLabels=true,
+// the controller writes ONLY addon-label keys (no Secret Data, no annotations,
+// no foreign labels, no strip of managed-by).
+//
+// This is the INVERSION of the Phase-1 read-only guard — same principle, opposite
+// assertion. With flag ON, the controller MUST write labels (verified by checking
+// the recording writer was called with the correct desired labels), but ONLY addon
+// keys (verified by the fact that SyncManagedClusterLabels is the primitive — it
+// PRESERVES managed-by + foreign labels + Secret Data by design).
+func TestClusterAddonsReconciler_DrivesLabelsON_DrivesLabelsSafely(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	cr := &v1alpha1.ClusterAddons{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-cluster",
+			Namespace:  "default",
+			Generation: 1,
+		},
+		Spec: v1alpha1.ClusterAddonsSpec{
+			Cluster: "prod-eu",
+			Addons: []v1alpha1.AddonAssignment{
+				{Name: "datadog"},
+				{Name: "prometheus", Enabled: boolPtr(true)},
+				{Name: "istio", Enabled: boolPtr(false)}, // disabled → no label
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cr).
+		WithStatusSubresource(cr).
+		Build()
+
+	recorder := &recordingLabelWriter{
+		result: argosecrets.ManagedLabelSyncResult{
+			Found:     true,
+			Changed:   true,
+			Converged: []string{"datadog", "prometheus"},
+		},
+	}
+
+	reconciler := &ClusterAddonsReconciler{
+		Client:       fakeClient,
+		labelWriter:  recorder,
+		DrivesLabels: true, // FLAG ON (Phase 2 mode)
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "test-cluster",
+			Namespace: "default",
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Fatalf("reconcile failed: %v", err)
+	}
+
+	// Assert exactly ONE call to SyncManagedClusterLabels.
+	if len(recorder.calls) != 1 {
+		t.Fatalf("expected exactly 1 label write call, got %d", len(recorder.calls))
+	}
+
+	call := recorder.calls[0]
+	if call.clusterName != "prod-eu" {
+		t.Errorf("cluster name: got %q, want %q", call.clusterName, "prod-eu")
+	}
+
+	// Verify the desired labels: ONLY addon keys, NO foreign labels, NO system labels.
+	// The spec has datadog + prometheus enabled, istio disabled (should be skipped).
+	wantLabels := map[string]string{
+		"datadog":    "enabled",
+		"prometheus": "enabled",
+		// "istio" MUST NOT appear (disabled).
+	}
+
+	if len(call.desiredLabels) != len(wantLabels) {
+		t.Errorf("desired labels count: got %d, want %d", len(call.desiredLabels), len(wantLabels))
+	}
+
+	for k, wantV := range wantLabels {
+		gotV, ok := call.desiredLabels[k]
+		if !ok {
+			t.Errorf("desired labels: missing key %q", k)
+		} else if gotV != wantV {
+			t.Errorf("desired labels[%q]: got %q, want %q", k, gotV, wantV)
+		}
+	}
+
+	// Assert NO foreign labels (e.g., "app.kubernetes.io/managed-by") in the desired set.
+	// The controller computes desired labels from CR spec via AddonAssignmentsToLabels,
+	// which emits ONLY addon keys. SyncManagedClusterLabels PRESERVES foreign labels
+	// (it doesn't delete them), but the desired set passed to it must be addon-only.
+	for k := range call.desiredLabels {
+		if contains(k, "/") {
+			t.Errorf("desired labels: unexpected foreign label %q (controller should only pass addon keys)", k)
+		}
+	}
+
+	// The "drives-labels-safely" contract: the controller ONLY writes labels
+	// (via SyncManagedClusterLabels), NEVER Secret Data, NEVER annotations, NEVER
+	// strips managed-by. Those guarantees are tested here by proxy: we verify the
+	// controller calls SyncManagedClusterLabels (which we KNOW preserves those
+	// fields — that's the G3-safe primitive's contract) with addon-only keys.
+}
+
+// TestClusterAddonsReconciler_RoundTrip_SpecToLabelsToSpec verifies that the
+// spec→labels (controller) and labels→spec (generator) mappers round-trip exactly
+// (Story 2.4): AddonAssignmentsToLabels ∘ mapLabelsToAddonAssignments = identity.
+//
+// This guards Git↔CR↔Secret consistency — if the two mappers disagree, the
+// generator and controller will drift the CR on every reconcile.
+func TestClusterAddonsReconciler_RoundTrip_SpecToLabelsToSpec(t *testing.T) {
+	tests := []struct {
+		name                string
+		startingAssignments []v1alpha1.AddonAssignment
+	}{
+		{
+			name: "two enabled addons",
+			startingAssignments: []v1alpha1.AddonAssignment{
+				{Name: "datadog"},
+				{Name: "prometheus"},
+			},
+		},
+		{
+			name: "one enabled, one explicitly enabled",
+			startingAssignments: []v1alpha1.AddonAssignment{
+				{Name: "datadog"},
+				{Name: "prometheus", Enabled: boolPtr(true)},
+			},
+		},
+		{
+			name: "one enabled, one disabled (absent from labels)",
+			startingAssignments: []v1alpha1.AddonAssignment{
+				{Name: "datadog"},
+				{Name: "istio", Enabled: boolPtr(false)},
+			},
+		},
+		{
+			name:                "empty assignments (no labels)",
+			startingAssignments: []v1alpha1.AddonAssignment{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Round-trip: spec → labels → spec.
+			labels := AddonAssignmentsToLabels(tt.startingAssignments)
+			roundTripped := mapLabelsToAddonAssignments(labels)
+
+			// Build the expected set: only ENABLED assignments (disabled are absent from labels).
+			var wantAssignments []v1alpha1.AddonAssignment
+			for _, a := range tt.startingAssignments {
+				if a.Enabled == nil || *a.Enabled {
+					// Round-trip produces explicit Enabled pointers (generator always sets them).
+					wantAssignments = append(wantAssignments, v1alpha1.AddonAssignment{
+						Name:    a.Name,
+						Enabled: boolPtr(true),
+					})
+				}
+			}
+
+			// Compare counts.
+			if len(roundTripped) != len(wantAssignments) {
+				t.Fatalf("round-trip count: got %d, want %d", len(roundTripped), len(wantAssignments))
+			}
+
+			// Compare contents (order-agnostic).
+			wantByName := make(map[string]bool, len(wantAssignments))
+			for _, a := range wantAssignments {
+				wantByName[a.Name] = *a.Enabled
+			}
+
+			for _, a := range roundTripped {
+				wantEnabled, ok := wantByName[a.Name]
+				if !ok {
+					t.Errorf("round-trip: unexpected addon %q", a.Name)
+					continue
+				}
+				if a.Enabled == nil || *a.Enabled != wantEnabled {
+					t.Errorf("round-trip addon %q: got enabled=%v, want %v", a.Name, a.Enabled, wantEnabled)
+				}
+			}
+		})
+	}
+}
+
+// TestClusterAddonsReconciler_RoundTrip_LabelsToSpecToLabels verifies the reverse
+// round-trip (labels→spec→labels = identity). This is the stronger guarantee:
+// the generator READS labels and emits spec; the controller READS spec and emits
+// labels. Both directions must compose back to the same state.
+func TestClusterAddonsReconciler_RoundTrip_LabelsToSpecToLabels(t *testing.T) {
+	tests := []struct {
+		name   string
+		labels map[string]string
+	}{
+		{
+			name: "two enabled addons",
+			labels: map[string]string{
+				"datadog":    "enabled",
+				"prometheus": "enabled",
+			},
+		},
+		{
+			name: "one enabled addon",
+			labels: map[string]string{
+				"datadog": "enabled",
+			},
+		},
+		{
+			name:   "empty labels",
+			labels: map[string]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Round-trip: labels → spec → labels.
+			assignments := mapLabelsToAddonAssignments(tt.labels)
+			roundTripped := AddonAssignmentsToLabels(assignments)
+
+			// Compare label sets (order-agnostic).
+			if len(roundTripped) != len(tt.labels) {
+				t.Fatalf("round-trip count: got %d, want %d", len(roundTripped), len(tt.labels))
+			}
+
+			for k, wantV := range tt.labels {
+				gotV, ok := roundTripped[k]
+				if !ok {
+					t.Errorf("round-trip: missing label %q", k)
+				} else if gotV != wantV {
+					t.Errorf("round-trip label[%q]: got %q, want %q", k, gotV, wantV)
+				}
+			}
+
+			for k := range roundTripped {
+				if _, ok := tt.labels[k]; !ok {
+					t.Errorf("round-trip: unexpected label %q", k)
+				}
+			}
+		})
+	}
+}
