@@ -163,6 +163,10 @@ spec:
             - name: GITOPS_ACTIONS_ENABLED
               value: "true"
             {{- end }}
+            {{- if .Values.operator.drivesLabels }}
+            - name: SHARKO_OPERATOR_DRIVES_LABELS
+              value: "true"
+            {{- end }}
             {{- /*
               V3 C2: git-native connection config (NON-SECRET fields only).
               Each env var is emitted ONLY when the operator explicitly sets the
