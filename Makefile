@@ -459,7 +459,7 @@ operator-dev-down: ## Delete ONLY the sharko-operator-dev cluster (safe — neve
 
 CONTROLLER_GEN := $(shell command -v controller-gen 2>/dev/null || echo "$(shell go env GOPATH)/bin/controller-gen")
 
-install: ## Apply CRDs to the cluster (no-op in Phase 0 — CRDs populated in Phase 1)
+install: ## Apply CRDs + RBAC to the cluster (Story 1.5: now does real work)
 	@if [ ! -d config/crd ]; then \
 		echo "==> install: config/crd/ does not exist"; \
 		exit 1; \
@@ -471,8 +471,28 @@ install: ## Apply CRDs to the cluster (no-op in Phase 0 — CRDs populated in Ph
 		echo "==> Applying CRDs from config/crd/"; \
 		kubectl apply -f config/crd/; \
 	fi
+	@if [ ! -d config/rbac ]; then \
+		echo "==> install: config/rbac/ does not exist"; \
+		exit 1; \
+	fi; \
+	RBAC_COUNT=$$(find config/rbac -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l | tr -d ' '); \
+	if [ "$$RBAC_COUNT" -eq 0 ]; then \
+		echo "==> install: no RBAC manifests yet (run 'make manifests' to generate)"; \
+	else \
+		echo "==> Applying RBAC from config/rbac/"; \
+		kubectl apply -f config/rbac/; \
+	fi
 
-uninstall: ## Delete CRDs from the cluster (no-op in Phase 0)
+uninstall: ## Delete CRDs + RBAC from the cluster (Story 1.5: now does real work)
+	@if [ ! -d config/rbac ]; then \
+		echo "==> uninstall: config/rbac/ does not exist"; \
+	else \
+		RBAC_COUNT=$$(find config/rbac -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l | tr -d ' '); \
+		if [ "$$RBAC_COUNT" -gt 0 ]; then \
+			echo "==> Deleting RBAC from config/rbac/"; \
+			kubectl delete -f config/rbac/ --ignore-not-found=true; \
+		fi; \
+	fi
 	@if [ ! -d config/crd ]; then \
 		echo "==> uninstall: config/crd/ does not exist"; \
 		exit 1; \
@@ -482,24 +502,31 @@ uninstall: ## Delete CRDs from the cluster (no-op in Phase 0)
 		echo "==> uninstall: no CRDs to delete (populated in Phase 1)"; \
 	else \
 		echo "==> Deleting CRDs from config/crd/"; \
-		kubectl delete -f config/crd/; \
+		kubectl delete -f config/crd/ --ignore-not-found=true; \
 	fi
 
-deploy: ## Apply controller RBAC + Deployment (no-op in Phase 0 — manifests populated in Phase 1)
-	@RBAC_COUNT=$$(find config/rbac -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l); \
-	if [ "$$RBAC_COUNT" -eq 0 ]; then \
-		echo "==> deploy: no RBAC manifests yet (populated in Phase 1)"; \
-	fi
+deploy: ## Apply CRDs + RBAC (Story 1.5: now does real work; Deployment in future story)
+	@echo "==> Deploying CRDs + RBAC (Deployment will be added in a future story)"
+	@$(MAKE) install
 	@MGR_COUNT=$$(find config/manager -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l); \
 	if [ "$$MGR_COUNT" -eq 0 ]; then \
-		echo "==> deploy: no manager Deployment yet (populated in Phase 1)"; \
+		echo "==> deploy: no manager Deployment yet (will be added in a future story)"; \
+	else \
+		echo "==> Applying manager Deployment from config/manager/"; \
+		kubectl apply -f config/manager/; \
 	fi
-	@echo "==> deploy: Phase 0 no-op complete (controller not wired until Phase 1)"
 
-undeploy: ## Delete controller RBAC + Deployment (no-op in Phase 0)
-	@echo "==> undeploy: Phase 0 no-op (controller not wired until Phase 1)"
+undeploy: ## Delete CRDs + RBAC + Deployment (Story 1.5: now does real work)
+	@if [ -d config/manager ]; then \
+		MGR_COUNT=$$(find config/manager -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l); \
+		if [ "$$MGR_COUNT" -gt 0 ]; then \
+			echo "==> Deleting manager Deployment from config/manager/"; \
+			kubectl delete -f config/manager/ --ignore-not-found=true; \
+		fi; \
+	fi
+	@$(MAKE) uninstall
 
-manifests: ## Generate CRD YAML + RBAC from Go markers
+manifests: ## Generate CRD YAML + deepcopy + RBAC from Go markers (Story 1.5: now generates RBAC)
 	@if [ ! -x "$(CONTROLLER_GEN)" ]; then \
 		echo "==> Installing controller-gen (sigs.k8s.io/controller-tools)"; \
 		go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest; \
@@ -515,7 +542,42 @@ manifests: ## Generate CRD YAML + RBAC from Go markers
 	@$(CONTROLLER_GEN) crd paths="./api/..." output:crd:artifacts:config=config/crd
 	@echo "    Generated: api/v1alpha1/zz_generated.deepcopy.go"
 	@echo "    Generated: config/crd/*.yaml"
+	@echo "==> Generating RBAC role from kubebuilder markers"
+	@mkdir -p config/rbac
+	@$(CONTROLLER_GEN) rbac:roleName=sharko-operator paths="./internal/operator/..." output:rbac:artifacts:config=config/rbac
+	@echo "    Generated: config/rbac/role.yaml"
 	@echo "==> Copying CRDs to Helm chart"
 	@mkdir -p charts/sharko/crds
 	@cp config/crd/*.yaml charts/sharko/crds/ 2>/dev/null || true
 	@echo "    Copied to: charts/sharko/crds/"
+
+SETUP_ENVTEST := $(shell command -v setup-envtest 2>/dev/null || echo "$(shell go env GOPATH)/bin/setup-envtest")
+
+setup-envtest: ## Install setup-envtest binary (for provisioning envtest assets)
+	@if [ -x "$(SETUP_ENVTEST)" ]; then \
+		echo "==> setup-envtest already installed at $(SETUP_ENVTEST)"; \
+	else \
+		echo "==> Installing setup-envtest (sigs.k8s.io/controller-runtime/tools/setup-envtest)"; \
+		go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest; \
+		echo "    Installed to $(shell go env GOPATH)/bin/setup-envtest"; \
+	fi
+
+test-operator: setup-envtest ## Run operator tests (unit + envtest integration)
+	@echo "==> Running operator unit tests (non-envtest)"
+	@go test ./internal/operator/... -v -run='Test.*' -skip='Envtest'
+	@echo ""
+	@echo "==> Provisioning envtest assets for integration tests"
+	@if ! command -v $(SETUP_ENVTEST) >/dev/null 2>&1; then \
+		echo "ERROR: setup-envtest not found. Run 'make setup-envtest' first."; \
+		exit 1; \
+	fi
+	@ASSETS_PATH=$$($(SETUP_ENVTEST) use -p path 2>/dev/null | tail -1); \
+	if [ -z "$$ASSETS_PATH" ]; then \
+		echo "    No envtest assets found — downloading latest"; \
+		ASSETS_PATH=$$($(SETUP_ENVTEST) use -p path --bin-dir $(shell go env GOPATH)/bin 2>&1 | tail -1); \
+	fi; \
+	echo "    Using KUBEBUILDER_ASSETS=$$ASSETS_PATH"; \
+	export KUBEBUILDER_ASSETS="$$ASSETS_PATH"; \
+	export PATH="$$PATH:$(shell go env GOPATH)/bin"; \
+	echo "==> Running operator envtest integration tests"; \
+	go test ./internal/operator/... -v -run='.*Envtest.*'

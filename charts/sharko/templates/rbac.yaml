@@ -135,4 +135,54 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "sharko.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+---
+# Role: ClusterAddons operator permissions (Operator Phase 1)
+# DECISION: Role (namespaced), not ClusterRole.
+# JUSTIFICATION: ClusterAddons CRs are Namespaced (scope in CRD is Namespaced),
+# and the generator/controller only manages CRs in the release namespace where
+# Sharko is installed. There is no cross-namespace or cluster-wide CR management.
+# A namespaced Role is sufficient and follows least-privilege.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "sharko.fullname" . }}-operator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sharko.labels" . | nindent 4 }}
+rules:
+  # ClusterAddons CRs: controller reads (get/list/watch) + generator writes (create/update/patch/delete).
+  # The generator auto-generates CRs from managed-clusters.yaml and prunes orphans (delete).
+  - apiGroups: ["sharko.dev"]
+    resources: ["clusteraddons"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # ClusterAddons status subresource: controller writes status projection (update/patch).
+  - apiGroups: ["sharko.dev"]
+    resources: ["clusteraddons/status"]
+    verbs: ["get", "update", "patch"]
+  # Leader election: the manager uses Lease resources for HA leader election.
+  # Leases live in the release namespace. The manager creates/updates a lease named
+  # "sharko-operator" but never deletes it (standard controller-runtime behavior).
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Events: the controller emits events for operator lifecycle/errors.
+  # Events create permission is already present in the -auth Role above; no duplication needed here.
+  # The manager will have both roles bound, so events create is covered.
+---
+# RoleBinding for ClusterAddons operator permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "sharko.fullname" . }}-operator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sharko.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "sharko.fullname" . }}-operator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "sharko.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
 {{- end }}

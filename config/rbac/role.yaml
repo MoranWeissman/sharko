@@ -1,0 +1,23 @@
+# Generated from +kubebuilder:rbac markers in internal/operator/
+# Role name: sharko-operator
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sharko-operator
+rules:
+- apiGroups:
+  - sharko.dev
+  resources:
+  - clusteraddons
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - sharko.dev
+  resources:
+  - clusteraddons/status
+  verbs:
+  - get
+  - update
+  - patch
