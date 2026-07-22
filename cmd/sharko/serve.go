@@ -33,6 +33,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/notifications"
+	"github.com/MoranWeissman/sharko/internal/operator"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/platform"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -1112,6 +1113,51 @@ var serveCmd = &cobra.Command{
 				prTracker.Start(context.Background())
 				defer prTracker.Stop()
 				slog.Info("pr tracker started")
+			}
+
+			// Operator manager (Story 1.2) — stands up a controller-runtime
+			// manager inside the existing serve process. NO reconcilers yet
+			// (Story 1.3). This block uses the same in-cluster gate as the
+			// clusterRecon and prTracker above: requires inClusterK8sClient
+			// (which means mode == ModeKubernetes AND InClusterConfig() succeeded).
+			// Kill-switch: SHARKO_OPERATOR_ENABLED=false|0 disables even when
+			// in-cluster.
+			if inClusterK8sClient != nil {
+				operatorEnabled := getEnvDefault("SHARKO_OPERATOR_ENABLED", "true")
+				if operatorEnabled == "true" || operatorEnabled == "1" {
+					// Build a *rest.Config for the manager (InClusterConfig again
+					// so the manager uses the same service-account credentials).
+					if operatorCfg, err := rest.InClusterConfig(); err != nil {
+						slog.Warn("operator manager skipped: could not get in-cluster config", "error", err)
+					} else {
+						operatorNamespace := os.Getenv("SHARKO_NAMESPACE")
+						if operatorNamespace == "" {
+							operatorNamespace = "sharko"
+						}
+						mgr, err := operator.NewManager(operatorCfg, operatorNamespace)
+						if err != nil {
+							slog.Warn("operator manager creation failed", "error", err)
+						} else {
+							// Start the manager in a goroutine so it does NOT block
+							// the HTTP server. The manager's context will be canceled
+							// on shutdown (via the same signal path as the existing
+							// server shutdown).
+							operatorCtx, operatorCancel := context.WithCancel(context.Background())
+							defer operatorCancel() // Clean shutdown on process exit
+							go func() {
+								slog.Info("operator manager starting", "namespace", operatorNamespace)
+								if err := mgr.Start(operatorCtx); err != nil {
+									slog.Error("operator manager stopped with error", "error", err)
+								}
+							}()
+							slog.Info("operator manager started (no reconcilers yet — Story 1.2)", "namespace", operatorNamespace)
+						}
+					}
+				} else {
+					slog.Info("operator manager disabled via SHARKO_OPERATOR_ENABLED", "value", operatorEnabled)
+				}
+			} else {
+				slog.Info("operator manager skipped: not running in-cluster (no k8s client)")
 			}
 		}
 
