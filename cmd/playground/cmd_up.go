@@ -249,10 +249,10 @@ spec:
 		return "", fmt.Errorf("apply gitfake deployment: %w", err)
 	}
 
-	// Wait for gitfake pod to be ready.
-	fmt.Println("    Waiting for gitfake pod to be ready...")
-	if err := kubectlWait(kubeconfigPath, ContextHub, Namespace, "pod", "-l app=gitfake", "ready", 2*time.Minute); err != nil {
-		return "", fmt.Errorf("wait for gitfake pod: %w", err)
+	// Wait for gitfake deployment to be ready.
+	fmt.Println("    Waiting for gitfake deployment to be ready...")
+	if err := kubectlWait(kubeconfigPath, ContextHub, Namespace, "deployment", "gitfake", "available", 2*time.Minute); err != nil {
+		return "", fmt.Errorf("wait for gitfake deployment: %w", err)
 	}
 
 	serviceURL := fmt.Sprintf("http://gitfake.%s.svc.cluster.local/%s.git", Namespace, GitFakeRepoName)
