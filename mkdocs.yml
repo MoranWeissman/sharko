@@ -69,6 +69,7 @@ nav:
     - 'Managing Cluster Connections Yourself': operator/self-managed-connections.md
     - 'Reference — Connection Doctor': operator/connection-doctor.md
     - 'Reference — Cluster Reconciler (architecture + embedded troubleshooting)': operator/cluster-reconciler.md
+    - 'Reference — ClusterAddons CRD': operator/clusteraddons-crd.md
     - 'Reference — Git-Native Server Configuration (git wins)': operator/git-native-config.md
     - 'Reference — Sharko Events': operator/sharko-events.md
     - 'Reference — AI Configuration': operator/ai-config.md

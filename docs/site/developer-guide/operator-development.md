@@ -4,11 +4,11 @@ This guide covers the local development loop for Sharko's Kubernetes operator mo
 
 ## Overview
 
-Sharko is transitioning from an HTTP-only addon management server to a full Kubernetes operator. In operator mode, Sharko watches Custom Resources (`ClusterAddons`, `ClusterAddonSet`) and reconciles ArgoCD `ApplicationSets` to deploy addons across multiple clusters.
+Sharko is transitioning from an HTTP-only addon management server to a full Kubernetes operator. In operator mode, Sharko exposes Custom Resources (`ClusterAddons`) that provide a native Kubernetes view of addon inventory per cluster.
 
-**Phase 0 (current):** Operator development tooling is scaffolded. CRDs and controller code do not exist yet. The targets below are idempotent no-ops today (exit 0 with honest messages).
+**Phase 1 (current):** The `ClusterAddons` CRD is live. Sharko's controller watches these CRs and writes a read-only `.status` projection of each cluster's addon state (which addons are synced, Ready condition). The CRD does not drive addon deployments yet — a future phase will invert this so the CR spec becomes the source of truth. The `make manifests`, `make install`, and `make deploy` targets are fully operational.
 
-**Phase 1+:** CRD Go types + controller reconciler land in `internal/`. The targets below generate CRD YAML, apply it to a cluster, and deploy the controller Deployment.
+**Phase 2+:** Additional CRs (e.g. `ClusterAddonSet` for multi-cluster families) will land, and the controller will reconcile ArgoCD `ApplicationSets` from CR specs to deploy addons.
 
 ## Persistent Dev Cluster
 
@@ -66,8 +66,9 @@ This target:
 2. Runs `controller-gen crd rbac:roleName=sharko-manager-role paths=./...`
 3. Writes CRD YAML to `config/crd/*.yaml`
 4. Writes RBAC manifests to `config/rbac/*.yaml`
+5. Copies generated CRDs to `charts/sharko/crds/` for Helm packaging
 
-**Phase 0:** No-op (exits 0 with a note). When controller Go files land in `internal/`, this target generates the CRDs.
+**Phase 1:** Generates `sharko.dev_clusteraddons.yaml` from `api/v1alpha1/clusteraddons_types.go`. After editing the Go type definitions or kubebuilder markers, run `make manifests` and commit the regenerated YAML.
 
 ### Apply CRDs to the cluster
 
@@ -82,7 +83,7 @@ kubectl config use-context kind-sharko-operator-dev
 make install
 ```
 
-**Phase 0:** No-op (exits 0 with a note). `config/crd/` is empty today.
+**Phase 1:** Installs the `sharko.dev/v1alpha1` `ClusterAddons` CRD. After running `make install`, you can create `ClusterAddons` CRs via `kubectl apply`.
 
 ### Remove CRDs from the cluster
 
@@ -102,7 +103,7 @@ make deploy
 
 This target applies `config/rbac/*.yaml` + `config/manager/*.yaml` to the cluster. The controller Deployment runs the `sharko` binary with operator mode enabled.
 
-**Phase 0:** No-op (exits 0 with a note). RBAC + manager manifests are scaffolds today.
+**Phase 1:** Deploys the Sharko controller with a least-privilege ClusterRole (get/list/watch/update for `clusteraddons` + status subresource, plus lease coordination). The controller runs an embedded `controller-runtime` manager that reconciles `ClusterAddons` CRs and writes read-only `.status` updates.
 
 ### Remove controller RBAC + Deployment
 
@@ -118,15 +119,19 @@ After `make install` (CRDs applied), test the operator with sample CRs:
 # Apply a ClusterAddons sample (one cluster)
 kubectl apply -f config/samples/clusteraddons_sample.yaml
 
-# Apply a ClusterAddonSet sample (multi-cluster)
-kubectl apply -f config/samples/clusteraddonset_sample.yaml
+# Watch the reconciler write status updates (Phase 1: read-only status projection)
+kubectl get clusteraddons -w
 
-# Watch the reconciler create ArgoCD ApplicationSets
-kubectl get applicationsets -n argocd -w
+# Describe the CR to see conditions and syncedAddons count
+kubectl describe clusteraddons prod-eu
 
 # Check reconciler logs
 kubectl logs -n sharko -l app.kubernetes.io/name=sharko -f
 ```
+
+**Phase 1 note:** The `ClusterAddons` CR shows a read-only view of addon state. The controller writes `.status` but does NOT create ArgoCD `ApplicationSets` yet. A future phase will invert this.
+
+**ClusterAddonSet:** The sample `config/samples/clusteraddonset_sample.yaml` is for a future phase (Phase 2+) and is not yet wired. You can ignore it for now.
 
 **Edit the samples:** Replace placeholder cluster names (`prod-eu`, `staging-us`) with your real cluster names (must match entries in `managed-clusters.yaml`).
 

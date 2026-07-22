@@ -35,8 +35,10 @@ spec:
         description: |-
           ClusterAddons is the Schema for the clusteraddons API.
           It defines a namespaced custom resource that represents the addon inventory
-          for a single managed cluster. The Sharko operator watches ClusterAddons objects
-          and generates corresponding ArgoCD ApplicationSet entries to deploy the addons.
+          for a single managed cluster. In Phase 1, the Sharko operator watches ClusterAddons
+          objects and writes a read-only .status projection of the cluster's addon-reconcile
+          outcome. The CRD does not drive addon deployments in Phase 1; a future phase will
+          invert this so the CR spec becomes the source of truth.
         properties:
           apiVersion:
             description: |-
