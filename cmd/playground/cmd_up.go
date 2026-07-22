@@ -357,7 +357,7 @@ func registerSpokes(numSpokes int, spokeNames []string) error {
 		fmt.Printf("    Registering %s...\n", displayName)
 		// Assign a couple of addons per spoke (placeholder — the seed content
 		// already assigns them, but the REST API expects the addon list).
-		addons := []string{"metrics-server", "external-secrets"}
+		addons := map[string]bool{"metrics-server": true, "external-secrets": true}
 		if err := client.registerCluster(displayName, kubeconfig, addons); err != nil {
 			return fmt.Errorf("register %s: %w", displayName, err)
 		}
