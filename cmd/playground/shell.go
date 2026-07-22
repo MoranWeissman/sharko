@@ -87,8 +87,9 @@ func kubectlConfigView(kubeconfig, context, jsonpath string) (string, error) {
 }
 
 // kubectlCreateToken creates a short-lived (1h) bearer token for a ServiceAccount.
-func kubectlCreateToken(kubeconfig, saName, duration string) (string, error) {
+func kubectlCreateToken(kubeconfig, kubectlContext, saName, duration string) (string, error) {
 	out, stderr, err := runCmd(15*time.Second, "kubectl", "--kubeconfig", kubeconfig,
+		"--context", kubectlContext,
 		"create", "token", saName, "--duration", duration)
 	if err != nil {
 		return "", fmt.Errorf("kubectl create token: %w (stderr=%s)", err, stderr)
@@ -97,8 +98,8 @@ func kubectlCreateToken(kubeconfig, saName, duration string) (string, error) {
 }
 
 // kubectlApply applies a YAML manifest (from stdin or file).
-func kubectlApply(kubeconfig, namespace, yaml string) error {
-	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "apply", "-n", namespace, "-f", "-")
+func kubectlApply(kubeconfig, kubectlContext, namespace, yaml string) error {
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "--context", kubectlContext, "apply", "-n", namespace, "-f", "-")
 	cmd.Stdin = strings.NewReader(yaml)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -109,8 +110,9 @@ func kubectlApply(kubeconfig, namespace, yaml string) error {
 }
 
 // kubectlWait waits for a resource to be ready.
-func kubectlWait(kubeconfig, namespace, resourceType, resourceName, condition string, timeout time.Duration) error {
+func kubectlWait(kubeconfig, kubectlContext, namespace, resourceType, resourceName, condition string, timeout time.Duration) error {
 	_, stderr, err := runCmd(timeout, "kubectl", "--kubeconfig", kubeconfig,
+		"--context", kubectlContext,
 		"-n", namespace, "wait",
 		"--for=condition="+condition,
 		"--timeout="+timeout.String(),

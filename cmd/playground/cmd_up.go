@@ -140,7 +140,7 @@ func installArgoCD() error {
 
 	// Wait for argocd-server deployment to be ready.
 	fmt.Println("    Waiting for argocd-server to be ready (up to 3 minutes)...")
-	if err := kubectlWait(kubeconfigPath, ArgoCDNamespace, "deployment", "argocd-server", "available", 3*time.Minute); err != nil {
+	if err := kubectlWait(kubeconfigPath, ContextHub, ArgoCDNamespace, "deployment", "argocd-server", "available", 3*time.Minute); err != nil {
 		return fmt.Errorf("wait for argocd-server: %w", err)
 	}
 
@@ -240,13 +240,13 @@ spec:
 `, Namespace, gitfakeImage, GitFakeRepoName, GitFakeSeedBranch, indentMultiline(seedContent, 12), Namespace)
 
 	kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
-	if err := kubectlApply(kubeconfigPath, Namespace, deploymentYAML); err != nil {
+	if err := kubectlApply(kubeconfigPath, ContextHub, Namespace, deploymentYAML); err != nil {
 		return "", fmt.Errorf("apply gitfake deployment: %w", err)
 	}
 
 	// Wait for gitfake pod to be ready.
 	fmt.Println("    Waiting for gitfake pod to be ready...")
-	if err := kubectlWait(kubeconfigPath, Namespace, "pod", "-l app=gitfake", "ready", 2*time.Minute); err != nil {
+	if err := kubectlWait(kubeconfigPath, ContextHub, Namespace, "pod", "-l app=gitfake", "ready", 2*time.Minute); err != nil {
 		return "", fmt.Errorf("wait for gitfake pod: %w", err)
 	}
 
