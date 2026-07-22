@@ -240,6 +240,11 @@ spec:
 `, Namespace, gitfakeImage, GitFakeRepoName, GitFakeSeedBranch, indentMultiline(seedContent, 12), Namespace)
 
 	kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
+
+	// Create sharko namespace (idempotent).
+	_, _, _ = runCmd(15*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
+		"--context", ContextHub, "create", "namespace", Namespace)
+
 	if err := kubectlApply(kubeconfigPath, ContextHub, Namespace, deploymentYAML); err != nil {
 		return "", fmt.Errorf("apply gitfake deployment: %w", err)
 	}
