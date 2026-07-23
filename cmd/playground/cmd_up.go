@@ -50,20 +50,41 @@ func cmdUp(ctx context.Context) error {
 		return fmt.Errorf("build/load images: %w", err)
 	}
 
-	// 6. Deploy in-cluster GitFake Pod on the hub, seeded with managed-clusters.yaml.
-	gitfakeURL, err := deployGitFake(spokeNames)
-	if err != nil {
-		return fmt.Errorf("deploy GitFake: %w", err)
+	// 6. Determine which git backend to use (Gitea by default, GitFake when PLAYGROUND_GIT_BACKEND=gitfake).
+	gitBackend := os.Getenv("PLAYGROUND_GIT_BACKEND")
+	if gitBackend == "" {
+		gitBackend = "gitea"
+	}
+	fmt.Printf("==> Playground git backend: %s\n", gitBackend)
+
+	var giteaURL, giteaToken string
+	var gitfakeURL string
+	var err error
+
+	if gitBackend == "gitfake" {
+		// Deploy in-cluster GitFake Pod on the hub, seeded with managed-clusters.yaml.
+		gitfakeURL, err = deployGitFake(spokeNames)
+		if err != nil {
+			return fmt.Errorf("deploy GitFake: %w", err)
+		}
+	} else {
+		// Deploy Gitea (real git server) on the hub.
+		giteaURL, giteaToken, err = deployGitea(spokeNames)
+		if err != nil {
+			return fmt.Errorf("deploy Gitea: %w", err)
+		}
 	}
 
-	// 7. Install Sharko on the hub via scripts/helm-install.sh with operator.enabled=true,
-	//    operator.drivesLabels=false (start inert), pointing at GitFake.
-	if err := installSharko(gitfakeURL); err != nil {
+	// 7. Install Sharko on the hub via helm with operator.enabled=true,
+	//    operator.drivesLabels=false (start inert). For Gitea backend, allowlist
+	//    the in-cluster Gitea host.
+	if err := installSharko(gitBackend, gitfakeURL, giteaURL); err != nil {
 		return fmt.Errorf("install Sharko: %w", err)
 	}
 
 	// 8. Register the N spokes as Sharko-managed clusters via REST API.
-	if err := registerSpokes(numSpokes, spokeNames); err != nil {
+	//    For Gitea backend, also create a gitea-typed connection.
+	if err := registerSpokes(numSpokes, spokeNames, gitBackend, giteaURL, giteaToken); err != nil {
 		return fmt.Errorf("register spokes: %w", err)
 	}
 
@@ -265,9 +286,8 @@ spec:
 // Returns the in-cluster Git URL and the API token. This is dev tooling only —
 // no product code changes.
 //
-// NOTE: This function is NOT wired into cmdUp's default sequence yet. To use it,
-// set PLAYGROUND_GIT_BACKEND=gitea before running `make operator-playground-up`.
-// Sub-step B will flip the default and wire it in properly.
+// This is now the DEFAULT git backend for the playground (as of Story 4b).
+// To use GitFake instead, set PLAYGROUND_GIT_BACKEND=gitfake.
 func deployGitea(spokeNames []string) (giteaURL, giteaToken string, err error) {
 	fmt.Println("==> Deploying Gitea in hub")
 
@@ -435,18 +455,15 @@ spec:
 
 // installSharko installs Sharko on the hub via direct helm upgrade --install.
 // The image (sharko:playground-<sha>) was already built + kind-loaded earlier.
-func installSharko(gitfakeURL string) error {
+// For Gitea backend, the gitea in-cluster host is allowlisted and no bootstrap connection is set.
+// For GitFake, the bootstrap connection points at GitFake.
+func installSharko(gitBackend, gitfakeURL, giteaURL string) error {
 	fmt.Println("==> Installing Sharko on hub")
 
 	gitSHA := mustRunCmd(10*time.Second, "git", "rev-parse", "--short", "HEAD")
 	imageTag := "playground-" + gitSHA
 
-	// Install via helm directly, pinned to the hub context.
-	// Image: sharko:playground-<sha> (pre-loaded into kind, pullPolicy=Never).
-	// Operator: enabled but inert (drivesLabels=false — Phase-2 drive OFF).
-	// Connection: point at in-cluster GitFake (values.yaml lines 92-94 say this
-	// is a no-op on fresh install without credentials, but setting the fields is
-	// harmless and correct if a connection is later created).
+	// Base helm args.
 	args := []string{
 		"upgrade", "--install", Release, "charts/sharko",
 		"--kube-context", ContextHub,
@@ -459,10 +476,21 @@ func installSharko(gitfakeURL string) error {
 		"--set", "operator.enabled=true",
 		"--set", "operator.drivesLabels=false",
 		"--set", "bootstrapAdmin.password=admin",
-		"--set", "connection.git.provider=github",
-		"--set", "connection.git.repoURL=" + gitfakeURL,
 		"--wait",
 		"--timeout", "3m",
+	}
+
+	// Backend-specific settings.
+	if gitBackend == "gitea" {
+		// For Gitea: allowlist the in-cluster Gitea host so createConnection succeeds.
+		// No bootstrap connection — we'll create a proper gitea-typed connection via API.
+		args = append(args, "--set", "e2e.gitHostsAllowlist=gitea.sharko.svc.cluster.local")
+	} else {
+		// For GitFake: set a bootstrap connection pointing at GitFake (github-typed).
+		args = append(args,
+			"--set", "connection.git.provider=github",
+			"--set", "connection.git.repoURL="+gitfakeURL,
+		)
 	}
 
 	if _, stderr, err := runCmd(5*time.Minute, "helm", args...); err != nil {
@@ -474,7 +502,8 @@ func installSharko(gitfakeURL string) error {
 }
 
 // registerSpokes registers the N spokes as Sharko-managed clusters via REST API.
-func registerSpokes(numSpokes int, spokeNames []string) error {
+// For Gitea backend, also creates a gitea-typed connection and sets it as active.
+func registerSpokes(numSpokes int, spokeNames []string, gitBackend, giteaURL, giteaToken string) error {
 	fmt.Println("==> Registering spokes with Sharko")
 
 	// Create ServiceAccounts on each spoke.
@@ -521,6 +550,26 @@ func registerSpokes(numSpokes int, spokeNames []string) error {
 	fmt.Println("    Logging in to Sharko API...")
 	if err := client.login("admin", "admin"); err != nil {
 		return fmt.Errorf("login to Sharko: %w", err)
+	}
+
+	// For Gitea backend, create a gitea-typed connection and set it as active.
+	// This gives Sharko an active connection pointing at the in-cluster Gitea.
+	// For GitFake, skip this step (GitFake is wired via the bootstrap connection or env vars).
+	if gitBackend == "gitea" {
+		fmt.Println("    Creating Gitea connection...")
+		argocdServerURL := fmt.Sprintf("http://argocd-server.%s.svc.cluster.local", ArgoCDNamespace)
+		if err := client.createConnection(
+			GiteaConnectionName,
+			"gitea",
+			giteaURL,
+			giteaToken,
+			argocdServerURL,
+			ArgoCDNamespace,
+			"", // empty argocd token — in-cluster uses service account
+		); err != nil {
+			return fmt.Errorf("create gitea connection: %w", err)
+		}
+		fmt.Printf("    Gitea connection '%s' created and set as active\n", GiteaConnectionName)
 	}
 
 	// Register each spoke.
