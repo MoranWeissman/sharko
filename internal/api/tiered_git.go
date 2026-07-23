@@ -15,7 +15,9 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -161,6 +163,17 @@ func (s *Server) providerFromConnectionWithToken(conn *models.Connection, token 
 			return s.connSvc.GetActiveGitProvider()
 		}
 		return gitprovider.NewAzureDevOpsProvider(conn.Git.Organization, conn.Git.Project, conn.Git.Repository, token), nil
+	case models.GitProviderGitea:
+		if token == "" {
+			return s.connSvc.GetActiveGitProvider()
+		}
+		// Derive baseURL from RepoURL (scheme + host).
+		// Gitea SDK appends /api/v1 automatically.
+		baseURL, err := deriveBaseURL(conn.Git.RepoURL)
+		if err != nil {
+			return nil, fmt.Errorf("gitea provider: %w", err)
+		}
+		return gitprovider.NewGiteaProvider(baseURL, conn.Git.Owner, conn.Git.Repo, token)
 	default:
 		// Unknown provider — defer to the connection service which produces
 		// the canonical error message.
@@ -218,4 +231,20 @@ func stripCoAuthorEmailHint(email string) string {
 		return ""
 	}
 	return email
+}
+
+// deriveBaseURL extracts scheme+host from a repo URL for Gitea SDK client construction.
+// The Gitea SDK appends /api/v1 automatically, so we only need the base.
+func deriveBaseURL(repoURL string) (string, error) {
+	if repoURL == "" {
+		return "", fmt.Errorf("repo_url is empty")
+	}
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return "", fmt.Errorf("parse repo_url: %w", err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("repo_url must have scheme and host")
+	}
+	return fmt.Sprintf("%s://%s", u.Scheme, u.Host), nil
 }

@@ -12,6 +12,7 @@ type GitProviderType string
 const (
 	GitProviderGitHub      GitProviderType = "github"
 	GitProviderAzureDevOps GitProviderType = "azuredevops"
+	GitProviderGitea       GitProviderType = "gitea"
 )
 
 // GitRepoConfig holds Git repository configuration.
@@ -113,8 +114,14 @@ func (g *GitRepoConfig) ParseRepoURL() error {
 		return nil
 	}
 
-	// GitHub (github.com or any other host = GitHub Enterprise).
-	g.Provider = GitProviderGitHub
+	// GitHub (github.com or any other host = GitHub Enterprise) OR Gitea.
+	// Gitea URLs have the same owner/repo shape as GitHub, but the provider
+	// must be set explicitly by the caller (a bare self-hosted URL cannot
+	// self-identify Gitea vs GitHub-Enterprise).
+	// Preserve an explicit Gitea provider; otherwise default to GitHub.
+	if g.Provider != GitProviderGitea {
+		g.Provider = GitProviderGitHub
+	}
 	if len(parts) < 2 {
 		// Explicit-fields override. The URL path lacks the owner/repo
 		// segments the path-parser needs, but if the caller already
@@ -264,6 +271,9 @@ func (c *Connection) ToResponse(isActive bool) ConnectionResponse {
 	case GitProviderAzureDevOps:
 		repoID = c.Git.Organization + "/" + c.Git.Project + "/" + c.Git.Repository
 		token = c.Git.PAT
+	case GitProviderGitea:
+		repoID = c.Git.Owner + "/" + c.Git.Repo
+		token = c.Git.Token
 	}
 
 	return ConnectionResponse{

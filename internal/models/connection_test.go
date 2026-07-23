@@ -62,6 +62,82 @@ func TestConnectionToResponse(t *testing.T) {
 	}
 }
 
+// TestParseRepoURL_Gitea covers the Gitea provider case: ParseRepoURL must
+// preserve an explicit Provider=gitea when the caller set it before calling
+// ParseRepoURL, because a bare self-hosted URL cannot self-identify Gitea vs
+// GitHub-Enterprise. Gitea URLs have the same owner/repo shape as GitHub.
+func TestParseRepoURL_Gitea(t *testing.T) {
+	tests := []struct {
+		name         string
+		in           GitRepoConfig
+		wantErr      bool
+		wantProvider GitProviderType
+		wantOwner    string
+		wantRepo     string
+	}{
+		{
+			name: "Gitea_ExplicitProvider_OwnerRepoPath_Preserved",
+			in: GitRepoConfig{
+				Provider: GitProviderGitea,
+				RepoURL:  "https://gitea.example.com/test-owner/test-repo",
+			},
+			wantErr:      false,
+			wantProvider: GitProviderGitea,
+			wantOwner:    "test-owner",
+			wantRepo:     "test-repo",
+		},
+		{
+			name: "Gitea_ExplicitProvider_ExplicitFields_Preserved",
+			in: GitRepoConfig{
+				Provider: GitProviderGitea,
+				RepoURL:  "https://gitea.example.com/path-owner/path-repo",
+				Owner:    "explicit-owner",
+				Repo:     "explicit-repo",
+			},
+			wantErr:      false,
+			wantProvider: GitProviderGitea,
+			wantOwner:    "path-owner", // path parse wins when path is valid
+			wantRepo:     "path-repo",
+		},
+		{
+			name: "GitHub_NoExplicitProvider_DefaultsToGitHub",
+			in: GitRepoConfig{
+				// Provider not set, URL is self-hosted
+				RepoURL: "https://gitea.example.com/test-owner/test-repo",
+			},
+			wantErr:      false,
+			wantProvider: GitProviderGitHub, // defaults to GitHub-Enterprise
+			wantOwner:    "test-owner",
+			wantRepo:     "test-repo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := tt.in // copy
+			err := g.ParseRepoURL()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ParseRepoURL() = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseRepoURL() = %v, want nil", err)
+			}
+			if g.Provider != tt.wantProvider {
+				t.Errorf("Provider = %q, want %q", g.Provider, tt.wantProvider)
+			}
+			if g.Owner != tt.wantOwner {
+				t.Errorf("Owner = %q, want %q", g.Owner, tt.wantOwner)
+			}
+			if g.Repo != tt.wantRepo {
+				t.Errorf("Repo = %q, want %q", g.Repo, tt.wantRepo)
+			}
+		})
+	}
+}
+
 // TestParseRepoURL_ExplicitFieldsOverride covers V126-4.1 / BUG-189:
 // ParseRepoURL must accept a URL whose path can't be parsed into owner/repo
 // when the caller has already populated the explicit Owner+Repo fields.
