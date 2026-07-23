@@ -857,7 +857,7 @@ func giteaAddFile(token, owner, repo, filePath, content string) error {
 // with the two addons registerSpokes assigns (metrics-server + external-secrets).
 func generateAddonsCatalogSeed() string {
 	return `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
-apiVersion: sharko.dev/v1alpha1
+apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog
@@ -880,25 +880,25 @@ spec:
 // generateManagedClustersSeed generates a managed-clusters.yaml seed content
 // assigning ~2 addons across the given spoke names.
 func generateManagedClustersSeed(spokeNames []string) string {
-	// Placeholder: assign metrics-server to spoke-eu, external-secrets to spoke-us.
-	// For N>2, alternate addons or assign none.
-	yaml := "apiVersion: sharko.dev/v1alpha1\n"
+	// Placeholder: assign metrics-server to spoke0, external-secrets to spoke1.
+	// For N>2, assign no addons.
+	yaml := "# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json\n"
+	yaml += "apiVersion: sharko.dev/v1\n"
 	yaml += "kind: ManagedClusters\n"
 	yaml += "metadata:\n"
 	yaml += "  name: managed-clusters\n"
-	yaml += "clusters:\n"
+	yaml += "spec:\n"
+	yaml += "  clusters:\n"
 	for i, name := range spokeNames {
-		yaml += fmt.Sprintf("- name: %s\n", name)
-		yaml += "  addons:\n"
+		yaml += fmt.Sprintf("  - name: %s\n", name)
 		if i == 0 {
-			yaml += "  - name: metrics-server\n"
-			yaml += "    version: \"0.7.0\"\n"
+			yaml += "    labels:\n"
+			yaml += "      metrics-server: enabled\n"
 		} else if i == 1 {
-			yaml += "  - name: external-secrets\n"
-			yaml += "    version: \"0.10.0\"\n"
-		} else {
-			yaml += "  # No addons assigned\n"
+			yaml += "    labels:\n"
+			yaml += "      external-secrets: enabled\n"
 		}
+		// No labels for i > 1 (no addons assigned)
 	}
 	return yaml
 }
