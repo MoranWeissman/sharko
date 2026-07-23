@@ -537,6 +537,9 @@ func registerSpokes(numSpokes int, spokeNames []string, gitBackend, giteaURL, gi
 
 	// Start background port-forward to Sharko API.
 	fmt.Println("    Starting port-forward to Sharko API...")
+	if isLocalPortInUse(8080) {
+		return fmt.Errorf("local port 8080 is already in use — the playground needs it to reach Sharko. Stop whatever is using it (e.g. a stale 'sharko serve --demo' or an old kubectl port-forward) and re-run. On macOS/Linux find it with: lsof -nP -iTCP:8080 -sTCP:LISTEN")
+	}
 	pfCmd, err := startBackground("kubectl", "--context", ContextHub,
 		"-n", Namespace, "port-forward", "svc/"+Release, "8080:80")
 	if err != nil {

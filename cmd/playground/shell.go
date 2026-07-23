@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -171,4 +172,14 @@ func mustNewRequest(method, url, body string) *http.Request {
 		panic(fmt.Sprintf("mustNewRequest: %v", err))
 	}
 	return req
+}
+
+// isLocalPortInUse returns true if something is already listening on the given TCP port on localhost.
+func isLocalPortInUse(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return true // couldn't bind → something's using it (or perms) → treat as in-use
+	}
+	_ = ln.Close()
+	return false
 }
