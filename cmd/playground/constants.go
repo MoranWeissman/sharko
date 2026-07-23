@@ -30,7 +30,7 @@ const (
 	// GiteaRepoName is the repo name for the Gitea repository (used when PLAYGROUND_GIT_BACKEND=gitea).
 	GiteaRepoName = "sharko-playground"
 	// GiteaAdminUser is the admin username created in Gitea.
-	GiteaAdminUser = "admin"
+	GiteaAdminUser = "sharko"
 	// GiteaAdminPassword is the admin password (local dev only — NOT for production).
 	GiteaAdminPassword = "sharko-play"
 	// GiteaAdminEmail is the email for the Gitea admin user.
