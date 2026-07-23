@@ -99,8 +99,13 @@ func (c *apiClient) registerCluster(name, kubeconfig string, addons map[string]b
 
 // createConnection creates a new Sharko connection and sets it as active.
 // The argocdToken is optional (empty string for in-cluster service account auth).
+// Retries up to 5 times with a 3s backoff to handle transient failures during
+// cold playground launch (e.g. hitting a pre-rollout pod).
 func (c *apiClient) createConnection(name, provider, giteaURL, giteaToken, argocdServerURL, argocdNamespace, argocdToken string) error {
-	// Build the create connection request
+	const maxAttempts = 5
+	const retryDelay = 3 * time.Second
+
+	// Build the create connection request body once (shared across retries)
 	reqBody := map[string]interface{}{
 		"name":           name,
 		"set_as_default": true,
@@ -120,58 +125,79 @@ func (c *apiClient) createConnection(name, provider, giteaURL, giteaToken, argoc
 		reqBody["argocd"].(map[string]interface{})["token"] = argocdToken
 	}
 
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return fmt.Errorf("marshal create connection request: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", c.baseURL+"/api/v1/connections/", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create connection request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.token)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("POST /api/v1/connections/: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("POST /api/v1/connections/: status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	// Set the connection as active
 	setActiveReq := map[string]string{
 		"connection_name": name,
 	}
-	body, err = json.Marshal(setActiveReq)
-	if err != nil {
-		return fmt.Errorf("marshal set active request: %w", err)
+
+	// Retry loop for both create + set-active
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			fmt.Printf("  Creating Gitea connection (attempt %d/%d)...\n", attempt, maxAttempts)
+			time.Sleep(retryDelay)
+		}
+
+		// Attempt to create the connection
+		body, err := json.Marshal(reqBody)
+		if err != nil {
+			return fmt.Errorf("marshal create connection request: %w", err)
+		}
+
+		req, err := http.NewRequest("POST", c.baseURL+"/api/v1/connections/", bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("create connection request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.token)
+
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("POST /api/v1/connections/: %w", err)
+			continue // retry on transport error
+		}
+
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("POST /api/v1/connections/: status %d: %s", resp.StatusCode, string(bodyBytes))
+			continue // retry on non-2xx
+		}
+		resp.Body.Close()
+
+		// Set the connection as active
+		body, err = json.Marshal(setActiveReq)
+		if err != nil {
+			return fmt.Errorf("marshal set active request: %w", err)
+		}
+
+		req, err = http.NewRequest("POST", c.baseURL+"/api/v1/connections/active", bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("create set active request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.token)
+
+		resp, err = client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("POST /api/v1/connections/active: %w", err)
+			continue // retry on transport error
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("POST /api/v1/connections/active: status %d: %s", resp.StatusCode, string(bodyBytes))
+			continue // retry on non-200
+		}
+		resp.Body.Close()
+
+		// Success!
+		return nil
 	}
 
-	req, err = http.NewRequest("POST", c.baseURL+"/api/v1/connections/active", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create set active request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.token)
-
-	resp, err = client.Do(req)
-	if err != nil {
-		return fmt.Errorf("POST /api/v1/connections/active: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("POST /api/v1/connections/active: status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	return nil
+	// All attempts failed
+	return fmt.Errorf("createConnection failed after %d attempts: %w", maxAttempts, lastErr)
 }
 
 // waitForSharkoReady polls the Sharko health endpoint until it returns a successful

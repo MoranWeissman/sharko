@@ -474,7 +474,7 @@ func installSharko(gitBackend, gitfakeURL, giteaURL string) error {
 		"--set", "operator.drivesLabels=false",
 		"--set", "bootstrapAdmin.password=admin",
 		"--wait",
-		"--timeout", "3m",
+		"--timeout", "5m",
 	}
 
 	// Backend-specific settings.
@@ -490,8 +490,21 @@ func installSharko(gitBackend, gitfakeURL, giteaURL string) error {
 		)
 	}
 
-	if _, stderr, err := runCmd(5*time.Minute, "helm", args...); err != nil {
+	if _, stderr, err := runCmd(10*time.Minute, "helm", args...); err != nil {
 		return fmt.Errorf("helm upgrade: %w (stderr=%s)", err, stderr)
+	}
+
+	// Belt-and-suspenders: explicitly wait for the Sharko deployment rollout to
+	// complete before returning. This ensures the pod is on the new image before
+	// registerSpokes runs (fixes cold-launch race where createConnection might hit
+	// the pre-rollout pod).
+	fmt.Println("    Waiting for Sharko deployment rollout...")
+	kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
+	_, stderr, err := runCmd(3*time.Minute, "kubectl", "--kubeconfig", kubeconfigPath,
+		"--context", ContextHub, "-n", Namespace,
+		"rollout", "status", "deploy/"+Release, "--timeout=180s")
+	if err != nil {
+		return fmt.Errorf("wait for sharko rollout: %w (stderr=%s)", err, stderr)
 	}
 
 	fmt.Println("    Sharko installed")
