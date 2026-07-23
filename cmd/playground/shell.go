@@ -81,6 +81,7 @@ func kubectlConfigView(kubeconfig, context, jsonpath string) (string, error) {
 		"--kubeconfig", kubeconfig,
 		"--context", context,
 		"--minify",
+		"--raw",
 		"-o", "jsonpath="+jsonpath)
 	if err != nil {
 		return "", fmt.Errorf("kubectl config view: %w (stderr=%s)", err, stderr)
