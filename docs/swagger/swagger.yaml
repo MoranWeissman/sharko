@@ -414,10 +414,12 @@ definitions:
     enum:
     - github
     - azuredevops
+    - gitea
     type: string
     x-enum-varnames:
     - GitProviderGitHub
     - GitProviderAzureDevOps
+    - GitProviderGitea
   github_com_MoranWeissman_sharko_internal_models.GitRepoConfig:
     properties:
       organization:

@@ -1,9 +1,9 @@
 module github.com/MoranWeissman/sharko
 
-go 1.26
+go 1.25.8
 
 require (
-	code.gitea.io/sdk/gitea v0.25.1
+	code.gitea.io/sdk/gitea v0.23.2
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.13
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.14
