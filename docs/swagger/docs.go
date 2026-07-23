@@ -7847,11 +7847,13 @@ const docTemplate = `{
             "type": "string",
             "enum": [
                 "github",
-                "azuredevops"
+                "azuredevops",
+                "gitea"
             ],
             "x-enum-varnames": [
                 "GitProviderGitHub",
-                "GitProviderAzureDevOps"
+                "GitProviderAzureDevOps",
+                "GitProviderGitea"
             ]
         },
         "github_com_MoranWeissman_sharko_internal_models.GitRepoConfig": {

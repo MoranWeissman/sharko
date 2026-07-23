@@ -224,8 +224,9 @@ func validateConnectionRequest(req models.CreateConnectionRequest) error {
 	// per-provider identifier checks.
 	if req.Git.Provider != "" &&
 		req.Git.Provider != models.GitProviderGitHub &&
-		req.Git.Provider != models.GitProviderAzureDevOps {
-		return fmt.Errorf("git.provider %q is not supported (must be one of: github, azuredevops): %w", req.Git.Provider, ErrValidation)
+		req.Git.Provider != models.GitProviderAzureDevOps &&
+		req.Git.Provider != models.GitProviderGitea {
+		return fmt.Errorf("git.provider %q is not supported (must be one of: github, azuredevops, gitea): %w", req.Git.Provider, ErrValidation)
 	}
 
 	// Probe with a synthetic non-empty name. Create() auto-derives the name
@@ -240,11 +241,13 @@ func validateConnectionRequest(req models.CreateConnectionRequest) error {
 		// operator-facing wording stable for the TestRejects… cases.
 		switch missing[0] {
 		case "git.provider":
-			return fmt.Errorf("git.provider is required (one of: github, azuredevops): %w", ErrValidation)
+			return fmt.Errorf("git.provider is required (one of: github, azuredevops, gitea): %w", ErrValidation)
 		case "git.owner_repo_or_repo_url":
 			return fmt.Errorf("git.repo_url or (git.owner + git.repo) is required for github provider: %w", ErrValidation)
 		case "git.azure_repo_or_repo_url":
 			return fmt.Errorf("git.repo_url or (git.organization + git.project + git.repository) is required for azuredevops provider: %w", ErrValidation)
+		case "git.gitea_repo_or_repo_url":
+			return fmt.Errorf("git.repo_url or (git.owner + git.repo) is required for gitea provider: %w", ErrValidation)
 		default:
 			return fmt.Errorf("connection request missing required fields %v: %w", missing, ErrValidation)
 		}
@@ -293,6 +296,10 @@ func missingRequiredConnectionFields(c models.Connection) []string {
 	case models.GitProviderAzureDevOps:
 		if c.Git.RepoURL == "" && (c.Git.Organization == "" || c.Git.Project == "" || c.Git.Repository == "") {
 			missing = append(missing, "git.azure_repo_or_repo_url")
+		}
+	case models.GitProviderGitea:
+		if c.Git.RepoURL == "" && (c.Git.Owner == "" || c.Git.Repo == "") {
+			missing = append(missing, "git.gitea_repo_or_repo_url")
 		}
 	default:
 		// Unsupported provider — surface as an unknown-provider missing
@@ -614,7 +621,40 @@ func (s *ConnectionService) buildGitProvider(conn *models.Connection) (gitprovid
 			return nil, fmt.Errorf("Azure DevOps PAT not configured. Provide it via Settings UI or set AZURE_DEVOPS_PAT env var with SHARKO_DEV_MODE=true")
 		}
 		return gitprovider.NewAzureDevOpsProvider(conn.Git.Organization, conn.Git.Project, conn.Git.Repository, pat), nil
+	case models.GitProviderGitea:
+		token := conn.Git.Token
+		if token == "" && s.devMode {
+			token = os.Getenv("GITEA_TOKEN")
+			if token != "" {
+				slog.Info("git: using GITEA_TOKEN env var (dev mode fallback)")
+			}
+		}
+		if token == "" {
+			return nil, fmt.Errorf("Gitea token not configured. Provide it via Settings UI or set GITEA_TOKEN env var with SHARKO_DEV_MODE=true")
+		}
+		// Derive baseURL from RepoURL (scheme + host).
+		baseURL, err := deriveGiteaBaseURL(conn.Git.RepoURL)
+		if err != nil {
+			return nil, fmt.Errorf("gitea provider: %w", err)
+		}
+		return gitprovider.NewGiteaProvider(baseURL, conn.Git.Owner, conn.Git.Repo, token)
 	default:
 		return nil, fmt.Errorf("unsupported git provider: %s", conn.Git.Provider)
 	}
+}
+
+// deriveGiteaBaseURL extracts scheme+host from a repo URL for Gitea SDK client construction.
+// The Gitea SDK appends /api/v1 automatically, so we only need the base.
+func deriveGiteaBaseURL(repoURL string) (string, error) {
+	if repoURL == "" {
+		return "", fmt.Errorf("repo_url is empty")
+	}
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return "", fmt.Errorf("parse repo_url: %w", err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("repo_url must have scheme and host")
+	}
+	return fmt.Sprintf("%s://%s", u.Scheme, u.Host), nil
 }
