@@ -183,3 +183,26 @@ func isLocalPortInUse(port int) bool {
 	_ = ln.Close()
 	return false
 }
+
+// execGiteaCmd runs a gitea CLI command inside the gitea pod as the git user,
+// retrying to absorb the DB-not-ready startup race (sqlite single-writer vs the
+// server's own boot-time init). Returns stdout on success.
+func execGiteaCmd(kubeconfigPath, namespace, kubectlContext, giteaCmd string) (string, error) {
+	const maxAttempts = 10
+	const delay = 6 * time.Second
+	var lastStdout, lastStderr string
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		stdout, stderr, err := runCmd(60*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
+			"--context", kubectlContext, "-n", namespace,
+			"exec", "deploy/gitea", "--", "su", "git", "-c", giteaCmd)
+		if err == nil {
+			return stdout, nil
+		}
+		lastStdout, lastStderr, lastErr = stdout, stderr, err
+		// stderr from kubectl exec is often empty on a swallowed pod error, so log attempt.
+		fmt.Printf("      gitea exec attempt %d/%d failed (retrying in %s): %v %s\n", attempt, maxAttempts, delay, err, stderr)
+		time.Sleep(delay)
+	}
+	return lastStdout, fmt.Errorf("gitea exec failed after %d attempts: %w (stderr=%s)", maxAttempts, lastErr, lastStderr)
+}

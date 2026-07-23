@@ -374,12 +374,8 @@ spec:
 	// 2. Bootstrap Gitea headlessly
 	// Initialize the database schema (INSTALL_LOCK=true skips the web installer's auto-migration)
 	fmt.Println("    Initializing Gitea database schema (gitea migrate)...")
-	_, stderr, err := runCmd(30*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
-		"--context", ContextHub, "-n", Namespace,
-		"exec", "deploy/gitea", "--",
-		"su", "git", "-c", "gitea migrate")
-	if err != nil {
-		return "", "", fmt.Errorf("gitea migrate (init db schema): %w (stderr=%s)", err, stderr)
+	if _, migrateErr := execGiteaCmd(kubeconfigPath, Namespace, ContextHub, "gitea migrate"); migrateErr != nil {
+		return "", "", fmt.Errorf("gitea migrate (init db schema): %w", migrateErr)
 	}
 
 	fmt.Println("    Bootstrapping Gitea (creating admin user)...")
@@ -388,12 +384,17 @@ spec:
 	// Run as the 'git' user (uid 1000) because Gitea CLI refuses to run as root.
 	createUserCmd := fmt.Sprintf("gitea admin user create --admin --username %s --password %s --email %s --must-change-password=false",
 		GiteaAdminUser, GiteaAdminPassword, GiteaAdminEmail)
-	_, stderr, err = runCmd(30*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
-		"--context", ContextHub, "-n", Namespace,
-		"exec", "deploy/gitea", "--",
-		"su", "git", "-c", createUserCmd)
-	if err != nil && !contains(stderr, "user already exists") && !contains(stderr, "already exists") {
-		return "", "", fmt.Errorf("create gitea admin user: %w (stderr=%s)", err, stderr)
+	_, createErr := execGiteaCmd(kubeconfigPath, Namespace, ContextHub, createUserCmd)
+	// The retry helper already absorbed the race, but the create command may still
+	// report "already exists" on a re-run (fresh clusters won't hit this).
+	// We treat that as success — the user is there, which is what we need.
+	if createErr != nil {
+		// Check if it's the idempotent "already exists" case
+		errStr := createErr.Error()
+		if !contains(errStr, "user already exists") && !contains(errStr, "already exists") {
+			return "", "", fmt.Errorf("create gitea admin user: %w", createErr)
+		}
+		// else: user already exists, proceed
 	}
 
 	// Generate API token
@@ -401,12 +402,9 @@ spec:
 	// Run as the 'git' user (uid 1000) because Gitea CLI refuses to run as root.
 	generateTokenCmd := fmt.Sprintf("gitea admin user generate-access-token --username %s --token-name sharko-playground --scopes 'write:repository,write:user' --raw",
 		GiteaAdminUser)
-	tokenOut, stderr, err := runCmd(30*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
-		"--context", ContextHub, "-n", Namespace,
-		"exec", "deploy/gitea", "--",
-		"su", "git", "-c", generateTokenCmd)
-	if err != nil {
-		return "", "", fmt.Errorf("generate gitea token: %w (stderr=%s)", err, stderr)
+	tokenOut, tokenErr := execGiteaCmd(kubeconfigPath, Namespace, ContextHub, generateTokenCmd)
+	if tokenErr != nil {
+		return "", "", fmt.Errorf("generate gitea token: %w", tokenErr)
 	}
 	giteaToken = mustTrimSpace(tokenOut)
 
