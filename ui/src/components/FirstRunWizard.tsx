@@ -974,6 +974,9 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
           gitUrl = `https://dev.azure.com/${parts[0]}/${parts[1]}/_git/${parts[2]}`
         }
       }
+      // Gitea: self-hosted host not recoverable from API (git_repo_identifier
+      // is only owner/repo). Leave blank — user must re-enter the full URL to
+      // change it.
       setForm((prev) => ({
         ...prev,
         git_url: gitUrl,

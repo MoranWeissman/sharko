@@ -6,7 +6,6 @@ import {
   Loader2,
   CheckCircle,
   XCircle,
-  Activity,
   AlertTriangle,
   Sparkles,
   FolderGit2,
@@ -85,6 +84,10 @@ export function ConnectionSection() {
           gitUrl = `https://dev.azure.com/${parts[0]}/${parts[1]}/_git/${parts[2]}`
         }
       }
+      // Gitea: self-hosted host not recoverable from API (git_repo_identifier
+      // is only owner/repo). Leave blank — user must re-enter the full URL to
+      // change it; "Test Git" is disabled when git_url is empty so no garbage
+      // is sent to the backend.
       setForm({
         git_url: gitUrl,
         git_token: '',
@@ -228,19 +231,6 @@ export function ConnectionSection() {
     }
   }
 
-  async function handleTestConnection() {
-    setLiveStatus({ git: 'testing', argocd: 'testing' })
-    try {
-      const res = await api.testConnection()
-      setLiveStatus({
-        git: res.git.status === 'ok' ? 'ok' : 'error',
-        argocd: res.argocd.status === 'ok' ? 'ok' : 'error',
-      })
-    } catch {
-      setLiveStatus({ git: 'error', argocd: 'error' })
-    }
-  }
-
   if (loading) return <LoadingState message="Loading connection..." />
   if (error) return <ErrorState message={error} onRetry={refreshConnections} />
 
@@ -357,7 +347,7 @@ export function ConnectionSection() {
         </div>
       )}
 
-      {/* Live status bar */}
+      {/* Live status readout (passive) */}
       {isEdit && (
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Connection</h3>
@@ -378,19 +368,6 @@ export function ConnectionSection() {
               {liveStatus.argocd === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
               {liveStatus.argocd === 'idle' && <span className="text-[#3a6a8a]">—</span>}
             </span>
-            <button
-              type="button"
-              onClick={handleTestConnection}
-              disabled={liveStatus.git === 'testing' || liveStatus.argocd === 'testing'}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-            >
-              {(liveStatus.git === 'testing' || liveStatus.argocd === 'testing') ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <Activity className="h-3 w-3" />
-              )}
-              Test Connection
-            </button>
           </div>
         </div>
       )}
@@ -413,10 +390,18 @@ export function ConnectionSection() {
                   className={inputCls}
                   value={form.git_url}
                   onChange={(e) => { setForm(prev => ({ ...prev, git_url: e.target.value })); setTestStatus({ git: 'idle', argocd: 'idle' }) }}
-                  placeholder="https://github.com/org/repo"
-                  required
+                  placeholder={
+                    existingConn?.git_provider === 'gitea' && !form.git_url
+                      ? `Gitea repository: ${existingConn.git_repo_identifier} (enter full URL to change)`
+                      : 'https://github.com/org/repo'
+                  }
+                  required={existingConn?.git_provider !== 'gitea'}
                 />
-                <p className="mt-1 text-sm text-[#3a6a8a]">GitHub, GitHub Enterprise, or Azure DevOps (auto-detected from URL)</p>
+                <p className="mt-1 text-sm text-[#3a6a8a]">
+                  {existingConn?.git_provider === 'gitea' && !form.git_url
+                    ? 'Gitea host not shown (self-hosted). Enter the full Gitea URL to update.'
+                    : 'GitHub, GitHub Enterprise, Azure DevOps, or Gitea (auto-detected from URL)'}
+                </p>
               </div>
               <div>
                 <label className={labelCls}>Token</label>
