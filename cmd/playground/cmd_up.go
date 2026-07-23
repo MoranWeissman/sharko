@@ -1,12 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -374,12 +381,8 @@ spec:
 	// 2. Bootstrap Gitea headlessly
 	// Initialize the database schema (INSTALL_LOCK=true skips the web installer's auto-migration)
 	fmt.Println("    Initializing Gitea database schema (gitea migrate)...")
-	_, stderr, err := runCmd(30*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
-		"--context", ContextHub, "-n", Namespace,
-		"exec", "deploy/gitea", "--",
-		"su", "git", "-c", "gitea migrate")
-	if err != nil {
-		return "", "", fmt.Errorf("gitea migrate (init db schema): %w (stderr=%s)", err, stderr)
+	if _, migrateErr := execGiteaCmd(kubeconfigPath, Namespace, ContextHub, "gitea migrate"); migrateErr != nil {
+		return "", "", fmt.Errorf("gitea migrate (init db schema): %w", migrateErr)
 	}
 
 	fmt.Println("    Bootstrapping Gitea (creating admin user)...")
@@ -388,12 +391,17 @@ spec:
 	// Run as the 'git' user (uid 1000) because Gitea CLI refuses to run as root.
 	createUserCmd := fmt.Sprintf("gitea admin user create --admin --username %s --password %s --email %s --must-change-password=false",
 		GiteaAdminUser, GiteaAdminPassword, GiteaAdminEmail)
-	_, stderr, err = runCmd(30*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
-		"--context", ContextHub, "-n", Namespace,
-		"exec", "deploy/gitea", "--",
-		"su", "git", "-c", createUserCmd)
-	if err != nil && !contains(stderr, "user already exists") && !contains(stderr, "already exists") {
-		return "", "", fmt.Errorf("create gitea admin user: %w (stderr=%s)", err, stderr)
+	_, createErr := execGiteaCmd(kubeconfigPath, Namespace, ContextHub, createUserCmd)
+	// The retry helper already absorbed the race, but the create command may still
+	// report "already exists" on a re-run (fresh clusters won't hit this).
+	// We treat that as success — the user is there, which is what we need.
+	if createErr != nil {
+		// Check if it's the idempotent "already exists" case
+		errStr := createErr.Error()
+		if !contains(errStr, "user already exists") && !contains(errStr, "already exists") {
+			return "", "", fmt.Errorf("create gitea admin user: %w", createErr)
+		}
+		// else: user already exists, proceed
 	}
 
 	// Generate API token
@@ -401,31 +409,49 @@ spec:
 	// Run as the 'git' user (uid 1000) because Gitea CLI refuses to run as root.
 	generateTokenCmd := fmt.Sprintf("gitea admin user generate-access-token --username %s --token-name sharko-playground --scopes 'write:repository,write:user' --raw",
 		GiteaAdminUser)
-	tokenOut, stderr, err := runCmd(30*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
-		"--context", ContextHub, "-n", Namespace,
-		"exec", "deploy/gitea", "--",
-		"su", "git", "-c", generateTokenCmd)
-	if err != nil {
-		return "", "", fmt.Errorf("generate gitea token: %w (stderr=%s)", err, stderr)
+	tokenOut, tokenErr := execGiteaCmd(kubeconfigPath, Namespace, ContextHub, generateTokenCmd)
+	if tokenErr != nil {
+		return "", "", fmt.Errorf("generate gitea token: %w", tokenErr)
 	}
 	giteaToken = mustTrimSpace(tokenOut)
 
 	// 3. Create repo + seed files via Gitea REST API
 	fmt.Println("    Creating Gitea repository and seeding config files...")
 
-	// Start port-forward to access Gitea API from the playground process
-	pfCmd, err := startBackground("kubectl", "--kubeconfig", kubeconfigPath,
-		"--context", ContextHub, "-n", Namespace,
-		"port-forward", "svc/gitea", "13000:3000")
-	if err != nil {
-		return "", "", fmt.Errorf("start gitea port-forward: %w", err)
+	// Start port-forward to access Gitea API from the playground process.
+	// Retry establishing the tunnel to absorb flaky port-forward startup.
+	fmt.Println("    Establishing Gitea port-forward (with retry)...")
+	var pfCmd *exec.Cmd
+	pfReady := false
+	for attempt := 1; attempt <= 3; attempt++ {
+		var startErr error
+		pfCmd, startErr = startBackground("kubectl", "--kubeconfig", kubeconfigPath,
+			"--context", ContextHub, "-n", Namespace,
+			"port-forward", "svc/gitea", "13000:3000")
+		if startErr != nil {
+			fmt.Printf("      gitea port-forward start attempt %d/3 failed: %v\n", attempt, startErr)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		// Wait for readiness with a per-attempt timeout (25s).
+		if err := waitForGiteaAPI("http://localhost:13000", 25*time.Second); err != nil {
+			fmt.Printf("      gitea port-forward not ready (attempt %d/3): %v — retrying\n", attempt, err)
+			_ = killProcessGroup(pfCmd)
+			pfCmd = nil
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		pfReady = true
+		break
+	}
+	if !pfReady {
+		return "", "", fmt.Errorf("gitea port-forward did not become ready after 3 attempts")
 	}
 	defer func() {
-		_ = killProcessGroup(pfCmd)
+		if pfCmd != nil {
+			_ = killProcessGroup(pfCmd)
+		}
 	}()
-
-	// Wait a bit for port-forward to be ready
-	time.Sleep(2 * time.Second)
 
 	// Create the repository
 	if err := giteaCreateRepo(giteaToken, GiteaRepoName); err != nil {
@@ -521,6 +547,117 @@ func installSharko(gitBackend, gitfakeURL, giteaURL string) error {
 	return nil
 }
 
+// mintArgoCDToken retrieves the ArgoCD admin password and mints an API token
+// by authenticating via the ArgoCD REST session endpoint. This token is needed
+// for Sharko to write ArgoCD cluster secrets when registering managed clusters.
+func mintArgoCDToken(kubeconfigPath string) (string, error) {
+	const argoCDPort = 18443
+	const maxAttempts = 5
+	const retryDelay = 3 * time.Second
+
+	// 1. Read ArgoCD admin password from the initial admin secret.
+	fmt.Println("    Reading ArgoCD admin password...")
+	passwordB64, _, err := runCmd(10*time.Second, "kubectl",
+		"--kubeconfig", kubeconfigPath,
+		"--context", ContextHub,
+		"-n", ArgoCDNamespace,
+		"get", "secret", "argocd-initial-admin-secret",
+		"-o", "jsonpath={.data.password}")
+	if err != nil {
+		return "", fmt.Errorf("read argocd-initial-admin-secret: %w", err)
+	}
+	passwordBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(passwordB64))
+	if err != nil {
+		return "", fmt.Errorf("decode argocd admin password: %w", err)
+	}
+	password := strings.TrimSpace(string(passwordBytes))
+
+	// 2. Check if the port is available.
+	if isLocalPortInUse(argoCDPort) {
+		return "", fmt.Errorf("local port %d is already in use — the playground needs it to mint the ArgoCD token. Stop whatever is using it and re-run", argoCDPort)
+	}
+
+	// 3. Start background port-forward to argocd-server.
+	fmt.Println("    Starting port-forward to argocd-server...")
+	pfCmd, err := startBackground("kubectl",
+		"--kubeconfig", kubeconfigPath,
+		"--context", ContextHub,
+		"-n", ArgoCDNamespace,
+		"port-forward", "svc/argocd-server",
+		fmt.Sprintf("%d:443", argoCDPort))
+	if err != nil {
+		return "", fmt.Errorf("start argocd port-forward: %w", err)
+	}
+	defer func() {
+		_ = killProcessGroup(pfCmd)
+	}()
+
+	// 4. Wait for argocd-server to be reachable and POST /api/v1/session to mint a token.
+	// Use an insecure TLS client since ArgoCD uses a self-signed cert.
+	insecureClient := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	sessionURL := fmt.Sprintf("https://localhost:%d/api/v1/session", argoCDPort)
+	sessionBody := map[string]string{
+		"username": "admin",
+		"password": password,
+	}
+	bodyBytes, err := json.Marshal(sessionBody)
+	if err != nil {
+		return "", fmt.Errorf("marshal session request: %w", err)
+	}
+
+	fmt.Println("    Waiting for argocd-server and minting API token...")
+	var token string
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			time.Sleep(retryDelay)
+		}
+
+		req, err := http.NewRequest("POST", sessionURL, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return "", fmt.Errorf("create session request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := insecureClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("POST /api/v1/session (attempt %d/%d): %w", attempt, maxAttempts, err)
+			continue
+		}
+
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("POST /api/v1/session (attempt %d/%d): status %d: %s", attempt, maxAttempts, resp.StatusCode, string(respBody))
+			continue
+		}
+
+		// Parse the token from the response.
+		var sessionResp struct {
+			Token string `json:"token"`
+		}
+		if err := json.Unmarshal(respBody, &sessionResp); err != nil {
+			return "", fmt.Errorf("parse session response: %w", err)
+		}
+		token = sessionResp.Token
+		break
+	}
+
+	if token == "" {
+		return "", fmt.Errorf("mint argocd token: %w", lastErr)
+	}
+
+	fmt.Println("    ArgoCD API token minted successfully")
+	return token, nil
+}
+
 // registerSpokes registers the N spokes as Sharko-managed clusters via REST API.
 // For Gitea backend, also creates a gitea-typed connection and sets it as active.
 func registerSpokes(numSpokes int, spokeNames []string, gitBackend, giteaURL, giteaToken string) error {
@@ -580,6 +717,14 @@ func registerSpokes(numSpokes int, spokeNames []string, gitBackend, giteaURL, gi
 	// For GitFake, skip this step (GitFake is wired via the bootstrap connection or env vars).
 	if gitBackend == "gitea" {
 		fmt.Println("    Creating Gitea connection...")
+
+		// Mint an ArgoCD API token so Sharko can write ArgoCD cluster secrets.
+		kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
+		argocdToken, err := mintArgoCDToken(kubeconfigPath)
+		if err != nil {
+			return fmt.Errorf("mint argocd token: %w", err)
+		}
+
 		argocdServerURL := fmt.Sprintf("http://argocd-server.%s.svc.cluster.local", ArgoCDNamespace)
 		if err := client.createConnection(
 			GiteaConnectionName,
@@ -588,7 +733,7 @@ func registerSpokes(numSpokes int, spokeNames []string, gitBackend, giteaURL, gi
 			giteaToken,
 			argocdServerURL,
 			ArgoCDNamespace,
-			"", // empty argocd token — in-cluster uses service account
+			argocdToken,
 		); err != nil {
 			return fmt.Errorf("create gitea connection: %w", err)
 		}
@@ -679,53 +824,59 @@ func showStatusSnapshot() error {
 }
 
 // giteaCreateRepo creates a new repository via the Gitea REST API.
+// Retries on transport errors or unexpected status codes (preserves 201/409 success semantics).
 func giteaCreateRepo(token, repoName string) error {
-	client := newHTTPClient()
-	reqBody := fmt.Sprintf(`{"name":"%s","private":false,"auto_init":true,"default_branch":"main"}`, repoName)
-	req := mustNewRequest("POST", "http://localhost:13000/api/v1/user/repos", reqBody)
-	req.Header.Set("Authorization", "token "+token)
-	req.Header.Set("Content-Type", "application/json")
+	return retryHTTP(5, 2*time.Second, func() error {
+		client := newHTTPClient()
+		reqBody := fmt.Sprintf(`{"name":"%s","private":false,"auto_init":true,"default_branch":"main"}`, repoName)
+		req := mustNewRequest("POST", "http://localhost:13000/api/v1/user/repos", reqBody)
+		req.Header.Set("Authorization", "token "+token)
+		req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("gitea create repo request: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("gitea create repo request: %w", err)
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != 201 && resp.StatusCode != 409 {
-		return fmt.Errorf("gitea create repo: unexpected status %d", resp.StatusCode)
-	}
-	return nil
+		if resp.StatusCode != 201 && resp.StatusCode != 409 {
+			return fmt.Errorf("gitea create repo: unexpected status %d", resp.StatusCode)
+		}
+		return nil
+	})
 }
 
 // giteaAddFile adds or updates a file in a Gitea repository via the Contents API.
+// Retries on transport errors or unexpected status codes (preserves 201 success semantics).
 func giteaAddFile(token, owner, repo, filePath, content string) error {
-	client := newHTTPClient()
-	encodedContent := base64.StdEncoding.EncodeToString([]byte(content))
-	reqBody := fmt.Sprintf(`{"branch":"main","content":"%s","message":"Add %s"}`, encodedContent, filePath)
+	return retryHTTP(5, 2*time.Second, func() error {
+		client := newHTTPClient()
+		encodedContent := base64.StdEncoding.EncodeToString([]byte(content))
+		reqBody := fmt.Sprintf(`{"branch":"main","content":"%s","message":"Add %s"}`, encodedContent, filePath)
 
-	url := fmt.Sprintf("http://localhost:13000/api/v1/repos/%s/%s/contents/%s", owner, repo, filePath)
-	req := mustNewRequest("POST", url, reqBody)
-	req.Header.Set("Authorization", "token "+token)
-	req.Header.Set("Content-Type", "application/json")
+		url := fmt.Sprintf("http://localhost:13000/api/v1/repos/%s/%s/contents/%s", owner, repo, filePath)
+		req := mustNewRequest("POST", url, reqBody)
+		req.Header.Set("Authorization", "token "+token)
+		req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("gitea add file request: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("gitea add file request: %w", err)
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != 201 {
-		return fmt.Errorf("gitea add file %s: unexpected status %d", filePath, resp.StatusCode)
-	}
-	return nil
+		if resp.StatusCode != 201 {
+			return fmt.Errorf("gitea add file %s: unexpected status %d", filePath, resp.StatusCode)
+		}
+		return nil
+	})
 }
 
 // generateAddonsCatalogSeed generates the addons-catalog.yaml seed content
 // with the two addons registerSpokes assigns (metrics-server + external-secrets).
 func generateAddonsCatalogSeed() string {
 	return `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
-apiVersion: sharko.dev/v1alpha1
+apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog
@@ -748,25 +899,25 @@ spec:
 // generateManagedClustersSeed generates a managed-clusters.yaml seed content
 // assigning ~2 addons across the given spoke names.
 func generateManagedClustersSeed(spokeNames []string) string {
-	// Placeholder: assign metrics-server to spoke-eu, external-secrets to spoke-us.
-	// For N>2, alternate addons or assign none.
-	yaml := "apiVersion: sharko.dev/v1alpha1\n"
+	// Placeholder: assign metrics-server to spoke0, external-secrets to spoke1.
+	// For N>2, assign no addons.
+	yaml := "# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json\n"
+	yaml += "apiVersion: sharko.dev/v1\n"
 	yaml += "kind: ManagedClusters\n"
 	yaml += "metadata:\n"
 	yaml += "  name: managed-clusters\n"
-	yaml += "clusters:\n"
+	yaml += "spec:\n"
+	yaml += "  clusters:\n"
 	for i, name := range spokeNames {
-		yaml += fmt.Sprintf("- name: %s\n", name)
-		yaml += "  addons:\n"
+		yaml += fmt.Sprintf("  - name: %s\n", name)
 		if i == 0 {
-			yaml += "  - name: metrics-server\n"
-			yaml += "    version: \"0.7.0\"\n"
+			yaml += "    labels:\n"
+			yaml += "      metrics-server: enabled\n"
 		} else if i == 1 {
-			yaml += "  - name: external-secrets\n"
-			yaml += "    version: \"0.10.0\"\n"
-		} else {
-			yaml += "  # No addons assigned\n"
+			yaml += "    labels:\n"
+			yaml += "      external-secrets: enabled\n"
 		}
+		// No labels for i > 1 (no addons assigned)
 	}
 	return yaml
 }

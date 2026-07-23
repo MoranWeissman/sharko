@@ -81,6 +81,7 @@ func kubectlConfigView(kubeconfig, context, jsonpath string) (string, error) {
 		"--kubeconfig", kubeconfig,
 		"--context", context,
 		"--minify",
+		"--raw",
 		"-o", "jsonpath="+jsonpath)
 	if err != nil {
 		return "", fmt.Errorf("kubectl config view: %w (stderr=%s)", err, stderr)
@@ -174,6 +175,47 @@ func mustNewRequest(method, url, body string) *http.Request {
 	return req
 }
 
+// waitForGiteaAPI polls the Gitea version endpoint through the local port-forward
+// until it answers (tunnel established + server ready) or the timeout expires.
+func waitForGiteaAPI(baseURL string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	client := newHTTPClient()
+	url := baseURL + "/api/v1/version"
+	var lastErr error
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(url)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				return nil
+			}
+			lastErr = fmt.Errorf("status %d", resp.StatusCode)
+		} else {
+			lastErr = err
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("gitea API not ready at %s within %s: %w", url, timeout, lastErr)
+}
+
+// retryHTTP retries a function up to 'attempts' times with 'delay' backoff between attempts.
+// The function should return nil on success, error on failure (either transport or unexpected status).
+func retryHTTP(attempts int, delay time.Duration, fn func() error) error {
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if err := fn(); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			if i < attempts-1 {
+				fmt.Printf("      Attempt %d/%d failed (%v), retrying in %s...\n", i+1, attempts, err, delay)
+				time.Sleep(delay)
+			}
+		}
+	}
+	return fmt.Errorf("failed after %d attempts: %w", attempts, lastErr)
+}
+
 // isLocalPortInUse returns true if something is already listening on the given TCP port on localhost.
 func isLocalPortInUse(port int) bool {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
@@ -182,4 +224,27 @@ func isLocalPortInUse(port int) bool {
 	}
 	_ = ln.Close()
 	return false
+}
+
+// execGiteaCmd runs a gitea CLI command inside the gitea pod as the git user,
+// retrying to absorb the DB-not-ready startup race (sqlite single-writer vs the
+// server's own boot-time init). Returns stdout on success.
+func execGiteaCmd(kubeconfigPath, namespace, kubectlContext, giteaCmd string) (string, error) {
+	const maxAttempts = 10
+	const delay = 6 * time.Second
+	var lastStdout, lastStderr string
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		stdout, stderr, err := runCmd(60*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
+			"--context", kubectlContext, "-n", namespace,
+			"exec", "deploy/gitea", "--", "su", "git", "-c", giteaCmd)
+		if err == nil {
+			return stdout, nil
+		}
+		lastStdout, lastStderr, lastErr = stdout, stderr, err
+		// stderr from kubectl exec is often empty on a swallowed pod error, so log attempt.
+		fmt.Printf("      gitea exec attempt %d/%d failed (retrying in %s): %v %s\n", attempt, maxAttempts, delay, err, stderr)
+		time.Sleep(delay)
+	}
+	return lastStdout, fmt.Errorf("gitea exec failed after %d attempts: %w (stderr=%s)", maxAttempts, lastErr, lastStderr)
 }
