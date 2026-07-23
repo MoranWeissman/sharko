@@ -1,12 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -522,6 +528,117 @@ func installSharko(gitBackend, gitfakeURL, giteaURL string) error {
 	return nil
 }
 
+// mintArgoCDToken retrieves the ArgoCD admin password and mints an API token
+// by authenticating via the ArgoCD REST session endpoint. This token is needed
+// for Sharko to write ArgoCD cluster secrets when registering managed clusters.
+func mintArgoCDToken(kubeconfigPath string) (string, error) {
+	const argoCDPort = 18443
+	const maxAttempts = 5
+	const retryDelay = 3 * time.Second
+
+	// 1. Read ArgoCD admin password from the initial admin secret.
+	fmt.Println("    Reading ArgoCD admin password...")
+	passwordB64, _, err := runCmd(10*time.Second, "kubectl",
+		"--kubeconfig", kubeconfigPath,
+		"--context", ContextHub,
+		"-n", ArgoCDNamespace,
+		"get", "secret", "argocd-initial-admin-secret",
+		"-o", "jsonpath={.data.password}")
+	if err != nil {
+		return "", fmt.Errorf("read argocd-initial-admin-secret: %w", err)
+	}
+	passwordBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(passwordB64))
+	if err != nil {
+		return "", fmt.Errorf("decode argocd admin password: %w", err)
+	}
+	password := strings.TrimSpace(string(passwordBytes))
+
+	// 2. Check if the port is available.
+	if isLocalPortInUse(argoCDPort) {
+		return "", fmt.Errorf("local port %d is already in use — the playground needs it to mint the ArgoCD token. Stop whatever is using it and re-run", argoCDPort)
+	}
+
+	// 3. Start background port-forward to argocd-server.
+	fmt.Println("    Starting port-forward to argocd-server...")
+	pfCmd, err := startBackground("kubectl",
+		"--kubeconfig", kubeconfigPath,
+		"--context", ContextHub,
+		"-n", ArgoCDNamespace,
+		"port-forward", "svc/argocd-server",
+		fmt.Sprintf("%d:443", argoCDPort))
+	if err != nil {
+		return "", fmt.Errorf("start argocd port-forward: %w", err)
+	}
+	defer func() {
+		_ = killProcessGroup(pfCmd)
+	}()
+
+	// 4. Wait for argocd-server to be reachable and POST /api/v1/session to mint a token.
+	// Use an insecure TLS client since ArgoCD uses a self-signed cert.
+	insecureClient := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	sessionURL := fmt.Sprintf("https://localhost:%d/api/v1/session", argoCDPort)
+	sessionBody := map[string]string{
+		"username": "admin",
+		"password": password,
+	}
+	bodyBytes, err := json.Marshal(sessionBody)
+	if err != nil {
+		return "", fmt.Errorf("marshal session request: %w", err)
+	}
+
+	fmt.Println("    Waiting for argocd-server and minting API token...")
+	var token string
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			time.Sleep(retryDelay)
+		}
+
+		req, err := http.NewRequest("POST", sessionURL, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return "", fmt.Errorf("create session request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := insecureClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("POST /api/v1/session (attempt %d/%d): %w", attempt, maxAttempts, err)
+			continue
+		}
+
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("POST /api/v1/session (attempt %d/%d): status %d: %s", attempt, maxAttempts, resp.StatusCode, string(respBody))
+			continue
+		}
+
+		// Parse the token from the response.
+		var sessionResp struct {
+			Token string `json:"token"`
+		}
+		if err := json.Unmarshal(respBody, &sessionResp); err != nil {
+			return "", fmt.Errorf("parse session response: %w", err)
+		}
+		token = sessionResp.Token
+		break
+	}
+
+	if token == "" {
+		return "", fmt.Errorf("mint argocd token: %w", lastErr)
+	}
+
+	fmt.Println("    ArgoCD API token minted successfully")
+	return token, nil
+}
+
 // registerSpokes registers the N spokes as Sharko-managed clusters via REST API.
 // For Gitea backend, also creates a gitea-typed connection and sets it as active.
 func registerSpokes(numSpokes int, spokeNames []string, gitBackend, giteaURL, giteaToken string) error {
@@ -581,6 +698,14 @@ func registerSpokes(numSpokes int, spokeNames []string, gitBackend, giteaURL, gi
 	// For GitFake, skip this step (GitFake is wired via the bootstrap connection or env vars).
 	if gitBackend == "gitea" {
 		fmt.Println("    Creating Gitea connection...")
+
+		// Mint an ArgoCD API token so Sharko can write ArgoCD cluster secrets.
+		kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
+		argocdToken, err := mintArgoCDToken(kubeconfigPath)
+		if err != nil {
+			return fmt.Errorf("mint argocd token: %w", err)
+		}
+
 		argocdServerURL := fmt.Sprintf("http://argocd-server.%s.svc.cluster.local", ArgoCDNamespace)
 		if err := client.createConnection(
 			GiteaConnectionName,
@@ -589,7 +714,7 @@ func registerSpokes(numSpokes int, spokeNames []string, gitBackend, giteaURL, gi
 			giteaToken,
 			argocdServerURL,
 			ArgoCDNamespace,
-			"", // empty argocd token — in-cluster uses service account
+			argocdToken,
 		); err != nil {
 			return fmt.Errorf("create gitea connection: %w", err)
 		}
