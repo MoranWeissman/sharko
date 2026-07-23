@@ -97,6 +97,83 @@ func (c *apiClient) registerCluster(name, kubeconfig string, addons map[string]b
 	return nil
 }
 
+// createConnection creates a new Sharko connection and sets it as active.
+// The argocdToken is optional (empty string for in-cluster service account auth).
+func (c *apiClient) createConnection(name, provider, giteaURL, giteaToken, argocdServerURL, argocdNamespace, argocdToken string) error {
+	// Build the create connection request
+	reqBody := map[string]interface{}{
+		"name":           name,
+		"set_as_default": true,
+		"git": map[string]interface{}{
+			"provider": provider,
+			"repo_url": giteaURL,
+			"token":    giteaToken,
+		},
+		"argocd": map[string]interface{}{
+			"server_url": argocdServerURL,
+			"namespace":  argocdNamespace,
+			"insecure":   true, // in-cluster self-signed cert
+		},
+	}
+	// Only add argocd.token if provided (in-cluster uses SA tokens)
+	if argocdToken != "" {
+		reqBody["argocd"].(map[string]interface{})["token"] = argocdToken
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal create connection request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", c.baseURL+"/api/v1/connections/", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create connection request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST /api/v1/connections/: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("POST /api/v1/connections/: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Set the connection as active
+	setActiveReq := map[string]string{
+		"connection_name": name,
+	}
+	body, err = json.Marshal(setActiveReq)
+	if err != nil {
+		return fmt.Errorf("marshal set active request: %w", err)
+	}
+
+	req, err = http.NewRequest("POST", c.baseURL+"/api/v1/connections/active", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create set active request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err = client.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST /api/v1/connections/active: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("POST /api/v1/connections/active: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
 // waitForSharkoReady polls the Sharko health endpoint until it returns a successful
 // response (any non-connection-refused response), or the timeout expires.
 func waitForSharkoReady(baseURL string, timeout time.Duration) error {

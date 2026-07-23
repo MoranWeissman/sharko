@@ -45,6 +45,9 @@ const (
 	// DefaultSpokes is the number of spoke clusters to create when
 	// PLAYGROUND_SPOKES is not set.
 	DefaultSpokes = 2
+
+	// GiteaConnectionName is the connection name registered when using the Gitea backend.
+	GiteaConnectionName = "gitea-playground"
 )
 
 // SpokeDisplayNames returns the display names (as registered in ArgoCD /
