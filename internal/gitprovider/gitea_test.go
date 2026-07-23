@@ -243,6 +243,59 @@ func TestGiteaProviderListPullRequests(t *testing.T) {
 	}
 }
 
+// TestGiteaProviderListPullRequestsUnknownState tests that an unknown state defaults to "all".
+func TestGiteaProviderListPullRequestsUnknownState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The Gitea SDK calls /version during client construction
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		// Handle GetRepo call (used by TestConnection)
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// ListRepoPullRequests path
+		if r.URL.Path != "/api/v1/repos/testowner/testrepo/pulls" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+
+		// Check state query parameter — should be "all" since we're passing an unknown state
+		state := r.URL.Query().Get("state")
+		if state != "all" {
+			t.Errorf("expected state 'all', got %q", state)
+		}
+
+		// Return empty PR list
+		response := []map[string]interface{}{}
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	// Call with an unrecognized state — should hit the default case and map to StateAll
+	prs, err := provider.ListPullRequests(context.Background(), "bogus")
+	if err != nil {
+		t.Fatalf("ListPullRequests failed: %v", err)
+	}
+
+	// Should succeed with empty list (the mock returns empty)
+	if len(prs) != 0 {
+		t.Errorf("expected 0 PRs, got %d", len(prs))
+	}
+}
+
 // TestGiteaProviderWriteStubs tests that write operations return "not yet implemented" errors.
 func TestGiteaProviderWriteStubs(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

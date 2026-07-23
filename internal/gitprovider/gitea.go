@@ -43,6 +43,9 @@ func (g *GiteaProvider) TestConnection(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("test connection: %w", err)
 	}
+	if resp == nil {
+		return fmt.Errorf("test connection: nil response")
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("test connection: unexpected status %d", resp.StatusCode)
 	}
@@ -63,6 +66,9 @@ func (g *GiteaProvider) GetFileContent(ctx context.Context, filePath, ref string
 		}
 		return nil, fmt.Errorf("get file content: %w", err)
 	}
+	if resp == nil {
+		return nil, fmt.Errorf("get file content: nil response")
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("get file content: unexpected status %d", resp.StatusCode)
 	}
@@ -75,6 +81,9 @@ func (g *GiteaProvider) ListDirectory(ctx context.Context, dirPath, ref string) 
 	contents, resp, err := g.client.ListContents(g.owner, g.repo, ref, dirPath)
 	if err != nil {
 		return nil, fmt.Errorf("list directory: %w", err)
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("list directory: nil response")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("list directory: unexpected status %d", resp.StatusCode)
@@ -100,6 +109,7 @@ func (g *GiteaProvider) ListPullRequests(ctx context.Context, state string) ([]P
 	case "all":
 		giteaState = gitea.StateAll
 	default:
+		slog.Warn("gitea: unknown PR state, defaulting to 'all'", "state", state)
 		giteaState = gitea.StateAll
 	}
 
@@ -110,6 +120,9 @@ func (g *GiteaProvider) ListPullRequests(ctx context.Context, state string) ([]P
 	prs, resp, err := g.client.ListRepoPullRequests(g.owner, g.repo, opt)
 	if err != nil {
 		return nil, fmt.Errorf("list pull requests: %w", err)
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("list pull requests: nil response")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("list pull requests: unexpected status %d", resp.StatusCode)
