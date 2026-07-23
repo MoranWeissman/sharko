@@ -597,3 +597,296 @@ func TestGiteaProviderDeleteFileMissing(t *testing.T) {
 		t.Errorf("expected 'file not found' error, got: %v", err)
 	}
 }
+
+// TestGiteaProviderMergePullRequestRetryThenSucceed tests that MergePullRequest
+// retries when the PR is not yet mergeable, then succeeds when it becomes mergeable.
+func TestGiteaProviderMergePullRequestRetryThenSucceed(t *testing.T) {
+	attemptCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// GetPullRequest
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42" {
+			attemptCount++
+			pr := map[string]interface{}{
+				"id":         1,
+				"number":     42,
+				"title":      "Test PR",
+				"state":      "open",
+				"merged":     false,
+				"has_merged": false,
+			}
+			// First 2 attempts: not yet mergeable
+			if attemptCount <= 2 {
+				pr["mergeable"] = false
+			} else {
+				pr["mergeable"] = true
+			}
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+
+		// MergePullRequest — only succeeds after GetPullRequest reports mergeable=true
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42/merge" {
+			// Should only be called after attempt 3+ when mergeable=true
+			if attemptCount < 3 {
+				// Should not reach here — GetPullRequest should have caused a retry
+				w.WriteHeader(405)
+				w.Write([]byte(`{"message":"Method Not Allowed"}`))
+				return
+			}
+			w.WriteHeader(200)
+			w.Write([]byte(`{"merged":true}`))
+			return
+		}
+
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+	// Use zero delay for fast test
+	provider.mergePollDelay = 0
+
+	err = provider.MergePullRequest(context.Background(), 42)
+	if err != nil {
+		t.Errorf("MergePullRequest failed: %v", err)
+	}
+
+	if attemptCount < 3 {
+		t.Errorf("expected at least 3 GetPullRequest attempts, got %d", attemptCount)
+	}
+}
+
+// TestGiteaProviderMergePullRequestAlreadyMerged tests that MergePullRequest
+// is idempotent — returns success if the PR is already merged.
+func TestGiteaProviderMergePullRequestAlreadyMerged(t *testing.T) {
+	mergeAttempted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// GetPullRequest — PR already merged
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42" {
+			pr := map[string]interface{}{
+				"id":         1,
+				"number":     42,
+				"title":      "Test PR",
+				"state":      "closed",
+				"merged":     true,
+				"has_merged": true,
+				"mergeable":  false, // irrelevant when already merged
+			}
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+
+		// MergePullRequest — should NOT be called if already merged
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42/merge" {
+			mergeAttempted = true
+			w.WriteHeader(200)
+			w.Write([]byte(`{"merged":true}`))
+			return
+		}
+
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+	provider.mergePollDelay = 0
+
+	err = provider.MergePullRequest(context.Background(), 42)
+	if err != nil {
+		t.Errorf("MergePullRequest failed: %v", err)
+	}
+
+	if mergeAttempted {
+		t.Error("merge should not have been attempted when PR already merged")
+	}
+}
+
+// TestGiteaProviderMergePullRequestExhaustion tests that MergePullRequest
+// returns an error after exhausting retry attempts when the PR never becomes mergeable.
+func TestGiteaProviderMergePullRequestExhaustion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// GetPullRequest — always returns not mergeable
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42" {
+			pr := map[string]interface{}{
+				"id":         1,
+				"number":     42,
+				"title":      "Test PR",
+				"state":      "open",
+				"merged":     false,
+				"has_merged": false,
+				"mergeable":  false,
+			}
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+	provider.mergePollDelay = 0
+
+	err = provider.MergePullRequest(context.Background(), 42)
+	if err == nil {
+		t.Fatal("expected error after exhausting attempts, got nil")
+	}
+
+	// Verify the error message mentions exhaustion
+	expectedMsg := "still not mergeable after 10 attempts"
+	if !errors.Is(err, errors.New(expectedMsg)) && err.Error() != "merge pull request #42: "+expectedMsg {
+		t.Errorf("expected exhaustion error, got: %v", err)
+	}
+}
+
+// TestGiteaProviderMergePullRequest404NotFound tests that MergePullRequest
+// wraps ErrPullRequestNotFound when GetPullRequest returns 404.
+func TestGiteaProviderMergePullRequest404NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// GetPullRequest — 404 PR not found
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/999" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+	provider.mergePollDelay = 0
+
+	err = provider.MergePullRequest(context.Background(), 999)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	if !errors.Is(err, ErrPullRequestNotFound) {
+		t.Errorf("expected ErrPullRequestNotFound, got: %v", err)
+	}
+}
+
+// TestGiteaProviderMergePullRequest405RetryThenSucceed tests that MergePullRequest
+// retries when the merge call itself returns 405, then succeeds.
+func TestGiteaProviderMergePullRequest405RetryThenSucceed(t *testing.T) {
+	mergeAttempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// GetPullRequest — always mergeable
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42" {
+			pr := map[string]interface{}{
+				"id":         1,
+				"number":     42,
+				"title":      "Test PR",
+				"state":      "open",
+				"merged":     false,
+				"has_merged": false,
+				"mergeable":  true,
+			}
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+
+		// MergePullRequest — first 2 attempts return 405, then succeed
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42/merge" {
+			mergeAttempts++
+			if mergeAttempts <= 2 {
+				w.WriteHeader(405)
+				w.Write([]byte(`{"message":"Method Not Allowed"}`))
+				return
+			}
+			w.WriteHeader(200)
+			w.Write([]byte(`{"merged":true}`))
+			return
+		}
+
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+	provider.mergePollDelay = 0
+
+	err = provider.MergePullRequest(context.Background(), 42)
+	if err != nil {
+		t.Errorf("MergePullRequest failed: %v", err)
+	}
+
+	if mergeAttempts < 3 {
+		t.Errorf("expected at least 3 merge attempts, got %d", mergeAttempts)
+	}
+}

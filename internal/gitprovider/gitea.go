@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"time"
 
 	"code.gitea.io/sdk/gitea"
 )
@@ -15,6 +16,9 @@ type GiteaProvider struct {
 	client *gitea.Client
 	owner  string
 	repo   string
+
+	// mergePollDelay is the delay between merge-poll attempts. Exported for test injection.
+	mergePollDelay time.Duration
 }
 
 // NewGiteaProvider creates a new Gitea-backed GitProvider.
@@ -27,9 +31,10 @@ func NewGiteaProvider(baseURL, owner, repo, token string) (*GiteaProvider, error
 		return nil, fmt.Errorf("create gitea client: %w", err)
 	}
 	return &GiteaProvider{
-		client: client,
-		owner:  owner,
-		repo:   repo,
+		client:         client,
+		owner:          owner,
+		repo:           repo,
+		mergePollDelay: 2 * time.Second, // default poll delay for merge readiness
 	}, nil
 }
 
@@ -355,22 +360,111 @@ func (g *GiteaProvider) CreatePullRequest(ctx context.Context, title, body, head
 }
 
 // MergePullRequest merges an open pull request by number.
+//
+// Gitea computes PR mergeability asynchronously after PR creation. Attempting to
+// merge immediately can return HTTP 405 (method not allowed) if the mergeable
+// field is still being calculated. This method polls the PR's mergeable state and
+// retries the merge attempt until success, the PR is already merged (idempotent),
+// or attempts are exhausted.
 func (g *GiteaProvider) MergePullRequest(ctx context.Context, prNumber int) error {
+	const maxAttempts = 10
 	opt := gitea.MergePullRequestOption{
 		Style: gitea.MergeStyleMerge,
 	}
-	_, resp, err := g.client.MergePullRequest(g.owner, g.repo, int64(prNumber), opt)
-	if err != nil {
-		return fmt.Errorf("merge pull request #%d: %w", prNumber, err)
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Check context cancellation before each attempt.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		// Poll the PR's current state to check if it's already merged or is mergeable.
+		pr, resp, err := g.client.GetPullRequest(g.owner, g.repo, int64(prNumber))
+		if err != nil {
+			// 404 = PR was deleted or never existed → wrap with sentinel for errors.Is.
+			if resp != nil && resp.StatusCode == 404 {
+				return fmt.Errorf("merge pull request #%d: %w", prNumber, ErrPullRequestNotFound)
+			}
+			// Other errors (auth, transient network) → retry unless attempts exhausted.
+			if attempt == maxAttempts {
+				return fmt.Errorf("merge pull request #%d: get PR failed after %d attempts: %w", prNumber, maxAttempts, err)
+			}
+			slog.Warn("gitea merge: get PR failed, retrying", "number", prNumber, "attempt", attempt, "error", err)
+			time.Sleep(g.mergePollDelay)
+			continue
+		}
+		if resp == nil {
+			return fmt.Errorf("merge pull request: nil response from GetPullRequest")
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			// Non-success status on GET (not 404, already handled) — likely transient.
+			if attempt == maxAttempts {
+				return fmt.Errorf("merge pull request: get PR returned status %d after %d attempts", resp.StatusCode, maxAttempts)
+			}
+			slog.Warn("gitea merge: get PR returned non-2xx, retrying", "number", prNumber, "status", resp.StatusCode, "attempt", attempt)
+			time.Sleep(g.mergePollDelay)
+			continue
+		}
+
+		// If already merged, return success (idempotent).
+		if pr.HasMerged {
+			slog.Info("gitea pull request already merged", "number", prNumber)
+			return nil
+		}
+
+		// If not yet mergeable, retry.
+		if !pr.Mergeable {
+			if attempt == maxAttempts {
+				return fmt.Errorf("merge pull request #%d: still not mergeable after %d attempts", prNumber, maxAttempts)
+			}
+			slog.Info("gitea pull request not yet mergeable, retrying", "number", prNumber, "attempt", attempt)
+			time.Sleep(g.mergePollDelay)
+			continue
+		}
+
+		// PR is mergeable → attempt the merge.
+		_, mergeResp, mergeErr := g.client.MergePullRequest(g.owner, g.repo, int64(prNumber), opt)
+		if mergeErr != nil {
+			// On 404 for the merge call itself (PR vanished mid-flight) → wrap sentinel.
+			if mergeResp != nil && mergeResp.StatusCode == 404 {
+				return fmt.Errorf("merge pull request #%d: %w", prNumber, ErrPullRequestNotFound)
+			}
+			// On 405 (still not ready, despite mergeable=true race) → retry.
+			if mergeResp != nil && mergeResp.StatusCode == 405 {
+				if attempt == maxAttempts {
+					return fmt.Errorf("merge pull request #%d: still not ready (status 405) after %d attempts", prNumber, maxAttempts)
+				}
+				slog.Warn("gitea merge: 405 not ready, retrying", "number", prNumber, "attempt", attempt)
+				time.Sleep(g.mergePollDelay)
+				continue
+			}
+			// Other hard errors (401/403 auth, 409 conflict that won't resolve) → fail immediately.
+			return fmt.Errorf("merge pull request #%d: %w", prNumber, mergeErr)
+		}
+		if mergeResp == nil {
+			return fmt.Errorf("merge pull request: nil response from MergePullRequest")
+		}
+		if mergeResp.StatusCode < 200 || mergeResp.StatusCode >= 300 {
+			// Non-success from merge call — treat 405 specially.
+			if mergeResp.StatusCode == 405 {
+				if attempt == maxAttempts {
+					return fmt.Errorf("merge pull request #%d: still not ready (status 405) after %d attempts", prNumber, maxAttempts)
+				}
+				slog.Warn("gitea merge: 405 not ready, retrying", "number", prNumber, "attempt", attempt)
+				time.Sleep(g.mergePollDelay)
+				continue
+			}
+			// Other non-2xx → fail immediately (hard error).
+			return fmt.Errorf("merge pull request: unexpected status %d", mergeResp.StatusCode)
+		}
+
+		// Success!
+		slog.Info("gitea pull request merged", "number", prNumber, "attempt", attempt)
+		return nil
 	}
-	if resp == nil {
-		return fmt.Errorf("merge pull request: nil response")
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("merge pull request: unexpected status %d", resp.StatusCode)
-	}
-	slog.Info("gitea pull request merged", "number", prNumber)
-	return nil
+
+	// Should not reach here (loop always returns or continues), but guard against logic errors.
+	return fmt.Errorf("merge pull request #%d: exhausted %d attempts", prNumber, maxAttempts)
 }
 
 // GetPullRequestStatus returns the status of a pull request: "open", "merged", or "closed".
