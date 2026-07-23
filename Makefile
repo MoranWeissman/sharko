@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image operator-dev-up operator-dev-down operator-playground-up operator-playground-status operator-playground-drive-on operator-playground-drive-off operator-playground-down install uninstall deploy undeploy manifests
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image operator-dev-up operator-dev-down operator-playground-up operator-playground-status operator-playground-tunnels operator-playground-drive-on operator-playground-drive-off operator-playground-down install uninstall deploy undeploy manifests
 
 PORT ?= 8080
 
@@ -46,6 +46,7 @@ help: ## Show available targets
 	@echo "  Operator Local Playground (Phase 2 prove-then-flip):"
 	@echo "    make operator-playground-up         Spin up hub + N spokes + ArgoCD + Sharko + GitFake"
 	@echo "    make operator-playground-status     Show current state (drive mode, CR status, labels)"
+	@echo "    make operator-playground-tunnels    Open browser tunnels (Sharko+ArgoCD+Gitea), Ctrl+C closes all"
 	@echo "    make operator-playground-drive-on   Flip operator drive ON (operator writes labels)"
 	@echo "    make operator-playground-drive-off  Flip operator drive OFF (reconciler writes labels)"
 	@echo "    make operator-playground-down       Tear down all playground clusters (safe)"
@@ -476,6 +477,9 @@ operator-playground-up: ## Provision playground (hub + N spokes + ArgoCD + Shark
 
 operator-playground-status: ## Show operator playground status — ClusterAddons Ready + converged addon labels per spoke
 	@bash scripts/operator-playground-status.sh
+
+operator-playground-tunnels: ## Open browser tunnels for Sharko + ArgoCD + Gitea (Ctrl+C closes all)
+	@bash scripts/operator-playground-tunnels.sh
 
 operator-playground-drive-on: ## Flip operator drive ON — controller writes addon labels
 	@echo "==> Flipping operator drive ON (SHARKO_OPERATOR_DRIVES_LABELS=true)"
