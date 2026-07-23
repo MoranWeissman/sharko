@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -417,22 +418,40 @@ spec:
 	// 3. Create repo + seed files via Gitea REST API
 	fmt.Println("    Creating Gitea repository and seeding config files...")
 
-	// Start port-forward to access Gitea API from the playground process
-	pfCmd, err := startBackground("kubectl", "--kubeconfig", kubeconfigPath,
-		"--context", ContextHub, "-n", Namespace,
-		"port-forward", "svc/gitea", "13000:3000")
-	if err != nil {
-		return "", "", fmt.Errorf("start gitea port-forward: %w", err)
+	// Start port-forward to access Gitea API from the playground process.
+	// Retry establishing the tunnel to absorb flaky port-forward startup.
+	fmt.Println("    Establishing Gitea port-forward (with retry)...")
+	var pfCmd *exec.Cmd
+	pfReady := false
+	for attempt := 1; attempt <= 3; attempt++ {
+		var startErr error
+		pfCmd, startErr = startBackground("kubectl", "--kubeconfig", kubeconfigPath,
+			"--context", ContextHub, "-n", Namespace,
+			"port-forward", "svc/gitea", "13000:3000")
+		if startErr != nil {
+			fmt.Printf("      gitea port-forward start attempt %d/3 failed: %v\n", attempt, startErr)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		// Wait for readiness with a per-attempt timeout (25s).
+		if err := waitForGiteaAPI("http://localhost:13000", 25*time.Second); err != nil {
+			fmt.Printf("      gitea port-forward not ready (attempt %d/3): %v — retrying\n", attempt, err)
+			_ = killProcessGroup(pfCmd)
+			pfCmd = nil
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		pfReady = true
+		break
+	}
+	if !pfReady {
+		return "", "", fmt.Errorf("gitea port-forward did not become ready after 3 attempts")
 	}
 	defer func() {
-		_ = killProcessGroup(pfCmd)
+		if pfCmd != nil {
+			_ = killProcessGroup(pfCmd)
+		}
 	}()
-
-	// Wait for Gitea API (port-forward) to be ready
-	fmt.Println("    Waiting for Gitea API (port-forward) to be ready...")
-	if err := waitForGiteaAPI("http://localhost:13000", 60*time.Second); err != nil {
-		return "", "", fmt.Errorf("gitea API readiness: %w", err)
-	}
 
 	// Create the repository
 	if err := giteaCreateRepo(giteaToken, GiteaRepoName); err != nil {
