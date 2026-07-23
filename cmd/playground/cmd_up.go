@@ -260,6 +260,179 @@ spec:
 	return serviceURL, nil
 }
 
+// deployGitea deploys a real Gitea server in the hub, headlessly bootstraps it
+// (admin user + API token + repo), and seeds the two config files Sharko reads.
+// Returns the in-cluster Git URL and the API token. This is dev tooling only —
+// no product code changes.
+//
+// NOTE: This function is NOT wired into cmdUp's default sequence yet. To use it,
+// set PLAYGROUND_GIT_BACKEND=gitea before running `make operator-playground-up`.
+// Sub-step B will flip the default and wire it in properly.
+func deployGitea(spokeNames []string) (giteaURL, giteaToken string, err error) {
+	fmt.Println("==> Deploying Gitea in hub")
+
+	kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
+
+	// 1. Deploy Gitea Deployment + Service
+	giteaDeploymentYAML := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitea
+  namespace: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gitea
+  template:
+    metadata:
+      labels:
+        app: gitea
+    spec:
+      containers:
+      - name: gitea
+        image: gitea/gitea:1.22.6
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: GITEA__security__INSTALL_LOCK
+          value: "true"
+        - name: GITEA__database__DB_TYPE
+          value: sqlite3
+        - name: GITEA__database__PATH
+          value: /data/gitea.db
+        - name: GITEA__server__ROOT_URL
+          value: http://gitea.%s.svc.cluster.local:3000/
+        - name: GITEA__server__DISABLE_REGISTRATION
+          value: "true"
+        - name: GITEA__service__DISABLE_REGISTRATION
+          value: "true"
+        - name: USER_UID
+          value: "1000"
+        - name: USER_GID
+          value: "1000"
+        ports:
+        - containerPort: 3000
+        - containerPort: 22
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitea
+  namespace: %s
+spec:
+  selector:
+    app: gitea
+  ports:
+  - name: http
+    port: 3000
+    targetPort: 3000
+  - name: ssh
+    port: 22
+    targetPort: 22
+`, Namespace, Namespace, Namespace)
+
+	// Create sharko namespace (idempotent).
+	_, _, _ = runCmd(15*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
+		"--context", ContextHub, "create", "namespace", Namespace)
+
+	if err := kubectlApply(kubeconfigPath, ContextHub, Namespace, giteaDeploymentYAML); err != nil {
+		return "", "", fmt.Errorf("apply gitea deployment: %w", err)
+	}
+
+	// Wait for gitea deployment to be ready.
+	fmt.Println("    Waiting for Gitea deployment to be ready (up to 3 minutes)...")
+	if err := kubectlWait(kubeconfigPath, ContextHub, Namespace, "deployment", "gitea", "available", 3*time.Minute); err != nil {
+		return "", "", fmt.Errorf("wait for gitea deployment: %w", err)
+	}
+
+	// 2. Bootstrap Gitea headlessly
+	fmt.Println("    Bootstrapping Gitea (creating admin user)...")
+
+	// Create admin user (idempotent — ignore "user already exists" error)
+	_, stderr, err := runCmd(30*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
+		"--context", ContextHub, "-n", Namespace,
+		"exec", "deploy/gitea", "--",
+		"gitea", "admin", "user", "create",
+		"--admin",
+		"--username", GiteaAdminUser,
+		"--password", GiteaAdminPassword,
+		"--email", GiteaAdminEmail,
+		"--must-change-password=false")
+	if err != nil && !contains(stderr, "user already exists") {
+		return "", "", fmt.Errorf("create gitea admin user: %w (stderr=%s)", err, stderr)
+	}
+
+	// Generate API token
+	fmt.Println("    Generating Gitea API token...")
+	tokenOut, stderr, err := runCmd(30*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
+		"--context", ContextHub, "-n", Namespace,
+		"exec", "deploy/gitea", "--",
+		"gitea", "admin", "user", "generate-access-token",
+		"--username", GiteaAdminUser,
+		"--token-name", "sharko-playground",
+		"--scopes", "write:repository,write:user",
+		"--raw")
+	if err != nil {
+		return "", "", fmt.Errorf("generate gitea token: %w (stderr=%s)", err, stderr)
+	}
+	giteaToken = mustTrimSpace(tokenOut)
+
+	// 3. Create repo + seed files via Gitea REST API
+	fmt.Println("    Creating Gitea repository and seeding config files...")
+
+	// Start port-forward to access Gitea API from the playground process
+	pfCmd, err := startBackground("kubectl", "--kubeconfig", kubeconfigPath,
+		"--context", ContextHub, "-n", Namespace,
+		"port-forward", "svc/gitea", "13000:3000")
+	if err != nil {
+		return "", "", fmt.Errorf("start gitea port-forward: %w", err)
+	}
+	defer func() {
+		_ = killProcessGroup(pfCmd)
+	}()
+
+	// Wait a bit for port-forward to be ready
+	time.Sleep(2 * time.Second)
+
+	// Create the repository
+	if err := giteaCreateRepo(giteaToken, GiteaRepoName); err != nil {
+		return "", "", fmt.Errorf("create gitea repo: %w", err)
+	}
+
+	// Seed managed-clusters.yaml
+	managedClustersContent := generateManagedClustersSeed(spokeNames)
+	if err := giteaAddFile(giteaToken, GiteaAdminUser, GiteaRepoName, "configuration/managed-clusters.yaml", managedClustersContent); err != nil {
+		return "", "", fmt.Errorf("seed managed-clusters.yaml: %w", err)
+	}
+
+	// Seed addons-catalog.yaml
+	addonsCatalogContent := generateAddonsCatalogSeed()
+	if err := giteaAddFile(giteaToken, GiteaAdminUser, GiteaRepoName, "configuration/addons-catalog.yaml", addonsCatalogContent); err != nil {
+		return "", "", fmt.Errorf("seed addons-catalog.yaml: %w", err)
+	}
+
+	// Build the in-cluster Git URL Sharko will use
+	giteaURL = fmt.Sprintf("http://gitea.%s.svc.cluster.local:3000/%s/%s.git", Namespace, GiteaAdminUser, GiteaRepoName)
+
+	fmt.Printf("    Gitea deployed at %s\n", giteaURL)
+	fmt.Println("")
+	fmt.Println("    Gitea admin credentials (local dev only):")
+	fmt.Printf("      Username: %s\n", GiteaAdminUser)
+	fmt.Printf("      Password: %s\n", GiteaAdminPassword)
+	fmt.Printf("      API Token: %s\n", giteaToken)
+	fmt.Println("    Access Gitea UI:")
+	fmt.Printf("      kubectl --context %s -n %s port-forward svc/gitea 13000:3000\n", ContextHub, Namespace)
+	fmt.Println("      Then open http://localhost:13000")
+
+	return giteaURL, giteaToken, nil
+}
+
 // installSharko installs Sharko on the hub via direct helm upgrade --install.
 // The image (sharko:playground-<sha>) was already built + kind-loaded earlier.
 func installSharko(gitfakeURL string) error {
@@ -431,6 +604,73 @@ func showStatusSnapshot() error {
 		return fmt.Errorf("operator-playground-status.sh: %w (stderr=%s)", err, stderr)
 	}
 	return nil
+}
+
+// giteaCreateRepo creates a new repository via the Gitea REST API.
+func giteaCreateRepo(token, repoName string) error {
+	client := newHTTPClient()
+	reqBody := fmt.Sprintf(`{"name":"%s","private":false,"auto_init":true,"default_branch":"main"}`, repoName)
+	req := mustNewRequest("POST", "http://localhost:13000/api/v1/user/repos", reqBody)
+	req.Header.Set("Authorization", "token "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("gitea create repo request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 201 && resp.StatusCode != 409 {
+		return fmt.Errorf("gitea create repo: unexpected status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// giteaAddFile adds or updates a file in a Gitea repository via the Contents API.
+func giteaAddFile(token, owner, repo, filePath, content string) error {
+	client := newHTTPClient()
+	encodedContent := base64.StdEncoding.EncodeToString([]byte(content))
+	reqBody := fmt.Sprintf(`{"branch":"main","content":"%s","message":"Add %s"}`, encodedContent, filePath)
+
+	url := fmt.Sprintf("http://localhost:13000/api/v1/repos/%s/%s/contents/%s", owner, repo, filePath)
+	req := mustNewRequest("POST", url, reqBody)
+	req.Header.Set("Authorization", "token "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("gitea add file request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 201 {
+		return fmt.Errorf("gitea add file %s: unexpected status %d", filePath, resp.StatusCode)
+	}
+	return nil
+}
+
+// generateAddonsCatalogSeed generates the addons-catalog.yaml seed content
+// with the two addons registerSpokes assigns (metrics-server + external-secrets).
+func generateAddonsCatalogSeed() string {
+	return `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
+apiVersion: sharko.dev/v1alpha1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  applicationsets:
+    - name: metrics-server
+      chart: metrics-server
+      repoURL: https://kubernetes-sigs.github.io/metrics-server/
+      version: "3.12.1"
+      namespace: kube-system
+
+    - name: external-secrets
+      chart: external-secrets
+      repoURL: https://charts.external-secrets.io
+      version: "0.10.0"
+      namespace: external-secrets-system
+`
 }
 
 // generateManagedClustersSeed generates a managed-clusters.yaml seed content
