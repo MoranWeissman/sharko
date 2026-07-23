@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // buildKubeconfigInCluster assembles a kubeconfig YAML pointing at the given
@@ -77,7 +78,7 @@ func createServiceAccountOnCluster(clusterName, saName string) error {
 	kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
 
 	// Create SA (idempotent — ignore "already exists").
-	_, stderr, err := runCmd(15, "kubectl", "--kubeconfig", kubeconfigPath,
+	_, stderr, err := runCmd(15*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
 		"--context", "kind-"+clusterName,
 		"create", "sa", saName)
 	if err != nil && !contains(stderr, "already exists") {
@@ -85,7 +86,7 @@ func createServiceAccountOnCluster(clusterName, saName string) error {
 	}
 
 	// Bind to cluster-admin (idempotent — ignore "already exists").
-	_, stderr, err = runCmd(15, "kubectl", "--kubeconfig", kubeconfigPath,
+	_, stderr, err = runCmd(15*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
 		"--context", "kind-"+clusterName,
 		"create", "clusterrolebinding", saName+"-cluster-admin",
 		"--clusterrole=cluster-admin",

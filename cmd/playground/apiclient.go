@@ -64,7 +64,7 @@ func (c *apiClient) login(username, password string) error {
 }
 
 // registerCluster registers a single cluster with Sharko via POST /api/v1/clusters.
-func (c *apiClient) registerCluster(name, kubeconfig string, addons []string) error {
+func (c *apiClient) registerCluster(name, kubeconfig string, addons map[string]bool) error {
 	reqBody := map[string]interface{}{
 		"name":       name,
 		"kubeconfig": kubeconfig,
