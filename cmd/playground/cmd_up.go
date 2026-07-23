@@ -372,13 +372,23 @@ spec:
 	}
 
 	// 2. Bootstrap Gitea headlessly
+	// Initialize the database schema (INSTALL_LOCK=true skips the web installer's auto-migration)
+	fmt.Println("    Initializing Gitea database schema (gitea migrate)...")
+	_, stderr, err := runCmd(30*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
+		"--context", ContextHub, "-n", Namespace,
+		"exec", "deploy/gitea", "--",
+		"su", "git", "-c", "gitea migrate")
+	if err != nil {
+		return "", "", fmt.Errorf("gitea migrate (init db schema): %w (stderr=%s)", err, stderr)
+	}
+
 	fmt.Println("    Bootstrapping Gitea (creating admin user)...")
 
 	// Create admin user (idempotent — ignore "user already exists" error)
 	// Run as the 'git' user (uid 1000) because Gitea CLI refuses to run as root.
 	createUserCmd := fmt.Sprintf("gitea admin user create --admin --username %s --password %s --email %s --must-change-password=false",
 		GiteaAdminUser, GiteaAdminPassword, GiteaAdminEmail)
-	_, stderr, err := runCmd(30*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
+	_, stderr, err = runCmd(30*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
 		"--context", ContextHub, "-n", Namespace,
 		"exec", "deploy/gitea", "--",
 		"su", "git", "-c", createUserCmd)
