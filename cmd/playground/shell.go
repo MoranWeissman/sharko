@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -147,4 +148,27 @@ func killProcessGroup(cmd *exec.Cmd) error {
 		return cmd.Process.Kill()
 	}
 	return syscall.Kill(-pgid, syscall.SIGKILL)
+}
+
+// mustTrimSpace trims whitespace from s and panics if s is empty after trimming.
+func mustTrimSpace(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		panic("mustTrimSpace: empty string after trimming")
+	}
+	return trimmed
+}
+
+// newHTTPClient creates a simple HTTP client with a reasonable timeout.
+func newHTTPClient() *http.Client {
+	return &http.Client{Timeout: 30 * time.Second}
+}
+
+// mustNewRequest creates a new HTTP request and panics on error.
+func mustNewRequest(method, url, body string) *http.Request {
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	if err != nil {
+		panic(fmt.Sprintf("mustNewRequest: %v", err))
+	}
+	return req
 }

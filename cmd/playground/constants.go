@@ -27,6 +27,17 @@ const (
 	// GitFakeSeedBranch is the default branch in the GitFake repo.
 	GitFakeSeedBranch = "main"
 
+	// GiteaRepoName is the repo name for the Gitea repository (used when PLAYGROUND_GIT_BACKEND=gitea).
+	GiteaRepoName = "sharko-playground"
+	// GiteaAdminUser is the admin username created in Gitea.
+	GiteaAdminUser = "admin"
+	// GiteaAdminPassword is the admin password (local dev only — NOT for production).
+	GiteaAdminPassword = "sharko-play"
+	// GiteaAdminEmail is the email for the Gitea admin user.
+	GiteaAdminEmail = "admin@gitea.example.com"
+	// GiteaSeedBranch is the default branch in the Gitea repo.
+	GiteaSeedBranch = "main"
+
 	// ServiceAccountName is the SA name created on each spoke for cluster-admin
 	// kubeconfig generation.
 	ServiceAccountName = "sharko-spoke-admin"
