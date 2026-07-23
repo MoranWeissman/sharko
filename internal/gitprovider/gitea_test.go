@@ -296,8 +296,9 @@ func TestGiteaProviderListPullRequestsUnknownState(t *testing.T) {
 	}
 }
 
-// TestGiteaProviderWriteStubs tests that write operations return "not yet implemented" errors.
-func TestGiteaProviderWriteStubs(t *testing.T) {
+// TestGiteaProviderWritePath tests the full write cycle: CreateBranch, CreateOrUpdateFile,
+// BatchCreateFiles, CreatePullRequest, GetPullRequestStatus, MergePullRequest, DeleteBranch, DeleteFile.
+func TestGiteaProviderWritePath(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The Gitea SDK calls /version during client construction
 		if r.URL.Path == "/api/v1/version" {
@@ -311,6 +312,145 @@ func TestGiteaProviderWriteStubs(t *testing.T) {
 			w.Write([]byte(`{"name":"testrepo"}`))
 			return
 		}
+
+		// CreateBranch: POST /api/v1/repos/{owner}/{repo}/branches
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/branches" {
+			w.WriteHeader(201)
+			w.Write([]byte(`{"name":"feature-branch","commit":{"id":"abc123"}}`))
+			return
+		}
+
+		// GetContents (for checking file existence before create/update): GET /api/v1/repos/{owner}/{repo}/contents/{filepath}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/newfile.txt" {
+			// First call (for CreateOrUpdateFile create path): file doesn't exist → 404
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/existingfile.txt" {
+			// Second call (for CreateOrUpdateFile update path): file exists
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"name": "existingfile.txt",
+				"path": "existingfile.txt",
+				"sha":  "oldsha123",
+				"type": "file",
+			})
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/deleteme.txt" {
+			// For DeleteFile: file exists
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"name": "deleteme.txt",
+				"path": "deleteme.txt",
+				"sha":  "deletesha",
+				"type": "file",
+			})
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch1.txt" {
+			w.WriteHeader(404) // batch file doesn't exist yet
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch2.txt" {
+			w.WriteHeader(404)
+			return
+		}
+
+		// CreateFile: POST /api/v1/repos/{owner}/{repo}/contents/{filepath}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/newfile.txt" {
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"newfile.txt","sha":"newsha"}}`))
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch1.txt" {
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"batch1.txt"}}`))
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch2.txt" {
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"batch2.txt"}}`))
+			return
+		}
+
+		// UpdateFile: PUT /api/v1/repos/{owner}/{repo}/contents/{filepath}
+		if r.Method == "PUT" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/existingfile.txt" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"content":{"name":"existingfile.txt","sha":"newsha"}}`))
+			return
+		}
+
+		// DeleteFile: DELETE /api/v1/repos/{owner}/{repo}/contents/{filepath}
+		if r.Method == "DELETE" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/deleteme.txt" {
+			w.WriteHeader(204)
+			return
+		}
+
+		// CreatePullRequest: POST /api/v1/repos/{owner}/{repo}/pulls
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls" {
+			now := time.Now()
+			pr := map[string]interface{}{
+				"id":       1,
+				"number":   42,
+				"title":    "Test PR",
+				"body":     "Test body",
+				"state":    "open",
+				"html_url": "https://gitea.example.com/testowner/testrepo/pulls/42",
+				"user": map[string]interface{}{
+					"login": "testuser",
+				},
+				"base": map[string]interface{}{
+					"ref": "main",
+				},
+				"head": map[string]interface{}{
+					"ref": "feature-branch",
+				},
+				"created_at": now.Format(time.RFC3339),
+			}
+			w.WriteHeader(201)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+
+		// GetPullRequest: GET /api/v1/repos/{owner}/{repo}/pulls/{index}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42" {
+			pr := map[string]interface{}{
+				"id":          1,
+				"number":      42,
+				"title":       "Test PR",
+				"state":       "open",
+				"merged":      false,
+				"has_merged":  false,
+				"mergeable":   true,
+			}
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/999" {
+			// PR not found
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+
+		// MergePullRequest: POST /api/v1/repos/{owner}/{repo}/pulls/{index}/merge
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42/merge" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"merged":true}`))
+			return
+		}
+
+		// DeleteBranch: DELETE /api/v1/repos/{owner}/{repo}/branches/{branch}
+		if r.Method == "DELETE" && r.URL.Path == "/api/v1/repos/testowner/testrepo/branches/feature-branch" {
+			w.WriteHeader(204)
+			return
+		}
+
+		// Catch-all
+		t.Logf("unhandled request: %s %s", r.Method, r.URL.Path)
 		w.WriteHeader(404)
 	}))
 	defer server.Close()
@@ -322,29 +462,138 @@ func TestGiteaProviderWriteStubs(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test each write method returns an error
-	if err := provider.CreateBranch(ctx, "test", "main"); err == nil {
-		t.Error("expected CreateBranch to return error")
+	// 1. CreateBranch
+	if err := provider.CreateBranch(ctx, "feature-branch", "main"); err != nil {
+		t.Errorf("CreateBranch failed: %v", err)
 	}
-	if err := provider.CreateOrUpdateFile(ctx, "test", nil, "main", "msg"); err == nil {
-		t.Error("expected CreateOrUpdateFile to return error")
+
+	// 2. CreateOrUpdateFile — create path (file doesn't exist)
+	if err := provider.CreateOrUpdateFile(ctx, "newfile.txt", []byte("new content"), "feature-branch", "Add new file"); err != nil {
+		t.Errorf("CreateOrUpdateFile (create) failed: %v", err)
 	}
-	if err := provider.BatchCreateFiles(ctx, nil, "main", "msg"); err == nil {
-		t.Error("expected BatchCreateFiles to return error")
+
+	// 3. CreateOrUpdateFile — update path (file exists)
+	if err := provider.CreateOrUpdateFile(ctx, "existingfile.txt", []byte("updated content"), "feature-branch", "Update file"); err != nil {
+		t.Errorf("CreateOrUpdateFile (update) failed: %v", err)
 	}
-	if err := provider.DeleteFile(ctx, "test", "main", "msg"); err == nil {
-		t.Error("expected DeleteFile to return error")
+
+	// 4. BatchCreateFiles
+	files := map[string][]byte{
+		"batch1.txt": []byte("batch content 1"),
+		"batch2.txt": []byte("batch content 2"),
 	}
-	if _, err := provider.CreatePullRequest(ctx, "title", "body", "head", "base"); err == nil {
-		t.Error("expected CreatePullRequest to return error")
+	if err := provider.BatchCreateFiles(ctx, files, "feature-branch", "Batch commit"); err != nil {
+		t.Errorf("BatchCreateFiles failed: %v", err)
 	}
-	if err := provider.MergePullRequest(ctx, 1); err == nil {
-		t.Error("expected MergePullRequest to return error")
+
+	// 5. CreatePullRequest
+	pr, err := provider.CreatePullRequest(ctx, "Test PR", "Test body", "feature-branch", "main")
+	if err != nil {
+		t.Fatalf("CreatePullRequest failed: %v", err)
 	}
-	if _, err := provider.GetPullRequestStatus(ctx, 1); err == nil {
-		t.Error("expected GetPullRequestStatus to return error")
+	if pr.ID != 42 {
+		t.Errorf("expected PR ID 42, got %d", pr.ID)
 	}
-	if err := provider.DeleteBranch(ctx, "test"); err == nil {
-		t.Error("expected DeleteBranch to return error")
+	if pr.Status != "open" {
+		t.Errorf("expected PR status 'open', got %q", pr.Status)
+	}
+
+	// 6. GetPullRequestStatus
+	status, err := provider.GetPullRequestStatus(ctx, 42)
+	if err != nil {
+		t.Errorf("GetPullRequestStatus failed: %v", err)
+	}
+	if status != "open" {
+		t.Errorf("expected status 'open', got %q", status)
+	}
+
+	// 7. MergePullRequest
+	if err := provider.MergePullRequest(ctx, 42); err != nil {
+		t.Errorf("MergePullRequest failed: %v", err)
+	}
+
+	// 8. DeleteFile
+	if err := provider.DeleteFile(ctx, "deleteme.txt", "main", "Remove file"); err != nil {
+		t.Errorf("DeleteFile failed: %v", err)
+	}
+
+	// 9. DeleteBranch
+	if err := provider.DeleteBranch(ctx, "feature-branch"); err != nil {
+		t.Errorf("DeleteBranch failed: %v", err)
+	}
+}
+
+// TestGiteaProviderGetPullRequestStatusNotFound tests that GetPullRequestStatus
+// wraps ErrPullRequestNotFound on 404.
+func TestGiteaProviderGetPullRequestStatusNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		// GetPullRequest returns 404
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/999" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	_, err = provider.GetPullRequestStatus(context.Background(), 999)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrPullRequestNotFound) {
+		t.Errorf("expected ErrPullRequestNotFound, got: %v", err)
+	}
+}
+
+// TestGiteaProviderDeleteFileMissing tests that DeleteFile errors when the file doesn't exist.
+func TestGiteaProviderDeleteFileMissing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		// GetContents for missing file returns 404
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/missing.txt" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	err = provider.DeleteFile(context.Background(), "missing.txt", "main", "Delete missing")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, errors.New("file not found")) && err.Error() != `delete file: file "missing.txt" not found on branch "main"` {
+		t.Errorf("expected 'file not found' error, got: %v", err)
 	}
 }
