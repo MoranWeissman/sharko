@@ -422,8 +422,11 @@ spec:
 		_ = killProcessGroup(pfCmd)
 	}()
 
-	// Wait a bit for port-forward to be ready
-	time.Sleep(2 * time.Second)
+	// Wait for Gitea API (port-forward) to be ready
+	fmt.Println("    Waiting for Gitea API (port-forward) to be ready...")
+	if err := waitForGiteaAPI("http://localhost:13000", 60*time.Second); err != nil {
+		return "", "", fmt.Errorf("gitea API readiness: %w", err)
+	}
 
 	// Create the repository
 	if err := giteaCreateRepo(giteaToken, GiteaRepoName); err != nil {
@@ -677,46 +680,52 @@ func showStatusSnapshot() error {
 }
 
 // giteaCreateRepo creates a new repository via the Gitea REST API.
+// Retries on transport errors or unexpected status codes (preserves 201/409 success semantics).
 func giteaCreateRepo(token, repoName string) error {
-	client := newHTTPClient()
-	reqBody := fmt.Sprintf(`{"name":"%s","private":false,"auto_init":true,"default_branch":"main"}`, repoName)
-	req := mustNewRequest("POST", "http://localhost:13000/api/v1/user/repos", reqBody)
-	req.Header.Set("Authorization", "token "+token)
-	req.Header.Set("Content-Type", "application/json")
+	return retryHTTP(5, 2*time.Second, func() error {
+		client := newHTTPClient()
+		reqBody := fmt.Sprintf(`{"name":"%s","private":false,"auto_init":true,"default_branch":"main"}`, repoName)
+		req := mustNewRequest("POST", "http://localhost:13000/api/v1/user/repos", reqBody)
+		req.Header.Set("Authorization", "token "+token)
+		req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("gitea create repo request: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("gitea create repo request: %w", err)
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != 201 && resp.StatusCode != 409 {
-		return fmt.Errorf("gitea create repo: unexpected status %d", resp.StatusCode)
-	}
-	return nil
+		if resp.StatusCode != 201 && resp.StatusCode != 409 {
+			return fmt.Errorf("gitea create repo: unexpected status %d", resp.StatusCode)
+		}
+		return nil
+	})
 }
 
 // giteaAddFile adds or updates a file in a Gitea repository via the Contents API.
+// Retries on transport errors or unexpected status codes (preserves 201 success semantics).
 func giteaAddFile(token, owner, repo, filePath, content string) error {
-	client := newHTTPClient()
-	encodedContent := base64.StdEncoding.EncodeToString([]byte(content))
-	reqBody := fmt.Sprintf(`{"branch":"main","content":"%s","message":"Add %s"}`, encodedContent, filePath)
+	return retryHTTP(5, 2*time.Second, func() error {
+		client := newHTTPClient()
+		encodedContent := base64.StdEncoding.EncodeToString([]byte(content))
+		reqBody := fmt.Sprintf(`{"branch":"main","content":"%s","message":"Add %s"}`, encodedContent, filePath)
 
-	url := fmt.Sprintf("http://localhost:13000/api/v1/repos/%s/%s/contents/%s", owner, repo, filePath)
-	req := mustNewRequest("POST", url, reqBody)
-	req.Header.Set("Authorization", "token "+token)
-	req.Header.Set("Content-Type", "application/json")
+		url := fmt.Sprintf("http://localhost:13000/api/v1/repos/%s/%s/contents/%s", owner, repo, filePath)
+		req := mustNewRequest("POST", url, reqBody)
+		req.Header.Set("Authorization", "token "+token)
+		req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("gitea add file request: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("gitea add file request: %w", err)
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != 201 {
-		return fmt.Errorf("gitea add file %s: unexpected status %d", filePath, resp.StatusCode)
-	}
-	return nil
+		if resp.StatusCode != 201 {
+			return fmt.Errorf("gitea add file %s: unexpected status %d", filePath, resp.StatusCode)
+		}
+		return nil
+	})
 }
 
 // generateAddonsCatalogSeed generates the addons-catalog.yaml seed content
