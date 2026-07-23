@@ -375,29 +375,26 @@ spec:
 	fmt.Println("    Bootstrapping Gitea (creating admin user)...")
 
 	// Create admin user (idempotent — ignore "user already exists" error)
+	// Run as the 'git' user (uid 1000) because Gitea CLI refuses to run as root.
+	createUserCmd := fmt.Sprintf("gitea admin user create --admin --username %s --password %s --email %s --must-change-password=false",
+		GiteaAdminUser, GiteaAdminPassword, GiteaAdminEmail)
 	_, stderr, err := runCmd(30*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
 		"--context", ContextHub, "-n", Namespace,
 		"exec", "deploy/gitea", "--",
-		"gitea", "admin", "user", "create",
-		"--admin",
-		"--username", GiteaAdminUser,
-		"--password", GiteaAdminPassword,
-		"--email", GiteaAdminEmail,
-		"--must-change-password=false")
-	if err != nil && !contains(stderr, "user already exists") {
+		"su", "git", "-c", createUserCmd)
+	if err != nil && !contains(stderr, "user already exists") && !contains(stderr, "already exists") {
 		return "", "", fmt.Errorf("create gitea admin user: %w (stderr=%s)", err, stderr)
 	}
 
 	// Generate API token
 	fmt.Println("    Generating Gitea API token...")
+	// Run as the 'git' user (uid 1000) because Gitea CLI refuses to run as root.
+	generateTokenCmd := fmt.Sprintf("gitea admin user generate-access-token --username %s --token-name sharko-playground --scopes 'write:repository,write:user' --raw",
+		GiteaAdminUser)
 	tokenOut, stderr, err := runCmd(30*time.Second, "kubectl", "--kubeconfig", kubeconfigPath,
 		"--context", ContextHub, "-n", Namespace,
 		"exec", "deploy/gitea", "--",
-		"gitea", "admin", "user", "generate-access-token",
-		"--username", GiteaAdminUser,
-		"--token-name", "sharko-playground",
-		"--scopes", "write:repository,write:user",
-		"--raw")
+		"su", "git", "-c", generateTokenCmd)
 	if err != nil {
 		return "", "", fmt.Errorf("generate gitea token: %w (stderr=%s)", err, stderr)
 	}
