@@ -13,7 +13,6 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
-COPY api/ api/
 COPY catalog/ catalog/
 COPY templates/ templates/
 COPY docs/swagger/ docs/swagger/
