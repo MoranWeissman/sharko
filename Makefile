@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image operator-dev-up operator-dev-down operator-playground-up operator-playground-status operator-playground-tunnels operator-playground-drive-on operator-playground-drive-off operator-playground-down install uninstall deploy undeploy manifests
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image playground-up playground-status playground-tunnels playground-down operator-playground-up operator-playground-status operator-playground-tunnels operator-playground-down
 
 PORT ?= 8080
 
@@ -34,23 +34,13 @@ help: ## Show available targets
 	@echo "    make kind-up               Provision a sharko-e2e kind topology"
 	@echo "    make kind-down             Destroy stale sharko-e2e-* kind clusters"
 	@echo ""
-	@echo "  Operator Development (Phase 0 scaffold):"
-	@echo "    make operator-dev-up       Provision persistent dev cluster + ArgoCD + Sharko"
-	@echo "    make operator-dev-down     Delete ONLY sharko-operator-dev cluster (safe)"
-	@echo "    make manifests             Generate CRD YAML + RBAC from Go markers (installs controller-gen)"
-	@echo "    make install               Apply CRDs to cluster (no-op until Phase 1)"
-	@echo "    make uninstall             Delete CRDs from cluster"
-	@echo "    make deploy                Apply controller RBAC + Deployment (no-op until Phase 1)"
-	@echo "    make undeploy              Delete controller RBAC + Deployment"
-	@echo ""
-	@echo "  Operator Local Playground (Phase 2 prove-then-flip):"
-	@echo "    make operator-playground-up         Spin up hub + N spokes + ArgoCD + Sharko + GitFake"
-	@echo "    make operator-playground-status     Show current state (drive mode, CR status, labels)"
-	@echo "    make operator-playground-tunnels    Open browser tunnels (Sharko+ArgoCD+Gitea), Ctrl+C closes all"
-	@echo "    make operator-playground-drive-on   Flip operator drive ON (operator writes labels)"
-	@echo "    make operator-playground-drive-off  Flip operator drive OFF (reconciler writes labels)"
-	@echo "    make operator-playground-down       Tear down all playground clusters (safe)"
+	@echo "  Local Playground (hub + spokes + ArgoCD + Sharko + Gitea):"
+	@echo "    make playground-up         Spin up hub + N spokes + ArgoCD + Sharko + GitFake"
+	@echo "    make playground-status     Show current state (cluster/label/Gitea state)"
+	@echo "    make playground-tunnels    Open browser tunnels (Sharko+ArgoCD+Gitea), Ctrl+C closes all"
+	@echo "    make playground-down       Tear down all playground clusters (safe)"
 	@echo "    (Set PLAYGROUND_SPOKES=N to override default 2 spokes)"
+	@echo "    (operator-playground-* names still work as aliases)"
 	@echo ""
 
 demo: ## Build UI + start server in demo mode
@@ -416,111 +406,26 @@ release: ## Tag and push a release (usage: make release VERSION=1.0.0)
 	@echo "    git push origin v$(VERSION)"
 	@echo ""
 
-# =====================================================================
-# Operator Development Tooling (Phase 0)
-# =====================================================================
-#
-# Phase 0 scaffolds the local operator development loop. Targets below are
-# idempotent no-ops today (CRDs + controller code land in Phase 1+). They
-# install controller-gen if missing and print honest "no CRDs yet" messages.
-#
-# The persistent dev cluster (sharko-operator-dev) is DISTINCT from the
-# throwaway e2e clusters (sharko-e2e-*) so test-e2e-clean / kind-down never
-# delete it. operator-dev-down guards by exact cluster name (same safety
-# discipline as test-e2e-clean).
-
-OPERATOR_DEV_CLUSTER_NAME := sharko-operator-dev
-
-operator-dev-up: ## Provision persistent operator dev cluster + install Sharko
-	@echo "==> Provisioning persistent operator dev cluster '$(OPERATOR_DEV_CLUSTER_NAME)'"
-	@if kind get clusters 2>/dev/null | grep -qx "$(OPERATOR_DEV_CLUSTER_NAME)"; then \
-		echo "    Cluster already exists — upgrading Sharko"; \
-	else \
-		echo "    Creating kind cluster"; \
-		kind create cluster --name $(OPERATOR_DEV_CLUSTER_NAME) --wait 60s; \
-	fi
-	@echo "==> Installing ArgoCD"
-	@kubectl --context kind-$(OPERATOR_DEV_CLUSTER_NAME) create namespace argocd 2>/dev/null || true
-	@kubectl --context kind-$(OPERATOR_DEV_CLUSTER_NAME) apply --server-side --force-conflicts -n argocd \
-		-f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml >/dev/null
-	@kubectl --context kind-$(OPERATOR_DEV_CLUSTER_NAME) wait --for=condition=available --timeout=180s \
-		deployment/argocd-server -n argocd
-	@echo "==> Installing Sharko via scripts/helm-install.sh"
-	@KIND_CLUSTER_NAME=$(OPERATOR_DEV_CLUSTER_NAME) bash scripts/helm-install.sh || \
-		echo "    helm-install.sh failed — check secrets.env is present with GITHUB_TOKEN"
-	@echo ""
-	@echo "  ✅ Operator dev cluster ready"
-	@echo "     Cluster: kind-$(OPERATOR_DEV_CLUSTER_NAME)"
-	@echo "     To access Sharko: kubectl --context kind-$(OPERATOR_DEV_CLUSTER_NAME) port-forward -n sharko svc/sharko 8080:80"
-	@echo "     To access ArgoCD: kubectl --context kind-$(OPERATOR_DEV_CLUSTER_NAME) port-forward -n argocd svc/argocd-server 18080:443"
-
-operator-dev-down: ## Delete ONLY the sharko-operator-dev cluster (safe — never touches other clusters)
-	@echo "==> Deleting persistent operator dev cluster '$(OPERATOR_DEV_CLUSTER_NAME)'"
-	@if kind get clusters 2>/dev/null | grep -qx "$(OPERATOR_DEV_CLUSTER_NAME)"; then \
-		kind delete cluster --name $(OPERATOR_DEV_CLUSTER_NAME); \
-		echo "    Cluster deleted"; \
-	else \
-		echo "    Cluster '$(OPERATOR_DEV_CLUSTER_NAME)' not found (already torn down)"; \
-	fi
-
-# Operator Local Playground (Phase 2 prove-then-flip tooling — Epic Operator-Local-Playground)
-# One-command kind topology to prove the operator driving addon labels without EKS or cloud secrets.
+# Local Playground (hub + N spokes + ArgoCD + Sharko + Gitea, full GitOps loop)
+# One-command kind topology for a realistic local end-to-end test bed.
 
 PLAYGROUND_SPOKES ?= 2
 PLAYGROUND_HUB_CONTEXT := kind-sharko-play-hub
 PLAYGROUND_NAMESPACE := sharko
 PLAYGROUND_RELEASE := sharko
 
-operator-playground-up: ## Provision playground (hub + N spokes + ArgoCD + Sharko + GitFake) — Story 1
-	@echo "==> Starting operator playground (hub + $(PLAYGROUND_SPOKES) spokes)"
+playground-up: ## Provision playground (hub + N spokes + ArgoCD + Sharko + GitFake)
+	@echo "==> Starting playground (hub + $(PLAYGROUND_SPOKES) spokes)"
 	@PLAYGROUND_SPOKES=$(PLAYGROUND_SPOKES) go run ./cmd/playground up
 
-operator-playground-status: ## Show operator playground status — ClusterAddons Ready + converged addon labels per spoke
-	@bash scripts/operator-playground-status.sh
+playground-status: ## Show playground status — cluster/label/Gitea state per spoke
+	@bash scripts/playground-status.sh
 
-operator-playground-tunnels: ## Open browser tunnels for Sharko + ArgoCD + Gitea (Ctrl+C closes all)
-	@bash scripts/operator-playground-tunnels.sh
+playground-tunnels: ## Open browser tunnels for Sharko + ArgoCD + Gitea (Ctrl+C closes all)
+	@bash scripts/playground-tunnels.sh
 
-operator-playground-drive-on: ## Flip operator drive ON — controller writes addon labels
-	@echo "==> Flipping operator drive ON (SHARKO_OPERATOR_DRIVES_LABELS=true)"
-	@if ! helm --kube-context $(PLAYGROUND_HUB_CONTEXT) list -n $(PLAYGROUND_NAMESPACE) | grep -q "^$(PLAYGROUND_RELEASE)"; then \
-		echo "ERROR: Helm release '$(PLAYGROUND_RELEASE)' not found in namespace '$(PLAYGROUND_NAMESPACE)' on $(PLAYGROUND_HUB_CONTEXT)"; \
-		echo "       Run 'make operator-playground-up' first."; \
-		exit 1; \
-	fi
-	@helm --kube-context $(PLAYGROUND_HUB_CONTEXT) upgrade $(PLAYGROUND_RELEASE) charts/sharko \
-		--namespace $(PLAYGROUND_NAMESPACE) \
-		--reuse-values \
-		--set operator.drivesLabels=true
-	@echo "    Restarting Sharko deployment to pick up env change..."
-	@kubectl --context $(PLAYGROUND_HUB_CONTEXT) -n $(PLAYGROUND_NAMESPACE) rollout restart deploy/sharko
-	@kubectl --context $(PLAYGROUND_HUB_CONTEXT) -n $(PLAYGROUND_NAMESPACE) rollout status deploy/sharko --timeout=120s
-	@echo ""
-	@echo "  ✅ Operator is now DRIVING labels."
-	@echo "     The controller writes addon labels from the ClusterAddons CR spec."
-	@echo "     Watch convergence: make operator-playground-status"
-
-operator-playground-drive-off: ## Flip operator drive OFF — reconciler resumes writing addon labels
-	@echo "==> Flipping operator drive OFF (SHARKO_OPERATOR_DRIVES_LABELS=false)"
-	@if ! helm --kube-context $(PLAYGROUND_HUB_CONTEXT) list -n $(PLAYGROUND_NAMESPACE) | grep -q "^$(PLAYGROUND_RELEASE)"; then \
-		echo "ERROR: Helm release '$(PLAYGROUND_RELEASE)' not found in namespace '$(PLAYGROUND_NAMESPACE)' on $(PLAYGROUND_HUB_CONTEXT)"; \
-		echo "       Run 'make operator-playground-up' first."; \
-		exit 1; \
-	fi
-	@helm --kube-context $(PLAYGROUND_HUB_CONTEXT) upgrade $(PLAYGROUND_RELEASE) charts/sharko \
-		--namespace $(PLAYGROUND_NAMESPACE) \
-		--reuse-values \
-		--set operator.drivesLabels=false
-	@echo "    Restarting Sharko deployment to pick up env change..."
-	@kubectl --context $(PLAYGROUND_HUB_CONTEXT) -n $(PLAYGROUND_NAMESPACE) rollout restart deploy/sharko
-	@kubectl --context $(PLAYGROUND_HUB_CONTEXT) -n $(PLAYGROUND_NAMESPACE) rollout status deploy/sharko --timeout=120s
-	@echo ""
-	@echo "  ✅ Operator drive OFF — reconciler resumes as the label writer."
-	@echo "     This is the one-line rollback. Labels remain correct."
-	@echo "     Watch state: make operator-playground-status"
-
-operator-playground-down: ## Delete ONLY sharko-play-* clusters (Story 4: name-guarded teardown)
-	@echo "==> Deleting operator playground clusters (sharko-play-* prefix only)"
+playground-down: ## Delete ONLY sharko-play-* clusters (name-guarded teardown)
+	@echo "==> Deleting playground clusters (sharko-play-* prefix only)"
 	@CLUSTERS=$$(kind get clusters 2>/dev/null | grep -E '^sharko-play-' || true); \
 	if [ -z "$$CLUSTERS" ]; then \
 		echo "    (none found — already clean)"; \
@@ -535,130 +440,9 @@ operator-playground-down: ## Delete ONLY sharko-play-* clusters (Story 4: name-g
 		docker rmi sharko-gitfake:e2e-* 2>/dev/null || echo "    (no gitfake images to prune)"; \
 	fi
 
-# Kubebuilder-standard targets. Phase 0: all are clean no-ops (exit 0 with a note).
-# Phase 1+: these will generate/apply CRDs + RBAC + controller Deployment.
-
-CONTROLLER_GEN := $(shell command -v controller-gen 2>/dev/null || echo "$(shell go env GOPATH)/bin/controller-gen")
-
-install: ## Apply CRDs + RBAC to the cluster (Story 1.5: now does real work)
-	@if [ ! -d config/crd ]; then \
-		echo "==> install: config/crd/ does not exist"; \
-		exit 1; \
-	fi; \
-	CRD_COUNT=$$(find config/crd -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l | tr -d ' '); \
-	if [ "$$CRD_COUNT" -eq 0 ]; then \
-		echo "==> install: no CRDs present yet (populated in Phase 1)"; \
-	else \
-		echo "==> Applying CRDs from config/crd/"; \
-		kubectl apply -f config/crd/; \
-	fi
-	@if [ ! -d config/rbac ]; then \
-		echo "==> install: config/rbac/ does not exist"; \
-		exit 1; \
-	fi; \
-	RBAC_COUNT=$$(find config/rbac -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l | tr -d ' '); \
-	if [ "$$RBAC_COUNT" -eq 0 ]; then \
-		echo "==> install: no RBAC manifests yet (run 'make manifests' to generate)"; \
-	else \
-		echo "==> Applying RBAC from config/rbac/"; \
-		kubectl apply -f config/rbac/; \
-	fi
-
-uninstall: ## Delete CRDs + RBAC from the cluster (Story 1.5: now does real work)
-	@if [ ! -d config/rbac ]; then \
-		echo "==> uninstall: config/rbac/ does not exist"; \
-	else \
-		RBAC_COUNT=$$(find config/rbac -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l | tr -d ' '); \
-		if [ "$$RBAC_COUNT" -gt 0 ]; then \
-			echo "==> Deleting RBAC from config/rbac/"; \
-			kubectl delete -f config/rbac/ --ignore-not-found=true; \
-		fi; \
-	fi
-	@if [ ! -d config/crd ]; then \
-		echo "==> uninstall: config/crd/ does not exist"; \
-		exit 1; \
-	fi; \
-	CRD_COUNT=$$(find config/crd -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l | tr -d ' '); \
-	if [ "$$CRD_COUNT" -eq 0 ]; then \
-		echo "==> uninstall: no CRDs to delete (populated in Phase 1)"; \
-	else \
-		echo "==> Deleting CRDs from config/crd/"; \
-		kubectl delete -f config/crd/ --ignore-not-found=true; \
-	fi
-
-deploy: ## Apply CRDs + RBAC (Story 1.5: now does real work; Deployment in future story)
-	@echo "==> Deploying CRDs + RBAC (Deployment will be added in a future story)"
-	@$(MAKE) install
-	@MGR_COUNT=$$(find config/manager -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l); \
-	if [ "$$MGR_COUNT" -eq 0 ]; then \
-		echo "==> deploy: no manager Deployment yet (will be added in a future story)"; \
-	else \
-		echo "==> Applying manager Deployment from config/manager/"; \
-		kubectl apply -f config/manager/; \
-	fi
-
-undeploy: ## Delete CRDs + RBAC + Deployment (Story 1.5: now does real work)
-	@if [ -d config/manager ]; then \
-		MGR_COUNT=$$(find config/manager -name '*.yaml' -o -name '*.yml' 2>/dev/null | wc -l); \
-		if [ "$$MGR_COUNT" -gt 0 ]; then \
-			echo "==> Deleting manager Deployment from config/manager/"; \
-			kubectl delete -f config/manager/ --ignore-not-found=true; \
-		fi; \
-	fi
-	@$(MAKE) uninstall
-
-manifests: ## Generate CRD YAML + deepcopy + RBAC from Go markers (Story 1.5: now generates RBAC)
-	@if [ ! -x "$(CONTROLLER_GEN)" ]; then \
-		echo "==> Installing controller-gen (sigs.k8s.io/controller-tools)"; \
-		go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest; \
-		echo "    Installed to $(shell go env GOPATH)/bin/controller-gen"; \
-	fi
-	@echo "==> manifests: controller-gen available at $(CONTROLLER_GEN)"
-	@if [ ! -d api/v1alpha1 ]; then \
-		echo "==> manifests: no API types present yet"; \
-		exit 1; \
-	fi
-	@echo "==> Generating deepcopy code + CRD YAML from Go markers"
-	@$(CONTROLLER_GEN) object:headerFile=hack/boilerplate.go.txt paths="./api/..."
-	@$(CONTROLLER_GEN) crd paths="./api/..." output:crd:artifacts:config=config/crd
-	@echo "    Generated: api/v1alpha1/zz_generated.deepcopy.go"
-	@echo "    Generated: config/crd/*.yaml"
-	@echo "==> Generating RBAC role from kubebuilder markers"
-	@mkdir -p config/rbac
-	@$(CONTROLLER_GEN) rbac:roleName=sharko-operator paths="./internal/operator/..." output:rbac:artifacts:config=config/rbac
-	@echo "    Generated: config/rbac/role.yaml"
-	@echo "==> Copying CRDs to Helm chart"
-	@mkdir -p charts/sharko/crds
-	@cp config/crd/*.yaml charts/sharko/crds/ 2>/dev/null || true
-	@echo "    Copied to: charts/sharko/crds/"
-
-SETUP_ENVTEST := $(shell command -v setup-envtest 2>/dev/null || echo "$(shell go env GOPATH)/bin/setup-envtest")
-
-setup-envtest: ## Install setup-envtest binary (for provisioning envtest assets)
-	@if [ -x "$(SETUP_ENVTEST)" ]; then \
-		echo "==> setup-envtest already installed at $(SETUP_ENVTEST)"; \
-	else \
-		echo "==> Installing setup-envtest (sigs.k8s.io/controller-runtime/tools/setup-envtest)"; \
-		go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest; \
-		echo "    Installed to $(shell go env GOPATH)/bin/setup-envtest"; \
-	fi
-
-test-operator: setup-envtest ## Run operator tests (unit + envtest integration)
-	@echo "==> Running operator unit tests (non-envtest)"
-	@go test ./internal/operator/... -v -run='Test.*' -skip='Envtest'
-	@echo ""
-	@echo "==> Provisioning envtest assets for integration tests"
-	@if ! command -v $(SETUP_ENVTEST) >/dev/null 2>&1; then \
-		echo "ERROR: setup-envtest not found. Run 'make setup-envtest' first."; \
-		exit 1; \
-	fi
-	@ASSETS_PATH=$$($(SETUP_ENVTEST) use -p path 2>/dev/null | tail -1); \
-	if [ -z "$$ASSETS_PATH" ]; then \
-		echo "    No envtest assets found — downloading latest"; \
-		ASSETS_PATH=$$($(SETUP_ENVTEST) use -p path --bin-dir $(shell go env GOPATH)/bin 2>&1 | tail -1); \
-	fi; \
-	echo "    Using KUBEBUILDER_ASSETS=$$ASSETS_PATH"; \
-	export KUBEBUILDER_ASSETS="$$ASSETS_PATH"; \
-	export PATH="$$PATH:$(shell go env GOPATH)/bin"; \
-	echo "==> Running operator envtest integration tests"; \
-	go test ./internal/operator/... -v -run='.*Envtest.*'
+# Aliases — kept so muscle memory from the old operator-playground-* names
+# still works. The playground-* targets above are canonical.
+operator-playground-up: playground-up
+operator-playground-status: playground-status
+operator-playground-tunnels: playground-tunnels
+operator-playground-down: playground-down

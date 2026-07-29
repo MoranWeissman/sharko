@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# operator-playground-tunnels.sh — Open browser tunnels for Sharko + ArgoCD + Gitea
+# playground-tunnels.sh — Open browser tunnels for Sharko + ArgoCD + Gitea
 #
 # Opens three kubectl port-forward tunnels (Sharko on 8080, ArgoCD on 18443, Gitea on 13000)
 # and blocks until Ctrl+C, then tears them ALL down cleanly.
@@ -28,12 +28,12 @@ info() {
 
 # Check if context exists
 if ! kubectl config get-contexts "$CONTEXT" &>/dev/null; then
-  err "Context '$CONTEXT' not found. Run 'make operator-playground-up' first."
+  err "Context '$CONTEXT' not found. Run 'make playground-up' first."
 fi
 
 # Check if Sharko release is installed
 if ! kubectl --context="$CONTEXT" -n "$SHARKO_NS" get deploy sharko &>/dev/null; then
-  err "Sharko deployment not found in namespace '$SHARKO_NS'. Run 'make operator-playground-up' first."
+  err "Sharko deployment not found in namespace '$SHARKO_NS'. Run 'make playground-up' first."
 fi
 
 # --- Tunnel Cleanup ---

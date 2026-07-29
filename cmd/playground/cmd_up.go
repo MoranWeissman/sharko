@@ -20,7 +20,7 @@ import (
 // cmdUp implements the `playground up` subcommand — spin up hub + N spokes,
 // install ArgoCD + Sharko + GitFake, register spokes.
 func cmdUp(ctx context.Context) error {
-	fmt.Println("==> Starting operator playground setup")
+	fmt.Println("==> Starting playground setup")
 
 	// 1. Determine number of spokes from PLAYGROUND_SPOKES env (default 2).
 	numSpokes := DefaultSpokes
@@ -82,8 +82,7 @@ func cmdUp(ctx context.Context) error {
 		}
 	}
 
-	// 7. Install Sharko on the hub via helm with operator.enabled=true,
-	//    operator.drivesLabels=false (start inert). For Gitea backend, allowlist
+	// 7. Install Sharko on the hub via helm. For Gitea backend, allowlist
 	//    the in-cluster Gitea host.
 	if err := installSharko(gitBackend, gitfakeURL, giteaURL); err != nil {
 		return fmt.Errorf("install Sharko: %w", err)
@@ -506,8 +505,6 @@ func installSharko(gitBackend, gitfakeURL, giteaURL string) error {
 		"--set", "image.repository=sharko",
 		"--set", "image.tag=" + imageTag,
 		"--set", "image.pullPolicy=Never",
-		"--set", "operator.enabled=true",
-		"--set", "operator.drivesLabels=false",
 		"--set", "bootstrapAdmin.password=admin",
 		"--wait",
 		"--timeout", "5m",
@@ -803,22 +800,21 @@ func printSuccessMessage() error {
 	fmt.Println("  Then open https://localhost:18080")
 	fmt.Println("")
 	fmt.Println("Next steps:")
-	fmt.Println("  make operator-playground-status     # Check current state")
-	fmt.Println("  make operator-playground-drive-on   # Flip operator drive ON")
-	fmt.Println("  make operator-playground-drive-off  # Flip operator drive OFF")
-	fmt.Println("  make operator-playground-down       # Tear down playground")
+	fmt.Println("  make playground-status     # Check current state")
+	fmt.Println("  make playground-tunnels    # Open browser tunnels")
+	fmt.Println("  make playground-down       # Tear down playground")
 
 	return nil
 }
 
-// showStatusSnapshot shells out to scripts/operator-playground-status.sh to
-// display the current state of the playground (clusters, ClusterAddons, drive mode).
+// showStatusSnapshot shells out to scripts/playground-status.sh to
+// display the current state of the playground (clusters, addon labels, Gitea state).
 func showStatusSnapshot() error {
 	fmt.Println("")
 	fmt.Println("==> Running status snapshot...")
-	_, stderr, err := runCmd(30*time.Second, "sh", "./scripts/operator-playground-status.sh")
+	_, stderr, err := runCmd(30*time.Second, "sh", "./scripts/playground-status.sh")
 	if err != nil {
-		return fmt.Errorf("operator-playground-status.sh: %w (stderr=%s)", err, stderr)
+		return fmt.Errorf("playground-status.sh: %w (stderr=%s)", err, stderr)
 	}
 	return nil
 }
