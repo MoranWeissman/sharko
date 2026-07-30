@@ -124,7 +124,12 @@ func (e *ToolExecutor) enableAddon(ctx context.Context, connectionName, clusterN
 	}
 
 	gp := e.resolveProvider(connectionName)
-	data, err := gp.GetFileContent(ctx, e.managedClustersPath, "main")
+	baseBranch := e.branch()
+	if msg, refused := refuseV3Write(ctx, gp, baseBranch); refused {
+		return msg, nil
+	}
+
+	data, err := gp.GetFileContent(ctx, e.managedClustersPath, baseBranch)
 	if err != nil {
 		return "", fmt.Errorf("reading managed-clusters.yaml: %w", err)
 	}
@@ -137,7 +142,7 @@ func (e *ToolExecutor) enableAddon(ctx context.Context, connectionName, clusterN
 	branch := fmt.Sprintf("sharko/enable-addon/%s/%s/%d",
 		sanitizeBranchName(addonName), sanitizeBranchName(clusterName), time.Now().Unix())
 
-	if err := gp.CreateBranch(ctx, branch, "main"); err != nil {
+	if err := gp.CreateBranch(ctx, branch, baseBranch); err != nil {
 		return "", fmt.Errorf("creating branch: %w", err)
 	}
 
@@ -149,7 +154,7 @@ func (e *ToolExecutor) enableAddon(ctx context.Context, connectionName, clusterN
 	title := fmt.Sprintf("[Sharko] Enable %s on %s", addonName, clusterName)
 	body := fmt.Sprintf("Automated by Sharko.\n\n**Change:** Enable addon %s on cluster %s.", addonName, clusterName)
 
-	pr, err := gp.CreatePullRequest(ctx, title, body, branch, "main")
+	pr, err := gp.CreatePullRequest(ctx, title, body, branch, baseBranch)
 	if err != nil {
 		return "", fmt.Errorf("creating pull request: %w", err)
 	}
@@ -162,7 +167,7 @@ func (e *ToolExecutor) enableAddon(ctx context.Context, connectionName, clusterN
 			PRUrl:     pr.URL,
 			PRBranch:  branch,
 			PRTitle:   title,
-			PRBase:    "main",
+			PRBase:    baseBranch,
 			Cluster:   clusterName,
 			Addon:     addonName,
 			Operation: "ai-tool-enable",
@@ -183,7 +188,12 @@ func (e *ToolExecutor) disableAddon(ctx context.Context, connectionName, cluster
 	}
 
 	gp := e.resolveProvider(connectionName)
-	data, err := gp.GetFileContent(ctx, e.managedClustersPath, "main")
+	baseBranch := e.branch()
+	if msg, refused := refuseV3Write(ctx, gp, baseBranch); refused {
+		return msg, nil
+	}
+
+	data, err := gp.GetFileContent(ctx, e.managedClustersPath, baseBranch)
 	if err != nil {
 		return "", fmt.Errorf("reading managed-clusters.yaml: %w", err)
 	}
@@ -196,7 +206,7 @@ func (e *ToolExecutor) disableAddon(ctx context.Context, connectionName, cluster
 	branch := fmt.Sprintf("sharko/disable-addon/%s/%s/%d",
 		sanitizeBranchName(addonName), sanitizeBranchName(clusterName), time.Now().Unix())
 
-	if err := gp.CreateBranch(ctx, branch, "main"); err != nil {
+	if err := gp.CreateBranch(ctx, branch, baseBranch); err != nil {
 		return "", fmt.Errorf("creating branch: %w", err)
 	}
 
@@ -208,7 +218,7 @@ func (e *ToolExecutor) disableAddon(ctx context.Context, connectionName, cluster
 	title := fmt.Sprintf("[Sharko] Disable %s on %s", addonName, clusterName)
 	body := fmt.Sprintf("Automated by Sharko.\n\n**Change:** Disable addon %s on cluster %s.", addonName, clusterName)
 
-	pr, err := gp.CreatePullRequest(ctx, title, body, branch, "main")
+	pr, err := gp.CreatePullRequest(ctx, title, body, branch, baseBranch)
 	if err != nil {
 		return "", fmt.Errorf("creating pull request: %w", err)
 	}
@@ -220,7 +230,7 @@ func (e *ToolExecutor) disableAddon(ctx context.Context, connectionName, cluster
 			PRUrl:     pr.URL,
 			PRBranch:  branch,
 			PRTitle:   title,
-			PRBase:    "main",
+			PRBase:    baseBranch,
 			Cluster:   clusterName,
 			Addon:     addonName,
 			Operation: "ai-tool-disable",
@@ -241,7 +251,12 @@ func (e *ToolExecutor) updateAddonVersion(ctx context.Context, connectionName, a
 	}
 
 	gp := e.resolveProvider(connectionName)
-	data, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
+	baseBranch := e.branch()
+	if msg, refused := refuseV3Write(ctx, gp, baseBranch); refused {
+		return msg, nil
+	}
+
+	data, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", baseBranch)
 	if err != nil {
 		return "", fmt.Errorf("reading addons-catalog.yaml: %w", err)
 	}
@@ -254,7 +269,7 @@ func (e *ToolExecutor) updateAddonVersion(ctx context.Context, connectionName, a
 	branch := fmt.Sprintf("sharko/update-version/%s/%d",
 		sanitizeBranchName(addonName), time.Now().Unix())
 
-	if err := gp.CreateBranch(ctx, branch, "main"); err != nil {
+	if err := gp.CreateBranch(ctx, branch, baseBranch); err != nil {
 		return "", fmt.Errorf("creating branch: %w", err)
 	}
 
@@ -266,7 +281,7 @@ func (e *ToolExecutor) updateAddonVersion(ctx context.Context, connectionName, a
 	title := fmt.Sprintf("[Sharko] Update %s to %s", addonName, version)
 	body := fmt.Sprintf("Automated by Sharko.\n\n**Change:** Update addon %s version to %s.", addonName, version)
 
-	pr, err := gp.CreatePullRequest(ctx, title, body, branch, "main")
+	pr, err := gp.CreatePullRequest(ctx, title, body, branch, baseBranch)
 	if err != nil {
 		return "", fmt.Errorf("creating pull request: %w", err)
 	}
@@ -278,7 +293,7 @@ func (e *ToolExecutor) updateAddonVersion(ctx context.Context, connectionName, a
 			PRUrl:     pr.URL,
 			PRBranch:  branch,
 			PRTitle:   title,
-			PRBase:    "main",
+			PRBase:    baseBranch,
 			Addon:     addonName,
 			Operation: "ai-tool-update",
 			User:      "ai-agent",
