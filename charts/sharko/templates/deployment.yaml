@@ -135,6 +135,21 @@ spec:
               value: "false"
             {{- end }}
             {{- /*
+              v4 Wave 1 Story 3.4 — catalog version-freshness scheduler.
+              Same tri-state shape as connectivityCheck/autoRemediate above
+              for the enabled flag (only rendered when explicitly disabled);
+              interval is a duration string, only rendered when the operator
+              overrides the code default (24h).
+            */}}
+            {{- if and .Values.catalog .Values.catalog.freshness (not .Values.catalog.freshness.enabled) }}
+            - name: SHARKO_CATALOG_FRESHNESS_ENABLED
+              value: "false"
+            {{- end }}
+            {{- if and .Values.catalog .Values.catalog.freshness .Values.catalog.freshness.interval }}
+            - name: SHARKO_CATALOG_FRESHNESS_INTERVAL
+              value: {{ .Values.catalog.freshness.interval | quote }}
+            {{- end }}
+            {{- /*
               V3 C1: git-native server settings (probe_mode, allow_inline_credentials).
               Emit only when operator explicitly sets the value (tri-state: set → git wins,
               unset → runtime ConfigMap authoritative). Empty string ⇒ no env var ⇒ undeclared.

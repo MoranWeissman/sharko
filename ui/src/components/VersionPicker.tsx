@@ -4,6 +4,7 @@ import type {
   CatalogVersionEntry,
   CatalogVersionsResponse,
 } from '@/services/models'
+import { relativeTime } from '@/lib/time'
 
 /**
  * Shared chart-version picker used by both the Marketplace Configure
@@ -198,6 +199,23 @@ export function VersionPicker({
       {versionsResp?.latest_stable && (
         <p className="text-xs text-[#3a6a8a] dark:text-gray-500">
           Latest stable: <code>{versionsResp.latest_stable}</code>
+        </p>
+      )}
+
+      {/* v4 wave 1 Story 3.4 — "last checked" is the honest-staleness
+          signal: cached_at now reflects the freshness scheduler's real
+          daily check (or the on-demand fetch when the scheduler hasn't
+          covered this addon yet), not just "the millisecond this modal
+          opened". Shown even when version_check_unknown is true — an
+          unresolved oci:// repo still has a real "we tried at <time>"
+          fact worth surfacing, per "stale-but-dated data, never an error
+          page". */}
+      {versionsResp?.cached_at && (
+        <p
+          className="text-xs text-[#5a8aaa] dark:text-gray-500"
+          title={new Date(versionsResp.cached_at).toLocaleString()}
+        >
+          Last checked: {relativeTime(versionsResp.cached_at)}
         </p>
       )}
 

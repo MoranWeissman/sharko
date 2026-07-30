@@ -17,14 +17,45 @@ package api
 // path, not this check-and-PR flow.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
+
+// CheckEnginePinLive performs a live engine pin check against the currently
+// active Git connection. Exported so the freshness scheduler (v4 wave 1
+// Story 3.4, wired in cmd/sharko/serve.go) can run the identical check on
+// its own daily cycle without duplicating the Git-provider lookup and
+// orchestrator construction that handleCheckEnginePin below also needs.
+func (s *Server) CheckEnginePinLive(ctx context.Context) (*orchestrator.EnginePinCheckResult, error) {
+	git, err := s.connSvc.GetActiveGitProvider()
+	if err != nil {
+		return nil, fmt.Errorf("no active Git connection: %w", err)
+	}
+	orch := orchestrator.New(&s.gitMu, nil, nil, git, s.gitopsConfig(), s.repoPaths, nil)
+	return orch.CheckEnginePin(ctx)
+}
+
+// enginePinResultFromSnapshot adapts a catalog.EnginePinSnapshot (the
+// freshness scheduler's stored result) into the same
+// orchestrator.EnginePinCheckResult shape the live check returns, so
+// GET /api/v1/engine/pin's response contract is identical whichever source
+// answered it.
+func enginePinResultFromSnapshot(snap catalog.EnginePinSnapshot) *orchestrator.EnginePinCheckResult {
+	return &orchestrator.EnginePinCheckResult{
+		V4Repo:           snap.Status.V4Repo,
+		BundledVersion:   snap.Status.BundledVersion,
+		PinnedVersion:    snap.Status.PinnedVersion,
+		UpgradeAvailable: snap.Status.UpgradeAvailable,
+		Message:          snap.Status.Message,
+	}
+}
 
 // handleCheckEnginePin godoc
 //
@@ -38,20 +69,27 @@ import (
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /engine/pin [get]
 // handleCheckEnginePin handles GET /api/v1/engine/pin.
+//
+// v4 wave 1 Story 3.4: when the live check cannot run (most commonly no
+// active Git connection), this falls back to the freshness scheduler's most
+// recent background check rather than failing hard — "every fetch failure →
+// stale-but-dated data shown, never an error page." The live path stays
+// primary whenever a connection IS available: it is a single cheap file
+// read, and an upgrade decision deserves the freshest answer Sharko can
+// give, not a potentially day-old cached one.
 func (s *Server) handleCheckEnginePin(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "engine.pin-check") {
 		return
 	}
 
-	git, err := s.connSvc.GetActiveGitProvider()
+	result, err := s.CheckEnginePinLive(r.Context())
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
-		return
-	}
-
-	orch := orchestrator.New(&s.gitMu, nil, nil, git, s.gitopsConfig(), s.repoPaths, nil)
-	result, err := orch.CheckEnginePin(r.Context())
-	if err != nil {
+		if s.freshness != nil {
+			if snap, ok := s.freshness.EnginePinSnapshot(); ok && snap.Err == "" {
+				writeJSON(w, http.StatusOK, enginePinResultFromSnapshot(snap))
+				return
+			}
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}

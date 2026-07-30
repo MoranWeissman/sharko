@@ -729,6 +729,27 @@ export interface CatalogVersionsResponse {
 }
 
 /**
+ * v4 wave 1 Story 3.4 — catalog-wide version-freshness summary. Powers the
+ * Marketplace Browse tab's "Last checked" header line (when Sharko last
+ * ran its background freshness pass over the curated catalog), distinct
+ * from the per-addon `cached_at` on CatalogVersionsResponse above.
+ */
+export interface CatalogFreshnessResponse {
+  enabled: boolean
+  interval_seconds?: number
+  last_run?: string
+  next_run?: string
+  addons_checked: number
+  engine_pin?: {
+    last_checked?: string
+    v4_repo: boolean
+    upgrade_available: boolean
+    message?: string
+    error?: string
+  }
+}
+
+/**
  * v4 wave 1 Story 3.2/3.3 — one addon's merged view: the shipped curated
  * catalog overlaid with the caller's own git catalog/addons.yaml delta.
  * Mirrors `internal/catalog.MergedAddon`.
