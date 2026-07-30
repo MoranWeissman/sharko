@@ -1,0 +1,165 @@
+/**
+ * V4EnableAddonDialog — unit tests (v4 Wave 1 Story 4.3 UI half).
+ *
+ * Covers the "sharpened pipeline" contract end to end from the UI's
+ * point of view: preview shows the exact files (DryRunPreview), a 422
+ * shows the plain-words problems list BEFORE any PR talk (never mixed
+ * with a preview or a PR banner), and a successful apply shows the PR
+ * reference.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { V4EnableAddonDialog } from '@/components/V4EnableAddonDialog';
+import { V4AddonValidationError } from '@/services/api';
+
+const mockEnableAddonV4 = vi.fn();
+const mockDisableAddonV4 = vi.fn();
+
+vi.mock('@/services/api', async () => {
+  const actual = await vi.importActual<typeof import('@/services/api')>('@/services/api');
+  return {
+    ...actual,
+    enableAddonV4: (...args: unknown[]) => mockEnableAddonV4(...args),
+    disableAddonV4: (...args: unknown[]) => mockDisableAddonV4(...args),
+  };
+});
+
+function renderDialog(overrides: Partial<React.ComponentProps<typeof V4EnableAddonDialog>> = {}) {
+  const onClose = vi.fn();
+  const onApplied = vi.fn();
+  const utils = render(
+    <V4EnableAddonDialog
+      open
+      cluster="prod-eu"
+      addon="cert-manager"
+      mode="enable"
+      onClose={onClose}
+      onApplied={onApplied}
+      {...overrides}
+    />,
+  );
+  return { ...utils, onClose, onApplied };
+}
+
+beforeEach(() => {
+  mockEnableAddonV4.mockReset();
+  mockDisableAddonV4.mockReset();
+});
+
+describe('V4EnableAddonDialog', () => {
+  it('renders the title naming cluster and addon', () => {
+    renderDialog();
+    expect(screen.getByText('Enable cert-manager on prod-eu')).toBeInTheDocument();
+  });
+
+  it('preview shows the exact files to write', async () => {
+    mockEnableAddonV4.mockResolvedValue({
+      dry_run: {
+        effective_addons: ['cert-manager'],
+        files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update', diff: '--- a\n+++ b\n' }],
+        pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
+        secrets_to_create: [],
+      },
+    });
+
+    renderDialog();
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('clusters/prod-eu.yaml')).toBeInTheDocument();
+    });
+    expect(mockEnableAddonV4).toHaveBeenCalledWith('prod-eu', 'cert-manager', { dry_run: true, values: undefined });
+    // Confirm button appears once a clean preview is shown.
+    expect(screen.getByTestId('v4-confirm')).toBeInTheDocument();
+  });
+
+  it('a 422 shows the plain-words problems list BEFORE any PR talk', async () => {
+    mockEnableAddonV4.mockRejectedValue(
+      new V4AddonValidationError({
+        error: 'cannot enable vault on prod-eu: missing required value "server.ha.enabled"',
+        cluster: 'prod-eu',
+        addon: 'vault',
+        problems: [
+          'missing required value "server.ha.enabled" — Whether to run Vault in HA mode.',
+          'missing required value "server.dataStorage" — The persistent volume Vault stores its data on.',
+        ],
+      }),
+    );
+
+    renderDialog({ addon: 'vault' });
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('v4-problems')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/missing required value "server.ha.enabled"/)).toBeInTheDocument();
+    expect(screen.getByText(/missing required value "server.dataStorage"/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing was written/)).toBeInTheDocument();
+
+    // No preview, no confirm/PR button — problems come before any PR talk.
+    expect(screen.queryByTestId('v4-confirm')).not.toBeInTheDocument();
+    expect(screen.queryByText(/PR merged|PR opened/)).not.toBeInTheDocument();
+  });
+
+  it('success shows the PR reference', async () => {
+    mockEnableAddonV4
+      .mockResolvedValueOnce({
+        dry_run: {
+          effective_addons: ['cert-manager'],
+          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+          pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
+          secrets_to_create: [],
+        },
+      })
+      .mockResolvedValueOnce({
+        pr_url: 'https://github.com/demo/sharko-addons/pull/99',
+        pr_id: 99,
+        merged: false,
+      });
+
+    renderDialog();
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    await waitFor(() => expect(screen.getByTestId('v4-confirm')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('v4-confirm'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/View PR #99/)).toBeInTheDocument();
+    });
+    expect(mockEnableAddonV4).toHaveBeenLastCalledWith('prod-eu', 'cert-manager', { yes: true, values: undefined });
+  });
+
+  it('disable mode calls disableAddonV4 and skips the values field', async () => {
+    mockDisableAddonV4.mockResolvedValue({
+      dry_run: {
+        effective_addons: [],
+        files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+        pr_title: 'sharko: disable addon cert-manager on cluster prod-eu',
+        secrets_to_create: [],
+      },
+    });
+
+    renderDialog({ mode: 'disable' });
+    expect(screen.queryByTestId('v4-enable-values')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    await waitFor(() => {
+      expect(mockDisableAddonV4).toHaveBeenCalledWith('prod-eu', 'cert-manager', { dry_run: true });
+    });
+  });
+
+  it('rejects malformed JSON in the values field before calling the API', () => {
+    renderDialog();
+    fireEvent.change(screen.getByTestId('v4-enable-values'), { target: { value: '{not json' } });
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+    expect(screen.getByText(/Values must be valid JSON/)).toBeInTheDocument();
+    expect(mockEnableAddonV4).not.toHaveBeenCalled();
+  });
+
+  it('Cancel calls onClose', () => {
+    const { onClose } = renderDialog();
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    expect(onClose).toHaveBeenCalled();
+  });
+});

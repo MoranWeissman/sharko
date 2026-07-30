@@ -19,6 +19,13 @@ type MockGitProvider struct {
 }
 
 // NewMockGitProvider creates a new in-memory git provider with pre-seeded content.
+//
+// panics if the v4 fixture set (buildV4DemoFiles) fails to render — the
+// same "this is a build-time invariant, not a runtime condition" stance
+// NewMockArgocdServer's caller takes for its own setup errors. The v4
+// fixtures are built entirely from static, hand-written Go values, so a
+// failure here can only mean a real bug in this package, never bad
+// input from an operator or a live repo.
 func NewMockGitProvider() *MockGitProvider {
 	p := &MockGitProvider{
 		files:    make(map[string][]byte),
@@ -26,6 +33,13 @@ func NewMockGitProvider() *MockGitProvider {
 		nextPRID: 43, // start after the 2 pre-seeded PRs (LW-18: removed perf-asia phantom PR)
 	}
 	p.seedFiles()
+	v4Files, err := buildV4DemoFiles()
+	if err != nil {
+		panic(fmt.Sprintf("demo: building v4 fixture files: %v", err))
+	}
+	for path, content := range v4Files {
+		p.files[path] = content
+	}
 	p.seedPRs()
 	return p
 }
@@ -68,13 +82,11 @@ alertmanager:
 
 	// Engine pin (marks repo as initialised). Path matches
 	// orchestrator.BootstrapRootAppPath — the demo simulates a repo that
-	// has already been through v4 init (v4 Wave 1 Story 4.2). This is a
-	// deliberately minimal stand-in, not a full v4 layout — Story 4.5
-	// rebuilds the whole demo repo on the v4 data-file format
-	// (clusters/, catalog/addons.yaml, values/); this fixture only keeps
-	// the /repo/status "initialized" probe (which reads this exact path)
-	// and the ArgoCD bootstrap-app probe (mock_argocd.go, which reads
-	// orchestrator.BootstrapRootAppName) working in the meantime.
+	// has already been through v4 init (v4 Wave 1 Story 4.2). The rest
+	// of the v4 layout this pin implies (clusters/, catalog/addons.yaml,
+	// values/, fleet/connections.yaml) is built by buildV4DemoFiles
+	// (v4_fixtures.go, Story 4.5) and merged into p.files by
+	// NewMockGitProvider, right after this method returns.
 	p.files["engine/application.yaml"] = []byte(`apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

@@ -37,6 +37,7 @@ import type { TestClusterUnavailable, PRWriteResult } from '@/services/api';
 import { PRResultBanner, extractPR } from '@/components/PRFeedback';
 import { DryRunPreview } from '@/components/AddAddonFlow';
 import { EnableAddonPicker } from '@/components/EnableAddonPicker';
+import { V4EnableAddonDialog } from '@/components/V4EnableAddonDialog';
 import type { ClusterChange, ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, VerifyStep, DryRunResult } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -355,6 +356,39 @@ export function ClusterDetail() {
   const [pickerCatalogLoading, setPickerCatalogLoading] = useState(false);
   const [pickerCatalogError, setPickerCatalogError] = useState<string | null>(null);
   const [catalogFetched, setCatalogFetched] = useState(false);
+
+  // v4 Wave 1 Story 4.3 (UI half): whether the connected repo has been
+  // bootstrapped in the v4 data-file format. /repo/status's `initialized`
+  // reports exactly this — since Story 4.2, the engine pin
+  // (engine/application.yaml) is the ONLY marker a v4 bootstrap PR is
+  // guaranteed to write, so `initialized: true` means "this repo is v4".
+  // Defaults to false (the v3 flow) so a fetch failure, a repo that
+  // hasn't been bootstrapped yet, or a test that doesn't mock
+  // getRepoStatus all fall back to the existing, unaffected v3 behavior
+  // below — this is additive, never a replacement for the v3 toggle
+  // flow.
+  const [isV4, setIsV4] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    // Defensive typeof guard: several test suites mock `api` as a small,
+    // hand-picked object (only the methods that specific suite exercises)
+    // rather than spreading the real module, so `getRepoStatus` may not
+    // exist on the mock. Skipping the call there is exactly right —
+    // isV4 stays false, the existing v3 behavior those suites assert on.
+    if (typeof api.getRepoStatus !== 'function') return;
+    api.getRepoStatus()
+      .then((res) => { if (!cancelled) setIsV4(res.initialized); })
+      .catch(() => { if (!cancelled) setIsV4(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // v4 enable dialog (V4EnableAddonDialog) — opened from the
+  // EnableAddonPicker instead of staging into addonToggles when isV4,
+  // since a v4 write is validated per-addon BEFORE any PR exists (the
+  // bulk toggle-and-apply flow below is v3-only: it PATCHes labels onto
+  // managed-clusters.yaml, which v4 no longer authors — design doc
+  // §2.4).
+  const [v4EnableAddon, setV4EnableAddon] = useState<string | null>(null);
 
   // addon_secrets_ready pre-warn (V2-cleanup-88.5, L4): when this cluster
   // has no resolvable connection credentials, staging a secret-bearing
@@ -1762,6 +1796,14 @@ export function ClusterDetail() {
                   loading={pickerCatalogLoading}
                   error={pickerCatalogError}
                   onEnable={(addonName) => {
+                    if (isV4) {
+                      // v4 Wave 1 Story 4.3: route through the v4
+                      // per-addon endpoint instead of staging into the
+                      // v3 bulk-toggle-and-apply flow.
+                      setPickerOpen(false);
+                      setV4EnableAddon(addonName);
+                      return;
+                    }
                     setAddonToggles((prev) => ({ ...prev, [addonName]: true }));
                     // Pre-warn (V2-cleanup-88.5) instead of letting the
                     // user hit the 422 blind on Apply Changes.
@@ -1774,6 +1816,22 @@ export function ClusterDetail() {
                     void handleOpenPicker();
                   }}
                 />
+
+                {/* v4 Wave 1 Story 4.3 (UI half): the v4-format enable
+                    flow — preview shows the exact files, a 422 shows the
+                    plain-words problems list before any PR talk, success
+                    shows the PR reference. Refetches the comparison on
+                    apply so the newly-enabled addon shows up. */}
+                {name && v4EnableAddon && (
+                  <V4EnableAddonDialog
+                    open={!!v4EnableAddon}
+                    cluster={name}
+                    addon={v4EnableAddon}
+                    mode="enable"
+                    onClose={() => setV4EnableAddon(null)}
+                    onApplied={() => { void fetchData(true); }}
+                  />
+                )}
               </RoleGuard>
 
               {/* W8: Connectivity-check InfoBanner — explains the test app so it's

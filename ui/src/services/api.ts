@@ -26,6 +26,8 @@ import type {
   TrackedPRsResponse,
   UpgradeCheckResponse,
   UpgradeRecommendations,
+  V4AddonValidationErrorBody,
+  V4GitResult,
   VerifyResult,
   VersionMatrixResponse,
 } from './models'
@@ -372,6 +374,120 @@ export async function previewEnableAddon(clusterName: string, addonName: string)
     `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}`,
     { dry_run: true },
   )
+}
+
+/**
+ * V4AddonValidationError — thrown by enableAddonV4 when the server
+ * returns 422 (v4 Wave 1 Story 4.3's "sharpened pipeline": every
+ * required value and declared secret the merged catalog entry needs is
+ * checked BEFORE any branch or PR exists). Distinct from a plain Error
+ * so callers can show the plain-English `problems` list instead of just
+ * the summary sentence — the AC is "shows the problems list BEFORE any
+ * PR talk", which needs the full list, not just message.
+ */
+export class V4AddonValidationError extends Error {
+  cluster: string
+  addon: string
+  problems: string[]
+
+  constructor(body: V4AddonValidationErrorBody) {
+    super(body.error)
+    this.name = 'V4AddonValidationError'
+    this.cluster = body.cluster
+    this.addon = body.addon
+    this.problems = body.problems ?? []
+  }
+}
+
+export interface EnableAddonV4Request {
+  version?: string
+  values?: Record<string, unknown>
+  settings?: Record<string, unknown>
+  dry_run?: boolean
+  yes?: boolean
+  auto_merge?: boolean
+}
+
+export interface DisableAddonV4Request {
+  remove?: boolean
+  dry_run?: boolean
+  yes?: boolean
+  auto_merge?: boolean
+}
+
+/**
+ * enableAddonV4 — POST /api/v1/v4/clusters/{name}/addons/{addon} (v4 Wave
+ * 1 Story 4.3). Writes clusters/{name}.yaml (kind ClusterAssignment) and,
+ * when values are supplied, values/clusters/{name}/{addon}.yaml — the v4
+ * data-file format, distinct from the v3 per-addon endpoint
+ * (previewEnableAddon / enableAddonOnCluster above). A 422 throws
+ * V4AddonValidationError with the full plain-English problems list rather
+ * than the generic postJSON Error (which would drop everything but the
+ * summary sentence).
+ */
+export async function enableAddonV4(
+  clusterName: string,
+  addonName: string,
+  body: EnableAddonV4Request,
+): Promise<V4GitResult> {
+  const res = await fetch(
+    `${BASE_URL}/v4/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(body),
+    },
+  )
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (res.status === 422) {
+    const errBody = await res.json().catch(() => null)
+    if (errBody && Array.isArray(errBody.problems)) {
+      throw new V4AddonValidationError(errBody as V4AddonValidationErrorBody)
+    }
+    throw new Error(errBody?.error || 'Validation failed')
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error || res.statusText)
+  }
+  return res.json()
+}
+
+/**
+ * disableAddonV4 — DELETE /api/v1/v4/clusters/{name}/addons/{addon} (v4
+ * Wave 1 Story 4.3). Sets enabled=false in clusters/{name}.yaml — the
+ * entry (version pin + settings) is kept by default so re-enabling is a
+ * one-word change; pass remove:true to delete it entirely. No semantic
+ * validation runs (disabling never needs required values or secrets), so
+ * this never throws V4AddonValidationError.
+ */
+export async function disableAddonV4(
+  clusterName: string,
+  addonName: string,
+  body: DisableAddonV4Request,
+): Promise<V4GitResult> {
+  const res = await fetch(
+    `${BASE_URL}/v4/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}`,
+    {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(body),
+    },
+  )
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error || res.statusText)
+  }
+  return res.json()
 }
 
 export async function fetchAuditLog(filters?: {
