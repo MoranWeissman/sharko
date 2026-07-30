@@ -18,13 +18,19 @@ import type {
   DashboardStats,
   DiagnosticReport,
   DoctorClusterResponse,
+  DropLegacyLabelsRequestBody,
+  DropLegacyLabelsResponse,
   DryRunResult,
   ObservabilityOverviewResponse,
   PullRequestsResponse,
   RegisterClusterResult,
   SyncActivityEntry,
   SystemCapabilitiesResponse,
+  TakeoverReport,
+  TakeoverRequestBody,
+  TakeoverResponse,
   TrackedPRsResponse,
+  UnregisterConsequencesResponse,
   UpgradeCheckResponse,
   UpgradeRecommendations,
   V4AddonValidationErrorBody,
@@ -372,6 +378,54 @@ export async function getSystemCapabilities() {
  */
 export async function doctorCluster(name: string) {
   return postJSON<DoctorClusterResponse>(`/clusters/${encodeURIComponent(name)}/doctor`, {})
+}
+
+/**
+ * takeoverPreflight — GET /clusters/{name}/takeover/preflight (v4 Wave 2,
+ * Epic 6, stories 6.1 + 6.2). Four read-only checks on a cluster ArgoCD
+ * already manages. Writes nothing, so it is safe to call on every render
+ * of the takeover dialog and safe to re-run after the user fixes something
+ * — that re-run is exactly how a blocked check turns green.
+ */
+export async function takeoverPreflight(name: string) {
+  return fetchJSON<TakeoverReport>(`/clusters/${encodeURIComponent(name)}/takeover/preflight`)
+}
+
+/**
+ * takeoverCluster — POST /clusters/{name}/takeover (story 6.3). Makes
+ * Sharko the owner of an existing cluster's ArgoCD connection: same name,
+ * same address, and by default every label the previous owner left on it.
+ * Refuses without `yes: true`, and refuses again without
+ * `acknowledge_warnings: true` when the preflight raised warnings. Pass
+ * `dry_run: true` for the plan.
+ */
+export async function takeoverCluster(name: string, body: TakeoverRequestBody) {
+  return postJSON<TakeoverResponse>(`/clusters/${encodeURIComponent(name)}/takeover`, body)
+}
+
+/**
+ * dropLegacyLabels — POST /clusters/{name}/takeover/legacy-labels/drop
+ * (story 6.4). Removes the labels the takeover carried over. The response
+ * carries `warnings` naming any ApplicationSet that still picks clusters
+ * using one of them — the caller must show those and send
+ * `acknowledge_warnings: true` before the removal is allowed.
+ */
+export async function dropLegacyLabels(name: string, body: DropLegacyLabelsRequestBody) {
+  return postJSON<DropLegacyLabelsResponse>(
+    `/clusters/${encodeURIComponent(name)}/takeover/legacy-labels/drop`,
+    body,
+  )
+}
+
+/**
+ * unregisterConsequences — GET /clusters/{name}/unregister/consequences
+ * (story 6.5). Reads out what unregistering this cluster will actually do.
+ * Deletes nothing; it is the read that comes before the removal.
+ */
+export async function unregisterConsequences(name: string) {
+  return fetchJSON<UnregisterConsequencesResponse>(
+    `/clusters/${encodeURIComponent(name)}/unregister/consequences`,
+  )
 }
 
 /**

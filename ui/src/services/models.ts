@@ -145,6 +145,111 @@ export interface DoctorClusterResponse {
   overall: 'pass' | 'fail' | 'partial'
 }
 
+// ── Brownfield takeover (v4 Wave 2, Epic 6) ───────────────────────────────
+//
+// Taking over a cluster ArgoCD already manages. The preflight is a pure
+// read that can be run as often as you like; every write below refuses
+// without an explicit confirmation.
+
+export type TakeoverFindingStatus = 'ok' | 'warning' | 'blocked'
+
+export type TakeoverFindingID =
+  | 'secret-owner'
+  | 'appset-deletion-safety'
+  | 'cluster-applications'
+  | 'name-collision'
+
+// Every finding says what it means and what to do about it, in words a
+// person who is not a developer can act on. The UI renders these strings
+// verbatim — it never composes its own explanation from the status.
+export interface TakeoverFinding {
+  id: TakeoverFindingID
+  title: string
+  status: TakeoverFindingStatus
+  detail: string
+  what_it_means: string
+  what_to_do: string
+  application_sets?: string[]
+  applications?: string[]
+}
+
+export interface TakeoverReport {
+  cluster: string
+  // ready is false when something must be fixed first.
+  ready: boolean
+  // needs_acknowledgement is true when at least one check is a warning.
+  needs_acknowledgement: boolean
+  summary: string
+  findings: TakeoverFinding[]
+  server?: string
+  // legacy_labels are the previous owner's labels that will be carried
+  // over. This is the list shown to the user before they confirm.
+  legacy_labels?: Record<string, string>
+  // legacy_labels_selected_by maps each of those label keys to the
+  // ApplicationSets that pick clusters using it.
+  legacy_labels_selected_by?: Record<string, string[]>
+}
+
+export interface TakeoverRequestBody {
+  yes?: boolean
+  dry_run?: boolean
+  acknowledge_warnings?: boolean
+  preserve_legacy_labels?: boolean
+  region?: string
+  auto_merge?: boolean
+}
+
+export interface TakeoverResponse {
+  cluster: string
+  status: 'success' | 'partial' | 'planned'
+  server?: string
+  preserved_labels?: Record<string, string>
+  dropped_labels?: Record<string, string>
+  secret_swapped: boolean
+  already_owned?: boolean
+  git?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+  }
+  dry_run?: DryRunResult
+  preflight?: TakeoverReport
+  warnings?: string[]
+  message: string
+}
+
+export interface DropLegacyLabelsRequestBody {
+  yes?: boolean
+  dry_run?: boolean
+  labels?: string[]
+  acknowledge_warnings?: boolean
+}
+
+export interface DropLegacyLabelsResponse {
+  cluster: string
+  status: 'success' | 'planned'
+  removed?: string[]
+  remaining?: string[]
+  warnings?: string[]
+  message: string
+}
+
+export interface UnregisterConsequence {
+  id: string
+  title: string
+  detail: string
+  what_it_means: string
+  severity: 'info' | 'warning'
+}
+
+export interface UnregisterConsequencesResponse {
+  cluster: string
+  summary: string
+  confirmation_required: string
+  consequences: UnregisterConsequence[]
+}
+
 // Server-wide connectivity probe mode (V2-cleanup-85.4). Controls whether
 // Sharko deploys a transient connectivity-check ArgoCD app to newly
 // registered, zero-addon clusters.
