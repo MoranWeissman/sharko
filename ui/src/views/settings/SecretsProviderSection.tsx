@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Shield, Globe, Activity, Loader2, CheckCircle, KeyRound, ChevronRight } from 'lucide-react'
+import { Shield, Globe, Activity, Loader2, CheckCircle, XCircle, KeyRound, ChevronRight } from 'lucide-react'
 import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
@@ -168,6 +168,27 @@ export function SecretsProviderSection() {
   const [unknownAddonSecretRawType, setUnknownAddonSecretRawType] = useState<string | null>(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showAddonSecretAdvanced, setShowAddonSecretAdvanced] = useState(false)
+
+  // Explicit "Test" action (v4-wave2 8.1) — separate from the passive
+  // status card above, which only reflects the health as of the last page
+  // load. This calls POST /providers/test on demand and shows a plain-words
+  // pass/fail result, the same contract Test Git / Test ArgoCD use in
+  // ConnectionSection.
+  const [vaultTest, setVaultTest] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
+  const [vaultTestMessage, setVaultTestMessage] = useState<string | undefined>()
+
+  async function handleTestVault() {
+    setVaultTest('testing')
+    setVaultTestMessage(undefined)
+    try {
+      const res = await api.testProvider()
+      setVaultTest(res.status === 'connected' || res.status === 'ok' ? 'ok' : 'error')
+      setVaultTestMessage(res.message)
+    } catch (err) {
+      setVaultTest('error')
+      setVaultTestMessage(err instanceof Error ? err.message : 'Test failed')
+    }
+  }
 
   // GET /providers feeds the STATUS card only (type / region / live
   // health). It is deliberately NOT the source the form hydrates from:
@@ -377,6 +398,29 @@ export function SecretsProviderSection() {
               </dd>
             </div>
           </dl>
+          <div className="mt-4 flex items-center gap-3 border-t border-[#6aade0]/40 pt-4 dark:border-gray-700">
+            <button
+              type="button"
+              onClick={() => { void handleTestVault() }}
+              disabled={vaultTest === 'testing'}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              {vaultTest === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Shield className="h-3 w-3" />}
+              Test Secrets Store
+            </button>
+            {vaultTest === 'ok' && (
+              <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
+                <CheckCircle className="h-3.5 w-3.5" />
+                {vaultTestMessage || 'Connected'}
+              </span>
+            )}
+            {vaultTest === 'error' && (
+              <span className="flex items-center gap-1 text-sm text-red-600 dark:text-red-400">
+                <XCircle className="h-3.5 w-3.5" />
+                {vaultTestMessage || 'Failed'}
+              </span>
+            )}
+          </div>
         </div>
       )}
 
