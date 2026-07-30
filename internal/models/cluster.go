@@ -432,10 +432,35 @@ type ClusterLastReconcileLabelDrift struct {
 // Sharko-managed clusters; nil when labels are in sync or for self-managed
 // connections.
 type ClusterLastReconcile struct {
-	Time       string                           `json:"time"`                 // RFC3339
-	Outcome    string                           `json:"outcome"`              // "succeeded" | "failed" | "skipped"
-	Message    string                           `json:"message,omitempty"`    // plain-English detail; set on failed/skipped
+	Time       string                          `json:"time"`                  // RFC3339
+	Outcome    string                          `json:"outcome"`               // "succeeded" | "failed" | "skipped"
+	Message    string                          `json:"message,omitempty"`     // plain-English detail; set on failed/skipped
 	LabelDrift *ClusterLastReconcileLabelDrift `json:"label_drift,omitempty"` // V3 G1 — drift detection
+}
+
+// ClusterResyncLabelDiff is the label diff a one-time "Re-sync now" action
+// (v4-8-5) applied to one cluster — the same added/removed/changed shape as
+// ClusterLastReconcileLabelDrift, plus Unchanged: the desired addon-label
+// keys that already matched before the resync ran (so the response can
+// account for every key Sharko compared, not just the ones that moved).
+type ClusterResyncLabelDiff struct {
+	Added     []string `json:"added,omitempty"`
+	Removed   []string `json:"removed,omitempty"`
+	Changed   []string `json:"changed,omitempty"`
+	Unchanged []string `json:"unchanged,omitempty"`
+}
+
+// ClusterResyncResponse is the response body for
+// POST /clusters/{name}/resync (v4-8-5 — the drift view's "Re-sync now"
+// action). Outcome/Message mirror ClusterLastReconcile's vocabulary
+// ("succeeded" | "failed" | "skipped"); LabelDiff is the addon-label diff
+// this one-time resync applied.
+type ClusterResyncResponse struct {
+	Status    string                 `json:"status"`
+	Cluster   string                 `json:"cluster"`
+	Outcome   string                 `json:"outcome"`
+	Message   string                 `json:"message"`
+	LabelDiff ClusterResyncLabelDiff `json:"label_diff"`
 }
 
 // ClusterHealthStats holds aggregated health statistics for the clusters overview.

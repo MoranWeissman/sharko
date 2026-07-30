@@ -818,6 +818,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("PATCH /api/v1/clusters/{name}", srv.handleUpdateClusterAddons)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/refresh", srv.handleRefreshClusterCredentials)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/reconcile", srv.handleReconcileCluster)
+	mux.HandleFunc("POST /api/v1/clusters/{name}/resync", srv.handleResyncCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/test", srv.handleTestCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/diagnose", srv.handleDiagnoseCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/doctor", srv.handleDoctorCluster)

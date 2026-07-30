@@ -85,6 +85,27 @@ export interface ClusterLastReconcile {
   label_drift?: ClusterLastReconcileLabelDrift
 }
 
+// ClusterResyncResponse mirrors internal/models.ClusterResyncResponse
+// (v4-8-5 — the drift view's "Re-sync now" action). Unlike reconcileCluster
+// (async 202, fleet-wide pass), this is a synchronous 200 response scoped to
+// one cluster: label_diff is the added/removed/changed/unchanged addon-label
+// diff THIS resync applied, and message always confirms the self-heal
+// setting was left alone.
+export interface ClusterResyncLabelDiff {
+  added?: string[]
+  removed?: string[]
+  changed?: string[]
+  unchanged?: string[]
+}
+
+export interface ClusterResyncResponse {
+  status: string
+  cluster: string
+  outcome: 'succeeded' | 'failed' | 'skipped'
+  message: string
+  label_diff: ClusterResyncLabelDiff
+}
+
 // SystemCapabilitiesResponse mirrors GET /api/v1/system/capabilities
 // (V2-cleanup-88.1) — what Sharko has auto-detected about its own runtime.
 // The two-layer registration dialog's Layer 1 (Identity) fetches this once

@@ -4357,6 +4357,75 @@
                 }
             }
         },
+        "/clusters/{name}/resync": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Re-applies Sharko's own addon-label keys onto this cluster's ArgoCD cluster Secret ONCE, to match git.\nRegardless of the managed_cluster_self_heal setting, and without reading or changing it.\nTouches only Sharko's own addon-label keys — never foreign labels, Secret Data, or annotations.\nReports the label diff this resync applied (added / removed / changed / unchanged).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Re-sync one cluster's addon labels to match git (one time)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Resync result",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterResyncResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Cluster has no entry in the git-managed cluster list",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — requires operator role or higher",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Cluster not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Reconciler not running on this server",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/clusters/{name}/secrets": {
             "get": {
                 "security": [
@@ -8868,6 +8937,55 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.ClusterResyncLabelDiff": {
+            "type": "object",
+            "properties": {
+                "added": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "changed": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "removed": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "unchanged": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.ClusterResyncResponse": {
+            "type": "object",
+            "properties": {
+                "cluster": {
+                    "type": "string"
+                },
+                "label_diff": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterResyncLabelDiff"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "outcome": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
                 }
             }
         },

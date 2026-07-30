@@ -10,6 +10,7 @@ import type {
   ClusterComparisonResponse,
   ClusterDetailResponse,
   ClusterProvider,
+  ClusterResyncResponse,
   ClustersResponse,
   ConfigDiffResponse,
   CredsSource,
@@ -336,6 +337,19 @@ export async function diagnoseCluster(name: string) {
  */
 export async function reconcileCluster(name: string) {
   return postJSON<{ status: string; message: string }>(`/clusters/${encodeURIComponent(name)}/reconcile`, {})
+}
+
+/**
+ * resyncClusterLabels — POST /clusters/{name}/resync (v4-8-5).
+ * "Re-sync now" from the drift view: re-applies Sharko's own addon-label
+ * keys for this ONE cluster, ONCE, to match git — regardless of the
+ * managed_cluster_self_heal setting, and without changing that setting.
+ * Unlike reconcileCluster (a fleet-wide pass nudge that returns 202 and
+ * runs async), this is a targeted, synchronous, single-cluster action that
+ * returns 200 with the label diff it applied.
+ */
+export async function resyncClusterLabels(name: string) {
+  return postJSON<ClusterResyncResponse>(`/clusters/${encodeURIComponent(name)}/resync`, {})
 }
 
 /**
