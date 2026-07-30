@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,19 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// ErrOCIVersionCheckUnsupported is returned by ListVersions (and anything
+// built on it) for an oci:// repo URL. Classic Helm repos publish a plain
+// HTTP index.yaml; OCI registries don't — listing tags there needs the
+// registry's own API plus, for a private registry, real credentials. v4
+// wave 1 Story 3.3 ("internal addons") requires this to degrade gracefully
+// — an internal addon is commonly a private OCI chart, and version
+// checking must show "unknown", never error. Full registry-aware version
+// checking (with credentials) is Story 3.4's job; this sentinel is the line
+// that story's work slots in behind. Callers that want the graceful
+// "unknown" UX check errors.Is(err, ErrOCIVersionCheckUnsupported) rather
+// than treating this as a real failure.
+var ErrOCIVersionCheckUnsupported = errors.New("version listing is not supported for oci:// registries without registry credentials")
 
 // ChartVersion represents a version entry from a Helm repo index.
 type ChartVersion struct {
@@ -62,6 +76,16 @@ func NewFetcher() *Fetcher {
 func (f *Fetcher) getIndex(ctx context.Context, repoURL string) (*repoIndex, error) {
 	if idx, ok := f.indexCache[repoURL]; ok {
 		return idx, nil
+	}
+
+	// OCI registries (helm 3.8+ oci:// charts, e.g. Karpenter or a private
+	// in-house registry) don't publish an index.yaml over HTTP — there is
+	// nothing at "<oci-url>/index.yaml" to fetch, so don't try. Return the
+	// distinguishable sentinel instead of a confusing network/parse error;
+	// callers that want "unknown" rather than a hard failure check
+	// errors.Is(err, ErrOCIVersionCheckUnsupported).
+	if strings.HasPrefix(repoURL, "oci://") {
+		return nil, ErrOCIVersionCheckUnsupported
 	}
 
 	indexURL := strings.TrimRight(repoURL, "/") + "/index.yaml"

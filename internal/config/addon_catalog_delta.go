@@ -18,6 +18,13 @@ import (
 // Wave 2's migration (design doc §8).
 const AddonCatalogDeltaFilename = "addons.yaml"
 
+// AddonCatalogDeltaPath is the full repo-relative path to the v4 catalog
+// delta file — design doc §2.3's worked example, "catalog/addons.yaml".
+// Single source of truth so callers (the orchestrator write path, the API
+// merged-view read path, CLI) never hand-assemble the directory + filename
+// and risk drifting from each other.
+const AddonCatalogDeltaPath = "catalog/" + AddonCatalogDeltaFilename
+
 // AddonCatalogDeltaSchemaHeader is the yaml-language-server header line
 // written as the first line of every Sharko-emitted catalog/addons.yaml
 // file. Mirrors AddonCatalogSchemaHeader's pattern.

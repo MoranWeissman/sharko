@@ -1,6 +1,38 @@
 package helm
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+)
+
+// TestListVersions_OCIRepoDegradesGracefully is the v4 wave 1 Story 3.3
+// primitive-level test: an oci:// repo (a private in-house chart is a
+// common case, per the story's "private OCI chart reference" AC) must
+// return the distinguishable ErrOCIVersionCheckUnsupported sentinel instead
+// of attempting (and confusingly failing) an HTTP GET to
+// "<oci-url>/index.yaml" — there is nothing to fetch there. No network
+// call should happen at all, so this test needs no HTTP server.
+func TestListVersions_OCIRepoDegradesGracefully(t *testing.T) {
+	f := NewFetcher()
+	_, err := f.ListVersions(context.Background(), "oci://registry.example.com/charts", "billing-api")
+	if err == nil {
+		t.Fatalf("expected an error for an oci:// repo")
+	}
+	if !errors.Is(err, ErrOCIVersionCheckUnsupported) {
+		t.Errorf("error = %v, want errors.Is match for ErrOCIVersionCheckUnsupported", err)
+	}
+}
+
+// TestListVersions_OCIRepoTrailingSlashStillDetected guards the prefix
+// check against a trivial formatting variant.
+func TestListVersions_OCIRepoTrailingSlashStillDetected(t *testing.T) {
+	f := NewFetcher()
+	_, err := f.ListVersions(context.Background(), "oci://registry.example.com/charts/", "billing-api")
+	if !errors.Is(err, ErrOCIVersionCheckUnsupported) {
+		t.Errorf("error = %v, want errors.Is match for ErrOCIVersionCheckUnsupported", err)
+	}
+}
 
 func TestGuessGitHubRepo(t *testing.T) {
 	tests := []struct {

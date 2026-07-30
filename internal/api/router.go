@@ -924,6 +924,16 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/catalog/remote/{repo}/{name}/project-readme", srv.handleGetRemoteProjectReadme)
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}", srv.handleGetCatalogAddon)
 
+	// v4 catalog delta model (v4 wave 1 Stories 3.2 + 3.3) — the merged
+	// view of the shipped curated catalog overlaid with the caller's own
+	// git catalog/addons.yaml (kind AddonCatalogDelta), and the write path
+	// for adding a first-class in-house addon to that delta. Distinct from
+	// the /catalog/addons routes above (pure curated) and from
+	// /addons/catalog below (the v3 deployed-catalog view).
+	mux.HandleFunc("GET /api/v1/catalog/delta/addons", srv.handleListMergedCatalogDelta)
+	mux.HandleFunc("POST /api/v1/catalog/delta/addons", srv.handleAddInternalAddon)
+	mux.HandleFunc("GET /api/v1/catalog/delta/addons/{name}", srv.handleGetMergedCatalogDeltaAddon)
+
 	// Paste Helm URL validator — confirms an arbitrary repo+chart is
 	// reachable and parseable, returns versions for the Configure modal.
 	mux.HandleFunc("GET /api/v1/catalog/validate", srv.handleValidateCatalogChart)
