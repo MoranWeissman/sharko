@@ -394,21 +394,20 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	// is; making the record before changing the live cluster means an
 	// interrupted takeover leaves a reviewable pull request rather than a
 	// relabelled Secret nobody wrote down.
-	git, err := s.connSvc.GetActiveGitProvider()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
-		return
-	}
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
 		return
 	}
-	ctx, tieredGit, _, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
-	if err == nil && tieredGit != nil {
-		git = tieredGit
-	} else {
-		ctx = r.Context()
+	// The tiered resolver is the ONLY way this commit gets attributed to the
+	// person who asked for it, and the only way the audit entry gets stamped
+	// with a tier. Carrying on with an unattributed provider when it fails
+	// would open a pull request nobody's name is on (v4-wave2 review M1), so
+	// this fails hard — same stance as handleMigrateRepo.
+	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		return
 	}
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsConfig(), s.repoPaths, nil)
@@ -441,7 +440,7 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 			resp.DroppedLabels = report.LegacyLabels
 		}
 		resp.Message = takeoverPlanMessage(name, preserve, report.LegacyLabels)
-		writeJSON(w, http.StatusOK, resp)
+		writeJSON(w, http.StatusOK, withAttributionWarning(resp, tokRes))
 		return
 	}
 
@@ -488,7 +487,7 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 		s.clusterRecon.Trigger()
 	}
 	audit.Enrich(ctx, audit.Fields{Event: "cluster_taken_over", Resource: "cluster:" + name})
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, withAttributionWarning(resp, tokRes))
 }
 
 // takeoverLegacyLabelKey is the classifier handed to the swap: it decides

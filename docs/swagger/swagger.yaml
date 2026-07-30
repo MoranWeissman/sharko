@@ -4,6 +4,14 @@ definitions:
     properties:
       created_at:
         type: string
+      created_by:
+        description: |-
+          CreatedBy is the username of whoever asked for this token. It is what
+          the own/other split on renew keys off (see TokenOwnedBy). Empty for
+          tokens minted outside a request — bootstrap, tests, or any token that
+          already existed before this field did — and an empty value is owned by
+          nobody, so only an admin can renew those.
+        type: string
       expired:
         type: boolean
       expires_at:
@@ -3193,6 +3201,12 @@ paths:
             type: object
         "403":
           description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: The connected repo is still in the v3 format and has to be
+            migrated first
           schema:
             additionalProperties: true
             type: object
@@ -6656,6 +6670,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Test active connection
@@ -6686,6 +6705,17 @@ paths:
             type: object
         "400":
           description: Bad request (e.g. use_saved=true but no matching saved connection)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: A saved credential was needed for an address that is not the
+            saved connection's own
           schema:
             additionalProperties: true
             type: object
@@ -7448,6 +7478,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
         "501":
           description: No provider configured
           schema:
@@ -7481,6 +7516,11 @@ paths:
             type: object
         "400":
           description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties: true
             type: object
@@ -8010,7 +8050,9 @@ paths:
       - application/json
       description: Creates a new long-lived API token for programmatic access. The
         token expires after 90 days unless expires_in_days (1-365) says otherwise.
-        The plaintext value is shown once and never again.
+        The plaintext value is shown once and never again. A token can carry at most
+        the role of the caller who created it — asking for a higher role is refused
+        with 403.
       parameters:
       - description: Token name, role, and optional expiry window
         in: body
@@ -8094,7 +8136,8 @@ paths:
       - application/json
       description: Pushes a token's expiry out by a fresh window (90 days by default,
         or expires_in_days between 1 and 365). The secret value does not change, so
-        every client using the token keeps working.
+        every client using the token keeps working. An operator may renew tokens they
+        own; renewing anyone else's token requires an admin.
       parameters:
       - description: Token name
         in: path

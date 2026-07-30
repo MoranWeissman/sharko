@@ -872,6 +872,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "The connected repo is still in the v3 format and has to be migrated first",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Gateway error — including a cluster missing its assignment file, or the addon not enabled on a selected cluster",
                         "schema": {
@@ -5368,6 +5375,13 @@ const docTemplate = `{
                             "type": "object",
                             "additionalProperties": true
                         }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     }
                 }
             }
@@ -5411,6 +5425,20 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad request (e.g. use_saved=true but no matching saved connection)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "A saved credential was needed for an address that is not the saved connection's own",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -6626,6 +6654,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "501": {
                         "description": "No provider configured",
                         "schema": {
@@ -6676,6 +6711,13 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -7450,7 +7492,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a new long-lived API token for programmatic access. The token expires after 90 days unless expires_in_days (1-365) says otherwise. The plaintext value is shown once and never again.",
+                "description": "Creates a new long-lived API token for programmatic access. The token expires after 90 days unless expires_in_days (1-365) says otherwise. The plaintext value is shown once and never again. A token can carry at most the role of the caller who created it — asking for a higher role is refused with 403.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7573,7 +7615,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Pushes a token's expiry out by a fresh window (90 days by default, or expires_in_days between 1 and 365). The secret value does not change, so every client using the token keeps working.",
+                "description": "Pushes a token's expiry out by a fresh window (90 days by default, or expires_in_days between 1 and 365). The secret value does not change, so every client using the token keeps working. An operator may renew tokens they own; renewing anyone else's token requires an admin.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8566,6 +8608,10 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "description": "CreatedBy is the username of whoever asked for this token. It is what\nthe own/other split on renew keys off (see TokenOwnedBy). Empty for\ntokens minted outside a request — bootstrap, tests, or any token that\nalready existed before this field did — and an empty value is owned by\nnobody, so only an admin can renew those.",
                     "type": "string"
                 },
                 "expired": {

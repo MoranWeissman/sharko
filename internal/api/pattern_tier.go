@@ -47,6 +47,12 @@ var mutatingPatternTier = map[string]audit.Tier{
 	"POST /api/v1/v4/clusters/{name}/addons/{addon}":           audit.Tier1,
 	"DELETE /api/v1/v4/clusters/{name}/addons/{addon}":         audit.Tier1,
 	"POST /api/v1/clusters/{name}/secrets/refresh":             audit.Tier1,
+	"POST /api/v1/clusters/{name}/resync":                      audit.Tier1,
+
+	// Brownfield takeover (v4 Wave 2, Epic 6). The takeover itself stamps
+	// its own tier through GitProviderForTier, so only the label drop —
+	// which touches the ArgoCD Secret and never Git — needs an entry here.
+	"POST /api/v1/clusters/{name}/takeover/legacy-labels/drop": audit.Tier1,
 
 	// Init — Tier 1.
 	"POST /api/v1/init": audit.Tier1,
@@ -118,9 +124,12 @@ var mutatingPatternTier = map[string]audit.Tier{
 	"DELETE /api/v1/users/{username}":              audit.Tier1,
 	"POST /api/v1/users/{username}/reset-password": audit.Tier1,
 
-	// Tokens — Tier 1.
-	"POST /api/v1/tokens":           audit.Tier1,
-	"DELETE /api/v1/tokens/{token}": audit.Tier1,
+	// Tokens — Tier 1. The wildcard name must match the router's ({name},
+	// not {token}); a pattern that does not match any registered route
+	// never fires, which is what the stale {token} entry here did.
+	"POST /api/v1/tokens":              audit.Tier1,
+	"POST /api/v1/tokens/{name}/renew": audit.Tier1,
+	"DELETE /api/v1/tokens/{name}":     audit.Tier1,
 
 	// My account — personal.
 	"POST /api/v1/auth/update-password":       audit.TierPersonal,
