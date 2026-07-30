@@ -11,7 +11,7 @@
 #
 # Deliberately NOT carrying the sharko.dev envelope: this fixture models a
 # broken hand-written file, and `sharko validate-config` (correctly) rejects
-# a ClusterAssignment with no spec — including in CI, which validates every
+# a ClusterAddons with no spec — including in CI, which validates every
 # committed enveloped YAML. The chart's nil-safety is what's under test here,
 # and the round-two simulation only reads `.spec`, so the envelope is not
 # needed to reproduce the crash scenario.

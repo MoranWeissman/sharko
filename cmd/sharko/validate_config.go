@@ -299,19 +299,19 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 		return fileVerdict{path: path, kind: "fail", reason: "YAML parse error", details: []string{err.Error()}}
 	}
 
-	// v4 Wave 1 Story 2.6 — ClusterAssignment carries two invariants a
+	// v4 Wave 1 Story 2.6 — ClusterAddons carries two invariants a
 	// generic JSON Schema can't express: the file's own path must match
 	// spec.cluster, and spec.addons.*.settings.preserveResourcesOnDeletion
 	// is a validation error with a specific "it belongs somewhere else"
 	// message (design doc §3.2 "Two tiers"). The forbidden-field check
 	// runs BEFORE schema validation and returns immediately when it
 	// fires: additionalProperties:false on
-	// models.ClusterAssignmentAddonSettings would ALSO reject the same
+	// models.ClusterAddonsAddonSettings would ALSO reject the same
 	// body (defense in depth — see that type's doc comment), but its
 	// generic "additional property not allowed" message doesn't say
 	// WHERE the field belongs, so the friendlier, contract-specific
 	// message takes priority when we can tell it's this exact mistake.
-	if header.Kind == sharkoschema.KindClusterAssignment {
+	if header.Kind == sharkoschema.KindClusterAddons {
 		if addonName, line, found := detectClusterSettingsPreserveResourcesOnDeletion(body); found {
 			return fileVerdict{
 				path:   path,
@@ -347,13 +347,13 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 		}
 	}
 
-	// Schema passed. ClusterAssignment has one more file-path-aware
+	// Schema passed. ClusterAddons has one more file-path-aware
 	// invariant the schema itself cannot check (design doc §2.1): the
 	// file name (minus .yaml) must equal spec.cluster, or the engine's
 	// git-files generator (which finds a cluster's assignment file BY
 	// that name) silently gives the cluster nothing.
-	if header.Kind == sharkoschema.KindClusterAssignment {
-		if gotCluster, wantCluster, line, mismatch := detectClusterAssignmentFilenameMismatch(path, body); mismatch {
+	if header.Kind == sharkoschema.KindClusterAddons {
+		if gotCluster, wantCluster, line, mismatch := detectClusterAddonsFilenameMismatch(path, body); mismatch {
 			return fileVerdict{
 				path:   path,
 				kind:   "fail",
@@ -393,7 +393,7 @@ func violationsWithLines(body []byte, failure *sharkoschema.ValidationFailure) [
 }
 
 // detectClusterSettingsPreserveResourcesOnDeletion walks a
-// ClusterAssignment body's spec.addons.*.settings blocks looking for a
+// ClusterAddons body's spec.addons.*.settings blocks looking for a
 // hand-authored preserveResourcesOnDeletion key — the one v1 setting
 // (design doc §3.2) that is per-ApplicationSet, not per-Application, and
 // therefore cannot vary per cluster. Returns the addon name and the
@@ -427,7 +427,7 @@ func detectClusterSettingsPreserveResourcesOnDeletion(body []byte) (addonName st
 	return "", 0, false
 }
 
-// detectClusterAssignmentFilenameMismatch compares a ClusterAssignment
+// detectClusterAddonsFilenameMismatch compares a ClusterAddons
 // body's spec.cluster against the file's own basename (design doc §2.1:
 // "clusters/prod-eu.yaml is the cluster called prod-eu... a mismatch
 // means the cluster silently gets nothing"). Returns the value on disk,
@@ -435,7 +435,7 @@ func detectClusterSettingsPreserveResourcesOnDeletion(body []byte) (addonName st
 // field. mismatch is false (and the other returns are zero) when the
 // document has no spec.cluster to compare (a separate schema violation
 // this function isn't responsible for) or the two agree.
-func detectClusterAssignmentFilenameMismatch(path string, body []byte) (gotCluster, wantCluster string, line int, mismatch bool) {
+func detectClusterAddonsFilenameMismatch(path string, body []byte) (gotCluster, wantCluster string, line int, mismatch bool) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(body, &doc); err != nil || len(doc.Content) == 0 {
 		return "", "", 0, false
@@ -491,8 +491,8 @@ func schemaURLForKind(kind string) string {
 		return sharkoschema.DefaultAddonsSchemaID
 	case sharkoschema.KindMarketplaceSources:
 		return sharkoschema.MarketplaceSourcesSchemaID
-	case sharkoschema.KindClusterAssignment:
-		return sharkoschema.ClusterAssignmentSchemaID
+	case sharkoschema.KindClusterAddons:
+		return sharkoschema.ClusterAddonsSchemaID
 	case sharkoschema.KindAddonCatalogDelta:
 		return sharkoschema.AddonCatalogDeltaSchemaID
 	default:

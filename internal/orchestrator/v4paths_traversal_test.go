@@ -28,8 +28,8 @@ var traversalNames = []string{
 func TestV4PathBuilders_RejectTraversalNames(t *testing.T) {
 	for _, name := range traversalNames {
 		t.Run("cluster="+name, func(t *testing.T) {
-			if p, err := v4ClusterAssignmentPath(name); err == nil {
-				t.Errorf("v4ClusterAssignmentPath(%q) = %q, want an error", name, p)
+			if p, err := v4ClusterAddonsPath(name); err == nil {
+				t.Errorf("v4ClusterAddonsPath(%q) = %q, want an error", name, p)
 			}
 			if p, err := v4ClusterValuesPath(name, "cert-manager"); err == nil {
 				t.Errorf("v4ClusterValuesPath(%q, cert-manager) = %q, want an error", name, p)
@@ -47,9 +47,9 @@ func TestV4PathBuilders_RejectTraversalNames(t *testing.T) {
 }
 
 func TestV4PathBuilders_AcceptOrdinaryNames(t *testing.T) {
-	got, err := v4ClusterAssignmentPath("prod-eu")
+	got, err := v4ClusterAddonsPath("prod-eu")
 	if err != nil || got != "clusters/prod-eu.yaml" {
-		t.Errorf("v4ClusterAssignmentPath(prod-eu) = (%q, %v), want (clusters/prod-eu.yaml, nil)", got, err)
+		t.Errorf("v4ClusterAddonsPath(prod-eu) = (%q, %v), want (clusters/prod-eu.yaml, nil)", got, err)
 	}
 	got, err = v4GlobalValuesPath("cert-manager")
 	if err != nil || got != "values/global/cert-manager.yaml" {

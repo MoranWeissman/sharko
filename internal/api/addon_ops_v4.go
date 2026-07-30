@@ -54,7 +54,7 @@ func validateV4PathNames(w http.ResponseWriter, clusterName, addonName string) e
 // handleEnableAddonV4 godoc
 //
 // @Summary Enable addon on cluster (v4 format)
-// @Description Enables an addon on a cluster by writing clusters/{name}.yaml (kind ClusterAssignment) and, when values are supplied, values/clusters/{name}/{addon}.yaml — the v4 data-file format (design doc 2026-07-30-v4-data-file-format.md). Runs semantic validation BEFORE any branch or pull request exists: every required value the merged catalog entry declares must be present (in the supplied values or already on disk), and every secret the addon declares must have a Sharko secret definition wired up. A validation failure returns 422 naming exactly what is missing, in plain English — nothing is written, not even a branch. Requires yes=true for confirmation (or dry_run=true to preview, which also runs validation first).
+// @Description Enables an addon on a cluster by writing clusters/{name}.yaml (kind ClusterAddons) and, when values are supplied, values/clusters/{name}/{addon}.yaml — the v4 data-file format (design doc 2026-07-30-v4-data-file-format.md). Runs semantic validation BEFORE any branch or pull request exists: every required value the merged catalog entry declares must be present (in the supplied values or already on disk), and every secret the addon declares must have a Sharko secret definition wired up. A validation failure returns 422 naming exactly what is missing, in plain English — nothing is written, not even a branch. Requires yes=true for confirmation (or dry_run=true to preview, which also runs validation first).
 // @Tags addons
 // @Accept json
 // @Produce json
@@ -143,7 +143,7 @@ func (s *Server) handleEnableAddonV4(w http.ResponseWriter, r *http.Request) {
 // handleDisableAddonV4 godoc
 //
 // @Summary Disable addon on cluster (v4 format)
-// @Description Disables an addon on a cluster by setting enabled=false in clusters/{name}.yaml (kind ClusterAssignment) — the entry (and its version pin and settings) is KEPT by default so re-enabling is a one-word change; pass remove=true to delete the entry entirely instead. No semantic validation runs (disabling never needs required values or secrets). Requires yes=true for confirmation (or dry_run=true to preview).
+// @Description Disables an addon on a cluster by setting enabled=false in clusters/{name}.yaml (kind ClusterAddons) — the entry (and its version pin and settings) is KEPT by default so re-enabling is a one-word change; pass remove=true to delete the entry entirely instead. No semantic validation runs (disabling never needs required values or secrets). Requires yes=true for confirmation (or dry_run=true to preview).
 // @Tags addons
 // @Accept json
 // @Produce json

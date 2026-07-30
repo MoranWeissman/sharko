@@ -8,12 +8,12 @@ import (
 
 func strPtr(s string) *string { return &s }
 
-func TestSetClusterAssignmentAddon_BootstrapsEmptyDoc(t *testing.T) {
-	out, err := SetClusterAssignmentAddon(nil, "prod-eu", "cert-manager", true, strPtr("1.12.0"), nil)
+func TestSetClusterAddonsAddon_BootstrapsEmptyDoc(t *testing.T) {
+	out, err := SetClusterAddonsAddon(nil, "prod-eu", "cert-manager", true, strPtr("1.12.0"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	spec, err := models.LoadClusterAssignment(out)
+	spec, err := models.LoadClusterAddons(out)
 	if err != nil {
 		t.Fatalf("round-trip parse failed: %v", err)
 	}
@@ -29,18 +29,18 @@ func TestSetClusterAssignmentAddon_BootstrapsEmptyDoc(t *testing.T) {
 	}
 }
 
-func TestSetClusterAssignmentAddon_DisableKeepsVersion(t *testing.T) {
-	seeded, err := SetClusterAssignmentAddon(nil, "prod-eu", "cert-manager", true, strPtr("1.12.0"), nil)
+func TestSetClusterAddonsAddon_DisableKeepsVersion(t *testing.T) {
+	seeded, err := SetClusterAddonsAddon(nil, "prod-eu", "cert-manager", true, strPtr("1.12.0"), nil)
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
 	// Disable WITHOUT mentioning a version (version=nil) — the pin must survive.
-	out, err := SetClusterAssignmentAddon(seeded, "prod-eu", "cert-manager", false, nil, nil)
+	out, err := SetClusterAddonsAddon(seeded, "prod-eu", "cert-manager", false, nil, nil)
 	if err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	spec, err := models.LoadClusterAssignment(out)
+	spec, err := models.LoadClusterAddons(out)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -53,8 +53,8 @@ func TestSetClusterAssignmentAddon_DisableKeepsVersion(t *testing.T) {
 	}
 }
 
-func TestSetClusterAssignmentAddon_ExplicitEmptyVersionClearsPin(t *testing.T) {
-	seeded, err := SetClusterAssignmentAddon(nil, "prod-eu", "cert-manager", true, strPtr("1.12.0"), nil)
+func TestSetClusterAddonsAddon_ExplicitEmptyVersionClearsPin(t *testing.T) {
+	seeded, err := SetClusterAddonsAddon(nil, "prod-eu", "cert-manager", true, strPtr("1.12.0"), nil)
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -62,11 +62,11 @@ func TestSetClusterAssignmentAddon_ExplicitEmptyVersionClearsPin(t *testing.T) {
 	// design doc §6's upgrade PR: removing the version line makes the
 	// cluster follow the catalog again — modelled as an explicit empty
 	// string, distinct from nil ("don't touch it").
-	out, err := SetClusterAssignmentAddon(seeded, "prod-eu", "cert-manager", true, strPtr(""), nil)
+	out, err := SetClusterAddonsAddon(seeded, "prod-eu", "cert-manager", true, strPtr(""), nil)
 	if err != nil {
 		t.Fatalf("clear pin: %v", err)
 	}
-	spec, err := models.LoadClusterAssignment(out)
+	spec, err := models.LoadClusterAddons(out)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -75,16 +75,16 @@ func TestSetClusterAssignmentAddon_ExplicitEmptyVersionClearsPin(t *testing.T) {
 	}
 }
 
-func TestSetClusterAssignmentAddon_PreservesOtherAddons(t *testing.T) {
-	seeded, err := SetClusterAssignmentAddon(nil, "prod-eu", "cert-manager", true, strPtr("1.12.0"), nil)
+func TestSetClusterAddonsAddon_PreservesOtherAddons(t *testing.T) {
+	seeded, err := SetClusterAddonsAddon(nil, "prod-eu", "cert-manager", true, strPtr("1.12.0"), nil)
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	out, err := SetClusterAssignmentAddon(seeded, "prod-eu", "metrics-server", true, nil, nil)
+	out, err := SetClusterAddonsAddon(seeded, "prod-eu", "metrics-server", true, nil, nil)
 	if err != nil {
 		t.Fatalf("add second addon: %v", err)
 	}
-	spec, err := models.LoadClusterAssignment(out)
+	spec, err := models.LoadClusterAddons(out)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -96,21 +96,21 @@ func TestSetClusterAssignmentAddon_PreservesOtherAddons(t *testing.T) {
 	}
 }
 
-func TestSetClusterAssignmentAddon_SettingsReplaceWholesale(t *testing.T) {
-	firstSettings := &models.ClusterAssignmentAddonSettings{
+func TestSetClusterAddonsAddon_SettingsReplaceWholesale(t *testing.T) {
+	firstSettings := &models.ClusterAddonsAddonSettings{
 		SyncOptions: []string{"ServerSideApply=true"},
 	}
-	seeded, err := SetClusterAssignmentAddon(nil, "prod-eu", "cert-manager", true, nil, firstSettings)
+	seeded, err := SetClusterAddonsAddon(nil, "prod-eu", "cert-manager", true, nil, firstSettings)
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
 	// settings=nil on the next call must leave the existing block alone.
-	out, err := SetClusterAssignmentAddon(seeded, "prod-eu", "cert-manager", true, nil, nil)
+	out, err := SetClusterAddonsAddon(seeded, "prod-eu", "cert-manager", true, nil, nil)
 	if err != nil {
 		t.Fatalf("no-op settings update: %v", err)
 	}
-	spec, err := models.LoadClusterAssignment(out)
+	spec, err := models.LoadClusterAddons(out)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -119,12 +119,12 @@ func TestSetClusterAssignmentAddon_SettingsReplaceWholesale(t *testing.T) {
 	}
 
 	// A non-nil settings replaces wholesale.
-	replaced := &models.ClusterAssignmentAddonSettings{Namespace: "custom-ns"}
-	out2, err := SetClusterAssignmentAddon(out, "prod-eu", "cert-manager", true, nil, replaced)
+	replaced := &models.ClusterAddonsAddonSettings{Namespace: "custom-ns"}
+	out2, err := SetClusterAddonsAddon(out, "prod-eu", "cert-manager", true, nil, replaced)
 	if err != nil {
 		t.Fatalf("replace settings: %v", err)
 	}
-	spec2, err := models.LoadClusterAssignment(out2)
+	spec2, err := models.LoadClusterAddons(out2)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -134,16 +134,16 @@ func TestSetClusterAssignmentAddon_SettingsReplaceWholesale(t *testing.T) {
 	}
 }
 
-func TestRemoveClusterAssignmentAddon(t *testing.T) {
-	seeded, err := SetClusterAssignmentAddon(nil, "prod-eu", "cert-manager", true, strPtr("1.12.0"), nil)
+func TestRemoveClusterAddonsAddon(t *testing.T) {
+	seeded, err := SetClusterAddonsAddon(nil, "prod-eu", "cert-manager", true, strPtr("1.12.0"), nil)
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	out, err := RemoveClusterAssignmentAddon(seeded, "prod-eu", "cert-manager")
+	out, err := RemoveClusterAddonsAddon(seeded, "prod-eu", "cert-manager")
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	spec, err := models.LoadClusterAssignment(out)
+	spec, err := models.LoadClusterAddons(out)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -152,12 +152,12 @@ func TestRemoveClusterAssignmentAddon(t *testing.T) {
 	}
 }
 
-func TestRemoveClusterAssignmentAddon_NotFound(t *testing.T) {
-	seeded, err := SetClusterAssignmentAddon(nil, "prod-eu", "cert-manager", true, nil, nil)
+func TestRemoveClusterAddonsAddon_NotFound(t *testing.T) {
+	seeded, err := SetClusterAddonsAddon(nil, "prod-eu", "cert-manager", true, nil, nil)
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if _, err := RemoveClusterAssignmentAddon(seeded, "prod-eu", "does-not-exist"); err == nil {
+	if _, err := RemoveClusterAddonsAddon(seeded, "prod-eu", "does-not-exist"); err == nil {
 		t.Error("expected an error removing a non-existent addon")
 	}
 }

@@ -417,7 +417,7 @@ export interface DisableAddonV4Request {
 
 /**
  * enableAddonV4 — POST /api/v1/v4/clusters/{name}/addons/{addon} (v4 Wave
- * 1 Story 4.3). Writes clusters/{name}.yaml (kind ClusterAssignment) and,
+ * 1 Story 4.3). Writes clusters/{name}.yaml (kind ClusterAddons) and,
  * when values are supplied, values/clusters/{name}/{addon}.yaml — the v4
  * data-file format, distinct from the v3 per-addon endpoint
  * (previewEnableAddon / enableAddonOnCluster above). A 422 throws

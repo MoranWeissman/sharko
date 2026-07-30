@@ -73,7 +73,7 @@ func readV4AddonLabels(ctx context.Context, gp gitprovider.GitProvider, branch s
 				"path", filePath, "branch", branch, "error", readErr)
 			continue
 		}
-		spec, parseErr := models.LoadClusterAssignment(body)
+		spec, parseErr := models.LoadClusterAddons(body)
 		if parseErr != nil {
 			log.Warn("[clusterreconciler] a v4 cluster assignment file was rejected — skipping it, other clusters still converge",
 				"path", filePath, "error", parseErr)
@@ -88,7 +88,7 @@ func readV4AddonLabels(ctx context.Context, gp gitprovider.GitProvider, branch s
 	return out
 }
 
-// v4LabelsFor turns one ClusterAssignment into the addon labels Sharko
+// v4LabelsFor turns one ClusterAddons into the addon labels Sharko
 // wants on that cluster's ArgoCD Secret. Enabled addons only; the value is
 // the canonical models.LabelEnabled, which is the exact literal the engine's
 // selector matches on.
@@ -98,7 +98,7 @@ func readV4AddonLabels(ctx context.Context, gp gitprovider.GitProvider, branch s
 // such a name (internal/orchestrator's checkV4PathSegment), so this only
 // fires on a hand-authored file, and a bad name must not be allowed to fail
 // the whole cluster's Secret update.
-func v4LabelsFor(spec models.ClusterAssignmentSpec) map[string]string {
+func v4LabelsFor(spec models.ClusterAddonsSpec) map[string]string {
 	labels := make(map[string]string, len(spec.Addons))
 	for addon, entry := range spec.Addons {
 		if !entry.Enabled {

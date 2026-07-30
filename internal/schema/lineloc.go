@@ -120,7 +120,7 @@ func stepYAMLNode(n *yaml.Node, seg string) (value *yaml.Node, ok bool) {
 // when n is nil, not a mapping, or the key isn't present.
 //
 // Exported for cmd/sharko's validate-config CLI, which uses it to build
-// the ClusterAssignment-specific semantic checks (filename-vs-
+// the ClusterAddons-specific semantic checks (filename-vs-
 // spec.cluster, the preserveResourcesOnDeletion redirect) that a generic
 // JSON Schema can't express — schema.MappingValue is the same primitive
 // stepYAMLNode uses internally, kept in sync deliberately.

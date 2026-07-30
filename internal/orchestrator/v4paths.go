@@ -25,7 +25,7 @@ import (
 // clusters/*.yaml instead — see EnableAddonV4/DisableAddonV4).
 const V4ConnectionsPath = "fleet/connections.yaml"
 
-// V4ClustersDir is where one ClusterAssignment file per cluster lives
+// V4ClustersDir is where one ClusterAddons file per cluster lives
 // (design doc §2.1): "clusters/<cluster-name>.yaml".
 const V4ClustersDir = "clusters"
 
@@ -79,9 +79,9 @@ func joinUnder(dir string, rest ...string) (string, error) {
 	return joined, nil
 }
 
-// v4ClusterAssignmentPath returns the commit path for a cluster's
-// ClusterAssignment file. Errors on a name that could escape V4ClustersDir.
-func v4ClusterAssignmentPath(clusterName string) (string, error) {
+// v4ClusterAddonsPath returns the commit path for a cluster's
+// ClusterAddons file. Errors on a name that could escape V4ClustersDir.
+func v4ClusterAddonsPath(clusterName string) (string, error) {
 	if err := checkV4PathSegment("cluster", clusterName); err != nil {
 		return "", err
 	}

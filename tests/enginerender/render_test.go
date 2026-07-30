@@ -28,7 +28,7 @@
 //     (Sprig included) reading testdata/clusters/*.yaml over git — out of
 //     reach for a Go unit test, and explicitly deferred to the live
 //     playground per the story brief. testdata/clusters/*.yaml is
-//     asserted directly instead (TestEngineChartFixtureClusterAssignments)
+//     asserted directly instead (TestEngineChartFixtureClusterAddons)
 //     to prove the DATA side matches the worked example exactly, so the
 //     only unverified step is ArgoCD's own (already-documented) Sprig
 //     evaluation.
@@ -396,14 +396,14 @@ func TestEngineChartTemplatePatchSettingsPassthrough(t *testing.T) {
 	}
 }
 
-// TestEngineChartFixtureClusterAssignments asserts the fixture repo's
+// TestEngineChartFixtureClusterAddons asserts the fixture repo's
 // clusters/*.yaml files match the design doc's worked example (section 6)
 // exactly: prod-eu pins cert-manager older with the webhook ignore-diff
 // quirk, staging-us has no override, both enable metrics-server on the
 // catalog default. This is the DATA half of the version-pin proof — the
 // engine template half is TestEngineChartVersionPinBakedDefaults and
 // TestEngineChartTemplatePatchSettingsPassthrough above.
-func TestEngineChartFixtureClusterAssignments(t *testing.T) {
+func TestEngineChartFixtureClusterAddons(t *testing.T) {
 	root := repoRoot(t)
 	dataDir := filepath.Join(root, "tests", "enginerender", "testdata")
 
@@ -412,20 +412,20 @@ func TestEngineChartFixtureClusterAssignments(t *testing.T) {
 		Version  string                 `yaml:"version"`
 		Settings map[string]interface{} `yaml:"settings"`
 	}
-	type clusterAssignment struct {
+	type clusterAddons struct {
 		Spec struct {
 			Cluster string               `yaml:"cluster"`
 			Addons  map[string]addonSpec `yaml:"addons"`
 		} `yaml:"spec"`
 	}
 
-	load := func(name string) clusterAssignment {
+	load := func(name string) clusterAddons {
 		t.Helper()
 		data, err := os.ReadFile(filepath.Join(dataDir, "clusters", name+".yaml"))
 		if err != nil {
 			t.Fatalf("failed to read clusters/%s.yaml: %v", name, err)
 		}
-		var ca clusterAssignment
+		var ca clusterAddons
 		if err := yaml.Unmarshal(data, &ca); err != nil {
 			t.Fatalf("clusters/%s.yaml is not valid YAML: %v", name, err)
 		}

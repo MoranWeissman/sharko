@@ -5,7 +5,7 @@
 // docs/design/2026-07-30-v4-data-file-format.md §2.1/§2.2/§2.3 define the
 // v4 write targets this file produces:
 //
-//   - clusters/<cluster>.yaml (kind ClusterAssignment) — enabled flag,
+//   - clusters/<cluster>.yaml (kind ClusterAddons) — enabled flag,
 //     the per-cluster version pin, per-cluster settings.
 //   - values/global/<addon>.yaml and values/clusters/<cluster>/<addon>.yaml
 //     — plain Helm values, no envelope.
@@ -67,7 +67,7 @@ type EnableAddonV4Request struct {
 	// Settings, when non-nil, replaces the cluster's per-Application
 	// settings block wholesale (design doc §3.3 — list fields replace,
 	// never merge). Nil leaves any existing settings block untouched.
-	Settings *models.ClusterAssignmentAddonSettings `json:"settings,omitempty"`
+	Settings *models.ClusterAddonsAddonSettings `json:"settings,omitempty"`
 
 	DryRun bool `json:"dry_run,omitempty"`
 	Yes    bool `json:"yes"`
@@ -157,7 +157,7 @@ func (o *Orchestrator) validateV4AddonInputs(addon catalog.MergedAddon, mergedVa
 // stub), this writes:
 //
 //   - clusters/<cluster>.yaml  — the addon's enabled flag, version pin,
-//     and settings (gitops.SetClusterAssignmentAddon).
+//     and settings (gitops.SetClusterAddonsAddon).
 //   - values/clusters/<cluster>/<addon>.yaml — ONLY when req.Values is
 //     non-empty, deep-merged onto whatever is already there.
 //
@@ -177,7 +177,7 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 	// Resolve every commit path BEFORE the catalog read (and long before
 	// any branch exists) so a name that could escape the v4 data folders
 	// fails with a plain-English error and zero side effects.
-	clusterPath, err := v4ClusterAssignmentPath(req.Cluster)
+	clusterPath, err := v4ClusterAddonsPath(req.Cluster)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 		return nil, err
 	}
 
-	existingClusterAssignment, _ := o.readFileIfExists(ctx, clusterPath)
+	existingClusterAddons, _ := o.readFileIfExists(ctx, clusterPath)
 	existingGlobalValuesRaw, _ := o.readFileIfExists(ctx, globalValuesPath)
 	existingClusterValuesRaw, _ := o.readFileIfExists(ctx, clusterValuesPath)
 
@@ -226,7 +226,7 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 		return nil, &V4SemanticValidationError{Cluster: req.Cluster, Addon: req.Addon, Problems: problems}
 	}
 
-	updatedClusterAssignment, err := gitops.SetClusterAssignmentAddon(existingClusterAssignment, req.Cluster, req.Addon, true, req.Version, req.Settings)
+	updatedClusterAddons, err := gitops.SetClusterAddonsAddon(existingClusterAddons, req.Cluster, req.Addon, true, req.Version, req.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("updating %s: %w", clusterPath, err)
 	}
@@ -245,8 +245,8 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 	if req.DryRun {
 		previews := []FilePreview{{
 			Path:   clusterPath,
-			Action: fileActionFromExists(existingClusterAssignment),
-			Diff:   o.buildFileDiff(clusterPath, existingClusterAssignment, updatedClusterAssignment, fileActionFromExists(existingClusterAssignment)),
+			Action: fileActionFromExists(existingClusterAddons),
+			Diff:   o.buildFileDiff(clusterPath, existingClusterAddons, updatedClusterAddons, fileActionFromExists(existingClusterAddons)),
 		}}
 		if writeClusterValues {
 			previews = append(previews, FilePreview{
@@ -269,7 +269,7 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 		return nil, fmt.Errorf("confirmation required: set yes: true in request body")
 	}
 
-	files := map[string][]byte{clusterPath: updatedClusterAssignment}
+	files := map[string][]byte{clusterPath: updatedClusterAddons}
 	if writeClusterValues {
 		files[clusterValuesPath] = updatedClusterValuesRaw
 	}
@@ -280,7 +280,7 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 	// "-v4"-suffixed code, so this PR lands in the dashboard's existing
 	// "Addons" bucket instead of the default/uncategorized one. Cluster +
 	// Addon on the tracked PR already disambiguate which cluster/addon
-	// this is about; the wire FORMAT (v3 labels vs v4 ClusterAssignment)
+	// this is about; the wire FORMAT (v3 labels vs v4 ClusterAddons)
 	// is an implementation detail the tracker/dashboard don't need to
 	// know.
 	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("enable addon %s on cluster %s (v4)", req.Addon, req.Cluster),
@@ -308,7 +308,7 @@ func (o *Orchestrator) DisableAddonV4(ctx context.Context, req DisableAddonV4Req
 	if err := checkV4PathSegment("addon", req.Addon); err != nil {
 		return nil, err
 	}
-	clusterPath, err := v4ClusterAssignmentPath(req.Cluster)
+	clusterPath, err := v4ClusterAddonsPath(req.Cluster)
 	if err != nil {
 		return nil, err
 	}
@@ -319,11 +319,11 @@ func (o *Orchestrator) DisableAddonV4(ctx context.Context, req DisableAddonV4Req
 
 	var updated []byte
 	if req.Remove {
-		updated, err = gitops.RemoveClusterAssignmentAddon(existing, req.Cluster, req.Addon)
+		updated, err = gitops.RemoveClusterAddonsAddon(existing, req.Cluster, req.Addon)
 	} else {
 		// version=nil: disabling must NOT clear an existing pin (design
 		// doc §2.1 — "false keeps the entry — and its settings").
-		updated, err = gitops.SetClusterAssignmentAddon(existing, req.Cluster, req.Addon, false, nil, nil)
+		updated, err = gitops.SetClusterAddonsAddon(existing, req.Cluster, req.Addon, false, nil, nil)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("updating %s: %w", clusterPath, err)

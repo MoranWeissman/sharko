@@ -98,7 +98,7 @@ That is the whole exception list. It is short on purpose.
 ### 2.1 The per-cluster assignment file
 
 **Path:** `clusters/<cluster-name>.yaml`
-**Kind:** `ClusterAssignment`
+**Kind:** `ClusterAddons`
 **Who writes it:** Sharko (through a PR), or a person editing by hand
 **Who reads it:** the engine, and `sharko validate`
 
@@ -143,7 +143,7 @@ whatever it deployed before. Nothing half-applies.
 
 ```yaml
 apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: prod-eu
 spec:
@@ -894,7 +894,7 @@ spec:
 
 ```yaml
 apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: prod-eu
 spec:
@@ -917,7 +917,7 @@ spec:
 
 ```yaml
 apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: staging-us
 spec:
@@ -1102,6 +1102,15 @@ easier to read. This is engine-internal rather than part of the data contract, s
 unchanged; only the folder moves. They are not engine input and are not part of the
 bootstrap seed — each is created when the setting it holds is first changed.
 
+**D19 — Renamed 2026-07-30: the per-cluster kind is `ClusterAddons`.**
+Maintainer decision. The kind's original working name did not read naturally;
+`ClusterAddons` says plainly what the file is — the addons for this cluster. The
+format was unreleased at the time of the rename, so this is a clean rename with no
+back-compat shim, no alias, and no dual-accept: only the kind string, Go type/file
+names, schema ids/filenames, docs, fixtures, and UI references changed. File paths,
+the envelope apiVersion, the `AddonCatalogDelta` kind, and all runtime behavior are
+unchanged.
+
 ---
 
 ## 8. What this changes in the existing code
@@ -1109,7 +1118,7 @@ bootstrap seed — each is created when the setting it holds is first changed.
 A candid list for the build lanes. None of it is a blocker; all of it is work someone
 will meet.
 
-**Kinds added:** `ClusterAssignment`, `AddonCatalogDelta`.
+**Kinds added:** `ClusterAddons`, `AddonCatalogDelta`.
 **Kinds retired:** `AddonCatalog` (the v3 list-shaped deployment catalog).
 **Kinds unchanged:** `ManagedClusters`, `DefaultAddons`, `MarketplaceSources`.
 

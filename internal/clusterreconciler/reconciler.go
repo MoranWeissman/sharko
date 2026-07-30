@@ -536,7 +536,7 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 	// Step 2b (v4 only): derive each cluster's addon-enablement labels from
 	// clusters/*.yaml. On a v4 repo the connection record's own labels
 	// block no longer carries addon on/off keys (design doc §2.4 / D9) —
-	// the ClusterAssignment files do — so without this read the desired
+	// the ClusterAddons files do — so without this read the desired
 	// label set would be empty and enabling an addon would deploy nothing.
 	// Gated on readPath so a v3 repo does not pay for a directory listing
 	// it can never use, and so the v3 desired-label computation stays

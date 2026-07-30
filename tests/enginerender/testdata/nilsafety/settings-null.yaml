@@ -11,7 +11,7 @@
 # `helm template` — it is a git-files generator input the real ArgoCD
 # ApplicationSet controller reads at round two (design doc section 4.1).
 apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: nullsettings-us
 spec:

@@ -92,10 +92,10 @@ const DefaultAddonsSchemaID = "https://raw.githubusercontent.com/MoranWeissman/s
 // marketplace-sources.v1.json file's $id. Mirrors the other schema ID constants.
 const MarketplaceSourcesSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/marketplace-sources.v1.json"
 
-// ClusterAssignmentSchemaID is the public URL embedded in every generated
-// cluster-assignment.v1.json file's $id (v4 Wave 1 Story 2.6). Mirrors the
+// ClusterAddonsSchemaID is the public URL embedded in every generated
+// cluster-addons.v1.json file's $id (v4 Wave 1 Story 2.6). Mirrors the
 // other schema ID constants.
-const ClusterAssignmentSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-assignment.v1.json"
+const ClusterAddonsSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-addons.v1.json"
 
 // AddonCatalogDeltaSchemaID is the public URL embedded in every generated
 // addon-catalog-delta.v1.json file's $id (v4 Wave 1 Story 2.6). Mirrors the

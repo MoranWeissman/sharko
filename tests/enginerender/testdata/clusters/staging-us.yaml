@@ -1,9 +1,9 @@
-# Fixture clusters/staging-us.yaml — ClusterAssignment, exactly as the
+# Fixture clusters/staging-us.yaml — ClusterAddons, exactly as the
 # worked example in docs/design/2026-07-30-v4-data-file-format.md section 6
 # shows it. Neither addon has a per-cluster override: both follow whatever
 # catalog/addons.yaml (the fleet-wide delta) says.
 apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: staging-us
 spec:

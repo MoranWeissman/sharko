@@ -1,6 +1,6 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-assignment.v1.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-addons.v1.json
 apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: prod-eu
 spec:

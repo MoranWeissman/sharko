@@ -38,7 +38,7 @@ const AddonCatalogDeltaSchemaHeader = "# yaml-language-server: $schema=https://r
 // engine builds exactly one ApplicationSet per addon covering every
 // cluster that runs it, so PreserveResourcesOnDeletion (a
 // syncPolicy-level field on that ApplicationSet) can only be set here,
-// never per cluster. See models.ClusterAssignmentAddonSettings for the
+// never per cluster. See models.ClusterAddonsAddonSettings for the
 // six-field sibling used in clusters/<name>.yaml, which deliberately
 // omits this field so a hand-authored per-cluster override of it fails
 // JSON Schema validation.
@@ -142,7 +142,7 @@ type AddonCatalogDeltaDoc = schema.Envelope[AddonCatalogDeltaSpec]
 const AddonCatalogDeltaMetadataName = "addon-catalog-delta"
 
 // LoadAddonCatalogDelta parses the on-disk bytes of a catalog/addons.yaml
-// document and returns its spec. Mirrors models.LoadClusterAssignment:
+// document and returns its spec. Mirrors models.LoadClusterAddons:
 // no legacy bare-YAML branch, hard error (never a silent "zero addons"
 // result) on a non-enveloped or wrong-kind body.
 func LoadAddonCatalogDelta(body []byte) (AddonCatalogDeltaSpec, error) {

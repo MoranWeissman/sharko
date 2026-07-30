@@ -174,7 +174,7 @@ func NewValidator() (*Validator, error) {
 	if err := v.registerEmbedded(KindMarketplaceSources, MarketplaceSourcesSchemaID, embeddedMarketplaceSourcesSchema); err != nil {
 		return nil, err
 	}
-	if err := v.registerEmbedded(KindClusterAssignment, ClusterAssignmentSchemaID, embeddedClusterAssignmentSchema); err != nil {
+	if err := v.registerEmbedded(KindClusterAddons, ClusterAddonsSchemaID, embeddedClusterAddonsSchema); err != nil {
 		return nil, err
 	}
 	if err := v.registerEmbedded(KindAddonCatalogDelta, AddonCatalogDeltaSchemaID, embeddedAddonCatalogDeltaSchema); err != nil {
@@ -439,7 +439,7 @@ func knownKinds(v *Validator) string {
 	var known []string
 	for _, k := range []string{
 		KindManagedClusters, KindAddonCatalog, KindDefaultAddons, KindMarketplaceSources,
-		KindClusterAssignment, KindAddonCatalogDelta,
+		KindClusterAddons, KindAddonCatalogDelta,
 	} {
 		if _, ok := v.schemas[k]; ok {
 			known = append(known, k)

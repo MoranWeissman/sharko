@@ -1,5 +1,5 @@
 // v4 Wave 1 Story 2.6 — generator coverage for the two new kinds
-// (ClusterAssignment, AddonCatalogDelta). Kept in a separate file from
+// (ClusterAddons, AddonCatalogDelta). Kept in a separate file from
 // generator_test.go (rather than growing that file's tables) so the
 // v3-kind and v4-kind test suites can evolve independently; the helpers
 // here deliberately mirror genManagedClusters/genAddonCatalog's shape.
@@ -18,11 +18,11 @@ import (
 // as managedClustersDoc/addonCatalogDoc above: package main can't be
 // imported, so each test file that needs to reflect an envelope
 // declares its own structurally-identical wrapper.
-type clusterAssignmentDoc struct {
+type clusterAddonsDoc struct {
 	APIVersion string                       `json:"apiVersion"`
 	Kind       string                       `json:"kind"`
 	Metadata   sharkoschema.Metadata        `json:"metadata"`
-	Spec       models.ClusterAssignmentSpec `json:"spec"`
+	Spec       models.ClusterAddonsSpec `json:"spec"`
 }
 
 type addonCatalogDeltaDoc struct {
@@ -32,17 +32,17 @@ type addonCatalogDeltaDoc struct {
 	Spec       config.AddonCatalogDeltaSpec `json:"spec"`
 }
 
-func genClusterAssignment(t *testing.T) []byte {
+func genClusterAddons(t *testing.T) []byte {
 	t.Helper()
 	out, err := sharkoschema.GenerateSchema(
-		&clusterAssignmentDoc{},
-		sharkoschema.ClusterAssignmentSchemaID,
-		"Sharko ClusterAssignment",
+		&clusterAddonsDoc{},
+		sharkoschema.ClusterAddonsSchemaID,
+		"Sharko ClusterAddons",
 		"clusters/<cluster-name>.yaml — which addons run on this cluster, at which version, tuned how (v4).",
-		sharkoschema.KindClusterAssignment,
+		sharkoschema.KindClusterAddons,
 	)
 	if err != nil {
-		t.Fatalf("GenerateSchema(cluster-assignment): %v", err)
+		t.Fatalf("GenerateSchema(cluster-addons): %v", err)
 	}
 	return out
 }
@@ -68,10 +68,10 @@ func genAddonCatalogDelta(t *testing.T) []byte {
 func TestGenerateSchemas_V4Kinds_Idempotent(t *testing.T) {
 	t.Parallel()
 
-	t.Run("cluster-assignment", func(t *testing.T) {
+	t.Run("cluster-addons", func(t *testing.T) {
 		t.Parallel()
-		a := genClusterAssignment(t)
-		b := genClusterAssignment(t)
+		a := genClusterAddons(t)
+		b := genClusterAddons(t)
 		if !bytes.Equal(a, b) {
 			t.Fatalf("schema generation not idempotent:\nfirst:  %s\nsecond: %s", a, b)
 		}
@@ -87,15 +87,15 @@ func TestGenerateSchemas_V4Kinds_Idempotent(t *testing.T) {
 	})
 }
 
-// TestGenerateClusterAssignment_AcceptsDesignDocExample validates the
+// TestGenerateClusterAddons_AcceptsDesignDocExample validates the
 // generator's output against the design doc's §2.1 worked example.
-func TestGenerateClusterAssignment_AcceptsDesignDocExample(t *testing.T) {
+func TestGenerateClusterAddons_AcceptsDesignDocExample(t *testing.T) {
 	t.Parallel()
-	schemaBytes := genClusterAssignment(t)
-	sch := compileSchema(t, schemaBytes, sharkoschema.ClusterAssignmentSchemaID)
+	schemaBytes := genClusterAddons(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.ClusterAddonsSchemaID)
 
 	example := `apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: prod-eu
 spec:
@@ -120,18 +120,18 @@ spec:
 	}
 }
 
-// TestGenerateClusterAssignment_RejectsPreserveResourcesOnDeletion pins
+// TestGenerateClusterAddons_RejectsPreserveResourcesOnDeletion pins
 // the schema-level half of design doc §3.2's "Two tiers" enforcement:
 // preserveResourcesOnDeletion inside spec.addons.*.settings must be
-// rejected because ClusterAssignmentAddonSettings has no such field and
+// rejected because ClusterAddonsAddonSettings has no such field and
 // additionalProperties is false.
-func TestGenerateClusterAssignment_RejectsPreserveResourcesOnDeletion(t *testing.T) {
+func TestGenerateClusterAddons_RejectsPreserveResourcesOnDeletion(t *testing.T) {
 	t.Parallel()
-	schemaBytes := genClusterAssignment(t)
-	sch := compileSchema(t, schemaBytes, sharkoschema.ClusterAssignmentSchemaID)
+	schemaBytes := genClusterAddons(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.ClusterAddonsSchemaID)
 
 	body := `apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: prod-eu
 spec:
@@ -147,15 +147,15 @@ spec:
 	}
 }
 
-// TestGenerateClusterAssignment_RejectsMissingEnabled — every addon
+// TestGenerateClusterAddons_RejectsMissingEnabled — every addon
 // entry requires `enabled` (design doc §2.1).
-func TestGenerateClusterAssignment_RejectsMissingEnabled(t *testing.T) {
+func TestGenerateClusterAddons_RejectsMissingEnabled(t *testing.T) {
 	t.Parallel()
-	schemaBytes := genClusterAssignment(t)
-	sch := compileSchema(t, schemaBytes, sharkoschema.ClusterAssignmentSchemaID)
+	schemaBytes := genClusterAddons(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.ClusterAddonsSchemaID)
 
 	body := `apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: prod-eu
 spec:

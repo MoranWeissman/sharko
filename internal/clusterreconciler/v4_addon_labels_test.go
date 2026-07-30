@@ -12,13 +12,13 @@ import (
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
-// clusterAssignmentYAML renders a clusters/<name>.yaml body with the given
+// clusterAddonsYAML renders a clusters/<name>.yaml body with the given
 // addon -> enabled map. Written as a literal (rather than through
-// models.SaveClusterAssignment) so the test pins the ON-DISK shape a person
+// models.SaveClusterAddons) so the test pins the ON-DISK shape a person
 // would actually author, not whatever the writer happens to emit.
-func clusterAssignmentYAML(cluster string, addons map[string]bool) []byte {
+func clusterAddonsYAML(cluster string, addons map[string]bool) []byte {
 	body := "apiVersion: sharko.dev/v1\n" +
-		"kind: ClusterAssignment\n" +
+		"kind: ClusterAddons\n" +
 		"metadata:\n" +
 		"  name: " + cluster + "\n" +
 		"spec:\n" +
@@ -38,7 +38,7 @@ func v4RepoFiles(assignments map[string]map[string]bool, clusters ...string) map
 		v4ConnectionsPath: envelopedManagedClusters(clusters...),
 	}
 	for cluster, addons := range assignments {
-		files["clusters/"+cluster+".yaml"] = clusterAssignmentYAML(cluster, addons)
+		files["clusters/"+cluster+".yaml"] = clusterAddonsYAML(cluster, addons)
 	}
 	return files
 }
@@ -134,7 +134,7 @@ func TestPollOnce_V4Repo_DisableRemovesLabelOnNextReconcile(t *testing.T) {
 	}
 
 	// Somebody disables the addon: the assignment file flips to false.
-	gp.files["clusters/prod-eu.yaml"] = clusterAssignmentYAML("prod-eu", map[string]bool{"cert-manager": false})
+	gp.files["clusters/prod-eu.yaml"] = clusterAddonsYAML("prod-eu", map[string]bool{"cert-manager": false})
 	r.pollOnce(ctx)
 
 	secret, err = k8sClient.CoreV1().Secrets(DefaultArgoCDNamespace).Get(ctx, "prod-eu", metav1.GetOptions{})
@@ -168,7 +168,7 @@ func TestPollOnce_V3Repo_NoV4LabelsDerived(t *testing.T) {
 	gp := &fakeGit{files: map[string][]byte{
 		DefaultManagedClustersPath: v3Body,
 		// A stray v4 tree that must be completely ignored on a v3 repo.
-		"clusters/prod-eu.yaml": clusterAssignmentYAML("prod-eu", map[string]bool{"falco": true}),
+		"clusters/prod-eu.yaml": clusterAddonsYAML("prod-eu", map[string]bool{"falco": true}),
 	}}
 
 	k8sClient := fake.NewSimpleClientset()
@@ -191,9 +191,9 @@ func TestPollOnce_V3Repo_NoV4LabelsDerived(t *testing.T) {
 
 func TestV4LabelsFor_SkipsDisabledAndUnnamed(t *testing.T) {
 	t.Parallel()
-	spec := models.ClusterAssignmentSpec{
+	spec := models.ClusterAddonsSpec{
 		Cluster: "prod-eu",
-		Addons: map[string]models.ClusterAssignmentAddon{
+		Addons: map[string]models.ClusterAddonsAddon{
 			"cert-manager":   {Enabled: true},
 			"falco":          {Enabled: false},
 			"../../engine":   {Enabled: true}, // hand-authored garbage
