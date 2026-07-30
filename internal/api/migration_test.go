@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -317,5 +318,65 @@ func TestV4Repo_WritesNotBlockedByTheMigrationGate(t *testing.T) {
 		if msg := decodeError(t, w); msg == orchestrator.V3MigrationRequiredMessage {
 			t.Error("the v3 migration gate fired on a v4 repo")
 		}
+	}
+}
+
+// ─── v4 Wave 2 review fixes: L-10 and the runtime-handoff refusal ────────
+
+// TestMigrate_DryRun_EmitsNoMigrationAuditEvent pins review finding L-10.
+// The audit entry used to go on before the dry-run flag was even read, so
+// every preview logged "repo_migrated_v3_to_v4" — and a log that claims
+// migrations that never happened makes the one real entry worthless.
+func TestMigrate_DryRun_EmitsNoMigrationAuditEvent(t *testing.T) {
+	srv := newMigrationTestServer(t, migrationV3Files())
+
+	body := bytes.NewBufferString(`{"dry_run":true,"yes":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/migration/migrate", body)
+	req.Header.Set("Content-Type", "application/json")
+	withRole(req, "admin")
+	w := httptest.NewRecorder()
+	NewRouter(srv, nil).ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("dry-run status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	for _, e := range srv.auditLog.List(0) {
+		if e.Event == "repo_migrated_v3_to_v4" {
+			t.Fatal("a dry run logged repo_migrated_v3_to_v4 — the audit log now claims a migration that never happened")
+		}
+	}
+}
+
+// TestMigrate_RefusesOnALiveFleetWithNoApplicationSetAccess is the HTTP
+// face of review finding B-1: the ApplicationSets that keep this fleet's
+// addons running are unreachable, so merging the pull request would
+// uninstall every one of them. Refuse, and open nothing.
+func TestMigrate_RefusesOnALiveFleetWithNoApplicationSetAccess(t *testing.T) {
+	srv := newMigrationTestServer(t, migrationV3Files())
+
+	body := bytes.NewBufferString(`{"yes":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/migration/migrate", body)
+	req.Header.Set("Content-Type", "application/json")
+	withRole(req, "admin")
+	w := httptest.NewRecorder()
+	NewRouter(srv, nil).ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 with the plain-words refusal (body=%s)", w.Code, w.Body.String())
+	}
+	if msg := decodeError(t, w); !strings.Contains(msg, "Nothing was written") {
+		t.Errorf("the refusal should promise nothing was written, got %q", msg)
+	}
+}
+
+// TestMigrationComplete_RequiresAdmin — same door, same lock as migrate.
+func TestMigrationComplete_RequiresAdmin(t *testing.T) {
+	srv := newMigrationTestServer(t, migrationV3Files())
+
+	if w := getJSON(t, srv, http.MethodPost, "/api/v1/migration/complete", "viewer"); w.Code != http.StatusForbidden {
+		t.Fatalf("viewer status = %d, want 403 (body=%s)", w.Code, w.Body.String())
+	}
+	if w := getJSON(t, srv, http.MethodPost, "/api/v1/migration/complete", "admin"); w.Code != http.StatusOK {
+		t.Fatalf("admin status = %d, want 200 (body=%s)", w.Code, w.Body.String())
 	}
 }

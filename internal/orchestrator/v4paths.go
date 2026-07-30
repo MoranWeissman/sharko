@@ -10,10 +10,12 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -113,10 +115,46 @@ func v4ClusterValuesPath(clusterName, addonName string) (string, error) {
 // isV4Repo reports whether the connected repo is v4-format, using the
 // same probe CheckEnginePin (enginepin.go) and
 // AddonService.GetVersionMatrix (internal/service/addon.go) already use:
-// the engine pin (EnginePinPath) resolving to non-empty content. "No pin
-// found" is the ordinary, non-error "not a v4 repo yet" case — never
-// treated as a hard failure here either.
-func (o *Orchestrator) isV4Repo(ctx context.Context) bool {
-	content, ok := o.readFileIfExists(ctx, EnginePinPath)
-	return ok && len(content) > 0
+// the engine pin (EnginePinPath) resolving to non-empty content.
+//
+// It answers (bool, error), and the error half is load-bearing. The
+// earlier form swallowed every read failure into "not v4", which made
+// refuseOnV4Repo fail OPEN: for one unreachable moment — an expired
+// token, a rate limit, a network blip — a genuinely v4 repo looked like a
+// v3 one, and the v3 write it was supposed to refuse went ahead and
+// recreated configuration/managed-clusters.yaml. That is precisely the
+// second-registry hijack ErrV4RepoUnsupported exists to prevent: the
+// reconciler prefers the v3 file whenever both exist, so every cluster
+// registered the v4 way vanishes from the desired state and has its
+// ArgoCD connection Secret deleted.
+//
+// So: a genuinely ABSENT pin is (false, nil) — the ordinary "not a v4
+// repo yet" answer. Any OTHER failure is (false, err), and the write
+// gates turn that into a refusal. Read and status paths are free to keep
+// treating an error as "not v4"; they say so at their call site.
+func (o *Orchestrator) isV4Repo(ctx context.Context) (bool, error) {
+	if o.git == nil {
+		return false, nil
+	}
+	content, err := o.git.GetFileContent(ctx, EnginePinPath, o.gitops.BaseBranch)
+	if err == nil {
+		return len(content) > 0, nil
+	}
+	if errors.Is(err, gitprovider.ErrFileNotFound) {
+		return false, nil
+	}
+	return false, fmt.Errorf(
+		"could not read %s from the %s branch, so Sharko cannot tell which layout this repo uses: %w",
+		EnginePinPath, o.gitops.BaseBranch, err)
+}
+
+// isV4RepoLenient is the old, error-swallowing form, kept for the read and
+// status paths where a wrong answer costs nothing worse than a slightly
+// stale view — and NAMED so that every remaining use of it is a visible,
+// deliberate choice rather than an accident of the signature.
+//
+// Never call this before a write.
+func (o *Orchestrator) isV4RepoLenient(ctx context.Context) bool {
+	v4, err := o.isV4Repo(ctx)
+	return err == nil && v4
 }

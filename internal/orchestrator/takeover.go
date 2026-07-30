@@ -81,7 +81,13 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 	if err != nil {
 		return nil, err
 	}
-	if !o.isV4Repo(ctx) {
+	// Fail closed: a layout probe that cannot get an answer stops the
+	// takeover rather than guessing. Everything below this line writes.
+	v4Repo, v4Err := o.isV4Repo(ctx)
+	if v4Err != nil {
+		return nil, v4Err
+	}
+	if !v4Repo {
 		return nil, ErrTakeoverNeedsV4Repo
 	}
 

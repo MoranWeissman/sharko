@@ -1178,6 +1178,13 @@ var serveCmd = &cobra.Command{
 					if clusterRecon != nil {
 						clusterRecon.Trigger()
 					}
+					// The second half of a v3 → v4 migration: retire the old
+					// ApplicationSets and start the engine in their place.
+					// Nothing else does this, so without it a merged
+					// migration leaves a repo in the new format with no
+					// engine running (v4 Wave 2 review finding H-2). Ignored
+					// for every other operation, and safe to call twice.
+					go srv.CompleteMigrationHandoffOnMerge(context.Background(), pr.Operation)
 					if remediator != nil {
 						go remediator.OnMerge(pr)
 						// Refresh ArgoCD immediately after the merge so it picks up

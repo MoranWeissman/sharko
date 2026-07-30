@@ -1263,6 +1263,12 @@ definitions:
     properties:
       git:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+      handoff:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RuntimeHandoffReport'
+        description: |-
+          Handoff reports what the ArgoCD half of the migration did before the
+          pull request was opened (migration_handoff.go).
       plan:
         allOf:
         - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrationPlan'
@@ -1272,6 +1278,15 @@ definitions:
       status:
         description: Status is "migrated", "preview", or "already_migrated".
         type: string
+      warnings:
+        description: |-
+          Warnings holds plain-English advisories that do NOT mean the
+          migration failed — chiefly "the pull request is open and correct, but
+          auto-merge could not merge it for you". Same partial-success shape as
+          RegisterClusterResult/AdoptClusterResult.
+        items:
+          type: string
+        type: array
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.MigrationFileChange:
     properties:
@@ -1312,6 +1327,15 @@ definitions:
       format:
         description: Format is "v3", "v4", or "empty".
         type: string
+      handoff:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RuntimeHandoffReport'
+        description: |-
+          Handoff reports where the RUNTIME half of the migration has got to —
+          the ApplicationSets that keep the fleet's addons running, which live
+          in ArgoCD rather than in the repo (see migration_handoff.go). It is
+          set on v4 repos, where the only remaining question is whether the
+          second half has finished.
       message:
         description: Message is a plain-English sentence the UI can show as-is.
         type: string
@@ -1443,6 +1467,35 @@ definitions:
         type: string
       status:
         description: '"success", "partial", "failed"'
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.RuntimeHandoffReport:
+    properties:
+      application_sets:
+        description: |-
+          ApplicationSets are the old ApplicationSets this handoff prepared
+          (or, after the second half, retired).
+        items:
+          type: string
+        type: array
+      engine_applied:
+        description: |-
+          EngineApplied reports whether engine/application.yaml has been
+          handed to ArgoCD.
+        type: boolean
+      message:
+        description: Message is one sentence a person can read as-is.
+        type: string
+      released_applications:
+        description: |-
+          ReleasedApplications are the live Applications whose
+          delete-everything marker was removed, so their workloads outlive the
+          transition.
+        items:
+          type: string
+        type: array
+      state:
+        description: State is one of the HandoffState* constants above.
         type: string
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.SecretMatch:
@@ -1841,6 +1894,14 @@ definitions:
           DryRun returns the plan with no side effects. Also settable via
           ?dry_run=true.
         type: boolean
+      runtime_handoff:
+        description: |-
+          RuntimeHandoff controls the ArgoCD side of the migration. Leave it
+          empty and Sharko decides: it prepares the handoff whenever the repo
+          has clusters registered, and skips it when the repo has none. Send
+          "skip" to migrate the files only — the escape hatch for a repo with
+          nothing actually running.
+        type: string
       "yes":
         description: |-
           Yes is the confirmation every v4 write requires. Without it, a
@@ -7159,6 +7220,38 @@ paths:
       summary: Probe GitOps repo initialization state
       tags:
       - init
+  /migration/complete:
+    post:
+      consumes:
+      - application/json
+      description: 'Retires the ApplicationSets left over from the old layout and
+        starts the engine in their place. Runs automatically when the migration pull
+        request merges; this endpoint is for the case where that never happened —
+        a PR merged outside Sharko, a restart at the wrong moment, or no ArgoCD connection
+        at the time. Idempotent: running it twice, or on a repo that never needed
+        it, does nothing.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: What the handoff did
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RuntimeHandoffReport'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Finish the ArgoCD side of a migration
+      tags:
+      - migration
   /migration/migrate:
     post:
       consumes:

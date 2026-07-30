@@ -32,6 +32,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/MoranWeissman/sharko/internal/appsets"
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -75,6 +76,12 @@ type MigrationStatusResult struct {
 	// second PR for the same repo.
 	MigrationPRURL    string `json:"migration_pr_url,omitempty"`
 	MigrationPRNumber int    `json:"migration_pr_number,omitempty"`
+	// Handoff reports where the RUNTIME half of the migration has got to —
+	// the ApplicationSets that keep the fleet's addons running, which live
+	// in ArgoCD rather than in the repo (see migration_handoff.go). It is
+	// set on v4 repos, where the only remaining question is whether the
+	// second half has finished.
+	Handoff *RuntimeHandoffReport `json:"handoff,omitempty"`
 }
 
 // ErrMigrationPROpen is returned by MigrateV3ToV4 when a previous attempt
@@ -124,6 +131,11 @@ type MigrateRequest struct {
 	DryRun    bool  `json:"dry_run,omitempty"`
 	Yes       bool  `json:"yes"`
 	AutoMerge *bool `json:"auto_merge,omitempty"`
+	// RuntimeHandoff controls the ArgoCD half of the migration. Empty (the
+	// default) prepares it whenever the repo has clusters registered;
+	// "skip" migrates the files only and is the escape hatch for a repo
+	// with nothing running. See migration_handoff.go.
+	RuntimeHandoff string `json:"runtime_handoff,omitempty"`
 }
 
 // MigrateResult is the output of MigrateV3ToV4.
@@ -134,6 +146,14 @@ type MigrateResult struct {
 	// caller can render exactly what the PR contains.
 	Plan *MigrationPlan `json:"plan,omitempty"`
 	Git  *GitResult     `json:"git,omitempty"`
+	// Handoff reports what the ArgoCD half of the migration did before the
+	// pull request was opened (migration_handoff.go).
+	Handoff *RuntimeHandoffReport `json:"handoff,omitempty"`
+	// Warnings holds plain-English advisories that do NOT mean the
+	// migration failed — chiefly "the pull request is open and correct, but
+	// auto-merge could not merge it for you". Same partial-success shape as
+	// RegisterClusterResult/AdoptClusterResult.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // migrationBuild is the assembled, validated migration: the complete file
@@ -147,21 +167,71 @@ type migrationBuild struct {
 	// instead of showing an unexplained new file.
 	convertedFrom map[string]string
 	notes         []string
+
+	// clusterCount and addonNames are what the runtime handoff decides
+	// against: how many clusters this repo registers (zero means there is
+	// nothing running to strand) and which addon names the old
+	// ApplicationSets select clusters by. Both come from the repo contents
+	// the file map was computed from, so the handoff and the pull request
+	// can never be reasoning about different states of the repo.
+	clusterCount int
+	addonNames   []string
+
+	// handoff is the pre-merge runtime handoff's report, set on a real run
+	// once prepareRuntimeHandoff has succeeded. It shapes the PR body — a
+	// person reading the pull request should be able to see, before they
+	// merge, that the running fleet was made safe first.
+	handoff *RuntimeHandoffReport
+
+	// keepPaths are files inside the v3 values folders that the migration
+	// deliberately does NOT delete even though it is not writing them
+	// either — a per-cluster values file whose name cannot become a v4
+	// folder. Deleting one would be exactly the silent data loss the design
+	// promises never happens.
+	keepPaths map[string]bool
 }
 
 // MigrationStatus reports which data-file format the connected repo uses
-// and whether the one-PR migration is available. Read-only; never errors
-// on a missing file — an unreachable repo is the caller's own connection
-// error, surfaced by whatever they used to reach us.
-func (o *Orchestrator) MigrationStatus(ctx context.Context) *MigrationStatusResult {
-	switch {
-	case o.isV4Repo(ctx):
-		return &MigrationStatusResult{
+// and whether the one-PR migration is available. Read-only.
+//
+// It returns an error when the git host would not answer (review finding
+// L-9). The earlier form swallowed every read failure, and a swallowed
+// failure here does not produce a vague answer — it produces a CONFIDENT
+// WRONG one: a live v3 repo whose probe read failed came back as "empty",
+// which is the state whose message tells the person to initialize the
+// repo. Following that advice on a running v3 repo seeds the whole v4
+// folder tree on top of it. A missing file is still the ordinary answer;
+// only a real transport failure is an error, and callers render it as
+// "can't reach your git host right now".
+func (o *Orchestrator) MigrationStatus(ctx context.Context) (*MigrationStatusResult, error) {
+	v4, err := o.isV4Repo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if v4 {
+		result := &MigrationStatusResult{
 			Format:             RepoFormatV4,
 			MigrationAvailable: false,
 			Message:            "this repo already uses the current format — nothing to migrate",
 		}
-	case o.hasV3Markers(ctx):
+		// The files are across; the only open question on a v4 repo is
+		// whether the RUNTIME half finished. Best-effort — a cluster Sharko
+		// cannot reach right now must not turn a plain status read into an
+		// error.
+		if handoff, handoffErr := o.inspectRuntimeHandoff(ctx); handoffErr == nil {
+			result.Handoff = handoff
+			if handoff.State == HandoffStatePending {
+				result.Message = "this repo already uses the current format, but the ArgoCD side of the migration has not finished — " + handoff.Message
+			}
+		}
+		return result, nil
+	}
+
+	markers, err := o.hasV3MarkersChecked(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if markers {
 		result := &MigrationStatusResult{
 			Format:             RepoFormatV3,
 			MigrationAvailable: true,
@@ -170,25 +240,64 @@ func (o *Orchestrator) MigrationStatus(ctx context.Context) *MigrationStatusResu
 		// Best-effort: a listing failure here must not hide the v3 status
 		// itself — the "is there a PR already" question is a bonus fact on
 		// top of it, not a precondition for answering it.
-		if pr, err := o.findOpenMigrationPR(ctx); err == nil && pr != nil {
+		if pr, prErr := o.findOpenMigrationPR(ctx); prErr == nil && pr != nil {
 			result.MigrationPRURL = pr.URL
 			result.MigrationPRNumber = pr.ID
 		}
-		return result
-	default:
-		return &MigrationStatusResult{
-			Format:             RepoFormatEmpty,
-			MigrationAvailable: false,
-			Message:            "this repo has not been set up yet — initialize it instead of migrating",
-		}
+		return result, nil
 	}
+
+	return &MigrationStatusResult{
+		Format:             RepoFormatEmpty,
+		MigrationAvailable: false,
+		Message:            "this repo has not been set up yet — initialize it instead of migrating",
+	}, nil
+}
+
+// inspectRuntimeHandoff answers "has the ArgoCD half finished?" without
+// changing anything. Used by status only.
+func (o *Orchestrator) inspectRuntimeHandoff(ctx context.Context) (*RuntimeHandoffReport, error) {
+	if o.appSets == nil {
+		return &RuntimeHandoffReport{
+			State:   HandoffStateComplete,
+			Message: "Sharko has no ArgoCD connection here, so it has nothing to report about the cluster side.",
+		}, nil
+	}
+	addonNames, err := o.mergedAddonNames(ctx)
+	if err != nil {
+		return nil, err
+	}
+	all, err := o.appSets.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	leftovers := legacyAddonAppSets(all, addonNames)
+	if len(leftovers) == 0 {
+		return &RuntimeHandoffReport{
+			State:   HandoffStateComplete,
+			Message: "Nothing from the old setup is left in ArgoCD.",
+		}, nil
+	}
+	names := appsets.Names(leftovers)
+	sort.Strings(names)
+	return &RuntimeHandoffReport{
+		State:           HandoffStatePending,
+		ApplicationSets: names,
+		Message: fmt.Sprintf(
+			"%s from the old setup %s still in ArgoCD (%s). Finish the migration to retire %s and start the new engine.",
+			plainCount(len(names), "ApplicationSet", "ApplicationSets"),
+			wasWereCount(len(names)), strings.Join(names, ", "), pluralIt(len(names))),
+	}, nil
 }
 
 // PreviewMigration returns the full dry-run plan for a v3 repo: every file
 // the migration PR would add, convert, or remove, with the rendered
 // content of everything it writes. Zero side effects.
 func (o *Orchestrator) PreviewMigration(ctx context.Context) (*MigrationPlan, error) {
-	status := o.MigrationStatus(ctx)
+	status, err := o.MigrationStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if !status.MigrationAvailable {
 		return &MigrationPlan{Format: status.Format, Notes: []string{status.Message}}, nil
 	}
@@ -207,11 +316,15 @@ func (o *Orchestrator) PreviewMigration(ctx context.Context) (*MigrationPlan, er
 // migration must be safe, because a person who is not sure whether it
 // worked will run it again.
 func (o *Orchestrator) MigrateV3ToV4(ctx context.Context, req MigrateRequest) (*MigrateResult, error) {
-	status := o.MigrationStatus(ctx)
+	status, err := o.MigrationStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if status.Format == RepoFormatV4 {
 		return &MigrateResult{
-			Status: "already_migrated",
-			Plan:   &MigrationPlan{Format: RepoFormatV4, Notes: []string{status.Message}},
+			Status:  "already_migrated",
+			Plan:    &MigrationPlan{Format: RepoFormatV4, Notes: []string{status.Message}},
+			Handoff: status.Handoff,
 		}, nil
 	}
 	if status.Format == RepoFormatEmpty {
@@ -242,11 +355,30 @@ func (o *Orchestrator) MigrateV3ToV4(ctx context.Context, req MigrateRequest) (*
 		return nil, fmt.Errorf("confirmation required: set yes: true in request body")
 	}
 
-	gitResult, err := o.commitMigrationPR(ctx, build, req.AutoMerge)
+	// The RUNTIME half, and it runs BEFORE the branch exists (review
+	// finding B-1). The ApplicationSets that keep this fleet's addons
+	// running live in ArgoCD, not in this repo, and this pull request takes
+	// away everything they read. Make them harmless first, or refuse —
+	// there is no safe third option, and a refusal here has written
+	// nothing. See migration_handoff.go for the whole sequence.
+	handoff, err := o.prepareRuntimeHandoff(ctx, req.RuntimeHandoff, build.clusterCount, build.addonNames)
 	if err != nil {
 		return nil, err
 	}
-	return &MigrateResult{Status: "migrated", Plan: plan, Git: gitResult}, nil
+	build.handoff = handoff
+	plan = o.planFromBuild(build) // re-render: the handoff adds notes and PR-body wording
+
+	gitResult, warnings, err := o.commitMigrationPR(ctx, build, req.AutoMerge)
+	if err != nil {
+		return nil, err
+	}
+	return &MigrateResult{
+		Status:   "migrated",
+		Plan:     plan,
+		Git:      gitResult,
+		Handoff:  handoff,
+		Warnings: warnings,
+	}, nil
 }
 
 // ─── building the migration ──────────────────────────────────────────────
@@ -259,6 +391,7 @@ func (o *Orchestrator) buildMigration(ctx context.Context) (*migrationBuild, err
 	b := &migrationBuild{
 		files:         map[string][]byte{},
 		convertedFrom: map[string]string{},
+		keepPaths:     map[string]bool{},
 	}
 
 	// 1 — the cluster registry. A v3 repo recognised by bootstrap/Chart.yaml
@@ -278,6 +411,11 @@ func (o *Orchestrator) buildMigration(ctx context.Context) (*migrationBuild, err
 	for _, e := range v3Catalog {
 		catalogNames[e.Name] = true
 	}
+
+	// What the runtime handoff decides against — recorded here so it comes
+	// from the same read of the repo the file map does.
+	b.clusterCount = len(clusters)
+	b.addonNames = sortedBoolKeys(catalogNames)
 
 	// 3 — catalog/addons.yaml (the delta).
 	deltaSpec, catalogNotes := buildCatalogDelta(v3Catalog, o.curated)
@@ -419,7 +557,36 @@ func (o *Orchestrator) buildV4ClusterFiles(b *migrationBuild, clusters []models.
 		for key, value := range entry.Labels {
 			addon, isVersionKey := strings.CutSuffix(key, "-version")
 			if isVersionKey && catalogNames[addon] {
-				continue // folded into the addon's entry below
+				if _, assigned := entry.Labels[addon]; assigned {
+					continue // folded into the addon's entry below
+				}
+				// A DANGLING version pin (review finding M-7): this cluster
+				// pins a version for an addon it does not actually run.
+				// Dropping it would be silent data loss, and carrying it as
+				// a plain label would leave a v3-shaped key on a v4
+				// connection record that nothing reads. So it becomes what
+				// it always meant — a pin — on a KEPT but switched-off
+				// entry, which is the same shape the migration already uses
+				// for an addon whose label said anything other than
+				// "enabled" (design doc §2.1: turning it back on later is a
+				// one-word change).
+				assignment.Addons[addon] = models.ClusterAddonsAddon{
+					Enabled: false,
+					Version: value,
+				}
+				b.notes = append(b.notes, fmt.Sprintf(
+					"Cluster %q pinned %s to version %s but was not running it. The pin is kept in clusters/%s.yaml with the addon switched off, so turning it on later gives you that same version",
+					entry.Name, addon, value, entry.Name))
+				continue
+			}
+			if isVersionKey && !catalogNames[addon] && addon != "" {
+				// A version pin for something that is not in the addon list
+				// at all. It stays as an ordinary label (below), which loses
+				// nothing — but say so, because a person who put it there
+				// meant it to do something.
+				b.notes = append(b.notes, fmt.Sprintf(
+					"Cluster %q has a %q label, but %q is not in your addon list. The label is carried across as an ordinary label; it does not pin anything",
+					entry.Name, key, addon))
 			}
 			if !catalogNames[key] {
 				keptLabels[key] = value
@@ -531,52 +698,134 @@ func listOrNone(items []string) string {
 // sub-map into Helm. So the sub-map IS the values, and carrying it across
 // verbatim is what makes "everything keeps running" true.
 func (o *Orchestrator) buildV4ClusterValues(ctx context.Context, b *migrationBuild, paths v3DataPathSet, clusters []models.ManagedClusterEntry, catalogNames map[string]bool) error {
+	registered := map[string]bool{}
 	for _, cluster := range clusters {
+		registered[cluster.Name] = true
 		oldPath := path.Join(paths.clusterValues, cluster.Name+".yaml")
-		body, ok := o.readFileIfExists(ctx, oldPath)
-		if !ok || len(strings.TrimSpace(string(body))) == 0 {
+		if err := o.splitV3ClusterValuesFile(ctx, b, oldPath, cluster.Name, catalogNames); err != nil {
+			return err
+		}
+	}
+	return o.rescueOrphanClusterValues(ctx, b, paths, registered, catalogNames)
+}
+
+// rescueOrphanClusterValues handles the per-cluster values files whose
+// cluster is NOT in the registry (review finding M-7b).
+//
+// Before this, those files were swept into the delete list by
+// collectMigrationDeletes' "whatever else is sitting in the two v3 values
+// folders" pass — removed with no note and no replacement. That is exactly
+// the silent loss the fleet-wide side already refuses to commit
+// (buildV4GlobalValues moves every file it finds, catalog entry or not,
+// because "losing hand-written values is not a tidy-up, it is data loss").
+// The two sides now behave the same way.
+//
+// The one file still deleted without ceremony is the example the v3
+// bootstrap itself shipped (cluster-example.yaml). That is scaffold, not
+// somebody's work, and it is identified the way the rest of the scaffold
+// is: by asking the embedded template tree what a v3 bootstrap wrote.
+func (o *Orchestrator) rescueOrphanClusterValues(ctx context.Context, b *migrationBuild, paths v3DataPathSet, registered, catalogNames map[string]bool) error {
+	names, err := o.git.ListDirectory(ctx, paths.clusterValues, o.gitops.BaseBranch)
+	if err != nil {
+		if errors.Is(err, gitprovider.ErrFileNotFound) {
+			return nil
+		}
+		return fmt.Errorf("listing %s: %w", paths.clusterValues, err)
+	}
+
+	scaffold := map[string]bool{}
+	for _, p := range v3ScaffoldRepoPaths() {
+		scaffold[p] = true
+	}
+
+	sort.Strings(names)
+	for _, name := range names {
+		if !strings.HasSuffix(name, ".yaml") {
 			continue
 		}
-		doc, err := parseYAMLMap(body)
-		if err != nil {
-			return fmt.Errorf("reading %s: %w", oldPath, err)
+		cluster := strings.TrimSuffix(name, ".yaml")
+		if registered[cluster] {
+			continue
 		}
+		oldPath := path.Join(paths.clusterValues, name)
+		if scaffold[oldPath] {
+			continue // the bootstrap's own example file — scaffold, not data
+		}
+		if segErr := checkV4PathSegment("cluster", cluster); segErr != nil {
+			// It cannot become a v4 folder, so it cannot be moved. Leaving
+			// it where it is beats deleting it.
+			b.keepPaths[oldPath] = true
+			b.notes = append(b.notes, fmt.Sprintf(
+				"%s is left exactly where it is: %v. Nothing reads it there, but nothing throws it away either", oldPath, segErr))
+			continue
+		}
+		before := len(b.files)
+		if err := o.splitV3ClusterValuesFile(ctx, b, oldPath, cluster, catalogNames); err != nil {
+			return err
+		}
+		if len(b.files) == before {
+			// Nothing came out of it — an empty file, or every block was
+			// unusable and the split already left its own note. Keep the
+			// original rather than delete a file we produced no replacement
+			// for.
+			b.keepPaths[oldPath] = true
+			continue
+		}
+		b.notes = append(b.notes, fmt.Sprintf(
+			"%s holds values for %q, which is not one of your registered clusters. They are moved under values/clusters/%s/ so nothing is lost, but they deploy nothing until you register that cluster",
+			oldPath, cluster, cluster))
+	}
+	return nil
+}
 
-		for _, addon := range sortedKeys(doc) {
-			if addon == v3ClusterGlobalValuesKey {
-				if !isEmptyYAMLValue(doc[addon]) {
-					b.notes = append(b.notes, fmt.Sprintf(
-						"%s had a %q block. Nothing ever read it (it was a scratch area for YAML shortcuts), so it is not carried over",
-						oldPath, v3ClusterGlobalValuesKey))
-				}
-				continue
-			}
-			if !catalogNames[addon] {
+// splitV3ClusterValuesFile turns one v3 per-cluster values document into
+// one plain Helm values file per addon under values/clusters/<cluster>/.
+// Shared by the registry-driven pass and the orphan rescue above, so both
+// carry values across by exactly the same rules.
+func (o *Orchestrator) splitV3ClusterValuesFile(ctx context.Context, b *migrationBuild, oldPath, clusterName string, catalogNames map[string]bool) error {
+	body, ok := o.readFileIfExists(ctx, oldPath)
+	if !ok || len(strings.TrimSpace(string(body))) == 0 {
+		return nil
+	}
+	doc, err := parseYAMLMap(body)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", oldPath, err)
+	}
+
+	for _, addon := range sortedKeys(doc) {
+		if addon == v3ClusterGlobalValuesKey {
+			if !isEmptyYAMLValue(doc[addon]) {
 				b.notes = append(b.notes, fmt.Sprintf(
-					"%s had values for %q, which is not in your addon list — those values were not deploying anything, so they are not carried over",
-					oldPath, addon))
-				continue
+					"%s had a %q block. Nothing ever read it (it was a scratch area for YAML shortcuts), so it is not carried over",
+					oldPath, v3ClusterGlobalValuesKey))
 			}
-			values, isMap := doc[addon].(map[string]interface{})
-			if !isMap {
-				b.notes = append(b.notes, fmt.Sprintf(
-					"%s had a %q entry that is not a block of settings — it is not carried over", oldPath, addon))
-				continue
-			}
-			if len(values) == 0 {
-				continue
-			}
-			newPath, err := v4ClusterValuesPath(cluster.Name, addon)
-			if err != nil {
-				return fmt.Errorf("cannot migrate this repo: %w", err)
-			}
-			rendered, err := marshalYAMLMap(values)
-			if err != nil {
-				return fmt.Errorf("rewriting the values for %s on %s: %w", addon, cluster.Name, err)
-			}
-			b.files[newPath] = rendered
-			b.convertedFrom[newPath] = oldPath
+			continue
 		}
+		if !catalogNames[addon] {
+			b.notes = append(b.notes, fmt.Sprintf(
+				"%s had values for %q, which is not in your addon list — those values were not deploying anything, so they are not carried over",
+				oldPath, addon))
+			continue
+		}
+		values, isMap := doc[addon].(map[string]interface{})
+		if !isMap {
+			b.notes = append(b.notes, fmt.Sprintf(
+				"%s had a %q entry that is not a block of settings — it is not carried over", oldPath, addon))
+			continue
+		}
+		if len(values) == 0 {
+			continue
+		}
+		newPath, err := v4ClusterValuesPath(clusterName, addon)
+		if err != nil {
+			return fmt.Errorf("cannot migrate this repo: %w", err)
+		}
+		rendered, err := marshalYAMLMap(values)
+		if err != nil {
+			return fmt.Errorf("rewriting the values for %s on %s: %w", addon, clusterName, err)
+		}
+		b.files[newPath] = rendered
+		b.convertedFrom[newPath] = oldPath
 	}
 	return nil
 }
@@ -714,6 +963,9 @@ func (o *Orchestrator) collectMigrationDeletes(ctx context.Context, b *migration
 		if keep[p] {
 			continue // the migration writes this path; a delete would undo it
 		}
+		if b.keepPaths[p] {
+			continue // deliberately left in place — see rescueOrphanClusterValues
+		}
 		if _, exists := o.readFileIfExists(ctx, p); !exists {
 			continue
 		}
@@ -774,6 +1026,9 @@ func (o *Orchestrator) planFromBuild(b *migrationBuild) *MigrationPlan {
 	if plan.Notes == nil {
 		plan.Notes = []string{}
 	}
+	if b.handoff != nil && b.handoff.Message != "" {
+		plan.Notes = append(plan.Notes, b.handoff.Message)
+	}
 
 	for _, p := range sortedFileKeys(b.files) {
 		change := MigrationFileChange{
@@ -822,6 +1077,25 @@ func migrationPRBody(b *migrationBuild) string {
 	sb.WriteString("- Helm values move under `values/` — one file per addon, per cluster where it differs.\n")
 	sb.WriteString("- The addon list becomes `catalog/addons.yaml`, holding only YOUR additions and changes. The addons Sharko ships now come with the engine, so they no longer need copying into your repository.\n\n")
 	sb.WriteString("Nothing about what is running changes. Every addon stays on the same cluster, at the same version, with the same values.\n\n")
+
+	// The runtime half. A person about to merge this deserves to see, on
+	// the pull request itself, what was done to the running fleet BEFORE
+	// the request was opened — that is the whole reason merging it is safe.
+	if b.handoff != nil {
+		sb.WriteString("What was already done in ArgoCD, before this pull request was opened:\n\n")
+		sb.WriteString("- " + b.handoff.Message + "\n")
+		if len(b.handoff.ApplicationSets) > 0 {
+			sb.WriteString("- ApplicationSets made safe: " + strings.Join(b.handoff.ApplicationSets, ", ") + "\n")
+		}
+		if len(b.handoff.ReleasedApplications) > 0 {
+			sb.WriteString(fmt.Sprintf(
+				"- %s had their delete-everything marker removed, so what they installed stays running no matter what happens to them: %s\n",
+				plainCount(len(b.handoff.ReleasedApplications), "Application", "Applications"),
+				strings.Join(b.handoff.ReleasedApplications, ", ")))
+		}
+		sb.WriteString("\n")
+	}
+
 	if len(b.notes) > 0 {
 		sb.WriteString("Worth reading before you merge:\n\n")
 		for _, note := range b.notes {
@@ -863,7 +1137,15 @@ func (o *Orchestrator) findOpenMigrationPR(ctx context.Context) (*gitprovider.Pu
 // again. The migration touches the whole repository, so a half-written
 // branch left behind is not untidiness — it is a thing somebody could
 // merge. The base branch is never written to; only the merge does that.
-func (o *Orchestrator) commitMigrationPR(ctx context.Context, b *migrationBuild, autoMerge *bool) (*GitResult, error) {
+//
+// Returns (result, warnings, error). The warnings channel exists for one
+// specific outcome (review finding H-4): auto-merge failing. That is NOT
+// a failed migration — the pull request is open, complete and correct, and
+// somebody can merge it by hand. Reporting it as an error threw the
+// GitResult away with it, so the caller lost the PR link for a PR that
+// definitely exists, and the person was told the migration failed when it
+// had not.
+func (o *Orchestrator) commitMigrationPR(ctx context.Context, b *migrationBuild, autoMerge *bool) (*GitResult, []string, error) {
 	if o.gitMu != nil {
 		o.gitMu.Lock()
 		defer o.gitMu.Unlock()
@@ -874,15 +1156,15 @@ func (o *Orchestrator) commitMigrationPR(ctx context.Context, b *migrationBuild,
 	branch := fmt.Sprintf("%smigrate-to-v4-%s", o.gitops.BranchPrefix, hex.EncodeToString(suffix))
 
 	if err := o.git.CreateBranch(ctx, branch, o.gitops.BaseBranch); err != nil {
-		return nil, fmt.Errorf("creating branch %q: %w", branch, err)
+		return nil, nil, fmt.Errorf("creating branch %q: %w", branch, err)
 	}
 
 	commitMsg := migrationPRTitle(o.gitops.CommitPrefix)
-	abandon := func(step string, err error) (*GitResult, error) {
+	abandon := func(step string, err error) (*GitResult, []string, error) {
 		// Best-effort cleanup: the branch is the only thing that exists,
 		// and removing it is what makes a retry a clean start.
 		_ = o.git.DeleteBranch(ctx, branch)
-		return nil, fmt.Errorf("migration stopped while %s — nothing was changed on %s: %w",
+		return nil, nil, fmt.Errorf("migration stopped while %s — nothing was changed on %s: %w",
 			step, o.gitops.BaseBranch, err)
 	}
 
@@ -917,18 +1199,24 @@ func (o *Orchestrator) commitMigrationPR(ctx context.Context, b *migrationBuild,
 		})
 	}
 
+	var warnings []string
 	if resolveAutoMerge(autoMerge, o.gitops.PRAutoMerge) {
 		if mergeErr := o.git.MergePullRequest(ctx, pr.ID); mergeErr != nil {
 			// The PR exists and is correct — only the merge failed. The
 			// branch STAYS: deleting it here would throw away a valid,
-			// reviewable migration the person can merge by hand.
-			return result, fmt.Errorf("migration pull request opened but the merge failed: %w", mergeErr)
+			// reviewable migration the person can merge by hand. And this
+			// comes back as a WARNING on a successful result, not an error
+			// that discards the PR link (review finding H-4).
+			warnings = append(warnings, fmt.Sprintf(
+				"The migration pull request is open and ready, but Sharko could not merge it for you (%v). "+
+					"Merge it yourself at %s — everything in it is correct.", mergeErr, pr.URL))
+			return result, warnings, nil
 		}
 		result.Merged = true
 		_ = o.git.DeleteBranch(ctx, branch)
 	}
 
-	return result, nil
+	return result, warnings, nil
 }
 
 // ─── small shared helpers ────────────────────────────────────────────────
@@ -937,6 +1225,17 @@ func sortedKeys(m map[string]interface{}) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedBoolKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		if k != "" {
+			out = append(out, k)
+		}
 	}
 	sort.Strings(out)
 	return out

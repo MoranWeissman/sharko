@@ -6187,6 +6187,48 @@ const docTemplate = `{
                 }
             }
         },
+        "/migration/complete": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retires the ApplicationSets left over from the old layout and starts the engine in their place. Runs automatically when the migration pull request merges; this endpoint is for the case where that never happened — a PR merged outside Sharko, a restart at the wrong moment, or no ArgoCD connection at the time. Idempotent: running it twice, or on a repo that never needed it, does nothing.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "migration"
+                ],
+                "summary": "Finish the ArgoCD side of a migration",
+                "responses": {
+                    "200": {
+                        "description": "What the handoff did",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RuntimeHandoffReport"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/migration/migrate": {
             "post": {
                 "security": [
@@ -10195,6 +10237,14 @@ const docTemplate = `{
                 "git": {
                     "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
                 },
+                "handoff": {
+                    "description": "Handoff reports what the ArgoCD half of the migration did before the\npull request was opened (migration_handoff.go).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RuntimeHandoffReport"
+                        }
+                    ]
+                },
                 "plan": {
                     "description": "Plan is always set for a dry run, and set on a real run too so the\ncaller can render exactly what the PR contains.",
                     "allOf": [
@@ -10206,6 +10256,13 @@ const docTemplate = `{
                 "status": {
                     "description": "Status is \"migrated\", \"preview\", or \"already_migrated\".",
                     "type": "string"
+                },
+                "warnings": {
+                    "description": "Warnings holds plain-English advisories that do NOT mean the\nmigration failed — chiefly \"the pull request is open and correct, but\nauto-merge could not merge it for you\". Same partial-success shape as\nRegisterClusterResult/AdoptClusterResult.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -10267,6 +10324,14 @@ const docTemplate = `{
                 "format": {
                     "description": "Format is \"v3\", \"v4\", or \"empty\".",
                     "type": "string"
+                },
+                "handoff": {
+                    "description": "Handoff reports where the RUNTIME half of the migration has got to —\nthe ApplicationSets that keep the fleet's addons running, which live\nin ArgoCD rather than in the repo (see migration_handoff.go). It is\nset on v4 repos, where the only remaining question is whether the\nsecond half has finished.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RuntimeHandoffReport"
+                        }
+                    ]
                 },
                 "message": {
                     "description": "Message is a plain-English sentence the UI can show as-is.",
@@ -10390,6 +10455,37 @@ const docTemplate = `{
                 },
                 "status": {
                     "description": "\"success\", \"partial\", \"failed\"",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.RuntimeHandoffReport": {
+            "type": "object",
+            "properties": {
+                "application_sets": {
+                    "description": "ApplicationSets are the old ApplicationSets this handoff prepared\n(or, after the second half, retired).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "engine_applied": {
+                    "description": "EngineApplied reports whether engine/application.yaml has been\nhanded to ArgoCD.",
+                    "type": "boolean"
+                },
+                "message": {
+                    "description": "Message is one sentence a person can read as-is.",
+                    "type": "string"
+                },
+                "released_applications": {
+                    "description": "ReleasedApplications are the live Applications whose\ndelete-everything marker was removed, so their workloads outlive the\ntransition.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "state": {
+                    "description": "State is one of the HandoffState* constants above.",
                     "type": "string"
                 }
             }
@@ -10893,6 +10989,10 @@ const docTemplate = `{
                 "dry_run": {
                     "description": "DryRun returns the plan with no side effects. Also settable via\n?dry_run=true.",
                     "type": "boolean"
+                },
+                "runtime_handoff": {
+                    "description": "RuntimeHandoff controls the ArgoCD side of the migration. Leave it\nempty and Sharko decides: it prepares the handoff whenever the repo\nhas clusters registered, and skips it when the repo has none. Send\n\"skip\" to migrate the files only — the escape hatch for a repo with\nnothing actually running.",
+                    "type": "string"
                 },
                 "yes": {
                     "description": "Yes is the confirmation every v4 write requires. Without it, a\nnon-dry-run call is refused with a 400 rather than silently\nrewriting the repository.",

@@ -122,6 +122,11 @@ var HandlerTier = map[string]audit.Tier{
 	// The preview is read-only: it computes the plan and writes nothing.
 	// Same classification as handlePreviewMergeAddonValues.
 	"handleMigrationPreview": audit.TierPersonal,
+	// Finishing the ArgoCD side of a migration touches no git at all — it
+	// retires the old ApplicationSets and starts the engine. It is still a
+	// deliberate, fleet-shaped change, so it sits in the same bucket as the
+	// migration it completes.
+	"handleMigrationComplete": audit.Tier2,
 
 	// Addon secret definitions — these define what secrets get reconciled where,
 	// which changes future deployment behaviour, so config-tier.
