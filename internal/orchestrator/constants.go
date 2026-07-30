@@ -3,12 +3,18 @@ package orchestrator
 import "strings"
 
 // BootstrapRootAppName is the canonical ArgoCD application name created during
-// first-run init. It MUST match metadata.name in templates/bootstrap/root-app.yaml.
+// first-run init.
 //
-// Drift between this constant and the template name causes Sharko to poll a
-// non-existent ArgoCD application during step 4 of the first-run wizard,
-// leading to a 2-minute timeout.
-const BootstrapRootAppName = "cluster-addons-bootstrap"
+// v4 Wave 1 Story 4.2: the bootstrap path no longer creates a
+// "cluster-addons-bootstrap" root Application that fans out to a Helm
+// chart of ApplicationSet templates. Instead it applies exactly ONE
+// ArgoCD Application — the engine pin (design doc
+// docs/design/2026-07-30-v4-data-file-format.md §2.5) — whose
+// metadata.name is "sharko-engine" (see EnginePinPath /
+// engineversion.BundledChartName). BuildV4SeedFiles is the single writer
+// of that name; there is no separate template to drift from any more —
+// the constant and the generator are the same source.
+const BootstrapRootAppName = "sharko-engine"
 
 // ConnectivityCheckAppPrefix is the prefix of the host-side ArgoCD
 // connectivity-probe Application, named "connectivity-check-<clusterName>".
@@ -24,12 +30,14 @@ func IsSharkoSystemApp(name string) bool {
 }
 
 // BootstrapRootAppPath is the canonical commit path of the ArgoCD root
-// application YAML in the GitOps repo. The orchestrator commits the file at
-// this path (CollectBootstrapFiles strips the "bootstrap/" prefix from
-// repo-root files like root-app.yaml, configuration/, repository-secret.yaml,
-// and README) and the API layer polls this path to detect a successful PR
-// merge (isPRMerged) and to gate the already-initialized check.
+// application YAML in the GitOps repo. The v4 seed (BuildV4SeedFiles)
+// commits the engine pin at exactly this path — design doc §2.5's
+// "engine/application.yaml" — and the API layer polls this same path to
+// detect a successful PR merge (isPRMerged) and to gate the
+// already-initialized check (repo_status.go, init_status.go).
 //
-// The orchestrator and the API layer MUST stay in sync — drift guarded by
-// templates_test.go's TestCollectBootstrapFiles_RootAppPath_MatchesConstant.
-const BootstrapRootAppPath = "root-app.yaml"
+// This is also EnginePinPath (internal/orchestrator/enginepin.go) — kept as
+// two names because they answer two different questions (what bootstrap
+// writes vs. what the pin-bump machinery edits), but they MUST stay the
+// same literal value; enginepin_test.go pins the equality.
+const BootstrapRootAppPath = "engine/application.yaml"

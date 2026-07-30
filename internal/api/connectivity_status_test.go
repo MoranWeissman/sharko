@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 func TestComputeConnectivityVerdict(t *testing.T) {
@@ -283,7 +284,7 @@ func TestClusterHasHealthyAddon(t *testing.T) {
 		{
 			name: "bootstrap root app is not an addon, even if Synced+Healthy",
 			apps: []models.ArgocdApplication{
-				{Name: "cluster-addons-bootstrap", DestinationServer: serverURL, SyncStatus: "Synced", HealthStatus: "Healthy"},
+				{Name: orchestrator.BootstrapRootAppName, DestinationServer: serverURL, SyncStatus: "Synced", HealthStatus: "Healthy"},
 			},
 			want: false,
 		},

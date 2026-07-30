@@ -11,10 +11,10 @@ import (
 // MockGitProvider implements gitprovider.GitProvider entirely in memory.
 // All write operations are accepted and stored in-process — no real Git calls made.
 type MockGitProvider struct {
-	mu      sync.RWMutex
-	files   map[string][]byte    // path → content
-	branches map[string]bool     // branch name → exists
-	prs     []gitprovider.PullRequest
+	mu       sync.RWMutex
+	files    map[string][]byte // path → content
+	branches map[string]bool   // branch name → exists
+	prs      []gitprovider.PullRequest
 	nextPRID int
 }
 
@@ -66,33 +66,29 @@ alertmanager:
   collectEvents: true
 `)
 
-	// Bootstrap root-app (marks repo as initialised). Path matches
+	// Engine pin (marks repo as initialised). Path matches
 	// orchestrator.BootstrapRootAppPath — the demo simulates a repo that
-	// has already been through init, so the file lives at repo root, not
-	// under bootstrap/ (the orchestrator's CollectBootstrapFiles strips
-	// the bootstrap/ prefix from this and other repo-root files).
-	p.files["root-app.yaml"] = []byte(`apiVersion: argoproj.io/v1alpha1
+	// has already been through v4 init (v4 Wave 1 Story 4.2). This is a
+	// deliberately minimal stand-in, not a full v4 layout — Story 4.5
+	// rebuilds the whole demo repo on the v4 data-file format
+	// (clusters/, catalog/addons.yaml, values/); this fixture only keeps
+	// the /repo/status "initialized" probe (which reads this exact path)
+	// and the ArgoCD bootstrap-app probe (mock_argocd.go, which reads
+	// orchestrator.BootstrapRootAppName) working in the meantime.
+	p.files["engine/application.yaml"] = []byte(`apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: sharko-root
+  name: sharko-engine
   namespace: argocd
 spec:
-  project: sharko
-  source:
-    repoURL: https://github.com/demo/sharko-addons
-    targetRevision: HEAD
-    path: bootstrap
-`)
-	// bootstrap/Chart.yaml — the file the /repo/status handler checks to
-	// decide whether the repo is bootstrapped. Without it the demo lands
-	// on the FirstRunWizard at Step 4 forever, blocking screenshot
-	// scripts from capturing real pages.
-	p.files["bootstrap/Chart.yaml"] = []byte(`apiVersion: v2
-name: sharko-bootstrap
-description: Bootstrap chart that registers the Sharko ApplicationSet
-type: application
-version: 0.1.0
-appVersion: "1.0.0"
+  project: default
+  sources:
+    - repoURL: ghcr.io/moranweissman/sharko
+      chart: sharko-engine
+      targetRevision: 0.1.0
+    - repoURL: https://github.com/demo/sharko-addons
+      targetRevision: main
+      ref: values
 `)
 
 	// Per-cluster values

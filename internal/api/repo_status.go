@@ -5,15 +5,22 @@ import (
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // RepoStatusResponse is the body returned by GET /api/v1/repo/status.
 //
-// `Initialized` reports whether bootstrap/Chart.yaml is readable on the
-// configured base branch — i.e. the GitOps repo has been seeded.
+// `Initialized` reports whether the engine pin (orchestrator.BootstrapRootAppPath
+// — "engine/application.yaml", v4 Wave 1 Story 4.2) is readable on the
+// configured base branch — i.e. the GitOps repo has been seeded. Before
+// Story 4.2 this checked the v3 "bootstrap/Chart.yaml" marker; the engine
+// pin is the one file every v4 bootstrap PR is guaranteed to contain, so
+// it is the readiness signal for both fresh v4 installs and (once merged)
+// any repo Sharko has bootstrapped.
 //
 // `BootstrapSynced` reports whether the canonical ArgoCD application
-// `cluster-addons-bootstrap` exists AND is Sync=Synced AND Health=Healthy.
+// (orchestrator.BootstrapRootAppName, "sharko-engine") exists AND is
+// Sync=Synced AND Health=Healthy.
 // The wizard gate in App.tsx uses this to auto-open the wizard when the
 // repo is initialized but the cluster-side bootstrap is missing or
 // degraded — without this signal, the user would land on a dashboard
@@ -22,7 +29,7 @@ import (
 // `Reason` is a short machine-readable tag that helps the UI distinguish the
 // not-ready cases from one another. When Initialized=false (Git side):
 //   - "no_connection"    — no active Git connection is configured.
-//   - "not_bootstrapped" — the repo IS reachable but bootstrap/Chart.yaml is
+//   - "not_bootstrapped" — the repo IS reachable but the engine pin is
 //     genuinely absent (a real "never set up" state — the wizard should fire).
 //   - "connection_error" — the repo could NOT be reached or verified (e.g. a
 //     TLS/transport/auth failure). This is an environment problem, NOT a setup
@@ -50,7 +57,7 @@ type RepoStatusResponse struct {
 // handleRepoStatus godoc
 //
 // @Summary Get repo initialization status
-// @Description Checks whether the GitOps repository has been bootstrapped (bootstrap/Chart.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present.
+// @Description Checks whether the GitOps repository has been bootstrapped (the engine pin at engine/application.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present.
 // @Tags system
 // @Produce json
 // @Security BearerAuth
@@ -69,12 +76,13 @@ func (s *Server) handleRepoStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if bootstrap/Chart.yaml exists on the base branch.
+	// Check if the engine pin exists on the base branch — the one file
+	// every v4 bootstrap PR is guaranteed to contain (design doc §1).
 	baseBranch := s.gitopsConfig().BaseBranch
 	if baseBranch == "" {
 		baseBranch = "main"
 	}
-	_, err = gp.GetFileContent(r.Context(), "bootstrap/Chart.yaml", baseBranch)
+	_, err = gp.GetFileContent(r.Context(), orchestrator.BootstrapRootAppPath, baseBranch)
 	if err != nil {
 		// The gitprovider layer already distinguishes the two cases:
 		// a genuinely-missing file is wrapped with gitprovider.ErrFileNotFound,

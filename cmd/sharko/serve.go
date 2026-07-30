@@ -282,6 +282,11 @@ var serveCmd = &cobra.Command{
 		}
 		slog.Info("curated catalog loaded", "entries", cat.Len())
 		srv.SetCatalog(cat)
+		// v4 Wave 1 Story 4.2: AddonService.GetVersionMatrix's v4 branch
+		// needs the shipped curated catalog to merge a caller's
+		// catalog/addons.yaml delta the same way handleListMergedCatalogDelta
+		// does (internal/api/catalog_delta.go).
+		addonSvc.SetCuratedCatalog(cat)
 
 		// Third-party catalog sources moved to after ReinitializeFromConnection
 		// so we can try file-then-env (V3-P3.1). See below.

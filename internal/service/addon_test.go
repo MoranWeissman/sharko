@@ -11,7 +11,10 @@ import (
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // fakeGitProvider implements gitprovider.GitProvider for testing.
@@ -23,8 +26,24 @@ func (f *fakeGitProvider) GetFileContent(_ context.Context, path, _ string) ([]b
 	return f.files[path], nil
 }
 
-func (f *fakeGitProvider) ListDirectory(_ context.Context, _, _ string) ([]string, error) {
-	return nil, nil
+// ListDirectory returns the basenames of entries directly under dir,
+// derived from the keys of f.files (immediate children only — no nested
+// path segments). Real enough for the v4 GetVersionMatrix tests
+// (clusters/*.yaml listing) without needing a full fake filesystem.
+func (f *fakeGitProvider) ListDirectory(_ context.Context, dir, _ string) ([]string, error) {
+	prefix := strings.TrimSuffix(dir, "/") + "/"
+	var names []string
+	for p := range f.files {
+		if !strings.HasPrefix(p, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(p, prefix)
+		if rest == "" || strings.Contains(rest, "/") {
+			continue
+		}
+		names = append(names, rest)
+	}
+	return names, nil
 }
 
 func (f *fakeGitProvider) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
@@ -107,8 +126,8 @@ applicationsets:
 			{
 				"metadata": map[string]interface{}{"name": "cert-manager-cluster-a", "namespace": "argocd"},
 				"spec": map[string]interface{}{
-					"project": "default",
-					"source":  map[string]interface{}{"repoURL": "https://charts.jetstack.io", "targetRevision": "1.15.0", "chart": "cert-manager"},
+					"project":     "default",
+					"source":      map[string]interface{}{"repoURL": "https://charts.jetstack.io", "targetRevision": "1.15.0", "chart": "cert-manager"},
 					"destination": map[string]interface{}{"server": "https://cluster-a", "namespace": "cert-manager"},
 				},
 				"status": map[string]interface{}{
@@ -119,8 +138,8 @@ applicationsets:
 			{
 				"metadata": map[string]interface{}{"name": "ingress-nginx-cluster-a", "namespace": "argocd"},
 				"spec": map[string]interface{}{
-					"project": "default",
-					"source":  map[string]interface{}{"repoURL": "https://kubernetes.github.io/ingress-nginx", "targetRevision": "4.10.0", "chart": "ingress-nginx"},
+					"project":     "default",
+					"source":      map[string]interface{}{"repoURL": "https://kubernetes.github.io/ingress-nginx", "targetRevision": "4.10.0", "chart": "ingress-nginx"},
 					"destination": map[string]interface{}{"server": "https://cluster-a", "namespace": "ingress-nginx"},
 				},
 				"status": map[string]interface{}{
@@ -131,8 +150,8 @@ applicationsets:
 			{
 				"metadata": map[string]interface{}{"name": "cert-manager-cluster-b", "namespace": "argocd"},
 				"spec": map[string]interface{}{
-					"project": "default",
-					"source":  map[string]interface{}{"repoURL": "https://charts.jetstack.io", "targetRevision": "1.14.0", "chart": "cert-manager"},
+					"project":     "default",
+					"source":      map[string]interface{}{"repoURL": "https://charts.jetstack.io", "targetRevision": "1.14.0", "chart": "cert-manager"},
 					"destination": map[string]interface{}{"server": "https://cluster-b", "namespace": "cert-manager"},
 				},
 				"status": map[string]interface{}{
@@ -531,5 +550,174 @@ applicationsets:
 					tc.name, tc.wantTarget, got.TotalTargetClusterCount, tc.stateNarrative)
 			}
 		})
+	}
+}
+
+// TestGetVersionMatrix_V4Repo is the v4 Wave 1 Story 4.2 counterpart to
+// TestGetVersionMatrix: the presence of the engine pin
+// (orchestrator.EnginePinPath) routes GetVersionMatrix through
+// getVersionMatrixV4, which reads clusters/*.yaml (ClusterAssignment) and
+// the delta-merged catalog (catalog/addons.yaml overlaid on the curated
+// set) instead of the v3 managed-clusters.yaml / addons-catalog.yaml
+// files — even though both v3 files are ALSO present in this fixture, to
+// prove the v4 branch is the one that actually ran.
+func TestGetVersionMatrix_V4Repo(t *testing.T) {
+	prodEU, err := models.SaveClusterAssignment(models.ClusterAssignmentSpec{
+		Cluster: "prod-eu",
+		Addons: map[string]models.ClusterAssignmentAddon{
+			"cert-manager": {Enabled: true, Version: "1.12.0"}, // per-cluster pin
+			"external-dns": {Enabled: false},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building prod-eu assignment: %v", err)
+	}
+	stagingUS, err := models.SaveClusterAssignment(models.ClusterAssignmentSpec{
+		Cluster: "staging-us",
+		Addons: map[string]models.ClusterAssignmentAddon{
+			"cert-manager": {Enabled: true}, // follows catalog default
+		},
+	})
+	if err != nil {
+		t.Fatalf("building staging-us assignment: %v", err)
+	}
+
+	// No curated catalog is wired for this test (svc.SetCuratedCatalog is
+	// never called — see NewAddonService below), so per catalog.MergeDelta
+	// every addon here merges as OriginInternal: repoURL/chart/version
+	// must all be set in the delta itself (design doc §2.3's "note on
+	// required"). This test exercises GetVersionMatrix's v4 wiring, not
+	// MergeDelta's curated-vs-delta precedence — that is covered by
+	// internal/catalog's own delta_merge_test.go.
+	delta, err := config.SaveAddonCatalogDelta(config.AddonCatalogDeltaSpec{
+		Addons: map[string]config.AddonCatalogDeltaEntry{
+			"cert-manager": {
+				RepoURL: "https://charts.jetstack.io",
+				Chart:   "cert-manager",
+				Version: "1.14.5",
+			},
+			"external-dns": {
+				RepoURL: "https://kubernetes-sigs.github.io/external-dns",
+				Chart:   "external-dns",
+				Version: "1.14.0",
+			},
+			"billing-api": { // internal addon — no shipped entry
+				RepoURL: "oci://registry.example.com/charts",
+				Chart:   "billing-api",
+				Version: "2.4.0",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building catalog delta: %v", err)
+	}
+
+	argoApps := map[string]interface{}{
+		"items": []map[string]interface{}{
+			{
+				"metadata": map[string]interface{}{"name": "cert-manager-prod-eu", "namespace": "argocd"},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+			{
+				"metadata": map[string]interface{}{"name": "cert-manager-staging-us", "namespace": "argocd"},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "OutOfSync"},
+					"health": map[string]interface{}{"status": "Progressing"},
+				},
+			},
+		},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(argoApps)
+	}))
+	defer ts.Close()
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			"clusters/prod-eu.yaml":      prodEU,
+			"clusters/staging-us.yaml":   stagingUS,
+			config.AddonCatalogDeltaPath: delta,
+			// v3 files are ALSO present, to prove they are ignored once the
+			// engine pin routes this to the v4 branch.
+			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-only-cluster\n    labels: {}\n"),
+			"configuration/addons-catalog.yaml":   []byte("applicationsets:\n  - name: v3-only-addon\n"),
+		},
+	}
+	ac := argocd.NewClient(ts.URL, "fake-token", false)
+	svc := NewAddonService("")
+
+	resp, err := svc.GetVersionMatrix(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetVersionMatrix returned error: %v", err)
+	}
+
+	if len(resp.Clusters) != 2 || resp.Clusters[0] != "prod-eu" || resp.Clusters[1] != "staging-us" {
+		t.Fatalf("expected clusters [prod-eu staging-us] (v4 clusters/*.yaml), got %v — v3 managed-clusters.yaml must be ignored", resp.Clusters)
+	}
+
+	byName := make(map[string]models.VersionMatrixRow)
+	for _, r := range resp.Addons {
+		byName[r.AddonName] = r
+	}
+	if _, ok := byName["v3-only-addon"]; ok {
+		t.Error("v3 addons-catalog.yaml entry leaked into the v4 matrix — the delta-merged catalog must be used instead")
+	}
+
+	certManager, ok := byName["cert-manager"]
+	if !ok {
+		t.Fatal("expected cert-manager row (curated + delta override)")
+	}
+	if certManager.CatalogVersion != "1.14.5" {
+		t.Errorf("cert-manager CatalogVersion = %q, want %q (from catalog/addons.yaml delta)", certManager.CatalogVersion, "1.14.5")
+	}
+	prodCell, ok := certManager.Cells["prod-eu"]
+	if !ok {
+		t.Fatal("expected a prod-eu cell for cert-manager")
+	}
+	if prodCell.Version != "1.12.0" {
+		t.Errorf("prod-eu cert-manager version = %q, want %q (per-cluster pin from clusters/prod-eu.yaml)", prodCell.Version, "1.12.0")
+	}
+	if !prodCell.DriftFromCatalog {
+		t.Error("expected DriftFromCatalog=true when the per-cluster pin (1.12.0) differs from the catalog version (1.14.5)")
+	}
+	if prodCell.Health != "Healthy" {
+		t.Errorf("prod-eu cert-manager health = %q, want %q (matched by cert-manager-prod-eu ArgoCD Application)", prodCell.Health, "Healthy")
+	}
+
+	stagingCell, ok := certManager.Cells["staging-us"]
+	if !ok {
+		t.Fatal("expected a staging-us cell for cert-manager")
+	}
+	if stagingCell.Version != "1.14.5" {
+		t.Errorf("staging-us cert-manager version = %q, want %q (no per-cluster pin — follows the catalog default)", stagingCell.Version, "1.14.5")
+	}
+	if stagingCell.DriftFromCatalog {
+		t.Error("expected DriftFromCatalog=false when the cluster follows the catalog default exactly")
+	}
+
+	billingAPI, ok := byName["billing-api"]
+	if !ok {
+		t.Fatal("expected billing-api row (internal addon, origin=internal, from catalog/addons.yaml alone)")
+	}
+	if billingAPI.CatalogVersion != "2.4.0" || billingAPI.Chart != "billing-api" {
+		t.Errorf("billing-api row = %+v, want CatalogVersion=2.4.0 Chart=billing-api", billingAPI)
+	}
+	if _, hasCell := billingAPI.Cells["prod-eu"]; hasCell {
+		t.Error("billing-api should have no cells — no cluster assignment references it")
+	}
+
+	externalDNS, ok := byName["external-dns"]
+	if !ok {
+		t.Fatal("expected external-dns row (curated, disabled on prod-eu)")
+	}
+	if cell, ok := externalDNS.Cells["prod-eu"]; !ok {
+		t.Error("expected a prod-eu cell for external-dns (present in the assignment, even though disabled)")
+	} else if cell.Health != "not_enabled" {
+		t.Errorf("prod-eu external-dns health = %q, want %q", cell.Health, "not_enabled")
 	}
 }

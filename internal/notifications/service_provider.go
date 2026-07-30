@@ -28,9 +28,9 @@ type ServiceProvider struct {
 	connSvc  *service.ConnectionService
 	addonSvc *service.AddonService
 
-	mu          sync.Mutex
-	indexCache  map[string]*helmIndexEntry // key: repoURL
-	cacheTTL    time.Duration
+	mu         sync.Mutex
+	indexCache map[string]*helmIndexEntry // key: repoURL
+	cacheTTL   time.Duration
 }
 
 // NewServiceProvider creates a ServiceProvider from the server's existing
