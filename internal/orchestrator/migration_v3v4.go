@@ -304,6 +304,18 @@ func (o *Orchestrator) readV3Clusters(ctx context.Context, registryPath string) 
 
 // readV3Catalog reads and parses the v3 full-copy catalog. A missing file
 // is an empty catalog, not an error.
+//
+// Story 8.6 gap fix (v4 Wave 2 all-or-nothing audit): parseAddonsCatalog's
+// legacy bare-YAML path (unlike internal/catalog.LoadBytes, which rejects
+// this outright) does not reject a catalog that names the same addon
+// twice — buildCatalogDelta folds entries into a map keyed by name, so a
+// duplicate silently collapses into whichever entry sorts last, with no
+// note telling the operator a whole entry's fields were dropped. That is
+// exactly the silent-data-loss failure class the migration's own design
+// doc promises never happens ("nothing is lost silently"), so it is
+// refused here, before any git write, with the same actionable shape
+// internal/catalog.LoadBytes already uses for the identical mistake in
+// the curated catalog.
 func (o *Orchestrator) readV3Catalog(ctx context.Context, catalogPath string) ([]models.AddonCatalogEntry, error) {
 	body, ok := o.readFileIfExists(ctx, catalogPath)
 	if !ok || len(strings.TrimSpace(string(body))) == 0 {
@@ -313,7 +325,30 @@ func (o *Orchestrator) readV3Catalog(ctx context.Context, catalogPath string) ([
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", catalogPath, err)
 	}
+	if err := rejectDuplicateCatalogNames(entries); err != nil {
+		return nil, fmt.Errorf("reading %s: %w", catalogPath, err)
+	}
 	return entries, nil
+}
+
+// rejectDuplicateCatalogNames returns an error naming the first addon name
+// that appears more than once in entries, or nil when every name is
+// unique. Empty names are not this check's concern — buildCatalogDelta
+// already skips those with its own note.
+func rejectDuplicateCatalogNames(entries []models.AddonCatalogEntry) error {
+	seen := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if e.Name == "" {
+			continue
+		}
+		if seen[e.Name] {
+			return fmt.Errorf(
+				"addon %q is listed more than once — refusing to migrate: the new catalog file can only hold one entry per addon, and silently keeping just one would drop the other's settings without telling you. Remove the duplicate and try again",
+				e.Name)
+		}
+		seen[e.Name] = true
+	}
+	return nil
 }
 
 // buildV4ClusterFiles writes fleet/connections.yaml and one

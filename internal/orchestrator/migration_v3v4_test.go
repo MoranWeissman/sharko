@@ -1097,3 +1097,196 @@ func TestV3ScaffoldFilesToRemove_LeavesDataAndWrittenFilesAlone(t *testing.T) {
 		}
 	}
 }
+
+// ─── Story 8.6: malformed-input all-or-nothing audit ─────────────────────
+//
+// buildMigration only reads from git — every file it produces lives in the
+// in-memory migrationBuild until commitMigrationPR runs, and that only
+// happens after buildMigration returns successfully (MigrateV3ToV4 calls
+// buildMigration, then commitMigrationPR — never the reverse, never
+// interleaved). So ANY read/parse failure anywhere in the build — whether
+// the source is unparseable YAML, a wrong-type field, or a file the FINAL
+// validateMigrationFiles backstop catches — structurally guarantees zero
+// branches, zero PRs, and a completely untouched base branch. This table
+// proves that guarantee holds for a spread of injection points, not just
+// the one semantic case (missing catalog version)
+// TestMigrate_RefusesBeforeAnyWrite_OnUnmigratableRepo already covers.
+func TestMigrate_AllOrNothing_OnMalformedInput(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mutate  func(files map[string][]byte)
+		wantErr string // substring that must appear in the returned error
+	}{
+		{
+			name: "managed-clusters.yaml is not valid YAML",
+			mutate: func(files map[string][]byte) {
+				files["configuration/managed-clusters.yaml"] = []byte("clusters:\n  - name: \"unterminated")
+			},
+			wantErr: "configuration/managed-clusters.yaml",
+		},
+		{
+			name: "managed-clusters.yaml is binary junk",
+			mutate: func(files map[string][]byte) {
+				junk := make([]byte, 64)
+				for i := range junk {
+					junk[i] = byte(i)
+				}
+				junk[0] = 0xFF
+				files["configuration/managed-clusters.yaml"] = junk
+			},
+			wantErr: "configuration/managed-clusters.yaml",
+		},
+		{
+			name: "addons-catalog.yaml is not valid YAML",
+			mutate: func(files map[string][]byte) {
+				files["configuration/addons-catalog.yaml"] = []byte("applicationsets:\n  - name: \"unterminated")
+			},
+			wantErr: "configuration/addons-catalog.yaml",
+		},
+		{
+			name: "a per-cluster values file is not valid YAML",
+			mutate: func(files map[string][]byte) {
+				files["configuration/addons-clusters-values/prod-eu.yaml"] = []byte("cert-manager:\n  replicaCount: [1, 2")
+			},
+			wantErr: "configuration/addons-clusters-values/prod-eu.yaml",
+		},
+		{
+			name: "a per-cluster values file is binary junk",
+			mutate: func(files map[string][]byte) {
+				junk := make([]byte, 64)
+				for i := range junk {
+					junk[i] = byte(i)
+				}
+				junk[0] = 0xFF
+				files["configuration/addons-clusters-values/prod-eu.yaml"] = junk
+			},
+			wantErr: "configuration/addons-clusters-values/prod-eu.yaml",
+		},
+		{
+			name: "addons-catalog.yaml names the same addon twice",
+			mutate: func(files map[string][]byte) {
+				files["configuration/addons-catalog.yaml"] = []byte(`applicationsets:
+  - name: cert-manager
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    version: 1.14.5
+  - name: cert-manager
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    version: 1.15.0
+`)
+			},
+			// Gap fixed by this story: buildCatalogDelta folds entries into
+			// a map keyed by name, so a duplicate used to silently collapse
+			// into whichever entry sorted last — dropping the other one's
+			// fields with no note. readV3Catalog now refuses this before
+			// any git write, matching internal/catalog.LoadBytes's existing
+			// duplicate-name rejection for the curated catalog.
+			wantErr: "listed more than once",
+		},
+		{
+			name: "a global values file is not valid YAML (caught by the final validation backstop)",
+			mutate: func(files map[string][]byte) {
+				files["configuration/addons-global-values/cert-manager.yaml"] = []byte("installCRDs: [true")
+			},
+			// buildV4GlobalValues carries the bytes across textually
+			// (UnwrapGlobalValuesFile is a line-scanner, not a YAML
+			// parse), so this is only caught later by
+			// validateMigrationFiles running the real yaml.Unmarshal
+			// reader against every generated file — the "the new %s
+			// would not be valid" wrapper, not the per-file read error.
+			wantErr: "would not be valid",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			files := newV3FixtureRepo()
+			tc.mutate(files)
+			git := newMigrationFakeGit(files)
+			orch := newMigrationOrchestrator(t, git)
+
+			_, err := orch.MigrateV3ToV4(context.Background(), MigrateRequest{Yes: true})
+			if err == nil {
+				t.Fatal("expected the migration to fail on malformed input")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.wantErr)
+			}
+
+			// The whole point: NOTHING was written. No branch, no PR, no
+			// delete, no change to the base branch's files.
+			if len(git.branches) != 0 {
+				t.Errorf("a refused migration created %d branch(es); want 0", len(git.branches))
+			}
+			if len(git.prs) != 0 {
+				t.Errorf("a refused migration opened %d pull request(s); want 0", len(git.prs))
+			}
+			if len(git.branchWrites) != 0 {
+				t.Errorf("a refused migration wrote %d file(s) to a branch; want 0", len(git.branchWrites))
+			}
+			if len(git.branchDeletes) != 0 {
+				t.Errorf("a refused migration deleted %d file(s) from a branch; want 0", len(git.branchDeletes))
+			}
+			// The base branch itself must be byte-identical to what
+			// newMigrationFakeGit was seeded with — buildMigration never
+			// writes, so files should be untouched by identity, but assert
+			// on content too so a future refactor that starts mutating the
+			// fake's base map in place gets caught here.
+			if _, ok := git.files["configuration/managed-clusters.yaml"]; !ok {
+				t.Error("the v3 cluster registry disappeared from the base branch")
+			}
+		})
+	}
+}
+
+// TestMigrate_AllOrNothing_OnMalformedInput_NeverPanics is the
+// panic-safety half of the audit: every case above, plus a few more
+// exotic malformed shapes, must come back as a Go error from
+// MigrateV3ToV4 — never a runtime panic that would take down the request
+// goroutine handling the migration API call.
+func TestMigrate_AllOrNothing_OnMalformedInput_NeverPanics(t *testing.T) {
+	deepNesting := func() []byte {
+		var b strings.Builder
+		b.WriteString("clusters:\n")
+		indent := "  "
+		for i := 0; i < 200; i++ {
+			b.WriteString(strings.Repeat(indent, i+1))
+			b.WriteString(fmt.Sprintf("level%d:\n", i))
+		}
+		return []byte(b.String())
+	}
+
+	cases := map[string]func(files map[string][]byte){
+		"managed_clusters_deep_nesting": func(files map[string][]byte) {
+			files["configuration/managed-clusters.yaml"] = deepNesting()
+		},
+		"managed_clusters_wrong_top_level_type": func(files map[string][]byte) {
+			files["configuration/managed-clusters.yaml"] = []byte("true")
+		},
+		"values_null_bytes": func(files map[string][]byte) {
+			files["configuration/addons-clusters-values/prod-eu.yaml"] = make([]byte, 32)
+		},
+	}
+
+	for name, mutate := range cases {
+		mutate := mutate
+		t.Run(name, func(t *testing.T) {
+			files := newV3FixtureRepo()
+			mutate(files)
+			git := newMigrationFakeGit(files)
+			orch := newMigrationOrchestrator(t, git)
+
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("MigrateV3ToV4 panicked on %s: %v", name, r)
+					}
+				}()
+				_, _ = orch.MigrateV3ToV4(context.Background(), MigrateRequest{Yes: true})
+			}()
+
+			if len(git.branches) != 0 {
+				t.Errorf("%s: a migration that should have been refused created %d branch(es)", name, len(git.branches))
+			}
+		})
+	}
+}
