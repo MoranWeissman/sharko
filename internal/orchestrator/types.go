@@ -213,6 +213,15 @@ type GitResult struct {
 	// DryRun field on RegisterClusterResult so the UI reuses the same preview
 	// render for both flows.
 	DryRun *DryRunResult `json:"dry_run,omitempty"`
+
+	// Warnings holds plain-English advisories that do NOT block the
+	// operation — e.g. EnableAddonV4's needed-at-runtime secrets (v4 wave 2
+	// w2-q4): the addon installs fine now, but will need the secret later.
+	// Set on both the dry-run preview response and the real (non-dry-run)
+	// response, per the same GitResult. Empty/omitted when there is
+	// nothing to warn about. Mirrors the Warnings field on
+	// RegisterClusterResult/AdoptClusterResult (V2-cleanup-89.5).
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // AddAddonRequest is the input for adding an addon to the catalog.

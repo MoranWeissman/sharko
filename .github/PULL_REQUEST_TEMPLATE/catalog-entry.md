@@ -54,7 +54,11 @@ Delete this comment block once you've filled in the sections below.
 - [ ] `secrets` — one entry per credential/secret the addon needs to
       function (not to install — to actually work), each with a
       plain-English `description` of what it's for and how it's
-      normally supplied.
+      normally supplied, plus `required_for: install` or
+      `required_for: runtime` (defaults to `install` if you leave it
+      out). Only mark a secret `runtime` when it's clearly consumed
+      later — by a CRD you create after install, not by the chart's
+      own values (see the docs page for the worked example).
 - [ ] `quirks` — short, plain-English sentences about known operational
       gotchas. Free text, not structured settings — e.g. "the webhook's
       CA bundle is rewritten on every reconcile, ignore it in Argo CD or

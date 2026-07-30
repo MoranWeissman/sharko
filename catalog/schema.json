@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sharko.dev/schemas/catalog/addons.json",
   "title": "Sharko Catalog",
-  "description": "Curated addon catalog embedded into the Sharko binary. Validated at load time by internal/catalog/loader.go; this JSON Schema is the human-readable contract and is also consumed by the catalog-validate CI workflow (v1.21 Epic 8). Schema v1.1 adds the optional per-entry `signature` block (V123-2.1). Schema v1.2 adds the optional `required_values`, `secrets`, and `quirks` extended-entry knowledge fields (v4 wave 1 Story 3.1) — see docs/design/2026-07-30-v4-data-file-format.md §2.3.",
+  "description": "Curated addon catalog embedded into the Sharko binary. Validated at load time by internal/catalog/loader.go; this JSON Schema is the human-readable contract and is also consumed by the catalog-validate CI workflow (v1.21 Epic 8). Schema v1.1 adds the optional per-entry `signature` block (V123-2.1). Schema v1.2 adds the optional `required_values`, `secrets`, and `quirks` extended-entry knowledge fields (v4 wave 1 Story 3.1) — see docs/design/2026-07-30-v4-data-file-format.md §2.3. Schema v1.3 adds the optional `required_for` field on each `secrets` entry (v4 wave 2 w2-q4, \"needed-secrets gate\") — install vs runtime, defaulting to install.",
   "type": "object",
   "required": ["addons"],
   "additionalProperties": false,
@@ -145,7 +145,12 @@
             "required": ["name", "description"],
             "properties": {
               "name": { "type": "string", "minLength": 1, "description": "Short human label for the secret." },
-              "description": { "type": "string", "minLength": 1, "description": "What the secret is for and how it is normally supplied." }
+              "description": { "type": "string", "minLength": 1, "description": "What the secret is for and how it is normally supplied." },
+              "required_for": {
+                "type": "string",
+                "enum": ["install", "runtime"],
+                "description": "When the secret actually matters. \"install\" (the default when omitted) means the chart needs it to deploy — missing it blocks enabling the addon. \"runtime\" means the secret is only consumed later (e.g. by a CRD you create after install) — missing it never blocks the install, Sharko just surfaces a heads-up. Schema v1.3+. Older Sharko tolerates this field as unknown and treats every secret as \"install\"."
+              }
             }
           }
         },

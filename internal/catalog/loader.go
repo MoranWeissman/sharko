@@ -80,15 +80,51 @@ type RequiredValue struct {
 	Description string `yaml:"description" json:"description"`
 }
 
+// SecretRequiredFor values classify WHEN a declared secret actually
+// matters (v4 wave 2 quick win w2-q4 — "needed-secrets gate"). Before this
+// split every declared secret gated the install the same way, even when
+// the secret is only consumed later by a CRD the addon's own chart never
+// looks at (external-secrets' SecretStore is the maintainer-reported
+// case: the chart installs fine with zero secrets — the credential only
+// matters once you create a SecretStore/ClusterSecretStore).
+const (
+	// SecretRequiredForInstall means the chart itself needs this secret to
+	// deploy/run — missing it blocks EnableAddonV4 with a 422 exactly as
+	// before this split existed.
+	SecretRequiredForInstall = "install"
+	// SecretRequiredForRuntime means the secret is consumed later — by a
+	// CRD the user creates after install, or by a step the chart never
+	// touches — and missing it must never block the install. EnableAddonV4
+	// proceeds and surfaces a non-blocking warning instead.
+	SecretRequiredForRuntime = "runtime"
+)
+
 // SecretRequirement documents ONE secret a curated addon needs to run,
 // in plain English (v4 wave 1 Story 3.1). Name is a short human label for
 // the secret (not necessarily a literal Kubernetes Secret name — addons
 // vary in how they expect the credential to be supplied); Description says
 // what it is for and, where useful, how it is normally wired in (env var,
 // mounted file, IRSA role, etc).
+//
+// RequiredFor classifies when the secret matters — SecretRequiredForInstall
+// or SecretRequiredForRuntime (v4 wave 2 w2-q4). Absent/empty defaults to
+// SecretRequiredForInstall — the pre-existing, stricter behavior — so every
+// entry written before this field existed keeps blocking exactly as it did.
+// Use EffectiveRequiredFor rather than reading the field directly so that
+// default resolution lives in one place.
 type SecretRequirement struct {
 	Name        string `yaml:"name" json:"name"`
 	Description string `yaml:"description" json:"description"`
+	RequiredFor string `yaml:"required_for,omitempty" json:"required_for,omitempty"`
+}
+
+// EffectiveRequiredFor returns s.RequiredFor, defaulting an empty value to
+// SecretRequiredForInstall (the "unclassified entries stay strict" rule).
+func (s SecretRequirement) EffectiveRequiredFor() string {
+	if s.RequiredFor == "" {
+		return SecretRequiredForInstall
+	}
+	return s.RequiredFor
 }
 
 // CatalogEntry is the Sharko-native curated catalog shape. Fields match the
@@ -604,6 +640,17 @@ func validateEntry(e *CatalogEntry) error {
 		}
 		if _, err := url.Parse(e.Signature.Bundle); err != nil {
 			return fmt.Errorf("signature.bundle is not a valid URL: %w", err)
+		}
+	}
+	for _, sr := range e.Secrets {
+		switch sr.RequiredFor {
+		case "", SecretRequiredForInstall, SecretRequiredForRuntime:
+			// ok — empty defaults to "install" via EffectiveRequiredFor.
+		default:
+			return fmt.Errorf(
+				"secret %q has required_for %q, must be %q, %q, or omitted",
+				sr.Name, sr.RequiredFor, SecretRequiredForInstall, SecretRequiredForRuntime,
+			)
 		}
 	}
 	return nil
