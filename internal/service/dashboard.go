@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
@@ -32,6 +33,51 @@ type DashboardService struct {
 	parser              *config.Parser
 	connSvc             *ConnectionService
 	managedClustersPath string // path in Git repo to managed-clusters.yaml
+
+	// curated is the shipped curated addon catalog, wired via
+	// SetCuratedCatalog. Used ONLY by gitStatsV4 to compute TotalAvailable
+	// as len(catalog.MergeDelta(curated, delta)) — the same curated+delta
+	// merge AddonService/UpgradeService use — instead of len(delta.Addons)
+	// alone, which undercounts (or on a repo with no delta file at all,
+	// zeroes) the addon count on every v4 repo that hasn't customized the
+	// shipped catalog (Wave 2 review finding: "Total Available: 0" on
+	// fresh v4 repos). nil is safe: every addon then merges as
+	// catalog.OriginInternal, matching catalog.MergeDelta's own contract.
+	curated *catalog.Catalog
+
+	// baseBranchFn is the per-instance test seam for the configured GitOps
+	// base branch, mirroring AddonService.baseBranchFn (Wave 2 ride-along
+	// w2-q6 item 1). nil (tests, e2e harness) falls back to "main" via the
+	// branch() helper below.
+	baseBranchFn func() string
+}
+
+// SetCuratedCatalog wires in the shipped curated catalog so gitStatsV4 can
+// merge a caller's catalog/addons.yaml delta against it, the same way
+// AddonService.SetCuratedCatalog does for the version matrix and catalog
+// views. Pass nil (or skip the call) to leave every v4-repo addon merging
+// as catalog.OriginInternal.
+func (s *DashboardService) SetCuratedCatalog(c *catalog.Catalog) {
+	s.curated = c
+}
+
+// SetBaseBranchFn wires in a live accessor for the configured GitOps base
+// branch (e.g. api.Server.GitopsBaseBranch), matching
+// AddonService.SetBaseBranchFn.
+func (s *DashboardService) SetBaseBranchFn(fn func() string) {
+	s.baseBranchFn = fn
+}
+
+// branch returns the configured GitOps base branch, defaulting to "main"
+// when no seam is wired (tests, e2e harness) or it resolves to "".
+func (s *DashboardService) branch() string {
+	if s.baseBranchFn == nil {
+		return "main"
+	}
+	if b := s.baseBranchFn(); b != "" {
+		return b
+	}
+	return "main"
 }
 
 // NewDashboardService creates a new DashboardService.
@@ -56,7 +102,7 @@ func (s *DashboardService) gitStatsV3(ctx context.Context, gp gitprovider.GitPro
 	// rather than propagating a 500 with the raw filesystem error
 	// string. Same isGitFileNotFound (errors.Is) pattern as
 	// ClusterService.ListClusters.
-	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
+	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, s.branch())
 	if err != nil {
 		if isGitFileNotFound(err) {
 			clusterData = []byte("clusters: []")
@@ -65,7 +111,7 @@ func (s *DashboardService) gitStatsV3(ctx context.Context, gp gitprovider.GitPro
 		}
 	}
 
-	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
+	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
 	if err != nil {
 		if isGitFileNotFound(err) {
 			catalogData = []byte("applicationsets: []")
@@ -108,7 +154,7 @@ func (s *DashboardService) gitStatsV3(ctx context.Context, gp gitprovider.GitPro
 func (s *DashboardService) gitStatsV4(ctx context.Context, gp gitprovider.GitProvider) (gitDerivedDashboardStats, error) {
 	out := gitDerivedDashboardStats{validAddonApps: make(map[string]bool)}
 
-	connData, err := gp.GetFileContent(ctx, orchestrator.V4ConnectionsPath, "main")
+	connData, err := gp.GetFileContent(ctx, orchestrator.V4ConnectionsPath, s.branch())
 	if err != nil {
 		if !isGitFileNotFound(err) {
 			return gitDerivedDashboardStats{}, fmt.Errorf("reading %s: %w", orchestrator.V4ConnectionsPath, err)
@@ -123,22 +169,33 @@ func (s *DashboardService) gitStatsV4(ctx context.Context, gp gitprovider.GitPro
 		}
 	}
 
-	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, "main")
+	// TotalAvailable is the curated+delta merged addon count — the same
+	// merge AddonService/UpgradeService use — NOT len(delta.Addons) alone.
+	// A repo that hasn't customized the shipped catalog yet (no
+	// catalog/addons.yaml, or one that only overrides a subset) still has
+	// every curated addon "available"; counting only the delta reported 0
+	// on every fresh v4 repo (Wave 2 review finding).
+	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, s.branch())
+	var delta config.AddonCatalogDeltaSpec
 	if err != nil {
 		if !isGitFileNotFound(err) {
 			return gitDerivedDashboardStats{}, fmt.Errorf("reading %s: %w", config.AddonCatalogDeltaPath, err)
 		}
 	} else if len(deltaData) > 0 {
-		delta, perr := config.LoadAddonCatalogDelta(deltaData)
-		if perr != nil {
-			return gitDerivedDashboardStats{}, fmt.Errorf("parsing %s: %w", config.AddonCatalogDeltaPath, perr)
+		delta, err = config.LoadAddonCatalogDelta(deltaData)
+		if err != nil {
+			return gitDerivedDashboardStats{}, fmt.Errorf("parsing %s: %w", config.AddonCatalogDeltaPath, err)
 		}
-		out.totalAvailable = len(delta.Addons)
 	}
+	merged, err := catalog.MergeDelta(s.curated, delta)
+	if err != nil {
+		return gitDerivedDashboardStats{}, fmt.Errorf("merging catalog delta: %w", err)
+	}
+	out.totalAvailable = len(merged)
 
 	// listClusterAddonsSpecs (addon.go, same package) lists clusters/*.yaml
 	// and is already "missing dir means empty" tolerant.
-	clusterAddons, err := listClusterAddonsSpecs(ctx, gp, "main")
+	clusterAddons, err := listClusterAddonsSpecs(ctx, gp, s.branch())
 	if err != nil {
 		return gitDerivedDashboardStats{}, fmt.Errorf("reading clusters/*.yaml: %w", err)
 	}
@@ -172,7 +229,7 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 	// base branch) — "no pin found" is the ordinary "not a v4 repo yet"
 	// case, never a hard failure.
 	var gitStats gitDerivedDashboardStats
-	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, "main"); pinErr == nil && len(pinContent) > 0 {
+	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, s.branch()); pinErr == nil && len(pinContent) > 0 {
 		gitStats, err = s.gitStatsV4(ctx, gp)
 	} else {
 		gitStats, err = s.gitStatsV3(ctx, gp)

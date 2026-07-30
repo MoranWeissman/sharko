@@ -51,6 +51,32 @@ func isGitFileNotFound(err error) bool {
 type ClusterService struct {
 	parser              *config.Parser
 	managedClustersPath string // path in Git repo to managed-clusters.yaml
+
+	// baseBranchFn is the per-instance test seam for the configured GitOps
+	// base branch, mirroring AddonService.baseBranchFn (Wave 2 ride-along
+	// w2-q6 item 1) so every read in this file follows the connection's
+	// configured branch instead of a hardcoded "main". nil (tests, e2e
+	// harness) falls back to "main" via the branch() helper below.
+	baseBranchFn func() string
+}
+
+// SetBaseBranchFn wires in a live accessor for the configured GitOps base
+// branch (e.g. api.Server.GitopsBaseBranch), matching
+// AddonService.SetBaseBranchFn.
+func (s *ClusterService) SetBaseBranchFn(fn func() string) {
+	s.baseBranchFn = fn
+}
+
+// branch returns the configured GitOps base branch, defaulting to "main"
+// when no seam is wired (tests, e2e harness) or it resolves to "".
+func (s *ClusterService) branch() string {
+	if s.baseBranchFn == nil {
+		return "main"
+	}
+	if b := s.baseBranchFn(); b != "" {
+		return b
+	}
+	return "main"
 }
 
 // NewClusterService creates a new ClusterService.
@@ -80,14 +106,14 @@ func NewClusterService(managedClustersPath string) *ClusterService {
 // []")) unchanged. Returns a non-nil error only for a genuine read
 // failure (auth, branch, transport) on either path.
 func (s *ClusterService) readManagedClustersData(ctx context.Context, gp gitprovider.GitProvider) ([]byte, error) {
-	data, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
+	data, err := gp.GetFileContent(ctx, s.managedClustersPath, s.branch())
 	if err == nil {
 		return data, nil
 	}
 	if !isGitFileNotFound(err) {
 		return nil, err
 	}
-	v4Data, v4Err := gp.GetFileContent(ctx, orchestrator.V4ConnectionsPath, "main")
+	v4Data, v4Err := gp.GetFileContent(ctx, orchestrator.V4ConnectionsPath, s.branch())
 	if v4Err == nil {
 		return v4Data, nil
 	}
@@ -192,7 +218,7 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 		clusterData = []byte("clusters: []")
 	}
 
-	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
+	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
 	if err != nil {
 		if isGitFileNotFound(err) {
 			catalogData = []byte("applicationsets: []")
@@ -286,7 +312,7 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 		clusterData = []byte("clusters: []")
 	}
 
-	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
+	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
 	if err != nil {
 		if isGitFileNotFound(err) {
 			catalogData = []byte("applicationsets: []")
@@ -510,7 +536,7 @@ func (s *ClusterService) GetConfigDiff(ctx context.Context, clusterName string, 
 	log := logging.LoggerFromContext(ctx)
 	// Fetch cluster values file
 	clusterValuesPath := fmt.Sprintf("configuration/addons-clusters-values/%s.yaml", clusterName)
-	clusterValuesData, err := gp.GetFileContent(ctx, clusterValuesPath, "main")
+	clusterValuesData, err := gp.GetFileContent(ctx, clusterValuesPath, s.branch())
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch cluster values for %s: %w", clusterName, err)
 	}
@@ -555,7 +581,7 @@ func (s *ClusterService) GetConfigDiff(ctx context.Context, clusterName string, 
 
 		// Fetch global defaults for this addon
 		globalPath := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)
-		globalData, err := gp.GetFileContent(ctx, globalPath, "main")
+		globalData, err := gp.GetFileContent(ctx, globalPath, s.branch())
 		globalYAML := ""
 		if err != nil {
 			log.Info("no global defaults found for addon", "addon", addonName, "error", err)
@@ -624,7 +650,7 @@ func isInfrastructureApp(appName string) bool {
 // GetClusterValues returns the raw cluster-specific values YAML.
 func (s *ClusterService) GetClusterValues(ctx context.Context, clusterName string, gp gitprovider.GitProvider) (*models.ClusterValuesResponse, error) {
 	path := fmt.Sprintf("configuration/addons-clusters-values/%s.yaml", clusterName)
-	data, err := gp.GetFileContent(ctx, path, "main")
+	data, err := gp.GetFileContent(ctx, path, s.branch())
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch cluster values for %s: %w", clusterName, err)
 	}
@@ -657,7 +683,7 @@ func (s *ClusterService) GetClusterAddonValues(ctx context.Context, clusterName,
 	}
 
 	clusterPath := fmt.Sprintf("configuration/addons-clusters-values/%s.yaml", clusterName)
-	if data, err := gp.GetFileContent(ctx, clusterPath, "main"); err == nil && len(data) > 0 {
+	if data, err := gp.GetFileContent(ctx, clusterPath, s.branch()); err == nil && len(data) > 0 {
 		root := map[string]interface{}{}
 		if uerr := yaml.Unmarshal(data, &root); uerr != nil {
 			log.Warn("could not parse cluster overrides file", "cluster", clusterName, "error", uerr)
@@ -669,7 +695,7 @@ func (s *ClusterService) GetClusterAddonValues(ctx context.Context, clusterName,
 	}
 
 	schemaPath := fmt.Sprintf("configuration/addons-global-values/%s.schema.json", addonName)
-	if schemaData, err := gp.GetFileContent(ctx, schemaPath, "main"); err == nil && len(schemaData) > 0 {
+	if schemaData, err := gp.GetFileContent(ctx, schemaPath, s.branch()); err == nil && len(schemaData) > 0 {
 		var schema map[string]interface{}
 		if jerr := json.Unmarshal(schemaData, &schema); jerr != nil {
 			log.Warn("ignoring unparseable values schema", "addon", addonName, "error", jerr)

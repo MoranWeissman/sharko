@@ -61,6 +61,16 @@ type ToolExecutor struct {
 	connections         map[string]gitprovider.GitProvider // named connections for multi-repo operations
 	managedClustersPath string                             // path in Git repo to managed-clusters.yaml
 	prTracker           ToolPRTracker                      // optional — surface AI-tool PRs on the dashboard panel
+
+	// baseBranchFn is the per-instance test seam (matches the identical
+	// convention in internal/service/addon.go) for the configured GitOps
+	// base branch. Wired via SetBaseBranchFn to api.Server.GitopsBaseBranch
+	// in production so the write tools (enable_addon, disable_addon,
+	// update_addon_version) read from and PR against the connection's
+	// configured branch instead of a hardcoded "main" (v4-wave2 review
+	// H-3). nil (the zero value — tests, and any caller that never wires
+	// it) falls back to "main" via branch() below.
+	baseBranchFn func() string
 }
 
 // NewToolExecutor creates a new ToolExecutor with the given providers.
@@ -88,6 +98,27 @@ func NewToolExecutor(gp gitprovider.GitProvider, ac *argocd.Client, memory *Memo
 // "AI" filter chip. nil disables tracking (test seam).
 func (e *ToolExecutor) SetPRTracker(t ToolPRTracker) {
 	e.prTracker = t
+}
+
+// SetBaseBranchFn wires in a live accessor for the configured GitOps base
+// branch (e.g. api.Server.GitopsBaseBranch). The function is called on every
+// read rather than snapshotted once, so it stays correct across
+// ReinitializeFromConnection hot-reloads — same contract as
+// AddonService.SetBaseBranchFn.
+func (e *ToolExecutor) SetBaseBranchFn(fn func() string) {
+	e.baseBranchFn = fn
+}
+
+// branch returns the configured GitOps base branch, defaulting to "main"
+// when no seam is wired (tests, e2e harness) or it resolves to "".
+func (e *ToolExecutor) branch() string {
+	if e.baseBranchFn == nil {
+		return "main"
+	}
+	if b := e.baseBranchFn(); b != "" {
+		return b
+	}
+	return "main"
 }
 
 // resolveProvider returns the GitProvider for the given connection name,

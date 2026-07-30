@@ -112,6 +112,10 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 		if s.prTracker != nil {
 			executor.SetPRTracker(&aiToolTrackerAdapter{t: s.prTracker})
 		}
+		// Read from / PR against the connection's configured base branch
+		// instead of a hardcoded "main" (v4-wave2 review H-3), same seam
+		// AddonService uses via SetBaseBranchFn.
+		executor.SetBaseBranchFn(s.GitopsBaseBranch)
 		agent := ai.NewAgent(s.aiClient, executor, s.agentMemory)
 
 		if req.SessionID == "" {

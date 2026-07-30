@@ -655,3 +655,47 @@ func TestClusterService_ListClusters_V3PathPresent_NeverTriesV4Fallback(t *testi
 		t.Fatalf("expected only v3-cluster, got %+v", resp.Clusters)
 	}
 }
+
+// TestClusterService_ListClusters_HonorsBaseBranch is the Wave 2 review
+// "BaseBranch hardcode sweep" regression test: ClusterService.ListClusters
+// (via readManagedClustersData) must read from the connection's configured
+// GitOps base branch — wired via SetBaseBranchFn — instead of a hardcoded
+// "main". Uses refRecordingGitProvider (defined in addon_test.go, same
+// package) which records every ref (branch) GetFileContent/ListDirectory
+// was asked to read from, so a regression to a literal "main" fails this
+// test even though a same-content-on-every-branch fake would otherwise mask
+// the bug.
+func TestClusterService_ListClusters_HonorsBaseBranch(t *testing.T) {
+	const configuredBranch = "release"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+	svc := NewClusterService("")
+	svc.SetBaseBranchFn(func() string { return configuredBranch })
+	gp := newRefRecordingGitProvider(map[string][]byte{
+		"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: prod-eu\n"),
+	})
+
+	resp, err := svc.ListClusters(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("ListClusters returned error: %v", err)
+	}
+	if len(resp.Clusters) != 1 || resp.Clusters[0].Name != "prod-eu" {
+		t.Fatalf("expected [prod-eu], got %+v — base-branch wiring broke the read", resp.Clusters)
+	}
+
+	if gp.refs["main"] {
+		t.Errorf("ListClusters read from hardcoded %q even though the connection's base branch is configured as %q — refs seen: %v", "main", configuredBranch, gp.refs)
+	}
+	if !gp.refs[configuredBranch] {
+		t.Errorf("expected ListClusters to read from the configured base branch %q, refs seen: %v", configuredBranch, gp.refs)
+	}
+}
