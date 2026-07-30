@@ -53,3 +53,17 @@ var embeddedDefaultAddonsSchema []byte
 //
 //go:embed marketplace-sources.v1.json
 var embeddedMarketplaceSourcesSchema []byte
+
+// embeddedClusterAssignmentSchema is the JSON Schema bytes for
+// clusters/<name>.yaml (v4 Wave 1 Story 2.6). Same lifecycle as the
+// other embedded schemas.
+//
+//go:embed cluster-assignment.v1.json
+var embeddedClusterAssignmentSchema []byte
+
+// embeddedAddonCatalogDeltaSchema is the JSON Schema bytes for
+// catalog/addons.yaml (v4 Wave 1 Story 2.6). Same lifecycle as the other
+// embedded schemas.
+//
+//go:embed addon-catalog-delta.v1.json
+var embeddedAddonCatalogDeltaSchema []byte

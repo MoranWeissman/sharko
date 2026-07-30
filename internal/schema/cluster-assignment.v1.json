@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-assignment.v1.json",
+  "properties": {
+    "apiVersion": {
+      "enum": [
+        "sharko.dev/v1",
+        "sharko.io/v1"
+      ]
+    },
+    "kind": {
+      "const": "ClusterAssignment"
+    },
+    "metadata": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "spec": {
+      "properties": {
+        "cluster": {
+          "type": "string"
+        },
+        "addons": {
+          "additionalProperties": {
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "version": {
+                "type": "string"
+              },
+              "settings": {
+                "properties": {
+                  "namespace": {
+                    "type": "string"
+                  },
+                  "createNamespace": {
+                    "type": "boolean"
+                  },
+                  "syncOptions": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "ignoreDifferences": {
+                    "items": {
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "prune": {
+                    "type": "boolean"
+                  },
+                  "selfHeal": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "enabled"
+            ]
+          },
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "cluster",
+        "addons"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "Sharko ClusterAssignment",
+  "description": "clusters/\u003ccluster-name\u003e.yaml — which addons run on this cluster, at which version, tuned how (v4)."
+}

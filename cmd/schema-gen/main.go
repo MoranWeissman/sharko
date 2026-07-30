@@ -6,13 +6,14 @@
 //	go run ./cmd/schema-gen      # from repo root
 //	make generate-schemas         # via the Makefile target
 //
-// Output (always four files — same two schemas mirrored to two
-// locations, overwritten if they exist):
+// Output (six schemas, each mirrored to two locations, overwritten if
+// they exist): managed-clusters, addons-catalog, default-addons,
+// marketplace-sources, cluster-assignment, addon-catalog-delta — the
+// last two are the v4 Wave 1 Story 2.6 kinds. Every schema lands at
+// both:
 //
-//	docs/schemas/managed-clusters.v1.json
-//	docs/schemas/addons-catalog.v1.json
-//	internal/schema/managed-clusters.v1.json   (embed source)
-//	internal/schema/addons-catalog.v1.json      (embed source)
+//	docs/schemas/<name>.v1.json
+//	internal/schema/<name>.v1.json   (embed source)
 //
 // The two locations exist for different consumers:
 //
@@ -114,10 +115,30 @@ type defaultAddonsDoc struct {
 // marketplaceSourcesDoc mirrors schema.Envelope[config.MarketplaceSourcesSpec] for the
 // same reason as managedClustersDoc. Same parity invariant applies.
 type marketplaceSourcesDoc struct {
-	APIVersion string                         `json:"apiVersion"`
-	Kind       string                         `json:"kind"`
-	Metadata   schema.Metadata                `json:"metadata"`
-	Spec       config.MarketplaceSourcesSpec  `json:"spec"`
+	APIVersion string                        `json:"apiVersion"`
+	Kind       string                        `json:"kind"`
+	Metadata   schema.Metadata               `json:"metadata"`
+	Spec       config.MarketplaceSourcesSpec `json:"spec"`
+}
+
+// clusterAssignmentDoc mirrors schema.Envelope[models.ClusterAssignmentSpec]
+// for the same reason as managedClustersDoc. Same parity invariant
+// applies. v4 Wave 1 Story 2.6.
+type clusterAssignmentDoc struct {
+	APIVersion string                       `json:"apiVersion"`
+	Kind       string                       `json:"kind"`
+	Metadata   schema.Metadata              `json:"metadata"`
+	Spec       models.ClusterAssignmentSpec `json:"spec"`
+}
+
+// addonCatalogDeltaDoc mirrors schema.Envelope[config.AddonCatalogDeltaSpec]
+// for the same reason as managedClustersDoc. Same parity invariant
+// applies. v4 Wave 1 Story 2.6.
+type addonCatalogDeltaDoc struct {
+	APIVersion string                       `json:"apiVersion"`
+	Kind       string                       `json:"kind"`
+	Metadata   schema.Metadata              `json:"metadata"`
+	Spec       config.AddonCatalogDeltaSpec `json:"spec"`
 }
 
 func main() {
@@ -211,7 +232,39 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	logger.Info("generated 4 schemas (mirrored to 2 locations each)",
+	// cluster-assignment.v1.json (v4 Wave 1 Story 2.6)
+	caBytes, err := schema.GenerateSchema(
+		&clusterAssignmentDoc{},
+		schema.ClusterAssignmentSchemaID,
+		"Sharko ClusterAssignment",
+		"clusters/<cluster-name>.yaml — which addons run on this cluster, at which version, tuned how (v4).",
+		schema.KindClusterAssignment,
+	)
+	if err != nil {
+		return fmt.Errorf("generating cluster-assignment schema: %w", err)
+	}
+	caDocsPath, caEmbedPath, err := writeSchemaToBoth("cluster-assignment.v1.json", caBytes)
+	if err != nil {
+		return err
+	}
+
+	// addon-catalog-delta.v1.json (v4 Wave 1 Story 2.6)
+	acdBytes, err := schema.GenerateSchema(
+		&addonCatalogDeltaDoc{},
+		schema.AddonCatalogDeltaSchemaID,
+		"Sharko AddonCatalogDelta",
+		"catalog/addons.yaml — the user's delta against the shipped addon catalog: in-house charts plus overrides of shipped addons (v4).",
+		schema.KindAddonCatalogDelta,
+	)
+	if err != nil {
+		return fmt.Errorf("generating addon-catalog-delta schema: %w", err)
+	}
+	acdDocsPath, acdEmbedPath, err := writeSchemaToBoth("addon-catalog-delta.v1.json", acdBytes)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("generated 6 schemas (mirrored to 2 locations each)",
 		"managed_clusters_docs", mcDocsPath,
 		"managed_clusters_embed", mcEmbedPath,
 		"addons_catalog_docs", acDocsPath,
@@ -220,8 +273,12 @@ func run(logger *slog.Logger) error {
 		"default_addons_embed", daEmbedPath,
 		"marketplace_sources_docs", msDocsPath,
 		"marketplace_sources_embed", msEmbedPath,
+		"cluster_assignment_docs", caDocsPath,
+		"cluster_assignment_embed", caEmbedPath,
+		"addon_catalog_delta_docs", acdDocsPath,
+		"addon_catalog_delta_embed", acdEmbedPath,
 	)
-	fmt.Printf("generated 4 schemas to %s + %s: managed-clusters.v1.json, addons-catalog.v1.json, default-addons.v1.json, marketplace-sources.v1.json\n",
+	fmt.Printf("generated 6 schemas to %s + %s: managed-clusters.v1.json, addons-catalog.v1.json, default-addons.v1.json, marketplace-sources.v1.json, cluster-assignment.v1.json, addon-catalog-delta.v1.json\n",
 		docsOutputDir, embedOutputDir)
 	return nil
 }
