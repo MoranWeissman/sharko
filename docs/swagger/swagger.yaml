@@ -809,6 +809,37 @@ definitions:
         description: '"success", "partial", "failed"'
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.EnginePinCheckResult:
+    properties:
+      bundled_version:
+        description: |-
+          BundledVersion is this Sharko build's own engine chart version.
+          Empty when V4Repo is false.
+        type: string
+      message:
+        description: |-
+          Message is a short, human-readable summary safe to surface directly
+          to a user without further formatting.
+        type: string
+      pinned_version:
+        description: |-
+          PinnedVersion is the version currently pinned in the repo's
+          engine/application.yaml. Empty when V4Repo is false.
+        type: string
+      upgrade_available:
+        description: |-
+          UpgradeAvailable is true when BundledVersion is newer than
+          PinnedVersion. Always false when V4Repo is false.
+        type: boolean
+      v4_repo:
+        description: |-
+          V4Repo is false when engine/application.yaml does not exist in the
+          connected repo — a v3 repo, or a v4 repo that has not been
+          bootstrapped yet. Every other field is the zero value in that case.
+          This is NOT an error condition (story brief: "v3 repos: the check
+          must respond cleanly ... never error").
+        type: boolean
+    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.FilePreview:
     properties:
       action:
@@ -1080,6 +1111,19 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  internal_api.EngineUpgradePinRequest:
+    properties:
+      auto_merge:
+        description: |-
+          AutoMerge overrides the connection-level PRAutoMerge default for
+          this PR only. nil = fall back to the connection default.
+        type: boolean
+      dry_run:
+        description: |-
+          DryRun, when true, returns a preview of the diff with no side
+          effects. Also settable via ?dry_run=true.
+        type: boolean
     type: object
   internal_api.HomeClusterInfo:
     properties:
@@ -5480,6 +5524,76 @@ paths:
       summary: Save embedded dashboards
       tags:
       - dashboard
+  /engine/pin:
+    get:
+      description: Compares the engine chart version pinned in the connected repo's
+        engine/application.yaml against the version bundled with this Sharko build.
+        Responds cleanly (v4_repo=false) for v3 repos or repos not yet bootstrapped
+        — never errors on a missing pin.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Check result
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.EnginePinCheckResult'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Check engine pin
+      tags:
+      - engine
+  /engine/pin/upgrade:
+    post:
+      consumes:
+      - application/json
+      description: Opens a pull request that changes ONLY the engine pin's targetRevision
+        to the version bundled with this Sharko build. Nothing in any cluster changes
+        until the PR is merged. Without dry_run=true, returns a preview of the (single-line)
+        diff with no side effects.
+      parameters:
+      - description: Upgrade request
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/internal_api.EngineUpgradePinRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Upgrade PR result (or dry-run preview)
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request — no engine pin, or already up to date
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upgrade engine pin
+      tags:
+      - engine
   /fleet/status:
     get:
       description: Returns aggregated health and addon deployment status across all

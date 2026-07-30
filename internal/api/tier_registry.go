@@ -96,6 +96,11 @@ var HandlerTier = map[string]audit.Tier{
 	"handleRemoveAddon":    audit.Tier2,
 	"handleConfigureAddon": audit.Tier2,
 
+	// Engine pin upgrade (v4 Wave 1 Story 2.5) — changes future deployment
+	// behaviour (which engine chart version renders the ApplicationSets),
+	// same tier as the addon catalog writes above.
+	"handleUpgradeEnginePin": audit.Tier2,
+
 	// Addon secret definitions — these define what secrets get reconciled where,
 	// which changes future deployment behaviour, so config-tier.
 	"handleCreateAddonSecret": audit.Tier2,
