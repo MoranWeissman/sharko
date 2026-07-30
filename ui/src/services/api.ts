@@ -771,6 +771,17 @@ export async function upgradeAddon(name: string, data: { version: string; cluste
   return postJSON<PRWriteResult>(`/addons/${encodeURIComponent(name)}/upgrade`, data)
 }
 
+// upgradeAddonClusters — Epic 7 Story 7.2 (v4 Wave 2): bump one addon's
+// version pin on a CHOSEN SUBSET of clusters in a single PR
+// (POST /addons/{name}/upgrade-clusters). Pass dry_run: true to preview
+// every file the PR would touch before opening it.
+export async function upgradeAddonClusters(
+  name: string,
+  data: { clusters: string[]; version: string; dry_run?: boolean; yes?: boolean; auto_merge?: boolean },
+): Promise<V4GitResult> {
+  return postJSON<V4GitResult>(`/addons/${encodeURIComponent(name)}/upgrade-clusters`, data)
+}
+
 // Overloads for configureAddon
 export async function configureAddon(
   name: string,

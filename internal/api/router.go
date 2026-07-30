@@ -850,6 +850,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Addons (write — orchestrator-backed)
 	mux.HandleFunc("POST /api/v1/addons/upgrade-batch", srv.handleUpgradeAddonsBatch)
 	mux.HandleFunc("POST /api/v1/addons/{name}/upgrade", srv.handleUpgradeAddon)
+	mux.HandleFunc("POST /api/v1/addons/{name}/upgrade-clusters", srv.handleUpgradeAddonClustersV4)
 	mux.HandleFunc("POST /api/v1/addons", srv.handleAddAddon)
 	mux.HandleFunc("DELETE /api/v1/addons/{name}", srv.handleRemoveAddon)
 	mux.HandleFunc("PATCH /api/v1/addons/{name}", srv.handleConfigureAddon)

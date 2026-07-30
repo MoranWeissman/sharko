@@ -99,15 +99,19 @@ var ActionRequirements = map[string]Role{
 	"connection.disable-auto-merge": RoleOperator,
 	"addon.add-to-catalog":          RoleOperator,
 	"addon.update-catalog":          RoleOperator,
-	"default-addons.update":         RoleOperator,
-	"engine.pin-upgrade":            RoleOperator,
-	"catalog.add-internal-addon":    RoleOperator,
-	"reconciler.trigger":            RoleOperator,
-	"catalog.freshness.refresh":     RoleOperator,
-	"token.create":                  RoleOperator,
-	"token.renew":                   RoleOperator,
-	"token.revoke-own":              RoleOperator,
-	"init":                          RoleOperator,
+	// v4 Wave 2 Epic 7 Story 7.2 — subset upgrade: bumps the version pin
+	// on a chosen set of clusters in one PR. Same tier as the existing
+	// global/per-cluster addon.update-catalog upgrade write.
+	"addon.upgrade-clusters":     RoleOperator,
+	"default-addons.update":      RoleOperator,
+	"engine.pin-upgrade":         RoleOperator,
+	"catalog.add-internal-addon": RoleOperator,
+	"reconciler.trigger":         RoleOperator,
+	"catalog.freshness.refresh":  RoleOperator,
+	"token.create":               RoleOperator,
+	"token.renew":                RoleOperator,
+	"token.revoke-own":           RoleOperator,
+	"init":                       RoleOperator,
 
 	// Viewer+ actions
 	// Self-service on the caller's own profile — any authenticated user.

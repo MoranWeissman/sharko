@@ -802,6 +802,80 @@
                 }
             }
         },
+        "/addons/{name}/upgrade-clusters": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Bumps one addon's version pin to a new value on exactly the clusters listed in the request, in ONE pull request — the fleet-upgrade \"one action, one PR\" flow (v4 Wave 2 Epic 7 Story 7.2). Writes clusters/{cluster}.yaml (kind ClusterAddons) for every selected cluster only; clusters left out of the list are untouched, so the diff is one small block per cluster. Every selected cluster must already have the addon enabled — this endpoint never enables an addon as a side effect of upgrading it. Requires yes=true for confirmation (or dry_run=true to preview every file the PR would change before it opens).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Upgrade addon on a chosen subset of clusters (v4 format)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Subset upgrade request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.UpgradeAddonClustersV4Request"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Upgrade committed (or dry-run preview)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request or missing confirmation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error — including a cluster missing its assignment file, or the addon not enabled on a selected cluster",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/addons/{name}/values": {
             "get": {
                 "security": [
@@ -9999,6 +10073,34 @@
                 "status": {
                     "description": "\"success\", \"partial\", \"failed\"",
                     "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.UpgradeAddonClustersV4Request": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "type": "string"
+                },
+                "auto_merge": {
+                    "type": "boolean"
+                },
+                "clusters": {
+                    "description": "Clusters is the chosen subset to upgrade. Duplicates are dropped and\nthe set is sorted before writing, so the resulting PR diff and dry\nrun preview are deterministic regardless of request order.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "dry_run": {
+                    "type": "boolean"
+                },
+                "version": {
+                    "description": "Version is the new pin, written identically to every selected\ncluster's clusters/\u003ccluster\u003e.yaml. Required and non-empty — this\nendpoint always sets an explicit pin; use DisableAddonV4/\nEnableAddonV4(version: nil) to remove a pin and fall back to the\ncatalog default.",
+                    "type": "string"
+                },
+                "yes": {
+                    "type": "boolean"
                 }
             }
         },

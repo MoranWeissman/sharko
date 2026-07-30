@@ -217,6 +217,16 @@ type VersionMatrixRow struct {
 	CatalogVersion string                       `json:"catalog_version"`
 	Chart          string                       `json:"chart"`
 	Cells          map[string]VersionMatrixCell `json:"cells"` // key = cluster name
+	// NewestAvailable is the highest chart version Sharko has last seen in
+	// the addon's Helm repo, per internal/catalog.FreshnessScheduler's
+	// background snapshot (v4 Wave 2 Epic 7 Story 7.1) — never a live
+	// per-request Helm fetch, so loading the matrix stays cheap regardless
+	// of addon count. Empty when no snapshot exists yet (fresh install) or
+	// the last check failed.
+	NewestAvailable string `json:"newest_available,omitempty"`
+	// LastChecked is when the freshness scheduler last checked this
+	// addon's chart versions (RFC3339). Empty when no snapshot exists yet.
+	LastChecked string `json:"last_checked,omitempty"`
 }
 
 // VersionMatrixResponse is the API response.
