@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
@@ -91,6 +92,7 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 // @Param body body map[string]interface{} false "Optional provider type and region to test"
 // @Success 200 {object} map[string]interface{} "Test result"
 // @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Failure 501 {object} map[string]interface{} "No provider configured"
 // @Router /providers/test [post]
 // handleTestProvider handles POST /api/v1/providers/test — test provider connectivity.
@@ -101,6 +103,13 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 // "" (auto-default) since the V2-cleanup-53.1 arm restore. For any other
 // req.Type the factory's error message lists the valid options.
 func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
+	// SECURITY (v4-wave2 review B1): this reaches a secret store with the
+	// server's configured credentials and reports back how many cluster
+	// secrets it found. It persists nothing, but it is not a read either —
+	// same operator tier as the other connectivity tests.
+	if !authz.RequireWithResponse(w, r, "provider.test") {
+		return
+	}
 	var req struct {
 		Type   string `json:"type"`
 		Region string `json:"region"`
@@ -172,6 +181,7 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 // @Param body body map[string]interface{} true "Provider config to test"
 // @Success 200 {object} map[string]interface{} "Test result"
 // @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Router /providers/test-config [post]
 // handleTestProviderConfig tests an ad-hoc cluster-test provider configuration.
 //
@@ -182,6 +192,10 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 // cross-contamination risk here — unlike the connection fan-through, where
 // the stored namespace's provenance is ambiguous).
 func (s *Server) handleTestProviderConfig(w http.ResponseWriter, r *http.Request) {
+	// Same gate and same reasoning as handleTestProvider above.
+	if !authz.RequireWithResponse(w, r, "provider.test") {
+		return
+	}
 	var req struct {
 		Type      string `json:"type"`
 		Region    string `json:"region"`

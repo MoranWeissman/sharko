@@ -69,14 +69,18 @@ var authzAllowlist = map[string]string{
 	// body — none of these persist anything (confirmed by reading each
 	// handler body during the v4-8-4 audit). No role distinction is
 	// meaningful for a probe that changes nothing.
-	"handleTestConnection":     "connectivity probe only (connSvc.TestConnection); no persisted state",
-	"handleTestCredentials":    "tests caller-submitted credentials as given; no persisted state",
-	"handleTestProvider":       "provider connectivity probe; no persisted state",
-	"handleTestProviderConfig": "provider-config connectivity probe; no persisted state",
-	"handleTestAI":             "AI connectivity probe (one summarize call); no persisted state",
-	"handleTestAIConfig":       "AI config connectivity probe; no persisted state (also audit-exempt, same reason)",
-	"handleGetAISummary":       "read-only analysis endpoint, POST only because it accepts a large body (also audit-exempt)",
-	"handleCheckUpgrade":       "read-only version/compatibility analysis (upgradeSvc.CheckUpgrade); no persisted state",
+	//
+	// The four connection/provider tests that used to live here came OUT in
+	// the v4-wave2 security review (finding B1). "Persists nothing" turned
+	// out to be the wrong question for them: they send real credentials —
+	// including stored ones the caller never typed — to an address that
+	// comes out of the request body. They now gate on connection.test /
+	// provider.test (operator+) like any other action that reaches out with
+	// a secret. Do NOT move them back here.
+	"handleTestAI":       "AI connectivity probe (one summarize call); no persisted state",
+	"handleTestAIConfig": "AI config connectivity probe; no persisted state (also audit-exempt, same reason)",
+	"handleGetAISummary": "read-only analysis endpoint, POST only because it accepts a large body (also audit-exempt)",
+	"handleCheckUpgrade": "read-only version/compatibility analysis (upgradeSvc.CheckUpgrade); no persisted state",
 }
 
 func TestAuthzCoverage(t *testing.T) {

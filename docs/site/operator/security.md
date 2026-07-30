@@ -99,12 +99,24 @@ which write actions (and a few read actions) are allowed — it is checked on
 | Role | Who it's for | Can do |
 |------|---------------|--------|
 | `viewer` | Anyone who should be able to look, not touch | See clusters, addons, connections, pull requests, the audit log, and metrics. Manage their own profile (change their own token, clear their own GitHub token). Cannot create, change, or delete anything shared. |
-| `operator` | The people who run day-to-day operations | Everything a viewer can do, plus: register/adopt/test/diagnose clusters, enable/disable addons, restart a stuck sync, create/update connections, edit the addon catalog, create their own API tokens and renew or revoke *their own* tokens, trigger the secrets reconciler, and run the first-time init wizard. |
-| `admin` | Whoever owns the Sharko install | Everything an operator can do, plus the actions with blast radius beyond the caller's own work: delete a connection, remove or unadopt a cluster, remove an addon from the catalog, create/delete/change the role of other users, revoke *someone else's* token, clear the audit log, change AI provider settings, save dashboard layouts, edit ArgoCD resource exclusions, create/delete addon secrets, delete a pull request, refresh third-party catalog sources, and flip the security-relevant settings toggles (probe mode, inline credentials, self-heal). |
+| `operator` | The people who run day-to-day operations | Everything a viewer can do, plus: register/adopt/test/diagnose clusters, enable/disable addons, restart a stuck sync, create/update connections, test connections and credential providers, edit the addon catalog, create API tokens and renew *their own* tokens, trigger the secrets reconciler, and run the first-time init wizard. |
+| `admin` | Whoever owns the Sharko install | Everything an operator can do, plus the actions with blast radius beyond the caller's own work: delete a connection, remove or unadopt a cluster, remove an addon from the catalog, create/delete/change the role of other users, revoke any token, renew *someone else's* token, clear the audit log, change AI provider settings, save dashboard layouts, edit ArgoCD resource exclusions, create/delete addon secrets, delete a pull request, refresh third-party catalog sources, and flip the security-relevant settings toggles (probe mode, inline credentials, self-heal). |
 
 **New users and new API tokens default to `viewer`** if no role is given —
 the caller (an admin) has to deliberately opt a person up to `operator` or
 `admin`, both at `POST /api/v1/users` and `POST /api/v1/tokens`.
+
+**A token can never carry a role higher than the person who created it.** An
+operator asking for an `admin` token is refused with a 403; only an admin can
+create an admin token. Without that ceiling, "create your own API token"
+would be a one-request way for an operator to hand themselves every
+permission their own account is refused.
+
+**Renewing a token follows who owns it.** An operator may renew a token they
+created (or a token renewing itself, since an API key authenticates under its
+own name); renewing anyone else's — including a token created before Sharko
+started recording who asked for it — takes an admin. Renewing keeps a live
+credential alive, so it sits on the same own/other line as revoking.
 
 An action Sharko's code doesn't recognize is treated as **admin-only**
 (fail-closed) rather than open to everyone — a bug that adds a new write path
@@ -192,6 +204,22 @@ Connection credentials (ArgoCD tokens, Git tokens) stored in the `sharko-connect
 
 !!! tip
     To rotate the encryption key, update the `SHARKO_ENCRYPTION_KEY` env var and re-save all connections in the Settings UI.
+
+### A stored credential only ever goes to its own address
+
+`POST /connections/test-credentials` lets you re-test a saved connection
+without re-typing its tokens: leave the token fields blank, name the
+connection, and Sharko fills in what it has stored.
+
+Sharko will only do that for the address the connection already points at. If
+the request names a different Git repository URL, a different Git provider, or
+a different ArgoCD server, the stored token is **not** used and the call is
+refused with a 422 telling you to submit that address's credentials
+explicitly. Otherwise "test this connection" would be a way to have Sharko
+post its stored secrets to any address the caller cares to name. All four
+connectivity tests (`/connections/test`, `/connections/test-credentials`,
+`/providers/test`, `/providers/test-config`) also require `operator` — they
+reach out with real credentials, which is not a read.
 
 ## Network Policy
 

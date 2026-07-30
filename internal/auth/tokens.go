@@ -52,6 +52,25 @@ const (
 // a real credential, so any detail is information they did not have.
 var ErrTokenNotFound = errors.New("token not recognized")
 
+// TokenNotFoundError is returned by RenewToken / RevokeToken when no stored
+// token carries the given name.
+//
+// This is deliberately NOT the same error as ErrTokenNotFound above.
+// ErrTokenNotFound belongs to the AUTHENTICATION path, where the caller
+// presented a secret and must be told nothing at all. This one belongs to the
+// MANAGEMENT path, where an already-authorized caller named a token themselves
+// — echoing that name back tells them nothing they did not already know.
+//
+// Handlers should match on this type (errors.As) rather than sniffing the
+// message text for "not found".
+type TokenNotFoundError struct {
+	Name string
+}
+
+func (e *TokenNotFoundError) Error() string {
+	return fmt.Sprintf("token %q not found", e.Name)
+}
+
 // TokenExpiredError is returned by AuthenticateToken when the presented value
 // matched a stored token whose expiry has passed. The caller already holds
 // this token's secret, so naming the token and its expiry date in the refusal
@@ -78,6 +97,13 @@ type APIToken struct {
 	ExpiresAt *time.Time `json:"expires_at"`
 	LastUsed  time.Time  `json:"last_used_at,omitempty"`
 
+	// CreatedBy is the username of whoever asked for this token. It is what
+	// the own/other split on renew keys off (see TokenOwnedBy). Empty for
+	// tokens minted outside a request — bootstrap, tests, or any token that
+	// already existed before this field did — and an empty value is owned by
+	// nobody, so only an admin can renew those.
+	CreatedBy string `json:"created_by,omitempty"`
+
 	// Derived fields, filled in on read. Never stored.
 	Status       string `json:"status,omitempty"`
 	Expired      bool   `json:"expired"`
@@ -98,6 +124,7 @@ func (t *APIToken) view(now time.Time) APIToken {
 		Role:      t.Role,
 		CreatedAt: t.CreatedAt,
 		LastUsed:  t.LastUsed,
+		CreatedBy: t.CreatedBy,
 	}
 	if t.ExpiresAt != nil {
 		exp := *t.ExpiresAt
@@ -139,6 +166,14 @@ func resolveExpiryDays(days int) (int, error) {
 // of DefaultTokenExpiryDays; anything else must be within
 // [MinTokenExpiryDays, MaxTokenExpiryDays].
 func (s *Store) CreateToken(name, role string, expiresInDays int) (string, error) {
+	return s.CreateTokenFor("", name, role, expiresInDays)
+}
+
+// CreateTokenFor is CreateToken with the creating user recorded on the token,
+// so a later renew can tell "my token" from "somebody else's". Pass an empty
+// owner when there is no user behind the call (bootstrap, tests) — such a
+// token is owned by nobody and only an admin can renew it.
+func (s *Store) CreateTokenFor(owner, name, role string, expiresInDays int) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("token name is required")
 	}
@@ -182,6 +217,7 @@ func (s *Store) CreateToken(name, role string, expiresInDays int) (string, error
 		Role:      role,
 		CreatedAt: now,
 		ExpiresAt: &expiresAt,
+		CreatedBy: owner,
 	}
 
 	// Re-check under write lock to prevent TOCTU race (bcrypt is ~100ms).
@@ -194,7 +230,7 @@ func (s *Store) CreateToken(name, role string, expiresInDays int) (string, error
 	s.mu.Unlock()
 
 	// SECURITY: never log the plaintext or the hash — name/role/expiry only.
-	slog.Info("API token created", "name", name, "role", role, "expires_at", expiresAt.UTC().Format(time.RFC3339))
+	slog.Info("API token created", "name", name, "role", role, "created_by", owner, "expires_at", expiresAt.UTC().Format(time.RFC3339))
 	return plaintext, nil
 }
 
@@ -220,7 +256,7 @@ func (s *Store) RenewToken(name string, expiresInDays int) (APIToken, error) {
 	tok, exists := s.tokens[name]
 	if !exists {
 		s.mu.Unlock()
-		return APIToken{}, fmt.Errorf("token %q not found", name)
+		return APIToken{}, &TokenNotFoundError{Name: name}
 	}
 	tok.ExpiresAt = &expiresAt
 	view := tok.view(now)
@@ -256,6 +292,26 @@ func (s *Store) GetToken(name string) (APIToken, bool) {
 	return tok.view(time.Now()), true
 }
 
+// TokenOwnedBy reports whether the named token belongs to username.
+//
+// A caller owns a token when they created it (CreatedBy), or when they ARE it
+// — an API key authenticates as its own name, so a token renewing itself is
+// the same "my own credential" case. An unknown token, or a token created
+// before anyone was recorded against it, is owned by nobody: the answer is
+// false and the action falls to the admin-only branch.
+func (s *Store) TokenOwnedBy(name, username string) bool {
+	if name == "" || username == "" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tok, ok := s.tokens[name]
+	if !ok {
+		return false
+	}
+	return tok.CreatedBy == username || tok.Name == username
+}
+
 // RevokeToken deletes a token by name. A revoked token stops working
 // immediately — there is no grace period.
 func (s *Store) RevokeToken(name string) error {
@@ -263,7 +319,7 @@ func (s *Store) RevokeToken(name string) error {
 	defer s.mu.Unlock()
 
 	if _, exists := s.tokens[name]; !exists {
-		return fmt.Errorf("token %q not found", name)
+		return &TokenNotFoundError{Name: name}
 	}
 	delete(s.tokens, name)
 

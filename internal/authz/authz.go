@@ -48,15 +48,19 @@ func (r Role) String() string {
 // Actions not in the map are treated as admin-only (fail-closed).
 var ActionRequirements = map[string]Role{
 	// Admin-only actions
-	"connection.delete":                  RoleAdmin,
-	"connection.enable-auto-merge":       RoleAdmin,
-	"cluster.remove":                     RoleAdmin,
-	"cluster.unadopt":                    RoleAdmin,
-	"addon.remove-from-catalog":          RoleAdmin,
-	"user.create":                        RoleAdmin,
-	"user.delete":                        RoleAdmin,
-	"user.change-role":                   RoleAdmin,
-	"token.revoke-other":                 RoleAdmin,
+	"connection.delete":            RoleAdmin,
+	"connection.enable-auto-merge": RoleAdmin,
+	"cluster.remove":               RoleAdmin,
+	"cluster.unadopt":              RoleAdmin,
+	"addon.remove-from-catalog":    RoleAdmin,
+	"user.create":                  RoleAdmin,
+	"user.delete":                  RoleAdmin,
+	"user.change-role":             RoleAdmin,
+	"token.revoke-other":           RoleAdmin,
+	// Renewing somebody ELSE's token. The own/other split mirrors revoke:
+	// pushing out the expiry of a token you do not own keeps a credential
+	// alive that only its owner should be able to keep alive.
+	"token.renew-other":                  RoleAdmin,
 	"audit.clear":                        RoleAdmin,
 	"ai.config":                          RoleAdmin,
 	"ai.provider":                        RoleAdmin,
@@ -123,9 +127,18 @@ var ActionRequirements = map[string]Role{
 	"reconciler.trigger":         RoleOperator,
 	"catalog.freshness.refresh":  RoleOperator,
 	"token.create":               RoleOperator,
-	"token.renew":                RoleOperator,
+	"token.renew-own":            RoleOperator,
 	"token.revoke-own":           RoleOperator,
 	"init":                       RoleOperator,
+
+	// Connectivity tests (v4-wave2 review B1). These endpoints reach out to
+	// a Git host, an ArgoCD server or a secret store with real credentials —
+	// including, on the saved-connection path, credentials the caller never
+	// typed. They persist nothing, but "sends a stored secret somewhere" is
+	// not a read, so they sit with the other operator actions rather than
+	// being open to every authenticated viewer.
+	"connection.test": RoleOperator,
+	"provider.test":   RoleOperator,
 
 	// Viewer+ actions
 	// Self-service on the caller's own profile — any authenticated user.

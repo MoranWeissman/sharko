@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
@@ -44,7 +43,7 @@ type RenewTokenRequest struct {
 // handleCreateToken godoc
 //
 // @Summary Create API token
-// @Description Creates a new long-lived API token for programmatic access. The token expires after 90 days unless expires_in_days (1-365) says otherwise. The plaintext value is shown once and never again.
+// @Description Creates a new long-lived API token for programmatic access. The token expires after 90 days unless expires_in_days (1-365) says otherwise. The plaintext value is shown once and never again. A token can carry at most the role of the caller who created it — asking for a higher role is refused with 403.
 // @Tags auth
 // @Accept json
 // @Produce json
@@ -70,7 +69,23 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	plaintext, err := s.authStore.CreateToken(req.Name, req.Role, req.ExpiresInDays)
+	// SECURITY (v4-wave2 review B2): a token can carry at most the role of
+	// whoever asked for it. Without this ceiling an operator could mint an
+	// admin token and then use it to do everything their own account is not
+	// allowed to do — a one-request escalation to full admin.
+	//
+	// authz.RoleFromString maps anything unrecognised to viewer, so a
+	// nonsense role never sneaks past this check; it falls through to the
+	// store, which rejects it with the plain "role must be ..." message.
+	caller := callerRole(r)
+	if req.Role != "" && !caller.AtLeast(authz.RoleFromString(req.Role)) {
+		writeError(w, http.StatusForbidden, fmt.Sprintf(
+			"you cannot create a %s token — a token can carry at most your own role, and yours is %s",
+			req.Role, caller))
+		return
+	}
+
+	plaintext, err := s.authStore.CreateTokenFor(r.Header.Get("X-Sharko-User"), req.Name, req.Role, req.ExpiresInDays)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -126,7 +141,7 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 // handleRenewToken godoc
 //
 // @Summary Renew API token
-// @Description Pushes a token's expiry out by a fresh window (90 days by default, or expires_in_days between 1 and 365). The secret value does not change, so every client using the token keeps working.
+// @Description Pushes a token's expiry out by a fresh window (90 days by default, or expires_in_days between 1 and 365). The secret value does not change, so every client using the token keeps working. An operator may renew tokens they own; renewing anyone else's token requires an admin.
 // @Tags auth
 // @Accept json
 // @Produce json
@@ -140,13 +155,29 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 // @Failure 404 {object} map[string]interface{} "Token not found"
 // @Router /tokens/{name}/renew [post]
 func (s *Server) handleRenewToken(w http.ResponseWriter, r *http.Request) {
-	if !authz.RequireWithResponse(w, r, "token.renew") {
-		return
-	}
-
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "token name is required")
+		return
+	}
+
+	// SECURITY (v4-wave2 review H1): renewing a token keeps a live credential
+	// alive, so it follows the same own/other split as revoking one. Renewing
+	// your own token is an operator action; renewing anybody else's — which
+	// includes every token nobody is recorded against — takes an admin.
+	//
+	// Resolving ownership BEFORE the role check also means an operator asking
+	// about a token that does not exist gets the same 403 as one asking about
+	// a token they do not own, so the refusal never doubles as a way to find
+	// out which token names are real.
+	//
+	// Both branches name their action as a literal so the mechanical authz
+	// coverage guard can see them (see authz_coverage_test.go).
+	if s.authStore != nil && s.authStore.TokenOwnedBy(name, r.Header.Get("X-Sharko-User")) {
+		if !authz.RequireWithResponse(w, r, "token.renew-own") {
+			return
+		}
+	} else if !authz.RequireWithResponse(w, r, "token.renew-other") {
 		return
 	}
 
@@ -159,7 +190,8 @@ func (s *Server) handleRenewToken(w http.ResponseWriter, r *http.Request) {
 
 	token, err := s.authStore.RenewToken(name, req.ExpiresInDays)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		var notFound *auth.TokenNotFoundError
+		if errors.As(err, &notFound) {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -206,7 +238,8 @@ func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.authStore.RevokeToken(name); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		var notFound *auth.TokenNotFoundError
+		if errors.As(err, &notFound) {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
