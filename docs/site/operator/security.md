@@ -90,6 +90,59 @@ pick up an expiry date.
 Full request and response shapes are in the
 [API endpoints reference](../api/endpoints.md#api-keys-tokens).
 
+## Application Roles
+
+Every user and every API key carries one of three roles. The role decides
+which write actions (and a few read actions) are allowed — it is checked on
+**every** request, not just at login.
+
+| Role | Who it's for | Can do |
+|------|---------------|--------|
+| `viewer` | Anyone who should be able to look, not touch | See clusters, addons, connections, pull requests, the audit log, and metrics. Manage their own profile (change their own token, clear their own GitHub token). Cannot create, change, or delete anything shared. |
+| `operator` | The people who run day-to-day operations | Everything a viewer can do, plus: register/adopt/test/diagnose clusters, enable/disable addons, restart a stuck sync, create/update connections, edit the addon catalog, create their own API tokens and renew or revoke *their own* tokens, trigger the secrets reconciler, and run the first-time init wizard. |
+| `admin` | Whoever owns the Sharko install | Everything an operator can do, plus the actions with blast radius beyond the caller's own work: delete a connection, remove or unadopt a cluster, remove an addon from the catalog, create/delete/change the role of other users, revoke *someone else's* token, clear the audit log, change AI provider settings, save dashboard layouts, edit ArgoCD resource exclusions, create/delete addon secrets, delete a pull request, refresh third-party catalog sources, and flip the security-relevant settings toggles (probe mode, inline credentials, self-heal). |
+
+**New users and new API tokens default to `viewer`** if no role is given —
+the caller (an admin) has to deliberately opt a person up to `operator` or
+`admin`, both at `POST /api/v1/users` and `POST /api/v1/tokens`.
+
+An action Sharko's code doesn't recognize is treated as **admin-only**
+(fail-closed) rather than open to everyone — a bug that adds a new write path
+without registering its action shows up as "nobody but admin can use this
+yet," never as "anyone can use this."
+
+### The honest limit: roles are coarse, not scoped
+
+As of v4, permissions are **not** scoped to a specific cluster or a specific
+addon. An `operator` who can enable addons can enable them on *any*
+registered cluster — there is no "operator for cluster X only" or "operator
+for addon Y only." The three roles are the entire permission model.
+
+This is a known gap, not an oversight: finer-grained, per-cluster or
+per-addon permissions are tracked as future work (see the
+[roadmap](../community/roadmap.md)) and are intentionally out of scope for
+v4. If your team needs cluster-level isolation today, the practical
+workaround is separate Sharko installs per team/cluster-group rather than
+one shared install with mixed trust levels.
+
+### Where the mapping lives
+
+The full action → role table is `internal/authz/authz.go`
+(`authz.ActionRequirements`). It is enforced identically on two surfaces:
+
+- **REST API** — every mutating handler (`POST`/`PUT`/`PATCH`/`DELETE`) calls
+  `authz.RequireWithResponse` naming its action before doing anything else.
+- **AI assistant tools** — the handful of tools that write (enable/disable an
+  addon, bump a catalog version, trigger an ArgoCD sync/refresh) check the
+  SAME action table before touching Git or ArgoCD, so a viewer asking the
+  assistant to "enable datadog on prod" gets the identical refusal a direct
+  API call would get.
+
+Both surfaces are covered by a test that mechanically re-derives the route
+and tool inventory from the source (rather than trusting a hand-maintained
+list to stay in sync): `internal/api/authz_coverage_test.go` and
+`internal/api/ai_tools_authz_parity_test.go`.
+
 ## Pod Security
 
 Sharko's default security context enforces a hardened pod configuration:

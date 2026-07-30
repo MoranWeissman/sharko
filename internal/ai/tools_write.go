@@ -31,6 +31,20 @@ var writeToolActions = map[string]string{
 	"refresh_argocd_app":   "reconciler.trigger",
 }
 
+// WriteToolActions returns a copy of the tool→action mapping so external
+// packages (notably internal/api's mechanical authz-completeness test, v4-8-4)
+// can verify — without duplicating this table by hand — that every AI write
+// tool's action is a real, currently-enforced authz action and not an orphan
+// or stale string. A copy is returned so callers can't mutate the package's
+// live gating table.
+func WriteToolActions() map[string]string {
+	out := make(map[string]string, len(writeToolActions))
+	for tool, action := range writeToolActions {
+		out[tool] = action
+	}
+	return out
+}
+
 // authorizeWriteTool returns nil if callerRole may invoke the named tool.
 // For read tools (not in writeToolActions) it always returns nil. For write
 // tools it returns a non-nil refusal error when the caller's role is below the
