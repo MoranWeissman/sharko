@@ -25,6 +25,7 @@ import type {
   MigrationMigrateRequest,
   MigrationPlan,
   MigrationStatus,
+  RuntimeHandoffReport,
   ObservabilityOverviewResponse,
   PullRequestsResponse,
   RegisterClusterResult,
@@ -1782,4 +1783,8 @@ export const api = {
   getMigrationStatus: () => fetchJSON<MigrationStatus>('/migration/status'),
   previewMigration: () => postJSON<MigrationPlan>('/migration/preview', {}),
   migrateRepo: (req: MigrationMigrateRequest = { yes: true }) => migrateRepoRequest(req),
+  // The fourth door, which a person normally never presses: finish the
+  // ArgoCD side when the automatic run after the merge did not happen.
+  // Idempotent, so pressing it twice costs nothing.
+  completeMigration: () => postJSON<RuntimeHandoffReport>('/migration/complete', {}),
 }

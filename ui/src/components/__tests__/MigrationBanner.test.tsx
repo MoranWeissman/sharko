@@ -23,6 +23,7 @@ vi.mock('@/services/api', () => ({
     getMigrationStatus: vi.fn(),
     previewMigration: vi.fn(),
     migrateRepo: vi.fn(),
+    completeMigration: vi.fn(),
   },
   MigrationPRAlreadyOpenError: class MigrationPRAlreadyOpenError extends Error {
     prUrl: string;
@@ -319,5 +320,85 @@ describe('MigrationBanner', () => {
     fireEvent.click(toggle); // collapses — must NOT fetch again
     await waitFor(() => expect(screen.queryByText('could not build the plan')).not.toBeInTheDocument());
     expect(mockedApi.previewMigration).toHaveBeenCalledTimes(1);
+  });
+
+  // ─── the ArgoCD half (v4-wave2 review findings B-1 / H-2) ─────────────
+  //
+  // A repo whose files are on the new format but whose old ApplicationSets
+  // are still in ArgoCD is NOT finished. Nothing is broken — the addons
+  // keep running — but the new setup is not in charge, and the person has
+  // to be able to see that and press the button that finishes it.
+
+  const pendingHandoffStatus = {
+    format: 'v4' as const,
+    migration_available: false,
+    message: 'this repo already uses the current format, but the ArgoCD side of the migration has not finished — 1 ApplicationSet from the old setup is still in ArgoCD (cert-manager).',
+    handoff: {
+      state: 'pending' as const,
+      message: '1 ApplicationSet from the old setup is still in ArgoCD (cert-manager). Finish the migration to retire it and start the new engine.',
+      application_sets: ['cert-manager'],
+      engine_applied: false,
+    },
+  };
+
+  it('shows the unfinished-ArgoCD-side banner on a v4 repo with a pending handoff', async () => {
+    mockedApi.getMigrationStatus.mockResolvedValue(pendingHandoffStatus);
+    renderAs(adminAuth);
+
+    const banner = await screen.findByTestId('migration-handoff-banner');
+    expect(banner).toHaveTextContent('The migration is not finished in ArgoCD');
+    expect(banner).toHaveTextContent('cert-manager');
+    // Reassurance matters as much as the warning: nothing is down.
+    expect(banner).toHaveTextContent('Your addons keep running either way');
+    // It must NOT claim the repo is still on the old layout — it is not.
+    expect(screen.queryByTestId('migration-banner')).not.toBeInTheDocument();
+  });
+
+  it('hides the Finish button from a viewer', async () => {
+    mockedApi.getMigrationStatus.mockResolvedValue(pendingHandoffStatus);
+    renderAs(viewerAuth);
+
+    await screen.findByTestId('migration-handoff-banner');
+    expect(screen.queryByTestId('finish-migration')).not.toBeInTheDocument();
+  });
+
+  it('clears itself once Finish completes the handoff', async () => {
+    mockedApi.getMigrationStatus
+      .mockResolvedValueOnce(pendingHandoffStatus)
+      .mockResolvedValue({
+        format: 'v4',
+        migration_available: false,
+        message: 'this repo already uses the current format — nothing to migrate',
+        handoff: { state: 'complete', message: 'Nothing from the old setup is left in ArgoCD.', engine_applied: true },
+      });
+    mockedApi.completeMigration.mockResolvedValue({
+      state: 'complete',
+      message: 'The old setup is retired and the new engine is running.',
+      engine_applied: true,
+    });
+    renderAs(adminAuth);
+
+    const finish = await screen.findByTestId('finish-migration');
+    await act(async () => {
+      fireEvent.click(finish);
+    });
+
+    expect(mockedApi.completeMigration).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(screen.queryByTestId('migration-handoff-banner')).not.toBeInTheDocument(),
+    );
+  });
+
+  it('does not render the handoff banner while the repo is still v3', async () => {
+    mockedApi.getMigrationStatus.mockResolvedValue({
+      format: 'v3',
+      migration_available: true,
+      message: 'v3 format — migration available',
+      handoff: { state: 'pending', message: 'should be ignored while still v3', engine_applied: false },
+    });
+    renderAs(adminAuth);
+
+    await screen.findByTestId('migration-banner');
+    expect(screen.queryByTestId('migration-handoff-banner')).not.toBeInTheDocument();
   });
 });

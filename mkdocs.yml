@@ -66,6 +66,7 @@ nav:
     - Configuration: operator/configuration.md
     - 'Upgrading & Rollback Safety': operator/upgrading-and-rollback.md
     - 'Taking Over a Fleet That Is Already Running': operator/takeover-playbook.md
+    - 'Migrating a Repo to the New Format': operator/migrating-to-the-new-format.md
     - 'If You Remove Sharko (no lock-in)': operator/removing-sharko.md
     - 'Managing Cluster Connections Yourself': operator/self-managed-connections.md
     - 'Reference — Connection Doctor': operator/connection-doctor.md
