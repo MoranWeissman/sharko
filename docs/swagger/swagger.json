@@ -5123,6 +5123,105 @@
                 }
             }
         },
+        "/engine/pin": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Compares the engine chart version pinned in the connected repo's engine/application.yaml against the version bundled with this Sharko build. Responds cleanly (v4_repo=false) for v3 repos or repos not yet bootstrapped — never errors on a missing pin.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "engine"
+                ],
+                "summary": "Check engine pin",
+                "responses": {
+                    "200": {
+                        "description": "Check result",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.EnginePinCheckResult"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/engine/pin/upgrade": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Opens a pull request that changes ONLY the engine pin's targetRevision to the version bundled with this Sharko build. Nothing in any cluster changes until the PR is merged. Without dry_run=true, returns a preview of the (single-line) diff with no side effects.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "engine"
+                ],
+                "summary": "Upgrade engine pin",
+                "parameters": [
+                    {
+                        "description": "Upgrade request",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.EngineUpgradePinRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Upgrade PR result (or dry-run preview)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request — no engine pin, or already up to date",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/fleet/status": {
             "get": {
                 "security": [
@@ -8355,6 +8454,31 @@
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.EnginePinCheckResult": {
+            "type": "object",
+            "properties": {
+                "bundled_version": {
+                    "description": "BundledVersion is this Sharko build's own engine chart version.\nEmpty when V4Repo is false.",
+                    "type": "string"
+                },
+                "message": {
+                    "description": "Message is a short, human-readable summary safe to surface directly\nto a user without further formatting.",
+                    "type": "string"
+                },
+                "pinned_version": {
+                    "description": "PinnedVersion is the version currently pinned in the repo's\nengine/application.yaml. Empty when V4Repo is false.",
+                    "type": "string"
+                },
+                "upgrade_available": {
+                    "description": "UpgradeAvailable is true when BundledVersion is newer than\nPinnedVersion. Always false when V4Repo is false.",
+                    "type": "boolean"
+                },
+                "v4_repo": {
+                    "description": "V4Repo is false when engine/application.yaml does not exist in the\nconnected repo — a v3 repo, or a v4 repo that has not been\nbootstrapped yet. Every other field is the zero value in that case.\nThis is NOT an error condition (story brief: \"v3 repos: the check\nmust respond cleanly ... never error\").",
+                    "type": "boolean"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_orchestrator.FilePreview": {
             "type": "object",
             "properties": {
@@ -8678,6 +8802,19 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "internal_api.EngineUpgradePinRequest": {
+            "type": "object",
+            "properties": {
+                "auto_merge": {
+                    "description": "AutoMerge overrides the connection-level PRAutoMerge default for\nthis PR only. nil = fall back to the connection default.",
+                    "type": "boolean"
+                },
+                "dry_run": {
+                    "description": "DryRun, when true, returns a preview of the diff with no side\neffects. Also settable via ?dry_run=true.",
+                    "type": "boolean"
                 }
             }
         },

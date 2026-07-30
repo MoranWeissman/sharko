@@ -289,10 +289,116 @@ jobs:
           echo "Signing chart ${REF}@${DIGEST}"
           cosign sign --yes "${REF}@${DIGEST}"
 
+  # v4 Wave 1 Story 2.4 — publish the sharko-engine chart (charts/sharko-engine)
+  # as a signed OCI artifact, same registry namespace and same
+  # package/push/sign shape as the helm-package job above for the sharko
+  # chart. Kept as its OWN job (own checkout, own working directory)
+  # rather than an extra step in helm-package: that job's
+  # `CHART_FILE=$(ls sharko-*.tgz)` glob would otherwise also match
+  # `sharko-engine-<version>.tgz` in the same workspace and break the
+  # existing chart's push.
+  #
+  # Chart-version rule (docs/design/2026-07-30-v4-data-file-format.md
+  # section 5 leaves the exact number open — "whenever Sharko releases new
+  # deploy logic", not tied to the product version by name): this job
+  # locks the simplest rule, chart version == product version at release,
+  # by reusing the exact `--version`/`--app-version` override the sharko
+  # chart's own package step already applies over its committed
+  # Chart.yaml version. Every product release therefore republishes the
+  # engine chart even when engine logic did not change — a known,
+  # deliberate trade-off (see charts/sharko-engine/README.md and the
+  # story's dispatch report); decoupling later is possible without
+  # breaking anything, since every consumer only ever reads the explicit
+  # pin in their own engine/application.yaml, never "latest".
+  helm-package-engine:
+    name: Package & Push Engine Chart
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    permissions:
+      contents: read
+      packages: write
+      # OIDC token for cosign keyless signing of the OCI Helm chart.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${{ github.event.workflow_run.head_branch }}"
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: latest
+
+      # Docker login writes creds to ~/.docker/config.json — cosign reads
+      # from there. helm registry login alone writes only to the helm
+      # config dir, leaving cosign unauthenticated against GHCR.
+      - name: Log in to GHCR (Docker — for cosign)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to GHCR (Helm OCI)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} \
+            --username ${{ github.actor }} \
+            --password-stdin
+
+      - name: Package engine Helm chart
+        run: helm package charts/sharko-engine --version ${{ steps.version.outputs.VERSION }} --app-version ${{ steps.version.outputs.TAG }}
+
+      - name: Push engine Helm chart to GHCR
+        id: helm_push
+        run: |
+          CHART_FILE=$(ls sharko-engine-*.tgz)
+          # `helm push` writes a `.digest` companion in the working dir; we
+          # capture the digest from stdout for the cosign sign step below.
+          OUTPUT=$(helm push "$CHART_FILE" oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} 2>&1)
+          echo "$OUTPUT"
+          DIGEST=$(echo "$OUTPUT" | awk '/^Digest:/ {print $2}')
+          if [ -z "$DIGEST" ]; then
+            echo "::error::could not extract engine chart digest from helm push output"
+            exit 1
+          fi
+          echo "DIGEST=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      # cosign-sign the OCI Helm chart so consumers can
+      # `cosign verify oci://ghcr.io/moranweissman/sharko/sharko-engine:vX.Y.Z`
+      # before `helm pull`. Same identity policy as the sharko chart's own
+      # signing step.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Sign published engine Helm chart (keyless)
+        env:
+          COSIGN_YES: "true"
+          DIGEST: ${{ steps.helm_push.outputs.DIGEST }}
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sharko-engine:${VERSION}"
+          # Sign by digest, same rationale as the sharko chart's signing step.
+          echo "Signing chart ${REF}@${DIGEST}"
+          cosign sign --yes "${REF}@${DIGEST}"
+
   goreleaser:
     name: Release CLI Binaries
     runs-on: ubuntu-latest
-    needs: [sign-catalog-entries, build-and-push, helm-package]
+    needs: [sign-catalog-entries, build-and-push, helm-package, helm-package-engine]
     permissions:
       contents: write
       # OIDC token for cosign keyless signing of every release archive

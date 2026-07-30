@@ -162,6 +162,35 @@ jobs:
             exit 1
           fi
 
+  # v4 Wave 1 Story 2.5 — internal/engineversion/generated.go is generated
+  # from charts/sharko-engine/Chart.yaml (name + version). It is the ONLY
+  # thing that lets the server know its own bundled engine chart version
+  # for the pin-bump check, so it must never silently drift from the chart
+  # Story 2.4's release pipeline actually packages, pushes, and signs.
+  # Mirrors the schemas-up-to-date + provider-types-up-to-date shape.
+  engine-version-up-to-date:
+    name: Engine Version Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Regenerate engine version
+        run: make generate-engine-version
+
+      - name: Check for diff
+        run: |
+          if ! git diff --exit-code -- internal/engineversion/generated.go; then
+            echo "internal/engineversion/generated.go is out of date."
+            echo "Run 'make generate-engine-version' and commit the result."
+            exit 1
+          fi
+
   # PR-time Sharko YAML validation.
   # On every pull request, this job builds the sharko CLI binary and
   # runs `sharko validate-config` against every changed *.yaml / *.yml
@@ -264,6 +293,27 @@ jobs:
           echo "$RENDERED" | grep -q "kind: AppProject" \
             || { echo "::error::bootstrap chart rendered NO AppProject from an enveloped catalog (V2-cleanup-17 regression)"; exit 1; }
           echo "bootstrap chart render guard passed: ApplicationSet + AppProject present"
+
+      # v4 Wave 1 Story 2.4 — charts/sharko-engine is the v4 replacement for
+      # templates/bootstrap/ (see charts/sharko-engine/README.md and
+      # docs/design/2026-07-30-v4-data-file-format.md). This job previously
+      # linted only charts/sharko/ + templates/bootstrap/; add the engine
+      # chart to the same gate rather than leaving it uncovered. Render
+      # against the committed fixture repo (tests/enginerender/testdata/,
+      # the design doc's own worked example) — the exact commands documented
+      # in charts/sharko-engine/README.md's "Rendering locally" section, so
+      # that doc and this CI step cannot silently drift apart.
+      - name: Engine chart lint + render regression (v4 Wave 1 Story 2.4)
+        run: |
+          helm lint charts/sharko-engine/
+          RENDERED=$(helm template testengine charts/sharko-engine/ \
+            --values tests/enginerender/testdata/engine-values.yaml \
+            --values tests/enginerender/testdata/catalog/addons.yaml)
+          echo "$RENDERED" | grep -q "kind: ApplicationSet" \
+            || { echo "::error::sharko-engine chart rendered NO ApplicationSet from the fixture repo — addons would not deploy"; exit 1; }
+          echo "$RENDERED" | grep -q "kind: AppProject" \
+            || { echo "::error::sharko-engine chart rendered NO AppProject from the fixture repo"; exit 1; }
+          echo "engine chart render guard passed: ApplicationSet + AppProject present"
 
   security-scan:
     name: Security Scan
