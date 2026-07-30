@@ -34,6 +34,95 @@ func TestLoad_Embedded(t *testing.T) {
 	}
 }
 
+// TestLoad_ExtendedEntry_ExternalDNS is the v4 wave 1 Story 3.1 acceptance
+// test, verbatim from the epic: "given a catalog entry for external-dns,
+// when I open it in any door, I see description, chart location, ...
+// required values with plain descriptions, needed secrets, known quirks,
+// and a docs link." All of that is one CatalogEntry struct — there is no
+// per-addon JSON Schema to look up.
+func TestLoad_ExtendedEntry_ExternalDNS(t *testing.T) {
+	cat, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	e, ok := cat.Get("external-dns")
+	if !ok {
+		t.Fatalf("expected external-dns in catalog")
+	}
+	if strings.TrimSpace(e.Description) == "" {
+		t.Errorf("external-dns: missing description")
+	}
+	if e.Chart == "" || e.Repo == "" {
+		t.Errorf("external-dns: missing chart location (chart=%q repo=%q)", e.Chart, e.Repo)
+	}
+	if e.DocsURL == "" {
+		t.Errorf("external-dns: missing docs link")
+	}
+	if len(e.RequiredValues) == 0 {
+		t.Errorf("external-dns: expected at least one required value")
+	}
+	for _, rv := range e.RequiredValues {
+		if rv.Key == "" || rv.Description == "" {
+			t.Errorf("external-dns: required value %+v missing key or plain-English description", rv)
+		}
+	}
+	if len(e.Secrets) == 0 {
+		t.Errorf("external-dns: expected at least one needed secret")
+	}
+	for _, sec := range e.Secrets {
+		if sec.Name == "" || sec.Description == "" {
+			t.Errorf("external-dns: secret %+v missing name or plain-English description", sec)
+		}
+	}
+	if len(e.Quirks) == 0 {
+		t.Errorf("external-dns: expected at least one known quirk")
+	}
+}
+
+// TestLoad_ExtendedEntry_FieldsRoundTripThroughJSON confirms the new
+// extended-entry fields survive the JSON encoding the API layer uses (both
+// the curated-catalog handlers and the merged view read CatalogEntry
+// straight off Load()/MergeDelta() with no field-stripping in between).
+func TestLoad_ExtendedEntry_FieldsRoundTripThroughJSON(t *testing.T) {
+	y := `
+addons:
+  - name: widget
+    description: A test addon.
+    chart: widget
+    repo: https://charts.example.com
+    default_namespace: widget
+    maintainers: [example]
+    license: Apache-2.0
+    category: security
+    curated_by: [artifacthub-verified]
+    required_values:
+      - key: provider
+        description: Which backend to target.
+    secrets:
+      - name: API token
+        description: Needed to talk to the backend.
+    quirks:
+      - "Restarts on config change."
+`
+	cat, err := LoadBytes([]byte(y))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	e, ok := cat.Get("widget")
+	if !ok {
+		t.Fatalf("expected widget entry")
+	}
+	if len(e.RequiredValues) != 1 || e.RequiredValues[0].Key != "provider" {
+		t.Errorf("required_values did not round-trip: %+v", e.RequiredValues)
+	}
+	if len(e.Secrets) != 1 || e.Secrets[0].Name != "API token" {
+		t.Errorf("secrets did not round-trip: %+v", e.Secrets)
+	}
+	if len(e.Quirks) != 1 || e.Quirks[0] != "Restarts on config change." {
+		t.Errorf("quirks did not round-trip: %+v", e.Quirks)
+	}
+}
+
 func TestLoadBytes_HappyPath(t *testing.T) {
 	y := `
 addons:

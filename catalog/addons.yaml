@@ -17,6 +17,16 @@
 #   - github_stars: round-number approximations; refreshed by the same daily
 #     job in-memory (not written back to this file).
 #
+# v4 wave 1 Story 3.1 ("extended entries"): required_values, secrets, and
+# quirks are the addon's operational knowledge — what a person needs to
+# know to actually run it, in plain English. All three are optional (many
+# addons need none of them) and deliberately unstructured free text, NOT a
+# per-addon JSON Schema — see docs/design/2026-07-30-v4-data-file-format.md
+# §2.3. This same file is also the single source for the v4 engine chart's
+# shipped catalog (design doc §4.7) — the chart's copy is generated from
+# this file at build time (Story 2.4's wiring), so entries here are read by
+# both the v3 Marketplace browse screen and the v4 engine.
+#
 # Schema: see catalog/schema.json (reference) and the CatalogEntry struct in
 # internal/catalog/loader.go (enforced).
 # ---------------------------------------------------------------------------
@@ -40,6 +50,14 @@ addons:
     security_score: unknown
     github_stars: 12500
     min_kubernetes_version: "1.23"
+    required_values:
+      - key: installCRDs
+        description: Set to true so the chart installs cert-manager's own CRDs; otherwise apply them separately before installing.
+    secrets:
+      - name: DNS provider API credentials
+        description: Only needed if you configure a DNS-01 ClusterIssuer (e.g. Route53, Cloudflare) after install — the chart itself needs no secret to run.
+    quirks:
+      - "The webhook's CA bundle is rewritten on every reconcile — ignore admissionregistration.k8s.io/ValidatingWebhookConfiguration's caBundle field in Argo CD or every sync looks dirty."
 
   - name: external-dns
     description: Configure external DNS records from Kubernetes ingresses and services.
@@ -56,6 +74,18 @@ addons:
     security_score: unknown
     github_stars: 7800
     min_kubernetes_version: "1.23"
+    required_values:
+      - key: provider
+        description: Which DNS provider to target (aws, cloudflare, google, azure, ...) — there is no default.
+      - key: domainFilters
+        description: Restricts which DNS zones it is allowed to manage. Without this it tries to manage every zone the credentials can see.
+      - key: txtOwnerId
+        description: A unique tag written into managed records so multiple clusters or environments sharing a zone don't fight over the same records.
+    secrets:
+      - name: DNS provider credentials
+        description: Credentials for the chosen provider's API (e.g. an AWS IAM role for Route53, or a Cloudflare API token) — usually wired via IRSA/workload identity rather than a literal Secret.
+    quirks:
+      - "Without domainFilters set, it will try to manage every zone its credentials can see — scope it before turning it on in a shared cloud account."
 
   - name: external-secrets
     description: Sync secrets from external managers (AWS SM, Vault, GCP SM, Azure KV, …) into Kubernetes.
@@ -72,6 +102,11 @@ addons:
     security_score: unknown
     github_stars: 5000
     min_kubernetes_version: "1.23"
+    secrets:
+      - name: Backend secret-manager credentials
+        description: Credentials for whichever external secret manager you point a SecretStore/ClusterSecretStore at (AWS SM, Vault, GCP SM, Azure KV) — supplied on that CRD, not on this chart's values.
+    quirks:
+      - "The chart only installs the operator — you still create a SecretStore or ClusterSecretStore CRD pointing at your real secret manager before anything actually syncs."
 
   - name: sealed-secrets
     description: Encrypt Kubernetes Secrets so they can be stored safely in Git.
@@ -88,6 +123,8 @@ addons:
     security_score: unknown
     github_stars: 7500
     min_kubernetes_version: "1.22"
+    quirks:
+      - "The private sealing key is generated in-cluster on first start and lives only there unless you back it up — losing it makes every previously-sealed secret unrecoverable."
 
   - name: kyverno
     description: Kubernetes-native policy management — validation, mutation, generation, and image verification.
@@ -104,6 +141,8 @@ addons:
     security_score: unknown
     github_stars: 5800
     min_kubernetes_version: "1.25"
+    quirks:
+      - "A large policy set can push its admission-webhook CRDs past Kubernetes' 262144-byte annotation limit — needs ServerSideApply=true (see the v4 settings schema, design doc §3.2) once policies grow."
 
   - name: gatekeeper
     description: Policy controller for Kubernetes built on OPA, constraint templates + constraints.
@@ -120,6 +159,8 @@ addons:
     security_score: unknown
     github_stars: 3800
     min_kubernetes_version: "1.24"
+    quirks:
+      - "Constraint templates and constraints are cluster-scoped CRDs — removing the addon does not remove your policies; clean those up separately."
 
   - name: trivy-operator
     description: Scans cluster workloads for vulnerabilities, misconfigurations, and exposed secrets.
@@ -136,6 +177,11 @@ addons:
     security_score: unknown
     github_stars: 1400
     min_kubernetes_version: "1.23"
+    secrets:
+      - name: Private registry pull credentials
+        description: Only needed to scan images in a private registry — reuses the imagePullSecrets already on the workloads being scanned.
+    quirks:
+      - "Runs a scan Job per workload on a schedule — expect a burst of short-lived pods across every namespace right after install."
 
   - name: falco
     description: Runtime security monitoring using kernel events + rules.
@@ -152,6 +198,11 @@ addons:
     security_score: unknown
     github_stars: 7300
     min_kubernetes_version: "1.23"
+    required_values:
+      - key: driver.kind
+        description: Chooses the kernel driver (eBPF probe vs. kernel module) — must match your node's kernel and OS image, so check this before enabling it fleet-wide.
+    quirks:
+      - "Needs a kernel driver matched to your node's kernel — a mismatch means the DaemonSet crash-loops instead of degrading gracefully."
 
   - name: vault
     description: HashiCorp Vault — secret management, encryption-as-a-service, identity-based access.
@@ -168,6 +219,16 @@ addons:
     security_score: unknown
     github_stars: 31000
     min_kubernetes_version: "1.23"
+    required_values:
+      - key: server.ha.enabled
+        description: Whether to run Vault in HA (Raft) mode across multiple replicas, or a single standalone instance.
+      - key: server.dataStorage
+        description: The persistent volume Vault stores its data on — sizing and storage class matter here.
+    secrets:
+      - name: Unseal keys and root token
+        description: Generated by you when you run `vault operator init` after install — Vault ships sealed and Sharko creates nothing here.
+    quirks:
+      - "Ships sealed by default — you must run `vault operator init` and unseal it yourself (or wire auto-unseal) before it serves any traffic."
 
   # -------------------- Observability --------------------
 
@@ -186,6 +247,13 @@ addons:
     security_score: unknown
     github_stars: 5400
     min_kubernetes_version: "1.24"
+    required_values:
+      - key: prometheus.prometheusSpec.retention
+        description: How long metrics are kept before eviction — the default is short; size it for your actual dashboards/alerting window.
+      - key: grafana.adminPassword
+        description: Set explicitly, or Grafana generates a random one only visible in its initial Secret.
+    quirks:
+      - "Ships its own CRDs (Prometheus, Alertmanager, ServiceMonitor) — installing a second copy of those CRDs elsewhere in the same cluster collides with this one."
 
   - name: grafana
     description: Grafana visualization platform for metrics, logs, and traces.
@@ -202,6 +270,11 @@ addons:
     security_score: unknown
     github_stars: 65000
     min_kubernetes_version: "1.24"
+    required_values:
+      - key: adminPassword
+        description: Set explicitly, or a random admin password is generated and only visible in the pod's initial Secret.
+    quirks:
+      - "AGPL-3.0 licensed — some organizations' license-review policy flags this before it can roll out broadly."
 
   - name: loki
     description: Prometheus-inspired log aggregation system; cheap, index-light, label-based.
@@ -218,6 +291,14 @@ addons:
     security_score: unknown
     github_stars: 24000
     min_kubernetes_version: "1.24"
+    required_values:
+      - key: loki.storage
+        description: Which object store backend holds log chunks (S3, GCS, filesystem, ...) — filesystem storage does not survive pod restarts in most setups.
+    secrets:
+      - name: Object storage credentials
+        description: Credentials for the configured backend (S3/GCS access key or IRSA) — not needed for filesystem storage.
+    quirks:
+      - "The default single-binary deployment mode is fine for small clusters but doesn't scale — production installs need the distributed (simple-scalable) mode."
 
   - name: tempo
     description: Grafana Tempo — high-volume distributed tracing backend.
@@ -234,6 +315,14 @@ addons:
     security_score: unknown
     github_stars: 4400
     min_kubernetes_version: "1.24"
+    required_values:
+      - key: storage.trace.backend
+        description: Which object store backend holds trace data (S3, GCS, filesystem, ...), same shape as Loki's storage config.
+    secrets:
+      - name: Object storage credentials
+        description: Credentials for the configured backend — not needed for local/filesystem storage.
+    quirks:
+      - "Needs a trace source actually sending spans (e.g. an OpenTelemetry Collector) — installed alone it's an empty backend with nothing to query."
 
   - name: opentelemetry-operator
     description: Manages OpenTelemetry Collector deployments + auto-instrumentation in Kubernetes.
@@ -250,6 +339,8 @@ addons:
     security_score: unknown
     github_stars: 1400
     min_kubernetes_version: "1.23"
+    quirks:
+      - "Only installs the operator and CRDs — you still create an OpenTelemetryCollector CR to actually run a collector."
 
   - name: jaeger
     description: Distributed tracing backend, end-to-end request flow across microservices.
@@ -266,6 +357,14 @@ addons:
     security_score: unknown
     github_stars: 20000
     min_kubernetes_version: "1.23"
+    required_values:
+      - key: storage.type
+        description: Storage backend for traces — the default in-memory backend loses everything on restart; use Elasticsearch or Cassandra for anything beyond a demo.
+    secrets:
+      - name: Storage backend credentials
+        description: Credentials for Elasticsearch/Cassandra when you configure a real storage backend.
+    quirks:
+      - "Default in-memory storage discards all traces on pod restart — fine for a demo, not for production."
 
   - name: fluent-bit
     description: Lightweight log processor and forwarder — ships logs to Loki / Elasticsearch / S3 / etc.
@@ -282,6 +381,14 @@ addons:
     security_score: unknown
     github_stars: 5800
     min_kubernetes_version: "1.22"
+    required_values:
+      - key: config.outputs
+        description: Where collected logs actually ship to (Loki URL, Elasticsearch endpoint, S3 bucket, ...) — there is no default destination.
+    secrets:
+      - name: Log sink credentials
+        description: Credentials for whichever downstream log sink you configure in config.outputs.
+    quirks:
+      - "Ships with no output backend configured — set config.outputs or it collects logs and quietly drops them."
 
   - name: kube-state-metrics
     description: Exposes metrics about the state of Kubernetes objects (deployments, pods, nodes, …).
@@ -298,6 +405,8 @@ addons:
     security_score: unknown
     github_stars: 5300
     min_kubernetes_version: "1.23"
+    quirks:
+      - "Exposes cluster-wide object state on an unauthenticated metrics endpoint by default — restrict network access to it if that matters in your environment."
 
   - name: metrics-server
     description: Aggregates resource metrics (CPU/memory) for kubectl top + HPA.
@@ -314,6 +423,8 @@ addons:
     security_score: unknown
     github_stars: 5900
     min_kubernetes_version: "1.23"
+    quirks:
+      - "On clusters with self-signed kubelet certificates (common on kind/k3s and some on-prem setups) it needs --kubelet-insecure-tls or it reports no metrics at all."
 
   # -------------------- Networking --------------------
 
@@ -332,6 +443,14 @@ addons:
     security_score: unknown
     github_stars: 17500
     min_kubernetes_version: "1.25"
+    required_values:
+      - key: controller.service.type
+        description: LoadBalancer on cloud clusters, NodePort (or hostNetwork) on bare-metal/on-prem — pick based on your infrastructure.
+    secrets:
+      - name: TLS certificate
+        description: Only needed if you terminate TLS at this ingress by hand — usually cert-manager provisions and rotates this for you instead.
+    quirks:
+      - "Only one ingress controller per cluster should be marked the default ingress class — check controller.ingressClassResource.default before installing a second one."
 
   - name: traefik
     description: Cloud-native reverse proxy and ingress controller with automatic service discovery.
@@ -348,6 +467,11 @@ addons:
     security_score: unknown
     github_stars: 52000
     min_kubernetes_version: "1.24"
+    secrets:
+      - name: TLS certificate
+        description: Only needed if you're not using Traefik's built-in ACME/Let's Encrypt integration for certificates.
+    quirks:
+      - "Its own CRDs (IngressRoute, Middleware) are a separate API from core Kubernetes Ingress — mixing both styles in one cluster gets confusing fast."
 
   - name: cilium
     description: eBPF-based networking, observability, and security (CNI, L4/L7 policy, service mesh).
@@ -364,6 +488,13 @@ addons:
     security_score: unknown
     github_stars: 21000
     min_kubernetes_version: "1.23"
+    required_values:
+      - key: kubeProxyReplacement
+        description: Whether Cilium replaces kube-proxy entirely — a decision that's hard to change once workloads are running on top of it.
+      - key: ipam.mode
+        description: The IP address management mode (cluster-pool, kubernetes, ENI, ...) — depends on your cloud/network setup.
+    quirks:
+      - "Best installed as the CNI at cluster bootstrap — swapping it in as a day-2 add-on on a cluster already running another CNI needs a careful, node-by-node migration."
 
   - name: istio
     description: Service mesh — traffic management, observability, security, policy.
@@ -380,6 +511,8 @@ addons:
     security_score: unknown
     github_stars: 36000
     min_kubernetes_version: "1.26"
+    quirks:
+      - "This chart installs istiod only — the ingress/egress gateways and sidecar injection are separate charts and steps layered on top."
 
   - name: linkerd
     description: Lightweight, security-focused service mesh.
@@ -396,6 +529,11 @@ addons:
     security_score: unknown
     github_stars: 10700
     min_kubernetes_version: "1.23"
+    secrets:
+      - name: Trust anchor and issuer certificate
+        description: The mTLS trust anchor + issuer cert/key pair Linkerd needs before the control plane will start — you generate and supply this; there is no auto-generated default.
+    quirks:
+      - "Needs its trust anchor and issuer certificate generated and supplied up front — unlike some meshes there's no built-in self-signed default to fall back on."
 
   - name: metallb
     description: Bare-metal load-balancer for Kubernetes — L2 / BGP modes.
@@ -412,6 +550,11 @@ addons:
     security_score: unknown
     github_stars: 7100
     min_kubernetes_version: "1.22"
+    required_values:
+      - key: (post-install) IPAddressPool CR
+        description: A separate custom resource (not a chart value) defining the IP range MetalLB may hand out — the chart alone allocates nothing.
+    quirks:
+      - "Only useful on bare-metal/on-prem clusters that don't already have a cloud load balancer — running it alongside a cloud LB controller usually isn't what you want."
 
   - name: haproxy-ingress
     description: HAProxy-based ingress controller.
@@ -428,6 +571,11 @@ addons:
     security_score: unknown
     github_stars: 1100
     min_kubernetes_version: "1.22"
+    required_values:
+      - key: controller.service.type
+        description: LoadBalancer on cloud clusters, NodePort/hostNetwork on bare-metal — matches your infrastructure.
+    quirks:
+      - "Configuration reloads restart HAProxy's connection tables briefly — expect brief connection resets right after an ingress-annotation change."
 
   # -------------------- Autoscaling / Scheduling --------------------
 
@@ -446,6 +594,16 @@ addons:
     security_score: unknown
     github_stars: 6900
     min_kubernetes_version: "1.25"
+    required_values:
+      - key: settings.clusterName
+        description: The EKS cluster name Karpenter provisions nodes for — required, no default.
+      - key: settings.clusterEndpoint
+        description: The cluster's API server endpoint, so newly-launched nodes can join it.
+    secrets:
+      - name: Controller IAM role (IRSA)
+        description: An IAM role with EC2/Auto Scaling permissions to launch and terminate instances — required before it can provision a single node.
+    quirks:
+      - "AWS/Azure only — there's no generic cloud-agnostic mode, and it does nothing useful until its controller IAM role has real EC2 permissions."
 
   - name: cluster-autoscaler
     description: Scales Kubernetes nodes up/down based on pending pods (cloud-provider-aware).
@@ -462,6 +620,16 @@ addons:
     security_score: unknown
     github_stars: 8200
     min_kubernetes_version: "1.23"
+    required_values:
+      - key: autoDiscovery.clusterName
+        description: Names the cluster whose node groups/ASGs cluster-autoscaler is allowed to scale.
+      - key: cloudProvider
+        description: Which cloud provider's node-group API to call (aws, gce, azure, ...).
+    secrets:
+      - name: Cloud IAM credentials
+        description: Permission to scale the discovered node groups (IRSA on EKS, workload identity on GKE, a managed identity on AKS).
+    quirks:
+      - "Node group discovery depends on your cloud's ASG/node-pool tagging convention — untagged groups are silently invisible to it."
 
   - name: keda
     description: Kubernetes Event-Driven Autoscaling — scale workloads based on events from any source.
@@ -478,6 +646,11 @@ addons:
     security_score: unknown
     github_stars: 8700
     min_kubernetes_version: "1.27"
+    secrets:
+      - name: Event source credentials
+        description: Credentials for whichever queue/broker/metric you scale on — supplied via the ScaledObject's TriggerAuthentication, not chart values.
+    quirks:
+      - "CRDs exceed Kubernetes' 262144-byte annotation limit on larger clusters — needs ServerSideApply=true, same requirement as Kyverno (design doc §3.2)."
 
   - name: vertical-pod-autoscaler
     description: Recommends and applies CPU / memory requests/limits based on observed usage.
@@ -494,6 +667,11 @@ addons:
     security_score: unknown
     github_stars: 8200
     min_kubernetes_version: "1.24"
+    required_values:
+      - key: (per-workload) updateMode
+        description: Set on each VerticalPodAutoscaler CR you create (Off/Initial/Auto) — the chart alone just installs the components and recommends nothing on its own.
+    quirks:
+      - "In Auto mode it evicts and restarts pods to apply new resource requests — don't enable that mode for anything that can't tolerate a restart."
 
   - name: descheduler
     description: Evicts pods so the scheduler can reschedule them for better balance.
@@ -510,6 +688,11 @@ addons:
     security_score: unknown
     github_stars: 4200
     min_kubernetes_version: "1.25"
+    required_values:
+      - key: deschedulerPolicy
+        description: Which strategies run and on what schedule (e.g. LowNodeUtilization) — the defaults are conservative but worth reviewing before enabling fleet-wide.
+    quirks:
+      - "Evicts pods to rebalance the cluster — a workload with no PodDisruptionBudget can be evicted repeatedly with nothing to protect it."
 
   # -------------------- GitOps / CI --------------------
 
@@ -528,6 +711,11 @@ addons:
     security_score: unknown
     github_stars: 19000
     min_kubernetes_version: "1.25"
+    secrets:
+      - name: Initial admin password
+        description: Auto-generated into a Secret on first install — rotate it before exposing the UI/API beyond the cluster.
+    quirks:
+      - "Using this addon to run Argo CD to manage Argo CD (self-management) works but needs care — a broken sync of its own Application can leave it unable to fix itself."
 
   - name: argo-workflows
     description: Workflow engine for Kubernetes — pipelines as DAGs of containerized steps.
@@ -544,6 +732,11 @@ addons:
     security_score: unknown
     github_stars: 15000
     min_kubernetes_version: "1.25"
+    secrets:
+      - name: Artifact repository credentials
+        description: S3/GCS credentials if you configure workflow artifact storage — not needed to run workflows without artifact passing.
+    quirks:
+      - "Ships with the UI/API server in a permissive auth mode by default — set server.authModes before exposing it outside the cluster."
 
   - name: argo-rollouts
     description: Progressive delivery — blue-green, canary, analysis, experimentation.
@@ -560,6 +753,8 @@ addons:
     security_score: unknown
     github_stars: 2800
     min_kubernetes_version: "1.25"
+    quirks:
+      - "The controller alone doesn't add traffic-splitting — that needs a supported traffic router (Istio, SMI, an ingress controller, or a cloud load balancer) wired to each Rollout."
 
   - name: tekton-pipelines
     description: Cloud-native CI/CD pipelines as Kubernetes CRDs.
@@ -576,6 +771,11 @@ addons:
     security_score: unknown
     github_stars: 8700
     min_kubernetes_version: "1.24"
+    secrets:
+      - name: Registry / git credentials
+        description: Supplied via ServiceAccounts on the Tasks/Pipelines you author, not on this chart's values.
+    quirks:
+      - "No built-in log retention or pruning — completed PipelineRuns/TaskRuns pile up until you configure a pruner or clean them up yourself."
 
   - name: flux
     description: GitOps operator — reconciles cluster state from Git (sister project to ArgoCD).
@@ -592,6 +792,11 @@ addons:
     security_score: unknown
     github_stars: 6600
     min_kubernetes_version: "1.25"
+    secrets:
+      - name: Git credentials
+        description: Needed for a private repo — supplied as a Kubernetes Secret referenced by the GitRepository source you create, not as a chart value.
+    quirks:
+      - "Runs the same kind of reconciliation loop Argo CD (and Sharko) is already doing — pointing both at the same objects will fight over ownership."
 
   # -------------------- Storage --------------------
 
@@ -610,6 +815,13 @@ addons:
     security_score: unknown
     github_stars: 6400
     min_kubernetes_version: "1.25"
+    required_values:
+      - key: persistence.defaultClassReplicaCount
+        description: How many replicas each volume keeps by default — trades durability for node-local disk usage.
+      - key: defaultSettings.defaultDataPath
+        description: Where on each node's local disk Longhorn stores volume data.
+    quirks:
+      - "Needs open-iscsi (or equivalent) installed on every node's host OS before volumes will attach — a plain vanilla node image usually needs a day-2 prep step."
 
   - name: rook-ceph
     description: Rook operator for Ceph — block, file, and object storage on Kubernetes.
@@ -626,6 +838,8 @@ addons:
     security_score: unknown
     github_stars: 12400
     min_kubernetes_version: "1.26"
+    quirks:
+      - "This chart installs the operator only — you still create a CephCluster CR naming the raw block devices Ceph may claim, and it's easy to point it at the wrong disk."
 
   - name: openebs
     description: Container-attached storage — local PVs, replicated volumes, Mayastor.
@@ -642,6 +856,8 @@ addons:
     security_score: unknown
     github_stars: 9100
     min_kubernetes_version: "1.23"
+    quirks:
+      - "The default LocalPV engine ties data to a single node — losing that node loses the volume, so it isn't a substitute for replicated storage like Longhorn or Rook Ceph."
 
   # -------------------- Database operators --------------------
 
@@ -660,6 +876,11 @@ addons:
     security_score: unknown
     github_stars: 5200
     min_kubernetes_version: "1.25"
+    secrets:
+      - name: Backup destination credentials
+        description: S3/GCS/Azure Blob credentials, only needed if you configure continuous WAL archiving/backups on a Cluster CR.
+    quirks:
+      - "The operator chart alone runs zero databases — you create a Cluster CR to actually get a running PostgreSQL instance."
 
   - name: strimzi-kafka-operator
     description: Apache Kafka operator — Kafka, ZooKeeper, Connect, MirrorMaker on Kubernetes.
@@ -676,6 +897,11 @@ addons:
     security_score: unknown
     github_stars: 5100
     min_kubernetes_version: "1.25"
+    secrets:
+      - name: Listener TLS/SASL credentials
+        description: Generated by the operator for its own managed listeners, or supplied by you for custom authentication on a Kafka CR.
+    quirks:
+      - "The operator chart alone runs zero brokers — you create a Kafka CR, and changing broker count or storage class later is a real (if online) migration, not a value tweak."
 
   # -------------------- Backup / DR --------------------
 
@@ -694,6 +920,14 @@ addons:
     security_score: unknown
     github_stars: 8900
     min_kubernetes_version: "1.23"
+    required_values:
+      - key: configuration.backupStorageLocation
+        description: Which object store bucket backups are written to, and which cloud provider plugin to use (aws, gcp, azure, ...).
+    secrets:
+      - name: Backup bucket credentials
+        description: Cloud storage credentials for the configured bucket — IRSA/workload identity is preferred over a static key Secret.
+    quirks:
+      - "Restores don't include PersistentVolume data by default unless you also install and configure the matching CSI/volume-snapshot plugin for your cloud."
 
   # -------------------- Chaos / testing --------------------
 
@@ -712,6 +946,11 @@ addons:
     security_score: unknown
     github_stars: 6600
     min_kubernetes_version: "1.24"
+    required_values:
+      - key: dashboard.securityMode
+        description: Keep RBAC mode on — the dashboard can trigger real faults against real workloads if left open.
+    quirks:
+      - "It can genuinely kill pods, drop network traffic, and fill disks — scope its RBAC to non-production namespaces until your team trusts the blast radius."
 
   - name: litmus
     description: LitmusChaos — chaos experiments for Kubernetes.
@@ -728,6 +967,11 @@ addons:
     security_score: unknown
     github_stars: 4400
     min_kubernetes_version: "1.23"
+    secrets:
+      - name: ChaosCenter admin credentials
+        description: Generated on first login to the ChaosCenter UI — nothing to supply up front.
+    quirks:
+      - "Same caution as chaos-mesh — experiments run real faults against real pods; keep it out of production namespaces until you've dry-run it in staging."
 
   # -------------------- Developer tools --------------------
 
@@ -746,6 +990,14 @@ addons:
     security_score: unknown
     github_stars: 28000
     min_kubernetes_version: "1.25"
+    required_values:
+      - key: app-config.yaml overrides
+        description: Your org's identity provider, backend database, and integration config — the chart ships a demo config that isn't meant to run as-is.
+    secrets:
+      - name: Backend database credentials
+        description: Postgres (or equivalent) credentials for the real backend store, plus API tokens for any integrations you enable (GitHub, CI, ...).
+    quirks:
+      - "The out-of-the-box chart points at an in-memory/demo backend — plan for a real Postgres instance and your own app-config before treating this as more than a preview."
 
   - name: keptn
     description: Cloud-native lifecycle observability + SRE automation.
@@ -762,5 +1014,10 @@ addons:
     security_score: unknown
     github_stars: 1500
     min_kubernetes_version: "1.26"
+    secrets:
+      - name: Integration API tokens
+        description: Tokens for whichever CI/CD and observability tools you wire in as lifecycle-toolkit integrations — none are needed for a minimal install.
+    quirks:
+      - "Its value comes almost entirely from the integrations you wire up afterward — installed alone it doesn't do much yet."
 
 # 45 entries. Additional entries are added via PR through CODEOWNERS review.
