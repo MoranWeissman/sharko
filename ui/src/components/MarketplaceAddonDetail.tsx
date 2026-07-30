@@ -1047,6 +1047,62 @@ export function MarketplaceAddonDetail({
         </div>
       </section>
 
+      {/* ─── 4b. What you need to know (v4 wave 1 Story 3.1 — extended entry) ─── */}
+      {(entry.required_values?.length ||
+        entry.secrets?.length ||
+        entry.quirks?.length) ? (
+        <section className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:bg-gray-800">
+          <h2 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-white">
+            What you need to know
+          </h2>
+          <div className="space-y-4">
+            {entry.required_values && entry.required_values.length > 0 && (
+              <div>
+                <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
+                  Required values
+                </h3>
+                <ul className="space-y-1 text-sm text-[#2a5a7a] dark:text-gray-300">
+                  {entry.required_values.map((rv) => (
+                    <li key={rv.key}>
+                      <code className="rounded bg-[#e0f0ff] px-1 py-0.5 font-mono text-xs dark:bg-gray-700">
+                        {rv.key}
+                      </code>{' '}
+                      — {rv.description}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {entry.secrets && entry.secrets.length > 0 && (
+              <div>
+                <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
+                  Needed secrets
+                </h3>
+                <ul className="space-y-1 text-sm text-[#2a5a7a] dark:text-gray-300">
+                  {entry.secrets.map((sec) => (
+                    <li key={sec.name}>
+                      <strong>{sec.name}</strong> — {sec.description}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {entry.quirks && entry.quirks.length > 0 && (
+              <div>
+                <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
+                  Known quirks
+                </h3>
+                <ul className="list-disc space-y-1 pl-4 text-sm text-[#2a5a7a] dark:text-gray-300">
+                  {entry.quirks.map((q) => (
+                    <li key={q}>{q}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null}
+
       {/* ─── 5. Metadata footer ─── */}
       <footer className="flex flex-col gap-2 rounded-lg border border-dashed border-[#c0ddf0] bg-[#f7fbff] p-4 text-xs text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">

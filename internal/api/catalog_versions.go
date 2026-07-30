@@ -13,6 +13,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -34,13 +35,22 @@ type catalogVersionEntry struct {
 
 // catalogVersionsResponse is the envelope. `latest_stable` is the first
 // non-prerelease version in the descending list; empty when none exists.
+//
+// VersionCheckUnknown is true when Sharko could not determine any versions
+// for the chart — today that's specifically an oci:// repo, which needs
+// registry credentials this handler doesn't have (v4 wave 1 Story 3.3:
+// "version checking degrades gracefully without registry credentials —
+// shows unknown, never errors"). Versions/LatestStable are empty in that
+// case; the response is still a 200, never a 502, so the UI can render an
+// "unknown" pill instead of an error banner.
 type catalogVersionsResponse struct {
-	Addon        string                `json:"addon"`
-	Chart        string                `json:"chart"`
-	Repo         string                `json:"repo"`
-	Versions     []catalogVersionEntry `json:"versions"`
-	LatestStable string                `json:"latest_stable,omitempty"`
-	CachedAt     string                `json:"cached_at"`
+	Addon               string                `json:"addon"`
+	Chart               string                `json:"chart"`
+	Repo                string                `json:"repo"`
+	Versions            []catalogVersionEntry `json:"versions"`
+	LatestStable        string                `json:"latest_stable,omitempty"`
+	CachedAt            string                `json:"cached_at"`
+	VersionCheckUnknown bool                  `json:"version_check_unknown,omitempty"`
 }
 
 // catalogVersionsCacheEntry holds a previously-fetched version list plus the
@@ -122,6 +132,24 @@ func (s *Server) handleListCatalogVersions(w http.ResponseWriter, r *http.Reques
 
 	versions, err := catalogVersionsFetcher.ListVersions(ctx, entry.Repo, entry.Chart)
 	if err != nil {
+		// Graceful degrade for oci:// repos without registry credentials
+		// (v4 wave 1 Story 3.3) — "unknown", not an error. Every other
+		// fetch failure (classic repo unreachable, malformed index, chart
+		// not found) is still a genuine 502.
+		if errors.Is(err, helm.ErrOCIVersionCheckUnsupported) {
+			resp := catalogVersionsResponse{
+				Addon:               entry.Name,
+				Chart:               entry.Chart,
+				Repo:                entry.Repo,
+				CachedAt:            time.Now().UTC().Format(time.RFC3339),
+				VersionCheckUnknown: true,
+			}
+			// Deliberately NOT cached — a registry that gains credentials
+			// later (Story 3.4) should be re-checked on the next call
+			// rather than serving a stale "unknown" for 15 minutes.
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
 		writeError(w, http.StatusBadGateway, "failed to list versions: "+err.Error())
 		return
 	}

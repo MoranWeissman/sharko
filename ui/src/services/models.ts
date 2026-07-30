@@ -611,6 +611,25 @@ export interface CatalogEntrySignature {
   bundle: string  // https URL to a Sigstore bundle file
 }
 
+/**
+ * One Helm value a curated addon expects an operator to set, in plain
+ * English (v4 wave 1 Story 3.1, "extended entries"). Mirrors
+ * `internal/catalog.RequiredValue`.
+ */
+export interface CatalogRequiredValue {
+  key: string
+  description: string
+}
+
+/**
+ * One secret a curated addon needs to run, in plain English. Mirrors
+ * `internal/catalog.SecretRequirement`.
+ */
+export interface CatalogSecretRequirement {
+  name: string
+  description: string
+}
+
 export interface CatalogEntry {
   name: string
   description: string
@@ -631,6 +650,14 @@ export interface CatalogEntry {
   min_kubernetes_version?: string
   deprecated?: boolean
   superseded_by?: string
+  /**
+   * The addon's operational knowledge (v4 wave 1 Story 3.1): what a person
+   * needs to know to actually run it. All three are optional — plenty of
+   * addons need none of them.
+   */
+  required_values?: CatalogRequiredValue[]
+  secrets?: CatalogSecretRequirement[]
+  quirks?: string[]
   /**
    * Origin of this entry — "embedded" for the binary-shipped catalog, or
    * the full third-party catalog URL. Absent on older API responses —
@@ -692,6 +719,60 @@ export interface CatalogVersionsResponse {
   versions: CatalogVersionEntry[]
   latest_stable?: string
   cached_at: string
+  /**
+   * True when Sharko could not determine any versions — today that's an
+   * oci:// registry needing credentials it doesn't have (v4 wave 1 Story
+   * 3.3: graceful degrade). `versions`/`latest_stable` are empty in that
+   * case. Render an "unknown" pill, never an error, when this is true.
+   */
+  version_check_unknown?: boolean
+}
+
+/**
+ * v4 wave 1 Story 3.2/3.3 — one addon's merged view: the shipped curated
+ * catalog overlaid with the caller's own git catalog/addons.yaml delta.
+ * Mirrors `internal/catalog.MergedAddon`.
+ */
+export type CatalogOrigin = 'curated' | 'internal'
+
+export interface MergedCatalogAddon {
+  name: string
+  origin: CatalogOrigin
+  customized: boolean
+
+  repo_url?: string
+  chart?: string
+  version?: string
+  version_source?: 'delta' | ''
+  namespace?: string
+
+  additional_sources?: unknown[]
+  extra_helm_values?: Record<string, string>
+
+  description?: string
+  docs_url?: string
+  homepage?: string
+  source_url?: string
+  maintainers?: string[]
+  license?: string
+  category?: string
+  curated_by?: string[]
+  security_score?: CatalogScore
+  security_tier?: CatalogSecurityTier
+  github_stars?: number
+  min_kubernetes_version?: string
+  deprecated?: boolean
+  superseded_by?: string
+  required_values?: CatalogRequiredValue[]
+  secrets?: CatalogSecretRequirement[]
+  quirks?: string[]
+  verified?: boolean
+  signature_identity?: string
+}
+
+export interface MergedCatalogListResponse {
+  addons: MergedCatalogAddon[]
+  total: number
 }
 
 // Paste Helm URL validator. The handler returns 200 in both the happy and

@@ -70,6 +70,27 @@ type Signature struct {
 	Bundle string `yaml:"bundle" json:"bundle"`
 }
 
+// RequiredValue documents ONE Helm value a curated addon expects an operator
+// to set before it works, in plain English — never a per-addon JSON Schema
+// (design doc §2.3 "extended entries" / v4 wave 1 Story 3.1). Key is the
+// dotted Helm values path (e.g. "provider" or "vault.server.ha.enabled");
+// Description says what it does and, where useful, what to set it to.
+type RequiredValue struct {
+	Key         string `yaml:"key" json:"key"`
+	Description string `yaml:"description" json:"description"`
+}
+
+// SecretRequirement documents ONE secret a curated addon needs to run,
+// in plain English (v4 wave 1 Story 3.1). Name is a short human label for
+// the secret (not necessarily a literal Kubernetes Secret name — addons
+// vary in how they expect the credential to be supplied); Description says
+// what it is for and, where useful, how it is normally wired in (env var,
+// mounted file, IRSA role, etc).
+type SecretRequirement struct {
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description" json:"description"`
+}
+
 // CatalogEntry is the Sharko-native curated catalog shape. Fields match the
 // YAML keys in catalog/addons.yaml and the JSON Schema in catalog/schema.json.
 //
@@ -107,6 +128,23 @@ type CatalogEntry struct {
 	MinKubernetesVersion string     `yaml:"min_kubernetes_version,omitempty" json:"min_kubernetes_version,omitempty"`
 	Deprecated           bool       `yaml:"deprecated,omitempty" json:"deprecated,omitempty"`
 	SupersededBy         string     `yaml:"superseded_by,omitempty" json:"superseded_by,omitempty"`
+
+	// RequiredValues, Secrets, and Quirks are the "extended entry" knowledge
+	// fields (v4 wave 1 Story 3.1, design doc §2.3): what a person needs to
+	// know to actually run this addon, in plain English. All three are
+	// optional — plenty of addons (metrics-server, ingress-nginx) need none
+	// of them. No per-addon JSON Schema backs these: RequiredValue and
+	// SecretRequirement are the same generic {name/key, description} shape
+	// for every addon, by design.
+	RequiredValues []RequiredValue     `yaml:"required_values,omitempty" json:"required_values,omitempty"`
+	Secrets        []SecretRequirement `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	// Quirks are short, plain-English sentences about known operational
+	// gotchas (e.g. "CRDs exceed the 262144-byte annotation limit — needs
+	// ServerSideApply=true"). Free text, not structured settings: turning a
+	// quirk into an actual Argo CD setting (namespace, ignoreDifferences,
+	// ...) is the shipped catalog's job inside the engine chart (design doc
+	// §3.3), not this human-readable list.
+	Quirks []string `yaml:"quirks,omitempty" json:"quirks,omitempty"`
 
 	// Signature is the optional cosign-keyless attestation pointer.
 	// nil when the entry is unsigned.

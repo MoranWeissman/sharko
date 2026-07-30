@@ -2167,6 +2167,173 @@ const docTemplate = `{
                 }
             }
         },
+        "/catalog/delta/addons": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Overlays the caller's own git catalog/addons.yaml (kind AddonCatalogDelta) onto the shipped curated catalog and returns the merged, per-addon view: chart location, version (and where it came from), settings, and — for curated addons — the extended knowledge fields (description, required values, secrets, quirks, docs link). Every addon carries an ` + "`" + `origin` + "`" + ` of \"curated\" or \"internal\" (v4 wave 1 Story 3.3's in-house-addon marker). A repo with no catalog/addons.yaml yet returns the curated set untouched (design doc D16, \"missing means empty\").",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List the merged v4 catalog (curated + your delta)",
+                "responses": {
+                    "200": {
+                        "description": "Merged catalog",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.mergedCatalogListResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "An internal addon in your delta is missing repoURL, chart, or version",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded or no active Git connection",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Adds (or updates) one first-class in-house addon entry in your catalog/addons.yaml (kind AddonCatalogDelta), committed via a pull request like every other Sharko write. repo_url, chart, and version are all required — nothing else can supply them for an addon with no shipped catalog entry (design doc §2.3). The addon becomes assignable to clusters and appears in the merged catalog view (origin=internal) once the PR merges.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Add an in-house addon to your v4 catalog delta",
+                "parameters": [
+                    {
+                        "description": "Internal addon request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddInternalAddonRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Internal addon added",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/delta/addons/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Single-addon form of GET /catalog/delta/addons — the curated entry (if any) overlaid with the caller's own catalog/addons.yaml override or, for an in-house addon, defined entirely by it.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Get one addon's merged v4 catalog view",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Merged catalog entry",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.MergedAddon"
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found in the curated catalog or your delta",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "An internal addon in your delta is missing repoURL, chart, or version",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded or no active Git connection",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/catalog/remote/{repo}/{name}": {
             "get": {
                 "security": [
@@ -7618,8 +7785,28 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "quirks": {
+                    "description": "Quirks are short, plain-English sentences about known operational\ngotchas (e.g. \"CRDs exceed the 262144-byte annotation limit — needs\nServerSideApply=true\"). Free text, not structured settings: turning a\nquirk into an actual Argo CD setting (namespace, ignoreDifferences,\n...) is the shipped catalog's job inside the engine chart (design doc\n§3.3), not this human-readable list.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "repo": {
                     "type": "string"
+                },
+                "required_values": {
+                    "description": "RequiredValues, Secrets, and Quirks are the \"extended entry\" knowledge\nfields (v4 wave 1 Story 3.1, design doc §2.3): what a person needs to\nknow to actually run this addon, in plain English. All three are\noptional — plenty of addons (metrics-server, ingress-nginx) need none\nof them. No per-addon JSON Schema backs these: RequiredValue and\nSecretRequirement are the same generic {name/key, description} shape\nfor every addon, by design.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.RequiredValue"
+                    }
+                },
+                "secrets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.SecretRequirement"
+                    }
                 },
                 "security_score": {
                     "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.ScoreValue"
@@ -7659,6 +7846,148 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_catalog.MergedAddon": {
+            "type": "object",
+            "properties": {
+                "additional_sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource"
+                    }
+                },
+                "category": {
+                    "type": "string"
+                },
+                "chart": {
+                    "type": "string"
+                },
+                "curated_by": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "customized": {
+                    "description": "Customized is true when the user's delta carries an entry for this\naddon at all — i.e. it touched at least one field, even if Origin is\nOriginCurated. False means \"shown exactly as the shipped catalog\nships it, untouched by your git\".",
+                    "type": "boolean"
+                },
+                "deprecated": {
+                    "type": "boolean"
+                },
+                "description": {
+                    "description": "Knowledge fields — Story 3.1's extended entry, carried straight\nthrough from the curated CatalogEntry. Always zero-value for\nOriginInternal addons: nothing but the user's own delta (which has\nno knowledge fields) has ever described them.",
+                    "type": "string"
+                },
+                "docs_url": {
+                    "type": "string"
+                },
+                "extra_helm_values": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "github_stars": {
+                    "type": "integer"
+                },
+                "homepage": {
+                    "type": "string"
+                },
+                "license": {
+                    "type": "string"
+                },
+                "maintainers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "min_kubernetes_version": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "origin": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.Origin"
+                },
+                "quirks": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "repo_url": {
+                    "description": "Deployment fields — what the engine actually needs to render an\nApplicationSet for this addon.",
+                    "type": "string"
+                },
+                "required_values": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.RequiredValue"
+                    }
+                },
+                "secrets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.SecretRequirement"
+                    }
+                },
+                "security_score": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.ScoreValue"
+                },
+                "security_tier": {
+                    "type": "string"
+                },
+                "settings": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_config.AddonSettings"
+                },
+                "signature_identity": {
+                    "type": "string"
+                },
+                "source_url": {
+                    "type": "string"
+                },
+                "superseded_by": {
+                    "type": "string"
+                },
+                "verified": {
+                    "type": "boolean"
+                },
+                "version": {
+                    "type": "string"
+                },
+                "version_source": {
+                    "description": "VersionSource names where Version came from: \"delta\" when the user's\ncatalog/addons.yaml set it, \"\" when nothing has (per design doc D7,\nthe shipped catalog itself never carries a version — a shipped\nversion would go stale inside a signed artefact). A per-cluster\nclusters/\u003cname\u003e.yaml pin (design doc §2.1) is a later precedence\nstep this merge does not see; VersionSource only speaks to the\ncurated/delta layer.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.Origin": {
+            "type": "string",
+            "enum": [
+                "curated",
+                "internal"
+            ],
+            "x-enum-varnames": [
+                "OriginCurated",
+                "OriginInternal"
+            ]
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.RequiredValue": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_catalog.ScoreValue": {
             "type": "object",
             "properties": {
@@ -7672,11 +8001,56 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_catalog.SecretRequirement": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_catalog.Signature": {
             "type": "object",
             "properties": {
                 "bundle": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_config.AddonSettings": {
+            "type": "object",
+            "properties": {
+                "createNamespace": {
+                    "type": "boolean"
+                },
+                "ignoreDifferences": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "preserveResourcesOnDeletion": {
+                    "description": "PreserveResourcesOnDeletion: if the Application is ever removed,\nleave the running workloads alone. Addon-wide only — see the type\ndoc comment above.",
+                    "type": "boolean"
+                },
+                "prune": {
+                    "type": "boolean"
+                },
+                "selfHeal": {
+                    "type": "boolean"
+                },
+                "syncOptions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -8159,6 +8533,30 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.AddInternalAddonRequest": {
+            "type": "object",
+            "properties": {
+                "auto_merge": {
+                    "description": "AutoMerge is the per-request auto-merge decision. nil means \"fall\nback to the connection-level PRAutoMerge default\"; a non-nil value\noverrides it for this operation only. Mirrors AddAddonRequest.",
+                    "type": "boolean"
+                },
+                "chart": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "repo_url": {
+                    "type": "string"
                 },
                 "version": {
                     "type": "string"
@@ -9280,6 +9678,9 @@ const docTemplate = `{
                 "repo": {
                     "type": "string"
                 },
+                "version_check_unknown": {
+                    "type": "boolean"
+                },
                 "versions": {
                     "type": "array",
                     "items": {
@@ -9476,6 +9877,20 @@ const docTemplate = `{
                 },
                 "username": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.mergedCatalogListResponse": {
+            "type": "object",
+            "properties": {
+                "addons": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.MergedAddon"
+                    }
+                },
+                "total": {
+                    "type": "integer"
                 }
             }
         },

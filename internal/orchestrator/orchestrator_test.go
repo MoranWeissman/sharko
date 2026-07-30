@@ -229,7 +229,14 @@ func (m *mockGitProvider) GetFileContent(_ context.Context, path, _ string) ([]b
 	if c, ok := m.files[path]; ok {
 		return c, nil
 	}
-	return nil, fmt.Errorf("file not found: %s", path)
+	// Wrapped with gitprovider.ErrFileNotFound so this mock matches the real
+	// GitHub/Gitea/Azure DevOps providers' shape (see gitprovider.provider.go)
+	// — code paths that use errors.Is(err, gitprovider.ErrFileNotFound) for
+	// "missing means empty" (design doc D16; e.g. orchestrator.readCatalogDelta)
+	// need this to behave the same in tests as it does in production. The
+	// "file not found: <path>" prefix is preserved for any test asserting on
+	// that substring.
+	return nil, fmt.Errorf("file not found: %s: %w", path, gitprovider.ErrFileNotFound)
 }
 
 func (m *mockGitProvider) ListDirectory(_ context.Context, _, _ string) ([]string, error) {

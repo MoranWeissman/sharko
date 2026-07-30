@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { AuthProvider } from '@/hooks/useAuth'
 import { MarketplaceAddonDetail } from '@/components/MarketplaceAddonDetail'
+import { api } from '@/services/api'
 
 // V2-cleanup-14 — the Marketplace "Add addon to catalog" flow gains:
 //   - an admin-gated auto-merge toggle that sends auto_merge
@@ -201,5 +202,49 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
     await waitForActionPanel()
 
     expect(screen.queryByText('Internal')).not.toBeInTheDocument()
+  })
+
+  // v4 wave 1 Story 3.1 — "extended entries": required_values, secrets, and
+  // quirks render in a "What you need to know" section when the catalog
+  // entry carries them.
+  it('renders required values, secrets, and quirks when the entry carries them', async () => {
+    vi.mocked(api.getCuratedCatalogEntry).mockResolvedValueOnce({
+      name: 'prometheus',
+      description: 'Monitoring',
+      chart: 'kube-prometheus-stack',
+      repo: 'https://prometheus-community.github.io/helm-charts',
+      default_namespace: 'monitoring',
+      maintainers: [],
+      license: 'Apache-2.0',
+      category: 'observability',
+      curated_by: [],
+      required_values: [
+        { key: 'grafana.adminPassword', description: 'Set explicitly or a random one is generated.' },
+      ],
+      secrets: [
+        { name: 'Alertmanager receiver credentials', description: 'Only needed if you wire alerting.' },
+      ],
+      quirks: ['Ships its own CRDs — a second copy elsewhere collides.'],
+    })
+
+    renderDetail()
+    await waitForActionPanel()
+
+    expect(await screen.findByText('What you need to know')).toBeInTheDocument()
+    expect(screen.getByText('grafana.adminPassword')).toBeInTheDocument()
+    expect(screen.getByText(/Alertmanager receiver credentials/)).toBeInTheDocument()
+    expect(
+      screen.getByText('Ships its own CRDs — a second copy elsewhere collides.'),
+    ).toBeInTheDocument()
+  })
+
+  // Baseline for the section above: the default mocked entry (no
+  // required_values/secrets/quirks) must NOT render the section at all —
+  // additive UI, invisible when there's nothing to show.
+  it('does not render "What you need to know" when the entry has no extended fields', async () => {
+    renderDetail()
+    await waitForActionPanel()
+
+    expect(screen.queryByText('What you need to know')).not.toBeInTheDocument()
   })
 })

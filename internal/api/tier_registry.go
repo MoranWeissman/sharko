@@ -60,9 +60,9 @@ var HandlerTier = map[string]audit.Tier{
 	// Server-wide settings (probe_mode, V2-cleanup-85.4; allow_inline_credentials,
 	// V2-cleanup-89.6; managed_cluster_self_heal, V3 G3) — a ConfigMap write,
 	// not a Git-affecting mutation; same bucket as AI config above.
-	"handleSetProbeMode":                 audit.Tier1,
-	"handleSetAllowInlineCredentials":    audit.Tier1,
-	"handleSetManagedClusterSelfHeal":    audit.Tier1,
+	"handleSetProbeMode":              audit.Tier1,
+	"handleSetAllowInlineCredentials": audit.Tier1,
+	"handleSetManagedClusterSelfHeal": audit.Tier1,
 
 	// Dashboards (embedded)
 	"handleSaveDashboards": audit.Tier1,
@@ -100,6 +100,10 @@ var HandlerTier = map[string]audit.Tier{
 	// behaviour (which engine chart version renders the ApplicationSets),
 	// same tier as the addon catalog writes above.
 	"handleUpgradeEnginePin": audit.Tier2,
+	// v4 catalog delta (v4 wave 1 Story 3.3): adding an in-house addon to
+	// catalog/addons.yaml is a configuration change, same tier as the v3
+	// catalog writes above.
+	"handleAddInternalAddon": audit.Tier2,
 
 	// Addon secret definitions — these define what secrets get reconciled where,
 	// which changes future deployment behaviour, so config-tier.

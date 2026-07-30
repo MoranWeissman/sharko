@@ -1285,6 +1285,36 @@ export const api = {
       `/catalog/addons/${encodeURIComponent(name)}`,
     ),
 
+  // ─── v4 catalog delta model (v4 wave 1 Stories 3.2 + 3.3) ────────────────
+  // The merged view — shipped curated catalog overlaid with the caller's own
+  // git catalog/addons.yaml — plus the write path for adding a first-class
+  // in-house addon. Distinct from listCuratedCatalog above (pure curated).
+
+  /** List the merged v4 catalog: curated + your delta, one entry per addon. */
+  listMergedCatalog: () =>
+    fetchJSON<import('./models').MergedCatalogListResponse>(
+      '/catalog/delta/addons',
+    ),
+
+  /** Single-addon form of listMergedCatalog. */
+  getMergedCatalogAddon: (name: string) =>
+    fetchJSON<import('./models').MergedCatalogAddon>(
+      `/catalog/delta/addons/${encodeURIComponent(name)}`,
+    ),
+
+  /**
+   * Add (or update) one in-house addon in your v4 catalog delta, committed
+   * via a pull request. repo_url, chart, and version are all required.
+   */
+  addInternalAddon: (req: {
+    name: string
+    repo_url: string
+    chart: string
+    version: string
+    namespace?: string
+    auto_merge?: boolean
+  }) => postJSON<unknown>('/catalog/delta/addons', req),
+
   /**
    * List configured catalog sources (embedded + third-party). Powers the
    * source-badge tooltip (last-fetched / status) on Browse tiles and the

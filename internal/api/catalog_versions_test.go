@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/helm"
 )
 
@@ -236,5 +237,54 @@ func TestHandleListCatalogVersions_ExcludePrereleases(t *testing.T) {
 		if v.Prerelease {
 			t.Errorf("prerelease leaked: %q", v.Version)
 		}
+	}
+}
+
+// TestHandleListCatalogVersions_OCIRepoDegradesGracefully is the API-layer
+// half of the v4 wave 1 Story 3.3 graceful-degrade AC: a catalog entry
+// whose chart lives in an oci:// registry (the common shape for a private
+// in-house addon) must answer 200 with version_check_unknown=true, never a
+// 502 — even though the upstream Helm fetch is never actually reachable
+// from this test (there's no network call to make: helm.ErrOCIVersionCheckUnsupported
+// short-circuits before any HTTP request).
+func TestHandleListCatalogVersions_OCIRepoDegradesGracefully(t *testing.T) {
+	resetCatalogVersionsCacheForTest()
+	t.Cleanup(resetCatalogVersionsCacheForTest)
+
+	y := `
+addons:
+  - name: karpenter
+    description: Just-in-time node provisioning.
+    chart: karpenter
+    repo: oci://public.ecr.aws/karpenter
+    default_namespace: karpenter
+    maintainers: [aws]
+    license: Apache-2.0
+    category: autoscaling
+    curated_by: [aws-eks-blueprints]
+`
+	c, err := catalog.LoadBytes([]byte(y))
+	if err != nil {
+		t.Fatalf("catalog.LoadBytes: %v", err)
+	}
+	srv := serverWithCatalog(t, c)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/addons/karpenter/versions", nil)
+	req.SetPathValue("name", "karpenter")
+	rw := httptest.NewRecorder()
+	srv.handleListCatalogVersions(rw, req)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (never an error for oci://); body = %s", rw.Code, rw.Body.String())
+	}
+	var body catalogVersionsResponse
+	if err := json.Unmarshal(rw.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.VersionCheckUnknown {
+		t.Errorf("VersionCheckUnknown = false, want true")
+	}
+	if len(body.Versions) != 0 || body.LatestStable != "" {
+		t.Errorf("expected no versions for an unknown oci:// check, got %+v", body)
 	}
 }
