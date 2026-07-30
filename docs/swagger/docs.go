@@ -7734,7 +7734,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Enables an addon on a cluster by writing clusters/{name}.yaml (kind ClusterAddons) and, when values are supplied, values/clusters/{name}/{addon}.yaml — the v4 data-file format (design doc 2026-07-30-v4-data-file-format.md). Runs semantic validation BEFORE any branch or pull request exists: every required value the merged catalog entry declares must be present (in the supplied values or already on disk), and every secret the addon declares must have a Sharko secret definition wired up. A validation failure returns 422 naming exactly what is missing, in plain English — nothing is written, not even a branch. Requires yes=true for confirmation (or dry_run=true to preview, which also runs validation first).",
+                "description": "Enables an addon on a cluster by writing clusters/{name}.yaml (kind ClusterAddons) and, when values are supplied, values/clusters/{name}/{addon}.yaml — the v4 data-file format (design doc 2026-07-30-v4-data-file-format.md). Runs semantic validation BEFORE any branch or pull request exists: every required value the merged catalog entry declares must be present (in the supplied values or already on disk), and every secret the addon declares as needed to INSTALL must have a Sharko secret definition wired up. A validation failure returns 422 naming exactly what is missing, in plain English — nothing is written, not even a branch. Secrets the addon only needs at RUNTIME (required_for: runtime on the catalog entry) never block the install; a missing one is instead listed in the response's warnings field, both on a dry-run preview and on the real enable. Requires yes=true for confirmation (or dry_run=true to preview, which also runs validation first).",
                 "consumes": [
                     "application/json"
                 ],
@@ -8434,6 +8434,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "required_for": {
                     "type": "string"
                 }
             }
@@ -9450,6 +9453,13 @@ const docTemplate = `{
                 },
                 "values_file": {
                     "type": "string"
+                },
+                "warnings": {
+                    "description": "Warnings holds plain-English advisories that do NOT block the\noperation — e.g. EnableAddonV4's needed-at-runtime secrets (v4 wave 2\nw2-q4): the addon installs fine now, but will need the secret later.\nSet on both the dry-run preview response and the real (non-dry-run)\nresponse, per the same GitResult. Empty/omitted when there is\nnothing to warn about. Mirrors the Warnings field on\nRegisterClusterResult/AdoptClusterResult (V2-cleanup-89.5).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

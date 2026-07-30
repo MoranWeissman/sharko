@@ -65,6 +65,7 @@ a complete real example, then a walk through what each part means:
   secrets:
     - name: DNS provider API credentials
       description: Only needed if you configure a DNS-01 ClusterIssuer (e.g. Route53, Cloudflare) after install — the chart itself needs no secret to run.
+      required_for: runtime
   quirks:
     - "The webhook's CA bundle is rewritten on every reconcile — ignore admissionregistration.k8s.io/ValidatingWebhookConfiguration's caBundle field in Argo CD or every sync looks dirty."
 ```
@@ -100,7 +101,18 @@ a complete real example, then a walk through what each part means:
   *work* (as opposed to what it needs to *install*, which is usually
   nothing). Each entry is a short `name` and a `description` of what
   it's for and how it's normally supplied (an env var, a mounted file,
-  an IRSA/workload-identity role, ...).
+  an IRSA/workload-identity role, ...), plus an optional `required_for`:
+  `install` or `runtime`. `install` (the default when you leave it out)
+  means the chart needs the secret to deploy — Sharko blocks enabling
+  the addon until a matching secret definition exists. `runtime` means
+  the secret only matters later — usually because it's consumed by a
+  CRD you create after the chart installs, not by the chart's own
+  values (external-secrets' `SecretStore`/`ClusterSecretStore` is the
+  canonical example: the chart installs with zero secrets, the
+  credential only matters once you point a `SecretStore` at your real
+  secret manager). A `runtime` secret never blocks the install — Sharko
+  just surfaces a heads-up. When in doubt, leave `required_for` out —
+  it defaults to the stricter `install` behavior.
 - **`quirks`** — short, plain-English sentences about known operational
   gotchas: things that surprise people the first time, or cause a
   support question if left undocumented. Free text on purpose — a

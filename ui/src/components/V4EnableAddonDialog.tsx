@@ -63,6 +63,34 @@ export interface V4EnableAddonDialogProps {
   onApplied?: (result: V4GitResult) => void
 }
 
+/**
+ * V4Warnings renders the non-blocking `warnings` list a v4 enable
+ * dry-run/real response can carry — e.g. a secret the addon only needs
+ * at RUNTIME (required_for: runtime on the catalog entry), which never
+ * blocks the install (v4 wave 2 w2-q4). Renders nothing when the list is
+ * empty/absent, so it's safe to mount unconditionally next to the
+ * preview/result content.
+ */
+function V4Warnings({ warnings }: { warnings?: string[] }) {
+  if (!warnings || warnings.length === 0) return null
+  return (
+    <div
+      data-testid="v4-warnings"
+      className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-950/30"
+    >
+      <p className="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-300">
+        <AlertTriangle className="h-4 w-4 shrink-0" />
+        Heads up
+      </p>
+      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-800 dark:text-amber-300">
+        {warnings.map((w, i) => (
+          <li key={i}>{w}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 export function V4EnableAddonDialog({
   open,
   cluster,
@@ -253,6 +281,7 @@ export function V4EnableAddonDialog({
         {phase === 'preview' && preview?.dry_run && (
           <DryRunPreview result={preview.dry_run} />
         )}
+        {phase === 'preview' && <V4Warnings warnings={preview?.warnings} />}
 
         {phase === 'applying' && (
           <div className="flex items-center gap-2 text-sm text-[#2a5a7a] dark:text-gray-400">
@@ -268,6 +297,7 @@ export function V4EnableAddonDialog({
             openMessage={mode === 'enable' ? 'PR opened — addon enables once it merges' : 'PR opened — addon disables once it merges'}
           />
         )}
+        {phase === 'result' && <V4Warnings warnings={result?.warnings} />}
 
         {phase === 'error' && errorMessage && (
           <p className="text-sm text-red-600 dark:text-red-400">{errorMessage}</p>

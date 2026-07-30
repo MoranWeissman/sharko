@@ -1351,6 +1351,11 @@ export interface V4GitResult {
   merged?: boolean
   commit_sha?: string
   dry_run?: DryRunResult
+  // Plain-English advisories that do NOT block the operation — e.g. a
+  // needed-at-runtime secret (v4 wave 2 w2-q4): the addon installs fine
+  // now, but will need the secret later. Present on both the dry-run
+  // preview response and the real (non-dry-run) response.
+  warnings?: string[]
 }
 
 /**

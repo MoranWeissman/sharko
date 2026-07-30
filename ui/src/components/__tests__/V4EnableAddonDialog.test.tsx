@@ -129,6 +129,63 @@ describe('V4EnableAddonDialog', () => {
     expect(mockEnableAddonV4).toHaveBeenLastCalledWith('prod-eu', 'cert-manager', { yes: true, values: undefined });
   });
 
+  it('preview shows a non-blocking runtime-secret warning without hiding the confirm button', async () => {
+    mockEnableAddonV4.mockResolvedValue({
+      dry_run: {
+        effective_addons: ['external-secrets'],
+        files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'create' }],
+        pr_title: 'sharko: enable addon external-secrets on cluster prod-eu',
+        secrets_to_create: [],
+      },
+      warnings: [
+        'heads-up: external-secrets will need the secret "Backend secret-manager credentials" later — nothing is required to install it now',
+      ],
+    });
+
+    renderDialog({ addon: 'external-secrets' });
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('v4-warnings')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/will need the secret "Backend secret-manager credentials" later/)).toBeInTheDocument();
+    // A runtime-secret warning never blocks the install — the confirm/PR
+    // path stays available, unlike the 422 problems list.
+    expect(screen.getByTestId('v4-confirm')).toBeInTheDocument();
+    expect(screen.queryByTestId('v4-problems')).not.toBeInTheDocument();
+  });
+
+  it('the real enable response also surfaces the runtime-secret warning', async () => {
+    mockEnableAddonV4
+      .mockResolvedValueOnce({
+        dry_run: {
+          effective_addons: ['external-secrets'],
+          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'create' }],
+          pr_title: 'sharko: enable addon external-secrets on cluster prod-eu',
+          secrets_to_create: [],
+        },
+        warnings: ['heads-up: external-secrets will need the secret "Backend secret-manager credentials" later'],
+      })
+      .mockResolvedValueOnce({
+        pr_url: 'https://github.com/demo/sharko-addons/pull/101',
+        pr_id: 101,
+        merged: false,
+        warnings: ['heads-up: external-secrets will need the secret "Backend secret-manager credentials" later'],
+      });
+
+    renderDialog({ addon: 'external-secrets' });
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    await waitFor(() => expect(screen.getByTestId('v4-confirm')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('v4-confirm'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/View PR #101/)).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('v4-warnings')).toBeInTheDocument();
+    expect(screen.getByText(/will need the secret "Backend secret-manager credentials" later/)).toBeInTheDocument();
+  });
+
   it('disable mode calls disableAddonV4 and skips the values field', async () => {
     mockDisableAddonV4.mockResolvedValue({
       dry_run: {
