@@ -7,9 +7,19 @@ metadata:
   labels:
     {{- include "sharko.labels" . | nindent 4 }}
 rules:
-  # ArgoCD applications
+  # ArgoCD applications.
+  #
+  # applicationsets was added by the brownfield-takeover checks (v4 Wave 2,
+  # Epic 6) and is READ-ONLY, like everything else in this rule. Before
+  # Sharko takes over a cluster ArgoCD already manages, it has to be able to
+  # say which ApplicationSets would delete running workloads if that
+  # cluster's labels changed — that answer lives in
+  # spec.syncPolicy.preserveResourcesOnDeletion and
+  # spec.syncPolicy.applicationsSync. Sharko reads those two fields and the
+  # cluster generators' label selectors, and nothing else: spec.template
+  # (your Application template) is never read. See internal/appsets.
   - apiGroups: ["argoproj.io"]
-    resources: ["applications", "appprojects"]
+    resources: ["applications", "appprojects", "applicationsets"]
     verbs: ["get", "list", "watch"]
   # ArgoCD clusters (stored as secrets in argocd namespace)
   - apiGroups: [""]

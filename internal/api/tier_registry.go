@@ -39,6 +39,12 @@ var HandlerTier = map[string]audit.Tier{
 	"handleBatchRegisterClusters":     audit.Tier1,
 	"handleAdoptClusters":             audit.Tier1,
 
+	// Brownfield takeover (v4 Wave 2, Epic 6) — operational: it changes
+	// who owns a live cluster connection and adds the cluster to the
+	// fleet. Same bucket as adopt, which it supersedes.
+	"handleClusterTakeover":         audit.Tier1,
+	"handleClusterDropLegacyLabels": audit.Tier1,
+
 	// Addon ops on existing addons (upgrade is operational; the version is the catalog)
 	"handleUpgradeAddon":           audit.Tier1,
 	"handleUpgradeAddonsBatch":     audit.Tier1,

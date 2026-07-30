@@ -77,28 +77,42 @@ var ActionRequirements = map[string]Role{
 	"migration.preview": RoleAdmin,
 	"migration.migrate": RoleAdmin,
 
+	// Brownfield takeover (v4 Wave 2, Epic 6). Both of these change who
+	// owns a live ArgoCD cluster connection on a fleet that is already
+	// running, so they sit with the other destructive-adjacent actions.
+	// The read-only preflight below is Operator+.
+	"cluster.takeover":             RoleAdmin,
+	"cluster.takeover.drop-labels": RoleAdmin,
+
 	// Operator+ actions
-	"addon.enable":                  RoleOperator,
-	"addon.disable":                 RoleOperator,
-	"addon.restart-sync":            RoleOperator,
-	"cluster.register":              RoleOperator,
-	"cluster.adopt":                 RoleOperator,
-	"cluster.update-addons":         RoleOperator,
-	"cluster.test":                  RoleOperator,
-	"cluster.diagnose":              RoleOperator,
-	"cluster.doctor":                RoleOperator,
-	"cluster.discover":              RoleOperator,
-	"cluster.refresh-credentials":   RoleOperator,
-	"cluster.reconcile":             RoleOperator,
-	"cluster.resync":                RoleOperator,
-	"cluster.secrets.list":          RoleOperator,
-	"cluster.secrets.refresh":       RoleOperator,
-	"connection.create":             RoleOperator,
-	"connection.update":             RoleOperator,
-	"connection.set-active":         RoleOperator,
-	"connection.disable-auto-merge": RoleOperator,
-	"addon.add-to-catalog":          RoleOperator,
-	"addon.update-catalog":          RoleOperator,
+	"addon.enable":                RoleOperator,
+	"addon.disable":               RoleOperator,
+	"addon.restart-sync":          RoleOperator,
+	"cluster.register":            RoleOperator,
+	"cluster.adopt":               RoleOperator,
+	"cluster.update-addons":       RoleOperator,
+	"cluster.test":                RoleOperator,
+	"cluster.diagnose":            RoleOperator,
+	"cluster.doctor":              RoleOperator,
+	"cluster.discover":            RoleOperator,
+	"cluster.refresh-credentials": RoleOperator,
+	"cluster.reconcile":           RoleOperator,
+	// The takeover checks and the unregister consequences read state and
+	// change nothing at all — same tier as the doctor and diagnose reads
+	// they sit next to. Running one is how an operator finds out whether
+	// the destructive step above is safe, so gating it at admin would
+	// mean only admins could ever look before leaping.
+	"cluster.takeover.preflight":      RoleOperator,
+	"cluster.unregister.consequences": RoleOperator,
+	"cluster.resync":                  RoleOperator,
+	"cluster.secrets.list":            RoleOperator,
+	"cluster.secrets.refresh":         RoleOperator,
+	"connection.create":               RoleOperator,
+	"connection.update":               RoleOperator,
+	"connection.set-active":           RoleOperator,
+	"connection.disable-auto-merge":   RoleOperator,
+	"addon.add-to-catalog":            RoleOperator,
+	"addon.update-catalog":            RoleOperator,
 	// v4 Wave 2 Epic 7 Story 7.2 — subset upgrade: bumps the version pin
 	// on a chosen set of clusters in one PR. Same tier as the existing
 	// global/per-cluster addon.update-catalog upgrade write.

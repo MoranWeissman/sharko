@@ -65,6 +65,7 @@ nav:
     - Installation: operator/installation.md
     - Configuration: operator/configuration.md
     - 'Upgrading & Rollback Safety': operator/upgrading-and-rollback.md
+    - 'Taking Over a Fleet That Is Already Running': operator/takeover-playbook.md
     - 'If You Remove Sharko (no lock-in)': operator/removing-sharko.md
     - 'Managing Cluster Connections Yourself': operator/self-managed-connections.md
     - 'Reference — Connection Doctor': operator/connection-doctor.md

@@ -26,6 +26,7 @@ import {
   RotateCcw,
   X,
   XCircle,
+  Shield,
   ShieldCheck,
   Sparkles,
   Settings,
@@ -61,6 +62,15 @@ import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
 import { DiagnoseResultView } from '@/components/DiagnoseModal';
 import { DoctorResultView, DOCTOR_LABEL, DOCTOR_HINT } from '@/components/DoctorModal';
+import {
+  TakeoverDialog,
+  DropLegacyLabelsDialog,
+  TAKEOVER_LABEL,
+  TAKEOVER_HINT,
+  DROP_LABELS_LABEL,
+  DROP_LABELS_HINT,
+} from '@/components/TakeoverDialog';
+import { UnregisterConsequencesPanel } from '@/components/UnregisterConsequencesPanel';
 import { TestConnectionModal } from '@/components/TestConnectionModal';
 import { PendingPRsPanel } from '@/components/PendingPRsPanel';
 import { CompletedChangesPanel } from '@/components/CompletedChangesPanel';
@@ -283,6 +293,12 @@ export function ClusterDetail() {
   const [removePreview, setRemovePreview] = useState<DryRunResult | null>(null);
   const [removePreviewLoading, setRemovePreviewLoading] = useState(false);
   const [removePreviewError, setRemovePreviewError] = useState<string | null>(null);
+
+  // Brownfield takeover (v4 Wave 2, Epic 6). Both dialogs start on a
+  // read — the preflight for the takeover, a dry run for the label drop —
+  // so opening either one changes nothing.
+  const [takeoverOpen, setTakeoverOpen] = useState(false);
+  const [dropLabelsOpen, setDropLabelsOpen] = useState(false);
 
   // Test connection
   const [testResult, setTestResult] = useState<
@@ -1195,8 +1211,53 @@ export function ClusterDetail() {
             </button>
             <InfoHint text={TEST_CONNECTION_HINT} label="What does Test connection do?" />
           </RoleGuard>
+          {/* Brownfield takeover (v4 Wave 2, Epic 6). Admin-only, because
+            * both of these change who owns a live cluster connection. Both
+            * open on a read — nothing happens until the dialog's own
+            * confirm. */}
+          <RoleGuard roles={['admin']}>
+            <button
+              type="button"
+              onClick={() => setTakeoverOpen(true)}
+              title={TAKEOVER_HINT}
+              data-testid="open-takeover"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+            >
+              <Shield className="h-3.5 w-3.5" />
+              {TAKEOVER_LABEL}
+            </button>
+            <InfoHint text={TAKEOVER_HINT} label="What does taking over a cluster do?" />
+            <button
+              type="button"
+              onClick={() => setDropLabelsOpen(true)}
+              title={DROP_LABELS_HINT}
+              data-testid="open-drop-labels"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+            >
+              <Tag className="h-3.5 w-3.5" />
+              {DROP_LABELS_LABEL}
+            </button>
+            <InfoHint text={DROP_LABELS_HINT} label="What does removing the old labels do?" />
+          </RoleGuard>
         </div>
       </div>
+
+      {name && (
+        <>
+          <TakeoverDialog
+            clusterName={name}
+            open={takeoverOpen}
+            onClose={() => setTakeoverOpen(false)}
+            onDone={() => setConfigFetched(false)}
+          />
+          <DropLegacyLabelsDialog
+            clusterName={name}
+            open={dropLabelsOpen}
+            onClose={() => setDropLabelsOpen(false)}
+            onDone={() => setConfigFetched(false)}
+          />
+        </>
+      )}
 
       <ConfirmationModal
         open={removeModalOpen}
@@ -1213,6 +1274,10 @@ export function ClusterDetail() {
         loading={removing}
         extraContent={
           <div className="space-y-3">
+            {/* Story 6.5 — the consequences come FIRST, before the preview
+              * button and before the confirm. Nothing has been deleted at
+              * this point and nothing will be until the confirm below. */}
+            {name && <UnregisterConsequencesPanel clusterName={name} open={removeModalOpen} />}
             {!removePreview && !removePreviewLoading && (
               <button
                 type="button"
