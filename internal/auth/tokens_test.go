@@ -16,7 +16,7 @@ func testStore() *Store {
 func TestCreateToken_Format(t *testing.T) {
 	s := testStore()
 
-	plaintext, err := s.CreateToken("test-token", "admin")
+	plaintext, err := s.CreateToken("test-token", "admin", 0)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
@@ -32,12 +32,12 @@ func TestCreateToken_Format(t *testing.T) {
 func TestCreateToken_DuplicateName(t *testing.T) {
 	s := testStore()
 
-	_, err := s.CreateToken("dup", "admin")
+	_, err := s.CreateToken("dup", "admin", 0)
 	if err != nil {
 		t.Fatalf("first CreateToken failed: %v", err)
 	}
 
-	_, err = s.CreateToken("dup", "admin")
+	_, err = s.CreateToken("dup", "admin", 0)
 	if err == nil {
 		t.Fatal("expected error for duplicate name, got nil")
 	}
@@ -49,7 +49,7 @@ func TestCreateToken_DuplicateName(t *testing.T) {
 func TestValidateToken_Valid(t *testing.T) {
 	s := testStore()
 
-	plaintext, err := s.CreateToken("valid-token", "operator")
+	plaintext, err := s.CreateToken("valid-token", "operator", 0)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestValidateToken_Invalid(t *testing.T) {
 func TestRevokeToken(t *testing.T) {
 	s := testStore()
 
-	plaintext, err := s.CreateToken("revoke-me", "admin")
+	plaintext, err := s.CreateToken("revoke-me", "admin", 0)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
@@ -123,11 +123,11 @@ func TestRevokeToken_NotFound(t *testing.T) {
 func TestListTokens(t *testing.T) {
 	s := testStore()
 
-	_, err := s.CreateToken("tok-a", "admin")
+	_, err := s.CreateToken("tok-a", "admin", 0)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
-	_, err = s.CreateToken("tok-b", "viewer")
+	_, err = s.CreateToken("tok-b", "viewer", 0)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestListTokens(t *testing.T) {
 func TestValidateToken_UpdatesLastUsed(t *testing.T) {
 	s := testStore()
 
-	plaintext, err := s.CreateToken("track-usage", "admin")
+	plaintext, err := s.CreateToken("track-usage", "admin", 0)
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}

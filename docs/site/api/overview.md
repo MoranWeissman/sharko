@@ -41,15 +41,25 @@ Response includes a JWT token. Pass it as a Bearer token:
 Authorization: Bearer <token>
 ```
 
-Session tokens expire after 24 hours. Re-authenticate to get a new token.
+**Session tokens last 24 hours.** That is the default and it is not
+configurable. Once the 24 hours are up the session is gone — the next request
+comes back `401` and the only way in is to log in again. There is no refresh
+token and no "remember me".
 
 ### API Key (CI/CD / Integrations)
 
-API keys do not expire and are suitable for non-interactive consumers:
+API keys are for non-interactive consumers — CI pipelines, Terraform, internal
+tools:
 
 ```
 Authorization: Bearer sharko_a1b2c3d4...
 ```
+
+**API keys expire after 90 days by default.** Ask for a different window with
+`expires_in_days` when you create one (anything from 1 to 365 days). A key that
+has run out is refused with a `401` naming the key and saying it expired — you
+can renew it or make a new one. Full details in
+[Endpoints → API keys](endpoints.md#api-keys-tokens).
 
 Create API keys via the CLI (`sharko token create`) or the Settings UI.
 

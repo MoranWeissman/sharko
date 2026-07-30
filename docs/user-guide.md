@@ -359,19 +359,18 @@ Actions not explicitly mapped default to **Admin** (fail-closed). The role is de
 
 ## API Keys (Token Management)
 
-API keys provide long-lived authentication for non-interactive consumers such as Backstage plugins, Terraform providers, and CI/CD pipelines. Unlike session tokens (which expire after 24 hours), API keys have a configurable expiry.
+API keys authenticate non-interactive consumers such as Backstage plugins, Terraform providers, and CI/CD pipelines. Session tokens last 24 hours; API keys last 90 days by default, and you can renew them without changing the key value.
 
 ### Create an API Key
 
 ```bash
-sharko token create --name backstage --role admin
+sharko token create --name backstage --role operator --expires-in-days 30
 ```
 
 Key behaviors:
 - The token value is printed once. Store it immediately in a secure location (e.g., a Kubernetes Secret or your CI secrets store).
-- **Role bounding:** You can only create tokens with a role equal to or lower than your own. An Operator cannot create Admin tokens.
-- **Default expiry:** 365 days. Admins can set no-expiry with duration `-1`.
-- Expired tokens are automatically rejected during validation.
+- **Default expiry:** 90 days. `--expires-in-days` accepts anything from 1 to 365. There is no "never expires" option for new keys.
+- Expired keys are refused at authentication with a `401` that names the key and says it expired.
 
 ### List API Keys
 
@@ -379,7 +378,17 @@ Key behaviors:
 sharko token list
 ```
 
-Token values are not shown -- only names, roles, creation timestamps, and last-used timestamps.
+Key values are not shown — only names, roles, status, and the creation, expiry, and last-used dates.
+
+The `STATUS` column reads `active`, `expired`, or `legacy-no-expiry`. The last one means the key was stored before Sharko put expiry dates on keys. Those keep working — Sharko does not force-expire them — but recreate them when you can so they pick up an expiry.
+
+### Renew an API Key
+
+```bash
+sharko token renew backstage --expires-in-days 180
+```
+
+Renewing gives the key a fresh window counted from now. **The key value does not change**, so pipelines already holding it keep working with nothing to redeploy. Renewing an expired key brings it straight back.
 
 ### Revoke an API Key
 
@@ -387,7 +396,7 @@ Token values are not shown -- only names, roles, creation timestamps, and last-u
 sharko token revoke backstage
 ```
 
-The key is invalidated immediately.
+The key is invalidated immediately — no grace period, no undo.
 
 ### Using an API Key
 

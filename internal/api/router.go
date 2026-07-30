@@ -1063,6 +1063,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// API tokens (admin only)
 	mux.HandleFunc("POST /api/v1/tokens", srv.handleCreateToken)
 	mux.HandleFunc("GET /api/v1/tokens", srv.handleListTokens)
+	mux.HandleFunc("POST /api/v1/tokens/{name}/renew", srv.handleRenewToken)
 	mux.HandleFunc("DELETE /api/v1/tokens/{name}", srv.handleRevokeToken)
 
 	// User management (admin only)
@@ -1251,17 +1252,26 @@ func clientIP(r *http.Request) string {
 //   - HttpOnly/Secure/SameSite cookie attributes do not apply (no cookies used).
 //   - Token confidentiality relies on HTTPS in transit and secure client storage
 //     (the UI stores the token in sessionStorage).
-//   - Sessions expire after 24h; a background goroutine cleans expired entries.
+//   - Sessions expire after DefaultSessionLifetime; a background goroutine
+//     cleans expired entries and every request re-checks the expiry, so an
+//     expired session is refused with a 401 even before the sweep runs.
+//     Once expired there is no refresh — the user logs in again.
 
 type sessionInfo struct {
 	Username string
 	Expiry   time.Time
 }
 
+// DefaultSessionLifetime is how long a human login stays valid before the
+// user has to sign in again. There is no refresh token and no remember-me:
+// when the window is up, the session is gone. Documented in
+// docs/site/api/overview.md and docs/site/operator/security.md.
+const DefaultSessionLifetime = 24 * time.Hour
+
 var (
 	activeSessions   = make(map[string]*sessionInfo) // token -> session
 	sessionsMu       sync.RWMutex
-	sessionLifetime  = 24 * time.Hour
+	sessionLifetime  = DefaultSessionLifetime
 	sessionCleanOnce sync.Once
 )
 
@@ -1297,11 +1307,14 @@ func isValidSession(token string) bool {
 	return ok && time.Now().Before(sess.Expiry)
 }
 
+// getSessionUser returns the username behind a session token, or "" if the
+// token is unknown OR its lifetime has run out. The expiry check matters here
+// as well as in isValidSession: the hourly sweep is a cleanup, not the gate.
 func getSessionUser(token string) string {
 	sessionsMu.RLock()
 	defer sessionsMu.RUnlock()
 	sess, ok := activeSessions[token]
-	if !ok {
+	if !ok || !time.Now().Before(sess.Expiry) {
 		return ""
 	}
 	return sess.Username
@@ -1465,14 +1478,21 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// refusal carries a specific, plain-English reason when the caller
+		// presented a real token that is no longer usable (expired). It stays
+		// empty for anything else so unknown tokens get a flat 401.
+		refusal := ""
+
 		// Check Bearer token
 		authHeader := r.Header.Get("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			token := strings.TrimPrefix(authHeader, "Bearer ")
-			if s.tryAuthenticateToken(r, token) {
+			ok, reason := s.tryAuthenticateToken(r, token)
+			if ok {
 				next.ServeHTTP(w, r)
 				return
 			}
+			refusal = reason
 		}
 
 		// EventSource (used by the audit Live Tail SSE stream in the UI)
@@ -1483,13 +1503,19 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 		// (V2-cleanup-85.2).
 		if isAuditStreamRequest(r) && !strings.HasPrefix(authHeader, "Bearer ") {
 			if token := r.URL.Query().Get("token"); token != "" {
-				if s.tryAuthenticateToken(r, token) {
+				ok, reason := s.tryAuthenticateToken(r, token)
+				if ok {
 					next.ServeHTTP(w, r)
 					return
 				}
+				refusal = reason
 			}
 		}
 
+		if refusal != "" {
+			writeError(w, http.StatusUnauthorized, refusal)
+			return
+		}
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 	})
 }
@@ -1504,10 +1530,16 @@ func isAuditStreamRequest(r *http.Request) bool {
 // tryAuthenticateToken validates token as either a session token or a
 // sharko_-prefixed API key — the SAME validation the Authorization: Bearer
 // path uses — and, on success, stamps X-Sharko-User / X-Sharko-Role on r.
-// Returns true iff authentication succeeded.
-func (s *Server) tryAuthenticateToken(r *http.Request, token string) bool {
+//
+// Returns (true, "") when authentication succeeded. On failure the second
+// value is a plain-English reason to show the caller, but ONLY when the
+// caller demonstrably holds the credential in question (an API token that
+// matched a stored hash but has expired). For an unknown or revoked token it
+// is empty, so the caller gets a flat "unauthorized" and learns nothing about
+// which token names exist.
+func (s *Server) tryAuthenticateToken(r *http.Request, token string) (bool, string) {
 	if token == "" {
-		return false
+		return false, ""
 	}
 	if isValidSession(token) {
 		username := getSessionUser(token)
@@ -1516,19 +1548,20 @@ func (s *Server) tryAuthenticateToken(r *http.Request, token string) bool {
 		if user := s.authStore.GetUser(username); user != nil {
 			r.Header.Set("X-Sharko-Role", user.Role)
 		}
-		return true
+		return true, ""
 	}
 
 	// Check if the token is an API key
 	if strings.HasPrefix(token, "sharko_") {
-		username, role, ok := s.authStore.ValidateToken(token)
-		if ok {
+		username, role, err := s.authStore.AuthenticateToken(token)
+		if err == nil {
 			r.Header.Set("X-Sharko-User", username)
 			r.Header.Set("X-Sharko-Role", role)
-			return true
+			return true, ""
 		}
+		return false, tokenRefusalMessage(err)
 	}
-	return false
+	return false, ""
 }
 
 // handleUpdatePassword godoc

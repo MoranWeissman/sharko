@@ -166,6 +166,7 @@ var HandlerTier = map[string]audit.Tier{
 
 	// ─── API token management ───────────────────────────────────────────────
 	"handleCreateToken": audit.Tier1,
+	"handleRenewToken":  audit.Tier1,
 	"handleRevokeToken": audit.Tier1,
 
 	// ─── Operation heartbeat / system noise ─────────────────────────────────

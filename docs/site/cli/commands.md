@@ -404,27 +404,47 @@ sharko secret-status
 Create a new API key.
 
 ```bash
-sharko token create --name <name> --role <role>
+sharko token create --name <name> --role <role> [--expires-in-days <n>]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--name <name>` | Key name for identification (required) |
-| `--role <role>` | `admin` or `viewer` (required) |
+| `--role <role>` | `admin`, `operator`, or `viewer` |
+| `--expires-in-days <n>` | How long the key stays usable, 1–365. Leave it out for the default of 90 days. |
 
-Output includes the plaintext key — shown once only.
+Output includes the plaintext key — shown once only — plus the expiry date.
 
 ### `sharko token list`
 
-List all API keys (names, roles, creation dates — not plaintext keys).
+List all API keys: names, roles, status, creation and expiry dates. Never the
+key values.
 
 ```bash
 sharko token list
 ```
 
+The `STATUS` column reads `active`, `expired`, or `legacy-no-expiry` (a key
+made before Sharko put expiry dates on keys — it keeps working, but has no
+expiry).
+
+### `sharko token renew`
+
+Give an existing key a fresh window, counted from now. **The key value does not
+change**, so anything already using it keeps working — nothing to redeploy.
+Works on an expired key too.
+
+```bash
+sharko token renew <name> [--expires-in-days <n>]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--expires-in-days <n>` | New window in days, 1–365. Leave it out for the default of 90 days. |
+
 ### `sharko token revoke`
 
-Revoke an API key by name.
+Revoke an API key by name. Takes effect immediately — no grace period, no undo.
 
 ```bash
 sharko token revoke <name>

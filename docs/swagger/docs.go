@@ -6810,7 +6810,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns all active API tokens without their secret values (admin only)",
+                "description": "Returns all API tokens without their secret values, each with its expiry date and status (active, expired, or legacy-no-expiry)",
                 "produces": [
                     "application/json"
                 ],
@@ -6822,8 +6822,10 @@ const docTemplate = `{
                     "200": {
                         "description": "Token list",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_auth.APIToken"
+                            }
                         }
                     },
                     "401": {
@@ -6848,7 +6850,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a new long-lived API token for programmatic access (admin only)",
+                "description": "Creates a new long-lived API token for programmatic access. The token expires after 90 days unless expires_in_days (1-365) says otherwise. The plaintext value is shown once and never again.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6861,22 +6863,20 @@ const docTemplate = `{
                 "summary": "Create API token",
                 "parameters": [
                     {
-                        "description": "Token name and role",
+                        "description": "Token name, role, and optional expiry window",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/internal_api.CreateTokenRequest"
                         }
                     }
                 ],
                 "responses": {
                     "201": {
-                        "description": "Created token (shown only once)",
+                        "description": "Created token (plaintext shown only once)",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/internal_api.CreateTokenResponse"
                         }
                     },
                     "400": {
@@ -6910,7 +6910,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Permanently revokes an API token by name (admin only)",
+                "description": "Permanently revokes an API token by name. The token stops working immediately — there is no grace period.",
                 "produces": [
                     "application/json"
                 ],
@@ -6951,6 +6951,86 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Token not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/tokens/{name}/renew": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Pushes a token's expiry out by a fresh window (90 days by default, or expires_in_days between 1 and 365). The secret value does not change, so every client using the token keeps working.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Renew API token",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Token name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional new expiry window",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.RenewTokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Renewed token metadata (no secret)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_auth.APIToken"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Token not found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -7868,6 +7948,36 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "github_com_MoranWeissman_sharko_internal_auth.APIToken": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "expired": {
+                    "type": "boolean"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "expiring_soon": {
+                    "type": "boolean"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Derived fields, filled in on read. Never stored.",
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_capabilities.AWSIdentity": {
             "type": "object",
             "properties": {
@@ -9598,6 +9708,40 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api.CreateTokenRequest": {
+            "type": "object",
+            "properties": {
+                "expires_in_days": {
+                    "description": "ExpiresInDays is how long the token stays usable, between 1 and 365.\nLeave it out for the default of 90 days.",
+                    "type": "integer"
+                },
+                "name": {
+                    "description": "Name identifies the token in the list and in audit entries.",
+                    "type": "string"
+                },
+                "role": {
+                    "description": "Role is admin, operator, or viewer. Defaults to viewer.",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.CreateTokenResponse": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_api.DefaultAddonsPutRequest": {
             "type": "object",
             "properties": {
@@ -9780,6 +9924,15 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/internal_api.PRItem"
                     }
+                }
+            }
+        },
+        "internal_api.RenewTokenRequest": {
+            "type": "object",
+            "properties": {
+                "expires_in_days": {
+                    "description": "ExpiresInDays is the new window, counted from now, between 1 and 365.\nLeave it out for the default of 90 days.",
+                    "type": "integer"
                 }
             }
         },

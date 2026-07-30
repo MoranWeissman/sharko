@@ -1153,8 +1153,11 @@ export interface APIToken {
   name: string
   role: string
   created_at: string
-  expires_at?: string
+  /** Null for tokens stored before expiry dates existed. Those keep working. */
+  expires_at?: string | null
   last_used_at?: string
+  /** 'active' | 'expired' | 'legacy-no-expiry' */
+  status?: string
   expiring_soon?: boolean
   expired?: boolean
 }

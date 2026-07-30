@@ -28,8 +28,8 @@ Authorization: Bearer <token>
 ```
 
 **Two token types are accepted (in priority order):**
-1. **API keys** — long-lived tokens created via `POST /api/v1/tokens`. Intended for non-interactive consumers (Backstage, Terraform, CI/CD).
-2. **Session tokens** — short-lived tokens returned by `POST /api/v1/auth/login`. Used by the CLI and UI. Expire after 24 hours.
+1. **API keys** — tokens created via `POST /api/v1/tokens`. Intended for non-interactive consumers (Backstage, Terraform, CI/CD). Expire after 90 days by default (1–365 configurable); renewable without changing the key value.
+2. **Session tokens** — short-lived tokens returned by `POST /api/v1/auth/login`. Used by the CLI and UI. Expire after 24 hours, with no refresh — the user logs in again.
 
 The auth middleware checks for an API key first; if not found, it falls back to session token validation.
 
@@ -1145,27 +1145,32 @@ Remove the secret template for a specific addon. Does not delete any existing se
 
 ### POST /api/v1/tokens — Create an API Key
 
-Create a long-lived API key for non-interactive consumers. API keys are stored hashed and the plaintext is only returned once at creation time.
+Create an API key for non-interactive consumers. API keys are stored hashed and the plaintext is only returned once at creation time.
+
+Every key gets an expiry date. The default window is **90 days**; `expires_in_days` can set anything from **1 to 365** days.
 
 **Request:**
 ```json
 {
   "name": "backstage",
-  "role": "admin"
+  "role": "operator",
+  "expires_in_days": 30
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | name | string | yes | Unique name for the API key. |
-| role | string | no | Role to assign. Defaults to `admin`. |
+| role | string | no | Role to assign. Defaults to `viewer`. |
+| expires_in_days | int | no | How long the key stays usable, 1–365. Defaults to 90. |
 
 **Success Response (201 Created):**
 ```json
 {
   "name": "backstage",
-  "token": "shr_abc123...",
-  "role": "admin"
+  "token": "sharko_abc123...",
+  "role": "operator",
+  "expires_at": "2026-08-14T10:00:00Z"
 }
 ```
 
@@ -1174,36 +1179,79 @@ Create a long-lived API key for non-interactive consumers. API keys are stored h
 **Error Responses:**
 | Code | Condition |
 |------|-----------|
-| 400 | Missing name, or token with this name already exists |
-| 401 | Unauthorized (admin only) |
+| 400 | Missing name, token with this name already exists, or expires_in_days outside 1–365 |
+| 401 | Unauthorized |
+| 403 | Role below operator |
 
 ---
 
 ### GET /api/v1/tokens — List API Keys
 
-List all API keys. Token values are not returned — only names, roles, and creation metadata.
+List all API keys. Token values and hashes are never returned — only names, roles, dates, and status.
 
 **Response (200 OK):**
 ```json
 [
   {
     "name": "backstage",
-    "role": "admin",
-    "created_at": "2026-01-15T10:00:00Z"
+    "role": "operator",
+    "created_at": "2026-01-15T10:00:00Z",
+    "expires_at": "2026-04-15T10:00:00Z",
+    "status": "active",
+    "expired": false,
+    "expiring_soon": false
   },
   {
     "name": "terraform-ci",
     "role": "admin",
-    "created_at": "2026-02-01T08:30:00Z"
+    "created_at": "2025-02-01T08:30:00Z",
+    "expires_at": null,
+    "status": "legacy-no-expiry",
+    "expired": false,
+    "expiring_soon": false
   }
 ]
 ```
+
+| Field | Description |
+|-------|-------------|
+| expires_at | Expiry date, or `null` for a key stored before expiry dates existed. |
+| status | `active`, `expired`, or `legacy-no-expiry`. |
+| expiring_soon | True when the key expires within 14 days. |
+
+Keys with `status: legacy-no-expiry` keep working — Sharko does not force-expire them. Recreate them so they pick up an expiry date.
+
+---
+
+### POST /api/v1/tokens/{name}/renew — Renew an API Key
+
+Push a key's expiry out by a fresh window, counted from now. **The key value does not change**, so consumers already holding it keep working. Renewing an expired key makes it usable again.
+
+**Path Parameters:**
+- `name` — token name
+
+**Request (optional — an empty body means the default window):**
+```json
+{
+  "expires_in_days": 180
+}
+```
+
+**Success Response (200 OK):** the same shape as one entry from `GET /api/v1/tokens`, with the new `expires_at`. No secret is returned.
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | expires_in_days outside 1–365 |
+| 401 | Unauthorized |
+| 403 | Role below operator |
+| 404 | No token by that name |
 
 ---
 
 ### DELETE /api/v1/tokens/{name} — Revoke an API Key
 
-Revoke an API key by name. The key is immediately invalidated.
+Revoke an API key by name. The key is immediately invalidated — no grace period.
 
 **Path Parameters:**
 - `name` — token name
@@ -1218,8 +1266,26 @@ Revoke an API key by name. The key is immediately invalidated.
 **Error Responses:**
 | Code | Condition |
 |------|-----------|
-| 400 | Missing or unknown token name |
-| 401 | Unauthorized (admin only) |
+| 400 | Missing token name |
+| 401 | Unauthorized |
+| 403 | Role below admin |
+| 404 | No token by that name |
+
+---
+
+### Refusing an API Key
+
+A request carrying an **expired** key gets a `401` naming the key — the caller already holds it, so naming it reveals nothing:
+
+```json
+{"error": "API token \"backstage\" expired on 2026-04-15 — renew it or create a new one, then try again"}
+```
+
+A key that was **revoked, mistyped, or never existed** gets the generic refusal, so nobody can probe for real key names:
+
+```json
+{"error": "unauthorized"}
+```
 
 ---
 
@@ -1484,7 +1550,7 @@ Each entry contains: timestamp, level, event name, user, action (HTTP verb), res
 |--------|--------|
 | auth | `login`, `logout`, `login_failed`, `password_changed` |
 | users | `user_created`, `user_updated`, `user_deleted`, `password_reset` |
-| tokens | `token_created`, `token_revoked` |
+| tokens | `token_created`, `token_renewed`, `token_revoked` |
 | clusters | `cluster_registered`, `cluster_deregistered`, `cluster_updated`, `cluster_adopted`, `cluster_unadopted`, `cluster_tested`, `cluster_diagnosed`, `cluster_credentials_refreshed`, `cluster_secret_synced`, `cluster_discovery_run` |
 | addons | `addon_added`, `addon_removed`, `addon_configured`, `addon_upgraded`, `addon_enabled_on_cluster`, `addon_disabled_on_cluster` |
 | secrets | `addon_secret_set`, `addon_secret_deleted` |
@@ -1556,8 +1622,9 @@ Every CLI command is a thin HTTP client call to the Sharko API.
 | `sharko remove-addon <name>` | DELETE | `/api/v1/addons/{name}` | |
 | `sharko upgrade-addon <name> --version <ver> [--cluster <c>]` | POST | `/api/v1/addons/{name}/upgrade` | `--cluster` for per-cluster upgrade |
 | `sharko upgrade-addons <addon=ver,...>` | POST | `/api/v1/addons/upgrade-batch` | Comma-separated `addon=version` pairs |
-| `sharko token create [--name <n> --role <r>]` | POST | `/api/v1/tokens` | Prints token once |
-| `sharko token list` | GET | `/api/v1/tokens` | Formatted table output |
+| `sharko token create [--name <n> --role <r> --expires-in-days <d>]` | POST | `/api/v1/tokens` | Prints token once, plus its expiry date |
+| `sharko token list` | GET | `/api/v1/tokens` | Formatted table with status + expiry |
+| `sharko token renew <name> [--expires-in-days <d>]` | POST | `/api/v1/tokens/{name}/renew` | Token value unchanged |
 | `sharko token revoke <name>` | DELETE | `/api/v1/tokens/{name}` | |
 | `sharko status` | GET | `/api/v1/fleet/status` | Formatted terminal output |
 | `sharko pr list [--status --cluster --user]` | GET | `/api/v1/prs` | Filter flags map to query params |

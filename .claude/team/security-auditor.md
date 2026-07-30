@@ -72,13 +72,30 @@ Every handler for POST/DELETE/PATCH must call `s.requireAdmin(w, r)` as the firs
 - Session cleanup: hourly goroutine
 - Storage: in-memory map (lost on restart — acceptable for v1.0)
 
-### 6. API Key Security (v1.0.0 Phase 4)
+### 6. API Key Security (v1.0.0 Phase 4, expiry added v4-wave2 8.2)
 - Token format: `sharko_` prefix + 32 random hex chars = 39 chars total
 - Stored as bcrypt hash in K8s Secret (never plaintext at rest)
 - Auth middleware priority: session cookie → session token → API key
-- `last_used_at` updated on each API key auth
+- `last_used_at` updated on each API key auth — but NOT for a refused token
 - Token creation response shows plaintext ONCE, never retrievable again
 - Revoked tokens immediately invalid (no grace period)
+- **Expiry (v4-wave2 8.2):** default 90 days (`auth.DefaultTokenExpiryDays`),
+  explicit `expires_in_days` bounded 1–365. `AuthenticateToken` enforces the
+  expiry BEFORE handing out any access. `POST /tokens/{name}/renew`
+  (`token.renew`, operator+) extends the window WITHOUT changing the secret.
+- **Refusal asymmetry is deliberate and must be preserved.** An expired token
+  gets a 401 naming the token (the caller already holds that secret, so it
+  leaks nothing and tells them what to fix). An unknown OR revoked token gets a
+  flat `"unauthorized"` — a caller must never be able to probe which token
+  names exist. `internal/api/tokens.go tokenRefusalMessage()` is the only place
+  that decides this; a change that widens the specific message to the
+  `ErrTokenNotFound` path is a critical finding.
+- **Legacy tokens** (`ExpiresAt == nil`, status `legacy-no-expiry`) are NOT
+  force-expired — they keep working, and the list says so plainly. This is a
+  locked decision; do not "fix" it by expiring them.
+- `APIToken.Hash` is `json:"-"` and `ListTokens` / `GetToken` / `RenewToken`
+  all return `view()` copies with the hash stripped. Any code path that
+  marshals a stored `*APIToken` directly is a critical finding.
 
 ### 7. Remote Cluster Security (v1.0.0 Phase 3)
 - Kubeconfig fetched from provider, used temporarily, never stored beyond operation
