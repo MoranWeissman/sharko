@@ -52,10 +52,18 @@ const (
 // Format (additive) names the repo layout the probe recognised — "v4" when
 // the engine pin is present, "v3" when it is not but a v3 marker is, empty
 // when the repo really is un-bootstrapped.
+// Repairable (additive, w2-q2) is only meaningful when State is "partial":
+// true means the bootstrap Application simply has not been created yet
+// (bootstrapAbsent) and POST /init's repair path can fix it with no PR — the
+// wizard's "Re-run initialize to repair it" copy is honest here. False means
+// the Application already exists but is degraded (bootstrapUnhealthy) —
+// re-running Initialize cannot fix a live app, so the wizard must not
+// promise a repair.
 type InitStatusResponse struct {
-	State  string `json:"state"`
-	Detail string `json:"detail"`
-	Format string `json:"format,omitempty"`
+	State      string `json:"state"`
+	Detail     string `json:"detail"`
+	Format     string `json:"format,omitempty"`
+	Repairable bool   `json:"repairable,omitempty"`
 }
 
 // probeRepoState is the single source of truth for classifying the GitOps
@@ -101,30 +109,52 @@ func probeRepoState(
 	ac orchestrator.ArgocdClient,
 	baseBranch string,
 ) (state, detail, format string) {
+	state, detail, format, _ = probeRepoStateWithBootstrapStatus(ctx, gp, ac, baseBranch)
+	return state, detail, format
+}
+
+// probeRepoStateWithBootstrapStatus is probeRepoState plus the raw
+// ProbeBootstrapApp status ("absent" | "unhealthy" | "unreachable" |
+// "forbidden" | "healthy" | "") that produced the wire-level state. Added in
+// w2-q2 so POST /init's repair path (runInitOperation) can tell "the app was
+// simply never created" (bootstrapAbsent — repairable, no PR needed) apart
+// from "the app exists but is degraded" (bootstrapUnhealthy — re-init cannot
+// fix a live app), both of which classifyBootstrapApp collapses into the
+// single wire-level RepoStatePartial. probeRepoState remains the function
+// most callers use — this variant exists only for callers that need the
+// finer-grained split.
+func probeRepoStateWithBootstrapStatus(
+	ctx context.Context,
+	gp gitprovider.GitProvider,
+	ac orchestrator.ArgocdClient,
+	baseBranch string,
+) (state, detail, format, bootstrapStatus string) {
 	if _, err := gp.GetFileContent(ctx, orchestrator.BootstrapRootAppPath, baseBranch); err != nil {
 		if orchestrator.HasV3Markers(ctx, gp, baseBranch) {
-			s, d := classifyBootstrapApp(ctx, ac)
-			return s, d, orchestrator.RepoFormatV3
+			s, d, bs := classifyBootstrapApp(ctx, ac)
+			return s, d, orchestrator.RepoFormatV3, bs
 		}
-		return RepoStateEmpty, "", ""
+		return RepoStateEmpty, "", "", ""
 	}
-	s, d := classifyBootstrapApp(ctx, ac)
-	return s, d, orchestrator.RepoFormatV4
+	s, d, bs := classifyBootstrapApp(ctx, ac)
+	return s, d, orchestrator.RepoFormatV4, bs
 }
 
 // classifyBootstrapApp maps the ArgoCD bootstrap-app probe onto the
 // RepoState* vocabulary. Shared by the v3 and v4 arms of probeRepoState so
-// both formats get the identical classification.
-func classifyBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (state, detail string) {
+// both formats get the identical classification. bootstrapStatus is the raw
+// ProbeBootstrapApp status this classification was derived from (see
+// probeRepoStateWithBootstrapStatus).
+func classifyBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (state, detail, bootstrapStatus string) {
 	status, argoDetail := ProbeBootstrapApp(ctx, ac)
 	switch status {
 	case bootstrapHealthy:
-		return RepoStateInitialized, ""
+		return RepoStateInitialized, "", status
 	case bootstrapForbidden:
 		// A 403 on the LIST is a genuine RBAC problem with the token, not a
 		// broken bootstrap — surface it distinctly so neither the POST /init
 		// partial path nor the GET /init/status probe mislabels it.
-		return RepoStateForbidden, argoDetail
+		return RepoStateForbidden, argoDetail, status
 	case bootstrapUnreachable:
 		// Sync=Unknown means ArgoCD's repo-server can't reach/evaluate the Git
 		// repo — a connection problem re-running Initialize cannot fix. Report
@@ -132,19 +162,21 @@ func classifyBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (st
 		// loop on the GET /init/status read path (V2-cleanup-51). The POST
 		// /init runner treats this the same as "partial" (a Fail), so this
 		// distinction only affects the read path that feeds the wizard.
-		return RepoStateUnreachable, argoDetail
+		return RepoStateUnreachable, argoDetail, status
 	default:
 		// "absent" and "unhealthy" both mean: the repo has bootstrap files but
 		// ArgoCD is not (yet) running a healthy bootstrap. The wizard offers
-		// init/repair. Never an RBAC message here (V2-cleanup-11.2).
-		return RepoStatePartial, argoDetail
+		// init/repair. Never an RBAC message here (V2-cleanup-11.2). w2-q2:
+		// POST /init tells these two apart via bootstrapStatus — "absent" is
+		// a real repair (no PR), "unhealthy" stays a refusal.
+		return RepoStatePartial, argoDetail, status
 	}
 }
 
 // handleInitStatus godoc
 //
 // @Summary Probe GitOps repo initialization state
-// @Description Read-only probe used by the first-run wizard before it offers to initialize the repo. Returns "empty" when the bootstrap root-app YAML is not present on the base branch, "initialized" when it is present and the ArgoCD bootstrap application is Synced + Healthy, "forbidden" when the file is present but ArgoCD rejected the read with a 403 because the token lacks RBAC permission (detail carries an actionable permission message), "unreachable" when the file is present but the ArgoCD bootstrap reports Sync=Unknown because ArgoCD cannot reach/evaluate the Git repo (a connection problem re-init cannot fix), and "partial" when the file is present but the ArgoCD bootstrap is missing or genuinely degraded (detail carries the ArgoCD diagnostic). Performs no writes and creates no operation session. Requires an active Git connection.
+// @Description Read-only probe used by the first-run wizard before it offers to initialize the repo. Returns "empty" when the bootstrap root-app YAML is not present on the base branch, "initialized" when it is present and the ArgoCD bootstrap application is Synced + Healthy, "forbidden" when the file is present but ArgoCD rejected the read with a 403 because the token lacks RBAC permission (detail carries an actionable permission message), "unreachable" when the file is present but the ArgoCD bootstrap reports Sync=Unknown because ArgoCD cannot reach/evaluate the Git repo (a connection problem re-init cannot fix), and "partial" when the file is present but the ArgoCD bootstrap is missing or genuinely degraded (detail carries the ArgoCD diagnostic). When state is "partial", repairable is true only if the bootstrap application was simply never created (POST /init can repair it with no PR) and false if it already exists but is degraded (re-init cannot fix a live app). Performs no writes and creates no operation session. Requires an active Git connection.
 // @Tags init
 // @Produce json
 // @Security BearerAuth
@@ -174,6 +206,9 @@ func (s *Server) handleInitStatus(w http.ResponseWriter, r *http.Request) {
 		baseBranch = "main"
 	}
 
-	state, detail, format := probeRepoState(r.Context(), gp, ac, baseBranch)
-	writeJSON(w, http.StatusOK, InitStatusResponse{State: state, Detail: detail, Format: format})
+	state, detail, format, bootstrapStatus := probeRepoStateWithBootstrapStatus(r.Context(), gp, ac, baseBranch)
+	repairable := state == RepoStatePartial && bootstrapStatus == bootstrapAbsent
+	writeJSON(w, http.StatusOK, InitStatusResponse{
+		State: state, Detail: detail, Format: format, Repairable: repairable,
+	})
 }

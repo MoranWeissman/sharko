@@ -276,6 +276,66 @@ describe('FirstRunWizard step 4 — sync-failure surfacing (V124-14 / BUG-032)',
   })
 })
 
+// w2-q2 — the error-state "Skip, go to Dashboard" button must escape the
+// same way the header's X button does.
+//
+// THE BUG: StepInit's error-state skip button called `onDone` (navigate
+// only). The X button correctly calls `handleEscape`, which sets the
+// `sharko:dismiss-wizard` sessionStorage flag before navigating — without
+// that flag, App.tsx's wizard gate re-renders the wizard the instant it
+// lands on /dashboard (the repo is still un-initialized after a failed
+// init), so clicking "Skip" looked like it did nothing.
+describe('FirstRunWizard step 4 — error-state skip escapes properly (w2-q2)', () => {
+  it('clicking "Skip, go to Dashboard" after a failed init sets the dismiss-wizard flag', async () => {
+    const initRepoMock = apiModule.initRepo as ReturnType<typeof vi.fn>
+    const getOperationMock = apiModule.getOperation as ReturnType<typeof vi.fn>
+    initRepoMock.mockResolvedValueOnce({ operation_id: 'op-skip-1' })
+    getOperationMock.mockResolvedValue({
+      id: 'op-skip-1',
+      status: 'failed',
+      error: 'ArgoCD bootstrap failed: some error',
+      steps: [],
+    })
+
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      renderWizard(4)
+
+      // Flush the on-mount repo-state probe so the Initialize offer renders.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      const initBtn = await screen.findByRole('button', { name: /Initialize.*Auto-merge/i })
+      fireEvent.click(initBtn)
+
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      // Advance past the 2s polling interval so the failed status lands.
+      await act(async () => {
+        vi.advanceTimersByTime(2100)
+        await Promise.resolve()
+      })
+
+      const skipBtn = await screen.findByRole('button', { name: /Skip, go to Dashboard/i })
+
+      expect(sessionStorage.getItem('sharko:dismiss-wizard')).toBeNull()
+      fireEvent.click(skipBtn)
+      expect(sessionStorage.getItem('sharko:dismiss-wizard')).toBe('1')
+    } finally {
+      vi.useRealTimers()
+      getOperationMock.mockResolvedValue({
+        id: 'op-1',
+        status: 'pending',
+        steps: [],
+      })
+      initRepoMock.mockResolvedValue({ operation_id: 'op-1' })
+    }
+  })
+})
+
 // V124-15 / BUG-033 — wizard surfaces 401 (session expired) during polling.
 //
 // Pre-V124-15, the wizard's polling useEffect had a blanket `catch {}` that
@@ -1047,26 +1107,67 @@ describe('FirstRunWizard — Step 4 conditional render by repo state (V2-cleanup
     ).not.toBeInTheDocument()
   })
 
-  it('partial → shows the ArgoCD detail and keeps the Initialize/repair buttons', async () => {
+  // w2-q2: partial now splits on `repairable`. A degraded (but existing) app
+  // is NOT repairable — re-running Initialize can't fix a live application,
+  // so the wizard must not promise a repair or show the Initialize buttons.
+  it('partial + not repairable (degraded app) → shows the "cannot fix a live app" copy, no Initialize buttons', async () => {
     getInitStatusMock().mockResolvedValueOnce({
       state: 'partial',
       detail: 'argocd app "cluster-addons-bootstrap" sync=OutOfSync health=Degraded',
+      repairable: false,
     })
     renderWizard(4)
 
     expect(
       await screen.findByText(
-        /This repo has Sharko files but the ArgoCD bootstrap is missing or unhealthy/i,
+        /ArgoCD bootstrap application already exists but is not healthy/i,
       ),
     ).toBeInTheDocument()
     // The backend detail is surfaced verbatim.
     expect(
       screen.getByText(/sync=OutOfSync health=Degraded/i),
     ).toBeInTheDocument()
-    // Repair path stays available.
     expect(
-      screen.getByRole('button', { name: /Initialize.*Auto-merge/i }),
+      screen.getByText(/Re-running Initialize will not fix a live application/i),
     ).toBeInTheDocument()
+    // No repair CTA — just a way back to the dashboard.
+    expect(
+      screen.queryByRole('button', { name: /Initialize.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Repair now/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Back to Dashboard/i }),
+    ).toBeInTheDocument()
+  })
+
+  // w2-q2: partial + repairable (the app was simply never created) IS an
+  // honest repair offer — a single "Repair now" button, no PR-vs-auto-merge
+  // choice since the repair never touches git.
+  it('partial + repairable (app never created) → shows the honest repair copy + a Repair now button', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'argocd app "sharko-engine" is not created on this cluster yet',
+      repairable: true,
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(
+        /the ArgoCD app hasn't been created yet/i,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/no PR needed, this only creates the ArgoCD app/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Repair now/i }),
+    ).toBeInTheDocument()
+    // The old two-button PR-vs-auto-merge choice does not apply to a repair.
+    expect(
+      screen.queryByRole('button', { name: /Initialize.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
   })
 
   it('loading → shows a "Checking repository…" spinner before the probe resolves', async () => {
@@ -1155,25 +1256,31 @@ describe('FirstRunWizard — Step 4 unreachable state (V2-cleanup-51)', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('partial → STILL shows the repair copy + Initialize buttons (genuine degraded path unchanged)', async () => {
+  // w2-q2: a genuinely degraded (but existing) bootstrap app is
+  // repairable=false — re-init cannot fix a live application, so it must
+  // NOT show the old "Re-run initialize to repair it" promise or the
+  // Initialize buttons. It still must not show the connection-problem copy
+  // either — that's the distinct `unreachable` state.
+  it('partial + not repairable → does NOT promise a repair, and the connection-problem copy does not leak in', async () => {
     getInitStatusMock().mockResolvedValueOnce({
       state: 'partial',
       detail: 'argocd app "cluster-addons-bootstrap" sync=OutOfSync health=Degraded',
+      repairable: false,
     })
     renderWizard(4)
 
     expect(
       await screen.findByText(
-        /This repo has Sharko files but the ArgoCD bootstrap is missing or unhealthy/i,
+        /ArgoCD bootstrap application already exists but is not healthy/i,
       ),
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/Re-run initialize to repair it/i),
-    ).toBeInTheDocument()
-    // Repair path stays available — re-init CAN fix a genuinely degraded bootstrap.
+      screen.queryByText(/Re-run initialize to repair it/i),
+    ).not.toBeInTheDocument()
+    // No repair CTA for a genuinely degraded (existing) app.
     expect(
-      screen.getByRole('button', { name: /Initialize.*Auto-merge/i }),
-    ).toBeInTheDocument()
+      screen.queryByRole('button', { name: /Initialize.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
     // And the connection-problem copy must NOT leak into the partial branch.
     expect(
       screen.queryByText(/ArgoCD can't reach your Git repo right now/i),

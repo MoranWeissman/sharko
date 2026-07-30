@@ -52,6 +52,13 @@ import (
 // ("root-app.yaml" at repo root, no bootstrap/ prefix).
 type initFakeGit struct {
 	rootAppExists bool
+	// writeCalls counts every call to a mutating GitProvider method
+	// (CreateBranch, CreateOrUpdateFile, BatchCreateFiles, DeleteFile,
+	// CreatePullRequest, MergePullRequest, DeleteBranch). w2-q2's repair path
+	// (RepoStatePartial + bootstrapAbsent) must perform NO git writes — this
+	// counter is how TestRunInitOperation_AbsentBootstrapApp_Repairs proves
+	// that.
+	writeCalls atomic.Int32
 }
 
 func (f *initFakeGit) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
@@ -69,23 +76,38 @@ func (f *initFakeGit) ListPullRequests(_ context.Context, _ string) ([]gitprovid
 	return nil, nil
 }
 
-func (f *initFakeGit) TestConnection(_ context.Context) error                          { return nil }
-func (f *initFakeGit) CreateBranch(_ context.Context, _, _ string) error               { return nil }
+func (f *initFakeGit) TestConnection(_ context.Context) error { return nil }
+func (f *initFakeGit) CreateBranch(_ context.Context, _, _ string) error {
+	f.writeCalls.Add(1)
+	return nil
+}
 func (f *initFakeGit) CreateOrUpdateFile(_ context.Context, _ string, _ []byte, _, _ string) error {
+	f.writeCalls.Add(1)
 	return nil
 }
 func (f *initFakeGit) BatchCreateFiles(_ context.Context, _ map[string][]byte, _, _ string) error {
+	f.writeCalls.Add(1)
 	return nil
 }
-func (f *initFakeGit) DeleteFile(_ context.Context, _, _, _ string) error { return nil }
+func (f *initFakeGit) DeleteFile(_ context.Context, _, _, _ string) error {
+	f.writeCalls.Add(1)
+	return nil
+}
 func (f *initFakeGit) CreatePullRequest(_ context.Context, _, _, _, _ string) (*gitprovider.PullRequest, error) {
+	f.writeCalls.Add(1)
 	return nil, nil
 }
-func (f *initFakeGit) MergePullRequest(_ context.Context, _ int) error          { return nil }
+func (f *initFakeGit) MergePullRequest(_ context.Context, _ int) error {
+	f.writeCalls.Add(1)
+	return nil
+}
 func (f *initFakeGit) GetPullRequestStatus(_ context.Context, _ int) (string, error) {
 	return "open", nil
 }
-func (f *initFakeGit) DeleteBranch(_ context.Context, _ string) error { return nil }
+func (f *initFakeGit) DeleteBranch(_ context.Context, _ string) error {
+	f.writeCalls.Add(1)
+	return nil
+}
 
 // initFakeArgocd is a minimal orchestrator.ArgocdClient. Every method except
 // GetApplication is a no-op — the BUG-034 already-initialized branch only
@@ -267,6 +289,14 @@ func TestRunInitOperation_AlreadyInitialized_MissingArgoCDApp_Fails(t *testing.T
 // OutOfSync / Degraded, the operation must Fail with a descriptive error
 // that includes the unhealthy status. This protects against the
 // "manually deleted the deployment" partial-state case.
+//
+// w2-q2: the message is also improved to plainly say the app already
+// exists — so re-running Initialize (repair) will not fix it — and to name
+// the app and point at ArgoCD/diagnostics, instead of the old generic
+// "missing or unhealthy" wording. This is the LOCKED "refuse-on-unhealthy"
+// decision: files-present + app-exists-but-degraded is NOT the same as
+// files-present + app-absent (which now repairs — see
+// TestRunInitOperation_AbsentBootstrapApp_Repairs).
 func TestRunInitOperation_AlreadyInitialized_UnhealthyArgoCDApp_Fails(t *testing.T) {
 	s := newInitTestServer()
 	gp := &initFakeGit{rootAppExists: true}
@@ -288,10 +318,133 @@ func TestRunInitOperation_AlreadyInitialized_UnhealthyArgoCDApp_Fails(t *testing
 		t.Errorf("expected status=%s, got %s (result=%q)",
 			operations.StatusFailed, sess.Status, sess.Result)
 	}
-	for _, want := range []string{"sync=OutOfSync", "health=Degraded"} {
+	for _, want := range []string{
+		"sync=OutOfSync", "health=Degraded",
+		orchestrator.BootstrapRootAppName,
+		"already exists", "will not fix it",
+	} {
 		if !strings.Contains(sess.Error, want) {
 			t.Errorf("expected error to contain %q, got %q", want, sess.Error)
 		}
+	}
+	if gp.writeCalls.Load() != 0 {
+		t.Errorf("expected zero git writes when refusing a degraded app, got %d", gp.writeCalls.Load())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// w2-q2 — real repair for files-present + bootstrap-app-absent
+// ---------------------------------------------------------------------------
+//
+// Background: the wizard's yellow banner told the user "Re-run initialize to
+// repair it", but runInitOperation's RepoStatePartial branch Failed
+// unconditionally — a dead end. These tests cover the fix: when the repo
+// files are already there and the ONLY thing missing is the ArgoCD
+// bootstrap Application (bootstrapAbsent), POST /init now repairs it —
+// creates the Application and waits for sync — with zero git writes, no PR,
+// no re-seeding. Genuinely degraded/unreachable apps still refuse (covered
+// above and below).
+
+// TestRunInitOperation_AbsentBootstrapApp_Repairs is the repair happy path:
+// files exist, the bootstrap Application was never created (LIST succeeds,
+// empty — the "absent" classification), so runInitOperation must create it
+// and wait for sync, WITHOUT touching git at all. gp.writeCalls proves no
+// git write method was ever called — the assertion the story called out
+// explicitly.
+func TestRunInitOperation_AbsentBootstrapApp_Repairs(t *testing.T) {
+	s := newInitTestServer()
+	gp := &initFakeGit{rootAppExists: true}
+	ac := &initFakeArgocd{
+		// Empty (non-nil) listApps drives ProbeBootstrapApp to "absent" —
+		// LIST succeeded, the bootstrap app just isn't in the results yet.
+		listApps: []models.ArgocdApplication{},
+		// GetApplication (used by WaitForSync, called AFTER BootstrapArgoCD
+		// "creates" the app) is pre-seeded as Synced+Healthy — the fake
+		// doesn't simulate CreateApplication actually mutating state, so we
+		// seed the post-creation view directly.
+		app: &models.ArgocdApplication{
+			Name:         orchestrator.BootstrapRootAppName,
+			SyncStatus:   "Synced",
+			HealthStatus: "Healthy",
+		},
+	}
+
+	sessID := runInit(s, gp, ac)
+
+	if gp.writeCalls.Load() != 0 {
+		t.Fatalf("repair must perform zero git writes, got %d", gp.writeCalls.Load())
+	}
+
+	sess, ok := s.opsStore.Get(sessID)
+	if !ok {
+		t.Fatalf("session %q not found in store", sessID)
+	}
+	if sess.Status != operations.StatusCompleted {
+		t.Fatalf("expected status=%s, got %s (error=%q)",
+			operations.StatusCompleted, sess.Status, sess.Error)
+	}
+	if !strings.Contains(sess.Result, "repaired") {
+		t.Errorf("expected result to mention the repair, got %q", sess.Result)
+	}
+
+	// Steps 1-4 (the git side) were skipped-as-already-done with the
+	// repair-specific detail; steps 5-6 (ArgoCD side) actually ran.
+	if len(sess.Steps) != 6 {
+		t.Fatalf("expected 6 steps, got %d", len(sess.Steps))
+	}
+	for i := 0; i < 4; i++ {
+		step := sess.Steps[i]
+		if step.Status != operations.StatusCompleted {
+			t.Errorf("step %d (%q): expected status=completed, got %s", i, step.Name, step.Status)
+		}
+		if !strings.Contains(step.Detail, "repairing ArgoCD bootstrap only") {
+			t.Errorf("step %d (%q): expected repair detail, got %q", i, step.Name, step.Detail)
+		}
+	}
+	if sess.Steps[4].Status != operations.StatusCompleted || sess.Steps[4].Detail != "ArgoCD bootstrapped" {
+		t.Errorf("step 4 (bootstrap): expected completed/%q, got %s/%q",
+			"ArgoCD bootstrapped", sess.Steps[4].Status, sess.Steps[4].Detail)
+	}
+	if sess.Steps[5].Status != operations.StatusCompleted || sess.Steps[5].Detail != "synced" {
+		t.Errorf("step 5 (sync): expected completed/%q, got %s/%q",
+			"synced", sess.Steps[5].Status, sess.Steps[5].Detail)
+	}
+}
+
+// TestRunInitOperation_UnreachableBootstrapApp_Fails covers the third split
+// of the old blanket RepoStatePartial Fail: Sync=Unknown means ArgoCD can't
+// reach/evaluate the repo at all — a connection problem, not a missing app.
+// Re-running Initialize cannot fix it, so this must stay a Fail (with a
+// message describing a connection problem, not "missing or unhealthy"), and
+// must perform zero git writes.
+func TestRunInitOperation_UnreachableBootstrapApp_Fails(t *testing.T) {
+	s := newInitTestServer()
+	gp := &initFakeGit{rootAppExists: true}
+	ac := &initFakeArgocd{
+		app: &models.ArgocdApplication{
+			Name:         orchestrator.BootstrapRootAppName,
+			SyncStatus:   "Unknown",
+			HealthStatus: "Error",
+		},
+	}
+
+	sessID := runInit(s, gp, ac)
+
+	sess, ok := s.opsStore.Get(sessID)
+	if !ok {
+		t.Fatalf("session %q not found in store", sessID)
+	}
+	if sess.Status != operations.StatusFailed {
+		t.Errorf("expected status=%s, got %s (result=%q)",
+			operations.StatusFailed, sess.Status, sess.Result)
+	}
+	for _, want := range []string{"cannot reach or evaluate the repository", "sync=Unknown"} {
+		if !strings.Contains(sess.Error, want) {
+			t.Errorf("expected error to contain %q, got %q", want, sess.Error)
+		}
+	}
+	if gp.writeCalls.Load() != 0 {
+		t.Errorf("expected zero git writes when refusing an unreachable repo, got %d", gp.writeCalls.Load())
 	}
 }
 

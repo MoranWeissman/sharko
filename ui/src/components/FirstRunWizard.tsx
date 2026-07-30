@@ -494,7 +494,23 @@ function StepArgoCD({
 /*  Step 4: Initialize Repository                                      */
 /* ------------------------------------------------------------------ */
 
-function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: boolean; onBack?: () => void }) {
+function StepInit({
+  onDone,
+  onEscape,
+  resumed,
+  onBack,
+}: {
+  onDone: () => void
+  // w2-q2: the error-state "Skip, go to Dashboard" button must escape the
+  // SAME way the header's X button does (set the sessionStorage dismiss
+  // flag) — NOT just navigate. onDone alone leaves App.tsx's wizard gate
+  // free to re-render the wizard the instant it lands on /dashboard, since
+  // the repo is still un-initialized after an error. Falls back to onDone
+  // if a caller doesn't pass it, so this stays backward compatible.
+  onEscape?: () => void
+  resumed?: boolean
+  onBack?: () => void
+}) {
   const navigate = useNavigate()
   const [state, setState] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -518,6 +534,12 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
   >('loading')
   const [probeDetail, setProbeDetail] = useState<string>('')
   const [probeFailed, setProbeFailed] = useState(false)
+  // w2-q2: only meaningful when repoState === 'partial'. true — the
+  // bootstrap app was simply never created, POST /init can repair it with
+  // no PR, so the "Re-run initialize to repair it" promise is honest. false
+  // — the app already exists but is degraded; re-init cannot fix a live
+  // app, so the banner must not promise a repair.
+  const [probeRepairable, setProbeRepairable] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -528,6 +550,7 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
         if (cancelled) return
         setRepoState(res.state)
         setProbeDetail(res.detail || '')
+        setProbeRepairable(Boolean(res.repairable))
       })
       .catch(() => {
         if (cancelled) return
@@ -659,19 +682,57 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
         </div>
       )}
 
-      {/* Partial state — repo files exist but the ArgoCD bootstrap is missing
-          or unhealthy. Surface the backend detail and keep the Initialize
-          buttons so the user can repair (init is idempotent). */}
-      {repoState === 'partial' && state === 'idle' && (
-        <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-5 dark:bg-amber-900/20">
-          <p className="text-sm font-medium text-amber-800 dark:text-amber-300 mb-1">
-            This repo has Sharko files but the ArgoCD bootstrap is missing or
-            unhealthy
-            {probeDetail ? `: ${probeDetail}` : '.'}
-          </p>
-          <p className="text-sm text-amber-700 dark:text-amber-400">
-            Re-run initialize to repair it — Sharko opens a PR for your review.
-          </p>
+      {/* Partial + repairable (w2-q2) — the ArgoCD bootstrap app was simply
+          never created. POST /init's repair path fixes this with no PR:
+          the "Re-run initialize to repair it" promise is honest here. */}
+      {repoState === 'partial' && probeRepairable && state === 'idle' && (
+        <div className="space-y-3">
+          <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-5 dark:bg-amber-900/20">
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-300 mb-1">
+              This repo has Sharko files, but the ArgoCD app hasn't been
+              created yet{probeDetail ? `: ${probeDetail}` : '.'}
+            </p>
+            <p className="text-sm text-amber-700 dark:text-amber-400">
+              Re-run initialize to repair it — no PR needed, this only
+              creates the ArgoCD app.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => handleInit(true)}
+            className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#6aade0]"
+          >
+            <Sparkles className="h-4 w-4" />
+            Repair now
+          </button>
+        </div>
+      )}
+
+      {/* Partial + NOT repairable (w2-q2) — the ArgoCD app already exists
+          but is degraded. Re-running Initialize cannot fix a live app, so
+          this must NOT promise a repair or show the Initialize buttons —
+          point the user at ArgoCD directly instead (same shape as the
+          unreachable state below). */}
+      {repoState === 'partial' && !probeRepairable && state === 'idle' && (
+        <div className="space-y-3">
+          <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-5 dark:bg-amber-900/20">
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+              This repo's ArgoCD bootstrap application already exists but is
+              not healthy{probeDetail ? `: ${probeDetail}` : '.'}
+            </p>
+            <p className="mt-1 text-sm text-amber-700 dark:text-amber-400">
+              Re-running Initialize will not fix a live application. Check
+              its sync and health status in ArgoCD directly, or use the
+              diagnostics tools.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onDone}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400"
+          >
+            Back to Dashboard
+          </button>
         </div>
       )}
 
@@ -738,9 +799,12 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
         </div>
       )}
 
-      {/* Initialize buttons — shown for empty (set up) and partial (repair).
+      {/* Initialize buttons — shown only for empty (set up). w2-q2: partial
+          now has its own CTA — a single "Repair now" button when
+          repairable, no button at all (just "Back to Dashboard") when not —
+          rendered above, since a repair is not a PR-vs-auto-merge choice.
           Hidden for initialized (nothing to do) and while loading. */}
-      {(repoState === 'empty' || repoState === 'partial') && state === 'idle' && (
+      {repoState === 'empty' && state === 'idle' && (
         <div className="flex flex-col gap-3 sm:flex-row">
           <button
             type="button"
@@ -878,7 +942,7 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
                 </button>
                 <button
                   type="button"
-                  onClick={onDone}
+                  onClick={onEscape ?? onDone}
                   className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400"
                 >
                   Skip, go to Dashboard
@@ -1262,6 +1326,7 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
             {step === 4 && (
               <StepInit
                 onDone={handleDone}
+                onEscape={handleEscape}
                 resumed={initialStep === 4}
                 onBack={initialStep === 4 ? () => setStep(3) : undefined}
               />

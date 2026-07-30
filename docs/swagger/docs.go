@@ -5678,7 +5678,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Read-only probe used by the first-run wizard before it offers to initialize the repo. Returns \"empty\" when the bootstrap root-app YAML is not present on the base branch, \"initialized\" when it is present and the ArgoCD bootstrap application is Synced + Healthy, \"forbidden\" when the file is present but ArgoCD rejected the read with a 403 because the token lacks RBAC permission (detail carries an actionable permission message), \"unreachable\" when the file is present but the ArgoCD bootstrap reports Sync=Unknown because ArgoCD cannot reach/evaluate the Git repo (a connection problem re-init cannot fix), and \"partial\" when the file is present but the ArgoCD bootstrap is missing or genuinely degraded (detail carries the ArgoCD diagnostic). Performs no writes and creates no operation session. Requires an active Git connection.",
+                "description": "Read-only probe used by the first-run wizard before it offers to initialize the repo. Returns \"empty\" when the bootstrap root-app YAML is not present on the base branch, \"initialized\" when it is present and the ArgoCD bootstrap application is Synced + Healthy, \"forbidden\" when the file is present but ArgoCD rejected the read with a 403 because the token lacks RBAC permission (detail carries an actionable permission message), \"unreachable\" when the file is present but the ArgoCD bootstrap reports Sync=Unknown because ArgoCD cannot reach/evaluate the Git repo (a connection problem re-init cannot fix), and \"partial\" when the file is present but the ArgoCD bootstrap is missing or genuinely degraded (detail carries the ArgoCD diagnostic). When state is \"partial\", repairable is true only if the bootstrap application was simply never created (POST /init can repair it with no PR) and false if it already exists but is degraded (re-init cannot fix a live app). Performs no writes and creates no operation session. Requires an active Git connection.",
                 "produces": [
                     "application/json"
                 ],
@@ -9811,6 +9811,9 @@ const docTemplate = `{
                 },
                 "format": {
                     "type": "string"
+                },
+                "repairable": {
+                    "type": "boolean"
                 },
                 "state": {
                     "type": "string"
