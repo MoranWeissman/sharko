@@ -28,6 +28,7 @@ import {
 } from '@/services/api'
 import type { OperationStep, InitStatus } from '@/services/api'
 import { useConnections } from '@/hooks/useConnections'
+import { MigrationBanner } from '@/components/MigrationBanner'
 
 /* ------------------------------------------------------------------ */
 /*  Shared styles                                                       */
@@ -1288,6 +1289,17 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
                 : `Step ${step} of ${stepLabels.length} — ${stepLabels[step - 1]}`}
             </p>
           </div>
+
+          {/* v3 -> v4 repo migration notice (migration-ui) — only meaningful
+              once a connection exists to check (steps 1-3 haven't saved one
+              yet). Renders nothing when the repo isn't on the v3 layout, so
+              this is a no-op outside of "resuming setup on an existing v3
+              repo". */}
+          {step === 4 && (
+            <div className="px-6 pt-4">
+              <MigrationBanner />
+            </div>
+          )}
 
           {/* Content */}
           <div className="p-6">

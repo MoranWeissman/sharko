@@ -320,12 +320,12 @@ func (s *Server) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
 		"argocd": map[string]interface{}{"status": "ok"},
 	}
 	if gitErr != nil {
-		result["git"] = map[string]interface{}{"status": "error", "message": gitErr.Error()}
+		result["git"] = map[string]interface{}{"status": "error", "message": plainConnectionError("git", gitErr)}
 	} else if authInfo.GitSource != "" {
 		result["git"] = map[string]interface{}{"status": "ok", "auth": authInfo.GitSource}
 	}
 	if argocdErr != nil {
-		result["argocd"] = map[string]interface{}{"status": "error", "message": argocdErr.Error()}
+		result["argocd"] = map[string]interface{}{"status": "error", "message": plainConnectionError("argocd", argocdErr)}
 	} else if authInfo.ArgocdSource != "" {
 		result["argocd"] = map[string]interface{}{"status": "ok", "auth": authInfo.ArgocdSource}
 	}
@@ -387,10 +387,10 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if gitErr != nil {
-		result["git"] = map[string]interface{}{"status": "error", "message": gitErr.Error()}
+		result["git"] = map[string]interface{}{"status": "error", "message": plainConnectionError("git", gitErr)}
 	}
 	if argocdErr != nil {
-		result["argocd"] = map[string]interface{}{"status": "error", "message": argocdErr.Error()}
+		result["argocd"] = map[string]interface{}{"status": "error", "message": plainConnectionError("argocd", argocdErr)}
 	}
 
 	audit.Enrich(r.Context(), audit.Fields{

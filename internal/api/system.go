@@ -123,7 +123,7 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
 				"status":  "error",
-				"message": err.Error(),
+				"message": plainConnectionError("vault", err),
 			})
 			return
 		}
@@ -146,7 +146,7 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"status":  "error",
-			"message": err.Error(),
+			"message": plainConnectionError("vault", err),
 		})
 		return
 	}
@@ -203,7 +203,7 @@ func (s *Server) handleTestProviderConfig(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"status":  "error",
-			"message": err.Error(),
+			"message": plainConnectionError("vault", err),
 		})
 		return
 	}
@@ -212,7 +212,7 @@ func (s *Server) handleTestProviderConfig(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"status":  "error",
-			"message": err.Error(),
+			"message": plainConnectionError("vault", err),
 		})
 		return
 	}

@@ -13,6 +13,7 @@ import { WaveDecoration } from '@/components/WaveDecoration';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
+import { MigrationBanner } from '@/components/MigrationBanner';
 import { PullRequestsPanel } from '@/components/PullRequestsPanel';
 import { DriftAlertsPanel } from '@/components/DriftAlertsPanel';
 import { showToast } from '@/components/ToastNotification';
@@ -416,6 +417,10 @@ export function Dashboard() {
 
       {/* ArgoCD Status Banner */}
       <ArgoCDStatusBanner visible={argoCDUnreachable} />
+
+      {/* v3 -> v4 repo migration notice (migration-ui) — renders nothing
+          unless the connected repo is still on the v3 file layout. */}
+      <MigrationBanner />
 
       {/* Bootstrap App Health Banner — inline only for genuinely BLOCKING
           states. Per the "bell absorbs everything" decision (connhealth-2),
