@@ -68,8 +68,9 @@ export function isConnectionErrorReason(reason?: string): boolean {
 /**
  * Pure helper for the wizard gate. Returns true when the wizard should auto-
  * open at Step 4 because either the GitOps repo isn't initialized yet, OR it
- * is initialized but the cluster-side ArgoCD bootstrap
- * (`cluster-addons-bootstrap`) is missing/degraded.
+ * is initialized but the cluster-side ArgoCD bootstrap application
+ * (`sharko-engine` as of v4; formerly `cluster-addons-bootstrap`) is
+ * missing/degraded.
  *
  * V2-cleanup-50: when the repo is NOT initialized BUT the reason is a broken
  * connection (TLS/transport/auth failure — `connection_error`/`no_connection`/

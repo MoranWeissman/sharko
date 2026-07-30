@@ -623,25 +623,42 @@ there, use `1.14.5` — the value Helm baked in from the merged catalog at rende
 
 **Why the pin had to move out of cluster-secret labels.** In v3 the pin was a label on
 the cluster secret, and the template read it with
-`index .metadata.labels (print .values.app "-version")`. That cannot work in v4, and the
-reason is worth stating plainly because it is a silent failure, not a loud one.
+`index .metadata.labels (print .values.app "-version")`. That does not carry over into
+v4 cleanly, and the reason is worth stating precisely — it is easy to get backwards.
 
-In a matrix generator, both arms contribute their fields into one shared set, and the
-later arm wins on any name they share. Arm 1 (clusters) contributes `metadata`, holding
-the cluster secret's labels. Arm 2 (the git file) is a Sharko-enveloped file, so it also
-contributes a top-level `metadata` — the envelope's own. Arm 2 runs second, so **the
-file's `metadata` replaces the cluster's.** `index .metadata.labels ...` then finds
-nothing, and under `missingkey=zero` that is an empty string, not an error. Every version
-pin would quietly become "no pin".
+ArgoCD's matrix generator (goTemplate mode) merges the two arms' parameter maps with
+Mergo's `WithOverride` merge, called so that the FIRST-listed generator's values win on
+any key both arms set, and — because `WithOverride` recurses into nested maps instead of
+replacing them outright — non-conflicting nested keys from BOTH arms survive into the
+merged result. Arm 1 (clusters) is listed first, so it wins conflicts; arm 2 (the git
+file) only fills in what arm 1 left empty (confirmed against ArgoCD's
+`applicationset/generators/matrix.go`: `g0 := getParams(Generators[0])`, then for each `a`
+in `g0`, `g1 := getParams(Generators[1], seed: a)`, then for each `b` in `g1`,
+`mergo.Merge(&tmp, b, WithOverride)` followed by `mergo.Merge(&tmp, a, WithOverride)` —
+the second merge call is what wins).
+
+Both arms happen to set the top-level `metadata` key, but with almost no overlapping
+subkeys: the ArgoCD clusters generator's `metadata` (in goTemplate mode) carries the
+cluster secret's real `labels`/`annotations`, with no `name` of its own; the git file's
+`metadata` — its Sharko envelope header — carries only `name` (e.g. `prod-eu`), no
+`labels`/`annotations`. The deep merge keeps both halves, so `metadata` at round two ends
+up a HYBRID: its `name` subkey is the envelope's own name, while its `labels` /
+`annotations` subkeys are the real cluster secret's. Nothing about that shape is a
+documented ArgoCD contract — it falls out of an implementation detail of how these two
+specific generators' parameter maps happen to line up, and it is not something the engine
+chart should ever depend on.
 
 So this is a hard rule for the engine, not a style preference:
 
-> Inside a generated ApplicationSet, `.metadata` is the assignment file's envelope
-> metadata. It is **not** the cluster secret's. The only cluster identity fields the
-> engine may use are `.name` and `.server`.
+> Inside a generated ApplicationSet, `metadata` at round two is a merge artifact — part
+> envelope name, part real cluster-secret labels/annotations — never a clean handoff to
+> either side. Never read it for anything. The only cluster identity fields the engine
+> may use are `.name` and `.server`.
 
-Pins as data are better anyway — visible in a pull request, diffable, reviewable. But
-they are also the only thing that works.
+Pins as data are better anyway — visible in a pull request, diffable, reviewable. Version
+pins live in `clusters/<cluster>.yaml`'s own `spec.addons.<name>.version`, read via `dig`
+against `.spec` — never against `metadata` — regardless of which arm's data happens to
+survive there.
 
 ### 4.5 How structured settings reach the Application
 

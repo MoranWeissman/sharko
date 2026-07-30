@@ -1,0 +1,14 @@
+# Fixture proving the FIX-3 review fix (v4 Wave 1 R2): a clusters/<cluster>.yaml
+# file with no `spec:` key at all. The git-files matrix arm then contributes
+# a nil `.spec` to the merged round-two parameters, which crashes dig's
+# naked map type assertion unless every dig call guards its input with
+# `(.spec | default dict)`. See TestEngineChartTemplatePatchNilSafety in
+# nilsafety_test.go.
+#
+# Like testdata/clusters/prod-eu.yaml, this file is not read by
+# `helm template` — it is a git-files generator input the real ArgoCD
+# ApplicationSet controller reads at round two (design doc section 4.1).
+apiVersion: sharko.dev/v1
+kind: ClusterAssignment
+metadata:
+  name: nospec-us

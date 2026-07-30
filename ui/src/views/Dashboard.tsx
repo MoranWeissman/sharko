@@ -133,7 +133,7 @@ function BootstrapHealthBanner({ health, sync }: BootstrapHealthBannerProps) {
         <div>
           <p className="font-semibold">ArgoCD Bootstrap Application Issue</p>
           <p className="mt-0.5 text-xs opacity-90">
-            The <code className="rounded bg-black/10 px-1 dark:bg-white/10">cluster-addons-bootstrap</code> application
+            The <code className="rounded bg-black/10 px-1 dark:bg-white/10">sharko-engine</code> application
             is the foundation of all addon deployments. An unhealthy bootstrap app may prevent addons from syncing.
           </p>
           <div className="mt-2 flex items-center gap-2">

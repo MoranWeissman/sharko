@@ -147,6 +147,75 @@ func renderEngineChart(t *testing.T) string {
 	return string(out)
 }
 
+// renderEngineChartWithExtra layers one additional --values file (highest
+// precedence — Helm's own last-wins ordering) on top of renderEngineChart's
+// usual three sources. Used by tests that need one addon's fleet-wide
+// settings to carry a specific quirk (e.g. a syncOptions list that already
+// contains CreateNamespace=true) without perturbing every other render
+// test's shared fixture.
+func renderEngineChartWithExtra(t *testing.T, extraValuesYAML string) string {
+	t.Helper()
+	helmBin, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm not installed; skipping engine render test (CI helm-validate job is the hard guard)")
+	}
+
+	root := repoRoot(t)
+	chartDir := filepath.Join(root, "charts", "sharko-engine")
+	dataDir := filepath.Join(root, "tests", "enginerender", "testdata")
+	nullFile := nullOutNonFixtureCuratedAddons(t)
+
+	extraFile := filepath.Join(t.TempDir(), "extra-values.yaml")
+	if err := os.WriteFile(extraFile, []byte(extraValuesYAML), 0o644); err != nil {
+		t.Fatalf("writing temp extra values file: %v", err)
+	}
+
+	cmd := exec.Command(helmBin, "template", "testengine", chartDir,
+		"--values", nullFile,
+		"--values", filepath.Join(dataDir, "engine-values.yaml"),
+		"--values", filepath.Join(dataDir, "catalog", "addons.yaml"),
+		"--values", extraFile,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, out)
+	}
+	return string(out)
+}
+
+// extractApplicationSetDoc returns the single rendered YAML document (one
+// `helm template` document between `---` separators) for the
+// ApplicationSet named "sharko-<addon>", so assertions can be scoped to
+// one addon's templatePatch instead of matching across every addon in the
+// render.
+func extractApplicationSetDoc(t *testing.T, rendered, name string) string {
+	t.Helper()
+	for _, doc := range strings.Split(rendered, "\n---\n") {
+		if strings.Contains(doc, "kind: ApplicationSet") && strings.Contains(doc, "name: '"+name+"'") {
+			return doc
+		}
+	}
+	t.Fatalf("could not find ApplicationSet %q in rendered output", name)
+	return ""
+}
+
+// extractBetween returns the substring of s strictly between the first
+// occurrence of start and the following occurrence of end (both markers
+// excluded). Used to scope assertions to one templatePatch branch.
+func extractBetween(t *testing.T, s, start, end string) string {
+	t.Helper()
+	i := strings.Index(s, start)
+	if i < 0 {
+		t.Fatalf("marker %q not found in:\n%s", start, s)
+	}
+	rest := s[i+len(start):]
+	j := strings.Index(rest, end)
+	if j < 0 {
+		t.Fatalf("marker %q not found after start marker in:\n%s", end, s)
+	}
+	return rest[:j]
+}
+
 // TestEngineChartRendersProjectAndApplicationSets asserts the chart emits
 // exactly the shared AppProject (design decision D17 — one project, not one
 // per addon) plus one ApplicationSet per enabled addon, named
@@ -185,7 +254,7 @@ func TestEngineChartVersionPinBakedDefaults(t *testing.T) {
 		"metrics-server": "3.12.1", // catalog/addons.yaml fleet-wide delta
 	}
 	for addon, version := range cases {
-		want := `targetRevision: '{{ dig "addons" "` + addon + `" "version" "` + version + `" .spec }}'`
+		want := `targetRevision: '{{ dig "addons" "` + addon + `" "version" "` + version + `" (.spec | default dict) }}'`
 		if !strings.Contains(rendered, want) {
 			t.Errorf("missing exact version-pin dig call for %s.\nwant substring: %s\n--- rendered ---\n%s", addon, want, rendered)
 		}
@@ -231,12 +300,15 @@ func TestEngineChartPreserveResourcesOnDeletionDefaultTrue(t *testing.T) {
 // TestEngineChartClusterIdentityOnlyNameAndServer pins the hard rule from
 // design doc section 4.4 (decision D8): inside a generated ApplicationSet,
 // the only cluster-identity fields the engine may reference are `.name` and
-// `.server` — never `.metadata`, because the git-files arm's envelope
-// metadata silently replaces the clusters arm's metadata in a matrix
-// generator, and `index .metadata.labels ...` would quietly resolve to
-// "no pin" under missingkey=zero. This is the exact v3 mechanism the
-// version-override label relied on; the engine chart source must never
-// reintroduce it.
+// `.server` — never `.metadata`. Round-two `metadata` is a merge artifact of
+// both matrix arms (the clusters arm wins any key the two share, and the
+// matrix generator deep-merges nested maps), so it renders as a hybrid of
+// the assignment file's envelope name and the real cluster secret's
+// labels/annotations — never a clean handoff to either side, and never
+// something the engine chart source should read for anything. The guard
+// below matches ANY `.metadata` read (not just `.metadata.labels`, the
+// v3-era access pattern) so a future template can't reintroduce the same
+// class of mistake through a different subfield.
 func TestEngineChartClusterIdentityOnlyNameAndServer(t *testing.T) {
 	root := repoRoot(t)
 	templatesDir := filepath.Join(root, "charts", "sharko-engine", "templates")
@@ -245,7 +317,7 @@ func TestEngineChartClusterIdentityOnlyNameAndServer(t *testing.T) {
 		t.Fatalf("failed to read templates dir: %v", err)
 	}
 
-	forbidden := regexp.MustCompile(`\.metadata\.labels`)
+	forbidden := regexp.MustCompile(`\.metadata\b`)
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -255,7 +327,7 @@ func TestEngineChartClusterIdentityOnlyNameAndServer(t *testing.T) {
 			t.Fatalf("failed to read %s: %v", e.Name(), err)
 		}
 		if forbidden.Match(data) {
-			t.Errorf("%s references .metadata.labels for cluster identity — forbidden by design doc section 4.4 (decision D8). "+
+			t.Errorf("%s references .metadata for cluster identity — forbidden by design doc section 4.4 (decision D8). "+
 				"Only .name and .server are safe cluster-identity fields inside a generated ApplicationSet.", e.Name())
 		}
 	}
@@ -303,7 +375,7 @@ func TestEngineChartTemplatePatchSettingsPassthrough(t *testing.T) {
 	rendered := renderEngineChart(t)
 
 	for _, addon := range []string{"cert-manager", "metrics-server"} {
-		settingsDig := `dig "addons" "` + addon + `" "settings" dict .spec`
+		settingsDig := `dig "addons" "` + addon + `" "settings" dict (.spec | default dict) | default dict`
 		if !strings.Contains(rendered, settingsDig) {
 			t.Errorf("missing per-cluster settings lookup for %s: %q\n--- rendered ---\n%s", addon, settingsDig, rendered)
 		}
@@ -539,7 +611,7 @@ func TestEngineChartCuratedNamespaceQuirkFlowsThroughWithoutOverride(t *testing.
 	if !strings.Contains(rendered, "name: 'sharko-sealed-secrets'") {
 		t.Fatalf("expected an ApplicationSet for sealed-secrets.\n--- rendered ---\n%s", truncate(rendered, 4000))
 	}
-	want := `namespace: '{{ dig "addons" "sealed-secrets" "settings" "namespace" "kube-system" .spec }}'`
+	want := `namespace: '{{ dig "addons" "sealed-secrets" "settings" "namespace" "kube-system" (.spec | default dict) }}'`
 	if !strings.Contains(rendered, want) {
 		t.Errorf("sealed-secrets curated namespace default (kube-system, from catalog/addons.yaml's default_namespace) did not flow through the merge.\nwant substring: %s\n--- rendered ---\n%s", want, truncate(rendered, 4000))
 	}

@@ -1,0 +1,22 @@
+# Fixture proving the FIX-3 review fix (v4 Wave 1 R2): an addon's
+# `settings:` key present but explicitly YAML `null`. Before the
+# `| default dict` guards in charts/sharko-engine/templates/appset.yaml,
+# dig's own lookup finds this key (it IS present) and returns the literal
+# nil it holds instead of falling back to dig's own empty-dict default —
+# that default only fires when a key is *missing*, not when it is present
+# and null. The templatePatch's `hasKey $s "..."` calls then panic on a
+# nil map. See TestEngineChartTemplatePatchNilSafety in nilsafety_test.go.
+#
+# Like testdata/clusters/prod-eu.yaml, this file is not read by
+# `helm template` — it is a git-files generator input the real ArgoCD
+# ApplicationSet controller reads at round two (design doc section 4.1).
+apiVersion: sharko.dev/v1
+kind: ClusterAssignment
+metadata:
+  name: nullsettings-us
+spec:
+  cluster: nullsettings-us
+  addons:
+    cert-manager:
+      enabled: true
+      settings: null

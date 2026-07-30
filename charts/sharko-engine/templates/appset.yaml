@@ -26,13 +26,15 @@ Every round-two `{{ }}` below is written as a Helm raw string literal
 the same escaping trick templates/bootstrap/templates/addons-appset.yaml
 already uses for the v3 shape this replaces.
 
-HARD RULE (design doc section 4.4): inside a generated ApplicationSet,
-`.metadata` is the assignment file's envelope metadata, not the cluster
-secret's — the git-files arm overrides whatever the clusters arm
-contributed under that name. The only cluster-identity fields safe to
-use here are `.name` and `.server`. Per-cluster settings and version
-pins come from `.spec` (the assignment file's own spec), never from
-`.metadata`.
+HARD RULE (design doc section 4.4): inside a generated ApplicationSet, the
+round-two metadata field is a merge artifact of BOTH matrix arms — the
+clusters arm (listed first) wins any key the two arms share, and ArgoCD's
+matrix-generator merge deep-merges nested maps, so that field ends up a
+hybrid of the assignment file's envelope name and the real cluster
+secret's labels/annotations. It is never a clean handoff to either side.
+The only cluster-identity fields safe to use here are `.name` and
+`.server`. Per-cluster settings and version pins come from `.spec` (the
+assignment file's own spec), never from metadata.
 */}}
 
 {{- $merged := include "sharko-engine.mergedAddons" . | fromYaml -}}
@@ -46,11 +48,21 @@ pins come from `.spec` (the assignment file's own spec), never from
 {{- $namespace := $settings.namespace | default ($addon.namespace | default $name) }}
 {{- $createNamespace := dig "createNamespace" true $settings }}
 {{- $syncOptionsBase := $settings.syncOptions | default (list "ServerSideApply=true") }}
+{{/*
+  Strip any literal "CreateNamespace=true" a fleet-wide syncOptions list
+  might already carry (review fix FIX-4, v4 Wave 1 R2): $syncOptionsBase is
+  reused verbatim by templatePatch's round-two rebuild below, and if it kept
+  a fleet-wide CreateNamespace=true baked in unconditionally, a per-cluster
+  createNamespace: false override would have no effect — the rebuild would
+  re-emit the flag from this list regardless of the per-cluster value.
+  Stripping it here means CreateNamespace=true can only ever come from an
+  explicit conditional (round one below, or round two in templatePatch),
+  never as a passenger in the base list.
+*/}}
+{{- $syncOptionsBase = without $syncOptionsBase "CreateNamespace=true" }}
 {{- $bakedSyncOptions := $syncOptionsBase }}
 {{- if $createNamespace }}
-{{- if not (has "CreateNamespace=true" $bakedSyncOptions) }}
 {{- $bakedSyncOptions = append $bakedSyncOptions "CreateNamespace=true" }}
-{{- end }}
 {{- end }}
 {{- $ignoreDifferences := $settings.ignoreDifferences | default list }}
 {{- $prune := dig "prune" true $settings }}
@@ -113,7 +125,11 @@ spec:
           # the fleet-wide merged version baked in by Helm above. If neither
           # exists this bakes an empty string and the Application fails to
           # sync with a clear ArgoCD error rather than guessing a version.
-          targetRevision: '{{`{{ dig "addons" "`}}{{ $name }}{{`" "version" "`}}{{ $version }}{{`" .spec }}`}}'
+          # `.spec | default dict` guards a clusters/<cluster>.yaml file
+          # with no `spec:` key at all — without it, dig's own nil map type
+          # assertion crashes round two instead of falling back cleanly
+          # (review fix FIX-3, v4 Wave 1 R2).
+          targetRevision: '{{`{{ dig "addons" "`}}{{ $name }}{{`" "version" "`}}{{ $version }}{{`" (.spec | default dict) }}`}}'
           helm:
             ignoreMissingValueFiles: true
             valueFiles:
@@ -171,8 +187,10 @@ spec:
         # namespace is a string field, so it can be templated directly here
         # instead of needing templatePatch (design doc section 4.5) — dig
         # for a per-cluster override, falling back to the fleet-wide merged
-        # namespace baked in by Helm above.
-        namespace: '{{`{{ dig "addons" "`}}{{ $name }}{{`" "settings" "namespace" "`}}{{ $namespace }}{{`" .spec }}`}}'
+        # namespace baked in by Helm above. `.spec | default dict` guards a
+        # clusters/<cluster>.yaml file with no `spec:` key at all (review
+        # fix FIX-3, v4 Wave 1 R2 — see the targetRevision comment above).
+        namespace: '{{`{{ dig "addons" "`}}{{ $name }}{{`" "settings" "namespace" "`}}{{ $namespace }}{{`" (.spec | default dict) }}`}}'
       syncPolicy:
         automated:
           prune: {{ $prune }}
@@ -201,21 +219,48 @@ spec:
   # so no index+default fallback is needed here.
   templatePatch: |
     spec:
-      {{`{{- $s := dig "addons" "`}}{{ $name }}{{`" "settings" dict .spec }}`}}
+      # `(.spec | default dict)` guards a clusters/<cluster>.yaml file with
+      # no `spec:` key at all; the trailing `| default dict` guards an
+      # addon's `settings:` key being present but explicitly YAML `null`
+      # (dig finds the key and returns the literal nil it holds, it does
+      # NOT fall back to its own "dict" default in that case — that default
+      # only fires when the key is *missing*). Without both guards, $s can
+      # be a nil map and every hasKey/dot-access on it below panics at
+      # round two (review fix FIX-3, v4 Wave 1 R2).
+      {{`{{- $s := dig "addons" "`}}{{ $name }}{{`" "settings" dict (.spec | default dict) | default dict }}`}}
       syncPolicy:
         automated:
           prune: {{`{{ dig "prune" `}}{{ $prune }}{{` $s }}`}}
           selfHeal: {{`{{ dig "selfHeal" `}}{{ $selfHeal }}{{` $s }}`}}
-        {{`{{- if hasKey $s "syncOptions" }}`}}
+        # Precedence when a cluster overrides createNamespace and/or
+        # syncOptions (review fix FIX-4, v4 Wave 1 R2): createNamespace
+        # ALWAYS wins over any CreateNamespace=true membership in a
+        # per-cluster syncOptions list, in every branch below — ArgoCD has
+        # no separate createNamespace field of its own, it is only ever
+        # expressed as membership in syncOptions, so "wins" means the
+        # rebuilt list's membership is decided by createNamespace, not by
+        # whatever the syncOptions list happened to already contain.
+        {{`{{- if and (hasKey $s "syncOptions") (hasKey $s "createNamespace") }}`}}
+        # Cluster overrode BOTH: use the cluster's own syncOptions list as
+        # the base (minus any CreateNamespace=true it already carries), then
+        # add CreateNamespace=true back only if createNamespace is true.
+        syncOptions:
+          {{`{{- if $s.createNamespace }}`}}
+          - CreateNamespace=true
+          {{`{{- end }}`}}
+          {{`{{- range without $s.syncOptions "CreateNamespace=true" }}`}}
+          - {{`{{ . }}`}}
+          {{`{{- end }}`}}
+        {{`{{- else if hasKey $s "syncOptions" }}`}}
         syncOptions:
           {{`{{- range $s.syncOptions }}`}}
           - {{`{{ . }}`}}
           {{`{{- end }}`}}
         {{`{{- else if hasKey $s "createNamespace" }}`}}
         # Cluster overrode createNamespace only (not syncOptions): rebuild
-        # the list from the fleet-wide base plus/minus CreateNamespace=true,
-        # since ArgoCD has no separate createNamespace field of its own —
-        # it is only ever expressed as membership in syncOptions.
+        # the list from the fleet-wide base (already stripped of any
+        # literal CreateNamespace=true by Helm above — see $syncOptionsBase)
+        # plus/minus CreateNamespace=true.
         syncOptions:
           {{`{{- if $s.createNamespace }}`}}
           - CreateNamespace=true
