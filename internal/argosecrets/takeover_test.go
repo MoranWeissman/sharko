@@ -215,8 +215,85 @@ func TestTakeOverClusterSecret_CanDropLegacyLabelsWhenAsked(t *testing.T) {
 	}
 }
 
-func TestTakeOverClusterSecret_AlreadyOwnedIsANoOp(t *testing.T) {
+func TestTakeOverClusterSecret_AlreadyOwnedWithTheRecordInPlaceIsANoOp(t *testing.T) {
 	s := brownfieldSecret()
+	s.Labels[LabelManagedBy] = ManagedByValue
+	s.Annotations[AnnotationTakeoverPreservedLabels] = "env,team"
+	m, client := newTakeoverManager(s)
+
+	res, err := m.TakeOverClusterSecret(context.Background(), "prod-eu", true, "2026-07-30T10:00:00Z", legacyKey)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.AlreadyOwned || res.Changed || res.ProtectionRepaired {
+		t.Errorf("res = %+v, want already-owned, unchanged, nothing repaired", res)
+	}
+	if IsAdopted(getSecret(t, client, "prod-eu").Annotations) {
+		t.Error("a no-op must not write anything at all")
+	}
+}
+
+// A cluster brought in by the older adopt path carries Sharko's ownership
+// label and the adopted marker, but nothing ever wrote down WHICH of its
+// labels came from the previous owner. Without that record the next label
+// sync reads those labels as Sharko's own and a self-heal run strips them.
+// Re-running the takeover is what repairs it.
+func TestTakeOverClusterSecret_AlreadyOwnedRepairsAMissingPreservedLabelsRecord(t *testing.T) {
+	s := brownfieldSecret()
+	s.Labels[LabelManagedBy] = ManagedByValue
+	s.Annotations[AnnotationAdopted] = "true"
+	// No AnnotationTakeoverPreservedLabels — this is the hole being repaired.
+	m, client := newTakeoverManager(s)
+
+	res, err := m.TakeOverClusterSecret(context.Background(), "prod-eu", true, "2026-07-30T10:00:00Z", legacyKey)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.AlreadyOwned {
+		t.Errorf("AlreadyOwned = false, want true (res = %+v)", res)
+	}
+	if !res.ProtectionRepaired {
+		t.Errorf("ProtectionRepaired = false — the missing record was not written back (res = %+v)", res)
+	}
+	if res.Changed {
+		t.Errorf("Changed = true — the connection's owner did not change, only the record was filled in")
+	}
+	if len(res.PreservedLabels) != 2 || res.PreservedLabels["env"] != "prod" || res.PreservedLabels["team"] != "platform" {
+		t.Errorf("PreservedLabels = %v, want env+team", res.PreservedLabels)
+	}
+
+	after := getSecret(t, client, "prod-eu")
+	if got := after.Annotations[AnnotationTakeoverPreservedLabels]; got != "env,team" {
+		t.Fatalf("preserved-label record = %q, want %q", got, "env,team")
+	}
+	// Metadata only: the labels, the connection data and the credentials are
+	// exactly as they were.
+	if after.Labels["env"] != "prod" || after.Labels["team"] != "platform" {
+		t.Errorf("the repair changed the labels: %v", after.Labels)
+	}
+	if string(after.Data["server"]) != "https://prod-eu.example.org" {
+		t.Errorf("the repair changed the connection address: %q", after.Data["server"])
+	}
+	if !strings.Contains(string(after.Data["config"]), "super-secret") {
+		t.Errorf("the repair touched the credentials: %q", after.Data["config"])
+	}
+
+	// Running it a second time writes nothing more.
+	res2, err := m.TakeOverClusterSecret(context.Background(), "prod-eu", true, "2026-07-30T10:00:00Z", legacyKey)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if res2.ProtectionRepaired {
+		t.Error("the repair ran again on a Secret that already has the record")
+	}
+}
+
+// Sharko already owns it and there is nothing from a previous owner on it —
+// there is no record to write, so nothing is written.
+func TestTakeOverClusterSecret_AlreadyOwnedWithNoForeignLabelsWritesNothing(t *testing.T) {
+	s := brownfieldSecret()
+	delete(s.Labels, "env")
+	delete(s.Labels, "team")
 	s.Labels[LabelManagedBy] = ManagedByValue
 	m, client := newTakeoverManager(s)
 
@@ -224,11 +301,11 @@ func TestTakeOverClusterSecret_AlreadyOwnedIsANoOp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !res.AlreadyOwned || res.Changed {
-		t.Errorf("res = %+v, want already-owned and unchanged", res)
+	if res.ProtectionRepaired {
+		t.Errorf("nothing to record, but ProtectionRepaired = true (res = %+v)", res)
 	}
-	if IsAdopted(getSecret(t, client, "prod-eu").Annotations) {
-		t.Error("a no-op must not write anything at all")
+	if _, ok := getSecret(t, client, "prod-eu").Annotations[AnnotationTakeoverPreservedLabels]; ok {
+		t.Error("an empty record was written")
 	}
 }
 

@@ -143,6 +143,11 @@ type Inputs struct {
 	// RegisteredClusters is every cluster name Sharko already has in its
 	// own fleet record.
 	RegisteredClusters []string
+	// RegisteredClustersError is non-empty when that list could not be read
+	// at all. The name check then blocks instead of reporting the name as
+	// free — "I could not look" and "I looked and there is nothing" are two
+	// different answers, and only one of them is safe to act on.
+	RegisteredClustersError string
 	// AlreadyTakenOver is true when THIS cluster is the one Sharko
 	// already manages under that name — a re-run after a successful
 	// takeover, not a collision with a different cluster.
@@ -437,6 +442,22 @@ func checkApplications(in Inputs) Finding {
 
 func checkNameCollision(in Inputs) Finding {
 	f := Finding{ID: FindingNameCollision, Title: "Whether the name is already taken"}
+
+	// Could not read Sharko's own list of clusters. This blocks rather than
+	// warns: the thing on the other side of this check is stamping Sharko's
+	// ownership onto a live ArgoCD connection, and if the name turns out to
+	// belong to a DIFFERENT cluster Sharko already has, that cluster's
+	// settings start being applied to this one. Guessing "the name is free"
+	// is not an option a person would accept if they were asked.
+	if in.RegisteredClustersError != "" {
+		f.Status = StatusBlocked
+		f.Detail = "Sharko could not read its own list of clusters: " + in.RegisteredClustersError
+		f.WhatItMeans = fmt.Sprintf(
+			"Sharko cannot tell you whether it already has a cluster called %q. It is not saying the name is taken — it is saying it does not know, and taking over on a name that turns out to belong to a different cluster would start applying that cluster's settings to this one.",
+			in.Cluster)
+		f.WhatToDo = "Check Sharko's Git connection is working, then run this check again. It goes green as soon as the list can be read."
+		return f
+	}
 
 	registered := false
 	for _, name := range in.RegisteredClusters {

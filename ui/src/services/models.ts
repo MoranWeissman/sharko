@@ -193,7 +193,11 @@ export interface TakeoverReport {
 export interface TakeoverRequestBody {
   yes?: boolean
   dry_run?: boolean
-  acknowledge_warnings?: boolean
+  // acknowledged_findings names the warnings the user has read, by the
+  // finding id shown on screen. The server re-runs the checks on this call
+  // and 409s on any warning whose id is not in here — so a warning that
+  // appeared after the user looked can never be covered by accident.
+  acknowledged_findings?: string[]
   preserve_legacy_labels?: boolean
   region?: string
   auto_merge?: boolean
@@ -207,6 +211,7 @@ export interface TakeoverResponse {
   dropped_labels?: Record<string, string>
   secret_swapped: boolean
   already_owned?: boolean
+  protection_repaired?: boolean
   git?: {
     pr_url?: string
     pr_id?: number
@@ -223,7 +228,8 @@ export interface DropLegacyLabelsRequestBody {
   yes?: boolean
   dry_run?: boolean
   labels?: string[]
-  acknowledge_warnings?: boolean
+  // acknowledged_findings echoes back the warning_ids the dry run returned.
+  acknowledged_findings?: string[]
 }
 
 export interface DropLegacyLabelsResponse {
@@ -232,6 +238,9 @@ export interface DropLegacyLabelsResponse {
   removed?: string[]
   remaining?: string[]
   warnings?: string[]
+  // warning_ids are the stable ids of those warnings, same order, to send
+  // back in acknowledged_findings.
+  warning_ids?: string[]
   message: string
 }
 

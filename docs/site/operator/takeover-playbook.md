@@ -156,6 +156,19 @@ Confirm, and Sharko:
    ownership marker, keeps every label that was already there, and does
    not touch the credentials or the server address.
 
+### The note that protects the old labels
+
+While it does that, Sharko writes down the exact list of labels it
+carried over, as an annotation on the same secret:
+`sharko.dev/takeover-preserved-labels`.
+
+That note is what keeps those labels safe. It is how everything else in
+Sharko knows those particular labels are not its own — so the drift view
+does not report them as something to fix, and a re-sync does not take
+them off. Please do not edit it or delete it by hand. If it does go
+missing, run the takeover again on that cluster: Sharko sees the note is
+gone, writes it back, and changes nothing else.
+
 ### The ordering, and why
 
 The new secret has to keep the same name as the old one, and two secrets
@@ -188,9 +201,10 @@ throughout, the same handover is available from the API with no UI at
 all:
 
 ```bash
-# 1. Read the checks.
+# 1. Read the checks. Note the id of anything that comes back a warning.
 curl -s -H "Authorization: Bearer $SHARKO_TOKEN" \
-  "$SHARKO_URL/api/v1/clusters/prod-eu/takeover/preflight" | jq '.summary, .findings[].title'
+  "$SHARKO_URL/api/v1/clusters/prod-eu/takeover/preflight" \
+  | jq '.summary, (.findings[] | {id, status, title})'
 
 # 2. See the plan without changing anything.
 curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
@@ -198,12 +212,17 @@ curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
   -d '{"dry_run": true}' \
   "$SHARKO_URL/api/v1/clusters/prod-eu/takeover" | jq '.message, .dry_run'
 
-# 3. Do it. Both flags are required when the preflight raised warnings.
+# 3. Do it. Name every warning you read, by the id the checks gave it.
 curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"yes": true, "acknowledge_warnings": true}' \
+  -d '{"yes": true, "acknowledged_findings": ["appset-deletion-safety"]}' \
   "$SHARKO_URL/api/v1/clusters/prod-eu/takeover" | jq
 ```
+
+The checks are run again on step 3, on that moment's reading of the
+world. If a warning turned up in the meantime — somebody pointing an
+ApplicationSet at this cluster while you were reading — the call comes
+back refused and names it, so you read that one too before going ahead.
 
 Add `"preserve_legacy_labels": false` only if you already know nothing
 selects on the old labels. Leaving it out keeps them, which is the safe
@@ -251,15 +270,16 @@ this cluster stopped matching. You tick a box saying you have read that,
 then confirm.
 
 ```bash
-# Dry run first — this is what produces the warnings.
+# Dry run first — this is what produces the warnings and their ids.
 curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
   -H 'Content-Type: application/json' -d '{"dry_run": true}' \
-  "$SHARKO_URL/api/v1/clusters/prod-eu/takeover/legacy-labels/drop" | jq
+  "$SHARKO_URL/api/v1/clusters/prod-eu/takeover/legacy-labels/drop" \
+  | jq '.warnings, .warning_ids'
 
-# Then, having read them:
+# Then, having read them, send those ids back.
 curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"yes": true, "acknowledge_warnings": true}' \
+  -d '{"yes": true, "acknowledged_findings": ["appset:legacy-addons"]}' \
   "$SHARKO_URL/api/v1/clusters/prod-eu/takeover/legacy-labels/drop" | jq
 ```
 
@@ -299,9 +319,17 @@ connection, what is deployed there right now, and which ApplicationSets
 may react to the labels the takeover carried over. Nothing is deleted
 until you send the removal itself with an explicit confirmation.
 
-If you want the cluster out of Sharko but want ArgoCD to keep talking to
-it, ask for `"cleanup": "git"` — Sharko drops its own records and leaves
-the connection exactly as it is.
+**One thing to know:** on a repo using Sharko's newer file layout — which
+is every repo you would be taking a cluster over into — taking a cluster
+back out is not built yet. The removal call refuses rather than writing
+the old files and breaking the fleet record, and the consequences page
+says so at the top. It arrives with the unregister work. Reading the
+consequences is still worth doing: it is what removal will do when it
+lands, so you can decide now whether you want it.
+
+Once removal is available, if you want the cluster out of Sharko but
+want ArgoCD to keep talking to it, you ask for `"cleanup": "git"` —
+Sharko drops its own records and leaves the connection exactly as it is.
 
 ## See also
 

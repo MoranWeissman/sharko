@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -17,12 +18,47 @@ import (
 // content and true if the file exists, or nil and false if the file does not
 // exist or any error occurs during retrieval. This is intended for dry-run
 // previews where missing files are an expected, non-error condition (creates).
+//
+// It is LENIENT ON PURPOSE and therefore only safe where a swallowed error
+// costs nothing worse than a slightly-wrong preview or an "" default. If the
+// value you are reading becomes the BASE of a file you then write back, use
+// readFileForRewrite instead — see the note on that function for what goes
+// wrong otherwise.
 func (o *Orchestrator) readFileIfExists(ctx context.Context, filePath string) ([]byte, bool) {
 	content, err := o.git.GetFileContent(ctx, filePath, o.gitops.BaseBranch)
 	if err != nil {
 		return nil, false
 	}
 	return content, true
+}
+
+// readFileForRewrite reads a file that is about to be edited and written back,
+// and refuses to guess. It is the fail-closed sibling of readFileIfExists.
+//
+// The distinction it draws is the whole point: a genuinely missing file
+// (gitprovider.ErrFileNotFound) is an ordinary answer — exists is false, err
+// is nil, and the caller starts from an empty document. ANY other failure
+// (rate limit, expired token, network blip, a 500 from the Git host) returns
+// an error, because the caller cannot tell the two apart from a nil body.
+//
+// Why that matters: a read-modify-write built on a swallowed error rewrites
+// the file from an empty default. For the fleet record that means a pull
+// request replacing every registered cluster with the single one being added
+// — and once it merges, the reconciler's orphan sweep deletes the ArgoCD
+// connection Secret of every other cluster in the fleet. One transient read
+// error, the whole fleet gone. Stopping with a plain-English error costs an
+// operator one retry.
+func (o *Orchestrator) readFileForRewrite(ctx context.Context, filePath string) (content []byte, exists bool, err error) {
+	content, err = o.git.GetFileContent(ctx, filePath, o.gitops.BaseBranch)
+	if err == nil {
+		return content, true, nil
+	}
+	if errors.Is(err, gitprovider.ErrFileNotFound) {
+		return nil, false, nil
+	}
+	return nil, false, fmt.Errorf(
+		"could not read %s from the %s branch, so Sharko stopped instead of rewriting that file from scratch and losing whatever is in it: %w",
+		filePath, o.gitops.BaseBranch, err)
 }
 
 // fileAction returns "update" if the file exists on the base branch, "create" otherwise.

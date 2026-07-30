@@ -171,6 +171,16 @@ export function CarriedLabelsPanel({ report }: { report: TakeoverReport }) {
   )
 }
 
+/**
+ * warningFindingIDs — the ids of the findings currently shown as warnings.
+ * These are exactly what the confirmation covers: the user ticked the box
+ * having read THESE rows, so THESE are the ids sent back.
+ */
+function warningFindingIDs(report: TakeoverReport | null): string[] {
+  if (!report) return []
+  return report.findings.filter((f) => f.status === 'warning').map((f) => f.id)
+}
+
 export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverDialogProps) {
   const [report, setReport] = useState<TakeoverReport | null>(null)
   const [loading, setLoading] = useState(false)
@@ -215,7 +225,12 @@ export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverD
     try {
       const res = await takeoverCluster(clusterName, {
         yes: true,
-        acknowledge_warnings: acknowledged,
+        // Name the warnings that were actually on screen. The server
+        // re-runs the checks and refuses if it finds one this list does
+        // not cover — which is the point: a warning that turned up while
+        // the dialog was open must not be waved through by a tickbox
+        // ticked against a different set of findings.
+        acknowledged_findings: acknowledged ? warningFindingIDs(report) : [],
         preserve_legacy_labels: preserve,
       })
       setResult(res)
@@ -412,7 +427,9 @@ export function DropLegacyLabelsDialog({ clusterName, open, onClose, onDone }: D
       const res = await dropLegacyLabels(clusterName, {
         yes: true,
         labels: plan.removed,
-        acknowledge_warnings: acknowledged,
+        // Same rule as the takeover: echo back the ids of the warnings the
+        // dry run put on screen, not a blanket "I read them".
+        acknowledged_findings: acknowledged ? (plan.warning_ids ?? []) : [],
       })
       setResult(res)
       onDone?.()

@@ -3,6 +3,7 @@ package clusterreconciler
 import (
 	"testing"
 
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -15,13 +16,13 @@ func TestComputeLabelDrift_NoDrift(t *testing.T) {
 	}
 	// Live Secret has same addon labels plus ownership labels
 	have := map[string]string{
-		"addon-foo":                        "enabled",
-		"addon-bar":                        "disabled",
-		LabelManagedBy:                     LabelValueSharko,
-		models.LabelConnectivityCheck:      "enabled",
+		"addon-foo":                   "enabled",
+		"addon-bar":                   "disabled",
+		LabelManagedBy:                LabelValueSharko,
+		models.LabelConnectivityCheck: "enabled",
 	}
 
-	drift := computeLabelDrift(desired, have)
+	drift := computeLabelDrift(desired, have, nil)
 
 	if drift != nil {
 		t.Errorf("expected nil drift when labels match, got %+v", drift)
@@ -44,7 +45,7 @@ func TestComputeLabelDrift_Added(t *testing.T) {
 		models.LabelConnectivityCheck: "enabled",
 	}
 
-	drift := computeLabelDrift(desired, have)
+	drift := computeLabelDrift(desired, have, nil)
 
 	if drift == nil {
 		t.Fatal("expected non-nil drift when labels differ")
@@ -75,7 +76,7 @@ func TestComputeLabelDrift_Removed(t *testing.T) {
 		models.LabelConnectivityCheck: "enabled",
 	}
 
-	drift := computeLabelDrift(desired, have)
+	drift := computeLabelDrift(desired, have, nil)
 
 	if drift == nil {
 		t.Fatal("expected non-nil drift when labels differ")
@@ -114,7 +115,7 @@ func TestComputeLabelDrift_Changed(t *testing.T) {
 		models.LabelConnectivityCheck: "enabled",
 	}
 
-	drift := computeLabelDrift(desired, have)
+	drift := computeLabelDrift(desired, have, nil)
 
 	if drift == nil {
 		t.Fatal("expected non-nil drift when labels differ")
@@ -153,7 +154,7 @@ func TestComputeLabelDrift_Combined(t *testing.T) {
 		models.LabelConnectivityCheck: "enabled",
 	}
 
-	drift := computeLabelDrift(desired, have)
+	drift := computeLabelDrift(desired, have, nil)
 
 	if drift == nil {
 		t.Fatal("expected non-nil drift")
@@ -183,7 +184,7 @@ func TestComputeLabelDrift_IgnoresOwnershipLabels(t *testing.T) {
 		models.LabelConnectivityCheck: "enabled",
 	}
 
-	drift := computeLabelDrift(desired, have)
+	drift := computeLabelDrift(desired, have, nil)
 
 	// Ownership labels should NOT appear in Removed even though they're not
 	// in desired — they're excluded from the comparison by design.
@@ -201,7 +202,7 @@ func TestComputeLabelDrift_EmptyLive(t *testing.T) {
 	}
 	have := map[string]string{} // empty live labels
 
-	drift := computeLabelDrift(desired, have)
+	drift := computeLabelDrift(desired, have, nil)
 
 	if drift == nil {
 		t.Fatal("expected non-nil drift")
@@ -228,7 +229,7 @@ func TestComputeLabelDrift_EmptyDesired(t *testing.T) {
 		models.LabelConnectivityCheck: "enabled",
 	}
 
-	drift := computeLabelDrift(desired, have)
+	drift := computeLabelDrift(desired, have, nil)
 
 	if drift == nil {
 		t.Fatal("expected non-nil drift")
@@ -241,5 +242,64 @@ func TestComputeLabelDrift_EmptyDesired(t *testing.T) {
 	}
 	if len(drift.Changed) != 0 {
 		t.Errorf("expected no Changed, got %v", drift.Changed)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Labels a takeover carried over are not drift (v4 Wave 2, Epic 6)
+// ─────────────────────────────────────────────────────────────────────────
+
+// A brownfield cluster's own labels sit on the Secret unqualified — "env:
+// prod" looks exactly like a v3 addon key. The takeover writes down which
+// keys those are, and drift reporting has to read that list. Without it,
+// every taken-over cluster reports drift that can never be fixed: git will
+// never declare "env", so it reads as Removed forever and the cluster sits
+// permanently "Failed" on the drift view.
+func TestComputeLabelDrift_IgnoresLabelsTheTakeoverCarriedOver(t *testing.T) {
+	desired := map[string]string{"addon-foo": "enabled"}
+	have := map[string]string{
+		"addon-foo":                      "enabled",
+		"env":                            "prod",     // carried over
+		"team":                           "platform", // carried over
+		LabelManagedBy:                   LabelValueSharko,
+		"argocd.argoproj.io/secret-type": "cluster",
+	}
+	annotations := map[string]string{
+		argosecrets.AnnotationTakeoverPreservedLabels: "env,team",
+	}
+
+	if drift := computeLabelDrift(desired, have, annotations); drift != nil {
+		t.Fatalf("carried-over labels reported as drift: %+v", drift)
+	}
+}
+
+// The same Secret WITHOUT the record is the bug this guards: the foreign
+// label comes back as Removed. Kept as the contrast case so the fix cannot
+// be silently undone.
+func TestComputeLabelDrift_WithoutTheRecordForeignLabelsLookLikeDrift(t *testing.T) {
+	desired := map[string]string{"addon-foo": "enabled"}
+	have := map[string]string{
+		"addon-foo": "enabled",
+		"env":       "prod",
+	}
+
+	drift := computeLabelDrift(desired, have, nil)
+	if drift == nil || len(drift.Removed) != 1 || drift.Removed[0] != "env" {
+		t.Fatalf("expected 'env' to read as drift with no record present, got %+v", drift)
+	}
+}
+
+// A carried-over key that git ALSO declares is still Sharko's to manage —
+// the record only ever covers keys nobody claimed.
+func TestComputeLabelDrift_ADesiredKeyIsStillComparedEvenIfListedAsCarried(t *testing.T) {
+	desired := map[string]string{"env": "enabled"}
+	have := map[string]string{"env": "prod"}
+	annotations := map[string]string{
+		argosecrets.AnnotationTakeoverPreservedLabels: "env",
+	}
+
+	drift := computeLabelDrift(desired, have, annotations)
+	if drift == nil || len(drift.Added) != 1 || drift.Added[0] != "env" {
+		t.Fatalf("a key git declares must still be reconciled, got %+v", drift)
 	}
 }

@@ -152,9 +152,11 @@ describe('TakeoverDialog', () => {
 
     await userEvent.click(screen.getByTestId('takeover-confirm'));
     await waitFor(() => expect(mockTakeover).toHaveBeenCalled());
+    // The payload names the warnings that were on screen, by id — not a
+    // blanket flag that would also cover a warning nobody saw.
     expect(mockTakeover).toHaveBeenCalledWith('prod-eu', {
       yes: true,
-      acknowledge_warnings: true,
+      acknowledged_findings: ['appset-deletion-safety'],
       preserve_legacy_labels: true,
     });
   });
@@ -244,6 +246,7 @@ describe('DropLegacyLabelsDialog', () => {
     warnings: [
       'The ApplicationSet "legacy-addons" picks clusters using env. Remove that label and this cluster stops matching it — it uses the default behaviour, which deletes the Application and everything that Application installed.',
     ],
+    warning_ids: ['appset:legacy-addons'],
     message: 'Plan: remove 2 label(s) from prod-eu’s connection — env and team. Nothing has been changed.',
   };
 
@@ -276,7 +279,7 @@ describe('DropLegacyLabelsDialog', () => {
     expect(mockDropLabels).toHaveBeenLastCalledWith('prod-eu', {
       yes: true,
       labels: ['env', 'team'],
-      acknowledge_warnings: true,
+      acknowledged_findings: ['appset:legacy-addons'],
     });
   });
 

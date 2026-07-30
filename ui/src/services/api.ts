@@ -399,9 +399,10 @@ export async function takeoverPreflight(name: string) {
  * takeoverCluster — POST /clusters/{name}/takeover (story 6.3). Makes
  * Sharko the owner of an existing cluster's ArgoCD connection: same name,
  * same address, and by default every label the previous owner left on it.
- * Refuses without `yes: true`, and refuses again without
- * `acknowledge_warnings: true` when the preflight raised warnings. Pass
- * `dry_run: true` for the plan.
+ * Refuses without `yes: true`. The checks are re-run server-side on this
+ * call, and every warning they raise has to be named by its finding id in
+ * `acknowledged_findings` — anything left out comes back as a 409 listing
+ * it. Pass `dry_run: true` for the plan.
  */
 export async function takeoverCluster(name: string, body: TakeoverRequestBody) {
   return postJSON<TakeoverResponse>(`/clusters/${encodeURIComponent(name)}/takeover`, body)
@@ -411,8 +412,9 @@ export async function takeoverCluster(name: string, body: TakeoverRequestBody) {
  * dropLegacyLabels — POST /clusters/{name}/takeover/legacy-labels/drop
  * (story 6.4). Removes the labels the takeover carried over. The response
  * carries `warnings` naming any ApplicationSet that still picks clusters
- * using one of them — the caller must show those and send
- * `acknowledge_warnings: true` before the removal is allowed.
+ * using one of them, and `warning_ids` alongside them — the caller must
+ * show the warnings and send those ids back in `acknowledged_findings`
+ * before the removal is allowed.
  */
 export async function dropLegacyLabels(name: string, body: DropLegacyLabelsRequestBody) {
   return postJSON<DropLegacyLabelsResponse>(
