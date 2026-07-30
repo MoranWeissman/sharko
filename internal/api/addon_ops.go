@@ -45,6 +45,11 @@ func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.enable") {
 		return
 	}
+	// A v3 repo must migrate first (Story 5.1). The v4 route for the same
+	// intent is POST /api/v1/v4/clusters/{name}/addons/{addon}.
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
+		return
+	}
 
 	// V2-3 SLO surface: addon_cycle (enable side). End-to-end timing
 	// only for PR 1; the full async PR -> merge -> reconciler -> ArgoCD
@@ -177,6 +182,11 @@ func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
 // @Router /clusters/{name}/addons/{addon} [delete]
 func (s *Server) handleDisableAddon(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.disable") {
+		return
+	}
+	// A v3 repo must migrate first (Story 5.1). The v4 route for the same
+	// intent is DELETE /api/v1/v4/clusters/{name}/addons/{addon}.
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
 		return
 	}
 

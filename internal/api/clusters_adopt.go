@@ -33,6 +33,10 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.adopt") {
 		return
 	}
+	// A v3 repo must migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
+		return
+	}
 
 	// Validate body BEFORE any upstream call.
 	var req orchestrator.AdoptClustersRequest
@@ -145,6 +149,10 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 // @Router /clusters/{name}/unadopt [post]
 func (s *Server) handleUnadoptCluster(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.unadopt") {
+		return
+	}
+	// A v3 repo must migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
 		return
 	}
 

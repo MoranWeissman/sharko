@@ -111,6 +111,12 @@ func (s *Server) handleUnwrapGlobalValues(w http.ResponseWriter, r *http.Request
 	if s.refuseV3ValuesSurfaceOnV4Repo(ctx, w, git) {
 		return
 	}
+	// And on a v3 repo, migrate first (Story 5.1) — the v3 -> v4 migration
+	// unwraps every legacy-wrapped values file as it moves them, so this
+	// separate pass has nothing left to do once that PR merges.
+	if s.refuseV3WriteOnV3Repo(ctx, w, git) {
+		return
+	}
 
 	dir := strings.TrimSuffix(s.repoPaths.GlobalValues, "/")
 	if dir == "" {

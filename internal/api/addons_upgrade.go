@@ -32,6 +32,10 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
 		return
 	}
+	// A v3 repo must migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
+		return
+	}
 
 	addonName := r.PathValue("name")
 	if addonName == "" {
@@ -112,6 +116,10 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 // Body: {"upgrades": {"cert-manager": "1.15.0", "metrics-server": "0.7.1"}}
 func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
+		return
+	}
+	// A v3 repo must migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
 		return
 	}
 

@@ -87,6 +87,11 @@ func (s *Server) handlePutDefaultAddons(w http.ResponseWriter, r *http.Request) 
 		Resource: "default-addons",
 	})
 
+	// A v3 repo must migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
+		return
+	}
+
 	var req DefaultAddonsPutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
