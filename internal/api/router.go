@@ -1252,17 +1252,26 @@ func clientIP(r *http.Request) string {
 //   - HttpOnly/Secure/SameSite cookie attributes do not apply (no cookies used).
 //   - Token confidentiality relies on HTTPS in transit and secure client storage
 //     (the UI stores the token in sessionStorage).
-//   - Sessions expire after 24h; a background goroutine cleans expired entries.
+//   - Sessions expire after DefaultSessionLifetime; a background goroutine
+//     cleans expired entries and every request re-checks the expiry, so an
+//     expired session is refused with a 401 even before the sweep runs.
+//     Once expired there is no refresh — the user logs in again.
 
 type sessionInfo struct {
 	Username string
 	Expiry   time.Time
 }
 
+// DefaultSessionLifetime is how long a human login stays valid before the
+// user has to sign in again. There is no refresh token and no remember-me:
+// when the window is up, the session is gone. Documented in
+// docs/site/api/overview.md and docs/site/operator/security.md.
+const DefaultSessionLifetime = 24 * time.Hour
+
 var (
 	activeSessions   = make(map[string]*sessionInfo) // token -> session
 	sessionsMu       sync.RWMutex
-	sessionLifetime  = 24 * time.Hour
+	sessionLifetime  = DefaultSessionLifetime
 	sessionCleanOnce sync.Once
 )
 
@@ -1298,11 +1307,14 @@ func isValidSession(token string) bool {
 	return ok && time.Now().Before(sess.Expiry)
 }
 
+// getSessionUser returns the username behind a session token, or "" if the
+// token is unknown OR its lifetime has run out. The expiry check matters here
+// as well as in isValidSession: the hourly sweep is a cleanup, not the gate.
 func getSessionUser(token string) string {
 	sessionsMu.RLock()
 	defer sessionsMu.RUnlock()
 	sess, ok := activeSessions[token]
-	if !ok {
+	if !ok || !time.Now().Before(sess.Expiry) {
 		return ""
 	}
 	return sess.Username
