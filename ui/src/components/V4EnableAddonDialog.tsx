@@ -16,6 +16,7 @@
  * preview.
  */
 import { useState } from 'react'
+import { parse as parseYaml } from 'yaml'
 import { AlertTriangle, Loader2, Sparkles, Trash2 } from 'lucide-react'
 import {
   Dialog,
@@ -32,6 +33,23 @@ import {
   V4AddonValidationError,
 } from '@/services/api'
 import type { V4GitResult } from '@/services/models'
+
+/** Plain-words error shown for any values input that doesn't parse to a
+ * mapping — e.g. a quoted string like `"installCRDs: true"`, a bare number,
+ * or a YAML/JSON array. Used both by the client-side check below and (for
+ * bare strings) is the exact bug this closes: a quoted string used to pass
+ * the old JSON.parse-only check and leak a raw Go decode error from the
+ * backend instead. */
+const VALUES_NOT_A_MAPPING_ERROR =
+  'Values must be a set of key: value pairs, e.g. installCRDs: true'
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+type ParsedValues =
+  | { ok: true; value: Record<string, unknown> | undefined }
+  | { ok: false }
 
 type Phase = 'form' | 'previewing' | 'preview' | 'problems' | 'applying' | 'result' | 'error'
 
@@ -76,33 +94,49 @@ export function V4EnableAddonDialog({
     onClose()
   }
 
-  const parseValues = (): Record<string, unknown> | undefined => {
-    if (mode !== 'enable' || !valuesText.trim()) return undefined
-    try {
-      const parsed = JSON.parse(valuesText)
+  /**
+   * Parses the values textarea as YAML — JSON is valid YAML, so plain JSON
+   * input keeps working unchanged. A blank textarea (or YAML that parses to
+   * nothing, e.g. an empty document / comments-only) means "no values
+   * sent", same as before. Anything that parses to something other than a
+   * plain mapping — a bare/quoted string, a number, `null`, or an array —
+   * is rejected: the API only ever accepts key/value pairs, and silently
+   * forwarding a non-mapping used to leak a raw Go decode error from the
+   * backend instead of a plain-English one.
+   */
+  const parseValues = (): ParsedValues => {
+    if (mode !== 'enable' || !valuesText.trim()) {
       setValuesError(null)
-      return parsed
-    } catch {
-      setValuesError('Values must be valid JSON (e.g. {"installCRDs": true}).')
-      return undefined
+      return { ok: true, value: undefined }
     }
+    let parsed: unknown
+    try {
+      parsed = parseYaml(valuesText)
+    } catch {
+      setValuesError(VALUES_NOT_A_MAPPING_ERROR)
+      return { ok: false }
+    }
+    if (parsed === undefined || parsed === null) {
+      setValuesError(null)
+      return { ok: true, value: undefined }
+    }
+    if (!isPlainObject(parsed)) {
+      setValuesError(VALUES_NOT_A_MAPPING_ERROR)
+      return { ok: false }
+    }
+    setValuesError(null)
+    return { ok: true, value: parsed }
   }
 
   const runPreview = async () => {
-    if (mode === 'enable' && valuesText.trim()) {
-      try {
-        JSON.parse(valuesText)
-      } catch {
-        setValuesError('Values must be valid JSON (e.g. {"installCRDs": true}).')
-        return
-      }
-    }
+    const parsedValues = mode === 'enable' ? parseValues() : { ok: true as const, value: undefined }
+    if (!parsedValues.ok) return
+
     setPhase('previewing')
     setErrorMessage(null)
     try {
       if (mode === 'enable') {
-        const values = parseValues()
-        const res = await enableAddonV4(cluster, addon, { dry_run: true, values })
+        const res = await enableAddonV4(cluster, addon, { dry_run: true, values: parsedValues.value })
         setPreview(res)
         setPhase('preview')
       } else {
@@ -122,12 +156,14 @@ export function V4EnableAddonDialog({
   }
 
   const handleConfirm = async () => {
+    const parsedValues = mode === 'enable' ? parseValues() : { ok: true as const, value: undefined }
+    if (!parsedValues.ok) return
+
     setPhase('applying')
     setErrorMessage(null)
     try {
       if (mode === 'enable') {
-        const values = parseValues()
-        const res = await enableAddonV4(cluster, addon, { yes: true, values })
+        const res = await enableAddonV4(cluster, addon, { yes: true, values: parsedValues.value })
         setResult(res)
         setPhase('result')
         onApplied?.(res)
@@ -168,12 +204,15 @@ export function V4EnableAddonDialog({
         {phase === 'form' && mode === 'enable' && (
           <div className="space-y-2">
             <label className="block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-              Values (optional JSON)
+              Values (optional)
             </label>
+            <p className="text-sm text-[#3a6a8a] dark:text-gray-400">
+              YAML key: value pairs (JSON also works).
+            </p>
             <textarea
               data-testid="v4-enable-values"
               className="w-full min-h-[100px] rounded-md bg-[#e8f4ff] p-2 font-mono text-xs text-[#0a2a4a] ring-2 ring-[#6aade0] focus:ring-teal-500 dark:bg-gray-900 dark:text-gray-200 dark:ring-gray-700"
-              placeholder='{"installCRDs": true}'
+              placeholder="installCRDs: true"
               value={valuesText}
               onChange={(e) => { setValuesText(e.target.value); setValuesError(null) }}
             />

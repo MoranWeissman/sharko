@@ -148,12 +148,14 @@ describe('V4EnableAddonDialog', () => {
     });
   });
 
-  it('rejects malformed JSON in the values field before calling the API', () => {
+  it('rejects malformed YAML in the values field before calling the API', () => {
     renderDialog();
     fireEvent.change(screen.getByTestId('v4-enable-values'), { target: { value: '{not json' } });
     fireEvent.click(screen.getByRole('button', { name: /preview/i }));
 
-    expect(screen.getByText(/Values must be valid JSON/)).toBeInTheDocument();
+    expect(
+      screen.getByText('Values must be a set of key: value pairs, e.g. installCRDs: true'),
+    ).toBeInTheDocument();
     expect(mockEnableAddonV4).not.toHaveBeenCalled();
   });
 
@@ -161,5 +163,107 @@ describe('V4EnableAddonDialog', () => {
     const { onClose } = renderDialog();
     fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  // w2-q3 UI half — plain YAML values input.
+  describe('values input accepts YAML, requires a mapping (w2-q3)', () => {
+    it('accepts a plain YAML mapping (no braces/quotes)', async () => {
+      mockEnableAddonV4.mockResolvedValue({
+        dry_run: {
+          effective_addons: ['cert-manager'],
+          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+          pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
+          secrets_to_create: [],
+        },
+      });
+
+      renderDialog();
+      fireEvent.change(screen.getByTestId('v4-enable-values'), {
+        target: { value: 'installCRDs: true' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+      await waitFor(() => {
+        expect(mockEnableAddonV4).toHaveBeenCalledWith('prod-eu', 'cert-manager', {
+          dry_run: true,
+          values: { installCRDs: true },
+        });
+      });
+    });
+
+    it('still accepts JSON (JSON is valid YAML)', async () => {
+      mockEnableAddonV4.mockResolvedValue({
+        dry_run: {
+          effective_addons: ['cert-manager'],
+          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+          pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
+          secrets_to_create: [],
+        },
+      });
+
+      renderDialog();
+      fireEvent.change(screen.getByTestId('v4-enable-values'), {
+        target: { value: '{"installCRDs": true}' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+      await waitFor(() => {
+        expect(mockEnableAddonV4).toHaveBeenCalledWith('prod-eu', 'cert-manager', {
+          dry_run: true,
+          values: { installCRDs: true },
+        });
+      });
+    });
+
+    it('rejects a quoted string with the plain-words error — closes the live decode-error leak', () => {
+      // This is the exact live bug: a quoted string like "installCRDs: true"
+      // used to pass the old JSON.parse-only check (it's a valid JSON
+      // string) and get forwarded to the backend, which then leaked a raw
+      // Go decode error. It must now be rejected client-side.
+      renderDialog();
+      fireEvent.change(screen.getByTestId('v4-enable-values'), {
+        target: { value: '"installCRDs: true"' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+      expect(
+        screen.getByText('Values must be a set of key: value pairs, e.g. installCRDs: true'),
+      ).toBeInTheDocument();
+      expect(mockEnableAddonV4).not.toHaveBeenCalled();
+    });
+
+    it('rejects an array with the plain-words error', () => {
+      renderDialog();
+      fireEvent.change(screen.getByTestId('v4-enable-values'), {
+        target: { value: '- a\n- b' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+      expect(
+        screen.getByText('Values must be a set of key: value pairs, e.g. installCRDs: true'),
+      ).toBeInTheDocument();
+      expect(mockEnableAddonV4).not.toHaveBeenCalled();
+    });
+
+    it('leaves an empty values field valid — no values sent', async () => {
+      mockEnableAddonV4.mockResolvedValue({
+        dry_run: {
+          effective_addons: ['cert-manager'],
+          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+          pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
+          secrets_to_create: [],
+        },
+      });
+
+      renderDialog();
+      fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+      await waitFor(() => {
+        expect(mockEnableAddonV4).toHaveBeenCalledWith('prod-eu', 'cert-manager', {
+          dry_run: true,
+          values: undefined,
+        });
+      });
+    });
   });
 });
