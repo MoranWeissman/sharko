@@ -1,0 +1,146 @@
+# Manual, tag-free publish of the sharko-engine Helm chart (charts/sharko-engine).
+#
+# WHY THIS WORKFLOW EXISTS: the normal `helm-package-engine` job in
+# release.yml only runs as part of a *product* release (workflow_run on a
+# green CI run for a `v*` tag). The engine chart versions INDEPENDENTLY of
+# the product release tag (see charts/sharko-engine/README.md) — it is
+# entirely possible for the chart to sit unpublished on `main` for a long
+# stretch with no product release to carry it to GHCR. Until the chart is
+# pullable, every user-visible status downstream of the engine pin
+# (internal/engineversion) stays "Unknown"/bootstrap_degraded.
+#
+# This workflow exists to unblock exactly that case — first publish, or a
+# re-publish after a chart-only change — WITHOUT cutting a product release
+# and WITHOUT creating or moving any tag (retagging is forbidden repo-wide;
+# product tags are the maintainer's call only). It is manual-only
+# (workflow_dispatch), publishes the chart's own COMMITTED
+# `version:`/`appVersion:` fields from Chart.yaml (never an override — the
+# same locked rule as helm-package-engine, so internal/engineversion stays
+# in lockstep with what's actually published), and is idempotent: if that
+# exact version is already in GHCR it skips loudly instead of failing.
+#
+# This job intentionally duplicates ~60 lines of steps from
+# helm-package-engine in release.yml. That job cannot be reused directly
+# (different trigger, different permissions/needs graph, and release.yml
+# is off-limits for this change), and factoring both into a shared
+# reusable workflow is a reasonable future cleanup but is NOT done here to
+# avoid churn risk on the release path. If you touch one job's chart
+# publish logic, check whether the other needs the same fix.
+
+name: Engine Chart Publish (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: >-
+          Git ref (branch, tag, or SHA) to publish the chart from. Defaults
+          to the repository's default branch.
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: moranweissman/sharko
+
+jobs:
+  publish-engine-chart:
+    name: Package & Push Engine Chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # OIDC token for cosign keyless signing of the OCI Helm chart.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: latest
+
+      # Docker login writes creds to ~/.docker/config.json — cosign reads
+      # from there. helm registry login alone writes only to the helm
+      # config dir, leaving cosign unauthenticated against GHCR.
+      - name: Log in to GHCR (Docker — for cosign)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to GHCR (Helm OCI)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} \
+            --username ${{ github.actor }} \
+            --password-stdin
+
+      # Reads the chart's own COMMITTED version (never an override — see
+      # the header comment above) and checks whether that exact version is
+      # already published to GHCR. Re-running this workflow after nothing
+      # changed in charts/sharko-engine/ is the expected common case: skip
+      # loudly (::notice::) rather than attempting a redundant push/sign of
+      # an unchanged artifact.
+      - name: Check if engine chart version already published
+        id: check
+        run: |
+          CHART_VERSION=$(helm show chart charts/sharko-engine | awk -F': *' '/^version:/ {print $2}')
+          if [ -z "$CHART_VERSION" ]; then
+            echo "::error::could not read version from charts/sharko-engine/Chart.yaml"
+            exit 1
+          fi
+          echo "CHART_VERSION=$CHART_VERSION" >> "$GITHUB_OUTPUT"
+          if helm show chart "oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sharko-engine" --version "$CHART_VERSION" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::sharko-engine chart version $CHART_VERSION is already published to GHCR — skipping republish (idempotent; the engine chart versions independently of the product release tag, see charts/sharko-engine/README.md)."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package engine Helm chart
+        if: steps.check.outputs.exists != 'true'
+        run: helm package charts/sharko-engine
+
+      - name: Push engine Helm chart to GHCR
+        id: helm_push
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          CHART_FILE=$(ls sharko-engine-*.tgz)
+          # `helm push` writes a `.digest` companion in the working dir; we
+          # capture the digest from stdout for the cosign sign step below.
+          OUTPUT=$(helm push "$CHART_FILE" oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} 2>&1)
+          echo "$OUTPUT"
+          DIGEST=$(echo "$OUTPUT" | awk '/^Digest:/ {print $2}')
+          if [ -z "$DIGEST" ]; then
+            echo "::error::could not extract engine chart digest from helm push output"
+            exit 1
+          fi
+          echo "DIGEST=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      # cosign-sign the OCI Helm chart so consumers can
+      # `cosign verify oci://ghcr.io/moranweissman/sharko/sharko-engine:X.Y.Z`
+      # before `helm pull` (no `v` prefix — the pushed OCI tag is the bare
+      # chart version, e.g. `0.1.0`, not a release tag).
+      # Same identity policy as release.yml's chart signing steps.
+      - name: Install cosign
+        if: steps.check.outputs.exists != 'true'
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Sign published engine Helm chart (keyless)
+        if: steps.check.outputs.exists != 'true'
+        env:
+          COSIGN_YES: "true"
+          DIGEST: ${{ steps.helm_push.outputs.DIGEST }}
+          VERSION: ${{ steps.check.outputs.CHART_VERSION }}
+        run: |
+          REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sharko-engine:${VERSION}"
+          # Sign by digest, same rationale as release.yml's chart signing steps.
+          echo "Signing chart ${REF}@${DIGEST}"
+          cosign sign --yes "${REF}@${DIGEST}"
