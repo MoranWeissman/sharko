@@ -46,6 +46,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -446,6 +447,119 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 		return
 	}
 
+	// Steps 1/2/2b — read + parse + validate the desired state from git.
+	// Extracted to readDesiredState so a one-time single-cluster resync
+	// (ResyncClusterLabels, v4-8-5's "Re-sync now") computes the identical
+	// desired-label set this tick would, from the SAME read path, instead
+	// of a second git-reading path that could drift out of sync with this
+	// one over time.
+	spec, v4Labels, fileNonEmpty, err := r.readDesiredState(ctx, gp)
+	if err != nil {
+		var rdErr *desiredStateReadError
+		if !errors.As(err, &rdErr) {
+			// readDesiredState only ever returns *desiredStateReadError —
+			// fail safe rather than dereference a nil pointer if that
+			// contract is ever violated.
+			rdErr = &desiredStateReadError{Kind: desiredStateReadKindGit, Path: r.managedClustersPath, Err: err}
+		}
+		switch rdErr.Kind {
+		case desiredStateReadKindSchema:
+			// schema.LogValidationFailure already fired slog.Error with the
+			// full violation list inside LoadManagedClusters; mirror it onto
+			// the audit log so the rejection is visible alongside other
+			// reconciler events.
+			log.Error("[clusterreconciler] managed-clusters file rejected — aborting tick (no state mutated)",
+				"path", rdErr.Path, "error", rdErr.Err,
+			)
+			r.audit(audit.Entry{
+				Level:     "error",
+				Event:     "cluster_secret_reconcile",
+				User:      "sharko",
+				Action:    "schema_validation",
+				Resource:  fmt.Sprintf("file:%s", rdErr.Path),
+				Source:    "reconciler",
+				Result:    "failure",
+				Error:     rdErr.Err.Error(),
+				RequestID: logging.RequestID(ctx),
+			})
+			// M5a — see the git-read-failure branch below for the rationale.
+			r.stampAbortedTick("schema validation failed: " + rdErr.Err.Error())
+		default:
+			log.Error("[clusterreconciler] git read failed — aborting tick (no state mutated)",
+				"path", rdErr.Path, "branch", r.branch, "error", rdErr.Err,
+			)
+			r.audit(audit.Entry{
+				Level:     "error",
+				Event:     "cluster_secret_reconcile",
+				User:      "sharko",
+				Action:    "git_read",
+				Resource:  fmt.Sprintf("file:%s ref:%s", rdErr.Path, r.branch),
+				Source:    "reconciler",
+				Result:    "failure",
+				Error:     rdErr.Err.Error(),
+				RequestID: logging.RequestID(ctx),
+			})
+			// M5a: this pass never reaches the per-cluster work below, so
+			// every cluster's last-known record would otherwise silently
+			// age. Stamp them all Failed so an operator watching one
+			// cluster sees the abort, not a stale success from an earlier
+			// tick.
+			r.stampAbortedTick("git read failed: " + rdErr.Err.Error())
+		}
+		return
+	}
+
+	// spec == nil, err == nil means the file was legitimately absent (a
+	// fresh repo before the first cluster registration) — treated as "zero
+	// clusters desired", same as before this was extracted. fileNonEmpty
+	// (V2-cleanup-60.2 orphan-sweep sanity guard) is false in that case too.
+	if spec == nil {
+		log.Info("[clusterreconciler] neither managed-clusters.yaml nor fleet/connections.yaml found in git — treating as empty desired state",
+			"v3_path", r.managedClustersPath, "v4_path", v4ConnectionsPath, "branch", r.branch,
+		)
+	}
+
+	r.reconcileDiff(ctx, spec, fileNonEmpty, v4Labels, &stats)
+	r.emitSummaryAudit(ctx, stats)
+}
+
+// desiredStateReadKind classifies why readDesiredState could not produce a
+// usable desired state, so callers can log / audit with the exact Action
+// value pollOnce has always used for each failure mode.
+type desiredStateReadKind string
+
+const (
+	desiredStateReadKindGit    desiredStateReadKind = "git_read"
+	desiredStateReadKindSchema desiredStateReadKind = "schema_validation"
+)
+
+// desiredStateReadError wraps a readDesiredState failure with enough
+// context (Kind + the path that failed) for the caller to reproduce the
+// exact audit.Entry / log line pollOnce has always written for that
+// failure mode.
+type desiredStateReadError struct {
+	Kind desiredStateReadKind
+	Path string
+	Err  error
+}
+
+func (e *desiredStateReadError) Error() string { return e.Err.Error() }
+func (e *desiredStateReadError) Unwrap() error { return e.Err }
+
+// readDesiredState performs pollOnce's Steps 1 (git read, with v3→v4 path
+// fallback), 2 (parse + schema validation) and 2b (v4 addon-label
+// derivation) — the read-only half of a reconcile pass. Extracted so
+// ResyncClusterLabels (v4-8-5's one-time single-cluster "Re-sync now")
+// computes the desired-label set for one cluster from the identical read
+// path the periodic tick uses, rather than a second git-reading path.
+//
+// spec == nil with err == nil means the file was legitimately absent (a
+// fresh repo before the first cluster registration) — callers should treat
+// that as "zero clusters desired". A non-nil error is always a
+// *desiredStateReadError.
+func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitProvider) (spec *models.ManagedClustersSpec, v4Labels map[string]map[string]string, fileNonEmpty bool, err error) {
+	log := logging.LoggerFromContext(ctx)
+
 	// Step 1: read the managed-clusters file from git. Tries the configured
 	// (v3) path first; when that is genuinely absent, falls back to the
 	// fixed v4 path (fleet/connections.yaml, design doc §2.4 — "same shape,
@@ -454,83 +568,32 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 	// single extra read only on the (common, cheap) not-found path — v3
 	// repos with a populated managed-clusters.yaml never take it.
 	readPath := r.managedClustersPath
-	body, err := gp.GetFileContent(ctx, readPath, r.branch)
-	if err != nil && errors.Is(err, gitprovider.ErrFileNotFound) {
+	body, readErr := gp.GetFileContent(ctx, readPath, r.branch)
+	if readErr != nil && errors.Is(readErr, gitprovider.ErrFileNotFound) {
 		if v4Body, v4Err := gp.GetFileContent(ctx, v4ConnectionsPath, r.branch); v4Err == nil {
-			body, err, readPath = v4Body, nil, v4ConnectionsPath
+			body, readErr, readPath = v4Body, nil, v4ConnectionsPath
 			log.Debug("[clusterreconciler] configured managed-clusters path absent — found the v4 fleet/connections.yaml instead",
 				"v3_path", r.managedClustersPath, "v4_path", v4ConnectionsPath)
 		}
 	}
-	if err != nil {
+	if readErr != nil {
 		// ErrFileNotFound is not exceptional — a freshly-bootstrapped repo
 		// has zero clusters in managed-clusters.yaml (or fleet/connections.yaml)
 		// until the first register-cluster PR merges. Treat it as "empty
-		// desired state" rather than an error: the diff against argocd
-		// will compute in-argocd ∖ in-git correctly (no creates, only the
-		// deletes that would have happened anyway). Without this carve-out
-		// a fresh repo would log noise on every tick and a sharko-labeled
-		// Secret orphaned in argocd would never be cleaned up.
-		if errors.Is(err, gitprovider.ErrFileNotFound) {
-			log.Info("[clusterreconciler] neither managed-clusters.yaml nor fleet/connections.yaml found in git — treating as empty desired state",
-				"v3_path", r.managedClustersPath, "v4_path", v4ConnectionsPath, "branch", r.branch,
-			)
-			// fall through with body == nil; LoadManagedClusters([]byte{})
-			// would still error, so short-circuit to empty spec instead.
-			// fileNonEmpty=false: a missing file is a legitimate fresh
-			// install / pre-first-registration state, so the orphan-sweep
-			// sanity guard must NOT hold the sweep (V2-cleanup-60.2).
-			r.reconcileDiff(ctx, nil, false, nil, &stats)
-			r.emitSummaryAudit(ctx, stats)
-			return
+		// desired state" rather than an error — the caller diffs against
+		// argocd correctly either way (no creates, only the deletes that
+		// would have happened anyway).
+		if errors.Is(readErr, gitprovider.ErrFileNotFound) {
+			return nil, nil, false, nil
 		}
-		log.Error("[clusterreconciler] git read failed — aborting tick (no state mutated)",
-			"path", readPath, "branch", r.branch, "error", err,
-		)
-		r.audit(audit.Entry{
-			Level:     "error",
-			Event:     "cluster_secret_reconcile",
-			User:      "sharko",
-			Action:    "git_read",
-			Resource:  fmt.Sprintf("file:%s ref:%s", readPath, r.branch),
-			Source:    "reconciler",
-			Result:    "failure",
-			Error:     err.Error(),
-			RequestID: logging.RequestID(ctx),
-		})
-		// M5a: this pass never reaches the per-cluster work below, so every
-		// cluster's last-known record would otherwise silently age. Stamp
-		// them all Failed so an operator watching one cluster sees the
-		// abort, not a stale success from an earlier tick.
-		r.stampAbortedTick("git read failed: " + err.Error())
-		return
+		return nil, nil, false, &desiredStateReadError{Kind: desiredStateReadKindGit, Path: readPath, Err: readErr}
 	}
 
 	// Step 2: parse + schema-validate. Same kind (ManagedClusters), same
 	// reader, regardless of which path Step 1 actually read from.
-	spec, err := models.LoadManagedClusters(body)
-	if err != nil {
-		// schema.LogValidationFailure already fired slog.Error with the
-		// full violation list inside LoadManagedClusters; mirror it onto
-		// the audit log so the rejection is visible alongside other
-		// reconciler events.
-		log.Error("[clusterreconciler] managed-clusters file rejected — aborting tick (no state mutated)",
-			"path", readPath, "error", err,
-		)
-		r.audit(audit.Entry{
-			Level:     "error",
-			Event:     "cluster_secret_reconcile",
-			User:      "sharko",
-			Action:    "schema_validation",
-			Resource:  fmt.Sprintf("file:%s", readPath),
-			Source:    "reconciler",
-			Result:    "failure",
-			Error:     err.Error(),
-			RequestID: logging.RequestID(ctx),
-		})
-		// M5a — see the git-read-failure branch above for the rationale.
-		r.stampAbortedTick("schema validation failed: " + err.Error())
-		return
+	parsedSpec, parseErr := models.LoadManagedClusters(body)
+	if parseErr != nil {
+		return nil, nil, false, &desiredStateReadError{Kind: desiredStateReadKindSchema, Path: readPath, Err: parseErr}
 	}
 
 	// Step 2b (v4 only): derive each cluster's addon-enablement labels from
@@ -541,7 +604,6 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 	// Gated on readPath so a v3 repo does not pay for a directory listing
 	// it can never use, and so the v3 desired-label computation stays
 	// byte-identical.
-	var v4Labels map[string]map[string]string
 	if readPath == v4ConnectionsPath {
 		v4Labels = readV4AddonLabels(ctx, gp, r.branch)
 	}
@@ -550,8 +612,7 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 	// a file that EXISTS with content but parses to zero clusters is the
 	// signature of a version/format mismatch, not of an intentionally
 	// emptied fleet — see orphanSweepHeld.
-	r.reconcileDiff(ctx, &spec, len(bytes.TrimSpace(body)) > 0, v4Labels, &stats)
-	r.emitSummaryAudit(ctx, stats)
+	return &parsedSpec, v4Labels, len(bytes.TrimSpace(body)) > 0, nil
 }
 
 // orphanSweepHeld is the orphan-sweep sanity guard (H2 forward guard,
@@ -1226,6 +1287,128 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 	// Verified converged: addon labels exactly match git AND (managed path)
 	// the ownership label survives. drift is genuinely nil.
 	r.recordReconcile(name, OutcomeSucceeded, "drift corrected — git-desired addon labels converged", nil)
+}
+
+// ErrClusterNotManaged is returned by ResyncClusterLabels when the named
+// cluster has no entry in the git-managed cluster list (managed-clusters.yaml
+// / fleet/connections.yaml) — e.g. a discovered-but-not-adopted ArgoCD
+// cluster. There is no git-desired label set to resync against.
+var ErrClusterNotManaged = errors.New("cluster has no entry in the git-managed cluster list — nothing to resync")
+
+// ResyncResult is the outcome of a one-time, single-cluster label resync
+// (v4-8-5 — the "Re-sync now" action on the drift view). Added/Removed/
+// Changed/Unchanged describe the addon-label diff this resync applied,
+// computed from the Secret's labels immediately BEFORE the write — the
+// same comparison the drift view already renders (computeLabelDrift).
+type ResyncResult struct {
+	Outcome ReconcileOutcome
+	Message string
+
+	Added     []string
+	Removed   []string
+	Changed   []string
+	Unchanged []string
+}
+
+// ResyncClusterLabels re-applies Sharko's own addon-label keys onto ONE
+// cluster's ArgoCD cluster Secret, ONCE, to match git — regardless of the
+// managed_cluster_self_heal setting (v4-8-5). It never reads or changes
+// that setting: this is a bounded, on-demand correction, not a toggle.
+//
+// Single-writer rule: this deliberately reuses the reconciler's EXISTING
+// write primitives rather than issuing its own Secret Update —
+// selfHealManagedCluster (reconciler.go, the same function the opt-in
+// self-heal tick calls when managed_cluster_self_heal is ON) for a
+// git-managed cluster, syncSelfManaged (reconciler.go, the same function
+// EVERY tick already calls unconditionally) for a self-managed (user-owned)
+// connection. There is exactly one code path that ever writes these
+// labels, whether it runs from the periodic tick, opt-in self-heal, or
+// this on-demand call.
+//
+// Touches nothing else: both write primitives only ever add/remove/update
+// Sharko's own addon-label keys — never foreign labels, Data, or
+// annotations (see their doc comments). Desired state is read via the
+// SAME git read path the tick uses (readDesiredState) so the label set
+// computed here is byte-identical to what the next tick would compute.
+func (r *Reconciler) ResyncClusterLabels(ctx context.Context, name string) (ResyncResult, error) {
+	if r.deps.GitProvider == nil {
+		return ResyncResult{}, errors.New("no GitProvider configured on this reconciler")
+	}
+	gp := r.deps.GitProvider()
+	if gp == nil {
+		return ResyncResult{}, errors.New("no active git provider configured")
+	}
+	if r.deps.ArgoClient == nil {
+		return ResyncResult{}, errors.New("no ArgoClient (k8s clientset) configured on this reconciler")
+	}
+
+	spec, v4Labels, _, err := r.readDesiredState(ctx, gp)
+	if err != nil {
+		return ResyncResult{}, fmt.Errorf("reading desired cluster state from git: %w", err)
+	}
+
+	var entry models.ManagedClusterEntry
+	found := false
+	if spec != nil {
+		for _, c := range spec.Clusters {
+			if c.Name == name {
+				entry, found = c, true
+				break
+			}
+		}
+	}
+	if !found {
+		return ResyncResult{}, ErrClusterNotManaged
+	}
+
+	desired := desiredAddonLabels(entry, v4Labels[name])
+
+	// Snapshot the live Secret's labels BEFORE the write, purely to report
+	// an honest "what this resync applied" diff — the write itself is done
+	// entirely by the reused primitive below, not by anything here.
+	var before map[string]string
+	if secret, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, name, metav1.GetOptions{}); getErr == nil {
+		before = secret.Labels
+	} else if !apierrors.IsNotFound(getErr) {
+		return ResyncResult{}, fmt.Errorf("reading cluster secret: %w", getErr)
+	}
+	drift := computeLabelDrift(desired, before)
+	unchanged := unchangedAddonLabelKeys(desired, before)
+
+	stats := reconcileStats{}
+	if entry.UserManagedConnection() {
+		r.syncSelfManaged(ctx, entry, v4Labels[name], &stats)
+	} else {
+		r.selfHealManagedCluster(ctx, name, desired, &stats)
+	}
+
+	rec, _ := r.LastReconcile(name)
+	result := ResyncResult{
+		Outcome:   rec.Outcome,
+		Message:   rec.Message,
+		Unchanged: unchanged,
+	}
+	if drift != nil {
+		result.Added = drift.Added
+		result.Removed = drift.Removed
+		result.Changed = drift.Changed
+	}
+	return result, nil
+}
+
+// unchangedAddonLabelKeys returns the (sorted) desired addon-label keys
+// that already matched the live Secret's value before the write — the
+// "nothing to do here" half of the diff ResyncClusterLabels reports
+// alongside computeLabelDrift's added/removed/changed.
+func unchangedAddonLabelKeys(desired, have map[string]string) []string {
+	var keys []string
+	for k, v := range desired {
+		if hv, ok := have[k]; ok && hv == v {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // effectiveDisableConnectivityCheck resolves whether the connectivity-check

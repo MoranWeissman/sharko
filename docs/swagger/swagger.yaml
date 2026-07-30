@@ -604,6 +604,38 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_MoranWeissman_sharko_internal_models.ClusterResyncLabelDiff:
+    properties:
+      added:
+        items:
+          type: string
+        type: array
+      changed:
+        items:
+          type: string
+        type: array
+      removed:
+        items:
+          type: string
+        type: array
+      unchanged:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.ClusterResyncResponse:
+    properties:
+      cluster:
+        type: string
+      label_diff:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterResyncLabelDiff'
+      message:
+        type: string
+      outcome:
+        type: string
+      status:
+        type: string
+    type: object
   github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest:
     properties:
       addon_secret_provider:
@@ -5403,6 +5435,56 @@ paths:
       security:
       - BearerAuth: []
       summary: Refresh cluster credentials
+      tags:
+      - clusters
+  /clusters/{name}/resync:
+    post:
+      description: |-
+        Re-applies Sharko's own addon-label keys onto this cluster's ArgoCD cluster Secret ONCE, to match git.
+        Regardless of the managed_cluster_self_heal setting, and without reading or changing it.
+        Touches only Sharko's own addon-label keys — never foreign labels, Secret Data, or annotations.
+        Reports the label diff this resync applied (added / removed / changed / unchanged).
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Resync result
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterResyncResponse'
+        "400":
+          description: Cluster has no entry in the git-managed cluster list
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden — requires operator role or higher
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Cluster not found
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Reconciler not running on this server
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Re-sync one cluster's addon labels to match git (one time)
       tags:
       - clusters
   /clusters/{name}/secrets:

@@ -32,7 +32,7 @@ import {
   Stethoscope,
   Activity,
 } from 'lucide-react';
-import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs, previewEnableAddon, reconcileCluster, diagnoseCluster, doctorCluster } from '@/services/api';
+import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs, previewEnableAddon, reconcileCluster, resyncClusterLabels, diagnoseCluster, doctorCluster } from '@/services/api';
 import type { TestClusterUnavailable, PRWriteResult } from '@/services/api';
 import { PRResultBanner, extractPR } from '@/components/PRFeedback';
 import { DryRunPreview } from '@/components/AddAddonFlow';
@@ -320,6 +320,12 @@ export function ClusterDetail() {
       }
     };
   }, []);
+
+  // One-time "Re-sync now" from the drift view (v4-8-5). State declared
+  // here; the handler itself is declared below (after fetchData) next to
+  // handleSyncNow.
+  const [resyncModalOpen, setResyncModalOpen] = useState(false);
+  const [resyncing, setResyncing] = useState(false);
 
   // Secret path editing
   const [editingSecretPath, setEditingSecretPath] = useState(false);
@@ -704,6 +710,27 @@ export function ClusterDetail() {
       setSyncingNow(false);
     }
   }, [name, fetchData, data]);
+
+  // handleResyncNow — one-time "Re-sync now" from the drift view (v4-8-5).
+  // Unlike handleSyncNow above (a fleet-wide nudge that returns 202 and
+  // runs async), this is a targeted, synchronous, single-cluster action:
+  // it always re-applies Sharko's addon labels for THIS cluster to match
+  // git, regardless of the managed_cluster_self_heal setting, and returns
+  // 200 with the diff it applied — no polling needed, one refetch is enough.
+  const handleResyncNow = useCallback(async () => {
+    if (!name) return;
+    setResyncing(true);
+    try {
+      const result = await resyncClusterLabels(name);
+      showToast(result.message, 'success');
+      setResyncModalOpen(false);
+      await fetchData(true);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to re-sync cluster labels', 'error');
+    } finally {
+      setResyncing(false);
+    }
+  }, [name, fetchData]);
 
   const handleTestConnection = useCallback(async () => {
     if (!name) return;
@@ -1527,10 +1554,39 @@ export function ClusterDetail() {
                     )}
                   </div>
                 </div>
+                {/* Re-sync now (v4-8-5) — a bounded, one-time correction of
+                  * THIS cluster's addon labels, independent of the
+                  * managed_cluster_self_heal setting (works even with it OFF,
+                  * which is the whole point). */}
+                <RoleGuard roles={['admin', 'operator']}>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      onClick={() => setResyncModalOpen(true)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-600 dark:bg-gray-900 dark:text-amber-400 dark:hover:bg-amber-950/30"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Re-sync now
+                    </button>
+                    <InfoHint
+                      text="Re-applies Sharko's addon labels for this cluster to match Git, one time. It does not turn on automatic self-heal — that setting stays exactly as it is."
+                      label="What does Re-sync now do?"
+                    />
+                  </div>
+                </RoleGuard>
               </div>
             );
           })()}
       </div>
+
+      <ConfirmationModal
+        open={resyncModalOpen}
+        onClose={() => setResyncModalOpen(false)}
+        onConfirm={handleResyncNow}
+        title={`Re-sync cluster "${name}"?`}
+        description="re-applies Sharko's addon labels for this cluster to match git — one time; the self-heal setting is not changed"
+        confirmText="Re-sync now"
+        loading={resyncing}
+      />
 
       {/* Main layout: nav panel + content */}
       <div className="flex gap-6">
