@@ -1045,7 +1045,11 @@ describe('ClusterDetail', () => {
       await waitFor(() => expect(screen.getByText(/Remove cluster "prod-eu"\?/i)).toBeInTheDocument());
 
       await waitFor(() => expect(screen.getByTestId('unregister-consequences-error')).toBeInTheDocument());
-      expect(screen.getByRole('button', { name: /^Remove$/i })).not.toBeDisabled();
+      // The error box renders in one pass; onReadyChange(true) fires from a
+      // separate effect and only the PARENT's next render actually enables
+      // the button. Wait for that propagation instead of asserting sync —
+      // on a slow CI runner the two renders don't land in the same tick.
+      await waitFor(() => expect(screen.getByRole('button', { name: /^Remove$/i })).not.toBeDisabled());
     });
   });
 
