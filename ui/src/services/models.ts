@@ -1533,6 +1533,25 @@ export interface MigrationStatus {
    * state that a remount would have wiped. */
   migration_pr_url?: string
   migration_pr_number?: number
+  /** Where the ArgoCD side of the migration has got to (v4 Wave 2 review
+   * finding B-1/H-2). The ApplicationSets that keep a fleet's addons
+   * running live in ArgoCD, not in the repo, so moving the files across is
+   * only half the job. Set on v4 repos. */
+  handoff?: RuntimeHandoffReport
+}
+
+/** What the ArgoCD half of a migration did, in plain words. */
+export interface RuntimeHandoffReport {
+  state: 'not_needed' | 'prepared' | 'pending' | 'complete' | 'skipped'
+  /** One sentence to render as-is. */
+  message: string
+  /** The old ApplicationSets this handoff prepared, or retired. */
+  application_sets?: string[]
+  /** Applications whose delete-everything marker was removed, so their
+   * workloads outlive the transition. */
+  released_applications?: string[]
+  /** Whether engine/application.yaml has been handed to ArgoCD. */
+  engine_applied: boolean
 }
 
 /** One file the migration pull request would add, convert, or remove. */
@@ -1561,6 +1580,10 @@ export interface MigrationMigrateRequest {
   dry_run?: boolean
   yes: boolean
   auto_merge?: boolean
+  /** Leave unset and Sharko decides whether the ArgoCD side is needed.
+   * "skip" migrates the files only — the escape hatch for a repo with
+   * nothing actually running. */
+  runtime_handoff?: 'skip'
 }
 
 /** Response for POST /api/v1/migration/migrate. */
@@ -1574,4 +1597,9 @@ export interface MigrateResult {
     branch?: string
     merged?: boolean
   }
+  /** What the ArgoCD half did before the pull request was opened. */
+  handoff?: RuntimeHandoffReport
+  /** Advisories that do NOT mean the migration failed — chiefly "the pull
+   * request is open and correct, but auto-merge could not merge it". */
+  warnings?: string[]
 }

@@ -15,6 +15,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // V3MigrationRequiredMessage is the ONE sentence every blocked v3 write
@@ -54,8 +55,15 @@ func IsV3MigrationRequired(err error) bool {
 // Exported (unlike refuseOnV4Repo) because the API layer renders the same
 // decision for handlers that never reach an orchestrator method, and the
 // two must not drift.
+// A layout probe that cannot get an answer refuses too, with the upstream
+// error attached — same fail-closed stance as refuseOnV4Repo, and for the
+// same reason: this gate stands in front of writes.
 func (o *Orchestrator) RefuseOnV3Repo(ctx context.Context) error {
-	if !o.IsV3Repo(ctx) {
+	v3, err := o.isV3Repo(ctx)
+	if err != nil {
+		return fmt.Errorf("Sharko stopped before writing: %w", err)
+	}
+	if !v3 {
 		return nil
 	}
 	return ErrV3MigrationRequired
@@ -64,9 +72,23 @@ func (o *Orchestrator) RefuseOnV3Repo(ctx context.Context) error {
 // IsV3Repo reports whether the connected repo is in the v3 data-file
 // format: no engine pin, but at least one v3 marker. Exported so the
 // migration status/preview endpoints and the write gate share one answer.
+//
+// Lenient: an unanswerable probe reports false. Every caller of THIS form
+// is a read or a status surface. Writes go through RefuseOnV3Repo, which
+// fails closed.
 func (o *Orchestrator) IsV3Repo(ctx context.Context) bool {
-	if o.isV4Repo(ctx) {
-		return false
+	v3, err := o.isV3Repo(ctx)
+	return err == nil && v3
+}
+
+// isV3Repo is the error-returning form the write gate uses.
+func (o *Orchestrator) isV3Repo(ctx context.Context) (bool, error) {
+	v4, err := o.isV4Repo(ctx)
+	if err != nil {
+		return false, err
 	}
-	return o.hasV3Markers(ctx)
+	if v4 {
+		return false, nil
+	}
+	return o.hasV3Markers(ctx), nil
 }

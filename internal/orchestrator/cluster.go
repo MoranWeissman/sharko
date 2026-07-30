@@ -325,7 +325,11 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			}
 		}
 
-		v4Repo := o.isV4Repo(ctx)
+		// Lenient here on purpose: this is the dry-run branch, which writes
+		// nothing. A probe failure costs a preview that names the v3 paths
+		// instead of the v4 ones, never a wrong file on disk. The real
+		// registration below uses the fail-closed form.
+		v4Repo := o.isV4RepoLenient(ctx)
 		valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
 		clusterAddonsPath := V4ConnectionsPath
 		if !v4Repo {
@@ -561,7 +565,13 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// addon keys here"). Any req.Addons supplied on a v4 registration
 	// request is intentionally ignored — enable each addon afterward via
 	// EnableAddonV4, which runs its own semantic validation.
-	v4Repo := o.isV4Repo(ctx)
+	// Fail closed. Everything from here writes, and getting this answer
+	// wrong in the "not v4" direction recreates the v3 registry on a v4
+	// repo — the second-registry hijack v4_guard.go describes.
+	v4Repo, v4ProbeErr := o.isV4Repo(ctx)
+	if v4ProbeErr != nil {
+		return nil, v4ProbeErr
+	}
 	if v4Repo && len(req.Addons) > 0 {
 		log.Info("v4 repo: ignoring addons on register-cluster — enable them via the v4 addon API after registration",
 			"cluster", req.Name, "addons", req.Addons)

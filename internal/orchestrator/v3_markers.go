@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 )
@@ -64,6 +66,49 @@ func (o *Orchestrator) hasV3Markers(ctx context.Context) bool {
 	}
 	var reader RepoFileReader = o.git
 	return HasV3Markers(ctx, reader, o.gitops.BaseBranch)
+}
+
+// hasV3MarkersChecked is the honest form: it tells a genuinely ABSENT
+// marker apart from a git host that would not answer (review finding L-9).
+//
+// The lenient form above cannot make that distinction, and for the
+// migration status probe the distinction is the whole point. "No markers"
+// is the answer that means "empty repo — initialize it", and offering
+// initialize to a live v3 repo whose probe merely timed out is how a
+// person ends up seeding a v4 folder tree on top of a running fleet.
+//
+// A marker found on the FIRST read wins immediately: once the answer is
+// "yes, v3", a failure reading the second marker changes nothing.
+func (o *Orchestrator) hasV3MarkersChecked(ctx context.Context) (bool, error) {
+	if o.git == nil {
+		return false, nil
+	}
+	branch := o.gitops.BaseBranch
+	if branch == "" {
+		branch = "main"
+	}
+	var firstErr error
+	for _, marker := range []string{V3BootstrapMarkerPath, V3SecondaryMarkerPath} {
+		body, err := o.git.GetFileContent(ctx, marker, branch)
+		if err == nil {
+			if len(body) > 0 {
+				return true, nil
+			}
+			continue
+		}
+		if errors.Is(err, gitprovider.ErrFileNotFound) {
+			continue
+		}
+		if firstErr == nil {
+			firstErr = fmt.Errorf(
+				"could not read %s from the %s branch, so Sharko cannot tell whether this repo has been set up: %w",
+				marker, branch, err)
+		}
+	}
+	if firstErr != nil {
+		return false, firstErr
+	}
+	return false, nil
 }
 
 // compile-time assurance that the real provider satisfies the narrow

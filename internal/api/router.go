@@ -263,6 +263,15 @@ type Server struct {
 	// check" rather than "all clear".
 	appSetReader appsets.Reader
 
+	// appSetManager is the same view PLUS the narrow write surface the
+	// v3 → v4 runtime handoff needs (internal/appsets/handoff.go): make an
+	// old ApplicationSet safe to strand, take the delete-everything marker
+	// off the Applications it generated, and later retire it. Optional in
+	// exactly the same way appSetReader is — but its absence has teeth:
+	// the migration REFUSES on any repo with clusters registered rather
+	// than open a pull request that would uninstall the fleet.
+	appSetManager appsets.Manager
+
 	// settingsStore persists server-wide settings such as probe_mode
 	// (optional — set via SetSettingsStore once the in-cluster K8s client
 	// is ready; nil in out-of-cluster / dev mode, in which case probe_mode
@@ -561,6 +570,24 @@ func (s *Server) ClusterReconciler() *clusterreconciler.Reconciler {
 // ApplicationSets are fine.
 func (s *Server) SetApplicationSetReader(r appsets.Reader) {
 	s.appSetReader = r
+	// The dynamic-client implementation covers the handoff writes too. A
+	// caller that hands us a read-only fake simply leaves the manager nil,
+	// which is a valid state — the migration then refuses on a live fleet
+	// instead of silently skipping the runtime handoff.
+	if m, ok := r.(appsets.Manager); ok {
+		s.appSetManager = m
+	}
+}
+
+// SetApplicationSetManager wires the ApplicationSet read+write surface the
+// v3 → v4 runtime handoff needs. Normally set for free by
+// SetApplicationSetReader; this exists so a test can supply a writer
+// without pretending to be the whole reader wiring.
+func (s *Server) SetApplicationSetManager(m appsets.Manager) {
+	s.appSetManager = m
+	if m != nil && s.appSetReader == nil {
+		s.appSetReader = m
+	}
 }
 
 // ReinitializeFromConnection reads provider config and GitOps settings from the active connection
@@ -943,6 +970,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/migration/status", srv.handleMigrationStatus)
 	mux.HandleFunc("POST /api/v1/migration/preview", srv.handleMigrationPreview)
 	mux.HandleFunc("POST /api/v1/migration/migrate", srv.handleMigrateRepo)
+	mux.HandleFunc("POST /api/v1/migration/complete", srv.handleMigrationComplete)
 
 	// System
 	mux.HandleFunc("GET /api/v1/providers", srv.handleGetProviders)

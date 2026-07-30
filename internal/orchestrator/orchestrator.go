@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/appsets"
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -189,6 +190,14 @@ type Orchestrator struct {
 	// already uses. nil is safe: every addon then merges as
 	// catalog.OriginInternal.
 	curated *catalog.Catalog
+
+	// appSets is the ApplicationSet read+write surface the v3 → v4 runtime
+	// handoff needs (migration_handoff.go), wired via
+	// SetApplicationSetManager. nil means "no ApplicationSet access", which
+	// makes the migration REFUSE on any repo with clusters registered
+	// rather than merge a pull request that would uninstall the fleet.
+	// Nothing else in the orchestrator touches it.
+	appSets appsets.Manager
 }
 
 // SetCuratedCatalog wires in the shipped curated catalog (v4 Wave 1 Story

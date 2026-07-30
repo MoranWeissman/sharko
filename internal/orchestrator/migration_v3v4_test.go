@@ -315,7 +315,27 @@ func migrationTestPaths() RepoPathsConfig {
 	}
 }
 
+// newMigrationOrchestrator builds the orchestrator these tests migrate
+// with — including a stand-in for the ApplicationSets the v3 bootstrap
+// left running in ArgoCD.
+//
+// That last part is not decoration. Since the runtime-handoff fix (v4
+// Wave 2 review finding B-1) a real migration REFUSES when it cannot
+// reach those ApplicationSets, because merging the pull request without
+// making them safe first uninstalls every addon on every cluster. A test
+// helper that left them out would be testing a path production refuses to
+// take. newMigrationOrchestratorNoAppSets is the deliberate opposite, used
+// by the tests that assert the refusal.
 func newMigrationOrchestrator(t *testing.T, git gitprovider.GitProvider) *Orchestrator {
+	t.Helper()
+	orch := newMigrationOrchestratorNoAppSets(t, git)
+	orch.SetApplicationSetManager(defaultMigrationAppSets())
+	return orch
+}
+
+// newMigrationOrchestratorNoAppSets builds one with NO ApplicationSet
+// access at all — the state a Sharko that cannot reach ArgoCD is in.
+func newMigrationOrchestratorNoAppSets(t *testing.T, git gitprovider.GitProvider) *Orchestrator {
 	t.Helper()
 	orch := New(nil, nil, nil, git, GitOpsConfig{
 		BranchPrefix: "sharko/",
@@ -332,7 +352,10 @@ func newMigrationOrchestrator(t *testing.T, git gitprovider.GitProvider) *Orches
 func TestMigrationStatus_V3Repo_ReportsMigrationAvailable(t *testing.T) {
 	orch := newMigrationOrchestrator(t, newMigrationFakeGit(newV3FixtureRepo()))
 
-	got := orch.MigrationStatus(context.Background())
+	got, statusErr := orch.MigrationStatus(context.Background())
+	if statusErr != nil {
+		t.Fatalf("MigrationStatus: %v", statusErr)
+	}
 
 	if got.Format != RepoFormatV3 {
 		t.Errorf("Format = %q, want %q", got.Format, RepoFormatV3)
@@ -351,7 +374,10 @@ func TestMigrationStatus_V4Repo_NothingToMigrate(t *testing.T) {
 	}
 	orch := newMigrationOrchestrator(t, newMigrationFakeGit(files))
 
-	got := orch.MigrationStatus(context.Background())
+	got, statusErr := orch.MigrationStatus(context.Background())
+	if statusErr != nil {
+		t.Fatalf("MigrationStatus: %v", statusErr)
+	}
 
 	if got.Format != RepoFormatV4 {
 		t.Errorf("Format = %q, want %q", got.Format, RepoFormatV4)
@@ -370,7 +396,11 @@ func TestMigrationStatus_EnginePinWins(t *testing.T) {
 	files[EnginePinPath] = []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n")
 	orch := newMigrationOrchestrator(t, newMigrationFakeGit(files))
 
-	if got := orch.MigrationStatus(context.Background()); got.Format != RepoFormatV4 {
+	got, statusErr := orch.MigrationStatus(context.Background())
+	if statusErr != nil {
+		t.Fatalf("MigrationStatus: %v", statusErr)
+	}
+	if got.Format != RepoFormatV4 {
 		t.Errorf("Format = %q, want %q — the engine pin is the more specific answer", got.Format, RepoFormatV4)
 	}
 }
@@ -378,7 +408,10 @@ func TestMigrationStatus_EnginePinWins(t *testing.T) {
 func TestMigrationStatus_EmptyRepo_SaysInitializeInstead(t *testing.T) {
 	orch := newMigrationOrchestrator(t, newMigrationFakeGit(nil))
 
-	got := orch.MigrationStatus(context.Background())
+	got, statusErr := orch.MigrationStatus(context.Background())
+	if statusErr != nil {
+		t.Fatalf("MigrationStatus: %v", statusErr)
+	}
 
 	if got.Format != RepoFormatEmpty {
 		t.Errorf("Format = %q, want %q", got.Format, RepoFormatEmpty)
@@ -400,7 +433,10 @@ func TestMigrationStatus_ReportsOpenMigrationPR(t *testing.T) {
 	}
 	orch := newMigrationOrchestrator(t, git)
 
-	got := orch.MigrationStatus(context.Background())
+	got, statusErr := orch.MigrationStatus(context.Background())
+	if statusErr != nil {
+		t.Fatalf("MigrationStatus: %v", statusErr)
+	}
 
 	if got.MigrationPRURL != "https://example.com/pull/42" {
 		t.Errorf("MigrationPRURL = %q, want the open PR's URL", got.MigrationPRURL)
@@ -415,7 +451,10 @@ func TestMigrationStatus_ReportsOpenMigrationPR(t *testing.T) {
 func TestMigrationStatus_NoOpenMigrationPR_FieldsEmpty(t *testing.T) {
 	orch := newMigrationOrchestrator(t, newMigrationFakeGit(newV3FixtureRepo()))
 
-	got := orch.MigrationStatus(context.Background())
+	got, statusErr := orch.MigrationStatus(context.Background())
+	if statusErr != nil {
+		t.Fatalf("MigrationStatus: %v", statusErr)
+	}
 
 	if got.MigrationPRURL != "" || got.MigrationPRNumber != 0 {
 		t.Errorf("expected no PR fields, got url=%q number=%d", got.MigrationPRURL, got.MigrationPRNumber)

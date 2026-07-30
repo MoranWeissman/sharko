@@ -25,6 +25,28 @@ const V4EditorUnsupportedMessage = "this editor doesn't support the v4 layout ye
 // A read failure of any kind answers false — the v3 behaviour — so a
 // transient git hiccup can never turn an ordinary v3 edit into a confusing
 // "this editor doesn't support v4" refusal.
+//
+// STANCE (v4 Wave 2 review, aligned with orchestrator.isV4Repo's
+// fail-closed change). Leniency here is safe in a way it was NOT safe in
+// the orchestrator, and the difference is worth spelling out because the
+// two probes look identical:
+//
+//   - The orchestrator's probe stands in front of a write that PICKS A
+//     PATH. Answering "not v4" wrongly there writes
+//     configuration/managed-clusters.yaml onto a v4 repo, creating a second
+//     cluster registry that the reconciler prefers — and every v4-registered
+//     cluster loses its ArgoCD connection Secret. That is unrecoverable, so
+//     it fails closed.
+//   - This probe stands in front of a REFUSAL. Answering "not v4" wrongly
+//     here lets a v3-shaped values edit through on a v4 repo. The worst
+//     outcome is a commit at a v3 path the engine does not read: a
+//     confusing no-op the person can see in git and revert, never a lost
+//     fleet. And failing closed here would turn every git hiccup into
+//     "this editor doesn't support the v4 layout yet", which is a lie
+//     about the repo rather than an honest error.
+//
+// So the two stay deliberately different, and this comment is the record
+// of why.
 func (s *Server) isV4Repo(ctx context.Context, gp gitprovider.GitProvider) bool {
 	if gp == nil {
 		return false

@@ -26,6 +26,17 @@ export function MigrationBanner() {
   const [format, setFormat] = useState<'v3' | 'v4' | 'empty' | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // handoffPending: the files are across, but the ApplicationSets from the
+  // old setup are still in ArgoCD and the engine has not started. That
+  // normally finishes by itself the moment the pull request merges; this
+  // state exists for the times it did not (a restart at the wrong moment,
+  // a PR merged outside Sharko, no ArgoCD connection at the time). Nothing
+  // is broken while it shows — the addons are still running — but the new
+  // setup is not in charge yet, so it must not be invisible.
+  const [handoffMessage, setHandoffMessage] = useState<string | null>(null)
+  const [finishing, setFinishing] = useState(false)
+  const [finishError, setFinishError] = useState<string | null>(null)
+
   const [showPreview, setShowPreview] = useState(false)
   const [plan, setPlan] = useState<MigrationPlan | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -56,6 +67,7 @@ export function MigrationBanner() {
         setFormat(res.format)
         setPrUrl(res.migration_pr_url ?? null)
         setPrNumber(res.migration_pr_number ?? null)
+        setHandoffMessage(res.handoff?.state === 'pending' ? res.handoff.message : null)
       })
       .catch(() => {
         if (!isPoll) setFormat(null)
@@ -71,10 +83,24 @@ export function MigrationBanner() {
   // banner clears itself the moment the PR merges — no refresh, no
   // dismiss button needed.
   useEffect(() => {
-    if (format !== 'v3') return
+    if (format !== 'v3' && !handoffMessage) return
     const interval = setInterval(() => fetchStatus(true), 30000)
     return () => clearInterval(interval)
-  }, [format, fetchStatus])
+  }, [format, handoffMessage, fetchStatus])
+
+  async function handleFinish() {
+    setFinishing(true)
+    setFinishError(null)
+    try {
+      const report = await api.completeMigration()
+      setHandoffMessage(report.state === 'pending' ? report.message : null)
+    } catch (err) {
+      setFinishError(err instanceof Error ? err.message : 'The ArgoCD side could not be finished.')
+    } finally {
+      setFinishing(false)
+      fetchStatus()
+    }
+  }
 
   async function handlePreview() {
     // Only fetch when actually OPENING — computing the next value up
@@ -121,6 +147,50 @@ export function MigrationBanner() {
     } finally {
       setMigrating(false)
     }
+  }
+
+  // The unfinished-ArgoCD-side banner. It stands alone: the repo is on the
+  // new format (so the "older v3 layout" wording below would be wrong), but
+  // the old ApplicationSets are still there and the engine is not running
+  // yet. Everything keeps working meanwhile — nothing here is an emergency,
+  // it is a job that stopped halfway.
+  if (!loading && handoffMessage && format !== 'v3') {
+    return (
+      <div
+        data-testid="migration-handoff-banner"
+        className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-4 shadow-sm dark:ring-amber-700 dark:bg-amber-900/20"
+      >
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+              The migration is not finished in ArgoCD
+            </p>
+            <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">{handoffMessage}</p>
+            <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">
+              Your addons keep running either way — the new setup just isn't in charge yet.
+            </p>
+            <RoleGuard roles={['admin']}>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => { void handleFinish() }}
+                  disabled={finishing}
+                  data-testid="finish-migration"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50 dark:bg-amber-700 dark:hover:bg-amber-600"
+                >
+                  {finishing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Finish migration
+                </button>
+              </div>
+            </RoleGuard>
+            {finishError && (
+              <p className="mt-2 text-sm text-red-600 dark:text-red-400">{finishError}</p>
+            )}
+          </div>
+        </div>
+      </div>
+    )
   }
 
   // alreadyMigrated keeps the banner up to show its own confirmation even
