@@ -93,6 +93,12 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// A v3 repo must migrate first (Story 5.1) — registering here would
+	// write more of the old format for the migration to convert.
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
+		return
+	}
+
 	// Decode + validate request body BEFORE any upstream call so that
 	// an empty body doesn't burn external API quota or return a
 	// confusing upstream-error message.
@@ -301,6 +307,10 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 	if !authz.RequireWithResponse(w, r, "cluster.remove") {
 		return
 	}
+	// A v3 repo must migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
+		return
+	}
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "cluster name is required")
@@ -401,6 +411,10 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 // handleUpdateClusterAddons handles PATCH /api/v1/clusters/{name} — update addon labels.
 func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.update-addons") {
+		return
+	}
+	// A v3 repo must migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
 		return
 	}
 	name := r.PathValue("name")

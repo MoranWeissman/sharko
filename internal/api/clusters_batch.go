@@ -36,6 +36,10 @@ func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Requ
 	if !authz.RequireWithResponse(w, r, "cluster.register") {
 		return
 	}
+	// A v3 repo must migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
+		return
+	}
 
 	var req struct {
 		Clusters []orchestrator.RegisterClusterRequest `json:"clusters"`

@@ -136,6 +136,11 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 	if s.refuseV3ValuesSurfaceOnActiveRepo(r.Context(), w) {
 		return
 	}
+	// And on a v3 repo, migrate first (Story 5.1): the migration moves
+	// this file to values/global/ and would otherwise be racing this edit.
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
+		return
+	}
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
@@ -317,6 +322,10 @@ func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 	// values/clusters/<cluster>/<addon>.yaml, not in the combined v3
 	// per-cluster file this path writes. Refuse before any branch.
 	if s.refuseV3ValuesSurfaceOnActiveRepo(r.Context(), w) {
+		return
+	}
+	// And on a v3 repo, migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
 		return
 	}
 

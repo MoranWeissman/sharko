@@ -99,6 +99,10 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 	if s.refuseV3ValuesSurfaceOnActiveRepo(r.Context(), w) {
 		return
 	}
+	// And on a v3 repo, migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
+		return
+	}
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
@@ -255,6 +259,10 @@ func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) 
 
 	// Same v3-file dependency as the annotate endpoint above.
 	if s.refuseV3ValuesSurfaceOnActiveRepo(r.Context(), w) {
+		return
+	}
+	// And on a v3 repo, migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
 		return
 	}
 

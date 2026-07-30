@@ -35,6 +35,11 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.add-to-catalog") {
 		return
 	}
+	// A v3 repo must migrate first (Story 5.1) — this writes the old
+	// full-copy catalog, which the migration turns into a delta.
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
+		return
+	}
 
 	// Validate request body BEFORE any upstream call so an empty `{}`
 	// POST doesn't burn external API quota and doesn't surface a
@@ -245,6 +250,10 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.remove-from-catalog") {
 		return
 	}
+	// A v3 repo must migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
+		return
+	}
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "addon name is required")
@@ -357,6 +366,10 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 // @Router /addons/{name} [patch]
 func (s *Server) handleConfigureAddon(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
+		return
+	}
+	// A v3 repo must migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
 		return
 	}
 	name := r.PathValue("name")
