@@ -8,6 +8,7 @@ What gets signed:
 |----------|--------|---------------|
 | Container image (`ghcr.io/moranweissman/sharko:vX.Y.Z`, `linux/amd64` + `linux/arm64`) | Cosign signature on the manifest list in OCI registry | `cosign verify` |
 | Helm OCI chart (`oci://ghcr.io/moranweissman/sharko/sharko:X.Y.Z`) | Cosign signature in OCI registry | `cosign verify` |
+| Engine Helm OCI chart (`oci://ghcr.io/moranweissman/sharko/sharko-engine:X.Y.Z`, v4+) | Cosign signature in OCI registry | `cosign verify` |
 | GitHub release archives (`sharko_X.Y.Z_<os>_<arch>.tar.gz`, `checksums.txt`) | Detached `.sig` + `.pem` published with the release | `cosign verify-blob` |
 
 The signing run also produces a CycloneDX SBOM that is published as a release asset.
@@ -47,6 +48,25 @@ If verification passes you can install the chart with the usual command:
 ```bash
 helm install sharko oci://ghcr.io/moranweissman/sharko/sharko --version ${VERSION}
 ```
+
+## Verifying the engine chart (v4+)
+
+Same shape as the `sharko` chart above, different chart name and a different pin: `charts/sharko-engine`'s own version (see `charts/sharko-engine/README.md`), not the product's — it usually changes on a different cadence than the server image.
+
+```bash
+ENGINE_VERSION=X.Y.Z
+cosign verify ghcr.io/moranweissman/sharko/sharko-engine:${ENGINE_VERSION} \
+  --certificate-identity-regexp 'https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+If verification passes, pull it:
+
+```bash
+helm pull oci://ghcr.io/moranweissman/sharko/sharko-engine --version ${ENGINE_VERSION} --untar
+```
+
+This is the chart `engine/application.yaml` (the "engine pin" — see `docs/design/2026-07-30-v4-data-file-format.md` section 2.5) points ArgoCD at. You do not normally pull it by hand — ArgoCD does, from the `targetRevision` in that file — but pulling it yourself is how you inspect a version before bumping the pin, or render it locally against your own repo (`charts/sharko-engine/README.md`'s "Rendering locally" section).
 
 ## Verifying release binaries
 

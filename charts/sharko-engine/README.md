@@ -64,6 +64,66 @@ exactly one file, never more).
 the two automated gates; both run in CI (`helm-validate` and
 `go-build-test`).
 
+## Publishing (v4 Wave 1 Story 2.4)
+
+On every tagged release, `.github/workflows/release.yml`'s
+`helm-package-engine` job packages this chart, pushes it to
+`oci://ghcr.io/moranweissman/sharko/sharko-engine`, and cosign-signs the
+pushed digest — the exact package → push → sign shape the `helm-package`
+job already uses for the `sharko` chart itself, same registry namespace,
+same keyless (OIDC) signing identity.
+
+**Chart-version rule.** The design doc (section 5) treats the engine
+chart's version as its own axis, bumped "whenever Sharko releases new
+deploy logic or a new shipped catalog" — not tied to the product version
+by name. The release pipeline locks the simplest rule available: **the
+OCI tag equals the product version at release time** (`helm package
+--version <release-version>` overrides this file's own committed
+`version:` at package time, identically to how the `sharko` chart's
+Chart.yaml version is overridden today). In practice this means the
+engine chart republishes on every Sharko release, even releases that
+touch nothing under `charts/sharko-engine/` — a known, deliberate
+trade-off for v1. It costs nothing at the consuming end: every cluster
+only ever reads the explicit `targetRevision` a human merged into their
+own `engine/application.yaml` (design decision D8), never "latest", so an
+unrelated republish changes nothing until someone opens (and merges) a
+pin-bump PR. Decoupling the two version axes later — e.g. only
+republishing the engine chart when `charts/sharko-engine/` actually
+changed — is possible without breaking any existing pin.
+
+## Pulling the released chart
+
+Verify the signature first (same identity policy as the server image and
+the `sharko` chart — see `docs/site/operator/supply-chain.md`):
+
+```bash
+ENGINE_VERSION=X.Y.Z   # the Sharko release version, per the rule above
+cosign verify ghcr.io/moranweissman/sharko/sharko-engine:${ENGINE_VERSION} \
+  --certificate-identity-regexp 'https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Then pull it:
+
+```bash
+helm pull oci://ghcr.io/moranweissman/sharko/sharko-engine --version ${ENGINE_VERSION} --untar
+```
+
+And render it locally, exactly like the "Rendering locally" section
+above but against the untarred chart directory instead of
+`charts/sharko-engine`:
+
+```bash
+helm template testengine sharko-engine \
+  --values tests/enginerender/testdata/engine-values.yaml \
+  --values tests/enginerender/testdata/catalog/addons.yaml
+```
+
+This is also how to inspect a new engine version before merging a
+pin-bump PR (`sharko validate` and the pin-bump check compare version
+numbers only — actually rendering the new chart against your own repo
+before merging is on you, same as reviewing any other dependency bump).
+
 ## The kill-Sharko story
 
 Delete the `sharko-engine` Application (`engine/application.yaml`) from
