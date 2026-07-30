@@ -40,8 +40,9 @@ var HandlerTier = map[string]audit.Tier{
 	"handleAdoptClusters":             audit.Tier1,
 
 	// Addon ops on existing addons (upgrade is operational; the version is the catalog)
-	"handleUpgradeAddon":       audit.Tier1,
-	"handleUpgradeAddonsBatch": audit.Tier1,
+	"handleUpgradeAddon":           audit.Tier1,
+	"handleUpgradeAddonsBatch":     audit.Tier1,
+	"handleUpgradeAddonClustersV4": audit.Tier1,
 
 	// ArgoCD cluster secret sync, secret reconciliation
 	"handleTriggerReconcile":      audit.Tier1,

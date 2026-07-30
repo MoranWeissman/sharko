@@ -29,10 +29,10 @@ import {
   Star,
   Eye,
 } from 'lucide-react'
-import { api, removeAddon, upgradeAddon, configureAddon, getAddonPRs, type PRWriteResult } from '@/services/api'
+import { api, removeAddon, upgradeAddon, upgradeAddonClusters, configureAddon, getAddonPRs, type PRWriteResult } from '@/services/api'
 import { PRLifecycleProgress, PRLink, extractPR } from '@/components/PRFeedback'
 import { DryRunPreview } from '@/components/AddAddonFlow'
-import type { AddonCatalogItem, CatalogEntry, CatalogSourceRecord, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR, AddonValuesSchemaResponse, MeResponse, DryRunResult } from '@/services/models'
+import type { AddonCatalogItem, CatalogEntry, CatalogSourceRecord, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR, AddonValuesSchemaResponse, MeResponse, DryRunResult, V4GitResult } from '@/services/models'
 import { ValuesEditor } from '@/components/ValuesEditor'
 import { RecentPRsPanel } from '@/components/RecentPRsPanel'
 import { showToast } from '@/components/ToastNotification'
@@ -891,6 +891,195 @@ function HealthProgressBar({ healthy, total }: { healthy: number; total: number 
       <p className="mt-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
         {healthy} of {total} applications are healthy ({Math.round(pct)}%)
       </p>
+    </div>
+  )
+}
+
+// SubsetUpgradePanel — Epic 7 Story 7.2 (v4 Wave 2 "one action, one PR"):
+// given an addon outdated on N of M clusters, let the user pick exactly
+// which of those N to move, preview every file the PR would touch, then
+// open ONE pull request that upgrades only the selected clusters.
+// Unselected clusters stay untouched. Only shown when 2+ clusters are
+// drifted from the catalog version — a single outdated cluster is better
+// served by the existing PerClusterUpgradeRow one-click upgrade above.
+function SubsetUpgradePanel({
+  addonName,
+  catalogVersion,
+  clusters,
+  onComplete,
+}: {
+  addonName: string
+  catalogVersion: string
+  clusters: { name: string; deployedVersion: string; drifted: boolean }[]
+  onComplete?: () => void
+}) {
+  const drifted = useMemo(() => clusters.filter((c) => c.drifted), [clusters])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [targetVersion, setTargetVersion] = useState(catalogVersion)
+  const [preview, setPreview] = useState<DryRunResult | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [applying, setApplying] = useState(false)
+  const [applyError, setApplyError] = useState<string | null>(null)
+  const [result, setResult] = useState<V4GitResult | null>(null)
+
+  if (drifted.length < 2) return null
+
+  const toggle = (name: string) => {
+    setPreview(null)
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const handlePreview = async () => {
+    setPreviewLoading(true)
+    setPreviewError(null)
+    try {
+      const res = await upgradeAddonClusters(addonName, {
+        clusters: Array.from(selected),
+        version: targetVersion,
+        dry_run: true,
+      })
+      setPreview(res.dry_run ?? null)
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : 'Could not build a preview')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const handleApply = async () => {
+    setApplying(true)
+    setApplyError(null)
+    try {
+      const res = await upgradeAddonClusters(addonName, {
+        clusters: Array.from(selected),
+        version: targetVersion,
+        yes: true,
+      })
+      setResult(res)
+      if (onComplete) setTimeout(onComplete, 1500)
+    } catch (err) {
+      setApplyError(err instanceof Error ? err.message : 'Upgrade failed')
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  const { merged } = extractPR(result)
+
+  return (
+    <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
+      <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+        Upgrade multiple clusters at once
+      </h3>
+      <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
+        {drifted.length} of {clusters.length} clusters are behind. Pick which ones move
+        together — one pull request, one small diff per cluster.
+      </p>
+
+      {!result && (
+        <>
+          <div className="mt-3 flex items-center gap-3 text-xs">
+            <button
+              type="button"
+              onClick={() => { setPreview(null); setSelected(new Set(drifted.map((c) => c.name))) }}
+              className="font-medium text-teal-600 hover:underline dark:text-teal-400"
+            >
+              Select all outdated
+            </button>
+            <button
+              type="button"
+              onClick={() => { setPreview(null); setSelected(new Set()) }}
+              className="font-medium text-[#5a8aaa] hover:underline dark:text-gray-400"
+            >
+              Clear
+            </button>
+          </div>
+
+          <div className="mt-2 space-y-1.5">
+            {drifted.map((c) => (
+              <label
+                key={c.name}
+                className="flex items-center gap-2 rounded-lg bg-[#e0f0ff] px-3 py-2 text-sm dark:bg-gray-700"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(c.name)}
+                  onChange={() => toggle(c.name)}
+                  className="h-4 w-4 rounded border-[#5a9dd0]"
+                />
+                <span className="font-medium text-[#0a2a4a] dark:text-gray-100">{c.name}</span>
+                <span className="font-mono text-xs text-[#5a8aaa] dark:text-gray-400">
+                  {c.deployedVersion} &rarr; {targetVersion}
+                </span>
+              </label>
+            ))}
+          </div>
+
+          <div className="mt-3 flex items-center gap-2">
+            <label className="text-xs font-medium text-[#5a8aaa] dark:text-gray-400" htmlFor="subset-upgrade-target">
+              Target version
+            </label>
+            <input
+              id="subset-upgrade-target"
+              value={targetVersion}
+              onChange={(e) => { setTargetVersion(e.target.value); setPreview(null) }}
+              className="rounded-md border border-[#5a9dd0] bg-[#e8f4ff] px-2 py-1 font-mono text-xs text-[#0a2a4a] dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+            />
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={selected.size === 0 || previewLoading || !targetVersion}
+              onClick={handlePreview}
+              className="inline-flex items-center gap-1.5 rounded-md border border-[#5a9dd0] bg-white px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+            >
+              {previewLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {previewLoading ? 'Building preview...' : `Preview ${selected.size || ''} change${selected.size === 1 ? '' : 's'}`.trim()}
+            </button>
+            {preview && (
+              <button
+                type="button"
+                disabled={applying}
+                onClick={handleApply}
+                className="inline-flex items-center gap-1.5 rounded-md bg-[#0a2a4a] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#14466e] disabled:opacity-50 dark:bg-blue-700 dark:hover:bg-blue-600"
+              >
+                {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {applying ? 'Opening PR...' : `Upgrade ${selected.size} cluster${selected.size === 1 ? '' : 's'}`}
+              </button>
+            )}
+          </div>
+
+          {previewError && (
+            <p className="mt-2 text-sm text-red-600 dark:text-red-400">{previewError}</p>
+          )}
+          {preview && (
+            <div className="mt-3">
+              <DryRunPreview result={preview} />
+            </div>
+          )}
+          {applyError && (
+            <p className="mt-2 text-sm text-red-600 dark:text-red-400">{applyError}</p>
+          )}
+        </>
+      )}
+
+      {result && (
+        <div className="mt-3">
+          <PRLifecycleProgress
+            result={result}
+            autoMergeExpected={merged === true}
+            mergedLabel={`PR merged — ${selected.size} cluster(s) upgraded to ${targetVersion}`}
+            openLabel={`PR open for review — ${selected.size} cluster(s) upgrade to ${targetVersion} once it merges`}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -2277,6 +2466,21 @@ export function AddonDetail() {
                   </div>
                 )}
               </div>
+
+              {/* Subset upgrade — one action, one PR (Epic 7 Story 7.2) */}
+              <SubsetUpgradePanel
+                addonName={addon.addon_name}
+                catalogVersion={addon.version}
+                clusters={enabledApps.map((app) => {
+                  const deployedVersion = app.deployed_version ?? app.configured_version ?? 'N/A'
+                  return {
+                    name: app.cluster_name,
+                    deployedVersion,
+                    drifted: deployedVersion !== addon.version && deployedVersion !== 'N/A',
+                  }
+                })}
+                onComplete={() => fetchAddonData(true)}
+              />
             </div>
           )}
 

@@ -3,16 +3,19 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/advisories"
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/helm"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // semverParts holds the parsed major.minor.patch components of a version string.
@@ -60,6 +63,23 @@ type UpgradeService struct {
 	ai                  *ai.Client
 	advisories          advisorySource
 	managedClustersPath string // path in Git repo to managed-clusters.yaml
+
+	// curated is the shipped curated catalog, wired via SetCuratedCatalog.
+	// Used ONLY by the v4 branch of resolveAddon (v4 Wave 2 Epic 7 Story
+	// 7.3) to merge a caller's catalog/addons.yaml delta against the
+	// shipped set, mirroring AddonService.curated (internal/service/addon.go)
+	// for the version matrix. nil is safe: every addon then merges as
+	// catalog.OriginInternal.
+	curated *catalog.Catalog
+}
+
+// SetCuratedCatalog wires in the shipped curated catalog so resolveAddon's
+// v4 branch can merge a caller's catalog/addons.yaml delta against it, the
+// same way AddonService.SetCuratedCatalog does for the version matrix. Pass
+// nil (or skip the call) to leave every v4-repo addon merging as
+// catalog.OriginInternal.
+func (s *UpgradeService) SetCuratedCatalog(c *catalog.Catalog) {
+	s.curated = c
 }
 
 // advisorySource is the subset of advisories.Service used by UpgradeService.
@@ -117,32 +137,94 @@ func (s *UpgradeService) GetAISummary(ctx context.Context, result *models.Upgrad
 	return s.ai.Summarize(ctx, prompt)
 }
 
-// ListVersions returns available versions for an addon's Helm chart.
-func (s *UpgradeService) ListVersions(ctx context.Context, addonName string, gp gitprovider.GitProvider) (*models.AvailableVersionsResponse, error) {
-	// Get addon info from catalog
+// resolvedAddon is the addon deployment info ListVersions, CheckUpgrade,
+// and GetRecommendations all need: where its chart lives, and the version
+// currently running. resolveAddon (below) is the single place that decides
+// WHERE that comes from — the v3 addons-catalog.yaml, or (v4 Wave 2 Epic 7
+// Story 7.3) the delta-merged catalog on a v4 repo — so all three verified
+// deterministic-check entry points read the same v4 data the version
+// matrix (AddonService.GetVersionMatrix) already does. This is a
+// re-pointing, not a rebuild: none of the version-comparison, diffing, or
+// recommendation logic below changes shape between the two branches.
+type resolvedAddon struct {
+	RepoURL string
+	Chart   string
+	Version string
+	IsV4    bool
+}
+
+// resolveAddon looks up addonName's chart location and current version,
+// using the SAME v4-repo probe GetVersionMatrix's v4 branch uses (the
+// engine pin resolving to non-empty content on "main") to decide whether
+// to read the v3 addons-catalog.yaml or the v4 delta-merged catalog.
+func (s *UpgradeService) resolveAddon(ctx context.Context, addonName string, gp gitprovider.GitProvider) (resolvedAddon, error) {
+	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, "main"); pinErr == nil && len(pinContent) > 0 {
+		merged, err := s.mergedAddonV4(ctx, addonName, gp)
+		if err != nil {
+			return resolvedAddon{}, err
+		}
+		return resolvedAddon{RepoURL: merged.RepoURL, Chart: merged.Chart, Version: merged.Version, IsV4: true}, nil
+	}
+
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			catalogData = []byte("applicationsets: []")
 		} else {
-			return nil, fmt.Errorf("fetching addons catalog: %w", err)
+			return resolvedAddon{}, fmt.Errorf("fetching addons catalog: %w", err)
 		}
 	}
 
 	addons, err := s.parser.ParseAddonsCatalog(catalogData)
 	if err != nil {
-		return nil, fmt.Errorf("parsing addons catalog: %w", err)
+		return resolvedAddon{}, fmt.Errorf("parsing addons catalog: %w", err)
 	}
 
-	var addon *models.AddonCatalogEntry
 	for i := range addons {
 		if addons[i].Name == addonName {
-			addon = &addons[i]
-			break
+			return resolvedAddon{RepoURL: addons[i].RepoURL, Chart: addons[i].Chart, Version: addons[i].Version}, nil
 		}
 	}
-	if addon == nil {
-		return nil, fmt.Errorf("addon %q not found in catalog", addonName)
+	return resolvedAddon{}, fmt.Errorf("addon %q not found in catalog", addonName)
+}
+
+// mergedAddonV4 reads the caller's catalog/addons.yaml delta and merges it
+// against the wired-in curated catalog (s.curated — nil-safe), returning
+// the single merged entry for addonName. Mirrors
+// AddonService.mergedAddonForV4 (internal/orchestrator/addon_ops_v4.go)
+// exactly — "missing means empty" for the delta file (design doc D16), and
+// a v4 repo with no curated catalog wired merges every addon as
+// catalog.OriginInternal (catalog.MergeDelta's own contract).
+func (s *UpgradeService) mergedAddonV4(ctx context.Context, addonName string, gp gitprovider.GitProvider) (catalog.MergedAddon, error) {
+	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, "main")
+	var delta config.AddonCatalogDeltaSpec
+	if err != nil {
+		if !isGitFileNotFound(err) {
+			return catalog.MergedAddon{}, fmt.Errorf("reading %s: %w", config.AddonCatalogDeltaPath, err)
+		}
+	} else {
+		delta, err = config.LoadAddonCatalogDelta(deltaData)
+		if err != nil {
+			return catalog.MergedAddon{}, fmt.Errorf("parsing %s: %w", config.AddonCatalogDeltaPath, err)
+		}
+	}
+
+	merged, err := catalog.MergeDelta(s.curated, delta)
+	if err != nil {
+		return catalog.MergedAddon{}, fmt.Errorf("merging catalog delta: %w", err)
+	}
+	entry, ok := merged[addonName]
+	if !ok {
+		return catalog.MergedAddon{}, fmt.Errorf("addon %q not found in catalog", addonName)
+	}
+	return entry, nil
+}
+
+// ListVersions returns available versions for an addon's Helm chart.
+func (s *UpgradeService) ListVersions(ctx context.Context, addonName string, gp gitprovider.GitProvider) (*models.AvailableVersionsResponse, error) {
+	addon, err := s.resolveAddon(ctx, addonName, gp)
+	if err != nil {
+		return nil, err
 	}
 
 	// Fetch versions from Helm repo index
@@ -177,30 +259,9 @@ func (s *UpgradeService) ListVersions(ctx context.Context, addonName string, gp 
 // CheckUpgrade performs an upgrade impact analysis comparing current and target chart versions.
 func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVersion string, gp gitprovider.GitProvider) (*models.UpgradeCheckResponse, error) {
 	log := logging.LoggerFromContext(ctx)
-	// Get addon info from catalog
-	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
+	addon, err := s.resolveAddon(ctx, addonName, gp)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
-			catalogData = []byte("applicationsets: []")
-		} else {
-			return nil, fmt.Errorf("fetching addons catalog: %w", err)
-		}
-	}
-
-	addons, err := s.parser.ParseAddonsCatalog(catalogData)
-	if err != nil {
-		return nil, fmt.Errorf("parsing addons catalog: %w", err)
-	}
-
-	var addon *models.AddonCatalogEntry
-	for i := range addons {
-		if addons[i].Name == addonName {
-			addon = &addons[i]
-			break
-		}
-	}
-	if addon == nil {
-		return nil, fmt.Errorf("addon %q not found in catalog", addonName)
+		return nil, err
 	}
 
 	currentVersion := addon.Version
@@ -287,6 +348,12 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 
 	if !baselineUnavailable {
 		globalValuesPath := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)
+		if addon.IsV4 {
+			// v4 Wave 2 Epic 7 Story 7.3: values live at
+			// values/global/<addon>.yaml (design doc §2.2), not the v3
+			// configuration/addons-global-values/ path.
+			globalValuesPath = fmt.Sprintf("%s/%s.yaml", orchestrator.V4GlobalValuesDir, addonName)
+		}
 		globalData, globalErr := gp.GetFileContent(ctx, globalValuesPath, "main")
 		if globalErr != nil {
 			log.Warn("could not fetch global values", "addon", addonName, "error", globalErr)
@@ -307,48 +374,10 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 			}
 		}
 
-		// Check for conflicts with per-cluster values
-		clusterData, clusterErr := gp.GetFileContent(ctx, s.managedClustersPath, "main")
-		if clusterErr != nil && strings.Contains(clusterErr.Error(), "404") {
-			clusterData = []byte("clusters: []")
-			clusterErr = nil
-		}
-		if clusterErr != nil {
-			log.Warn("could not fetch cluster addons config", "error", clusterErr)
+		if addon.IsV4 {
+			allConflicts = append(allConflicts, s.checkClusterConflictsV4(ctx, addonName, oldValues, newValues, gp)...)
 		} else {
-			clusters, parseErr := s.parser.ParseClusterAddons(clusterData)
-			if parseErr != nil {
-				log.Warn("could not parse cluster addons", "error", parseErr)
-			} else {
-				for _, cluster := range clusters {
-					labelVal, hasAddon := cluster.Labels[addonName]
-					if !hasAddon || !strings.EqualFold(labelVal, "enabled") {
-						continue
-					}
-
-					clusterValuesPath := fmt.Sprintf("configuration/addons-cluster-values/%s/%s.yaml", cluster.Name, addonName)
-					clusterValuesData, cvErr := gp.GetFileContent(ctx, clusterValuesPath, "main")
-					if cvErr != nil {
-						continue
-					}
-
-					conflicts, conflictErr := helm.FindConflicts(string(clusterValuesData), oldValues, newValues)
-					if conflictErr != nil {
-						log.Warn("conflict check failed for cluster", "cluster", cluster.Name, "error", conflictErr)
-						continue
-					}
-
-					for _, c := range conflicts {
-						allConflicts = append(allConflicts, models.ConflictCheckEntry{
-							Path:            c.Path,
-							ConfiguredValue: c.ConfiguredValue,
-							OldDefault:      c.OldDefault,
-							NewDefault:      c.NewDefault,
-							Source:          cluster.Name,
-						})
-					}
-				}
-			}
+			allConflicts = append(allConflicts, s.checkClusterConflictsV3(ctx, addonName, oldValues, newValues, gp)...)
 		}
 	}
 
@@ -373,34 +402,124 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 	}, nil
 }
 
+// checkClusterConflictsV3 is CheckUpgrade's v3 per-cluster conflict pass:
+// managed-clusters.yaml labels decide which clusters run the addon, and
+// configuration/addons-cluster-values/<cluster>/<addon>.yaml holds that
+// cluster's override values.
+func (s *UpgradeService) checkClusterConflictsV3(ctx context.Context, addonName, oldValues, newValues string, gp gitprovider.GitProvider) []models.ConflictCheckEntry {
+	log := logging.LoggerFromContext(ctx)
+	var out []models.ConflictCheckEntry
+
+	clusterData, clusterErr := gp.GetFileContent(ctx, s.managedClustersPath, "main")
+	if clusterErr != nil && strings.Contains(clusterErr.Error(), "404") {
+		clusterData = []byte("clusters: []")
+		clusterErr = nil
+	}
+	if clusterErr != nil {
+		log.Warn("could not fetch cluster addons config", "error", clusterErr)
+		return out
+	}
+
+	clusters, parseErr := s.parser.ParseClusterAddons(clusterData)
+	if parseErr != nil {
+		log.Warn("could not parse cluster addons", "error", parseErr)
+		return out
+	}
+
+	for _, cluster := range clusters {
+		labelVal, hasAddon := cluster.Labels[addonName]
+		if !hasAddon || !strings.EqualFold(labelVal, "enabled") {
+			continue
+		}
+
+		clusterValuesPath := fmt.Sprintf("configuration/addons-cluster-values/%s/%s.yaml", cluster.Name, addonName)
+		clusterValuesData, cvErr := gp.GetFileContent(ctx, clusterValuesPath, "main")
+		if cvErr != nil {
+			continue
+		}
+
+		conflicts, conflictErr := helm.FindConflicts(string(clusterValuesData), oldValues, newValues)
+		if conflictErr != nil {
+			log.Warn("conflict check failed for cluster", "cluster", cluster.Name, "error", conflictErr)
+			continue
+		}
+
+		for _, c := range conflicts {
+			out = append(out, models.ConflictCheckEntry{
+				Path:            c.Path,
+				ConfiguredValue: c.ConfiguredValue,
+				OldDefault:      c.OldDefault,
+				NewDefault:      c.NewDefault,
+				Source:          cluster.Name,
+			})
+		}
+	}
+	return out
+}
+
+// checkClusterConflictsV4 is CheckUpgrade's v4 per-cluster conflict pass
+// (v4 Wave 2 Epic 7 Story 7.3) — the re-pointed counterpart of
+// checkClusterConflictsV3: clusters/*.yaml (kind ClusterAddons) decides
+// which clusters run the addon (design doc §2.1), and
+// values/clusters/<cluster>/<addon>.yaml holds that cluster's override
+// values (design doc §2.2), instead of managed-clusters.yaml labels and
+// configuration/addons-cluster-values/. Cluster names are sorted before
+// iterating so the conflict list order is deterministic, matching
+// getVersionMatrixV4's convention.
+func (s *UpgradeService) checkClusterConflictsV4(ctx context.Context, addonName, oldValues, newValues string, gp gitprovider.GitProvider) []models.ConflictCheckEntry {
+	log := logging.LoggerFromContext(ctx)
+	var out []models.ConflictCheckEntry
+
+	clusterAddons, err := listClusterAddonsSpecs(ctx, gp, "main")
+	if err != nil {
+		log.Warn("could not list clusters/*.yaml", "error", err)
+		return out
+	}
+
+	clusterNames := make([]string, 0, len(clusterAddons))
+	for name := range clusterAddons {
+		clusterNames = append(clusterNames, name)
+	}
+	sort.Strings(clusterNames)
+
+	for _, clusterName := range clusterNames {
+		entry, hasAddon := clusterAddons[clusterName].Addons[addonName]
+		if !hasAddon || !entry.Enabled {
+			continue
+		}
+
+		clusterValuesPath := fmt.Sprintf("%s/%s/%s.yaml", orchestrator.V4ClusterValuesDir, clusterName, addonName)
+		clusterValuesData, cvErr := gp.GetFileContent(ctx, clusterValuesPath, "main")
+		if cvErr != nil {
+			continue
+		}
+
+		conflicts, conflictErr := helm.FindConflicts(string(clusterValuesData), oldValues, newValues)
+		if conflictErr != nil {
+			log.Warn("conflict check failed for cluster", "cluster", clusterName, "error", conflictErr)
+			continue
+		}
+
+		for _, c := range conflicts {
+			out = append(out, models.ConflictCheckEntry{
+				Path:            c.Path,
+				ConfiguredValue: c.ConfiguredValue,
+				OldDefault:      c.OldDefault,
+				NewDefault:      c.NewDefault,
+				Source:          clusterName,
+			})
+		}
+	}
+	return out
+}
+
 // GetRecommendations returns smart upgrade recommendations for an addon:
 // next patch (safe bugfix), next minor (feature update), and latest stable.
 // It also builds security-aware RecommendationCards using advisory data from ArtifactHub.
 func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName string, gp gitprovider.GitProvider) (*models.UpgradeRecommendations, error) {
-	// Fetch catalog to get current version and chart info
-	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
+	addon, err := s.resolveAddon(ctx, addonName, gp)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
-			catalogData = []byte("applicationsets: []")
-		} else {
-			return nil, fmt.Errorf("fetching addons catalog: %w", err)
-		}
-	}
-
-	addons, err := s.parser.ParseAddonsCatalog(catalogData)
-	if err != nil {
-		return nil, fmt.Errorf("parsing addons catalog: %w", err)
-	}
-
-	var addon *models.AddonCatalogEntry
-	for i := range addons {
-		if addons[i].Name == addonName {
-			addon = &addons[i]
-			break
-		}
-	}
-	if addon == nil {
-		return nil, fmt.Errorf("addon %q not found in catalog", addonName)
+		return nil, err
 	}
 
 	current := addon.Version
@@ -433,11 +552,11 @@ func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName strin
 	// `latestStable` is now "highest stable that is also newer than
 	// current"; if no such version exists the slot stays empty.
 	var (
-		nextPatch    string
-		nextPatchP   semverParts
-		nextMinor    string
-		nextMinorP   semverParts
-		latestStable string
+		nextPatch     string
+		nextPatchP    semverParts
+		nextMinor     string
+		nextMinorP    semverParts
+		latestStable  string
 		latestStableP semverParts
 	)
 
@@ -658,9 +777,9 @@ func buildCards(cur semverParts, patchVer, minorVer, nextMajorVer, latestVer str
 		crossMajor := p.major != cur.major
 
 		card := models.RecommendationCard{
-			Label:      c.label,
-			Version:    c.version,
-			CrossMajor: crossMajor,
+			Label:       c.label,
+			Version:     c.version,
+			CrossMajor:  crossMajor,
 			HasBreaking: crossMajor, // cross-major is always flagged as potentially breaking
 		}
 		if hasAdv {

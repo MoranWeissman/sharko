@@ -56,11 +56,12 @@ var mutatingPatternTier = map[string]audit.Tier{
 	"POST /api/v1/operations/{id}/cancel":    audit.Tier1,
 
 	// Addons catalog — Tier 2 for catalog-editing, Tier 1 for ops.
-	"POST /api/v1/addons":                audit.Tier2,
-	"DELETE /api/v1/addons/{name}":       audit.Tier2,
-	"PATCH /api/v1/addons/{name}":        audit.Tier2,
-	"POST /api/v1/addons/upgrade-batch":  audit.Tier1,
-	"POST /api/v1/addons/{name}/upgrade": audit.Tier1,
+	"POST /api/v1/addons":                         audit.Tier2,
+	"DELETE /api/v1/addons/{name}":                audit.Tier2,
+	"PATCH /api/v1/addons/{name}":                 audit.Tier2,
+	"POST /api/v1/addons/upgrade-batch":           audit.Tier1,
+	"POST /api/v1/addons/{name}/upgrade":          audit.Tier1,
+	"POST /api/v1/addons/{name}/upgrade-clusters": audit.Tier1,
 
 	// Force-refresh third-party catalog sources. Tier 2 because it's an
 	// admin configuration-time action (verifying a newly added

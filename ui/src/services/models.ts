@@ -412,6 +412,8 @@ export interface VersionMatrixRow {
   catalog_version: string
   chart: string
   cells: Record<string, VersionMatrixCell>
+  newest_available?: string
+  last_checked?: string
 }
 
 export interface VersionMatrixResponse {

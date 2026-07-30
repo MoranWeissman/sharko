@@ -166,3 +166,76 @@ func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request
 	})
 	writeJSON(w, http.StatusOK, result)
 }
+
+// handleUpgradeAddonClustersV4 godoc
+//
+// @Summary Upgrade addon on a chosen subset of clusters (v4 format)
+// @Description Bumps one addon's version pin to a new value on exactly the clusters listed in the request, in ONE pull request — the fleet-upgrade "one action, one PR" flow (v4 Wave 2 Epic 7 Story 7.2). Writes clusters/{cluster}.yaml (kind ClusterAddons) for every selected cluster only; clusters left out of the list are untouched, so the diff is one small block per cluster. Every selected cluster must already have the addon enabled — this endpoint never enables an addon as a side effect of upgrading it. Requires yes=true for confirmation (or dry_run=true to preview every file the PR would change before it opens).
+// @Tags addons
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Addon name"
+// @Param body body orchestrator.UpgradeAddonClustersV4Request true "Subset upgrade request"
+// @Success 200 {object} orchestrator.GitResult "Upgrade committed (or dry-run preview)"
+// @Failure 400 {object} map[string]interface{} "Bad request or missing confirmation"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Failure 502 {object} map[string]interface{} "Gateway error — including a cluster missing its assignment file, or the addon not enabled on a selected cluster"
+// @Router /addons/{name}/upgrade-clusters [post]
+// handleUpgradeAddonClustersV4 handles POST /api/v1/addons/{name}/upgrade-clusters.
+// Body: {"clusters": ["prod-eu", "staging-us"], "version": "1.15.0", "yes": true}
+func (s *Server) handleUpgradeAddonClustersV4(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "addon.upgrade-clusters") {
+		return
+	}
+
+	addonName := r.PathValue("name")
+	if addonName == "" {
+		writeError(w, http.StatusBadRequest, "addon name is required")
+		return
+	}
+
+	var req orchestrator.UpgradeAddonClustersV4Request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	req.Addon = addonName
+
+	ac, err := s.connSvc.GetActiveArgocdClient()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		return
+	}
+	git, err := s.connSvc.GetActiveGitProvider()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		return
+	}
+
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsConfig(), s.repoPaths, nil)
+	s.attachPRTracker(orch)
+
+	result, err := orch.UpgradeAddonClustersV4(r.Context(), req)
+	if err != nil {
+		if err.Error() == "confirmation required: set yes: true in request body" {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	if req.DryRun {
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "addon_upgraded_clusters_v4",
+		Resource: fmt.Sprintf("addon:%s", addonName),
+		Detail:   fmt.Sprintf("to=%s clusters=%d", req.Version, len(req.Clusters)),
+	})
+	writeJSON(w, http.StatusOK, result)
+}
