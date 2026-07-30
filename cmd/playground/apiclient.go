@@ -200,6 +200,194 @@ func (c *apiClient) createConnection(name, provider, giteaURL, giteaToken, argoc
 	return fmt.Errorf("createConnection failed after %d attempts: %w", maxAttempts, lastErr)
 }
 
+// operationSession mirrors the fields the playground needs from
+// operations.Session (internal/operations/store.go) to poll a long-running
+// operation such as POST /api/v1/init.
+type operationSession struct {
+	ID          string `json:"id"`
+	Status      string `json:"status"` // pending|running|waiting|completed|failed|cancelled
+	WaitDetail  string `json:"wait_detail,omitempty"`
+	WaitPayload string `json:"wait_payload,omitempty"` // PR URL while waiting
+	Result      string `json:"result,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+// gitResult mirrors the fields the playground needs from orchestrator.GitResult
+// — the PR info returned by register-cluster and enable-addon-v4.
+type gitResult struct {
+	PRUrl  string `json:"pr_url,omitempty"`
+	PRID   int    `json:"pr_id,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	Merged bool   `json:"merged"`
+}
+
+// doJSON performs an authenticated JSON request against the Sharko API.
+// If out is non-nil and the response has a body, the body is decoded into it.
+// Always returns the raw status code and body so callers can report server
+// error text verbatim.
+func (c *apiClient) doJSON(method, path string, reqBody interface{}, out interface{}) (int, []byte, error) {
+	var bodyReader io.Reader
+	if reqBody != nil {
+		b, err := json.Marshal(reqBody)
+		if err != nil {
+			return 0, nil, fmt.Errorf("marshal %s %s request: %w", method, path, err)
+		}
+		bodyReader = bytes.NewReader(b)
+	}
+
+	req, err := http.NewRequest(method, c.baseURL+path, bodyReader)
+	if err != nil {
+		return 0, nil, fmt.Errorf("create %s %s request: %w", method, path, err)
+	}
+	if reqBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("%s %s: %w", method, path, err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if out != nil && len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, out); err != nil {
+			return resp.StatusCode, respBody, fmt.Errorf("decode %s %s response: %w", method, path, err)
+		}
+	}
+	return resp.StatusCode, respBody, nil
+}
+
+// initRepo calls POST /api/v1/init — the real seed-bootstrap door. autoMerge
+// is always passed explicitly (never relies on the connection's default) so
+// the caller controls whether Sharko merges the seed PR itself or leaves it
+// for the playground to merge "like a human" via the Gitea REST API.
+func (c *apiClient) initRepo(autoMerge bool) (operationID, status, waitPayload string, err error) {
+	reqBody := map[string]interface{}{
+		"bootstrap_argocd": true,
+		"auto_merge":       autoMerge,
+	}
+	statusCode, body, err := c.doJSON("POST", "/api/v1/init", reqBody, nil)
+	if err != nil {
+		return "", "", "", err
+	}
+	if statusCode != http.StatusOK && statusCode != http.StatusAccepted {
+		return "", "", "", fmt.Errorf("POST /api/v1/init: status %d: %s", statusCode, string(body))
+	}
+	var resp struct {
+		OperationID string `json:"operation_id"`
+		Status      string `json:"status"`
+		WaitPayload string `json:"wait_payload,omitempty"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", "", "", fmt.Errorf("decode init response: %w", err)
+	}
+	return resp.OperationID, resp.Status, resp.WaitPayload, nil
+}
+
+// getOperation polls GET /api/v1/operations/{id}.
+func (c *apiClient) getOperation(id string) (*operationSession, error) {
+	statusCode, body, err := c.doJSON("GET", "/api/v1/operations/"+id, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET /api/v1/operations/%s: status %d: %s", id, statusCode, string(body))
+	}
+	var sess operationSession
+	if err := json.Unmarshal(body, &sess); err != nil {
+		return nil, fmt.Errorf("decode operation session: %w", err)
+	}
+	return &sess, nil
+}
+
+// heartbeatOperation calls POST /api/v1/operations/{id}/heartbeat so a
+// "waiting" init session isn't abandoned while the playground is off merging
+// the PR through Gitea's own API.
+func (c *apiClient) heartbeatOperation(id string) error {
+	statusCode, body, err := c.doJSON("POST", "/api/v1/operations/"+id+"/heartbeat", nil, nil)
+	if err != nil {
+		return err
+	}
+	if statusCode != http.StatusOK {
+		return fmt.Errorf("POST /api/v1/operations/%s/heartbeat: status %d: %s", id, statusCode, string(body))
+	}
+	return nil
+}
+
+// registerClusterV4 registers a cluster via POST /api/v1/clusters with an
+// explicit auto_merge decision, returning the PR info so the caller can
+// merge it itself. No addons are passed here — on a v4 repo addon
+// assignment happens separately via enableAddonV4.
+func (c *apiClient) registerClusterV4(name, kubeconfig string, autoMerge bool) (*gitResult, error) {
+	reqBody := map[string]interface{}{
+		"name":       name,
+		"kubeconfig": kubeconfig,
+		"auto_merge": autoMerge,
+	}
+	statusCode, body, err := c.doJSON("POST", "/api/v1/clusters", reqBody, nil)
+	if err != nil {
+		return nil, err
+	}
+	if statusCode != http.StatusOK && statusCode != http.StatusCreated && statusCode != http.StatusMultiStatus {
+		return nil, fmt.Errorf("POST /api/v1/clusters: status %d: %s", statusCode, string(body))
+	}
+	var resp struct {
+		Status  string     `json:"status"`
+		Error   string     `json:"error,omitempty"`
+		Message string     `json:"message,omitempty"`
+		Git     *gitResult `json:"git,omitempty"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("decode register response: %w", err)
+	}
+	if resp.Git == nil {
+		return nil, fmt.Errorf("POST /api/v1/clusters: no git PR info in response (status=%s message=%s error=%s)", resp.Status, resp.Message, resp.Error)
+	}
+	return resp.Git, nil
+}
+
+// enableAddonV4 enables an addon via POST /api/v1/v4/clusters/{cluster}/addons/{addon}
+// with an explicit auto_merge decision, returning the PR info.
+func (c *apiClient) enableAddonV4(cluster, addon string, autoMerge bool) (*gitResult, error) {
+	reqBody := map[string]interface{}{
+		"yes":        true,
+		"auto_merge": autoMerge,
+	}
+	path := "/api/v1/v4/clusters/" + cluster + "/addons/" + addon
+	statusCode, body, err := c.doJSON("POST", path, reqBody, nil)
+	if err != nil {
+		return nil, err
+	}
+	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
+		return nil, fmt.Errorf("POST %s: status %d: %s", path, statusCode, string(body))
+	}
+	var gr gitResult
+	if err := json.Unmarshal(body, &gr); err != nil {
+		return nil, fmt.Errorf("decode enable-addon response: %w", err)
+	}
+	return &gr, nil
+}
+
+// clusterExists checks GET /api/v1/clusters/{name} — used to detect when the
+// cluster reconciler has picked up a merged registration.
+func (c *apiClient) clusterExists(name string) (bool, error) {
+	statusCode, body, err := c.doJSON("GET", "/api/v1/clusters/"+name, nil, nil)
+	if err != nil {
+		return false, err
+	}
+	switch statusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, fmt.Errorf("GET /api/v1/clusters/%s: status %d: %s", name, statusCode, string(body))
+	}
+}
+
 // waitForSharkoReady polls the Sharko health endpoint until it returns a successful
 // response (any non-connection-refused response), or the timeout expires.
 func waitForSharkoReady(baseURL string, timeout time.Duration) error {

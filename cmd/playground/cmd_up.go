@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -414,59 +413,26 @@ spec:
 	}
 	giteaToken = mustTrimSpace(tokenOut)
 
-	// 3. Create repo + seed files via Gitea REST API
-	fmt.Println("    Creating Gitea repository and seeding config files...")
+	// 3. Create an EMPTY repo via the Gitea REST API. No Sharko-format
+	// files are written here — ALL Sharko state (seed-bootstrap files,
+	// cluster registrations, addon assignments) goes through Sharko's own
+	// REST API afterward, exactly like a real user, via realdoors.go
+	// (runGiteaRealDoorsFlow). "Empty" here means what any git host gives
+	// you on repo creation with auto-init on: a README, nothing else.
+	fmt.Println("    Creating Gitea repository (empty — Sharko state comes later, through the real API)...")
 
 	// Start port-forward to access Gitea API from the playground process.
 	// Retry establishing the tunnel to absorb flaky port-forward startup.
 	fmt.Println("    Establishing Gitea port-forward (with retry)...")
-	var pfCmd *exec.Cmd
-	pfReady := false
-	for attempt := 1; attempt <= 3; attempt++ {
-		var startErr error
-		pfCmd, startErr = startBackground("kubectl", "--kubeconfig", kubeconfigPath,
-			"--context", ContextHub, "-n", Namespace,
-			"port-forward", "svc/gitea", "13000:3000")
-		if startErr != nil {
-			fmt.Printf("      gitea port-forward start attempt %d/3 failed: %v\n", attempt, startErr)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		// Wait for readiness with a per-attempt timeout (25s).
-		if err := waitForGiteaAPI("http://localhost:13000", 25*time.Second); err != nil {
-			fmt.Printf("      gitea port-forward not ready (attempt %d/3): %v — retrying\n", attempt, err)
-			_ = killProcessGroup(pfCmd)
-			pfCmd = nil
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		pfReady = true
-		break
+	pfCmd, err := establishGiteaPortForward(kubeconfigPath)
+	if err != nil {
+		return "", "", err
 	}
-	if !pfReady {
-		return "", "", fmt.Errorf("gitea port-forward did not become ready after 3 attempts")
-	}
-	defer func() {
-		if pfCmd != nil {
-			_ = killProcessGroup(pfCmd)
-		}
-	}()
+	defer func() { _ = killProcessGroup(pfCmd) }()
 
 	// Create the repository
 	if err := giteaCreateRepo(giteaToken, GiteaRepoName); err != nil {
 		return "", "", fmt.Errorf("create gitea repo: %w", err)
-	}
-
-	// Seed managed-clusters.yaml
-	managedClustersContent := generateManagedClustersSeed(spokeNames)
-	if err := giteaAddFile(giteaToken, GiteaAdminUser, GiteaRepoName, "configuration/managed-clusters.yaml", managedClustersContent); err != nil {
-		return "", "", fmt.Errorf("seed managed-clusters.yaml: %w", err)
-	}
-
-	// Seed addons-catalog.yaml
-	addonsCatalogContent := generateAddonsCatalogSeed()
-	if err := giteaAddFile(giteaToken, GiteaAdminUser, GiteaRepoName, "configuration/addons-catalog.yaml", addonsCatalogContent); err != nil {
-		return "", "", fmt.Errorf("seed addons-catalog.yaml: %w", err)
 	}
 
 	// Build the in-cluster Git URL Sharko will use
@@ -709,41 +675,28 @@ func registerSpokes(numSpokes int, spokeNames []string, gitBackend, giteaURL, gi
 		return fmt.Errorf("login to Sharko: %w", err)
 	}
 
-	// For Gitea backend, create a gitea-typed connection and set it as active.
-	// This gives Sharko an active connection pointing at the in-cluster Gitea.
-	// For GitFake, skip this step (GitFake is wired via the bootstrap connection or env vars).
+	// Gitea backend: drive EVERY piece of Sharko state (connection is
+	// infra wiring, but the seed-bootstrap, cluster registrations, and
+	// addon assignment all go through Sharko's real REST API doors — see
+	// realdoors.go). GitFake backend: keep the pre-existing direct path,
+	// since GitFake has no PR/merge REST API to drive the same way (see
+	// the doc comment at the top of realdoors.go).
 	if gitBackend == "gitea" {
-		fmt.Println("    Creating Gitea connection...")
-
-		// Mint an ArgoCD API token so Sharko can write ArgoCD cluster secrets.
 		kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
-		argocdToken, err := mintArgoCDToken(kubeconfigPath)
-		if err != nil {
-			return fmt.Errorf("mint argocd token: %w", err)
+		if err := runGiteaRealDoorsFlow(client, kubeconfigPath, numSpokes, spokeNames, kubeconfigs, giteaURL, giteaToken); err != nil {
+			return err
 		}
-
-		argocdServerURL := fmt.Sprintf("http://argocd-server.%s.svc.cluster.local", ArgoCDNamespace)
-		if err := client.createConnection(
-			GiteaConnectionName,
-			"gitea",
-			giteaURL,
-			giteaToken,
-			argocdServerURL,
-			ArgoCDNamespace,
-			argocdToken,
-		); err != nil {
-			return fmt.Errorf("create gitea connection: %w", err)
-		}
-		fmt.Printf("    Gitea connection '%s' created and set as active\n", GiteaConnectionName)
+		return nil
 	}
 
-	// Register each spoke.
+	// GitFake legacy path — GitFake was pre-seeded with managed-clusters.yaml
+	// at pod startup (deployGitFake's SEED_CONTENT), so registration here
+	// still uses the v3-style direct addons map. GitFake cannot open/merge
+	// real PRs (no such REST API), so it can't run runGiteaRealDoorsFlow.
 	for i := 0; i < numSpokes; i++ {
 		displayName := spokeNames[i]
 		kubeconfig := kubeconfigs[i]
 		fmt.Printf("    Registering %s...\n", displayName)
-		// Assign a couple of addons per spoke (placeholder — the seed content
-		// already assigns them, but the REST API expects the addon list).
 		addons := map[string]bool{"metrics-server": true, "external-secrets": true}
 		if err := client.registerCluster(displayName, kubeconfig, addons); err != nil {
 			return fmt.Errorf("register %s: %w", displayName, err)
@@ -842,58 +795,15 @@ func giteaCreateRepo(token, repoName string) error {
 	})
 }
 
-// giteaAddFile adds or updates a file in a Gitea repository via the Contents API.
-// Retries on transport errors or unexpected status codes (preserves 201 success semantics).
-func giteaAddFile(token, owner, repo, filePath, content string) error {
-	return retryHTTP(5, 2*time.Second, func() error {
-		client := newHTTPClient()
-		encodedContent := base64.StdEncoding.EncodeToString([]byte(content))
-		reqBody := fmt.Sprintf(`{"branch":"main","content":"%s","message":"Add %s"}`, encodedContent, filePath)
-
-		url := fmt.Sprintf("http://localhost:13000/api/v1/repos/%s/%s/contents/%s", owner, repo, filePath)
-		req := mustNewRequest("POST", url, reqBody)
-		req.Header.Set("Authorization", "token "+token)
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return fmt.Errorf("gitea add file request: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != 201 {
-			return fmt.Errorf("gitea add file %s: unexpected status %d", filePath, resp.StatusCode)
-		}
-		return nil
-	})
-}
-
-// generateAddonsCatalogSeed generates the addons-catalog.yaml seed content
-// with the two addons registerSpokes assigns (metrics-server + external-secrets).
-func generateAddonsCatalogSeed() string {
-	return `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
-apiVersion: sharko.dev/v1
-kind: AddonCatalog
-metadata:
-  name: addon-catalog
-spec:
-  applicationsets:
-    - name: metrics-server
-      chart: metrics-server
-      repoURL: https://kubernetes-sigs.github.io/metrics-server/
-      version: "3.12.1"
-      namespace: kube-system
-
-    - name: external-secrets
-      chart: external-secrets
-      repoURL: https://charts.external-secrets.io
-      version: "0.10.0"
-      namespace: external-secrets-system
-`
-}
-
 // generateManagedClustersSeed generates a managed-clusters.yaml seed content
 // assigning ~2 addons across the given spoke names.
+//
+// GitFake-only (PLAYGROUND_GIT_BACKEND=gitfake): baked into the GitFake Pod
+// at startup via SEED_CONTENT (see deployGitFake), NOT written by this
+// process into a live repo. The Gitea path (the default) never seeds
+// Sharko-format files directly — see realdoors.go for why: GitFake has no
+// PR/merge REST API for the playground to drive the real seed-bootstrap /
+// register / addon-enable doors the way it does against Gitea.
 func generateManagedClustersSeed(spokeNames []string) string {
 	// Placeholder: assign metrics-server to spoke0, external-secrets to spoke1.
 	// For N>2, assign no addons.

@@ -57,8 +57,12 @@ else
     SECRET_NAME=$(echo "$SECRETS_JSON" | jq -r ".items[$i].metadata.name")
     SECRET_LABELS=$(echo "$SECRETS_JSON" | jq -r ".items[$i].metadata.labels // {}")
 
-    # Filter addon-key labels: keys that do NOT contain '/' or ':' (those are system/foreign labels)
-    ADDON_LABELS=$(echo "$SECRET_LABELS" | jq -r 'to_entries | map(select(.key | contains("/") or contains(":") | not)) | map("\(.key)=\(.value)") | join(", ")')
+    # Filter addon-key labels: either a v3 plain addon-name key (no '/' or
+    # ':' — those are system/foreign labels) or a v4 "addons.sharko.dev/"
+    # key (internal/models/addon_labels.go — V4AddonLabelPrefix). v4 addon
+    # labels DO contain a '/', so a plain "no slash" filter would silently
+    # hide every addon the v4 real-doors flow enables.
+    ADDON_LABELS=$(echo "$SECRET_LABELS" | jq -r 'to_entries | map(select((.key | (contains("/") or contains(":")) | not) or (.key | startswith("addons.sharko.dev/")))) | map("\(.key)=\(.value)") | join(", ")')
 
     if [ -z "$ADDON_LABELS" ] || [ "$ADDON_LABELS" = "null" ]; then
       ADDON_LABELS="(none)"
@@ -96,7 +100,7 @@ echo ""
 SPOKES_WITH_LABELS=0
 for i in $(seq 0 $((SECRET_COUNT - 1))); do
   SECRET_LABELS=$(echo "$SECRETS_JSON" | jq -r ".items[$i].metadata.labels // {}")
-  ADDON_LABELS=$(echo "$SECRET_LABELS" | jq -r 'to_entries | map(select(.key | contains("/") or contains(":") | not)) | map("\(.key)=\(.value)") | join(", ")')
+  ADDON_LABELS=$(echo "$SECRET_LABELS" | jq -r 'to_entries | map(select((.key | (contains("/") or contains(":")) | not) or (.key | startswith("addons.sharko.dev/")))) | map("\(.key)=\(.value)") | join(", ")')
   if [ -n "$ADDON_LABELS" ] && [ "$ADDON_LABELS" != "null" ] && [ "$ADDON_LABELS" != "(none)" ]; then
     SPOKES_WITH_LABELS=$((SPOKES_WITH_LABELS + 1))
   fi
