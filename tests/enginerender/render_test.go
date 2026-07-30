@@ -1,0 +1,409 @@
+// Package enginerender holds a render-level regression test for the Sharko
+// v4 "engine" Helm chart (charts/sharko-engine), which replaces
+// templates/bootstrap/ as the thing that turns a user's GitOps repo into
+// ArgoCD ApplicationSets — see docs/design/2026-07-30-v4-data-file-format.md.
+//
+// The fixture at testdata/ is the design doc's own worked example (section
+// 6): two clusters, prod-eu and staging-us; cert-manager pinned older on
+// prod-eu with a webhook ignore-diff quirk; metrics-server everywhere on
+// the catalog default. testdata/engine-values.yaml plus
+// testdata/catalog/addons.yaml are exactly the two Helm values sources the
+// real engine pin (engine/application.yaml) would pass at render time
+// (design doc sections 2.5 / 4.7): repo/host/project plumbing and shipped
+// catalog defaults, then the user's own catalog/addons.yaml delta.
+//
+// What this test proves, and what it does not (design intentionally, per
+// the story brief — there is no live ArgoCD available here):
+//
+//   - PROVEN by `helm template`: the chart renders one AppProject and one
+//     ApplicationSet per enabled addon, with the version pin, values
+//     layering paths, settings pass-through, and preserveResourcesOnDeletion
+//     default all wired correctly — including the exact `dig`/`hasKey`
+//     Go-template calls (with the correct addon name and the correct
+//     Helm-baked fleet-wide default) that the ArgoCD ApplicationSet
+//     controller evaluates per cluster at round two.
+//   - NOT proven here: that a live ArgoCD controller actually resolves
+//     those round-two `dig` calls to 1.12.0 on prod-eu and 1.14.5 on
+//     staging-us. That requires a running ApplicationSet controller
+//     (Sprig included) reading testdata/clusters/*.yaml over git — out of
+//     reach for a Go unit test, and explicitly deferred to the live
+//     playground per the story brief. testdata/clusters/*.yaml is
+//     asserted directly instead (TestEngineChartFixtureClusterAssignments)
+//     to prove the DATA side matches the worked example exactly, so the
+//     only unverified step is ArgoCD's own (already-documented) Sprig
+//     evaluation.
+package enginerender
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+// repoRoot resolves the repository root from this test file's location so
+// the test works regardless of the working directory `go test` is invoked
+// from — mirrors tests/bootstraprender/render_test.go.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	// thisFile = <root>/tests/enginerender/render_test.go
+	return filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+}
+
+// renderEngineChart runs `helm template` against charts/sharko-engine with
+// the fixture engine config and the fixture catalog delta — the same two
+// values sources the real engine pin passes. Skips (not fails) if helm is
+// not installed, matching tests/bootstraprender's convention: the
+// helm-validate CI job is the hard guard when helm is unavailable locally.
+func renderEngineChart(t *testing.T) string {
+	t.Helper()
+	helmBin, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm not installed; skipping engine render test (CI helm-validate job is the hard guard)")
+	}
+
+	root := repoRoot(t)
+	chartDir := filepath.Join(root, "charts", "sharko-engine")
+	dataDir := filepath.Join(root, "tests", "enginerender", "testdata")
+
+	cmd := exec.Command(helmBin, "template", "testengine", chartDir,
+		"--values", filepath.Join(dataDir, "engine-values.yaml"),
+		"--values", filepath.Join(dataDir, "catalog", "addons.yaml"),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, out)
+	}
+	return string(out)
+}
+
+// TestEngineChartRendersProjectAndApplicationSets asserts the chart emits
+// exactly the shared AppProject (design decision D17 — one project, not one
+// per addon) plus one ApplicationSet per enabled addon, named
+// "sharko-<addon>".
+func TestEngineChartRendersProjectAndApplicationSets(t *testing.T) {
+	rendered := renderEngineChart(t)
+
+	if got := strings.Count(rendered, "kind: AppProject"); got != 1 {
+		t.Errorf("expected exactly 1 AppProject (design decision D17: one shared project, not one per addon), found %d.\n--- rendered ---\n%s", got, rendered)
+	}
+	if !regexp.MustCompile(`(?m)^\s+name: sharko-addons$`).MatchString(rendered) {
+		t.Errorf("missing the shared AppProject named sharko-addons.\n--- rendered ---\n%s", rendered)
+	}
+
+	if got := strings.Count(rendered, "kind: ApplicationSet"); got != 2 {
+		t.Errorf("expected exactly 2 ApplicationSets (cert-manager, metrics-server), found %d.\n--- rendered ---\n%s", got, rendered)
+	}
+	for _, name := range []string{"sharko-cert-manager", "sharko-metrics-server"} {
+		needle := "name: '" + name + "'"
+		if !strings.Contains(rendered, needle) {
+			t.Errorf("missing ApplicationSet %q.\n--- rendered ---\n%s", needle, rendered)
+		}
+	}
+}
+
+// TestEngineChartVersionPinBakedDefaults asserts the version-pin dig call
+// baked into targetRevision names the right addon and carries the right
+// fleet-wide default — the default Helm bakes in from the merged catalog
+// (design doc section 4.4), which the ApplicationSet controller falls back
+// to when a cluster's assignment file has no per-cluster override.
+func TestEngineChartVersionPinBakedDefaults(t *testing.T) {
+	rendered := renderEngineChart(t)
+
+	cases := map[string]string{
+		"cert-manager":   "1.14.5", // catalog/addons.yaml fleet-wide delta
+		"metrics-server": "3.12.1", // catalog/addons.yaml fleet-wide delta
+	}
+	for addon, version := range cases {
+		want := `targetRevision: '{{ dig "addons" "` + addon + `" "version" "` + version + `" .spec }}'`
+		if !strings.Contains(rendered, want) {
+			t.Errorf("missing exact version-pin dig call for %s.\nwant substring: %s\n--- rendered ---\n%s", addon, want, rendered)
+		}
+	}
+}
+
+// TestEngineChartValuesLayeringPaths asserts the values layering paths
+// match design doc section 4.3 exactly: chart defaults (implicit, Helm's
+// own baseline), then the global values file, then the per-cluster file —
+// via Helm's own valueFiles ordering, no merge code of Sharko's own.
+func TestEngineChartValuesLayeringPaths(t *testing.T) {
+	rendered := renderEngineChart(t)
+
+	for _, addon := range []string{"cert-manager", "metrics-server"} {
+		global := "- $values/values/global/" + addon + ".yaml"
+		cluster := "- $values/values/clusters/{{ .name }}/" + addon + ".yaml"
+		if !strings.Contains(rendered, global) {
+			t.Errorf("missing global values file entry for %s: %q\n--- rendered ---\n%s", addon, global, rendered)
+		}
+		if !strings.Contains(rendered, cluster) {
+			t.Errorf("missing per-cluster values file entry for %s: %q\n--- rendered ---\n%s", addon, cluster, rendered)
+		}
+		if !strings.Contains(rendered, "ignoreMissingValueFiles: true") {
+			t.Errorf("missing ignoreMissingValueFiles: true — required so absent values files are normal, not errors (design doc section 4.3)")
+		}
+	}
+}
+
+// TestEngineChartPreserveResourcesOnDeletionDefaultTrue asserts every
+// ApplicationSet carries syncPolicy.preserveResourcesOnDeletion: true by
+// default (design doc section 3.2/2.5 — the deletion-safe default the PRD
+// requires; removing an ApplicationSet must never cascade into deleted
+// workloads).
+func TestEngineChartPreserveResourcesOnDeletionDefaultTrue(t *testing.T) {
+	rendered := renderEngineChart(t)
+
+	got := strings.Count(rendered, "preserveResourcesOnDeletion: true")
+	if got != 2 {
+		t.Errorf("expected preserveResourcesOnDeletion: true exactly twice (once per ApplicationSet), found %d.\n--- rendered ---\n%s", got, rendered)
+	}
+}
+
+// TestEngineChartClusterIdentityOnlyNameAndServer pins the hard rule from
+// design doc section 4.4 (decision D8): inside a generated ApplicationSet,
+// the only cluster-identity fields the engine may reference are `.name` and
+// `.server` — never `.metadata`, because the git-files arm's envelope
+// metadata silently replaces the clusters arm's metadata in a matrix
+// generator, and `index .metadata.labels ...` would quietly resolve to
+// "no pin" under missingkey=zero. This is the exact v3 mechanism the
+// version-override label relied on; the engine chart source must never
+// reintroduce it.
+func TestEngineChartClusterIdentityOnlyNameAndServer(t *testing.T) {
+	root := repoRoot(t)
+	templatesDir := filepath.Join(root, "charts", "sharko-engine", "templates")
+	entries, err := os.ReadDir(templatesDir)
+	if err != nil {
+		t.Fatalf("failed to read templates dir: %v", err)
+	}
+
+	forbidden := regexp.MustCompile(`\.metadata\.labels`)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(templatesDir, e.Name()))
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", e.Name(), err)
+		}
+		if forbidden.Match(data) {
+			t.Errorf("%s references .metadata.labels for cluster identity — forbidden by design doc section 4.4 (decision D8). "+
+				"Only .name and .server are safe cluster-identity fields inside a generated ApplicationSet.", e.Name())
+		}
+	}
+}
+
+// TestEngineChartZeroPerAddonConditionals asserts the chart's TEMPLATE
+// SOURCE (not the rendered output — rendered output legitimately contains
+// addon names, that is the whole point of a config-driven engine) contains
+// no addon-name-specific text anywhere. Swap any addon name for any other
+// and the chart's shape must be identical (design doc section 4.6 / 3.1 —
+// "the engine has no `if addon == "cert-manager"` anywhere in it").
+func TestEngineChartZeroPerAddonConditionals(t *testing.T) {
+	root := repoRoot(t)
+	templatesDir := filepath.Join(root, "charts", "sharko-engine", "templates")
+	entries, err := os.ReadDir(templatesDir)
+	if err != nil {
+		t.Fatalf("failed to read templates dir: %v", err)
+	}
+
+	addonNames := []string{"cert-manager", "metrics-server"}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(templatesDir, e.Name()))
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", e.Name(), err)
+		}
+		for _, addon := range addonNames {
+			if strings.Contains(string(data), addon) {
+				t.Errorf("%s hardcodes addon name %q — the engine chart source must have zero per-addon conditionals (design doc section 4.6)", e.Name(), addon)
+			}
+		}
+	}
+}
+
+// TestEngineChartTemplatePatchSettingsPassthrough asserts the round-two
+// templatePatch text carries the per-cluster override machinery for every
+// v1 setting that cannot be a typed template string field (design doc
+// section 4.5 / decision D14): prune, selfHeal, syncOptions,
+// createNamespace (folded into syncOptions, since ArgoCD has no field of
+// its own for it), and ignoreDifferences — for both addons, each with the
+// correct addon name baked into its own `dig "addons" "<name>" ...` calls.
+func TestEngineChartTemplatePatchSettingsPassthrough(t *testing.T) {
+	rendered := renderEngineChart(t)
+
+	for _, addon := range []string{"cert-manager", "metrics-server"} {
+		settingsDig := `dig "addons" "` + addon + `" "settings" dict .spec`
+		if !strings.Contains(rendered, settingsDig) {
+			t.Errorf("missing per-cluster settings lookup for %s: %q\n--- rendered ---\n%s", addon, settingsDig, rendered)
+		}
+	}
+
+	for _, needle := range []string{
+		`dig "prune" true $s`,
+		`dig "selfHeal" true $s`,
+		`if hasKey $s "syncOptions"`,
+		`else if hasKey $s "createNamespace"`,
+		`if $s.createNamespace`,
+		`if hasKey $s "ignoreDifferences"`,
+		`toYaml $s.ignoreDifferences | nindent 8`,
+	} {
+		if !strings.Contains(rendered, needle) {
+			t.Errorf("templatePatch is missing settings pass-through fragment: %q\n--- rendered ---\n%s", needle, rendered)
+		}
+	}
+}
+
+// TestEngineChartFixtureClusterAssignments asserts the fixture repo's
+// clusters/*.yaml files match the design doc's worked example (section 6)
+// exactly: prod-eu pins cert-manager older with the webhook ignore-diff
+// quirk, staging-us has no override, both enable metrics-server on the
+// catalog default. This is the DATA half of the version-pin proof — the
+// engine template half is TestEngineChartVersionPinBakedDefaults and
+// TestEngineChartTemplatePatchSettingsPassthrough above.
+func TestEngineChartFixtureClusterAssignments(t *testing.T) {
+	root := repoRoot(t)
+	dataDir := filepath.Join(root, "tests", "enginerender", "testdata")
+
+	type addonSpec struct {
+		Enabled  bool                   `yaml:"enabled"`
+		Version  string                 `yaml:"version"`
+		Settings map[string]interface{} `yaml:"settings"`
+	}
+	type clusterAssignment struct {
+		Spec struct {
+			Cluster string               `yaml:"cluster"`
+			Addons  map[string]addonSpec `yaml:"addons"`
+		} `yaml:"spec"`
+	}
+
+	load := func(name string) clusterAssignment {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(dataDir, "clusters", name+".yaml"))
+		if err != nil {
+			t.Fatalf("failed to read clusters/%s.yaml: %v", name, err)
+		}
+		var ca clusterAssignment
+		if err := yaml.Unmarshal(data, &ca); err != nil {
+			t.Fatalf("clusters/%s.yaml is not valid YAML: %v", name, err)
+		}
+		if ca.Spec.Cluster != name {
+			t.Errorf("clusters/%s.yaml: spec.cluster = %q, want %q (design doc section 2.1 — file name must equal spec.cluster)", name, ca.Spec.Cluster, name)
+		}
+		return ca
+	}
+
+	prodEU := load("prod-eu")
+	cm, ok := prodEU.Spec.Addons["cert-manager"]
+	if !ok || !cm.Enabled {
+		t.Fatalf("clusters/prod-eu.yaml: cert-manager must be enabled")
+	}
+	if cm.Version != "1.12.0" {
+		t.Errorf("clusters/prod-eu.yaml: cert-manager version = %q, want %q (the worked example's per-cluster pin)", cm.Version, "1.12.0")
+	}
+	if cm.Settings == nil || cm.Settings["ignoreDifferences"] == nil {
+		t.Errorf("clusters/prod-eu.yaml: cert-manager is missing the webhook ignoreDifferences quirk from the worked example")
+	}
+	ms, ok := prodEU.Spec.Addons["metrics-server"]
+	if !ok || !ms.Enabled {
+		t.Fatalf("clusters/prod-eu.yaml: metrics-server must be enabled")
+	}
+	if ms.Version != "" {
+		t.Errorf("clusters/prod-eu.yaml: metrics-server must have no version override (follows the catalog default), got %q", ms.Version)
+	}
+
+	stagingUS := load("staging-us")
+	cm2, ok := stagingUS.Spec.Addons["cert-manager"]
+	if !ok || !cm2.Enabled {
+		t.Fatalf("clusters/staging-us.yaml: cert-manager must be enabled")
+	}
+	if cm2.Version != "" {
+		t.Errorf("clusters/staging-us.yaml: cert-manager must have no version override (follows the catalog default 1.14.5), got %q", cm2.Version)
+	}
+	if cm2.Settings != nil && cm2.Settings["ignoreDifferences"] != nil {
+		t.Errorf("clusters/staging-us.yaml: cert-manager must NOT carry the prod-eu-only webhook quirk")
+	}
+	ms2, ok := stagingUS.Spec.Addons["metrics-server"]
+	if !ok || !ms2.Enabled {
+		t.Fatalf("clusters/staging-us.yaml: metrics-server must be enabled")
+	}
+}
+
+// TestEngineChartFixtureValuesLayeringFiles asserts the fixture's
+// values/global and values/clusters files exist and match the worked
+// example (section 6) — proving the repo shape the engine's valueFiles
+// list (design doc section 4.3) is written to consume.
+func TestEngineChartFixtureValuesLayeringFiles(t *testing.T) {
+	root := repoRoot(t)
+	dataDir := filepath.Join(root, "tests", "enginerender", "testdata")
+
+	global := filepath.Join(dataDir, "values", "global", "cert-manager.yaml")
+	data, err := os.ReadFile(global)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", global, err)
+	}
+	var globalVals map[string]interface{}
+	if err := yaml.Unmarshal(data, &globalVals); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", global, err)
+	}
+	if globalVals["installCRDs"] != true {
+		t.Errorf("values/global/cert-manager.yaml: installCRDs = %v, want true", globalVals["installCRDs"])
+	}
+
+	perCluster := filepath.Join(dataDir, "values", "clusters", "prod-eu", "cert-manager.yaml")
+	data, err = os.ReadFile(perCluster)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", perCluster, err)
+	}
+	var clusterVals map[string]interface{}
+	if err := yaml.Unmarshal(data, &clusterVals); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", perCluster, err)
+	}
+	if replicaCount, ok := clusterVals["replicaCount"].(int); !ok || replicaCount != 3 {
+		t.Errorf("values/clusters/prod-eu/cert-manager.yaml: replicaCount = %v, want 3", clusterVals["replicaCount"])
+	}
+}
+
+// TestEngineChartNoTemplatesRenderedForEmptyCatalog asserts a totally fresh
+// install — chart defaults only, no shipped catalog wired up yet and no
+// user delta — renders zero ApplicationSets (there is nothing in the
+// merged catalog to range over), but still renders the shared AppProject.
+// Design doc section 2.5: "Sharko itself, not this chart, is the thing a
+// user deletes to kill Sharko" — this chart has no never-empty-bootstrap
+// guard of its own because an empty render here is a correct, harmless
+// starting state, not the "wipe out everything" hazard v3's bootstrap
+// Application had.
+func TestEngineChartNoTemplatesRenderedForEmptyCatalog(t *testing.T) {
+	helmBin, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm not installed; skipping engine render test (CI helm-validate job is the hard guard)")
+	}
+
+	root := repoRoot(t)
+	chartDir := filepath.Join(root, "charts", "sharko-engine")
+
+	// Deliberately no --values at all: chart defaults ship curated.addons:
+	// {} and spec.addons: {} (values.yaml), so the merged catalog is empty.
+	cmd := exec.Command(helmBin, "template", "testengine", chartDir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed with chart defaults only: %v\n%s", err, out)
+	}
+	rendered := string(out)
+
+	if strings.Contains(rendered, "kind: ApplicationSet") {
+		t.Errorf("expected zero ApplicationSets with an empty merged catalog (chart defaults only), got some.\n--- rendered ---\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "kind: AppProject") {
+		t.Errorf("expected the shared AppProject to still render with an empty merged catalog.\n--- rendered ---\n%s", rendered)
+	}
+}

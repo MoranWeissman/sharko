@@ -1,0 +1,24 @@
+apiVersion: v2
+name: sharko-engine
+description: >-
+  The Sharko v4 engine — turns a data-file repo (clusters/, catalog/, values/)
+  into one ArgoCD ApplicationSet per addon. This is the whole of Sharko's
+  deployment logic; see docs/design/2026-07-30-v4-data-file-format.md.
+type: application
+version: 0.1.0
+appVersion: "4.0.0"
+keywords:
+  - argocd
+  - kubernetes
+  - addons
+  - applicationset
+home: https://github.com/MoranWeissman/sharko
+maintainers:
+  - name: MoranWeissman
+annotations:
+  # The data-file format versions this engine release can read. sharko
+  # validate compares a repo's pinned engine version against this annotation
+  # and refuses a mismatch with a plain sentence naming both numbers (design
+  # doc section 5). Bump only when the format itself changes meaning
+  # (apiVersion bump), never for a new optional field.
+  sharko.dev/data-format-versions: v1

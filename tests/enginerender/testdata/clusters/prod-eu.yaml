@@ -1,0 +1,28 @@
+# Fixture clusters/prod-eu.yaml — ClusterAssignment, exactly as the worked
+# example in docs/design/2026-07-30-v4-data-file-format.md section 6 shows
+# it. cert-manager is pinned older than the fleet default with a webhook
+# ignore-diff quirk; metrics-server follows the catalog default.
+#
+# This file is not read by `helm template` (it is a git-files generator
+# input the real ArgoCD ApplicationSet controller reads at round two, per
+# design doc section 4.1) — it is fixture data proving the repo shape the
+# engine's `dig "addons" "<name>" "version" ... .spec` calls are written to
+# consume, and it is asserted directly for shape/content by the render test.
+apiVersion: sharko.dev/v1
+kind: ClusterAssignment
+metadata:
+  name: prod-eu
+spec:
+  cluster: prod-eu
+  addons:
+    cert-manager:
+      enabled: true
+      version: "1.12.0"
+      settings:
+        ignoreDifferences:
+          - group: admissionregistration.k8s.io
+            kind: ValidatingWebhookConfiguration
+            jsonPointers:
+              - /webhooks/0/clientConfig/caBundle
+    metrics-server:
+      enabled: true

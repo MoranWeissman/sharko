@@ -1,0 +1,5 @@
+# Fixture values/clusters/prod-eu/cert-manager.yaml — per-cluster override,
+# exactly as the worked example in docs/design/2026-07-30-v4-data-file-format.md
+# section 6 shows it. Helm's own valueFiles layering applies this on top of
+# the global file (section 4.3) — the engine writes no merge logic.
+replicaCount: 3
