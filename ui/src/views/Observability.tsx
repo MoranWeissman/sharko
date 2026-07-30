@@ -1273,9 +1273,13 @@ function BootstrapAppSection({
   const appExists =
     health !== 'Missing' && health !== 'Unknown' && health !== '';
 
+  // v4: the bootstrap ArgoCD Application is named "sharko-engine" (was
+  // "cluster-addons-bootstrap" pre-v4). DashboardStats doesn't carry the
+  // actual app name, so this can't be derived per-connection; the current
+  // (v4) name is used directly rather than the dead v3 literal.
   const argoCDLink =
     appExists && argoCDUrl
-      ? `${argoCDUrl.replace(/\/$/, '')}/applications/cluster-addons-bootstrap`
+      ? `${argoCDUrl.replace(/\/$/, '')}/applications/sharko-engine`
       : null;
 
   return (
@@ -1299,7 +1303,7 @@ function BootstrapAppSection({
       </div>
 
       <p className="mb-5 text-sm text-[#2a5a7a] dark:text-gray-400">
-        The <code className="rounded bg-[#d6eeff] px-1 py-0.5 text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300">cluster-addons-bootstrap</code> application
+        The <code className="rounded bg-[#d6eeff] px-1 py-0.5 text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300">sharko-engine</code> application
         manages the foundation of your Sharko deployment. If unhealthy, addon deployments may fail.
       </p>
 

@@ -34,13 +34,23 @@ Each generated ApplicationSet:
   ApplicationSet never cascades into deleted workloads.
 
 **Hard rule (design doc section 4.4):** inside a generated ApplicationSet,
-`.metadata` is the assignment file's envelope metadata, not the cluster
-secret's — the git-files arm overrides whatever the clusters arm
-contributed under that key. The only cluster-identity fields safe to use
-are `.name` and `.server`. This is why the v3 per-cluster version-override
-label (`<addon>-version` read via `index .metadata.labels ...`) could never
-work in v4; version pins moved into `clusters/<cluster>.yaml` instead
-(decision D8).
+the round-two metadata field is a merge artifact of both matrix arms — the
+clusters arm (listed first) wins any key the two arms share, and the
+matrix generator's merge deep-merges nested maps, so that field ends up a
+hybrid of the assignment file's envelope name and the real cluster
+secret's labels/annotations, never a clean handoff to either side. The
+only cluster-identity fields safe to use are `.name` and `.server`. This
+is why the v3 per-cluster version-override label (`<addon>-version` read
+via `index .metadata.labels ...`) could never reliably carry over into v4;
+version pins moved into `clusters/<cluster>.yaml` instead (decision D8).
+
+**createNamespace precedence rule.** ArgoCD has no dedicated `createNamespace`
+field — it is only ever expressed as `CreateNamespace=true` membership in
+`syncOptions`. When a cluster overrides both `createNamespace` and
+`syncOptions` in the same addon's settings, `createNamespace` always wins:
+it decides whether `CreateNamespace=true` ends up in the rebuilt list,
+regardless of whether the cluster's own `syncOptions` value already
+contained (or omitted) that entry.
 
 ## Rendering locally
 
@@ -64,7 +74,7 @@ exactly one file, never more).
 the two automated gates; both run in CI (`helm-validate` and
 `go-build-test`).
 
-## Publishing (v4 Wave 1 Story 2.4)
+## Publishing (v4 Wave 1 Story 2.4, versioning corrected in R2 review)
 
 On every tagged release, `.github/workflows/release.yml`'s
 `helm-package-engine` job packages this chart, pushes it to
@@ -73,23 +83,29 @@ pushed digest — the exact package → push → sign shape the `helm-package`
 job already uses for the `sharko` chart itself, same registry namespace,
 same keyless (OIDC) signing identity.
 
-**Chart-version rule.** The design doc (section 5) treats the engine
-chart's version as its own axis, bumped "whenever Sharko releases new
-deploy logic or a new shipped catalog" — not tied to the product version
-by name. The release pipeline locks the simplest rule available: **the
-OCI tag equals the product version at release time** (`helm package
---version <release-version>` overrides this file's own committed
-`version:` at package time, identically to how the `sharko` chart's
-Chart.yaml version is overridden today). In practice this means the
-engine chart republishes on every Sharko release, even releases that
-touch nothing under `charts/sharko-engine/` — a known, deliberate
-trade-off for v1. It costs nothing at the consuming end: every cluster
-only ever reads the explicit `targetRevision` a human merged into their
-own `engine/application.yaml` (design decision D8), never "latest", so an
-unrelated republish changes nothing until someone opens (and merges) a
-pin-bump PR. Decoupling the two version axes later — e.g. only
-republishing the engine chart when `charts/sharko-engine/` actually
-changed — is possible without breaking any existing pin.
+**Chart-version rule.** The engine chart versions independently — bumped
+"whenever Sharko releases new deploy logic or a new shipped catalog"
+(design doc section 5), not tied to the product release tag by name. The
+release pipeline publishes this chart at **exactly its own committed
+`version:`/`appVersion:` from this file's `Chart.yaml`** — never an
+override, and never the product's release tag. The pin a user merges into
+their `engine/application.yaml` references that same chart version, and
+`internal/engineversion/generated.go` (regenerated from this file's `name`
++ `version` fields, CI-gated to match) is what the pin-bump check compares
+a repo's current pin against — so the published OCI tag and the number
+CI enforces are always the same number by construction. (An earlier draft
+of this rule published the chart under the product's own release tag
+instead; that would have meant the very first release's chart lived at a
+version nothing on disk ever pointed to — corrected before it shipped.)
+
+Because most product releases don't touch `charts/sharko-engine/`, most
+releases have nothing new to publish here. The release job checks whether
+the committed version already exists in GHCR before packaging, and skips
+the package/push/sign steps with a loud `::notice::` (not a silent no-op,
+not an error) when it does — republishing an unchanged chart under its
+own version would be redundant, not idempotent-safe by accident. Bump
+this file's `version:` whenever `charts/sharko-engine/` actually changes,
+same discipline as any other chart.
 
 ## Pulling the released chart
 
@@ -97,7 +113,7 @@ Verify the signature first (same identity policy as the server image and
 the `sharko` chart — see `docs/site/operator/supply-chain.md`):
 
 ```bash
-ENGINE_VERSION=X.Y.Z   # the Sharko release version, per the rule above
+ENGINE_VERSION=X.Y.Z   # this chart's own Chart.yaml version, per the rule above
 cosign verify ghcr.io/moranweissman/sharko/sharko-engine:${ENGINE_VERSION} \
   --certificate-identity-regexp 'https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com

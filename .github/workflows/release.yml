@@ -298,18 +298,22 @@ jobs:
   # `sharko-engine-<version>.tgz` in the same workspace and break the
   # existing chart's push.
   #
-  # Chart-version rule (docs/design/2026-07-30-v4-data-file-format.md
-  # section 5 leaves the exact number open — "whenever Sharko releases new
-  # deploy logic", not tied to the product version by name): this job
-  # locks the simplest rule, chart version == product version at release,
-  # by reusing the exact `--version`/`--app-version` override the sharko
-  # chart's own package step already applies over its committed
-  # Chart.yaml version. Every product release therefore republishes the
-  # engine chart even when engine logic did not change — a known,
-  # deliberate trade-off (see charts/sharko-engine/README.md and the
-  # story's dispatch report); decoupling later is possible without
-  # breaking anything, since every consumer only ever reads the explicit
-  # pin in their own engine/application.yaml, never "latest".
+  # Chart-version rule (review fix, v4 Wave 1 R2 — supersedes the original
+  # Story 2.4 rule): the engine chart versions INDEPENDENTLY of the product
+  # release tag. This job packages and pushes charts/sharko-engine's own
+  # COMMITTED Chart.yaml `version:`/`appVersion:` fields — never an
+  # override. Why: `internal/engineversion/generated.go` (kept in lockstep
+  # with Chart.yaml by the "Engine Version Up To Date" CI job) is the
+  # number a user's engine pin-bump check compares against, so the
+  # published OCI tag MUST equal that committed number. The original rule
+  # (publish under the product's own release tag) would have meant the
+  # very first release's chart lived at a version nothing on disk ever
+  # points to — a day-zero break. Most product releases do not touch
+  # charts/sharko-engine/, so most releases have nothing new to publish
+  # here; the "Check if engine chart version already published" step below
+  # makes that a loud, idempotent skip instead of an error on a duplicate
+  # OCI tag (see charts/sharko-engine/README.md for the full versioning
+  # rule).
   helm-package-engine:
     name: Package & Push Engine Chart
     runs-on: ubuntu-latest
@@ -325,16 +329,6 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_branch }}
           fetch-depth: 0
-
-      - name: Fetch tags
-        run: git fetch --tags --force
-
-      - name: Extract version from tag
-        id: version
-        run: |
-          TAG="${{ github.event.workflow_run.head_branch }}"
-          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
-          echo "VERSION=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Install Helm
         uses: azure/setup-helm@v4
@@ -357,11 +351,35 @@ jobs:
             --username ${{ github.actor }} \
             --password-stdin
 
+      # Reads the chart's own COMMITTED version (never an override — see
+      # the chart-version rule comment on this job above) and checks
+      # whether that exact version is already published to GHCR. Most
+      # releases don't touch charts/sharko-engine/, so this is the common
+      # case, not the exception: skip loudly (::notice::) rather than
+      # attempting a redundant push/sign of an unchanged artifact.
+      - name: Check if engine chart version already published
+        id: check
+        run: |
+          CHART_VERSION=$(helm show chart charts/sharko-engine | awk -F': *' '/^version:/ {print $2}')
+          if [ -z "$CHART_VERSION" ]; then
+            echo "::error::could not read version from charts/sharko-engine/Chart.yaml"
+            exit 1
+          fi
+          echo "CHART_VERSION=$CHART_VERSION" >> "$GITHUB_OUTPUT"
+          if helm show chart "oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sharko-engine" --version "$CHART_VERSION" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::sharko-engine chart version $CHART_VERSION is already published to GHCR — skipping republish (idempotent; the engine chart versions independently of the product release tag, see charts/sharko-engine/README.md)."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Package engine Helm chart
-        run: helm package charts/sharko-engine --version ${{ steps.version.outputs.VERSION }} --app-version ${{ steps.version.outputs.TAG }}
+        if: steps.check.outputs.exists != 'true'
+        run: helm package charts/sharko-engine
 
       - name: Push engine Helm chart to GHCR
         id: helm_push
+        if: steps.check.outputs.exists != 'true'
         run: |
           CHART_FILE=$(ls sharko-engine-*.tgz)
           # `helm push` writes a `.digest` companion in the working dir; we
@@ -376,19 +394,22 @@ jobs:
           echo "DIGEST=$DIGEST" >> "$GITHUB_OUTPUT"
 
       # cosign-sign the OCI Helm chart so consumers can
-      # `cosign verify oci://ghcr.io/moranweissman/sharko/sharko-engine:vX.Y.Z`
-      # before `helm pull`. Same identity policy as the sharko chart's own
-      # signing step.
+      # `cosign verify oci://ghcr.io/moranweissman/sharko/sharko-engine:X.Y.Z`
+      # before `helm pull` (no `v` prefix — the pushed OCI tag is the bare
+      # chart version, e.g. `0.1.0`, not the release tag).
+      # Same identity policy as the sharko chart's own signing step.
       - name: Install cosign
+        if: steps.check.outputs.exists != 'true'
         uses: sigstore/cosign-installer@v3
         with:
           cosign-release: 'v2.4.1'
 
       - name: Sign published engine Helm chart (keyless)
+        if: steps.check.outputs.exists != 'true'
         env:
           COSIGN_YES: "true"
           DIGEST: ${{ steps.helm_push.outputs.DIGEST }}
-          VERSION: ${{ steps.version.outputs.VERSION }}
+          VERSION: ${{ steps.check.outputs.CHART_VERSION }}
         run: |
           REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sharko-engine:${VERSION}"
           # Sign by digest, same rationale as the sharko chart's signing step.
