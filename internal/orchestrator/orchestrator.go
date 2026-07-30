@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -178,6 +179,24 @@ type Orchestrator struct {
 	// already swallows read errors and defaults to true — RegisterCluster
 	// never blocks on a settings-store outage.
 	allowInlineCredentialsFn func(ctx context.Context) bool
+
+	// curated is the shipped curated addon catalog, wired via
+	// SetCuratedCatalog (v4 Wave 1 Story 4.3). Used by the v4 addon
+	// enable/disable pipeline (addon_ops_v4.go) to merge a caller's
+	// catalog/addons.yaml delta against the shipped set before running
+	// semantic validation (required values, declared secrets) — the same
+	// catalog.MergeDelta the read-side /catalog/delta/addons handler
+	// already uses. nil is safe: every addon then merges as
+	// catalog.OriginInternal.
+	curated *catalog.Catalog
+}
+
+// SetCuratedCatalog wires in the shipped curated catalog (v4 Wave 1 Story
+// 4.3). Pass nil (or skip the call) to leave every v4-repo addon merging
+// as catalog.OriginInternal — safe default for tests and any caller that
+// has not loaded a catalog.
+func (o *Orchestrator) SetCuratedCatalog(c *catalog.Catalog) {
+	o.curated = c
 }
 
 // SetDefaultAddons configures the default addons applied to clusters

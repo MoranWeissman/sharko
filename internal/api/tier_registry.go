@@ -32,6 +32,8 @@ var HandlerTier = map[string]audit.Tier{
 	"handleUnadoptCluster":            audit.Tier1,
 	"handleEnableAddon":               audit.Tier1,
 	"handleDisableAddon":              audit.Tier1,
+	"handleEnableAddonV4":             audit.Tier1,
+	"handleDisableAddonV4":            audit.Tier1,
 	"handleRestartAddonSync":          audit.Tier1,
 	"handleBatchRegisterClusters":     audit.Tier1,
 	"handleAdoptClusters":             audit.Tier1,

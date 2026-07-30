@@ -49,7 +49,6 @@ import (
 	"github.com/MoranWeissman/sharko/internal/settings"
 )
 
-
 // providerSet is the immutable snapshot published through
 // Server.providerState (review M1 — provider hot-reload was a data race:
 // ReinitializeFromConnection plain-assigned three fields while handlers
@@ -816,6 +815,11 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}", srv.handleEnableAddon)
 	mux.HandleFunc("DELETE /api/v1/clusters/{name}/addons/{addon}", srv.handleDisableAddon)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}/restart-sync", srv.handleRestartAddonSync)
+	// v4 Wave 1 Story 4.3 — the sharpened enable/disable pipeline for v4
+	// (clusters/*.yaml) repos. Distinct routes from the pair above so a v3
+	// repo's behavior never changes underfoot (addon_ops_v4.go).
+	mux.HandleFunc("POST /api/v1/v4/clusters/{name}/addons/{addon}", srv.handleEnableAddonV4)
+	mux.HandleFunc("DELETE /api/v1/v4/clusters/{name}/addons/{addon}", srv.handleDisableAddonV4)
 	// Orphan-cluster Secret cleanup. Refuses to delete a cluster that's
 	// actually managed (in git) or pending (open register PR) — see
 	// clusters_orphan_delete.go for the safety gates.

@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addon-catalog-delta.v1.json
+apiVersion: sharko.dev/v1
+kind: AddonCatalogDelta
+metadata:
+  name: addon-catalog-delta
+spec:
+  addons:
+    cert-manager:
+      version: "1.14.5"
+    metrics-server:
+      version: "3.12.1"
+    billing-api:
+      repoURL: oci://registry.example.com/charts
+      chart: billing-api
+      version: "2.4.0"
+      namespace: billing
