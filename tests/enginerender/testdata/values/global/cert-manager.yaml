@@ -1,0 +1,6 @@
+# Fixture values/global/cert-manager.yaml — plain Helm values, exactly as
+# the worked example in docs/design/2026-07-30-v4-data-file-format.md
+# section 6 shows it. No envelope (section 2.0) — handed straight to
+# cert-manager's own chart.
+installCRDs: true
+replicaCount: 2

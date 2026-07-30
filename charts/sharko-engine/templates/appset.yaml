@@ -1,0 +1,231 @@
+{{/*
+============================================================================
+sharko-engine — the generic addon ApplicationSet template
+============================================================================
+One ApplicationSet per addon in the merged catalog (shipped defaults +
+the user's own catalog/addons.yaml delta, design doc section 4.7). This
+file has no addon-specific logic anywhere in it — no `if addon == "x"`,
+no hardcoded chart names, no hardcoded namespaces. Swap any addon name for
+any other and the shape produced is identical (design doc section 4.6).
+
+Two rounds of `{{ }}` are in play here (design doc section 4.1):
+
+  Round one — Helm, when this chart renders. Loops over the merged
+  catalog and writes one ApplicationSet per addon; addon name, chart,
+  repo URL, and the fleet-wide merged settings are all known now, so
+  they are written into the output as plain text or as *baked* Go
+  template default arguments.
+
+  Round two — the ArgoCD ApplicationSet controller, later and
+  repeatedly. Fills in `{{ }}` still present in the rendered
+  ApplicationSet from the matrix generator's two arms, once per
+  (addon, cluster) pair.
+
+Every round-two `{{ }}` below is written as a Helm raw string literal
+(backtick-quoted) so Helm leaves it untouched and emits it verbatim —
+the same escaping trick templates/bootstrap/templates/addons-appset.yaml
+already uses for the v3 shape this replaces.
+
+HARD RULE (design doc section 4.4): inside a generated ApplicationSet,
+`.metadata` is the assignment file's envelope metadata, not the cluster
+secret's — the git-files arm overrides whatever the clusters arm
+contributed under that name. The only cluster-identity fields safe to
+use here are `.name` and `.server`. Per-cluster settings and version
+pins come from `.spec` (the assignment file's own spec), never from
+`.metadata`.
+*/}}
+
+{{- $merged := include "sharko-engine.mergedAddons" . | fromYaml -}}
+{{- $repoURL := .Values.repo.url -}}
+{{- $revision := .Values.repo.revision -}}
+{{- $hostClusterName := .Values.hostCluster.name | default "" -}}
+{{- $projectName := .Values.project.name | default "sharko-addons" -}}
+
+{{- range $name, $addon := $merged }}
+{{- $settings := $addon.settings | default dict }}
+{{- $namespace := $settings.namespace | default ($addon.namespace | default $name) }}
+{{- $createNamespace := dig "createNamespace" true $settings }}
+{{- $syncOptionsBase := $settings.syncOptions | default (list "ServerSideApply=true") }}
+{{- $bakedSyncOptions := $syncOptionsBase }}
+{{- if $createNamespace }}
+{{- if not (has "CreateNamespace=true" $bakedSyncOptions) }}
+{{- $bakedSyncOptions = append $bakedSyncOptions "CreateNamespace=true" }}
+{{- end }}
+{{- end }}
+{{- $ignoreDifferences := $settings.ignoreDifferences | default list }}
+{{- $prune := dig "prune" true $settings }}
+{{- $selfHeal := dig "selfHeal" true $settings }}
+{{- $preserveResourcesOnDeletion := dig "preserveResourcesOnDeletion" true $settings }}
+{{- $version := $addon.version | default "" }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: 'sharko-{{ $name }}'
+  namespace: argocd
+  labels:
+    {{- include "sharko-engine.commonLabels" $ | nindent 4 }}
+    sharko.dev/addon: {{ $name }}
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=zero"]
+  syncPolicy:
+    # preserveResourcesOnDeletion is addon-wide (design doc section 3.2 —
+    # it lives on the ApplicationSet, not the generated Application, so it
+    # cannot vary per cluster). Defaults true: removing this ApplicationSet
+    # never cascades into deleted workloads (design doc section 2.5, the
+    # kill-Sharko promise).
+    preserveResourcesOnDeletion: {{ $preserveResourcesOnDeletion }}
+  generators:
+    - matrix:
+        generators:
+          # Arm 1 — which clusters run this addon (decides *whether*).
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  addons.sharko.dev/{{ $name }}: enabled
+          # Arm 2 — that cluster's assignment file (decides *how*: version
+          # pin and per-cluster settings). Must run second — its path
+          # depends on `.name`, which only exists once arm 1 has run.
+          - git:
+              repoURL: {{ $repoURL }}
+              revision: {{ $revision }}
+              files:
+                - path: "clusters/{{`{{ .name }}`}}.yaml"
+  template:
+    metadata:
+      name: '{{ $name }}-{{`{{ .name }}`}}'
+      labels:
+        {{- include "sharko-engine.commonLabels" $ | nindent 8 }}
+        sharko.dev/addon: {{ $name }}
+        sharko.dev/cluster: '{{`{{ .name }}`}}'
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: {{ $projectName }}
+      sources:
+        # Primary source: the addon's own Helm chart.
+        - repoURL: {{ $addon.repoURL }}
+          chart: {{ $addon.chart }}
+          # "No pin = follow the catalog" (design doc section 2.1): dig for
+          # a per-cluster pin in the assignment file's spec, falling back to
+          # the fleet-wide merged version baked in by Helm above. If neither
+          # exists this bakes an empty string and the Application fails to
+          # sync with a clear ArgoCD error rather than guessing a version.
+          targetRevision: '{{`{{ dig "addons" "`}}{{ $name }}{{`" "version" "`}}{{ $version }}{{`" .spec }}`}}'
+          helm:
+            ignoreMissingValueFiles: true
+            valueFiles:
+            # Values layering (design doc section 4.3): chart defaults,
+            # then global, then per-cluster. Helm does the merging; Sharko
+            # writes none. Missing files are normal, not errors.
+            - $values/values/global/{{ $name }}.yaml
+            - $values/values/clusters/{{`{{ .name }}`}}/{{ $name }}.yaml
+            {{- if $addon.extraHelmValues }}
+            parameters:
+            {{- range $k, $v := $addon.extraHelmValues }}
+            - name: {{ $k }}
+              value: "{{ $v }}"
+            {{- end }}
+            {{- end }}
+        {{- range $addon.additionalSources }}
+        # Extra source declared on the catalog entry (carried over from v3
+        # unchanged, design doc section 2.3).
+        - repoURL: {{ .repoURL | default $repoURL }}
+          targetRevision: {{ .version | default $revision }}
+          {{- if .path }}
+          path: {{ .path }}
+          {{- else }}
+          chart: {{ .chart }}
+          {{- end }}
+          {{- if or .parameters .valueFiles }}
+          helm:
+            {{- if .valueFiles }}
+            valueFiles:
+            {{- range .valueFiles }}
+            - {{ . }}
+            {{- end }}
+            {{- end }}
+            {{- if .parameters }}
+            parameters:
+            {{- range $k, $v := .parameters }}
+            - name: {{ $k }}
+              value: "{{ $v }}"
+            {{- end }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+        # Values reference — lets the sources above read $values/values/...
+        # from the user's own repo (design doc section 4.3).
+        - repoURL: {{ $repoURL }}
+          targetRevision: {{ $revision }}
+          ref: values
+      destination:
+        # Route the hub cluster's own addon Applications to the in-cluster
+        # API server; every other cluster gets its registered server URL
+        # (design doc section 8, item 7 — the v3 SHARKO_HOST_CLUSTER_NAME
+        # special case, now passed as a Helm parameter instead of a
+        # placeholder substituted at bootstrap time).
+        server: '{{`{{ if eq .name "`}}{{ $hostClusterName }}{{`" }}https://kubernetes.default.svc{{ else }}{{ .server }}{{ end }}`}}'
+        # namespace is a string field, so it can be templated directly here
+        # instead of needing templatePatch (design doc section 4.5) — dig
+        # for a per-cluster override, falling back to the fleet-wide merged
+        # namespace baked in by Helm above.
+        namespace: '{{`{{ dig "addons" "`}}{{ $name }}{{`" "settings" "namespace" "`}}{{ $namespace }}{{`" .spec }}`}}'
+      syncPolicy:
+        automated:
+          prune: {{ $prune }}
+          selfHeal: {{ $selfHeal }}
+        syncOptions:
+          {{- range $bakedSyncOptions }}
+          - {{ . }}
+          {{- end }}
+      {{- if $ignoreDifferences }}
+      ignoreDifferences:
+        {{- toYaml $ignoreDifferences | nindent 8 }}
+      {{- end }}
+  # templatePatch carries the settings that are not plain strings — booleans
+  # and lists — because the typed `template:` block above only substitutes
+  # round-two braces into string fields (design doc section 4.5 / decision D14). Every
+  # baked default below (true/false literals, the syncOptions-without-
+  # CreateNamespace-true base list) was computed by Helm in round one, after
+  # merging engine defaults with the shipped catalog entry and the user's
+  # fleet-wide delta — the `dig` calls only look for a *per-cluster*
+  # override on top of that.
+  #
+  # `dig` and `hasKey` are both Sprig functions; ArgoCD's ApplicationSet
+  # controller registers Sprig and only removes the env-related functions
+  # (env, expandenv, getHostByName) — confirmed against the ArgoCD docs
+  # (operator-manual/applicationset/GoTemplate) while building this chart,
+  # so no index+default fallback is needed here.
+  templatePatch: |
+    spec:
+      {{`{{- $s := dig "addons" "`}}{{ $name }}{{`" "settings" dict .spec }}`}}
+      syncPolicy:
+        automated:
+          prune: {{`{{ dig "prune" `}}{{ $prune }}{{` $s }}`}}
+          selfHeal: {{`{{ dig "selfHeal" `}}{{ $selfHeal }}{{` $s }}`}}
+        {{`{{- if hasKey $s "syncOptions" }}`}}
+        syncOptions:
+          {{`{{- range $s.syncOptions }}`}}
+          - {{`{{ . }}`}}
+          {{`{{- end }}`}}
+        {{`{{- else if hasKey $s "createNamespace" }}`}}
+        # Cluster overrode createNamespace only (not syncOptions): rebuild
+        # the list from the fleet-wide base plus/minus CreateNamespace=true,
+        # since ArgoCD has no separate createNamespace field of its own —
+        # it is only ever expressed as membership in syncOptions.
+        syncOptions:
+          {{`{{- if $s.createNamespace }}`}}
+          - CreateNamespace=true
+          {{`{{- end }}`}}
+          {{- range $syncOptionsBase }}
+          - {{ . }}
+          {{- end }}
+        {{`{{- end }}`}}
+      {{`{{- if hasKey $s "ignoreDifferences" }}`}}
+      ignoreDifferences:
+        {{`{{- toYaml $s.ignoreDifferences | nindent 8 }}`}}
+      {{`{{- end }}`}}
+{{- end }}

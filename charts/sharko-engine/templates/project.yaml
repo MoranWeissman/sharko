@@ -1,0 +1,26 @@
+{{/*
+The one shared AppProject every addon Application belongs to (design decision
+D17). Unconditionally rendered — even a repo with zero addons switched on
+still gets this, since it costs nothing and means enabling the first addon
+never needs a second render pass to create its project.
+*/}}
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ .Values.project.name }}
+  namespace: argocd
+  labels:
+    {{- include "sharko-engine.commonLabels" . | nindent 4 }}
+spec:
+  description: Sharko-managed addons — shared project, no per-addon isolation (design decision D17)
+  sourceRepos:
+    - '*'
+  destinations:
+    - namespace: '*'
+      server: '*'
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'

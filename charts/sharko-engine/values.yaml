@@ -1,0 +1,64 @@
+# -----------------------------------------------------------------------------
+# sharko-engine — chart values
+#
+# See docs/design/2026-07-30-v4-data-file-format.md for the full contract.
+# This file only carries what the chart needs to render: where the user's
+# GitOps repo is, the shared AppProject name, and the shipped catalog
+# defaults. Everything else — which addons are on, per-cluster pins, and
+# settings — comes from the user's own repo, read at render time.
+# -----------------------------------------------------------------------------
+
+# repo points the engine at the user's own GitOps repo: the repo that holds
+# clusters/, catalog/addons.yaml and values/. In production this is set via
+# `helm.parameters` on the engine pin (engine/application.yaml) — see design
+# doc section 2.5 — never hand-edited here. The values below are placeholders
+# so `helm lint` / `helm template` work standalone, against this chart alone.
+repo:
+  # url is the git remote both generator arms read from: the git-files arm
+  # (clusters/<cluster>.yaml) and the `ref: values` source (values/**).
+  url: https://github.com/example-org/fleet-gitops.git
+  # revision is the branch/tag clusters/, catalog/, and values/ are read
+  # from. Almost always "main".
+  revision: main
+
+# hostCluster.name lets the addon Application for Sharko's own hub cluster
+# route to the in-cluster API server instead of an external URL — the same
+# special case v3 had via SHARKO_HOST_CLUSTER_NAME, now passed as a Helm
+# parameter instead of a placeholder substituted into the template at
+# bootstrap time (design doc section 8, item 7). Leave empty to disable the
+# special case (no cluster name will ever match "").
+hostCluster:
+  name: ""
+
+# project.name is the single shared AppProject every addon Application
+# belongs to (design decision D17). v3 created one AppProject per addon with
+# every permission set to '*', which bought no real isolation — just one
+# extra object per addon. One project is easier to read and is
+# engine-internal, not part of the data-file contract, so it may be revisited
+# if per-addon restrictions ever become real.
+project:
+  name: sharko-addons
+
+# curated.addons is the shipped catalog: the addons Sharko knows about out of
+# the box, keyed by addon name, in the same shape as a catalog/addons.yaml
+# entry (design doc section 2.3) minus the envelope. Per decision D7, no
+# entry here carries a `version` — a version baked into a signed chart goes
+# stale, so Sharko writes the running version into the USER's own
+# catalog/addons.yaml the first time an addon is switched on, never in here.
+#
+# This block is hand-maintained today. Design doc section 4.7 / story 2.4
+# generates it from the monorepo's own catalog/addons.yaml at build time,
+# with a CI job (the same shape as schemas-up-to-date) failing on any diff —
+# that wiring is Story 2.4's job, not this chart's.
+curated:
+  addons: {}
+
+# spec.addons is where the user's catalog/addons.yaml delta lands when the
+# engine pin passes it as the chart's one enveloped Helm values file (design
+# doc section 2.5 / D6 — exactly one enveloped file, because every enveloped
+# file's payload lives under `spec`, and two would collide). Empty by
+# default: a repo with zero addons switched on renders zero
+# ApplicationSets, which is correct — Sharko itself, not this chart, is the
+# thing a user deletes to kill Sharko (design doc section 2.5).
+spec:
+  addons: {}

@@ -1,0 +1,26 @@
+# Fixture engine-values.yaml — stands in for what production splits across
+# two places (design doc section 2.5 / 4.7):
+#   - repo.url / repo.revision / hostCluster.name / project.name: normally
+#     `helm.parameters` on the engine pin, engine/application.yaml.
+#   - curated.addons: normally the shipped catalog baked into the chart's
+#     own values.yaml (Story 2.4 generates it from the monorepo's
+#     catalog/addons.yaml at build time; this test hand-writes the same
+#     two entries the worked example uses, with no `version` field per
+#     decision D7).
+repo:
+  url: https://github.com/example-org/fleet-gitops.git
+  revision: main
+hostCluster:
+  name: hub
+project:
+  name: sharko-addons
+curated:
+  addons:
+    cert-manager:
+      repoURL: https://charts.jetstack.io
+      chart: cert-manager
+      namespace: cert-manager
+    metrics-server:
+      repoURL: https://kubernetes-sigs.github.io/metrics-server/
+      chart: metrics-server
+      namespace: kube-system

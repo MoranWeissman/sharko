@@ -1,0 +1,19 @@
+# Fixture fleet/connections.yaml — ManagedClusters, exactly as the worked
+# example in docs/design/2026-07-30-v4-data-file-format.md section 6 shows
+# it. Not read by the engine (design doc section 2.4 — the Sharko server's
+# cluster reconciler reads this, never the engine); included so the fixture
+# is a complete, realistic repo, not just the files the chart touches.
+apiVersion: sharko.dev/v1
+kind: ManagedClusters
+metadata:
+  name: connections
+spec:
+  clusters:
+    - name: prod-eu
+      secretPath: k8s-prod-eu
+      region: eu-central-1
+      credsSource: secret-kubeconfig
+    - name: staging-us
+      secretPath: k8s-staging-us
+      region: us-east-1
+      credsSource: secret-kubeconfig
