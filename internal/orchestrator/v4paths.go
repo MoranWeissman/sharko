@@ -8,7 +8,18 @@
 // actually reads.
 package orchestrator
 
-import "path"
+import (
+	"context"
+	"path"
+)
+
+// V4ConnectionsPath is where cluster credentials/registration info lives
+// in a v4 repo (design doc §2.4): "fleet/connections.yaml". Same kind
+// (ManagedClusters) and shape models.LoadManagedClusters already reads —
+// only the path and, per design doc §2.4, the MEANING of the labels field
+// change (v4 no longer authors addon on/off keys there; that lives in
+// clusters/*.yaml instead — see EnableAddonV4/DisableAddonV4).
+const V4ConnectionsPath = "fleet/connections.yaml"
 
 // V4ClustersDir is where one ClusterAssignment file per cluster lives
 // (design doc §2.1): "clusters/<cluster-name>.yaml".
@@ -38,4 +49,15 @@ func v4GlobalValuesPath(addonName string) string {
 // values override file.
 func v4ClusterValuesPath(clusterName, addonName string) string {
 	return path.Join(V4ClusterValuesDir, clusterName, addonName+".yaml")
+}
+
+// isV4Repo reports whether the connected repo is v4-format, using the
+// same probe CheckEnginePin (enginepin.go) and
+// AddonService.GetVersionMatrix (internal/service/addon.go) already use:
+// the engine pin (EnginePinPath) resolving to non-empty content. "No pin
+// found" is the ordinary, non-error "not a v4 repo yet" case — never
+// treated as a hard failure here either.
+func (o *Orchestrator) isV4Repo(ctx context.Context) bool {
+	content, ok := o.readFileIfExists(ctx, EnginePinPath)
+	return ok && len(content) > 0
 }

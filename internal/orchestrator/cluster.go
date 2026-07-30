@@ -325,10 +325,14 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			}
 		}
 
+		v4Repo := o.isV4Repo(ctx)
 		valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
-		clusterAddonsPath := o.paths.ManagedClusters
-		if clusterAddonsPath == "" {
-			clusterAddonsPath = "configuration/managed-clusters.yaml"
+		clusterAddonsPath := V4ConnectionsPath
+		if !v4Repo {
+			clusterAddonsPath = o.paths.ManagedClusters
+			if clusterAddonsPath == "" {
+				clusterAddonsPath = "configuration/managed-clusters.yaml"
+			}
 		}
 
 		// Build the file preview with diffs. The generation happens below
@@ -336,22 +340,29 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		// preview-only compute here for the dry-run diff.
 		var filePreviews []FilePreview
 
-		// Generate the cluster values content for preview
-		var catalog []models.AddonCatalogEntry
-		catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
-		if catalogErr == nil && catalogData != nil {
-			catalog, _ = parseAddonsCatalog(catalogData)
+		// Generate the cluster values content for preview. v4 repos never
+		// get a combined values file (Story 4.4 — mirrors the real write
+		// path below).
+		var previewValuesContent []byte
+		if !v4Repo {
+			var catalog []models.AddonCatalogEntry
+			catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
+			if catalogErr == nil && catalogData != nil {
+				catalog, _ = parseAddonsCatalog(catalogData)
+			}
+			previewValuesContent = generateClusterValues(req.Name, req.Region, req.Addons, catalog)
 		}
-		previewValuesContent := generateClusterValues(req.Name, req.Region, req.Addons, catalog)
 
-		// Generate the managed-clusters update for preview
+		// Generate the cluster registry update for preview
 		clusterAddonsData, clusterAddonsErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
 		if clusterAddonsErr != nil {
 			clusterAddonsData = []byte("clusters:\n")
 		}
 		clusterLabels := make(map[string]string, len(req.Addons))
-		for addon, enabled := range req.Addons {
-			clusterLabels[addon] = models.AddonLabelValue(enabled)
+		if !v4Repo {
+			for addon, enabled := range req.Addons {
+				clusterLabels[addon] = models.AddonLabelValue(enabled)
+			}
 		}
 		connMode := ""
 		if selfManaged {
@@ -367,14 +378,17 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			RoleARN:             req.RoleARN,
 		})
 
-		// Build file previews with diffs
-		valuesAction := o.fileAction(ctx, valuesPath)
-		oldValues, _ := o.readFileIfExists(ctx, valuesPath)
-		filePreviews = append(filePreviews, FilePreview{
-			Path:   valuesPath,
-			Action: valuesAction,
-			Diff:   o.buildFileDiff(valuesPath, oldValues, previewValuesContent, valuesAction),
-		})
+		// Build file previews with diffs. v4 repos skip the values-file
+		// preview entirely — there is no such file to write (Story 4.4).
+		if !v4Repo {
+			valuesAction := o.fileAction(ctx, valuesPath)
+			oldValues, _ := o.readFileIfExists(ctx, valuesPath)
+			filePreviews = append(filePreviews, FilePreview{
+				Path:   valuesPath,
+				Action: valuesAction,
+				Diff:   o.buildFileDiff(valuesPath, oldValues, previewValuesContent, valuesAction),
+			})
+		}
 
 		if addEntryErr == nil && previewClusterAddons != nil {
 			clusterAddonsAction := o.fileAction(ctx, clusterAddonsPath)
@@ -538,43 +552,70 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		return result, nil
 	}
 
+	// v4 Wave 1 Story 4.4: on a v4 repo, cluster registration writes ONLY
+	// the connection record (fleet/connections.yaml, design doc §2.4) — no
+	// combined per-cluster values file (that concept doesn't exist in v4;
+	// values live under values/global|clusters/, written by
+	// EnableAddonV4), and no addon on/off labels (those live in
+	// clusters/<name>.yaml, design doc §2.4 "Sharko no longer authors
+	// addon keys here"). Any req.Addons supplied on a v4 registration
+	// request is intentionally ignored — enable each addon afterward via
+	// EnableAddonV4, which runs its own semantic validation.
+	v4Repo := o.isV4Repo(ctx)
+	if v4Repo && len(req.Addons) > 0 {
+		log.Info("v4 repo: ignoring addons on register-cluster — enable them via the v4 addon API after registration",
+			"cluster", req.Name, "addons", req.Addons)
+	}
+
 	// Idempotency: check if the values file already exists on the base branch.
 	valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
-	valuesExist := false
-	if _, valuesCheckErr := o.git.GetFileContent(ctx, valuesPath, o.gitops.BaseBranch); valuesCheckErr == nil {
-		valuesExist = true
-		log.Info("Values file already exists — will update instead of create",
-			"cluster", req.Name, "path", valuesPath)
-	}
-	_ = valuesExist // Used for logging; file is always (re)generated to ensure correctness.
+	var valuesContent []byte
+	if !v4Repo {
+		valuesExist := false
+		if _, valuesCheckErr := o.git.GetFileContent(ctx, valuesPath, o.gitops.BaseBranch); valuesCheckErr == nil {
+			valuesExist = true
+			log.Info("Values file already exists — will update instead of create",
+				"cluster", req.Name, "path", valuesPath)
+		}
+		_ = valuesExist // Used for logging; file is always (re)generated to ensure correctness.
 
-	var catalog []models.AddonCatalogEntry
-	catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
-	if catalogErr == nil && catalogData != nil {
-		catalog, _ = parseAddonsCatalog(catalogData)
+		var catalog []models.AddonCatalogEntry
+		catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
+		if catalogErr == nil && catalogData != nil {
+			catalog, _ = parseAddonsCatalog(catalogData)
+		}
+		valuesContent = generateClusterValues(req.Name, req.Region, req.Addons, catalog)
 	}
-	valuesContent := generateClusterValues(req.Name, req.Region, req.Addons, catalog)
 
-	// Read cluster-addons.yaml and add this cluster's entry so the /api/v1/clusters
-	// endpoint recognises the cluster as managed after the PR merges.
-	clusterAddonsPath := o.paths.ManagedClusters
-	if clusterAddonsPath == "" {
-		clusterAddonsPath = "configuration/managed-clusters.yaml"
+	// Read the cluster registry and add this cluster's entry so the
+	// /api/v1/clusters endpoint recognises the cluster as managed after
+	// the PR merges. v4 repos use fleet/connections.yaml; v3 repos use
+	// the server-configured (or default) managed-clusters.yaml path.
+	clusterAddonsPath := V4ConnectionsPath
+	if !v4Repo {
+		clusterAddonsPath = o.paths.ManagedClusters
+		if clusterAddonsPath == "" {
+			clusterAddonsPath = "configuration/managed-clusters.yaml"
+		}
 	}
 	clusterAddonsData, clusterAddonsErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
 	if clusterAddonsErr != nil {
 		// File doesn't exist yet — bootstrap a minimal document.
-		log.Info("managed-clusters.yaml not found, bootstrapping", "cluster", req.Name)
+		log.Info("cluster registry file not found, bootstrapping", "cluster", req.Name, "path", clusterAddonsPath)
 		clusterAddonsData = []byte("clusters:\n")
 	}
 
 	// Build labels in the canonical "enabled"/"disabled" vocabulary. This is
 	// the value the live ArgoCD ApplicationSet selector + GetEnabledAddons
 	// require; the legacy "true"/"false" form read as NOT-enabled downstream
-	// and the addon never deployed (V2-cleanup-20).
+	// and the addon never deployed (V2-cleanup-20). v4 never authors addon
+	// keys on the connection record (design doc §2.4) — clusterLabels stays
+	// empty, so the resulting entry carries no addons: block at all.
 	clusterLabels := make(map[string]string, len(req.Addons))
-	for addon, enabled := range req.Addons {
-		clusterLabels[addon] = models.AddonLabelValue(enabled)
+	if !v4Repo {
+		for addon, enabled := range req.Addons {
+			clusterLabels[addon] = models.AddonLabelValue(enabled)
+		}
 	}
 
 	// Record the connection-ownership mode on the managed-clusters entry.
@@ -613,8 +654,9 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		updatedClusterAddons = nil
 	}
 
-	files := map[string][]byte{
-		valuesPath: valuesContent,
+	files := map[string][]byte{}
+	if !v4Repo {
+		files[valuesPath] = valuesContent
 	}
 	if updatedClusterAddons != nil {
 		files[clusterAddonsPath] = updatedClusterAddons
@@ -648,7 +690,9 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		return result, nil
 	}
 	steps = append(steps, "git_commit")
-	gitResult.ValuesFile = valuesPath
+	if !v4Repo {
+		gitResult.ValuesFile = valuesPath
+	}
 
 	if gitResult != nil && !gitResult.Merged {
 		log.Info("PR created but not auto-merged — cluster will appear as managed after PR is merged",

@@ -262,8 +262,17 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 		files[clusterValuesPath] = updatedClusterValuesRaw
 	}
 
+	// OperationCode reuses the v3 literal ("addon-enable", matching
+	// prtracker.OpAddonEnable's value — orchestrator cannot import
+	// prtracker itself, see pr_tracker_adapter.go) rather than a
+	// "-v4"-suffixed code, so this PR lands in the dashboard's existing
+	// "Addons" bucket instead of the default/uncategorized one. Cluster +
+	// Addon on the tracked PR already disambiguate which cluster/addon
+	// this is about; the wire FORMAT (v3 labels vs v4 ClusterAssignment)
+	// is an implementation detail the tracker/dashboard don't need to
+	// know.
 	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("enable addon %s on cluster %s (v4)", req.Addon, req.Cluster),
-		o.prMeta(req.AutoMerge, "addon-enable-v4", title, req.Cluster, req.Addon))
+		o.prMeta(req.AutoMerge, "addon-enable", title, req.Cluster, req.Addon))
 	if err != nil {
 		return nil, fmt.Errorf("committing addon enable: %w", err)
 	}
@@ -325,9 +334,12 @@ func (o *Orchestrator) DisableAddonV4(ctx context.Context, req DisableAddonV4Req
 		return nil, fmt.Errorf("confirmation required: set yes: true in request body")
 	}
 
+	// Same reasoning as EnableAddonV4: reuse the v3 "addon-disable" literal
+	// (prtracker.OpAddonDisable's value) so this lands in the dashboard's
+	// existing "Addons" bucket.
 	gitResult, err := o.commitChangesWithMeta(ctx, map[string][]byte{clusterPath: updated}, nil,
 		fmt.Sprintf("%s addon %s on cluster %s (v4)", action, req.Addon, req.Cluster),
-		o.prMeta(req.AutoMerge, "addon-disable-v4", title, req.Cluster, req.Addon))
+		o.prMeta(req.AutoMerge, "addon-disable", title, req.Cluster, req.Addon))
 	if err != nil {
 		return nil, fmt.Errorf("committing addon %s: %w", action, err)
 	}

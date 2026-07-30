@@ -11,11 +11,12 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // isGitFileNotFound reports whether err signals "file does not exist" from a
@@ -66,17 +67,47 @@ func NewClusterService(managedClustersPath string) *ClusterService {
 	}
 }
 
+// readManagedClustersData reads the cluster registry file, trying the
+// configured (v3) path first and falling back to the fixed v4 path
+// (orchestrator.V4ConnectionsPath, "fleet/connections.yaml" — design doc
+// §2.4: same kind/shape as the v3 file, only the location changed) when
+// the v3 path is genuinely absent. A connected repo is one format or the
+// other, never both, so this costs one extra read only on the (cheap,
+// not-found) v3-absent path.
+//
+// Returns (nil, nil) when NEITHER path resolves — callers keep their
+// existing "treat as empty" fallback (clusterData = []byte("clusters:
+// []")) unchanged. Returns a non-nil error only for a genuine read
+// failure (auth, branch, transport) on either path.
+func (s *ClusterService) readManagedClustersData(ctx context.Context, gp gitprovider.GitProvider) ([]byte, error) {
+	data, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
+	if err == nil {
+		return data, nil
+	}
+	if !isGitFileNotFound(err) {
+		return nil, err
+	}
+	v4Data, v4Err := gp.GetFileContent(ctx, orchestrator.V4ConnectionsPath, "main")
+	if v4Err == nil {
+		return v4Data, nil
+	}
+	if !isGitFileNotFound(v4Err) {
+		return nil, v4Err
+	}
+	return nil, nil
+}
+
 // ListClusters returns all clusters with health stats from Git + ArgoCD.
 func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClustersResponse, error) {
 	log := logging.LoggerFromContext(ctx)
-	// Fetch Git config
-	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
+	// Fetch Git config — v3 managed-clusters.yaml, or its v4 equivalent
+	// fleet/connections.yaml (v4 Wave 1 Story 4.4).
+	clusterData, err := s.readManagedClustersData(ctx, gp)
 	if err != nil {
-		if isGitFileNotFound(err) {
-			clusterData = []byte("clusters: []")
-		} else {
-			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
-		}
+		return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
+	}
+	if clusterData == nil {
+		clusterData = []byte("clusters: []")
 	}
 
 	clusters, err := s.parser.ParseClusterAddons(clusterData)
@@ -153,13 +184,12 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 // GetClusterDetail returns detail for a single cluster.
 func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName string, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClusterDetailResponse, error) {
 	log := logging.LoggerFromContext(ctx)
-	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
+	clusterData, err := s.readManagedClustersData(ctx, gp)
 	if err != nil {
-		if isGitFileNotFound(err) {
-			clusterData = []byte("clusters: []")
-		} else {
-			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
-		}
+		return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
+	}
+	if clusterData == nil {
+		clusterData = []byte("clusters: []")
 	}
 
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
@@ -248,13 +278,12 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 // GetClusterComparison returns Git vs ArgoCD comparison for a cluster.
 func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName string, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClusterComparisonResponse, error) {
 	log := logging.LoggerFromContext(ctx)
-	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
+	clusterData, err := s.readManagedClustersData(ctx, gp)
 	if err != nil {
-		if isGitFileNotFound(err) {
-			clusterData = []byte("clusters: []")
-		} else {
-			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
-		}
+		return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
+	}
+	if clusterData == nil {
+		clusterData = []byte("clusters: []")
 	}
 
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
@@ -455,24 +484,24 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 	cluster.ConnectionStatus = connStatus
 
 	return &models.ClusterComparisonResponse{
-		Cluster:                      *cluster,
-		GitTotalAddons:               len(gitAddons),
-		GitEnabledAddons:             len(gitAddons),
-		GitDisabledAddons:            0,
-		ArgocdTotalApplications:      len(argocdApps),
-		ArgocdHealthyApplications:    argocdHealthy,
-		ArgocdSyncedApplications:     argocdSynced,
-		ArgocdDegradedApplications:   argocdDegraded,
-		ArgocdOutOfSyncApplications:  argocdOutOfSync,
-		AddonComparisons:             comparisons,
-		TotalHealthy:                 totalHealthy,
-		TotalWithIssues:              totalIssues,
-		TotalMissingInArgocd:         totalMissing,
-		TotalUntrackedInArgocd:       totalUntracked,
-		TotalDisabledInGit:           0,
-		ClusterConnectionState:       connStatus,
-		ArgocdConnectionStatus:       connStatus,
-		ArgocdConnectionMessage:      connMessage,
+		Cluster:                     *cluster,
+		GitTotalAddons:              len(gitAddons),
+		GitEnabledAddons:            len(gitAddons),
+		GitDisabledAddons:           0,
+		ArgocdTotalApplications:     len(argocdApps),
+		ArgocdHealthyApplications:   argocdHealthy,
+		ArgocdSyncedApplications:    argocdSynced,
+		ArgocdDegradedApplications:  argocdDegraded,
+		ArgocdOutOfSyncApplications: argocdOutOfSync,
+		AddonComparisons:            comparisons,
+		TotalHealthy:                totalHealthy,
+		TotalWithIssues:             totalIssues,
+		TotalMissingInArgocd:        totalMissing,
+		TotalUntrackedInArgocd:      totalUntracked,
+		TotalDisabledInGit:          0,
+		ClusterConnectionState:      connStatus,
+		ArgocdConnectionStatus:      connStatus,
+		ArgocdConnectionMessage:     connMessage,
 	}, nil
 }
 
