@@ -5710,6 +5710,150 @@ const docTemplate = `{
                 }
             }
         },
+        "/migration/migrate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Converts the whole repository in exactly ONE pull request: the generated template files are removed, the engine pin is added, cluster assignments and values files are rewritten into the current layout, and the full-copy addon catalog becomes a delta of only your own changes. All or nothing — every generated file is validated before a branch exists, and any failure afterwards deletes the branch again, leaving the repo untouched. Requires yes=true (or dry_run=true to preview). Running it on an already-migrated repo is a clean no-op.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "migration"
+                ],
+                "summary": "Migrate the repo from v3 to v4 (one pull request)",
+                "parameters": [
+                    {
+                        "description": "Migration request",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.MigrationMigrateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Migration pull request (or dry-run plan)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrateResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing confirmation, or the repo cannot be migrated as it stands",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/migration/preview": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the complete dry-run plan: every file the migration pull request would add, convert (old path plus new content), or remove, with plain-words notes about anything that cannot be carried across. Values-file content is redacted the same way every other preview redacts it. Zero side effects — no branch, no commit, no pull request.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "migration"
+                ],
+                "summary": "Preview the v3 to v4 migration",
+                "responses": {
+                    "200": {
+                        "description": "The migration plan",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrationPlan"
+                        }
+                    },
+                    "400": {
+                        "description": "The repo cannot be migrated as it stands",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/migration/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reports which data-file format the connected repo uses — \"v3\", \"v4\", or \"empty\" — and whether the one-pull-request migration is available. Read-only; never writes anything.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "migration"
+                ],
+                "summary": "Repo format and migration availability",
+                "responses": {
+                    "200": {
+                        "description": "Repo format",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrationStatusResult"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/notifications": {
             "get": {
                 "security": [
@@ -9480,6 +9624,95 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.MigrateResult": {
+            "type": "object",
+            "properties": {
+                "git": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
+                },
+                "plan": {
+                    "description": "Plan is always set for a dry run, and set on a real run too so the\ncaller can render exactly what the PR contains.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrationPlan"
+                        }
+                    ]
+                },
+                "status": {
+                    "description": "Status is \"migrated\", \"preview\", or \"already_migrated\".",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.MigrationFileChange": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "content": {
+                    "type": "string"
+                },
+                "from_path": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.MigrationPlan": {
+            "type": "object",
+            "properties": {
+                "add": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrationFileChange"
+                    }
+                },
+                "convert": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrationFileChange"
+                    }
+                },
+                "format": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "pr_title": {
+                    "type": "string"
+                },
+                "remove": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrationFileChange"
+                    }
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.MigrationStatusResult": {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "description": "Format is \"v3\", \"v4\", or \"empty\".",
+                    "type": "string"
+                },
+                "message": {
+                    "description": "Message is a plain-English sentence the UI can show as-is.",
+                    "type": "string"
+                },
+                "migration_available": {
+                    "description": "MigrationAvailable is true only for \"v3\" — the one state where\nthere is something to convert.",
+                    "type": "boolean"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_orchestrator.RegisterClusterRequest": {
             "type": "object",
             "properties": {
@@ -9879,6 +10112,23 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/internal_api.MergedPRItem"
                     }
+                }
+            }
+        },
+        "internal_api.MigrationMigrateRequest": {
+            "type": "object",
+            "properties": {
+                "auto_merge": {
+                    "description": "AutoMerge overrides the connection-level PRAutoMerge default for\nthis PR only. nil = fall back to the connection default.",
+                    "type": "boolean"
+                },
+                "dry_run": {
+                    "description": "DryRun returns the plan with no side effects. Also settable via\n?dry_run=true.",
+                    "type": "boolean"
+                },
+                "yes": {
+                    "description": "Yes is the confirmation every v4 write requires. Without it, a\nnon-dry-run call is refused with a 400 rather than silently\nrewriting the repository.",
+                    "type": "boolean"
                 }
             }
         },

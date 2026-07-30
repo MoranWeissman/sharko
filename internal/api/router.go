@@ -898,6 +898,13 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Repo status
 	mux.HandleFunc("GET /api/v1/repo/status", srv.handleRepoStatus)
 
+	// v3 -> v4 migration (v4 Wave 2, Stories 5.1 + 5.2). Status is a
+	// read-only probe (Viewer+); preview and migrate are admin — one call
+	// rewrites the whole repository.
+	mux.HandleFunc("GET /api/v1/migration/status", srv.handleMigrationStatus)
+	mux.HandleFunc("POST /api/v1/migration/preview", srv.handleMigrationPreview)
+	mux.HandleFunc("POST /api/v1/migration/migrate", srv.handleMigrateRepo)
+
 	// System
 	mux.HandleFunc("GET /api/v1/providers", srv.handleGetProviders)
 	mux.HandleFunc("POST /api/v1/providers/test", srv.handleTestProvider)

@@ -1219,6 +1219,68 @@ definitions:
       git_username:
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.MigrateResult:
+    properties:
+      git:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+      plan:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrationPlan'
+        description: |-
+          Plan is always set for a dry run, and set on a real run too so the
+          caller can render exactly what the PR contains.
+      status:
+        description: Status is "migrated", "preview", or "already_migrated".
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.MigrationFileChange:
+    properties:
+      action:
+        type: string
+      content:
+        type: string
+      from_path:
+        type: string
+      path:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.MigrationPlan:
+    properties:
+      add:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrationFileChange'
+        type: array
+      convert:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrationFileChange'
+        type: array
+      format:
+        type: string
+      notes:
+        items:
+          type: string
+        type: array
+      pr_title:
+        type: string
+      remove:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrationFileChange'
+        type: array
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.MigrationStatusResult:
+    properties:
+      format:
+        description: Format is "v3", "v4", or "empty".
+        type: string
+      message:
+        description: Message is a plain-English sentence the UI can show as-is.
+        type: string
+      migration_available:
+        description: |-
+          MigrationAvailable is true only for "v3" — the one state where
+          there is something to convert.
+        type: boolean
+    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.RegisterClusterRequest:
     properties:
       addons:
@@ -1542,6 +1604,25 @@ definitions:
         items:
           $ref: '#/definitions/internal_api.MergedPRItem'
         type: array
+    type: object
+  internal_api.MigrationMigrateRequest:
+    properties:
+      auto_merge:
+        description: |-
+          AutoMerge overrides the connection-level PRAutoMerge default for
+          this PR only. nil = fall back to the connection default.
+        type: boolean
+      dry_run:
+        description: |-
+          DryRun returns the plan with no side effects. Also settable via
+          ?dry_run=true.
+        type: boolean
+      "yes":
+        description: |-
+          Yes is the confirmation every v4 write requires. Without it, a
+          non-dry-run call is refused with a 400 rather than silently
+          rewriting the repository.
+        type: boolean
     type: object
   internal_api.PRItem:
     properties:
@@ -6381,6 +6462,113 @@ paths:
       summary: Probe GitOps repo initialization state
       tags:
       - init
+  /migration/migrate:
+    post:
+      consumes:
+      - application/json
+      description: 'Converts the whole repository in exactly ONE pull request: the
+        generated template files are removed, the engine pin is added, cluster assignments
+        and values files are rewritten into the current layout, and the full-copy
+        addon catalog becomes a delta of only your own changes. All or nothing — every
+        generated file is validated before a branch exists, and any failure afterwards
+        deletes the branch again, leaving the repo untouched. Requires yes=true (or
+        dry_run=true to preview). Running it on an already-migrated repo is a clean
+        no-op.'
+      parameters:
+      - description: Migration request
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/internal_api.MigrationMigrateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Migration pull request (or dry-run plan)
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrateResult'
+        "400":
+          description: Missing confirmation, or the repo cannot be migrated as it
+            stands
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Migrate the repo from v3 to v4 (one pull request)
+      tags:
+      - migration
+  /migration/preview:
+    post:
+      description: 'Returns the complete dry-run plan: every file the migration pull
+        request would add, convert (old path plus new content), or remove, with plain-words
+        notes about anything that cannot be carried across. Values-file content is
+        redacted the same way every other preview redacts it. Zero side effects —
+        no branch, no commit, no pull request.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The migration plan
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrationPlan'
+        "400":
+          description: The repo cannot be migrated as it stands
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Preview the v3 to v4 migration
+      tags:
+      - migration
+  /migration/status:
+    get:
+      description: Reports which data-file format the connected repo uses — "v3",
+        "v4", or "empty" — and whether the one-pull-request migration is available.
+        Read-only; never writes anything.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Repo format
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.MigrationStatusResult'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Repo format and migration availability
+      tags:
+      - migration
   /notifications:
     get:
       description: Returns recent notifications (upgrades, drift, security)

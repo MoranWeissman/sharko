@@ -55,6 +55,12 @@ var auditAllowlist = map[string]string{
 	// for the UI diff — it does not write Git. POST is used so the body
 	// can grow optional knobs in the future.
 	"handlePreviewMergeAddonValues": "read-only diff preview; commit happens through PUT /addons/{name}/values",
+
+	// v4 Wave 2 Story 5.1: the migration preview computes the plan and
+	// writes nothing — no branch, no commit, no PR. POST so the plan can
+	// take options later. The migration itself (handleMigrateRepo) does
+	// enrich.
+	"handleMigrationPreview": "read-only migration plan; the migration itself is POST /migration/migrate",
 }
 
 // mutatingMethods is the set of HTTP methods we treat as mutating.

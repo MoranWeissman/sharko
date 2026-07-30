@@ -107,6 +107,14 @@ var HandlerTier = map[string]audit.Tier{
 	// catalog writes above.
 	"handleAddInternalAddon": audit.Tier2,
 
+	// v3 -> v4 migration (v4 Wave 2 Story 5.2) — rewrites every
+	// configuration file in the repo in one PR. Tier 2, the same bucket
+	// as the catalog and values writes it converts.
+	"handleMigrateRepo": audit.Tier2,
+	// The preview is read-only: it computes the plan and writes nothing.
+	// Same classification as handlePreviewMergeAddonValues.
+	"handleMigrationPreview": audit.TierPersonal,
+
 	// Addon secret definitions — these define what secrets get reconciled where,
 	// which changes future deployment behaviour, so config-tier.
 	"handleCreateAddonSecret": audit.Tier2,

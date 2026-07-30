@@ -70,6 +70,13 @@ var ActionRequirements = map[string]Role{
 	"settings.allow-inline-credentials":  RoleAdmin,
 	"settings.managed-cluster-self-heal": RoleAdmin,
 
+	// v3 -> v4 migration (v4 Wave 2, Story 5.2). One call rewrites every
+	// data file in the connected repo, so both the preview (which renders
+	// the content of every file, values included) and the migration itself
+	// are admin-only. The read-only status probe below is Viewer+.
+	"migration.preview": RoleAdmin,
+	"migration.migrate": RoleAdmin,
+
 	// Operator+ actions
 	"addon.enable":                  RoleOperator,
 	"addon.disable":                 RoleOperator,
@@ -132,6 +139,11 @@ var ActionRequirements = map[string]Role{
 	// any authenticated viewer (and the unauthenticated first-run flow)
 	// can check repo state before the wizard offers to initialize.
 	"init.status": RoleViewer,
+
+	// Read-only repo-format probe (GET /api/v1/migration/status). Same
+	// stance as init.status: seeing WHETHER a migration is available is a
+	// read; running one is admin (see migration.migrate above).
+	"migration.status": RoleViewer,
 }
 
 // RoleAllows reports whether the given role is sufficient for the action.
