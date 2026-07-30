@@ -383,6 +383,8 @@ definitions:
         type: string
       name:
         type: string
+      required_for:
+        type: string
     type: object
   github_com_MoranWeissman_sharko_internal_catalog.Signature:
     properties:
@@ -1193,6 +1195,18 @@ definitions:
         type: string
       values_file:
         type: string
+      warnings:
+        description: |-
+          Warnings holds plain-English advisories that do NOT block the
+          operation — e.g. EnableAddonV4's needed-at-runtime secrets (v4 wave 2
+          w2-q4): the addon installs fine now, but will need the secret later.
+          Set on both the dry-run preview response and the real (non-dry-run)
+          response, per the same GitResult. Empty/omitted when there is
+          nothing to warn about. Mirrors the Warnings field on
+          RegisterClusterResult/AdoptClusterResult (V2-cleanup-89.5).
+        items:
+          type: string
+        type: array
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.InitRepoRequest:
     properties:
@@ -7786,11 +7800,14 @@ paths:
         — the v4 data-file format (design doc 2026-07-30-v4-data-file-format.md).
         Runs semantic validation BEFORE any branch or pull request exists: every required
         value the merged catalog entry declares must be present (in the supplied values
-        or already on disk), and every secret the addon declares must have a Sharko
-        secret definition wired up. A validation failure returns 422 naming exactly
-        what is missing, in plain English — nothing is written, not even a branch.
-        Requires yes=true for confirmation (or dry_run=true to preview, which also
-        runs validation first).'
+        or already on disk), and every secret the addon declares as needed to INSTALL
+        must have a Sharko secret definition wired up. A validation failure returns
+        422 naming exactly what is missing, in plain English — nothing is written,
+        not even a branch. Secrets the addon only needs at RUNTIME (required_for:
+        runtime on the catalog entry) never block the install; a missing one is instead
+        listed in the response''s warnings field, both on a dry-run preview and on
+        the real enable. Requires yes=true for confirmation (or dry_run=true to preview,
+        which also runs validation first).'
       parameters:
       - description: Cluster name
         in: path

@@ -40,6 +40,19 @@ addons:
     category: observability
     maintainers: ["sig-instrumentation"]
     curated_by: ["cncf-graduated"]
+  - name: external-secrets
+    description: Sync secrets from external managers into Kubernetes.
+    chart: external-secrets
+    repo: https://charts.external-secrets.io
+    default_namespace: external-secrets
+    license: Apache-2.0
+    category: security
+    maintainers: ["external-secrets-io"]
+    curated_by: ["cncf-graduated"]
+    secrets:
+      - name: Backend secret-manager credentials
+        description: Supplied on a SecretStore CRD, not this chart's values.
+        required_for: runtime
 `
 
 func v4TestCuratedCatalog(t *testing.T) *catalog.Catalog {
@@ -153,6 +166,77 @@ func TestEnableAddonV4_BlocksOnUndeclaredSecret(t *testing.T) {
 	}
 	if len(git.branches) != 0 {
 		t.Error("expected no branch to be created on validation failure")
+	}
+}
+
+// TestEnableAddonV4_RuntimeSecretMissing_RealEnable_ProceedsWithWarning is
+// the w2-q4 gate-split scenario, real (non-dry-run) path: external-secrets
+// declares one secret classified required_for: runtime and no
+// SetSecretManagement call was made (no secret definition exists anywhere)
+// — the enable must still SUCCEED (a runtime secret never blocks install)
+// and the returned GitResult must carry a plain-English warning naming
+// the addon and the secret.
+func TestEnableAddonV4_RuntimeSecretMissing_RealEnable_ProceedsWithWarning(t *testing.T) {
+	git := newMockGitProvider()
+	orch := newV4TestOrchestrator(t, git)
+	// Deliberately no orch.SetSecretManagement call.
+
+	result, err := orch.EnableAddonV4(context.Background(), EnableAddonV4Request{
+		Cluster: "prod-eu",
+		Addon:   "external-secrets",
+		Yes:     true,
+	})
+	if err != nil {
+		t.Fatalf("expected the enable to succeed (runtime secret never blocks), got error: %v", err)
+	}
+	if result.PRUrl == "" {
+		t.Error("expected a PR to be opened")
+	}
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "external-secrets") && strings.Contains(w, "Backend secret-manager credentials") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a warning naming external-secrets and its runtime secret, got %v", result.Warnings)
+	}
+	if _, ok := git.files[assignPath(t, "prod-eu")]; !ok {
+		t.Error("expected clusters/prod-eu.yaml to still be written despite the missing runtime secret")
+	}
+}
+
+// TestEnableAddonV4_RuntimeSecretMissing_DryRun_ProceedsWithWarning is the
+// dry-run counterpart: the preview must succeed (no *V4SemanticValidationError,
+// no side effects either way) and the DryRun-wrapping GitResult must carry
+// the same warning the real call would — so the UI's preview never promises
+// a clean install that the real call would then flag differently.
+func TestEnableAddonV4_RuntimeSecretMissing_DryRun_ProceedsWithWarning(t *testing.T) {
+	git := newMockGitProvider()
+	orch := newV4TestOrchestrator(t, git)
+
+	result, err := orch.EnableAddonV4(context.Background(), EnableAddonV4Request{
+		Cluster: "prod-eu",
+		Addon:   "external-secrets",
+		DryRun:  true,
+	})
+	if err != nil {
+		t.Fatalf("expected the dry-run preview to succeed, got error: %v", err)
+	}
+	if result.DryRun == nil {
+		t.Fatal("expected a DryRun result")
+	}
+	if len(git.branches) != 0 || len(git.prs) != 0 {
+		t.Error("dry run must have zero git side effects")
+	}
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "external-secrets") && strings.Contains(w, "Backend secret-manager credentials") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected the dry-run GitResult to carry the runtime-secret warning, got %v", result.Warnings)
 	}
 }
 

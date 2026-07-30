@@ -123,11 +123,17 @@ func (o *Orchestrator) mergedAddonForV4(ctx context.Context, addonName string) (
 // check without live cluster access; whether the SECRET VALUE actually
 // exists in the secrets backend is a runtime concern EnableAddon's
 // pre-flight credentials gate already owns, not this static check).
-// Returns nil on success, or a non-empty slice of plain-English problem
-// strings.
-func (o *Orchestrator) validateV4AddonInputs(addon catalog.MergedAddon, mergedValues map[string]interface{}) []string {
-	var problems []string
-
+//
+// v4 wave 2 w2-q4 ("needed-secrets gate") split what happens on a missing
+// secret by SecretRequirement.EffectiveRequiredFor(): a missing
+// "install"-classified secret is still a blocking problem (unchanged
+// behavior — this is the default for any entry that predates the split),
+// but a missing "runtime"-classified secret is downgraded to a
+// non-blocking, plain-English warning — the addon installs; the warning
+// just flags that the secret will matter later. Returns problems (each a
+// complete sentence — blocks the enable when non-empty) and warnings
+// (each a complete sentence — never blocks).
+func (o *Orchestrator) validateV4AddonInputs(addon catalog.MergedAddon, mergedValues map[string]interface{}) (problems []string, warnings []string) {
 	for _, rv := range addon.RequiredValues {
 		val, ok := lookupDottedValue(mergedValues, rv.Key)
 		if !ok || isEmptyYAMLValue(val) {
@@ -140,16 +146,26 @@ func (o *Orchestrator) validateV4AddonInputs(addon catalog.MergedAddon, mergedVa
 	}
 
 	for _, sr := range addon.Secrets {
-		if _, declared := o.secretDefs[addon.Name]; !declared {
-			msg := fmt.Sprintf("needed secret %q is not declared for %s — no secret definition is configured for this addon", sr.Name, addon.Name)
-			if sr.Description != "" {
-				msg += " (" + sr.Description + ")"
-			}
-			problems = append(problems, msg)
+		if _, declared := o.secretDefs[addon.Name]; declared {
+			continue
 		}
+		if sr.EffectiveRequiredFor() == catalog.SecretRequiredForRuntime {
+			msg := fmt.Sprintf("heads-up: %s will need the secret %q later", addon.Name, sr.Name)
+			if sr.Description != "" {
+				msg += fmt.Sprintf(" (%s)", sr.Description)
+			}
+			msg += " — nothing is required to install it now"
+			warnings = append(warnings, msg)
+			continue
+		}
+		msg := fmt.Sprintf("needed secret %q is not declared for %s — no secret definition is configured for this addon", sr.Name, addon.Name)
+		if sr.Description != "" {
+			msg += " (" + sr.Description + ")"
+		}
+		problems = append(problems, msg)
 	}
 
-	return problems
+	return problems, warnings
 }
 
 // EnableAddonV4 is the v4-format counterpart to EnableAddon (v4 Wave 1
@@ -222,7 +238,8 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 	mergedValues := deepCopyYAMLMap(existingGlobalValues)
 	deepMergeYAMLMaps(mergedValues, finalClusterValues)
 
-	if problems := o.validateV4AddonInputs(merged, mergedValues); len(problems) > 0 {
+	problems, warnings := o.validateV4AddonInputs(merged, mergedValues)
+	if len(problems) > 0 {
 		return nil, &V4SemanticValidationError{Cluster: req.Cluster, Addon: req.Addon, Problems: problems}
 	}
 
@@ -262,6 +279,7 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 				PRTitle:         fmt.Sprintf("%s enable addon %s on cluster %s", o.gitops.CommitPrefix, req.Addon, req.Cluster),
 				SecretsToCreate: []string{},
 			},
+			Warnings: warnings,
 		}, nil
 	}
 
@@ -287,6 +305,9 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 		o.prMeta(req.AutoMerge, "addon-enable", title, req.Cluster, req.Addon))
 	if err != nil {
 		return nil, fmt.Errorf("committing addon enable: %w", err)
+	}
+	if len(warnings) > 0 {
+		gitResult.Warnings = append(gitResult.Warnings, warnings...)
 	}
 	return gitResult, nil
 }

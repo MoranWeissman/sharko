@@ -118,8 +118,121 @@ addons:
 	if len(e.Secrets) != 1 || e.Secrets[0].Name != "API token" {
 		t.Errorf("secrets did not round-trip: %+v", e.Secrets)
 	}
+	// required_for was omitted in the YAML — it must round-trip as "" on
+	// the struct (the zero value), and EffectiveRequiredFor must default
+	// that to "install" (v4 wave 2 w2-q4 — "unclassified entries stay
+	// strict").
+	if e.Secrets[0].RequiredFor != "" {
+		t.Errorf("secrets[0].RequiredFor = %q, want empty (unclassified)", e.Secrets[0].RequiredFor)
+	}
+	if got := e.Secrets[0].EffectiveRequiredFor(); got != SecretRequiredForInstall {
+		t.Errorf("EffectiveRequiredFor() = %q, want %q (default)", got, SecretRequiredForInstall)
+	}
 	if len(e.Quirks) != 1 || e.Quirks[0] != "Restarts on config change." {
 		t.Errorf("quirks did not round-trip: %+v", e.Quirks)
+	}
+}
+
+// TestLoad_ExtendedEntry_RequiredForRoundTripsThroughYAML is the schema
+// round-trip test for the w2-q4 needed-secrets split: an entry that
+// explicitly sets required_for: runtime must survive LoadBytes with that
+// exact classification, and EffectiveRequiredFor must return it verbatim
+// (not the "install" default).
+func TestLoad_ExtendedEntry_RequiredForRoundTripsThroughYAML(t *testing.T) {
+	y := `
+addons:
+  - name: widget
+    description: A test addon.
+    chart: widget
+    repo: https://charts.example.com
+    default_namespace: widget
+    maintainers: [example]
+    license: Apache-2.0
+    category: security
+    curated_by: [artifacthub-verified]
+    secrets:
+      - name: Backend credentials
+        description: Consumed by a CRD you create after install, not this chart's values.
+        required_for: runtime
+      - name: Bootstrap token
+        description: Needed for the chart to deploy.
+        required_for: install
+`
+	cat, err := LoadBytes([]byte(y))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	e, ok := cat.Get("widget")
+	if !ok {
+		t.Fatalf("expected widget entry")
+	}
+	if len(e.Secrets) != 2 {
+		t.Fatalf("expected 2 secrets, got %d: %+v", len(e.Secrets), e.Secrets)
+	}
+	if got := e.Secrets[0].EffectiveRequiredFor(); got != SecretRequiredForRuntime {
+		t.Errorf("secrets[0] EffectiveRequiredFor() = %q, want %q", got, SecretRequiredForRuntime)
+	}
+	if got := e.Secrets[1].EffectiveRequiredFor(); got != SecretRequiredForInstall {
+		t.Errorf("secrets[1] EffectiveRequiredFor() = %q, want %q", got, SecretRequiredForInstall)
+	}
+}
+
+// TestValidateEntry_RejectsInvalidRequiredFor asserts the loader fails
+// fast, in plain English, on an out-of-enum required_for value rather
+// than silently treating a typo (e.g. "runtme") as either classification.
+func TestValidateEntry_RejectsInvalidRequiredFor(t *testing.T) {
+	y := `
+addons:
+  - name: widget
+    description: A test addon.
+    chart: widget
+    repo: https://charts.example.com
+    default_namespace: widget
+    maintainers: [example]
+    license: Apache-2.0
+    category: security
+    curated_by: [artifacthub-verified]
+    secrets:
+      - name: Backend credentials
+        description: Something.
+        required_for: sometimes
+`
+	_, err := LoadBytes([]byte(y))
+	if err == nil {
+		t.Fatal("expected an error for an invalid required_for value, got nil")
+	}
+	if !strings.Contains(err.Error(), "required_for") {
+		t.Errorf("expected error to name required_for, got: %v", err)
+	}
+}
+
+// TestLoad_Embedded_ExternalSecretsRuntimeSecret is a spot-check of the
+// curated catalog's own w2-q4 reclassification: external-secrets' one
+// declared secret is the maintainer-confirmed runtime case (the chart
+// installs with zero secrets; the credential only matters once a
+// SecretStore/ClusterSecretStore CRD is created) and must round-trip as
+// required_for: runtime from the real embedded catalog/addons.yaml, not
+// just a synthetic test fixture.
+func TestLoad_Embedded_ExternalSecretsRuntimeSecret(t *testing.T) {
+	cat, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	e, ok := cat.Get("external-secrets")
+	if !ok {
+		t.Fatalf("expected external-secrets in catalog")
+	}
+	if len(e.Secrets) == 0 {
+		t.Fatalf("expected external-secrets to declare at least one secret")
+	}
+	found := false
+	for _, sec := range e.Secrets {
+		if sec.EffectiveRequiredFor() == SecretRequiredForRuntime {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected at least one external-secrets secret classified required_for: runtime, got %+v", e.Secrets)
 	}
 }
 
