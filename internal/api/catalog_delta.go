@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
@@ -170,6 +172,15 @@ func (s *Server) handleAddInternalAddon(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.Name == "" {
 		writeError(w, http.StatusBadRequest, "addon name is required")
+		return
+	}
+	// The addon name becomes a values/global/<addon>.yaml path segment and
+	// a Kubernetes label key the moment somebody enables this addon on a
+	// cluster, so it goes through the same gate the v4 enable/disable
+	// endpoints use.
+	if !models.IsValidResourceName(req.Name) {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("invalid addon name %q: %s", req.Name, models.InvalidResourceNameMessage))
 		return
 	}
 	if req.RepoURL == "" {

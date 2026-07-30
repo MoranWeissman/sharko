@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/invopop/jsonschema"
 	"gopkg.in/yaml.v3"
 
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -101,6 +102,30 @@ type AddonCatalogDeltaEntry struct {
 // decision D16, "missing means empty".
 type AddonCatalogDeltaSpec struct {
 	Addons map[string]AddonCatalogDeltaEntry `json:"addons" yaml:"addons"`
+}
+
+// JSONSchemaExtend constrains the KEYS of the addons map in the generated
+// JSON Schema (invopop/jsonschema calls this hook while reflecting the
+// type; cmd/schema-gen is the only caller, and internal/schema's runtime
+// validator enforces the emitted schema on every read AND every write).
+//
+// Without this, `addons:` accepts any string as an addon name — including
+// "../../engine" — and a hand-authored catalog/addons.yaml could name an
+// addon whose name later becomes a git path segment
+// (values/global/<addon>.yaml) and a Kubernetes label key
+// (addons.sharko.dev/<addon>). The API edge rejects such a name on the
+// write path; propertyNames is what rejects it on the READ path, for a file
+// somebody committed by hand.
+//
+// The pattern is models.ResourceNamePattern — the same literal the API edge
+// and the orchestrator's path builders compile, so a name that is legal in
+// one place is legal in all of them.
+func (AddonCatalogDeltaSpec) JSONSchemaExtend(base *jsonschema.Schema) {
+	addons, ok := base.Properties.Get("addons")
+	if !ok || addons == nil {
+		return
+	}
+	addons.PropertyNames = &jsonschema.Schema{Pattern: models.ResourceNamePattern}
 }
 
 // AddonCatalogDeltaDoc is the on-disk shape for an enveloped

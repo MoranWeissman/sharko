@@ -847,6 +847,15 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 		Cluster: ClusterResult{Name: name, Server: serverURL, Addons: addons},
 	}
 
+	// v4 repos record addon on/off in clusters/<name>.yaml, not as labels
+	// in the cluster registry — this handler writes the v3 registry, which
+	// on a v4 repo would create a rival file and orphan the fleet (see
+	// ErrV4RepoUnsupported). The v4 route for the same intent is
+	// POST/DELETE /api/v1/v4/clusters/{name}/addons/{addon}.
+	if err := o.refuseOnV4Repo(ctx, "changing a cluster's addons through this endpoint"); err != nil {
+		return nil, err
+	}
+
 	// Referential-integrity guard (V2-cleanup-32): every addon name in the
 	// request must exist in the catalog before any write is attempted. An
 	// unknown name means the label would point at a non-existent

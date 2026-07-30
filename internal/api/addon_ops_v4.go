@@ -15,9 +15,41 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
+
+// validateV4PathNames rejects a cluster or addon name that is empty or does
+// not match the one shared name pattern (models.ResourceNamePattern), and
+// writes the 400 itself. Returns a non-nil error when it wrote one, so the
+// caller's line stays `if err := validateV4PathNames(...); err != nil { return }`.
+//
+// This is the request-edge half of the path-traversal fix. Both names land
+// verbatim in a git commit path (clusters/<cluster>.yaml,
+// values/clusters/<cluster>/<addon>.yaml) and the addon name also becomes a
+// Kubernetes label key, so an unchecked "../.." would let a caller rewrite
+// any file in the repo — including the engine pin. Go 1.22's ServeMux
+// URL-decodes path segments before PathValue sees them, so "..%2F" arrives
+// as a plain "../" and this check is what stops it.
+func validateV4PathNames(w http.ResponseWriter, clusterName, addonName string) error {
+	for _, pair := range []struct{ kind, value string }{
+		{"cluster", clusterName},
+		{"addon", addonName},
+	} {
+		if pair.value == "" {
+			err := fmt.Errorf("%s name is required", pair.kind)
+			writeError(w, http.StatusBadRequest, err.Error())
+			return err
+		}
+		if !models.IsValidResourceName(pair.value) {
+			err := fmt.Errorf("invalid %s name %q: %s", pair.kind, pair.value, models.InvalidResourceNameMessage)
+			writeError(w, http.StatusBadRequest, err.Error())
+			return err
+		}
+	}
+	return nil
+}
 
 // handleEnableAddonV4 godoc
 //
@@ -43,12 +75,7 @@ func (s *Server) handleEnableAddonV4(w http.ResponseWriter, r *http.Request) {
 
 	clusterName := r.PathValue("name")
 	addonName := r.PathValue("addon")
-	if clusterName == "" {
-		writeError(w, http.StatusBadRequest, "cluster name is required")
-		return
-	}
-	if addonName == "" {
-		writeError(w, http.StatusBadRequest, "addon name is required")
+	if err := validateV4PathNames(w, clusterName, addonName); err != nil {
 		return
 	}
 
@@ -136,12 +163,7 @@ func (s *Server) handleDisableAddonV4(w http.ResponseWriter, r *http.Request) {
 
 	clusterName := r.PathValue("name")
 	addonName := r.PathValue("addon")
-	if clusterName == "" {
-		writeError(w, http.StatusBadRequest, "cluster name is required")
-		return
-	}
-	if addonName == "" {
-		writeError(w, http.StatusBadRequest, "addon name is required")
+	if err := validateV4PathNames(w, clusterName, addonName); err != nil {
 		return
 	}
 

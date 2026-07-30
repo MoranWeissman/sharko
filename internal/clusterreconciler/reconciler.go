@@ -480,7 +480,7 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 			// fileNonEmpty=false: a missing file is a legitimate fresh
 			// install / pre-first-registration state, so the orphan-sweep
 			// sanity guard must NOT hold the sweep (V2-cleanup-60.2).
-			r.reconcileDiff(ctx, nil, false, &stats)
+			r.reconcileDiff(ctx, nil, false, nil, &stats)
 			r.emitSummaryAudit(ctx, stats)
 			return
 		}
@@ -533,11 +533,24 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 		return
 	}
 
+	// Step 2b (v4 only): derive each cluster's addon-enablement labels from
+	// clusters/*.yaml. On a v4 repo the connection record's own labels
+	// block no longer carries addon on/off keys (design doc §2.4 / D9) —
+	// the ClusterAssignment files do — so without this read the desired
+	// label set would be empty and enabling an addon would deploy nothing.
+	// Gated on readPath so a v3 repo does not pay for a directory listing
+	// it can never use, and so the v3 desired-label computation stays
+	// byte-identical.
+	var v4Labels map[string]map[string]string
+	if readPath == v4ConnectionsPath {
+		v4Labels = readV4AddonLabels(ctx, gp, r.branch)
+	}
+
 	// fileNonEmpty feeds the orphan-sweep sanity guard (V2-cleanup-60.2):
 	// a file that EXISTS with content but parses to zero clusters is the
 	// signature of a version/format mismatch, not of an intentionally
 	// emptied fleet — see orphanSweepHeld.
-	r.reconcileDiff(ctx, &spec, len(bytes.TrimSpace(body)) > 0, &stats)
+	r.reconcileDiff(ctx, &spec, len(bytes.TrimSpace(body)) > 0, v4Labels, &stats)
 	r.emitSummaryAudit(ctx, stats)
 }
 
@@ -576,7 +589,13 @@ func orphanSweepHeld(desiredCount int, fileNonEmpty bool, observedManaged int) b
 // fileNonEmpty reports whether managed-clusters.yaml existed in git with
 // non-whitespace content — one of the three inputs to the orphan-sweep
 // sanity guard (orphanSweepHeld, V2-cleanup-60.2).
-func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClustersSpec, fileNonEmpty bool, stats *reconcileStats) {
+//
+// v4Labels is the per-cluster addon-enablement label set derived from
+// clusters/*.yaml on a v4 repo (readV4AddonLabels). It is nil on a v3 repo,
+// and every use of it below is a no-op when nil — the v3 path computes its
+// desired labels exactly as it always did, from the connection record's own
+// labels block.
+func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClustersSpec, fileNonEmpty bool, v4Labels map[string]map[string]string, stats *reconcileStats) {
 	// Build the desired set (in-git names).
 	desired := make(map[string]models.ManagedClusterEntry)
 	if spec != nil {
@@ -652,9 +671,21 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 		// OutOfSync state + the diff to the UI.
 		msg := "cluster Secret present"
 		var drift *LabelDrift
-		desiredLabels := desiredAddonLabels(desired[name])
+		desiredLabels := desiredAddonLabels(desired[name], v4Labels[name])
 		if secret := existing[name]; secret != nil {
-			if labelsMatch(desiredLabels, secret.Labels) {
+			// v4 adds one extra question to "are we in sync?". labelsMatch
+			// is a SUBSET check, which is the right question for v3 (off is
+			// recorded as `<addon>: disabled`, a value change it catches)
+			// but not for v4, where off is recorded as the ABSENCE of the
+			// key — a stale `addons.sharko.dev/x: enabled` would satisfy a
+			// subset check while the addon kept deploying. Only consulted
+			// when v4 labels were actually derived, so v3's in-sync
+			// decision is unchanged.
+			inSync := labelsMatch(desiredLabels, secret.Labels)
+			if inSync && v4Labels != nil && hasStaleV4AddonLabels(desiredLabels, secret.Labels) {
+				inSync = false
+			}
+			if inSync {
 				msg = "cluster Secret present; labels verified"
 				// drift stays nil — labels are in sync
 			} else {
@@ -749,7 +780,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 	// SOLE writer of managed-cluster addon labels; register-time bootstrap
 	// (orchestrator Ensure) is a separate, unaffected path.
 	for _, entry := range toCreate {
-		r.createOne(ctx, entry, stats)
+		r.createOne(ctx, entry, v4Labels[entry.Name], stats)
 	}
 
 	// Orphan-sweep sanity guard (H2 forward guard, V2-cleanup-60.2): when
@@ -796,7 +827,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 	// every tick so addon toggles converge onto the user's Secret with the
 	// same latency Sharko-managed clusters get.
 	for _, entry := range selfManaged {
-		r.syncSelfManaged(ctx, entry, stats)
+		r.syncSelfManaged(ctx, entry, v4Labels[entry.Name], stats)
 	}
 
 	// Convert pending → managed: any Secret that is now in BOTH git and
@@ -847,14 +878,21 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 // including them would make an honest already-in-sync comparison (M5b)
 // depend on server settings (ProbeModeFn) that have nothing to do with
 // whether the cluster's OWN addon labels are correct.
-func desiredAddonLabels(entry models.ManagedClusterEntry) map[string]string {
+//
+// v4AddonLabels (v4 repos only, nil on v3) is the addon-enablement label
+// set derived from this cluster's clusters/<name>.yaml — see
+// readV4AddonLabels. It is merged on top of the entry's own labels because
+// on a v4 repo the assignment file, not the connection record, is the
+// source of truth for which addons run here. nil means "nothing derived",
+// and the result is then byte-identical to the v3 computation.
+func desiredAddonLabels(entry models.ManagedClusterEntry, v4AddonLabels map[string]string) map[string]string {
 	labels := normalizeLabels(entry.Labels)
 	for k, v := range labels {
 		if normalized, changed := models.NormalizeAddonLabelValue(v); changed {
 			labels[k] = normalized
 		}
 	}
-	return labels
+	return mergeV4AddonLabels(labels, v4AddonLabels)
 }
 
 // labelsMatch reports whether every key/value in want is present with an
@@ -951,18 +989,20 @@ func computeLabelDrift(desired, have map[string]string) *LabelDrift {
 //
 // Per-cluster error isolation matches createOne: failures log + audit +
 // count, and the next cluster still gets its turn.
-func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedClusterEntry, stats *reconcileStats) {
+func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedClusterEntry, v4AddonLabels map[string]string, stats *reconcileStats) {
 	log := logging.LoggerFromContext(ctx)
 
 	// Addon labels in the canonical vocabulary, self-healing legacy
 	// "true"/"false" values exactly like the create path does — the label
-	// payload must be identical no matter who owns the connection.
+	// payload must be identical no matter who owns the connection. On a v4
+	// repo the derived addons.sharko.dev/ keys are merged on top; nil on v3.
 	clusterLabels := normalizeLabels(entry.Labels)
 	for k, v := range clusterLabels {
 		if normalized, changed := models.NormalizeAddonLabelValue(v); changed {
 			clusterLabels[k] = normalized
 		}
 	}
+	clusterLabels = mergeV4AddonLabels(clusterLabels, v4AddonLabels)
 	// NOTE: no ApplyConnectivityCheckLabel here — the check label is never
 	// stamped on a connection Sharko does not own (guest stance, same as
 	// adopted clusters). SyncLabelsOnly strips it defensively as well.
@@ -1305,7 +1345,7 @@ func (r *Reconciler) listManagedSecrets(ctx context.Context) (map[string]*corev1
 // The "skip if same-name unlabeled Secret exists" branch implements
 // design doc §9: an unlabeled Secret is Adopt territory; this
 // reconciler must not silently overwrite it.
-func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterEntry, stats *reconcileStats) {
+func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterEntry, v4AddonLabels map[string]string, stats *reconcileStats) {
 	log := logging.LoggerFromContext(ctx)
 	// Defensive: a same-name Secret may already exist without our label
 	// (operator-created, or adopted-by-another-tool). The list step
@@ -1399,6 +1439,9 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			clusterLabels[k] = normalized
 		}
 	}
+	// v4 repos: the addon on/off keys come from clusters/<name>.yaml, not
+	// from the connection record. nil on v3, where this is a no-op.
+	clusterLabels = mergeV4AddonLabels(clusterLabels, v4AddonLabels)
 	// Apply the connectivity-check label (V2-cleanup-29). The label is DERIVED
 	// here — never stored in managed-clusters.yaml — so no schema regen needed.
 	// effectiveDisableConnectivityCheck combines the static

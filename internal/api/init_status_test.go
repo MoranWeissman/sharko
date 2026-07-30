@@ -193,14 +193,14 @@ func TestHandleInitStatus_NoConnection(t *testing.T) {
 // because both call this one function.
 
 func TestProbeRepoState_Empty(t *testing.T) {
-	state, detail := probeRepoState(context.Background(), emptyRepoGit(), healthyBootstrapApp(), "main")
+	state, detail, _ := probeRepoState(context.Background(), emptyRepoGit(), healthyBootstrapApp(), "main")
 	if state != RepoStateEmpty || detail != "" {
 		t.Errorf("expected (empty, ''), got (%q, %q)", state, detail)
 	}
 }
 
 func TestProbeRepoState_Initialized(t *testing.T) {
-	state, detail := probeRepoState(context.Background(), initializedRepoGit(), healthyBootstrapApp(), "main")
+	state, detail, _ := probeRepoState(context.Background(), initializedRepoGit(), healthyBootstrapApp(), "main")
 	if state != RepoStateInitialized || detail != "" {
 		t.Errorf("expected (initialized, ''), got (%q, %q)", state, detail)
 	}
@@ -208,7 +208,7 @@ func TestProbeRepoState_Initialized(t *testing.T) {
 
 func TestProbeRepoState_Partial(t *testing.T) {
 	ac := &initFakeArgocd{getErr: errors.New("application not found")}
-	state, detail := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
+	state, detail, _ := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
 	if state != RepoStatePartial {
 		t.Errorf("expected state=partial, got %q", state)
 	}
@@ -226,7 +226,7 @@ func TestProbeRepoState_Unreachable(t *testing.T) {
 		SyncStatus:   "Unknown",
 		HealthStatus: "Error",
 	}}
-	state, detail := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
+	state, detail, _ := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
 	if state != RepoStateUnreachable {
 		t.Errorf("expected state=unreachable, got %q", state)
 	}
@@ -244,7 +244,7 @@ func TestProbeRepoState_Degraded_StaysPartial(t *testing.T) {
 		SyncStatus:   "OutOfSync",
 		HealthStatus: "Degraded",
 	}}
-	state, _ := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
+	state, _, _ := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
 	if state != RepoStatePartial {
 		t.Errorf("expected degraded bootstrap to stay partial, got %q", state)
 	}
@@ -253,7 +253,7 @@ func TestProbeRepoState_Degraded_StaysPartial(t *testing.T) {
 // V2-cleanup-10: a permission-denied error classifies as "forbidden" with the
 // actionable message — distinct from "partial".
 func TestProbeRepoState_Forbidden(t *testing.T) {
-	state, detail := probeRepoState(context.Background(), initializedRepoGit(), forbiddenBootstrapArgocd(), "main")
+	state, detail, _ := probeRepoState(context.Background(), initializedRepoGit(), forbiddenBootstrapArgocd(), "main")
 	if state != RepoStateForbidden {
 		t.Errorf("expected state=forbidden, got %q", state)
 	}
@@ -395,7 +395,7 @@ func TestProbeBootstrapApp_ListForbidden(t *testing.T) {
 // to RepoStatePartial — the wizard offers init/repair, NOT an RBAC message.
 func TestProbeRepoState_AbsentApp_MapsToPartial_NotForbidden(t *testing.T) {
 	ac := &initFakeArgocd{listApps: []models.ArgocdApplication{}} // LIST ok, empty
-	state, detail := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
+	state, detail, _ := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
 	if state != RepoStatePartial {
 		t.Fatalf("absent bootstrap app must map to partial, got %q", state)
 	}
@@ -408,7 +408,7 @@ func TestProbeRepoState_AbsentApp_MapsToPartial_NotForbidden(t *testing.T) {
 // with the permission message preserved.
 func TestProbeRepoState_ListForbidden_MapsToForbidden(t *testing.T) {
 	ac := &initFakeArgocd{listErr: fmt.Errorf("listing applications: %w", argocd.ErrPermissionDenied)}
-	state, detail := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
+	state, detail, _ := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
 	if state != RepoStateForbidden {
 		t.Fatalf("a genuine LIST 403 must map to forbidden, got %q", state)
 	}

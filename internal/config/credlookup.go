@@ -11,6 +11,17 @@ import (
 // managed-clusters document, used when a caller passes an empty path.
 const DefaultManagedClustersPath = "configuration/managed-clusters.yaml"
 
+// V4ConnectionsPath is where the cluster registry lives in a v4 repo
+// (design doc docs/design/2026-07-30-v4-data-file-format.md §2.4 —
+// "fleet/connections.yaml"). Same ManagedClusters kind and shape this file
+// already parses; only the location changed.
+//
+// Declared here rather than imported from internal/orchestrator because
+// orchestrator imports config, not the other way round — the same lockstep
+// duplication internal/clusterreconciler already carries for the same
+// reason. Keep the literal identical to orchestrator.V4ConnectionsPath.
+const V4ConnectionsPath = "fleet/connections.yaml"
+
 // ManagedClustersReader is the minimal read-only Git surface the credential
 // lookup-key resolver needs. Both gitprovider.GitProvider and the various
 // GitReader test fakes satisfy it.
@@ -64,8 +75,25 @@ func ResolveCredentialRouting(ctx context.Context, git ManagedClustersReader, ma
 	}
 	data, err := git.GetFileContent(ctx, managedClustersPath, branch)
 	if err != nil || data == nil {
-		// No readable record — fall back to the plain name.
-		return name, "", ""
+		// The configured (v3) path did not resolve. Before giving up and
+		// falling back to the plain cluster name, try the v4 location —
+		// fleet/connections.yaml holds the same ManagedClusters document on
+		// a v4 repo. Without this, a v4-registered cluster with a custom
+		// secretPath, credsSource, or roleARN silently loses all three:
+		// Sharko would fetch credentials by the raw cluster name against
+		// the wrong backend, which is precisely the V2-cleanup-55.1 bug
+		// class this resolver exists to prevent — reintroduced by the
+		// change of file location.
+		//
+		// Same v3-then-v4 shape ClusterService.readManagedClustersData and
+		// clusterreconciler.pollOnce already use. A repo is one format or
+		// the other, so this costs one extra read only on the v3-absent
+		// path.
+		v4Data, v4Err := git.GetFileContent(ctx, V4ConnectionsPath, branch)
+		if v4Err != nil || v4Data == nil {
+			return name, "", ""
+		}
+		data = v4Data
 	}
 	return ResolveCredentialRoutingFromData(data, name)
 }

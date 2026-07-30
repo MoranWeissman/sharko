@@ -47,6 +47,12 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 	if len(req.Clusters) == 0 {
 		return nil, fmt.Errorf("at least one cluster name is required")
 	}
+	// Adoption still writes the v3 registry (managed-clusters.yaml). On a
+	// v4 repo that would create a rival registry file and orphan every
+	// v4-registered cluster — refuse before anything is read or written.
+	if err := o.refuseOnV4Repo(ctx, "adopting a cluster"); err != nil {
+		return nil, err
+	}
 
 	result := &AdoptClustersResult{
 		Results: make([]AdoptClusterResult, 0, len(req.Clusters)),

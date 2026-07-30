@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -41,8 +42,33 @@ func (f *fakeGit) GetFileContent(_ context.Context, path, _ string) ([]byte, err
 	}
 	return nil, fmt.Errorf("fakeGit: %s: %w", path, gitprovider.ErrFileNotFound)
 }
-func (f *fakeGit) ListDirectory(_ context.Context, _, _ string) ([]string, error) {
-	panic("fakeGit: ListDirectory not expected in clusterreconciler tests")
+// ListDirectory is a real (if simple) implementation now that pollOnce
+// lists clusters/ on a v4 repo to derive addon labels. It returns the
+// basenames of entries directly under dir, sorted so a tick's behaviour is
+// deterministic. A directory with no entries reports ErrFileNotFound, which
+// is exactly what a git provider does for a path that does not exist —
+// readV4AddonLabels treats that as "no clusters yet", not an error.
+func (f *fakeGit) ListDirectory(_ context.Context, dir, _ string) ([]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	prefix := strings.TrimSuffix(dir, "/") + "/"
+	var names []string
+	for p := range f.files {
+		if !strings.HasPrefix(p, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(p, prefix)
+		if strings.Contains(rest, "/") {
+			continue // nested deeper — not a direct child
+		}
+		names = append(names, rest)
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("fakeGit: %s: %w", dir, gitprovider.ErrFileNotFound)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 func (f *fakeGit) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
 	panic("fakeGit: ListPullRequests not expected in clusterreconciler tests")

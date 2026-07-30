@@ -164,16 +164,32 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 	// v3 "cluster-addons-bootstrap" AppSet-fanout root. Reading the
 	// literal here would silently report every v4 repo's dashboard tile
 	// as "bootstrap missing" even when the engine is healthy.
-	bootstrapApp, err := ac.GetApplication(ctx, orchestrator.BootstrapRootAppName)
-	if err == nil && bootstrapApp != nil {
+	//
+	// Both names are tried, current first: a cluster bootstrapped before the
+	// v4 rename still runs "cluster-addons-bootstrap", and reading only the
+	// new name would show its dashboard tile as Unknown forever.
+	var bootstrapApp *models.ArgocdApplication
+	var lastErr error
+	for _, name := range orchestrator.BootstrapAppNames() {
+		app, err := ac.GetApplication(ctx, name)
+		if err == nil && app != nil {
+			bootstrapApp = app
+			lastErr = nil
+			break
+		}
+		if err != nil {
+			lastErr = err
+		}
+	}
+	if bootstrapApp != nil {
 		if bootstrapApp.HealthStatus != "" {
 			bootstrapHealth = bootstrapApp.HealthStatus
 		}
 		if bootstrapApp.SyncStatus != "" {
 			bootstrapSync = bootstrapApp.SyncStatus
 		}
-	} else if err != nil {
-		log.Warn("could not fetch bootstrap app status for dashboard", "error", err)
+	} else if lastErr != nil {
+		log.Warn("could not fetch bootstrap app status for dashboard", "error", lastErr)
 	}
 
 	return &models.DashboardStatisticsResponse{

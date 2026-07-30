@@ -174,14 +174,26 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 		return nil, fmt.Errorf("addon name is required")
 	}
 
-	merged, err := o.mergedAddonForV4(ctx, req.Addon)
+	// Resolve every commit path BEFORE the catalog read (and long before
+	// any branch exists) so a name that could escape the v4 data folders
+	// fails with a plain-English error and zero side effects.
+	clusterPath, err := v4ClusterAssignmentPath(req.Cluster)
+	if err != nil {
+		return nil, err
+	}
+	globalValuesPath, err := v4GlobalValuesPath(req.Addon)
+	if err != nil {
+		return nil, err
+	}
+	clusterValuesPath, err := v4ClusterValuesPath(req.Cluster, req.Addon)
 	if err != nil {
 		return nil, err
 	}
 
-	clusterPath := v4ClusterAssignmentPath(req.Cluster)
-	globalValuesPath := v4GlobalValuesPath(req.Addon)
-	clusterValuesPath := v4ClusterValuesPath(req.Cluster, req.Addon)
+	merged, err := o.mergedAddonForV4(ctx, req.Addon)
+	if err != nil {
+		return nil, err
+	}
 
 	existingClusterAssignment, _ := o.readFileIfExists(ctx, clusterPath)
 	existingGlobalValuesRaw, _ := o.readFileIfExists(ctx, globalValuesPath)
@@ -290,14 +302,22 @@ func (o *Orchestrator) DisableAddonV4(ctx context.Context, req DisableAddonV4Req
 		return nil, fmt.Errorf("addon name is required")
 	}
 
-	clusterPath := v4ClusterAssignmentPath(req.Cluster)
+	// Same edge guard as EnableAddonV4 — the addon name is not part of a
+	// path here, but it IS written into the assignment file as a key, so
+	// it goes through the identical check.
+	if err := checkV4PathSegment("addon", req.Addon); err != nil {
+		return nil, err
+	}
+	clusterPath, err := v4ClusterAssignmentPath(req.Cluster)
+	if err != nil {
+		return nil, err
+	}
 	existing, ok := o.readFileIfExists(ctx, clusterPath)
 	if !ok {
 		return nil, fmt.Errorf("cluster %q has no assignment file at %s — nothing to disable", req.Cluster, clusterPath)
 	}
 
 	var updated []byte
-	var err error
 	if req.Remove {
 		updated, err = gitops.RemoveClusterAssignmentAddon(existing, req.Cluster, req.Addon)
 	} else {

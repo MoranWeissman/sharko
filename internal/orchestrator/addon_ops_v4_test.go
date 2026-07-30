@@ -51,6 +51,28 @@ func v4TestCuratedCatalog(t *testing.T) *catalog.Catalog {
 	return cat
 }
 
+// assignPath / clusterValsPath are the error-checking test wrappers around
+// the v4 path builders, which now refuse a name that could escape the v4
+// data folders (the path-traversal fix). Every name these tests pass is a
+// plain valid one, so an error here is a bug in the test itself.
+func assignPath(t *testing.T, cluster string) string {
+	t.Helper()
+	p, err := v4ClusterAssignmentPath(cluster)
+	if err != nil {
+		t.Fatalf("v4ClusterAssignmentPath(%q): %v", cluster, err)
+	}
+	return p
+}
+
+func clusterValsPath(t *testing.T, cluster, addon string) string {
+	t.Helper()
+	p, err := v4ClusterValuesPath(cluster, addon)
+	if err != nil {
+		t.Fatalf("v4ClusterValuesPath(%q, %q): %v", cluster, addon, err)
+	}
+	return p
+}
+
 func newV4TestOrchestrator(t *testing.T, git *mockGitProvider) *Orchestrator {
 	t.Helper()
 	orch := New(nil, nil, newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
@@ -99,7 +121,7 @@ func TestEnableAddonV4_BlocksOnMissingRequiredValue_BeforeAnyGitWrite(t *testing
 	if len(git.prs) != 0 {
 		t.Errorf("expected no PR to be created, got %d", len(git.prs))
 	}
-	if _, ok := git.files[v4ClusterAssignmentPath("prod-eu")]; ok {
+	if _, ok := git.files[assignPath(t, "prod-eu")]; ok {
 		t.Error("expected no clusters/prod-eu.yaml write on validation failure")
 	}
 }
@@ -155,7 +177,7 @@ func TestEnableAddonV4_ValidInputs_WritesExpectedFiles(t *testing.T) {
 		t.Error("expected a PR to be opened")
 	}
 
-	clusterPath := v4ClusterAssignmentPath("prod-eu")
+	clusterPath := assignPath(t, "prod-eu")
 	clusterBytes, ok := git.files[clusterPath]
 	if !ok {
 		t.Fatalf("expected %s to be written", clusterPath)
@@ -179,7 +201,7 @@ func TestEnableAddonV4_ValidInputs_WritesExpectedFiles(t *testing.T) {
 		}
 	}
 
-	valuesPath := v4ClusterValuesPath("prod-eu", "cert-manager")
+	valuesPath := clusterValsPath(t, "prod-eu", "cert-manager")
 	valuesBytes, ok := git.files[valuesPath]
 	if !ok {
 		t.Fatalf("expected %s to be written", valuesPath)
@@ -222,11 +244,11 @@ func TestEnableAddonV4_DryRun_NoSideEffectsAndShowsExactFiles(t *testing.T) {
 			t.Errorf("expected action=create for a brand-new file %s, got %s", f.Path, f.Action)
 		}
 	}
-	if !paths[v4ClusterAssignmentPath("prod-eu")] {
-		t.Errorf("expected preview to include %s, got %v", v4ClusterAssignmentPath("prod-eu"), paths)
+	if !paths[assignPath(t, "prod-eu")] {
+		t.Errorf("expected preview to include %s, got %v", assignPath(t, "prod-eu"), paths)
 	}
-	if !paths[v4ClusterValuesPath("prod-eu", "cert-manager")] {
-		t.Errorf("expected preview to include %s, got %v", v4ClusterValuesPath("prod-eu", "cert-manager"), paths)
+	if !paths[clusterValsPath(t, "prod-eu", "cert-manager")] {
+		t.Errorf("expected preview to include %s, got %v", clusterValsPath(t, "prod-eu", "cert-manager"), paths)
 	}
 }
 
@@ -242,10 +264,10 @@ func TestEnableAddonV4_NoValues_SkipsClusterValuesWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := git.files[v4ClusterValuesPath("prod-eu", "metrics-server")]; ok {
+	if _, ok := git.files[clusterValsPath(t, "prod-eu", "metrics-server")]; ok {
 		t.Error("expected no values file written when req.Values is empty")
 	}
-	if _, ok := git.files[v4ClusterAssignmentPath("prod-eu")]; !ok {
+	if _, ok := git.files[assignPath(t, "prod-eu")]; !ok {
 		t.Error("expected clusters/prod-eu.yaml to be written")
 	}
 }
@@ -254,16 +276,36 @@ func TestDisableAddonV4_PreservesVersionPin(t *testing.T) {
 	git := newMockGitProvider()
 	orch := newV4TestOrchestrator(t, git)
 
-	// Seed an enabled+pinned entry first.
+	// Seed an enabled entry that carries BOTH a version pin and a settings
+	// block — the two things a plain disable must not throw away (design
+	// doc §2.1: "false keeps the entry — and its settings"). Seeding only
+	// the enabled flag would let a regression that drops Version/Settings
+	// pass this test unnoticed.
+	seedNamespace := "kube-system"
+	seedPrune := true
 	_, err := orch.EnableAddonV4(context.Background(), EnableAddonV4Request{
-		Cluster: "prod-eu", Addon: "metrics-server", Yes: true,
+		Cluster: "prod-eu",
+		Addon:   "metrics-server",
+		Version: strPtrTest("3.12.1"),
+		Settings: &models.ClusterAssignmentAddonSettings{
+			Namespace: seedNamespace,
+			Prune:     &seedPrune,
+		},
+		Yes: true,
 	})
 	if err != nil {
 		t.Fatalf("seed enable: %v", err)
 	}
-	seeded, _ := models.LoadClusterAssignment(git.files[v4ClusterAssignmentPath("prod-eu")])
-	if !seeded.Addons["metrics-server"].Enabled {
+	seeded, _ := models.LoadClusterAssignment(git.files[assignPath(t, "prod-eu")])
+	seededEntry := seeded.Addons["metrics-server"]
+	if !seededEntry.Enabled {
 		t.Fatal("seed did not enable metrics-server")
+	}
+	if seededEntry.Version != "3.12.1" {
+		t.Fatalf("seed Version = %q, want 3.12.1", seededEntry.Version)
+	}
+	if seededEntry.Settings == nil || seededEntry.Settings.Namespace != seedNamespace {
+		t.Fatalf("seed Settings = %+v, want Namespace=%s", seededEntry.Settings, seedNamespace)
 	}
 
 	_, err = orch.DisableAddonV4(context.Background(), DisableAddonV4Request{
@@ -272,7 +314,7 @@ func TestDisableAddonV4_PreservesVersionPin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	spec, err := models.LoadClusterAssignment(git.files[v4ClusterAssignmentPath("prod-eu")])
+	spec, err := models.LoadClusterAssignment(git.files[assignPath(t, "prod-eu")])
 	if err != nil {
 		t.Fatalf("parse after disable: %v", err)
 	}
@@ -282,6 +324,18 @@ func TestDisableAddonV4_PreservesVersionPin(t *testing.T) {
 	}
 	if entry.Enabled {
 		t.Error("expected Enabled=false after disable")
+	}
+	if entry.Version != "3.12.1" {
+		t.Errorf("Version after disable = %q, want the pin to survive (3.12.1)", entry.Version)
+	}
+	if entry.Settings == nil {
+		t.Fatal("Settings after disable = nil, want the seeded settings block to survive")
+	}
+	if entry.Settings.Namespace != seedNamespace {
+		t.Errorf("Settings.Namespace after disable = %q, want %q", entry.Settings.Namespace, seedNamespace)
+	}
+	if entry.Settings.Prune == nil || !*entry.Settings.Prune {
+		t.Errorf("Settings.Prune after disable = %v, want the seeded true to survive", entry.Settings.Prune)
 	}
 }
 
@@ -302,7 +356,7 @@ func TestDisableAddonV4_Remove_DeletesEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("disable+remove: %v", err)
 	}
-	spec, err := models.LoadClusterAssignment(git.files[v4ClusterAssignmentPath("prod-eu")])
+	spec, err := models.LoadClusterAssignment(git.files[assignPath(t, "prod-eu")])
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

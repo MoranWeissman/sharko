@@ -74,6 +74,7 @@ type aiAnnotateBlockedResponse struct {
 // @Failure 422 {object} aiAnnotateBlockedResponse "Secret-leak guard blocked the LLM call"
 // @Failure 502 {object} map[string]interface{} "Git or upstream fetch error"
 // @Failure 503 {object} map[string]interface{} "AI not configured"
+// @Failure 409 {object} map[string]interface{} "Addon is opted out of AI annotation, or the connected repo uses the v4 layout this editor does not support yet"
 // @Router /addons/{name}/values/annotate [post]
 func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
@@ -89,6 +90,13 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 	// jumping to Settings → AI rather than failing silently.
 	if s.aiClient == nil || !s.aiClient.IsEnabled() {
 		writeError(w, http.StatusServiceUnavailable, "AI is not configured; configure a provider in Settings → AI")
+		return
+	}
+
+	// Annotation reads and rewrites the v3 global values file — on a v4
+	// repo that file does not exist and the resulting PR would create one
+	// nothing ever loads.
+	if s.refuseV3ValuesSurfaceOnActiveRepo(r.Context(), w) {
 		return
 	}
 
@@ -228,6 +236,7 @@ type setAIOptOutRequest struct {
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "Addon not found"
 // @Failure 502 {object} map[string]interface{} "Git error"
+// @Failure 409 {object} map[string]interface{} "This endpoint edits a v3-layout values file; the connected repo uses the v4 layout"
 // @Router /addons/{name}/values/ai-opt-out [put]
 func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
@@ -241,6 +250,11 @@ func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) 
 	var req setAIOptOutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	// Same v3-file dependency as the annotate endpoint above.
+	if s.refuseV3ValuesSurfaceOnActiveRepo(r.Context(), w) {
 		return
 	}
 
