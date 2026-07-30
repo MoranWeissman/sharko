@@ -41,7 +41,12 @@ import (
 // (charts/sharko-engine/templates/appset.yaml) hard-codes the same
 // "clusters/<name>.yaml"-style repo convention, so the pin's own location
 // is likewise fixed by the format, not by per-connection configuration.
-const EnginePinPath = "engine/application.yaml"
+//
+// Aliased to BootstrapRootAppPath (constants.go) rather than duplicating the
+// literal — v4 Wave 1 Story 4.2 made the bootstrap seed's root-app path AND
+// the pin-bump machinery's edit target the very same file, so there is
+// exactly one string constant for both.
+const EnginePinPath = BootstrapRootAppPath
 
 // EnginePinCheckResult is the outcome of CheckEnginePin.
 type EnginePinCheckResult struct {

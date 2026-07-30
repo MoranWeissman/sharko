@@ -12,6 +12,15 @@ type GitOpsConfig struct {
 	CommitPrefix string // e.g. "sharko:"
 	BaseBranch   string // e.g. "main"
 	RepoURL      string // Git repo URL for placeholder replacement
+
+	// EngineChartRepoURL is the OCI registry path the v4 bootstrap seed's
+	// engine pin (engine/application.yaml, design doc §2.5) names as the
+	// source of the sharko-engine chart — e.g. "ghcr.io/moranweissman/sharko",
+	// the path Story 2.4's release pipeline (.github/workflows/release.yml)
+	// pushes and cosign-signs the chart under. Empty falls back to
+	// DefaultEngineChartRepoURL (BuildV4SeedFiles applies the default, so
+	// existing callers that never set this field still get a working pin).
+	EngineChartRepoURL string
 }
 
 // RepoPathsConfig holds the addons repo directory layout (from server Helm values).

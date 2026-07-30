@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-assignment.v1.json
+apiVersion: sharko.dev/v1
+kind: ClusterAssignment
+metadata:
+  name: prod-eu
+spec:
+  cluster: prod-eu
+  addons:
+    cert-manager:
+      enabled: true
+      version: "1.12.0"
+      settings:
+        ignoreDifferences:
+          - group: admissionregistration.k8s.io
+            kind: ValidatingWebhookConfiguration
+            jsonPointers:
+              - /webhooks/0/clientConfig/caBundle
+    metrics-server:
+      enabled: true
+    external-dns:
+      enabled: false

@@ -11,7 +11,7 @@ func TestIsSharkoSystemApp(t *testing.T) {
 		name string
 		want bool
 	}{
-		{name: "cluster-addons-bootstrap", want: true},
+		{name: "sharko-engine", want: true},
 		{name: "connectivity-check-test-1", want: true},
 		{name: "connectivity-check-foo", want: true},
 		{name: "keda-prod", want: false},

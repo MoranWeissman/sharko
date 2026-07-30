@@ -97,6 +97,13 @@ func (s *Server) attachPRTracker(orch *orchestrator.Orchestrator) *orchestrator.
 	// ArgoCD reader, one test seam. nil (no provider published) is a no-op:
 	// the orchestrator keeps its New() default.
 	orch.SetCredsRouter(s.credsRouter())
+	// v4 Wave 1 Story 4.3: the sharpened enable/disable pipeline needs the
+	// shipped curated catalog to merge against a caller's catalog/addons.yaml
+	// delta (catalog.MergeDelta) — the same merge
+	// handleListMergedCatalogDelta already does. s.catalog is optional
+	// (router.go); a nil catalog makes every addon merge as
+	// catalog.OriginInternal, matching MergeDelta's own contract.
+	orch.SetCuratedCatalog(s.catalog)
 	return orch
 }
 

@@ -18,6 +18,18 @@
 //
 // Proof it guards the bug: against the OLD (unfixed) template this test FAILS
 // (zero ApplicationSets rendered); against the fixed template it PASSES.
+//
+// LEGACY-FORMAT COVERAGE (v4 Wave 1 Story 4.2): as of Story 4.2, Sharko's
+// bootstrap PR no longer writes templates/bootstrap/ into a repo — new
+// bootstraps produce only the v4 seed (empty data folders, the engine pin,
+// a README; see internal/orchestrator/bootstrap_v4.go and
+// docs/design/2026-07-30-v4-data-file-format.md §1). templates/bootstrap/
+// itself is untouched and still ships in the repo: Wave 2's migration path
+// and any pre-v4 repo Sharko already bootstrapped still read it, and the
+// engine chart (charts/sharko-engine/) is a straight port of its matrix-
+// generator shape. This test keeps proving that OLD tree renders correctly
+// — it is not a regression test for the (new) bootstrap write path, which
+// is covered by internal/orchestrator/templates_test.go instead.
 package bootstraprender
 
 import (

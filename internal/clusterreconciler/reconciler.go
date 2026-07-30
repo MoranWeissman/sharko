@@ -93,6 +93,18 @@ const (
 	// managed clusters file. Overridable via Deps.ManagedClustersPath.
 	DefaultManagedClustersPath = "configuration/managed-clusters.yaml"
 
+	// v4ConnectionsPath is the v4 data-file format's equivalent of
+	// DefaultManagedClustersPath — design doc
+	// docs/design/2026-07-30-v4-data-file-format.md §2.4:
+	// "fleet/connections.yaml ... is the same shape the code already reads
+	// through models.LoadManagedClusters ... v4 changes nothing about it
+	// except where it sits." (v4 Wave 1 Story 4.4.) Unlike
+	// DefaultManagedClustersPath this is not server-configurable — the v4
+	// format fixes the path, the same way EnginePinPath / V4ClustersDir
+	// are fixed in internal/orchestrator. Tried as a fallback ONLY when
+	// the configured (v3) path is genuinely absent — see pollOnce.
+	v4ConnectionsPath = "fleet/connections.yaml"
+
 	// DefaultArgoCDNamespace is the namespace the reconciler writes cluster
 	// Secrets into. Overridable via Deps.Namespace.
 	DefaultArgoCDNamespace = "argocd"
@@ -434,20 +446,34 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 		return
 	}
 
-	// Step 1: read managed-clusters.yaml from git.
-	body, err := gp.GetFileContent(ctx, r.managedClustersPath, r.branch)
+	// Step 1: read the managed-clusters file from git. Tries the configured
+	// (v3) path first; when that is genuinely absent, falls back to the
+	// fixed v4 path (fleet/connections.yaml, design doc §2.4 — "same shape,
+	// different location") before treating the desired state as empty. A
+	// connected repo is one format or the other, never both, so this is a
+	// single extra read only on the (common, cheap) not-found path — v3
+	// repos with a populated managed-clusters.yaml never take it.
+	readPath := r.managedClustersPath
+	body, err := gp.GetFileContent(ctx, readPath, r.branch)
+	if err != nil && errors.Is(err, gitprovider.ErrFileNotFound) {
+		if v4Body, v4Err := gp.GetFileContent(ctx, v4ConnectionsPath, r.branch); v4Err == nil {
+			body, err, readPath = v4Body, nil, v4ConnectionsPath
+			log.Debug("[clusterreconciler] configured managed-clusters path absent — found the v4 fleet/connections.yaml instead",
+				"v3_path", r.managedClustersPath, "v4_path", v4ConnectionsPath)
+		}
+	}
 	if err != nil {
 		// ErrFileNotFound is not exceptional — a freshly-bootstrapped repo
-		// has zero clusters in managed-clusters.yaml until the first
-		// register-cluster PR merges. Treat it as "empty desired state"
-		// rather than an error: the diff against argocd will compute
-		// in-argocd ∖ in-git correctly (no creates, only the deletes that
-		// would have happened anyway). Without this carve-out a fresh repo
-		// would log noise on every tick and a sharko-labeled Secret
-		// orphaned in argocd would never be cleaned up.
+		// has zero clusters in managed-clusters.yaml (or fleet/connections.yaml)
+		// until the first register-cluster PR merges. Treat it as "empty
+		// desired state" rather than an error: the diff against argocd
+		// will compute in-argocd ∖ in-git correctly (no creates, only the
+		// deletes that would have happened anyway). Without this carve-out
+		// a fresh repo would log noise on every tick and a sharko-labeled
+		// Secret orphaned in argocd would never be cleaned up.
 		if errors.Is(err, gitprovider.ErrFileNotFound) {
-			log.Info("[clusterreconciler] managed-clusters.yaml not in git — treating as empty desired state",
-				"path", r.managedClustersPath, "branch", r.branch,
+			log.Info("[clusterreconciler] neither managed-clusters.yaml nor fleet/connections.yaml found in git — treating as empty desired state",
+				"v3_path", r.managedClustersPath, "v4_path", v4ConnectionsPath, "branch", r.branch,
 			)
 			// fall through with body == nil; LoadManagedClusters([]byte{})
 			// would still error, so short-circuit to empty spec instead.
@@ -459,14 +485,14 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 			return
 		}
 		log.Error("[clusterreconciler] git read failed — aborting tick (no state mutated)",
-			"path", r.managedClustersPath, "branch", r.branch, "error", err,
+			"path", readPath, "branch", r.branch, "error", err,
 		)
 		r.audit(audit.Entry{
 			Level:     "error",
 			Event:     "cluster_secret_reconcile",
 			User:      "sharko",
 			Action:    "git_read",
-			Resource:  fmt.Sprintf("file:%s ref:%s", r.managedClustersPath, r.branch),
+			Resource:  fmt.Sprintf("file:%s ref:%s", readPath, r.branch),
 			Source:    "reconciler",
 			Result:    "failure",
 			Error:     err.Error(),
@@ -480,22 +506,23 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 		return
 	}
 
-	// Step 2: parse + schema-validate.
+	// Step 2: parse + schema-validate. Same kind (ManagedClusters), same
+	// reader, regardless of which path Step 1 actually read from.
 	spec, err := models.LoadManagedClusters(body)
 	if err != nil {
 		// schema.LogValidationFailure already fired slog.Error with the
 		// full violation list inside LoadManagedClusters; mirror it onto
 		// the audit log so the rejection is visible alongside other
 		// reconciler events.
-		log.Error("[clusterreconciler] managed-clusters.yaml rejected — aborting tick (no state mutated)",
-			"path", r.managedClustersPath, "error", err,
+		log.Error("[clusterreconciler] managed-clusters file rejected — aborting tick (no state mutated)",
+			"path", readPath, "error", err,
 		)
 		r.audit(audit.Entry{
 			Level:     "error",
 			Event:     "cluster_secret_reconcile",
 			User:      "sharko",
 			Action:    "schema_validation",
-			Resource:  fmt.Sprintf("file:%s", r.managedClustersPath),
+			Resource:  fmt.Sprintf("file:%s", readPath),
 			Source:    "reconciler",
 			Result:    "failure",
 			Error:     err.Error(),

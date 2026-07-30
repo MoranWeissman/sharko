@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // DashboardService handles dashboard-related operations.
@@ -158,7 +159,12 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 	// If unreachable, report "Unknown" rather than failing the whole dashboard request.
 	bootstrapHealth := "Unknown"
 	bootstrapSync := "Unknown"
-	bootstrapApp, err := ac.GetApplication(ctx, "cluster-addons-bootstrap")
+	// v4 Wave 1 Story 4.2: the canonical bootstrap app is the engine pin
+	// (orchestrator.BootstrapRootAppName = "sharko-engine"), not the old
+	// v3 "cluster-addons-bootstrap" AppSet-fanout root. Reading the
+	// literal here would silently report every v4 repo's dashboard tile
+	// as "bootstrap missing" even when the engine is healthy.
+	bootstrapApp, err := ac.GetApplication(ctx, orchestrator.BootstrapRootAppName)
 	if err == nil && bootstrapApp != nil {
 		if bootstrapApp.HealthStatus != "" {
 			bootstrapHealth = bootstrapApp.HealthStatus

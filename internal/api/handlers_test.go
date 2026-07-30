@@ -214,7 +214,7 @@ func repoStatusInitializedTestSetup(t *testing.T, ac orchestrator.ArgocdClient) 
 	srv := newTestServer()
 	srv.publishGitopsCfg(orchestrator.GitOpsConfig{BaseBranch: "main"})
 	gp := &handlerFakeGitProvider{files: map[string][]byte{
-		"bootstrap/Chart.yaml": []byte("apiVersion: v2\nname: bootstrap\n"),
+		orchestrator.BootstrapRootAppPath: []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
 	}}
 	srv.connSvc.SetGitProviderOverride(gp)
 	if ac != nil {

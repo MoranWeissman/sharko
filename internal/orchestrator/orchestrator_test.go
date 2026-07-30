@@ -21,12 +21,12 @@ import (
 
 type mockArgocd struct {
 	mu                 sync.Mutex
-	registeredClusters map[string]string              // name -> server
+	registeredClusters map[string]string // name -> server
 	deletedServers     []string
-	updatedLabels      map[string]map[string]string   // server -> labels
+	updatedLabels      map[string]map[string]string // server -> labels
 	syncedApps         []string
-	existingClusters   []models.ArgocdCluster         // for ListClusters / duplicate check
-	addedRepos         []string                        // repo URLs added via AddRepository
+	existingClusters   []models.ArgocdCluster               // for ListClusters / duplicate check
+	addedRepos         []string                             // repo URLs added via AddRepository
 	applications       map[string]*models.ArgocdApplication // name -> app (for GetApplication)
 	registerErr        error
 	deleteErr          error
@@ -444,8 +444,10 @@ func TestInitRepo_CommitsViaPR(t *testing.T) {
 
 func TestInitRepo_AlreadyInitialized(t *testing.T) {
 	git := newMockGitProvider()
-	// Pre-populate the bootstrap file so it looks initialized.
-	git.files["bootstrap/Chart.yaml"] = []byte("existing")
+	// Pre-populate the engine pin so it looks initialized (v4 Wave 1 Story
+	// 4.2 — the bootstrap-already-done marker is BootstrapRootAppPath, not
+	// the old v3 "bootstrap/Chart.yaml").
+	git.files[BootstrapRootAppPath] = []byte("existing")
 
 	cfg := defaultGitOps()
 	cfg.RepoURL = "https://github.com/example/addons"
@@ -524,8 +526,8 @@ func TestInitRepo_WithBootstrapAndSync(t *testing.T) {
 
 	result, err := orch.InitRepo(context.Background(), InitRepoRequest{
 		BootstrapArgoCD: true,
-		GitUsername:      "x-access-token",
-		GitToken:         "test-token",
+		GitUsername:     "x-access-token",
+		GitToken:        "test-token",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

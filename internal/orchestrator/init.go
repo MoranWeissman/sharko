@@ -7,61 +7,34 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io/fs"
-	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-// InitRepo scaffolds the addons repository from the embedded bootstrap templates.
-// It collects all files from templateFS, commits them via a PR (using commitChanges),
-// optionally registers the repo in ArgoCD, creates the bootstrap project/application,
-// and polls for sync verification.
+// InitRepo scaffolds the addons repository with the v4 bootstrap seed
+// (design doc §1 / v4 Wave 1 Story 4.2: empty data folders, the engine
+// pin, and a README — nothing else), commits it via a PR (using
+// commitChanges), optionally registers the repo in ArgoCD by applying the
+// engine pin, and polls for sync verification.
 func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*InitRepoResult, error) {
-	if o.templateFS == nil {
-		return nil, fmt.Errorf("template filesystem not configured")
-	}
 	if o.gitops.RepoURL == "" {
 		return nil, fmt.Errorf("git repo URL is required for init — set SHARKO_GITOPS_REPO_URL")
 	}
 
-	// Step 1 — Check if repo is already initialized.
-	if _, err := o.git.GetFileContent(ctx, "bootstrap/Chart.yaml", o.gitops.BaseBranch); err == nil {
-		return nil, fmt.Errorf("repo already initialized: bootstrap/Chart.yaml exists")
+	// Step 1 — Check if repo is already initialized. The engine pin is the
+	// v4 seed's one moving part and BootstrapRootAppPath is the single
+	// source of truth for where it lives — same check the async
+	// (CollectBootstrapFiles-driven) path uses via isPRMerged.
+	if _, err := o.git.GetFileContent(ctx, BootstrapRootAppPath, o.gitops.BaseBranch); err == nil {
+		return nil, fmt.Errorf("repo already initialized: %s exists", BootstrapRootAppPath)
 	}
 
-	// Step 2 — Collect all files from templates.
-	files := make(map[string][]byte)
-	err := fs.WalkDir(o.templateFS, "bootstrap", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		content, readErr := fs.ReadFile(o.templateFS, path)
-		if readErr != nil {
-			return fmt.Errorf("reading template %s: %w", path, readErr)
-		}
-
-		// Replace placeholder tokens with actual config values.
-		content = replacePlaceholdersFull(content, o.gitops, o.paths)
-
-		// Keep bootstrap/ prefix for Helm chart files (Chart.yaml, templates/)
-		// Strip prefix for repo-root files (configuration/, README, root-app, repository-secret)
-		repoPath := path
-		if !strings.HasPrefix(path, "bootstrap/Chart.yaml") &&
-			!strings.HasPrefix(path, "bootstrap/templates/") {
-			repoPath = strings.TrimPrefix(path, "bootstrap/")
-		}
-		files[repoPath] = content
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("walking bootstrap templates: %w", err)
-	}
+	// Step 2 — Build the v4 seed: empty data folders + the engine pin +
+	// README. Nothing else — no Helm chart, no catalog seed, no per-addon
+	// values stubs (design doc §1, "What the bootstrap PR actually
+	// contains").
+	files := BuildV4SeedFiles(o.gitops, o.paths)
 
 	// Step 3 — Commit all files via PR (using commitChanges with shared mutex).
 	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, "initialize repository",
@@ -100,17 +73,14 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 			}
 		}
 
-		// Step 5 & 6 — Create AppProject and Application from root-app.yaml.
-		rootAppContent, readErr := fs.ReadFile(o.templateFS, "bootstrap/root-app.yaml")
-		if readErr != nil {
-			result.ArgoCD = &InitArgocdInfo{
-				Bootstrapped: false,
-				RootApp:      fmt.Sprintf("failed to read root-app template: %v", readErr),
-			}
-			return result, nil
-		}
-
-		rootAppContent = replaceForBootstrap(rootAppContent, o.gitops, o.paths)
+		// Step 5 & 6 — Apply the engine pin (design doc §2.5). v4 has no
+		// separate AppProject to create here: engine/application.yaml's
+		// spec.project is "default", and the engine chart's own render
+		// creates the shared "sharko-addons" AppProject
+		// (charts/sharko-engine/templates/project.yaml) the first time
+		// ArgoCD syncs it — one Application is the whole of what bootstrap
+		// applies through the ArgoCD API.
+		rootAppContent := files[BootstrapRootAppPath]
 
 		bootstrapErr := o.bootstrapArgoCD(ctx, rootAppContent)
 		if bootstrapErr != nil {
@@ -239,43 +209,18 @@ func (o *Orchestrator) bootstrapArgoCD(ctx context.Context, rootAppYAML []byte) 
 // handler can drive them one step at a time, recording progress in the
 // operations store between each step.
 
-// CollectBootstrapFiles walks the templateFS and returns the ready-to-commit
-// file map (placeholder tokens already substituted).
+// CollectBootstrapFiles returns the ready-to-commit v4 bootstrap seed:
+// empty data folders, the engine pin, and a README — nothing else (design
+// doc §1 / Story 4.2). This is the async init flow's Step 1; the API
+// handler (runInitOperation) drives CollectBootstrapFiles →
+// CommitBootstrapFiles → CreateInitPR → (wait for merge) →
+// ReadRootAppTemplate → BootstrapArgoCD → WaitForSync one step at a time,
+// recording progress between each.
 func (o *Orchestrator) CollectBootstrapFiles(_ context.Context) (map[string][]byte, error) {
-	if o.templateFS == nil {
-		return nil, fmt.Errorf("template filesystem not configured")
-	}
 	if o.gitops.RepoURL == "" {
 		return nil, fmt.Errorf("git repo URL is required — set SHARKO_GITOPS_REPO_URL")
 	}
-
-	files := make(map[string][]byte)
-	err := fs.WalkDir(o.templateFS, "bootstrap", func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			return nil
-		}
-		content, readErr := fs.ReadFile(o.templateFS, path)
-		if readErr != nil {
-			return fmt.Errorf("reading template %s: %w", path, readErr)
-		}
-		content = replacePlaceholdersFull(content, o.gitops, o.paths)
-		// Keep bootstrap/ prefix for Helm chart files (Chart.yaml, templates/)
-		// Strip prefix for repo-root files (configuration/, README, root-app, repository-secret)
-		repoPath := path
-		if !strings.HasPrefix(path, "bootstrap/Chart.yaml") &&
-			!strings.HasPrefix(path, "bootstrap/templates/") {
-			repoPath = strings.TrimPrefix(path, "bootstrap/")
-		}
-		files[repoPath] = content
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("walking bootstrap templates: %w", err)
-	}
-	return files, nil
+	return BuildV4SeedFiles(o.gitops, o.paths), nil
 }
 
 // CommitBootstrapFiles creates a uniquely-named branch and commits the given
@@ -336,16 +281,18 @@ func (o *Orchestrator) CreateInitPR(ctx context.Context, branch string) (*GitRes
 	}, nil
 }
 
-// ReadRootAppTemplate reads and renders the root-app.yaml bootstrap template.
-func (o *Orchestrator) ReadRootAppTemplate(_ context.Context) ([]byte, error) {
-	if o.templateFS == nil {
-		return nil, fmt.Errorf("template filesystem not configured")
-	}
-	content, err := fs.ReadFile(o.templateFS, "bootstrap/root-app.yaml")
+// ReadRootAppTemplate reads the engine pin (engine/application.yaml, at
+// BootstrapRootAppPath) back from the base branch — called after the
+// bootstrap PR has merged, so this reads exactly what is now in git rather
+// than re-deriving it. Unlike the v3 template path there is no
+// placeholder substitution step: BuildV4SeedFiles already resolved every
+// value (repo URL, branch, host cluster name) when it wrote the file.
+func (o *Orchestrator) ReadRootAppTemplate(ctx context.Context) ([]byte, error) {
+	content, err := o.git.GetFileContent(ctx, BootstrapRootAppPath, o.gitops.BaseBranch)
 	if err != nil {
-		return nil, fmt.Errorf("reading root-app template: %w", err)
+		return nil, fmt.Errorf("reading engine pin at %s: %w", BootstrapRootAppPath, err)
 	}
-	return replaceForBootstrap(content, o.gitops, o.paths), nil
+	return content, nil
 }
 
 // BootstrapArgoCD is the exported counterpart of bootstrapArgoCD.
@@ -363,48 +310,4 @@ func initBranchSuffix() string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
-}
-
-// replacePlaceholders substitutes well-known tokens in template content.
-// Tokens replaced:
-//   - SHARKO_GIT_REPO_URL  → cfg.RepoURL
-//   - SHARKO_GIT_BRANCH    → cfg.BaseBranch (default "main")
-//   - SHARKO_HOST_CLUSTER_NAME → repoPaths.HostClusterName (if set; otherwise token removed)
-func replacePlaceholders(content []byte, cfg GitOpsConfig) []byte {
-	if cfg.RepoURL != "" {
-		content = bytes.ReplaceAll(content, []byte("SHARKO_GIT_REPO_URL"), []byte(cfg.RepoURL))
-	}
-	branch := cfg.BaseBranch
-	if branch == "" {
-		branch = "main"
-	}
-	content = bytes.ReplaceAll(content, []byte("SHARKO_GIT_BRANCH"), []byte(branch))
-	return content
-}
-
-// replacePlaceholdersFull extends replacePlaceholders with repo-path tokens including
-// the host cluster name used for in-cluster routing.
-func replacePlaceholdersFull(content []byte, cfg GitOpsConfig, paths RepoPathsConfig) []byte {
-	content = replacePlaceholders(content, cfg)
-	// Always replace — if unset, use empty string so no cluster matches the in-cluster condition.
-	content = bytes.ReplaceAll(content, []byte("SHARKO_HOST_CLUSTER_NAME"), []byte(paths.HostClusterName))
-	return content
-}
-
-// replaceForBootstrap extends replacePlaceholdersFull by also substituting Helm template
-// expressions present in root-app.yaml. Those expressions must remain intact in the
-// Git-committed copy (ArgoCD renders them at deploy time), but when Sharko reads the
-// file directly to call the ArgoCD API it needs plain YAML without unresolved {{ }} syntax.
-func replaceForBootstrap(content []byte, cfg GitOpsConfig, paths RepoPathsConfig) []byte {
-	content = replacePlaceholdersFull(content, cfg, paths)
-	if cfg.RepoURL != "" {
-		content = bytes.ReplaceAll(content, []byte("{{ .Values.repoURL }}"), []byte(cfg.RepoURL))
-	}
-	branch := cfg.BaseBranch
-	if branch == "" {
-		branch = "main"
-	}
-	content = bytes.ReplaceAll(content, []byte("{{ .Values.targetRevision }}"), []byte(branch))
-	content = bytes.ReplaceAll(content, []byte("{{ .Values.hostCluster.name }}"), []byte(paths.HostClusterName))
-	return content
 }

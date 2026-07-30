@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"sort"
 	"strings"
 
-	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // parseJSONObject decodes data as a JSON object. Used by the values-editor
@@ -63,6 +66,24 @@ func loadEnvironments() []string {
 type AddonService struct {
 	parser              *config.Parser
 	managedClustersPath string // path in Git repo to managed-clusters.yaml
+
+	// curated is the shipped curated addon catalog (internal/catalog,
+	// loaded from the embedded YAML at server startup), wired in via
+	// SetCuratedCatalog. Used ONLY by the v4 branch of GetVersionMatrix
+	// (v4 Wave 1 Story 4.2) to merge a caller's catalog/addons.yaml delta
+	// against the shipped set — catalog.MergeDelta's own contract. nil is
+	// safe: every addon then merges as catalog.OriginInternal.
+	curated *catalog.Catalog
+}
+
+// SetCuratedCatalog wires in the shipped curated catalog so
+// GetVersionMatrix's v4 branch can merge a caller's catalog/addons.yaml
+// delta against it. Pass nil (or skip the call) to leave every v4-repo
+// addon merging as catalog.OriginInternal — matches how
+// internal/api/catalog_delta.go's handlers already treat a nil
+// s.catalog (Server.catalog is itself optional, per router.go).
+func (s *AddonService) SetCuratedCatalog(c *catalog.Catalog) {
+	s.curated = c
 }
 
 // NewAddonService creates a new AddonService.
@@ -280,17 +301,40 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 	return nil, nil
 }
 
-// GetVersionMatrix returns a version matrix showing addon versions and health across all clusters.
+// GetVersionMatrix returns a version matrix showing addon versions and
+// health across all clusters.
 //
-// When managed-clusters.yaml or addons-catalog.yaml is missing (e.g.
-// fresh-install gitops repo with no clusters yet) the matrix degrades
-// to an empty response rather than propagating a 500 with the raw
-// filesystem error string. Same pattern as
-// ClusterService.ListClusters: isGitFileNotFound uses errors.Is on
-// gitprovider.ErrFileNotFound (and fs.ErrNotExist) so legitimate
-// auth/branch/perm errors that happen to mention "404" still surface
-// as real 5xx — only the genuinely missing-file path short-circuits.
+// v4-repo detection (v4 Wave 1 Story 4.2): the presence of the engine pin
+// (orchestrator.EnginePinPath, "engine/application.yaml") on the base
+// branch is the single signal Sharko already uses to distinguish a v4
+// repo from a v3 one — CheckEnginePin (internal/orchestrator/enginepin.go)
+// uses the identical probe for the same reason: "no pin found" is the
+// ordinary, non-error "not a v4 repo yet" case, never a hard failure. When
+// the pin is present, the matrix is built from clusters/*.yaml (kind
+// ClusterAssignment) and the delta-merged catalog (catalog/addons.yaml
+// overlaid on s.curated, wired via SetCuratedCatalog) instead of
+// managed-clusters.yaml labels and addons-catalog.yaml. s.curated may be
+// nil (no embedded catalog loaded); every addon then merges as
+// catalog.OriginInternal, matching catalog.MergeDelta's own contract.
+//
+// v3 path: when managed-clusters.yaml or addons-catalog.yaml is missing
+// (e.g. fresh-install gitops repo with no clusters yet) the matrix
+// degrades to an empty response rather than propagating a 500 with the
+// raw filesystem error string. Same pattern as ClusterService.ListClusters:
+// isGitFileNotFound uses errors.Is on gitprovider.ErrFileNotFound (and
+// fs.ErrNotExist) so legitimate auth/branch/perm errors that happen to
+// mention "404" still surface as real 5xx — only the genuinely
+// missing-file path short-circuits.
 func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.VersionMatrixResponse, error) {
+	// Non-empty-content check (not just err == nil) because some
+	// GitProvider fakes in this codebase's own test suites return
+	// (nil, nil) rather than an error for an unknown path — matching the
+	// stricter check keeps v4 detection correct against both real
+	// providers (which error) and those doubles.
+	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, "main"); pinErr == nil && len(pinContent) > 0 {
+		return s.getVersionMatrixV4(ctx, gp, ac)
+	}
+
 	log := logging.LoggerFromContext(ctx)
 	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
@@ -400,6 +444,149 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 		Clusters: clusterNames,
 		Addons:   rows,
 	}, nil
+}
+
+// getVersionMatrixV4 is GetVersionMatrix's v4-repo branch (v4 Wave 1 Story
+// 4.2). It reads clusters/*.yaml (kind ClusterAssignment, one file per
+// cluster — design doc §2.1) instead of managed-clusters.yaml labels, and
+// the delta-merged catalog (catalog.MergeDelta(curated, catalog/addons.yaml))
+// instead of addons-catalog.yaml. ArgoCD Application health is looked up by
+// the SAME "<addon>-<cluster>" naming convention the v3 path uses — the
+// engine chart's generated Applications are named identically
+// (charts/sharko-engine/templates/appset.yaml: '{{ $name }}-{{ .name }}').
+func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.VersionMatrixResponse, error) {
+	log := logging.LoggerFromContext(ctx)
+
+	assignments, err := listClusterAssignments(ctx, gp)
+	if err != nil {
+		return nil, fmt.Errorf("reading clusters/*.yaml: %w", err)
+	}
+
+	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, "main")
+	var delta config.AddonCatalogDeltaSpec
+	if err != nil {
+		if !isGitFileNotFound(err) {
+			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogDeltaPath, err)
+		}
+		// Missing catalog/addons.yaml means empty delta (design doc D16,
+		// "missing means empty") — not an error, mirrors
+		// internal/api/catalog_delta.go's loadCatalogDelta.
+	} else {
+		delta, err = config.LoadAddonCatalogDelta(deltaData)
+		if err != nil {
+			return nil, fmt.Errorf("parsing %s: %w", config.AddonCatalogDeltaPath, err)
+		}
+	}
+
+	merged, err := catalog.MergeDelta(s.curated, delta)
+	if err != nil {
+		return nil, fmt.Errorf("merging catalog delta: %w", err)
+	}
+
+	allApps, err := ac.ListApplications(ctx)
+	if err != nil {
+		log.Warn("could not fetch argocd applications", "error", err)
+	}
+	appMap := make(map[string]models.ArgocdApplication, len(allApps))
+	for _, app := range allApps {
+		appMap[app.Name] = app
+	}
+
+	clusterNames := make([]string, 0, len(assignments))
+	for name := range assignments {
+		clusterNames = append(clusterNames, name)
+	}
+	sort.Strings(clusterNames)
+
+	addonNames := make([]string, 0, len(merged))
+	for name := range merged {
+		addonNames = append(addonNames, name)
+	}
+	sort.Strings(addonNames)
+
+	rows := make([]models.VersionMatrixRow, 0, len(addonNames))
+	for _, addonName := range addonNames {
+		addon := merged[addonName]
+		row := models.VersionMatrixRow{
+			AddonName:      addonName,
+			CatalogVersion: addon.Version,
+			Chart:          addon.Chart,
+			Cells:          make(map[string]models.VersionMatrixCell),
+		}
+
+		for _, clusterName := range clusterNames {
+			ca, hasAddon := assignments[clusterName].Addons[addonName]
+			if !hasAddon {
+				continue
+			}
+
+			// "No pin = follow the catalog default" (design doc §2.1) —
+			// the ONLY per-cluster version pin location in the v4 format.
+			version := ca.Version
+			if version == "" {
+				version = addon.Version
+			}
+
+			cell := models.VersionMatrixCell{
+				Version:          version,
+				DriftFromCatalog: version != addon.Version,
+			}
+
+			if !ca.Enabled {
+				cell.Health = "not_enabled"
+			} else {
+				appName := addonName + "-" + clusterName
+				if app, ok := appMap[appName]; ok {
+					cell.Health = app.HealthStatus
+					if cell.Health == "" {
+						cell.Health = "Unknown"
+					}
+				} else {
+					cell.Health = "missing"
+				}
+			}
+
+			row.Cells[clusterName] = cell
+		}
+
+		rows = append(rows, row)
+	}
+
+	return &models.VersionMatrixResponse{
+		Clusters: clusterNames,
+		Addons:   rows,
+	}, nil
+}
+
+// listClusterAssignments lists clusters/*.yaml and parses each into a
+// ClusterAssignmentSpec, keyed by cluster name. An empty (or absent —
+// pre-first-cluster v4 repos have only clusters/.gitkeep) directory
+// returns an empty, non-nil map rather than an error.
+func listClusterAssignments(ctx context.Context, gp gitprovider.GitProvider) (map[string]models.ClusterAssignmentSpec, error) {
+	entries, err := gp.ListDirectory(ctx, "clusters", "main")
+	if err != nil {
+		if isGitFileNotFound(err) {
+			return map[string]models.ClusterAssignmentSpec{}, nil
+		}
+		return nil, err
+	}
+
+	out := make(map[string]models.ClusterAssignmentSpec, len(entries))
+	for _, name := range entries {
+		if !strings.HasSuffix(name, ".yaml") {
+			continue // .gitkeep and any non-YAML entry
+		}
+		data, readErr := gp.GetFileContent(ctx, path.Join("clusters", name), "main")
+		if readErr != nil {
+			return nil, fmt.Errorf("reading clusters/%s: %w", name, readErr)
+		}
+		spec, parseErr := models.LoadClusterAssignment(data)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parsing clusters/%s: %w", name, parseErr)
+		}
+		out[spec.Cluster] = spec
+	}
+	return out, nil
 }
 
 // GetAddonValues returns the global default values YAML for a specific addon.

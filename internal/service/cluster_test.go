@@ -12,6 +12,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // Compile-time assertion that fakeGP satisfies gitprovider.GitProvider in
@@ -48,8 +49,8 @@ func (f *fakeGP) ListDirectory(_ context.Context, _, _ string) ([]string, error)
 func (f *fakeGP) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
 	return nil, nil
 }
-func (f *fakeGP) TestConnection(_ context.Context) error                            { return nil }
-func (f *fakeGP) CreateBranch(_ context.Context, _, _ string) error                 { return nil }
+func (f *fakeGP) TestConnection(_ context.Context) error            { return nil }
+func (f *fakeGP) CreateBranch(_ context.Context, _, _ string) error { return nil }
 func (f *fakeGP) CreateOrUpdateFile(_ context.Context, _ string, _ []byte, _, _ string) error {
 	return nil
 }
@@ -60,9 +61,9 @@ func (f *fakeGP) DeleteFile(_ context.Context, _, _, _ string) error { return ni
 func (f *fakeGP) CreatePullRequest(_ context.Context, _, _, _, _ string) (*gitprovider.PullRequest, error) {
 	return nil, nil
 }
-func (f *fakeGP) MergePullRequest(_ context.Context, _ int) error            { return nil }
+func (f *fakeGP) MergePullRequest(_ context.Context, _ int) error               { return nil }
 func (f *fakeGP) GetPullRequestStatus(_ context.Context, _ int) (string, error) { return "", nil }
-func (f *fakeGP) DeleteBranch(_ context.Context, _ string) error             { return nil }
+func (f *fakeGP) DeleteBranch(_ context.Context, _ string) error                { return nil }
 
 // TestIsGitFileNotFound checks every error shape the helper must accept and,
 // just as importantly, the false-positive shapes it MUST reject. The
@@ -575,5 +576,82 @@ applicationsets:
 	// Verify totalUntracked is 0 (no foreign apps counted).
 	if resp.TotalUntrackedInArgocd != 0 {
 		t.Errorf("TotalUntrackedInArgocd = %d, want 0 (foreign apps not counted)", resp.TotalUntrackedInArgocd)
+	}
+}
+
+// TestClusterService_ListClusters_V4Repo_ReadsFleetConnectionsFallback is
+// the v4 Wave 1 Story 4.4 regression guard: when the v3 path
+// (configuration/managed-clusters.yaml) is genuinely absent, ListClusters
+// must fall back to the v4 path (orchestrator.V4ConnectionsPath,
+// "fleet/connections.yaml" — design doc §2.4, same ManagedClusters shape)
+// so a cluster registered on a v4 repo appears on the dashboard.
+func TestClusterService_ListClusters_V4Repo_ReadsFleetConnectionsFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+	svc := NewClusterService("")
+	gp := &fakeGP{
+		files: map[string][]byte{
+			// v3 configuration/managed-clusters.yaml is intentionally
+			// absent — falls through to fakeGP's default ErrFileNotFound.
+			orchestrator.V4ConnectionsPath: []byte(`apiVersion: sharko.dev/v1
+kind: ManagedClusters
+metadata:
+  name: connections
+spec:
+  clusters:
+    - name: prod-eu
+`),
+		},
+	}
+
+	resp, err := svc.ListClusters(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("ListClusters returned error: %v", err)
+	}
+	if len(resp.Clusters) != 1 || resp.Clusters[0].Name != "prod-eu" {
+		t.Fatalf("expected the v4-registered cluster prod-eu to appear, got %+v", resp.Clusters)
+	}
+	if !resp.Clusters[0].Managed {
+		t.Error("expected the v4-registered cluster to be marked Managed=true")
+	}
+}
+
+// TestClusterService_ListClusters_V3PathPresent_NeverTriesV4Fallback
+// proves the fallback is truly a fallback: when the v3 path resolves, a
+// stray fleet/connections.yaml (e.g. mid-migration) must never leak into
+// the v3 desired state.
+func TestClusterService_ListClusters_V3PathPresent_NeverTriesV4Fallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+	svc := NewClusterService("")
+	gp := &fakeGP{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-cluster\n"),
+			orchestrator.V4ConnectionsPath:        []byte("clusters:\n  - name: v4-cluster-should-be-ignored\n"),
+		},
+	}
+
+	resp, err := svc.ListClusters(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("ListClusters returned error: %v", err)
+	}
+	if len(resp.Clusters) != 1 || resp.Clusters[0].Name != "v3-cluster" {
+		t.Fatalf("expected only v3-cluster, got %+v", resp.Clusters)
 	}
 }

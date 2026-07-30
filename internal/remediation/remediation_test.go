@@ -9,6 +9,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
 )
 
@@ -67,13 +68,13 @@ func liveKedaApp(mergeTime time.Time) models.ArgocdApplication {
 	// startedAt is 10 minutes before the merge — clearly stale.
 	startedAt := mergeTime.Add(-10 * time.Minute)
 	return models.ArgocdApplication{
-		Name:             "keda-moran-test",
-		SyncStatus:       "OutOfSync",
-		HealthStatus:     "Healthy",
-		OperationPhase:   "Running",
-		OperationMessage: "one or more synchronization tasks completed unsuccessfully, reason: CustomResourceDefinition.apiextensions.k8s.io \"scaledjobs.keda.sh\" is invalid: metadata.annotations: Too long: must have at most 262144 bytes",
+		Name:                  "keda-moran-test",
+		SyncStatus:            "OutOfSync",
+		HealthStatus:          "Healthy",
+		OperationPhase:        "Running",
+		OperationMessage:      "one or more synchronization tasks completed unsuccessfully, reason: CustomResourceDefinition.apiextensions.k8s.io \"scaledjobs.keda.sh\" is invalid: metadata.annotations: Too long: must have at most 262144 bytes",
 		HasSyncFailedResource: true,
-		OperationStartedAt: startedAt.UTC().Format(time.RFC3339),
+		OperationStartedAt:    startedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -120,14 +121,14 @@ func TestRemediation_V2cleanup37(t *testing.T) {
 	mergeBase := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 
 	cases := []struct {
-		name              string
-		apps              []models.ArgocdApplication
-		pr                prtracker.PRInfo
-		envDisable        bool
-		skipCooldown      bool // second call within cooldown window
-		wantTerminated    int
-		wantSynced        int
-		wantAuditSuccess  bool
+		name             string
+		apps             []models.ArgocdApplication
+		pr               prtracker.PRInfo
+		envDisable       bool
+		skipCooldown     bool // second call within cooldown window
+		wantTerminated   int
+		wantSynced       int
+		wantAuditSuccess bool
 	}{
 		{
 			// (i) Live keda shape: op Running + SyncFailed task + startedAt before merge → terminate+sync once, audit recorded.
@@ -135,9 +136,9 @@ func TestRemediation_V2cleanup37(t *testing.T) {
 			apps: []models.ArgocdApplication{
 				liveKedaApp(mergeBase),
 			},
-			pr:             makePR("keda", "moran-test", 8),
-			wantTerminated: 1,
-			wantSynced:     1,
+			pr:               makePR("keda", "moran-test", 8),
+			wantTerminated:   1,
+			wantSynced:       1,
 			wantAuditSuccess: true,
 		},
 		{
@@ -145,11 +146,11 @@ func TestRemediation_V2cleanup37(t *testing.T) {
 			name: "op_started_after_merge_no_action",
 			apps: []models.ArgocdApplication{
 				{
-					Name:               "keda-moran-test",
-					OperationPhase:     "Running",
-					OperationMessage:   "one or more synchronization tasks completed unsuccessfully",
+					Name:                  "keda-moran-test",
+					OperationPhase:        "Running",
+					OperationMessage:      "one or more synchronization tasks completed unsuccessfully",
 					HasSyncFailedResource: true,
-					OperationStartedAt: mergeBase.Add(5 * time.Minute).UTC().Format(time.RFC3339),
+					OperationStartedAt:    mergeBase.Add(5 * time.Minute).UTC().Format(time.RFC3339),
 				},
 			},
 			pr:             makePR("keda", "moran-test", 9),
@@ -161,11 +162,11 @@ func TestRemediation_V2cleanup37(t *testing.T) {
 			name: "op_running_not_failing_no_action",
 			apps: []models.ArgocdApplication{
 				{
-					Name:               "keda-moran-test",
-					OperationPhase:     "Running",
-					OperationMessage:   "sync in progress",
+					Name:                  "keda-moran-test",
+					OperationPhase:        "Running",
+					OperationMessage:      "sync in progress",
 					HasSyncFailedResource: false,
-					OperationStartedAt: mergeBase.Add(-10 * time.Minute).UTC().Format(time.RFC3339),
+					OperationStartedAt:    mergeBase.Add(-10 * time.Minute).UTC().Format(time.RFC3339),
 				},
 			},
 			pr:             makePR("keda", "moran-test", 10),
@@ -271,7 +272,7 @@ func TestRemediation_KillSwitch(t *testing.T) {
 		env  string
 		want bool
 	}{
-		{"", true},       // default: on
+		{"", true}, // default: on
 		{"true", true},
 		{"1", true},
 		{"false", false},
@@ -337,9 +338,9 @@ func TestIsFailingAndStale(t *testing.T) {
 	rem := &Remediator{}
 
 	cases := []struct {
-		name      string
-		app       models.ArgocdApplication
-		want      bool
+		name string
+		app  models.ArgocdApplication
+		want bool
 	}{
 		{
 			name: "running_syncfailed_before_merge",
@@ -472,7 +473,7 @@ func TestRemediation_V2cleanup38_OnMergeRefresh(t *testing.T) {
 	bootstrapFound := false
 	addonFound := false
 	for _, name := range fa.refreshed {
-		if name == "cluster-addons-bootstrap" {
+		if name == orchestrator.BootstrapRootAppName {
 			bootstrapFound = true
 		}
 		if name == "keda-moran-test" {
@@ -480,7 +481,7 @@ func TestRemediation_V2cleanup38_OnMergeRefresh(t *testing.T) {
 		}
 	}
 	if !bootstrapFound {
-		t.Errorf("expected cluster-addons-bootstrap to be refreshed; refreshed=%v", fa.refreshed)
+		t.Errorf("expected %s to be refreshed; refreshed=%v", orchestrator.BootstrapRootAppName, fa.refreshed)
 	}
 	if !addonFound {
 		t.Errorf("expected keda-moran-test to be refreshed; refreshed=%v", fa.refreshed)
@@ -508,7 +509,7 @@ func TestRemediation_V2cleanup38_OnMergeRefresh_NoAddon(t *testing.T) {
 	pr := prtracker.PRInfo{PRID: 77, LastPolled: mergeBase} // no Addon/Cluster
 	rem.OnMergeRefresh(context.Background(), pr)
 
-	if len(fa.refreshed) != 1 || fa.refreshed[0] != "cluster-addons-bootstrap" {
+	if len(fa.refreshed) != 1 || fa.refreshed[0] != orchestrator.BootstrapRootAppName {
 		t.Errorf("expected only bootstrap refresh for no-addon PR; refreshed=%v", fa.refreshed)
 	}
 }

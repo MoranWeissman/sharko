@@ -535,6 +535,53 @@ definitions:
       token:
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_models.ClusterAssignmentAddonSettings:
+    properties:
+      createNamespace:
+        description: |-
+          CreateNamespace lets Argo CD create Namespace if it is missing.
+          Pointer so "explicitly false" is distinguishable from "not set"
+          (the engine's default is true).
+        type: boolean
+      ignoreDifferences:
+        description: |-
+          IgnoreDifferences replaces (never merges with) the shipped/delta
+          list, same reasoning as SyncOptions. Modelled as
+          []map[string]interface{} to mirror the existing v3
+          AddonCatalogEntry.IgnoreDifferences shape (group/kind/jsonPointers
+          objects) rather than inventing a new typed struct.
+        items:
+          additionalProperties: true
+          type: object
+        type: array
+      namespace:
+        description: |-
+          Namespace overrides which namespace this addon installs into on
+          this cluster. Falls back to the addon's shipped/delta namespace,
+          then to the addon name.
+        type: string
+      prune:
+        description: |-
+          Prune: when something disappears from git, delete it from the
+          cluster too. Pointer for the same explicit-false reason as
+          CreateNamespace.
+        type: boolean
+      selfHeal:
+        description: |-
+          SelfHeal: Argo CD's own Application-level self-heal (NOT Sharko's
+          label self-heal loop — see design doc §3.2 "two words that both
+          mean self-heal"). Pointer for the same explicit-false reason.
+        type: boolean
+      syncOptions:
+        description: |-
+          SyncOptions replaces (never merges with) the shipped/delta list —
+          design doc §3.3 decision D12: there is no honest way to know
+          whether a per-cluster list was meant to add to or replace the
+          fleet-wide one, so it always replaces.
+        items:
+          type: string
+        type: array
+    type: object
   github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest:
     properties:
       addon_secret_provider:
@@ -939,6 +986,27 @@ definitions:
         description: '"success", "partial", "failed"'
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonV4Request:
+    properties:
+      addon:
+        type: string
+      auto_merge:
+        type: boolean
+      cluster:
+        type: string
+      dry_run:
+        type: boolean
+      remove:
+        description: |-
+          Remove, when true, deletes the addon's entry from clusters/<cluster>.yaml
+          entirely instead of keeping it with enabled=false. Design doc §2.1
+          recommends keeping the entry (a one-word re-enable later); Remove
+          exists for the rare "actually forget this addon on this cluster"
+          case.
+        type: boolean
+      "yes":
+        type: boolean
+    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult:
     properties:
       effective_addons:
@@ -1000,6 +1068,45 @@ definitions:
       status:
         description: '"success", "partial", "failed"'
         type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.EnableAddonV4Request:
+    properties:
+      addon:
+        type: string
+      auto_merge:
+        description: AutoMerge mirrors every other v4/v3 write's per-request override.
+        type: boolean
+      cluster:
+        type: string
+      dry_run:
+        type: boolean
+      settings:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterAssignmentAddonSettings'
+        description: |-
+          Settings, when non-nil, replaces the cluster's per-Application
+          settings block wholesale (design doc §3.3 — list fields replace,
+          never merge). Nil leaves any existing settings block untouched.
+      values:
+        additionalProperties: true
+        description: |-
+          Values is deep-merged onto any EXISTING
+          values/clusters/<cluster>/<addon>.yaml content and written back —
+          never a wholesale replace, so a second enable call that only sets
+          one more key doesn't clobber values a person hand-edited in
+          between. Nil/empty means "don't touch the per-cluster values file
+          at all".
+        type: object
+      version:
+        description: |-
+          Version pins the chart version for THIS cluster only (design doc
+          §2.1). nil means "don't change the pin" — the field is a pointer so
+          enabling an already-enabled addon without mentioning a version
+          never accidentally clears an existing pin. An explicit empty
+          string clears the pin (follow the catalog default again).
+        type: string
+      "yes":
+        type: boolean
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.EnginePinCheckResult:
     properties:
@@ -6566,11 +6673,11 @@ paths:
       - prs
   /repo/status:
     get:
-      description: Checks whether the GitOps repository has been bootstrapped (bootstrap/Chart.yaml
-        exists on the base branch) AND whether the ArgoCD bootstrap Application is
-        Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open
-        the recovery wizard when the cluster-side bootstrap is missing or degraded
-        even though the repo files are present.
+      description: Checks whether the GitOps repository has been bootstrapped (the
+        engine pin at engine/application.yaml exists on the base branch) AND whether
+        the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the
+        UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side
+        bootstrap is missing or degraded even though the repo files are present.
       produces:
       - application/json
       responses:
@@ -7421,6 +7528,123 @@ paths:
       summary: Test personal GitHub token
       tags:
       - auth
+  /v4/clusters/{name}/addons/{addon}:
+    delete:
+      consumes:
+      - application/json
+      description: Disables an addon on a cluster by setting enabled=false in clusters/{name}.yaml
+        (kind ClusterAssignment) — the entry (and its version pin and settings) is
+        KEPT by default so re-enabling is a one-word change; pass remove=true to delete
+        the entry entirely instead. No semantic validation runs (disabling never needs
+        required values or secrets). Requires yes=true for confirmation (or dry_run=true
+        to preview).
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Addon name
+        in: path
+        name: addon
+        required: true
+        type: string
+      - description: Disable addon request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonV4Request'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Addon disabled (or dry-run preview)
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+        "400":
+          description: Bad request or missing confirmation
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Disable addon on cluster (v4 format)
+      tags:
+      - addons
+    post:
+      consumes:
+      - application/json
+      description: 'Enables an addon on a cluster by writing clusters/{name}.yaml
+        (kind ClusterAssignment) and, when values are supplied, values/clusters/{name}/{addon}.yaml
+        — the v4 data-file format (design doc 2026-07-30-v4-data-file-format.md).
+        Runs semantic validation BEFORE any branch or pull request exists: every required
+        value the merged catalog entry declares must be present (in the supplied values
+        or already on disk), and every secret the addon declares must have a Sharko
+        secret definition wired up. A validation failure returns 422 naming exactly
+        what is missing, in plain English — nothing is written, not even a branch.
+        Requires yes=true for confirmation (or dry_run=true to preview, which also
+        runs validation first).'
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Addon name
+        in: path
+        name: addon
+        required: true
+        type: string
+      - description: Enable addon request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.EnableAddonV4Request'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Addon enabled (or dry-run preview)
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+        "400":
+          description: Bad request or missing confirmation
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Semantic validation failed — missing required values or undeclared
+            secrets, listed by name
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Enable addon on cluster (v4 format)
+      tags:
+      - addons
   /webhooks/git:
     post:
       consumes:

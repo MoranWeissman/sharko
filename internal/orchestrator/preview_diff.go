@@ -100,12 +100,20 @@ func (o *Orchestrator) redactValuesContent(path string, content []byte) []byte {
 	}
 
 	// Determine if this is a values file that requires redaction.
-	// Values files live under ClusterValues or GlobalValues directories.
+	// Values files live under ClusterValues or GlobalValues directories
+	// (v3, per-connection-configured) or under the fixed v4 values/
+	// tree (V4GlobalValuesDir / V4ClusterValuesDir — v4 Wave 1 Story 4.3;
+	// unlike the v3 paths these are NOT server-configurable, so they must
+	// be checked unconditionally, not gated on a RepoPathsConfig field
+	// being set).
 	isValuesFile := false
 	if o.paths.ClusterValues != "" && isUnderDirectory(path, o.paths.ClusterValues) {
 		isValuesFile = true
 	}
 	if o.paths.GlobalValues != "" && isUnderDirectory(path, o.paths.GlobalValues) {
+		isValuesFile = true
+	}
+	if isUnderDirectory(path, V4GlobalValuesDir) || isUnderDirectory(path, V4ClusterValuesDir) {
 		isValuesFile = true
 	}
 
