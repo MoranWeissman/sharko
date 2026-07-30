@@ -470,7 +470,7 @@ func (s *UpgradeService) checkClusterConflictsV4(ctx context.Context, addonName,
 	log := logging.LoggerFromContext(ctx)
 	var out []models.ConflictCheckEntry
 
-	clusterAddons, err := listClusterAddonsSpecs(ctx, gp)
+	clusterAddons, err := listClusterAddonsSpecs(ctx, gp, "main")
 	if err != nil {
 		log.Warn("could not list clusters/*.yaml", "error", err)
 		return out
