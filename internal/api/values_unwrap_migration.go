@@ -83,6 +83,7 @@ type unwrapGlobalsResponse struct {
 // @Success 200 {object} api.unwrapGlobalsResponse "Migration result"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 502 {object} map[string]interface{} "Git or ArgoCD failure"
+// @Failure 409 {object} map[string]interface{} "This migration walks the v3 values tree; the connected repo uses the v4 layout"
 // @Router /addons/unwrap-globals [post]
 func (s *Server) handleUnwrapGlobalValues(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
@@ -101,6 +102,13 @@ func (s *Server) handleUnwrapGlobalValues(w http.ResponseWriter, r *http.Request
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		return
+	}
+
+	// This migration walks and rewrites the v3 global values tree. On a v4
+	// repo that tree does not exist, so the only thing it could do is
+	// report a confident "migrated: 0" for a layout it never looked at.
+	if s.refuseV3ValuesSurfaceOnV4Repo(ctx, w, git) {
 		return
 	}
 

@@ -31,6 +31,37 @@ const (
 	LabelDisabled = "disabled"
 )
 
+// V4AddonLabelPrefix is the label-key namespace the v4 engine's
+// ApplicationSet selector matches on:
+//
+//	addons.sharko.dev/<addon>: enabled
+//
+// (charts/sharko-engine/templates/appset.yaml, generator arm 1 — "which
+// clusters run this addon"). It is the v4 counterpart of v3's BARE
+// `<addon>: enabled` key. The two vocabularies deliberately differ: a v3
+// repo's cluster Secret carries unqualified keys, a v4 repo's carries
+// qualified ones, so a repo mid-migration can never have Sharko mistake one
+// format's labels for the other's.
+//
+// The VALUE vocabulary is unchanged — LabelEnabled / LabelDisabled, and
+// only the literal "enabled" counts as on, exactly as in v3.
+const V4AddonLabelPrefix = "addons.sharko.dev/"
+
+// V4AddonLabelKey returns the v4 cluster-Secret label key for an addon.
+func V4AddonLabelKey(addon string) string {
+	return V4AddonLabelPrefix + addon
+}
+
+// IsV4AddonLabelKey reports whether a cluster-Secret label key is one of
+// Sharko's v4 addon-enablement keys. Used by the reconciler and by
+// argosecrets to decide which "/"-qualified keys Sharko owns (and may
+// therefore add, update, and delete) versus which are foreign and must be
+// preserved verbatim. The bare prefix with nothing after it is NOT an addon
+// key — there is no addon named "".
+func IsV4AddonLabelKey(key string) bool {
+	return len(key) > len(V4AddonLabelPrefix) && strings.HasPrefix(key, V4AddonLabelPrefix)
+}
+
 // AddonLabelValue maps the API/request bool to the canonical label string
 // written to managed-clusters.yaml and the ArgoCD cluster Secret.
 func AddonLabelValue(enabled bool) string {

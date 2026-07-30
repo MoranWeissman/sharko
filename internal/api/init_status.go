@@ -49,9 +49,13 @@ const (
 // "forbidden". Detail carries a human-readable explanation — empty for the
 // clean "empty"/"initialized" cases, and ArgoCD's diagnostic string for
 // "partial"/"unreachable"/"forbidden".
+// Format (additive) names the repo layout the probe recognised — "v4" when
+// the engine pin is present, "v3" when it is not but a v3 marker is, empty
+// when the repo really is un-bootstrapped.
 type InitStatusResponse struct {
 	State  string `json:"state"`
 	Detail string `json:"detail"`
+	Format string `json:"format,omitempty"`
 }
 
 // probeRepoState is the single source of truth for classifying the GitOps
@@ -83,15 +87,35 @@ type InitStatusResponse struct {
 // NOT "partial". Re-running Initialize cannot fix a connection problem, so the
 // wizard must treat it differently (Story 2). A genuinely degraded bootstrap
 // (OutOfSync/Degraded) and an absent app stay "partial".
+//
+// Note (v4 review R1, H3): "no engine pin" is NOT the same as "empty". A v3
+// repo has no engine pin either, so an engine-pin-only probe reports a
+// live, fully-populated v3 repo as "empty" and the wizard then offers
+// Initialize — which would write the v4 folder tree on top of it. When the
+// pin is absent but a v3 marker is present (orchestrator.HasV3Markers) the
+// probe classifies the repo exactly as it would a v4 one, and reports
+// format "v3" so the caller knows which layout it is looking at.
 func probeRepoState(
 	ctx context.Context,
 	gp gitprovider.GitProvider,
 	ac orchestrator.ArgocdClient,
 	baseBranch string,
-) (state, detail string) {
+) (state, detail, format string) {
 	if _, err := gp.GetFileContent(ctx, orchestrator.BootstrapRootAppPath, baseBranch); err != nil {
-		return RepoStateEmpty, ""
+		if orchestrator.HasV3Markers(ctx, gp, baseBranch) {
+			s, d := classifyBootstrapApp(ctx, ac)
+			return s, d, orchestrator.RepoFormatV3
+		}
+		return RepoStateEmpty, "", ""
 	}
+	s, d := classifyBootstrapApp(ctx, ac)
+	return s, d, orchestrator.RepoFormatV4
+}
+
+// classifyBootstrapApp maps the ArgoCD bootstrap-app probe onto the
+// RepoState* vocabulary. Shared by the v3 and v4 arms of probeRepoState so
+// both formats get the identical classification.
+func classifyBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (state, detail string) {
 	status, argoDetail := ProbeBootstrapApp(ctx, ac)
 	switch status {
 	case bootstrapHealthy:
@@ -150,6 +174,6 @@ func (s *Server) handleInitStatus(w http.ResponseWriter, r *http.Request) {
 		baseBranch = "main"
 	}
 
-	state, detail := probeRepoState(r.Context(), gp, ac, baseBranch)
-	writeJSON(w, http.StatusOK, InitStatusResponse{State: state, Detail: detail})
+	state, detail, format := probeRepoState(r.Context(), gp, ac, baseBranch)
+	writeJSON(w, http.StatusOK, InitStatusResponse{State: state, Detail: detail, Format: format})
 }

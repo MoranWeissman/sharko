@@ -336,6 +336,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "This migration walks the v3 values tree; the connected repo uses the v4 layout",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Git or ArgoCD failure",
                         "schema": {
@@ -913,6 +920,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "This editor writes a v3-layout values path; the connected repo uses the v4 layout",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Git or ArgoCD failure",
                         "schema": {
@@ -957,6 +971,13 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "This editor reads a v3-layout values path; the connected repo uses the v4 layout",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1030,6 +1051,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "This endpoint edits a v3-layout values file; the connected repo uses the v4 layout",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Git error",
                         "schema": {
@@ -1080,6 +1108,13 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Addon not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Addon is opted out of AI annotation, or the connected repo uses the v4 layout this editor does not support yet",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1156,6 +1191,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "This preview reads a v3-layout values path; the connected repo uses the v4 layout",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Git or Helm-repo failure",
                         "schema": {
@@ -1201,6 +1243,13 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_api.recentPRsResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "This panel reads a v3-layout values path; the connected repo uses the v4 layout",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -2995,6 +3044,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "Adoption still writes the v3 cluster registry and is not supported on a v4 repo yet",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Gateway error",
                         "schema": {
@@ -3167,6 +3223,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "This editor reads a v3-layout values path; the connected repo uses the v4 layout",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Git failure",
                         "schema": {
@@ -3240,6 +3303,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "This editor writes a v3-layout values path; the connected repo uses the v4 layout",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Git or ArgoCD failure",
                         "schema": {
@@ -3292,6 +3362,13 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_api.recentPRsResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "This panel reads a v3-layout values path; the connected repo uses the v4 layout",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -3421,6 +3498,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "Removal still writes the v3 cluster registry and is not supported on a v4 repo yet",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Gateway error",
                         "schema": {
@@ -3497,6 +3581,13 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Cluster not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "This endpoint writes v3 addon labels; on a v4 repo use POST or DELETE /v4/clusters/{name}/addons/{addon}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -9574,6 +9665,9 @@ const docTemplate = `{
                 "detail": {
                     "type": "string"
                 },
+                "format": {
+                    "type": "string"
+                },
                 "state": {
                     "type": "string"
                 }
@@ -9694,6 +9788,9 @@ const docTemplate = `{
             "properties": {
                 "bootstrap_synced": {
                     "type": "boolean"
+                },
+                "format": {
+                    "type": "string"
                 },
                 "initialized": {
                     "type": "boolean"

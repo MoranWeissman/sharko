@@ -21,7 +21,11 @@ import (
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
-var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
+// validClusterNameRe compiles the ONE shared name pattern
+// (models.ResourceNamePattern) rather than re-declaring the literal, so the
+// v3 register/batch edge, the v4 addon-ops edge, the orchestrator's path
+// builders, and the generated JSON Schema can never drift apart.
+var validClusterNameRe = regexp.MustCompile(models.ResourceNamePattern)
 
 // handleRegisterCluster godoc
 //
@@ -290,6 +294,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Failure 409 {object} map[string]interface{} "Removal still writes the v3 cluster registry and is not supported on a v4 repo yet"
 // @Router /clusters/{name} [delete]
 // handleDeregisterCluster handles DELETE /api/v1/clusters/{name} — remove a cluster.
 func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request) {
@@ -338,6 +343,10 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 
 	result, orchErr := orch.RemoveCluster(ctx, req)
 	if orchErr != nil {
+		if orchestrator.IsV4RepoUnsupported(orchErr) {
+			writeError(w, http.StatusConflict, orchErr.Error())
+			return
+		}
 		// Check for confirmation error.
 		if orchErr.Error() == "confirmation required: set yes: true in request body" {
 			writeError(w, http.StatusBadRequest, orchErr.Error())
@@ -387,6 +396,7 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 // @Failure 404 {object} map[string]interface{} "Cluster not found"
 // @Failure 422 {object} map[string]interface{} "Addon not in catalog"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Failure 409 {object} map[string]interface{} "This endpoint writes v3 addon labels; on a v4 repo use POST or DELETE /v4/clusters/{name}/addons/{addon}"
 // @Router /clusters/{name} [patch]
 // handleUpdateClusterAddons handles PATCH /api/v1/clusters/{name} — update addon labels.
 func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Request) {
@@ -519,6 +529,10 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	// commitChangesWithMeta via PRMetadata.AutoMergeOverride.
 	result, err := orch.UpdateClusterAddons(ctx, name, serverURL, "", req.Addons, req.AutoMerge, req.DryRun)
 	if err != nil {
+		if orchestrator.IsV4RepoUnsupported(err) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		if orchestrator.IsAddonNotInCatalog(err) {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
 			return

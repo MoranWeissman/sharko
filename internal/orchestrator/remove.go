@@ -57,6 +57,13 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 	if req.Name == "" {
 		return nil, fmt.Errorf("cluster name is required")
 	}
+	// Removal still edits the v3 registry (managed-clusters.yaml) and would
+	// leave a v4 repo's fleet/connections.yaml entry in place while adding
+	// a rival v3 file — see ErrV4RepoUnsupported. Refuse before any read,
+	// any Secret deletion, and any branch.
+	if err := o.refuseOnV4Repo(ctx, "removing a cluster"); err != nil {
+		return nil, err
+	}
 
 	// Normalize cleanup scope.
 	cleanup := req.Cleanup

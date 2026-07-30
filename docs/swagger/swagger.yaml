@@ -1443,6 +1443,8 @@ definitions:
     properties:
       detail:
         type: string
+      format:
+        type: string
       state:
         type: string
     type: object
@@ -1522,6 +1524,8 @@ definitions:
     properties:
       bootstrap_synced:
         type: boolean
+      format:
+        type: string
       initialized:
         type: boolean
       reason:
@@ -2725,6 +2729,12 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "409":
+          description: This editor writes a v3-layout values path; the connected repo
+            uses the v4 layout
+          schema:
+            additionalProperties: true
+            type: object
         "502":
           description: Git or ArgoCD failure
           schema:
@@ -2757,6 +2767,12 @@ paths:
             type: object
         "400":
           description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: This editor reads a v3-layout values path; the connected repo
+            uses the v4 layout
           schema:
             additionalProperties: true
             type: object
@@ -2808,6 +2824,12 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "409":
+          description: This endpoint edits a v3-layout values file; the connected
+            repo uses the v4 layout
+          schema:
+            additionalProperties: true
+            type: object
         "502":
           description: Git error
           schema:
@@ -2846,6 +2868,12 @@ paths:
             type: object
         "404":
           description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Addon is opted out of AI annotation, or the connected repo
+            uses the v4 layout this editor does not support yet
           schema:
             additionalProperties: true
             type: object
@@ -2900,6 +2928,12 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "409":
+          description: This preview reads a v3-layout values path; the connected repo
+            uses the v4 layout
+          schema:
+            additionalProperties: true
+            type: object
         "502":
           description: Git or Helm-repo failure
           schema:
@@ -2931,6 +2965,12 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/internal_api.recentPRsResponse'
+        "409":
+          description: This panel reads a v3-layout values path; the connected repo
+            uses the v4 layout
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Recent PRs that touched an addon's global values
@@ -3011,6 +3051,12 @@ paths:
             $ref: '#/definitions/internal_api.unwrapGlobalsResponse'
         "401":
           description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: This migration walks the v3 values tree; the connected repo
+            uses the v4 layout
           schema:
             additionalProperties: true
             type: object
@@ -4378,6 +4424,12 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "409":
+          description: This editor reads a v3-layout values path; the connected repo
+            uses the v4 layout
+          schema:
+            additionalProperties: true
+            type: object
         "502":
           description: Git failure
           schema:
@@ -4430,6 +4482,12 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "409":
+          description: This editor writes a v3-layout values path; the connected repo
+            uses the v4 layout
+          schema:
+            additionalProperties: true
+            type: object
         "502":
           description: Git or ArgoCD failure
           schema:
@@ -4466,6 +4524,12 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/internal_api.recentPRsResponse'
+        "409":
+          description: This panel reads a v3-layout values path; the connected repo
+            uses the v4 layout
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Recent PRs that touched per-cluster addon overrides
@@ -4515,6 +4579,12 @@ paths:
             type: object
         "403":
           description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Removal still writes the v3 cluster registry and is not supported
+            on a v4 repo yet
           schema:
             additionalProperties: true
             type: object
@@ -4607,6 +4677,12 @@ paths:
             type: object
         "404":
           description: Cluster not found
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: This endpoint writes v3 addon labels; on a v4 repo use POST
+            or DELETE /v4/clusters/{name}/addons/{addon}
           schema:
             additionalProperties: true
             type: object
@@ -5433,6 +5509,12 @@ paths:
             type: object
         "403":
           description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Adoption still writes the v3 cluster registry and is not supported
+            on a v4 repo yet
           schema:
             additionalProperties: true
             type: object

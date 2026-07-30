@@ -19,6 +19,11 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 	if name == "" {
 		return nil, fmt.Errorf("cluster name is required")
 	}
+	// Unadopt still writes the v3 registry (managed-clusters.yaml) — see
+	// ErrV4RepoUnsupported for why that is destructive on a v4 repo.
+	if err := o.refuseOnV4Repo(ctx, "un-adopting a cluster"); err != nil {
+		return nil, err
+	}
 
 	result := &UnadoptClusterResult{Name: name}
 

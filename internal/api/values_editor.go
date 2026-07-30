@@ -101,6 +101,7 @@ type setClusterAddonValuesRequest struct {
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "Addon not found"
 // @Failure 502 {object} map[string]interface{} "Git or ArgoCD failure"
+// @Failure 409 {object} map[string]interface{} "This editor writes a v3-layout values path; the connected repo uses the v4 layout"
 // @Router /addons/{name}/values [put]
 func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
@@ -126,6 +127,14 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid YAML: "+err.Error())
 			return
 		}
+	}
+
+	// v4 repos keep addon values under values/global/, which this handler
+	// knows nothing about — refuse before the upstream calls and long
+	// before any branch or commit, rather than writing a v3 path nothing
+	// will ever read.
+	if s.refuseV3ValuesSurfaceOnActiveRepo(r.Context(), w) {
+		return
 	}
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
@@ -274,6 +283,7 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]interface{} "Invalid YAML or missing field"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 502 {object} map[string]interface{} "Git or ArgoCD failure"
+// @Failure 409 {object} map[string]interface{} "This editor writes a v3-layout values path; the connected repo uses the v4 layout"
 // @Router /clusters/{cluster}/addons/{name}/values [put]
 func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
@@ -301,6 +311,13 @@ func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusBadRequest, "invalid YAML: "+err.Error())
 			return
 		}
+	}
+
+	// v4 repos keep per-cluster overrides at
+	// values/clusters/<cluster>/<addon>.yaml, not in the combined v3
+	// per-cluster file this path writes. Refuse before any branch.
+	if s.refuseV3ValuesSurfaceOnActiveRepo(r.Context(), w) {
+		return
 	}
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
@@ -355,6 +372,7 @@ func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 // @Success 200 {object} map[string]interface{} "Current values + optional schema"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 502 {object} map[string]interface{} "Git failure"
+// @Failure 409 {object} map[string]interface{} "This editor reads a v3-layout values path; the connected repo uses the v4 layout"
 // @Router /addons/{name}/values-schema [get]
 func (s *Server) handleGetAddonValuesSchema(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.list") {
@@ -370,6 +388,14 @@ func (s *Server) handleGetAddonValuesSchema(w http.ResponseWriter, r *http.Reque
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+
+	// A v4 repo has nothing at configuration/addons-global-values/, so this
+	// would open a blank editor that reads as "this addon has no values" —
+	// and any save from it would write a file the engine never loads. Say
+	// so instead.
+	if s.refuseV3ValuesSurfaceOnV4Repo(r.Context(), w, gp) {
 		return
 	}
 
@@ -434,6 +460,7 @@ func (s *Server) handleGetAddonValuesSchema(w http.ResponseWriter, r *http.Reque
 // @Success 200 {object} map[string]interface{} "Current overrides + optional schema"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 502 {object} map[string]interface{} "Git failure"
+// @Failure 409 {object} map[string]interface{} "This editor reads a v3-layout values path; the connected repo uses the v4 layout"
 // @Router /clusters/{cluster}/addons/{name}/values [get]
 func (s *Server) handleGetClusterAddonValues(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.detail") {
@@ -454,6 +481,13 @@ func (s *Server) handleGetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+
+	// Same reasoning as the global values editor: on a v4 repo the
+	// per-cluster overrides live at values/clusters/<cluster>/<addon>.yaml
+	// and this reader would report an empty override set.
+	if s.refuseV3ValuesSurfaceOnV4Repo(r.Context(), w, gp) {
 		return
 	}
 

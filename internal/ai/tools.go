@@ -559,6 +559,12 @@ func (e *ToolExecutor) listAddons(ctx context.Context) (string, error) {
 }
 
 func (e *ToolExecutor) getAddonValues(ctx context.Context, addonName string) (string, error) {
+	// A v4 repo keeps addon values under values/global/. Reading the v3
+	// path there would return "no values file found" for an addon that has
+	// values — a confident wrong answer. Say what is actually true instead.
+	if e.isV4Repo(ctx) {
+		return v4ValuesUnsupportedMessage, nil
+	}
 	data, err := e.gp.GetFileContent(ctx, fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName), "main")
 	if err != nil {
 		return fmt.Sprintf("No global values file found for %s", addonName), nil
@@ -572,6 +578,11 @@ func (e *ToolExecutor) getAddonValues(ctx context.Context, addonName string) (st
 }
 
 func (e *ToolExecutor) getClusterValues(ctx context.Context, clusterName string) (string, error) {
+	// Same reasoning as getAddonValues — v4 per-cluster overrides live at
+	// values/clusters/<cluster>/<addon>.yaml.
+	if e.isV4Repo(ctx) {
+		return v4ValuesUnsupportedMessage, nil
+	}
 	data, err := e.gp.GetFileContent(ctx, fmt.Sprintf("configuration/addons-clusters-values/%s.yaml", clusterName), "main")
 	if err != nil {
 		return fmt.Sprintf("No values file found for cluster %s", clusterName), nil
@@ -949,6 +960,11 @@ func (e *ToolExecutor) getAddonConfigOnCluster(ctx context.Context, addonName, c
 	}
 	if clusterName == "" {
 		return "Please specify a cluster name.", nil
+	}
+
+	// Both layers this tool reads are v3-only paths.
+	if e.isV4Repo(ctx) {
+		return v4ValuesUnsupportedMessage, nil
 	}
 
 	var sb strings.Builder

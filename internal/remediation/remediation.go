@@ -262,20 +262,35 @@ func (l *LazyArgoClient) RefreshApplication(ctx context.Context, appName string,
 // optimisation, not a correctness requirement. No kill-switch; refresh is
 // cheap and merge-driven.
 func (r *Remediator) OnMergeRefresh(ctx context.Context, pr prtracker.PRInfo) {
-	// Always refresh the bootstrap application.
-	bootstrapAppName := orchestrator.BootstrapRootAppName
-	if _, err := r.deps.ArgoClient.RefreshApplication(ctx, bootstrapAppName, false); err != nil {
+	// Always refresh the bootstrap application. Try the current name first,
+	// then the v3 one: a cluster bootstrapped before the v4 rename runs an
+	// Application called "cluster-addons-bootstrap", and refreshing only
+	// the new name would leave that cluster waiting out ArgoCD's ~3-minute
+	// git poll after every merge — the exact delay this function exists to
+	// remove. The first name that refreshes wins; we do not refresh both,
+	// because a repo only ever has one bootstrap app.
+	var refreshedName string
+	var lastErr error
+	for _, name := range orchestrator.BootstrapAppNames() {
+		if _, err := r.deps.ArgoClient.RefreshApplication(ctx, name, false); err != nil {
+			lastErr = err
+			continue
+		}
+		refreshedName = name
+		break
+	}
+	if refreshedName == "" {
 		slog.Warn("remediation: failed to refresh bootstrap app after PR merge",
-			"app", bootstrapAppName, "pr_id", pr.PRID, "error", err)
+			"app", orchestrator.BootstrapRootAppName, "pr_id", pr.PRID, "error", lastErr)
 	} else {
 		slog.Info("remediation: refreshed ArgoCD after PR merge",
-			"app", bootstrapAppName, "pr_id", pr.PRID)
+			"app", refreshedName, "pr_id", pr.PRID)
 		r.deps.AuditFn(audit.Entry{
 			Level:    "info",
 			Event:    "argocd_refreshed_after_merge",
 			User:     "sharko",
 			Action:   "refresh_application",
-			Resource: "app:" + bootstrapAppName,
+			Resource: "app:" + refreshedName,
 			Source:   "remediation",
 			Result:   "success",
 			Detail:   fmt.Sprintf("refreshed ArgoCD after PR #%d merged", pr.PRID),

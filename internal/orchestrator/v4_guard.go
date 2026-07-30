@@ -1,0 +1,45 @@
+package orchestrator
+
+import (
+	"context"
+	"errors"
+	"fmt"
+)
+
+// ErrV4RepoUnsupported marks an operation that still writes the v3 cluster
+// registry (configuration/managed-clusters.yaml) and therefore must not run
+// against a repo in the v4 data-file format.
+//
+// Why a refusal rather than a best-effort write: on a v4 repo the cluster
+// registry lives at fleet/connections.yaml (design doc §2.4). An operation
+// that writes managed-clusters.yaml there creates a SECOND registry file,
+// and the reconciler prefers the v3 file whenever both exist — so every
+// cluster registered the v4 way instantly disappears from the desired
+// state, becomes an orphan, and has its ArgoCD cluster Secret deleted.
+// Losing the fleet's Secrets is not a recoverable "oops"; refusing the
+// operation is.
+//
+// The v4 implementations of these operations are Wave 2 takeover scope.
+// Callers map this to HTTP 409 — the request is well-formed, the repo is
+// simply in a state this operation does not handle yet.
+var ErrV4RepoUnsupported = errors.New("operation not supported on a v4 repo")
+
+// IsV4RepoUnsupported reports whether err is a v4-repo refusal. The API
+// layer uses it to answer 409 instead of the default 502.
+func IsV4RepoUnsupported(err error) bool {
+	return errors.Is(err, ErrV4RepoUnsupported)
+}
+
+// refuseOnV4Repo returns a plain-English ErrV4RepoUnsupported when the
+// connected repo is v4-format, and nil otherwise.
+//
+// operation is the thing the person asked for, phrased so it reads as a
+// sentence: "adopting a cluster", "removing a cluster". Call this BEFORE
+// any git read-modify-write, branch creation, or ArgoCD mutation — the
+// whole point is that nothing happens.
+func (o *Orchestrator) refuseOnV4Repo(ctx context.Context, operation string) error {
+	if !o.isV4Repo(ctx) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s is not yet supported on a v4 repo — coming with the takeover work", ErrV4RepoUnsupported, operation)
+}

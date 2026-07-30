@@ -30,6 +30,16 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 		return nil, fmt.Errorf("repo already initialized: %s exists", BootstrapRootAppPath)
 	}
 
+	// Step 1b — a v3 repo has no engine pin, so the check above passes and
+	// this seed would drop the whole v4 folder tree on top of a live v3
+	// repo. Refuse: the v3 -> v4 migration is its own operation (Wave 2's
+	// takeover work), never a side effect of re-running Initialize.
+	if o.hasV3Markers(ctx) {
+		return nil, fmt.Errorf(
+			"this repo is already set up in the older (v3) layout — %s or %s is present. Initializing would write the new layout on top of it. Moving a v3 repo across is its own operation, coming with the takeover work",
+			V3BootstrapMarkerPath, V3SecondaryMarkerPath)
+	}
+
 	// Step 2 — Build the v4 seed: empty data folders + the engine pin +
 	// README. Nothing else — no Helm chart, no catalog seed, no per-addon
 	// values stubs (design doc §1, "What the bootstrap PR actually

@@ -60,6 +60,30 @@ func TestRedactValuesContent(t *testing.T) {
 			expectChange: true,
 			mustNotFind:  []string{"valid: yaml"},
 		},
+		// The v4 values tree is FIXED by the format (V4GlobalValuesDir /
+		// V4ClusterValuesDir) and is not reachable through RepoPathsConfig
+		// at all — note both configured paths below are the v3 ones. A
+		// preview of a v4 values write must still redact, otherwise moving
+		// the values files to their new home would quietly turn the
+		// exact-files diff into a secret leak.
+		{
+			name:         "v4 global values file redacted despite v3-only configured paths",
+			path:         V4GlobalValuesDir + "/cert-manager.yaml",
+			content:      []byte("database:\n  password: supersecret\n  host: db.example.com"),
+			clusterPath:  "configuration/addons-clusters-values",
+			globalPath:   "configuration/addons-global-values",
+			expectChange: true,
+			mustNotFind:  []string{"supersecret"},
+		},
+		{
+			name:         "v4 per-cluster values file redacted despite v3-only configured paths",
+			path:         V4ClusterValuesDir + "/prod-eu/cert-manager.yaml",
+			content:      []byte("password: hunter2\ntoken: abc123\napi:\n  key: secret456"),
+			clusterPath:  "configuration/addons-clusters-values",
+			globalPath:   "configuration/addons-global-values",
+			expectChange: true,
+			mustNotFind:  []string{"hunter2", "abc123", "secret456"},
+		},
 	}
 
 	for _, tt := range tests {

@@ -46,8 +46,14 @@ type AddInternalAddonRequest struct {
 // catalog view (catalog.MergeDelta, Origin=OriginInternal) the moment the
 // PR merges.
 func (o *Orchestrator) AddInternalAddon(ctx context.Context, req AddInternalAddonRequest) (*GitResult, error) {
-	if req.Name == "" {
-		return nil, fmt.Errorf("addon name is required")
+	// Same name gate the v4 enable/disable paths use. An internal addon's
+	// name is not a path segment HERE (it is a map key in
+	// catalog/addons.yaml), but it becomes one the moment somebody enables
+	// the addon on a cluster (values/global/<addon>.yaml), and it becomes a
+	// Kubernetes label key on the cluster Secret. Rejecting it at the point
+	// it enters the repo is the only place that covers both.
+	if err := checkV4PathSegment("addon", req.Name); err != nil {
+		return nil, err
 	}
 	if req.RepoURL == "" {
 		return nil, fmt.Errorf("addon repo_url is required")

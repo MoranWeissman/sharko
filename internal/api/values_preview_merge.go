@@ -95,6 +95,7 @@ type previewMergeSummary struct {
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 404 {object} map[string]interface{} "Addon not found"
 // @Failure 502 {object} map[string]interface{} "Git or Helm-repo failure"
+// @Failure 409 {object} map[string]interface{} "This preview reads a v3-layout values path; the connected repo uses the v4 layout"
 // @Router /addons/{name}/values/preview-merge [post]
 func (s *Server) handlePreviewMergeAddonValues(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.list") {
@@ -112,6 +113,14 @@ func (s *Server) handlePreviewMergeAddonValues(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	// The preview merges against the v3 global values file. On a v4 repo
+	// that file is absent, so the "before" side would be empty and the
+	// preview would promise a full upstream import that no v4 write path
+	// could ever apply.
+	if s.refuseV3ValuesSurfaceOnV4Repo(r.Context(), w, gp) {
+		return
+	}
+
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())

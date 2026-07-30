@@ -71,6 +71,14 @@ HOW IT WORKS:
    - configuration/addons-global-values/<addon>.yaml — default Helm values for each addon
    - configuration/addons-clusters-values/<cluster>.yaml — per-cluster value overrides
 
+   NOTE — repos in the newer (v4) layout use different files: clusters/<cluster>.yaml for which
+   addons run where, catalog/addons.yaml for the user's own addon entries, values/global/<addon>.yaml
+   and values/clusters/<cluster>/<addon>.yaml for Helm values, and fleet/connections.yaml for the
+   cluster registry. The values tools above only understand the older layout and will tell you so
+   when the connected repo is a v4 one. When that happens, say plainly that reading and editing
+   values on a v4 repo is not wired up yet and that the person should open the values/ files
+   directly — never guess at the contents, and never claim an addon has no values.
+
 2. ArgoCD ApplicationSets watch the Git repo and automatically:
    - Detect clusters with "addon-name: enabled" labels
    - Create an ArgoCD Application for each addon-cluster combination

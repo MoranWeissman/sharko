@@ -182,7 +182,14 @@ func (s *Server) runInitOperation(
 	// The classify-by-state decision is shared with the read-only
 	// GET /api/v1/init/status probe via probeRepoState, so the two paths
 	// can never disagree about what "already initialized" means.
-	switch state, detail := probeRepoState(ctx, gp, ac, gitopsCfg.BaseBranch); state {
+	//
+	// The probe now recognises a v3 repo (no engine pin, but v3 markers
+	// present) as initialized too, so the async runner takes the same
+	// "already set up, do not re-bootstrap" branch a v4 repo does — rather
+	// than falling through and seeding the v4 folder tree over a live v3
+	// repo. InitRepo refuses that case as well; this is the earlier, nicer
+	// stop.
+	switch state, detail, _ := probeRepoState(ctx, gp, ac, gitopsCfg.BaseBranch); state {
 	case RepoStateInitialized:
 		// Advance every step as already-completed so the wizard's
 		// step-list UI shows a clean checkmarked sequence. We know the
@@ -500,10 +507,21 @@ func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (statu
 		return bootstrapUnhealthy, fmt.Sprintf("listing argocd applications failed: %v", err)
 	}
 
+	// Look for the current bootstrap app name first, then the v3 one. A
+	// cluster bootstrapped before the v4 rename still runs an Application
+	// called "cluster-addons-bootstrap"; matching only the new name would
+	// report that healthy v3 cluster as "bootstrap missing" and send the
+	// user into the repair wizard for nothing.
 	var found *models.ArgocdApplication
-	for i := range apps {
-		if apps[i].Name == orchestrator.BootstrapRootAppName {
-			found = &apps[i]
+	var foundName string
+	for _, want := range orchestrator.BootstrapAppNames() {
+		for i := range apps {
+			if apps[i].Name == want {
+				found, foundName = &apps[i], want
+				break
+			}
+		}
+		if found != nil {
 			break
 		}
 	}
@@ -518,7 +536,7 @@ func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (statu
 		// Build the base detail with sync and health status (V2-cleanup-51.1
 		// test asserts sync= and health= are present; do not reorder them).
 		detail := fmt.Sprintf("argocd app %q sync=%s health=%s",
-			orchestrator.BootstrapRootAppName, found.SyncStatus, found.HealthStatus)
+			foundName, found.SyncStatus, found.HealthStatus)
 		// Append repo URL when available so the bell alert "ArgoCD can't sync
 		// the repo" names WHICH repo is failing (V2-cleanup-52). Empty URL
 		// produces no trailing artifact.

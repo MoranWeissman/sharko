@@ -27,6 +27,7 @@ import (
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Failure 409 {object} map[string]interface{} "Adoption still writes the v3 cluster registry and is not supported on a v4 repo yet"
 // @Router /clusters/adopt [post]
 func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.adopt") {
@@ -72,6 +73,12 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 
 	result, err := orch.AdoptClusters(r.Context(), req)
 	if err != nil {
+		// A v4 repo is a well-formed request against a repo state this
+		// operation does not handle yet — 409, not an upstream failure.
+		if orchestrator.IsV4RepoUnsupported(err) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -185,6 +192,10 @@ func (s *Server) handleUnadoptCluster(w http.ResponseWriter, r *http.Request) {
 
 	result, err := orch.UnadoptCluster(r.Context(), name, req)
 	if err != nil {
+		if orchestrator.IsV4RepoUnsupported(err) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		// Check if this is a "not adopted" error.
 		if contains(err.Error(), "was not adopted") {
 			writeError(w, http.StatusConflict, err.Error())

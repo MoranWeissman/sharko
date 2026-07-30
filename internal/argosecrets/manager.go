@@ -787,7 +787,28 @@ func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels m
 	// Sharko-managed past either.
 	stripCheckLabel := models.HasConnectivityCheckLabel(existing.Labels)
 
-	if !stripManagedBy && !stripCheckLabel && desiredLabelsSubset(existing.Labels, desired) {
+	// Stale v4 addon keys (models.V4AddonLabelPrefix) that git no longer
+	// declares must be DELETED, not merely left alone. v3 records an
+	// addon's off state as an explicit `<addon>: disabled` value, so a
+	// merge converges on its own; v4 records "off" as the ABSENCE of the
+	// key (the assignment file's enabled:false simply stops producing it),
+	// so a merge alone would leave a stale `addons.sharko.dev/x: enabled`
+	// behind forever and the addon would never stop deploying. The guest
+	// stance is intact: this only ever touches keys inside Sharko's own
+	// addons.sharko.dev/ namespace — every foreign label, the credential
+	// material, and every annotation are still untouched. A v3 repo's
+	// Secret carries no such key, so this is inert there.
+	staleV4 := make([]string, 0)
+	for k := range existing.Labels {
+		if !models.IsV4AddonLabelKey(k) {
+			continue
+		}
+		if _, want := desired[k]; !want {
+			staleV4 = append(staleV4, k)
+		}
+	}
+
+	if !stripManagedBy && !stripCheckLabel && len(staleV4) == 0 && desiredLabelsSubset(existing.Labels, desired) {
 		slog.Debug("[argosecrets] self-managed cluster secret labels up-to-date, skipping",
 			"cluster", name, "namespace", m.namespace,
 		)
@@ -797,6 +818,9 @@ func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels m
 	updated := existing.DeepCopy()
 	if updated.Labels == nil {
 		updated.Labels = make(map[string]string, len(desired))
+	}
+	for _, k := range staleV4 {
+		delete(updated.Labels, k)
 	}
 	for k, v := range desired {
 		updated.Labels[k] = v
@@ -833,13 +857,30 @@ func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels m
 //   - app.kubernetes.io/instance     (ArgoCD tracking)
 //
 // So "no slash" == "an unqualified addon-enablement key Sharko owns", and
-// any key containing "/" is foreign/system and is PRESERVED verbatim by the
-// managed-cluster self-heal. This is the exact scope git is the source of
-// truth for; the connection credential material (Data/StringData) and every
-// annotation are outside it and never touched. An empty key is never an
-// addon key.
+// any OTHER key containing "/" is foreign/system and is PRESERVED verbatim
+// by the managed-cluster self-heal. This is the exact scope git is the
+// source of truth for; the connection credential material (Data/StringData)
+// and every annotation are outside it and never touched. An empty key is
+// never an addon key.
+//
+// The one qualified exception is the v4 vocabulary
+// (models.V4AddonLabelPrefix, "addons.sharko.dev/<addon>") — the key the v4
+// engine chart's ApplicationSet selector matches on. It carries a "/" but it
+// is unambiguously Sharko's own namespace, derived from clusters/*.yaml by
+// the reconciler and written by nobody else. Without this arm the v4 keys
+// would be classified foreign, which means SyncManagedClusterLabels would
+// neither ADD them (they get filtered out of the desired set) nor DELETE a
+// stale one — i.e. enabling an addon on a v4 repo would deploy nothing and
+// disabling it would never stop. A v3 repo never carries such a key, so
+// this arm is inert there and v3 behaviour is unchanged.
 func IsAddonLabelKey(key string) bool {
-	return key != "" && !strings.Contains(key, "/")
+	if key == "" {
+		return false
+	}
+	if models.IsV4AddonLabelKey(key) {
+		return true
+	}
+	return !strings.Contains(key, "/")
 }
 
 // ManagedLabelSyncResult reports the outcome of SyncManagedClusterLabels.

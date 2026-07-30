@@ -109,6 +109,7 @@ func (c *recentPRsCache) reset() {
 // @Param name path string true "Addon name"
 // @Param limit query int false "Maximum entries (default 5, max 20)"
 // @Success 200 {object} api.recentPRsResponse
+// @Failure 409 {object} map[string]interface{} "This panel reads a v3-layout values path; the connected repo uses the v4 layout"
 // @Router /addons/{name}/values/recent-prs [get]
 func (s *Server) handleGetAddonValuesRecentPRs(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.list") {
@@ -118,6 +119,15 @@ func (s *Server) handleGetAddonValuesRecentPRs(w http.ResponseWriter, r *http.Re
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "addon name is required")
 		return
+	}
+
+	// This panel is scoped to a hard-coded v3 values path; on a v4 repo it
+	// would search PR history for a file that does not exist and report a
+	// confident, permanently-empty "no recent changes".
+	if gp, gpErr := s.connSvc.GetActiveGitProvider(); gpErr == nil {
+		if s.refuseV3ValuesSurfaceOnV4Repo(r.Context(), w, gp) {
+			return
+		}
 	}
 
 	dir := strings.TrimSuffix(s.repoPaths.GlobalValues, "/")
@@ -142,6 +152,7 @@ func (s *Server) handleGetAddonValuesRecentPRs(w http.ResponseWriter, r *http.Re
 // @Param name path string true "Addon name"
 // @Param limit query int false "Maximum entries (default 5, max 20)"
 // @Success 200 {object} api.recentPRsResponse
+// @Failure 409 {object} map[string]interface{} "This panel reads a v3-layout values path; the connected repo uses the v4 layout"
 // @Router /clusters/{cluster}/addons/{name}/values/recent-prs [get]
 func (s *Server) handleGetClusterAddonValuesRecentPRs(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.detail") {
@@ -152,6 +163,13 @@ func (s *Server) handleGetClusterAddonValuesRecentPRs(w http.ResponseWriter, r *
 	if cluster == "" || name == "" {
 		writeError(w, http.StatusBadRequest, "cluster and addon name are required")
 		return
+	}
+
+	// Same v3-path scoping as the global panel above.
+	if gp, gpErr := s.connSvc.GetActiveGitProvider(); gpErr == nil {
+		if s.refuseV3ValuesSurfaceOnV4Repo(r.Context(), w, gp) {
+			return
+		}
 	}
 
 	dir := strings.TrimSuffix(s.repoPaths.ClusterValues, "/")
