@@ -107,6 +107,23 @@ const (
 	// KindMarketplaceSources identifies a marketplace-sources.yaml document.
 	// V3-Phase-3: GitOps-native third-party catalog source URLs (env fallback for tokened URLs).
 	KindMarketplaceSources = "MarketplaceSources"
+
+	// KindClusterAssignment identifies a clusters/<cluster-name>.yaml
+	// document (v4 Wave 1 Story 2.6). One file per cluster: which addons
+	// run there, at which version, tuned how. See
+	// docs/design/2026-07-30-v4-data-file-format.md §2.1.
+	KindClusterAssignment = "ClusterAssignment"
+
+	// KindAddonCatalogDelta identifies a catalog/addons.yaml document
+	// (v4 Wave 1 Story 2.6). A NEW kind, not a replacement for
+	// KindAddonCatalog: the payload shape changes from a list
+	// (spec.applicationsets) to a map (spec.addons), and the meaning
+	// changes from "the whole catalog" to "only your changes" — same
+	// apiVersion plus same kind plus a different shape is precisely the
+	// silent-misread failure class this codebase already got burned by
+	// (design doc decision D5). KindAddonCatalog (v3) is untouched and
+	// keeps validating v3 files exactly as today.
+	KindAddonCatalogDelta = "AddonCatalogDelta"
 )
 
 // Metadata holds the envelope's metadata block. Only Name is required by the

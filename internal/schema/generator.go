@@ -92,6 +92,16 @@ const DefaultAddonsSchemaID = "https://raw.githubusercontent.com/MoranWeissman/s
 // marketplace-sources.v1.json file's $id. Mirrors the other schema ID constants.
 const MarketplaceSourcesSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/marketplace-sources.v1.json"
 
+// ClusterAssignmentSchemaID is the public URL embedded in every generated
+// cluster-assignment.v1.json file's $id (v4 Wave 1 Story 2.6). Mirrors the
+// other schema ID constants.
+const ClusterAssignmentSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-assignment.v1.json"
+
+// AddonCatalogDeltaSchemaID is the public URL embedded in every generated
+// addon-catalog-delta.v1.json file's $id (v4 Wave 1 Story 2.6). Mirrors the
+// other schema ID constants.
+const AddonCatalogDeltaSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addon-catalog-delta.v1.json"
+
 // SchemaDialect is the JSON Schema dialect URL emitted as $schema in every
 // generated file. Story 9.4's runtime validator (santhosh-tekuri/jsonschema
 // v5) defaults to draft 2020-12 when this URL is present.

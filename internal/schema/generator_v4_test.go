@@ -1,0 +1,261 @@
+// v4 Wave 1 Story 2.6 — generator coverage for the two new kinds
+// (ClusterAssignment, AddonCatalogDelta). Kept in a separate file from
+// generator_test.go (rather than growing that file's tables) so the
+// v3-kind and v4-kind test suites can evolve independently; the helpers
+// here deliberately mirror genManagedClusters/genAddonCatalog's shape.
+package schema_test
+
+import (
+	"bytes"
+	"testing"
+
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/models"
+	sharkoschema "github.com/MoranWeissman/sharko/internal/schema"
+)
+
+// Test wrappers duplicated from cmd/schema-gen/main.go — same rationale
+// as managedClustersDoc/addonCatalogDoc above: package main can't be
+// imported, so each test file that needs to reflect an envelope
+// declares its own structurally-identical wrapper.
+type clusterAssignmentDoc struct {
+	APIVersion string                       `json:"apiVersion"`
+	Kind       string                       `json:"kind"`
+	Metadata   sharkoschema.Metadata        `json:"metadata"`
+	Spec       models.ClusterAssignmentSpec `json:"spec"`
+}
+
+type addonCatalogDeltaDoc struct {
+	APIVersion string                       `json:"apiVersion"`
+	Kind       string                       `json:"kind"`
+	Metadata   sharkoschema.Metadata        `json:"metadata"`
+	Spec       config.AddonCatalogDeltaSpec `json:"spec"`
+}
+
+func genClusterAssignment(t *testing.T) []byte {
+	t.Helper()
+	out, err := sharkoschema.GenerateSchema(
+		&clusterAssignmentDoc{},
+		sharkoschema.ClusterAssignmentSchemaID,
+		"Sharko ClusterAssignment",
+		"clusters/<cluster-name>.yaml — which addons run on this cluster, at which version, tuned how (v4).",
+		sharkoschema.KindClusterAssignment,
+	)
+	if err != nil {
+		t.Fatalf("GenerateSchema(cluster-assignment): %v", err)
+	}
+	return out
+}
+
+func genAddonCatalogDelta(t *testing.T) []byte {
+	t.Helper()
+	out, err := sharkoschema.GenerateSchema(
+		&addonCatalogDeltaDoc{},
+		sharkoschema.AddonCatalogDeltaSchemaID,
+		"Sharko AddonCatalogDelta",
+		"catalog/addons.yaml — the user's delta against the shipped addon catalog (v4).",
+		sharkoschema.KindAddonCatalogDelta,
+	)
+	if err != nil {
+		t.Fatalf("GenerateSchema(addon-catalog-delta): %v", err)
+	}
+	return out
+}
+
+// TestGenerateSchemas_V4Kinds_Idempotent mirrors
+// TestGenerateSchemas_Idempotent for the two new v4 kinds — the same
+// invariant the CI "Schemas Up To Date" drift gate depends on.
+func TestGenerateSchemas_V4Kinds_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	t.Run("cluster-assignment", func(t *testing.T) {
+		t.Parallel()
+		a := genClusterAssignment(t)
+		b := genClusterAssignment(t)
+		if !bytes.Equal(a, b) {
+			t.Fatalf("schema generation not idempotent:\nfirst:  %s\nsecond: %s", a, b)
+		}
+	})
+
+	t.Run("addon-catalog-delta", func(t *testing.T) {
+		t.Parallel()
+		a := genAddonCatalogDelta(t)
+		b := genAddonCatalogDelta(t)
+		if !bytes.Equal(a, b) {
+			t.Fatalf("schema generation not idempotent:\nfirst:  %s\nsecond: %s", a, b)
+		}
+	})
+}
+
+// TestGenerateClusterAssignment_AcceptsDesignDocExample validates the
+// generator's output against the design doc's §2.1 worked example.
+func TestGenerateClusterAssignment_AcceptsDesignDocExample(t *testing.T) {
+	t.Parallel()
+	schemaBytes := genClusterAssignment(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.ClusterAssignmentSchemaID)
+
+	example := `apiVersion: sharko.dev/v1
+kind: ClusterAssignment
+metadata:
+  name: prod-eu
+spec:
+  cluster: prod-eu
+  addons:
+    cert-manager:
+      enabled: true
+      version: "1.12.0"
+      settings:
+        ignoreDifferences:
+          - group: admissionregistration.k8s.io
+            kind: ValidatingWebhookConfiguration
+            jsonPointers:
+              - /webhooks/0/clientConfig/caBundle
+    metrics-server:
+      enabled: true
+    external-dns:
+      enabled: false
+`
+	if err := sch.Validate(yamlToInterface(t, example)); err != nil {
+		t.Fatalf("design-doc-shape example failed validation: %v", err)
+	}
+}
+
+// TestGenerateClusterAssignment_RejectsPreserveResourcesOnDeletion pins
+// the schema-level half of design doc §3.2's "Two tiers" enforcement:
+// preserveResourcesOnDeletion inside spec.addons.*.settings must be
+// rejected because ClusterAssignmentAddonSettings has no such field and
+// additionalProperties is false.
+func TestGenerateClusterAssignment_RejectsPreserveResourcesOnDeletion(t *testing.T) {
+	t.Parallel()
+	schemaBytes := genClusterAssignment(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.ClusterAssignmentSchemaID)
+
+	body := `apiVersion: sharko.dev/v1
+kind: ClusterAssignment
+metadata:
+  name: prod-eu
+spec:
+  cluster: prod-eu
+  addons:
+    cert-manager:
+      enabled: true
+      settings:
+        preserveResourcesOnDeletion: false
+`
+	if err := sch.Validate(yamlToInterface(t, body)); err == nil {
+		t.Fatal("expected validation error for preserveResourcesOnDeletion in a per-cluster settings block, got nil")
+	}
+}
+
+// TestGenerateClusterAssignment_RejectsMissingEnabled — every addon
+// entry requires `enabled` (design doc §2.1).
+func TestGenerateClusterAssignment_RejectsMissingEnabled(t *testing.T) {
+	t.Parallel()
+	schemaBytes := genClusterAssignment(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.ClusterAssignmentSchemaID)
+
+	body := `apiVersion: sharko.dev/v1
+kind: ClusterAssignment
+metadata:
+  name: prod-eu
+spec:
+  cluster: prod-eu
+  addons:
+    cert-manager:
+      version: "1.12.0"
+`
+	if err := sch.Validate(yamlToInterface(t, body)); err == nil {
+		t.Fatal("expected validation error for addon entry missing enabled, got nil")
+	}
+}
+
+// TestGenerateAddonCatalogDelta_AcceptsDesignDocExample validates the
+// generator's output against the design doc's §2.3 worked example.
+func TestGenerateAddonCatalogDelta_AcceptsDesignDocExample(t *testing.T) {
+	t.Parallel()
+	schemaBytes := genAddonCatalogDelta(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogDeltaSchemaID)
+
+	example := `apiVersion: sharko.dev/v1
+kind: AddonCatalogDelta
+metadata:
+  name: addon-catalog-delta
+spec:
+  addons:
+    cert-manager:
+      version: "1.14.5"
+    metrics-server:
+      version: "3.12.1"
+    billing-api:
+      repoURL: oci://registry.example.com/charts
+      chart: billing-api
+      version: "2.4.0"
+      namespace: billing
+`
+	if err := sch.Validate(yamlToInterface(t, example)); err != nil {
+		t.Fatalf("design-doc-shape example failed validation: %v", err)
+	}
+}
+
+// TestGenerateAddonCatalogDelta_AllowsPreserveResourcesOnDeletion — the
+// AddonCatalogDelta settings block DOES allow this field (it's the only
+// legal place for it — design doc §3.2).
+func TestGenerateAddonCatalogDelta_AllowsPreserveResourcesOnDeletion(t *testing.T) {
+	t.Parallel()
+	schemaBytes := genAddonCatalogDelta(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogDeltaSchemaID)
+
+	body := `apiVersion: sharko.dev/v1
+kind: AddonCatalogDelta
+metadata:
+  name: addon-catalog-delta
+spec:
+  addons:
+    cert-manager:
+      version: "1.14.5"
+      settings:
+        preserveResourcesOnDeletion: false
+`
+	if err := sch.Validate(yamlToInterface(t, body)); err != nil {
+		t.Fatalf("expected preserveResourcesOnDeletion to be legal on AddonCatalogDelta settings, got: %v", err)
+	}
+}
+
+// TestGenerateAddonCatalogDelta_RejectsWrongKind — a v3 AddonCatalog
+// body must fail against the v4 AddonCatalogDelta schema (design doc
+// decision D5: distinct kinds, never silently cross-validated).
+func TestGenerateAddonCatalogDelta_RejectsWrongKind(t *testing.T) {
+	t.Parallel()
+	schemaBytes := genAddonCatalogDelta(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogDeltaSchemaID)
+
+	wrongKind := `apiVersion: sharko.dev/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  applicationsets: []
+`
+	if err := sch.Validate(yamlToInterface(t, wrongKind)); err == nil {
+		t.Fatal("expected validation error for kind: AddonCatalog against the AddonCatalogDelta schema, got nil")
+	}
+}
+
+// TestGenerateAddonCatalogDelta_EmptyAddonsMap_Accept — spec.addons may
+// be an empty map (design doc decision D16).
+func TestGenerateAddonCatalogDelta_EmptyAddonsMap_Accept(t *testing.T) {
+	t.Parallel()
+	schemaBytes := genAddonCatalogDelta(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogDeltaSchemaID)
+
+	body := `apiVersion: sharko.dev/v1
+kind: AddonCatalogDelta
+metadata:
+  name: addon-catalog-delta
+spec:
+  addons: {}
+`
+	if err := sch.Validate(yamlToInterface(t, body)); err != nil {
+		t.Fatalf("expected empty addons map to validate, got: %v", err)
+	}
+}

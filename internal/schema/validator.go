@@ -83,6 +83,19 @@ type ValidationFailure struct {
 	// at least one violation); callers can range over without a length
 	// check.
 	Violations []string
+	// Locations holds the RFC 6901 JSON Pointer instance location
+	// (e.g. "/spec/addons/cert-manager/version") for each entry in
+	// Violations, at the SAME index — Locations[i] is where
+	// Violations[i] happened. Always the same length as Violations.
+	//
+	// Added for v4 Wave 1 Story 2.6's line-number requirement: callers
+	// that have the original YAML bytes in hand (cmd/sharko's
+	// validate-config CLI) resolve each pointer to a source line via
+	// LineForInstanceLocation and print "reason (line N)" so an
+	// operator can jump straight to the broken field. Callers that
+	// don't need line numbers can ignore this field entirely — it adds
+	// no new failure mode to existing Violations-only consumers.
+	Locations []string
 }
 
 // Error implements the error interface. Format:
@@ -147,7 +160,7 @@ func DefaultValidator() (*Validator, error) {
 // internal/schema/loader_disk.go (if/when added) would be a separate
 // dev-only constructor.
 func NewValidator() (*Validator, error) {
-	v := &Validator{schemas: make(map[string]*jsonschema.Schema, 4)}
+	v := &Validator{schemas: make(map[string]*jsonschema.Schema, 6)}
 
 	if err := v.registerEmbedded(KindManagedClusters, ManagedClustersSchemaID, embeddedManagedClustersSchema); err != nil {
 		return nil, err
@@ -159,6 +172,12 @@ func NewValidator() (*Validator, error) {
 		return nil, err
 	}
 	if err := v.registerEmbedded(KindMarketplaceSources, MarketplaceSourcesSchemaID, embeddedMarketplaceSourcesSchema); err != nil {
+		return nil, err
+	}
+	if err := v.registerEmbedded(KindClusterAssignment, ClusterAssignmentSchemaID, embeddedClusterAssignmentSchema); err != nil {
+		return nil, err
+	}
+	if err := v.registerEmbedded(KindAddonCatalogDelta, AddonCatalogDeltaSchemaID, embeddedAddonCatalogDeltaSchema); err != nil {
 		return nil, err
 	}
 	return v, nil
@@ -231,9 +250,11 @@ func (v *Validator) Validate(kind string, body []byte) error {
 			// during a library upgrade that changes the contract.
 			return fmt.Errorf("schema validator: %w", err)
 		}
+		violations, locations := flattenViolations(ve)
 		return &ValidationFailure{
 			Kind:       kind,
-			Violations: flattenViolations(ve),
+			Violations: violations,
+			Locations:  locations,
 		}
 	}
 	return nil
@@ -358,11 +379,17 @@ func normaliseYAMLForJSON(in any) any {
 // the flat list because that's what the operator needs to see — each
 // concrete violation, once. Internal nodes that have causes but no
 // useful message of their own are skipped to keep the list compact.
-func flattenViolations(ve *jsonschema.ValidationError) []string {
+// Returns two parallel slices — violation messages and their RFC 6901
+// JSON Pointer instance locations — rather than a single []string,
+// so callers with the original YAML bytes (cmd/sharko's validate-config
+// CLI) can resolve each violation to a source line via
+// LineForInstanceLocation without re-parsing the message string.
+func flattenViolations(ve *jsonschema.ValidationError) ([]string, []string) {
 	if ve == nil {
-		return []string{"<nil validation error>"}
+		return []string{"<nil validation error>"}, []string{""}
 	}
-	var out []string
+	var msgs []string
+	var locs []string
 	var walk func(e *jsonschema.ValidationError)
 	walk = func(e *jsonschema.ValidationError) {
 		if e == nil {
@@ -378,7 +405,8 @@ func flattenViolations(ve *jsonschema.ValidationError) []string {
 			if loc == "" {
 				loc = "/"
 			}
-			out = append(out, fmt.Sprintf("%s: %s", loc, e.Message))
+			msgs = append(msgs, fmt.Sprintf("%s: %s", loc, e.Message))
+			locs = append(locs, loc)
 			return
 		}
 		// Internal node with causes — descend. We deliberately do NOT
@@ -389,13 +417,14 @@ func flattenViolations(ve *jsonschema.ValidationError) []string {
 		}
 	}
 	walk(ve)
-	if len(out) == 0 {
+	if len(msgs) == 0 {
 		// Defensive fall-back: if the walk produced nothing, surface
 		// the library's own Error() string so we never lose
 		// information.
-		out = []string{ve.Error()}
+		msgs = []string{ve.Error()}
+		locs = []string{""}
 	}
-	return out
+	return msgs, locs
 }
 
 // knownKinds returns a sorted-ish comma-separated list of the kinds
@@ -408,7 +437,10 @@ func knownKinds(v *Validator) string {
 	// Hard-coded order for stability — same convention as the
 	// generator's per-kind iteration in cmd/schema-gen/main.go.
 	var known []string
-	for _, k := range []string{KindManagedClusters, KindAddonCatalog, KindDefaultAddons, KindMarketplaceSources} {
+	for _, k := range []string{
+		KindManagedClusters, KindAddonCatalog, KindDefaultAddons, KindMarketplaceSources,
+		KindClusterAssignment, KindAddonCatalogDelta,
+	} {
 		if _, ok := v.schemas[k]; ok {
 			known = append(known, k)
 		}

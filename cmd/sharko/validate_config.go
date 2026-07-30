@@ -299,6 +299,32 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 		return fileVerdict{path: path, kind: "fail", reason: "YAML parse error", details: []string{err.Error()}}
 	}
 
+	// v4 Wave 1 Story 2.6 — ClusterAssignment carries two invariants a
+	// generic JSON Schema can't express: the file's own path must match
+	// spec.cluster, and spec.addons.*.settings.preserveResourcesOnDeletion
+	// is a validation error with a specific "it belongs somewhere else"
+	// message (design doc §3.2 "Two tiers"). The forbidden-field check
+	// runs BEFORE schema validation and returns immediately when it
+	// fires: additionalProperties:false on
+	// models.ClusterAssignmentAddonSettings would ALSO reject the same
+	// body (defense in depth — see that type's doc comment), but its
+	// generic "additional property not allowed" message doesn't say
+	// WHERE the field belongs, so the friendlier, contract-specific
+	// message takes priority when we can tell it's this exact mistake.
+	if header.Kind == sharkoschema.KindClusterAssignment {
+		if addonName, line, found := detectClusterSettingsPreserveResourcesOnDeletion(body); found {
+			return fileVerdict{
+				path:   path,
+				kind:   "fail",
+				reason: fmt.Sprintf("preserveResourcesOnDeletion is not allowed on a per-cluster addon (addon %q)", addonName),
+				details: []string{fmt.Sprintf(
+					"line %d: preserveResourcesOnDeletion can only vary per addon, fleet-wide, because the engine builds one ApplicationSet per addon covering every cluster — set it in catalog/addons.yaml's addon settings instead, not in this clusters/*.yaml file",
+					line,
+				)},
+			}
+		}
+	}
+
 	if err := v.ValidateAutoDetect(body); err != nil {
 		var failure *sharkoschema.ValidationFailure
 		if errors.As(err, &failure) {
@@ -306,7 +332,7 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 				path:    path,
 				kind:    "fail",
 				reason:  fmt.Sprintf("schema violations (kind: %s)", failure.Kind),
-				details: append(failure.Violations, fmt.Sprintf("→ for details: %s", schemaURLForKind(failure.Kind))),
+				details: append(violationsWithLines(body, failure), fmt.Sprintf("→ for details: %s", schemaURLForKind(failure.Kind))),
 			}
 		}
 		// Non-ValidationFailure error: unknown kind, decode failure,
@@ -320,7 +346,115 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 			details: []string{err.Error()},
 		}
 	}
+
+	// Schema passed. ClusterAssignment has one more file-path-aware
+	// invariant the schema itself cannot check (design doc §2.1): the
+	// file name (minus .yaml) must equal spec.cluster, or the engine's
+	// git-files generator (which finds a cluster's assignment file BY
+	// that name) silently gives the cluster nothing.
+	if header.Kind == sharkoschema.KindClusterAssignment {
+		if gotCluster, wantCluster, line, mismatch := detectClusterAssignmentFilenameMismatch(path, body); mismatch {
+			return fileVerdict{
+				path:   path,
+				kind:   "fail",
+				reason: fmt.Sprintf("file name and spec.cluster disagree (file implies %q, spec.cluster is %q)", wantCluster, gotCluster),
+				details: []string{fmt.Sprintf(
+					"line %d: spec.cluster must equal the file name without .yaml — the engine finds a cluster's assignment file by name, so a mismatch means the cluster silently gets nothing",
+					line,
+				)},
+			}
+		}
+	}
+
 	return fileVerdict{path: path, kind: "pass"}
+}
+
+// violationsWithLines appends a best-effort "(line N)" suffix to each
+// violation string in failure, resolved against the original YAML bytes
+// via sharkoschema.LineForInstanceLocation. Violations whose line can't
+// be resolved (LineForInstanceLocation returns ok=false, or the
+// Locations slice is shorter than Violations for some reason) are left
+// as-is rather than failing the whole verdict over a cosmetic miss.
+func violationsWithLines(body []byte, failure *sharkoschema.ValidationFailure) []string {
+	out := make([]string, len(failure.Violations))
+	for i, violation := range failure.Violations {
+		if i >= len(failure.Locations) {
+			out[i] = violation
+			continue
+		}
+		line, ok := sharkoschema.LineForInstanceLocation(body, failure.Locations[i])
+		if !ok || line <= 0 {
+			out[i] = violation
+			continue
+		}
+		out[i] = fmt.Sprintf("%s (line %d)", violation, line)
+	}
+	return out
+}
+
+// detectClusterSettingsPreserveResourcesOnDeletion walks a
+// ClusterAssignment body's spec.addons.*.settings blocks looking for a
+// hand-authored preserveResourcesOnDeletion key — the one v1 setting
+// (design doc §3.2) that is per-ApplicationSet, not per-Application, and
+// therefore cannot vary per cluster. Returns the addon name and the
+// 1-based source line of the offending key the first time it's found;
+// (‘’, 0, false) when the body has none.
+func detectClusterSettingsPreserveResourcesOnDeletion(body []byte) (addonName string, line int, found bool) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(body, &doc); err != nil || len(doc.Content) == 0 {
+		return "", 0, false
+	}
+	root := doc.Content[0]
+	_, spec, ok := sharkoschema.MappingValue(root, "spec")
+	if !ok {
+		return "", 0, false
+	}
+	_, addons, ok := sharkoschema.MappingValue(spec, "addons")
+	if !ok || addons.Kind != yaml.MappingNode {
+		return "", 0, false
+	}
+	for i := 0; i+1 < len(addons.Content); i += 2 {
+		name := addons.Content[i].Value
+		entry := addons.Content[i+1]
+		_, settings, ok := sharkoschema.MappingValue(entry, "settings")
+		if !ok {
+			continue
+		}
+		if keyNode, _, ok := sharkoschema.MappingValue(settings, "preserveResourcesOnDeletion"); ok {
+			return name, keyNode.Line, true
+		}
+	}
+	return "", 0, false
+}
+
+// detectClusterAssignmentFilenameMismatch compares a ClusterAssignment
+// body's spec.cluster against the file's own basename (design doc §2.1:
+// "clusters/prod-eu.yaml is the cluster called prod-eu... a mismatch
+// means the cluster silently gets nothing"). Returns the value on disk,
+// the value the filename implies, and the source line of the spec.cluster
+// field. mismatch is false (and the other returns are zero) when the
+// document has no spec.cluster to compare (a separate schema violation
+// this function isn't responsible for) or the two agree.
+func detectClusterAssignmentFilenameMismatch(path string, body []byte) (gotCluster, wantCluster string, line int, mismatch bool) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(body, &doc); err != nil || len(doc.Content) == 0 {
+		return "", "", 0, false
+	}
+	root := doc.Content[0]
+	_, spec, ok := sharkoschema.MappingValue(root, "spec")
+	if !ok {
+		return "", "", 0, false
+	}
+	clusterKey, clusterVal, ok := sharkoschema.MappingValue(spec, "cluster")
+	if !ok || clusterVal.Kind != yaml.ScalarNode {
+		return "", "", 0, false
+	}
+	base := filepath.Base(path)
+	want := strings.TrimSuffix(base, filepath.Ext(base))
+	if clusterVal.Value == want {
+		return clusterVal.Value, want, 0, false
+	}
+	return clusterVal.Value, want, clusterKey.Line, true
 }
 
 // looksLikeGoTemplate reports whether body appears to be a Go/Helm
@@ -353,6 +487,14 @@ func schemaURLForKind(kind string) string {
 		return sharkoschema.ManagedClustersSchemaID
 	case sharkoschema.KindAddonCatalog:
 		return sharkoschema.AddonCatalogSchemaID
+	case sharkoschema.KindDefaultAddons:
+		return sharkoschema.DefaultAddonsSchemaID
+	case sharkoschema.KindMarketplaceSources:
+		return sharkoschema.MarketplaceSourcesSchemaID
+	case sharkoschema.KindClusterAssignment:
+		return sharkoschema.ClusterAssignmentSchemaID
+	case sharkoschema.KindAddonCatalogDelta:
+		return sharkoschema.AddonCatalogDeltaSchemaID
 	default:
 		return "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/"
 	}
