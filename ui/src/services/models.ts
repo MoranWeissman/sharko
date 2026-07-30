@@ -517,6 +517,8 @@ export interface VersionMatrixRow {
   catalog_version: string
   chart: string
   cells: Record<string, VersionMatrixCell>
+  newest_available?: string
+  last_checked?: string
 }
 
 export interface VersionMatrixResponse {
@@ -1499,4 +1501,62 @@ export interface V4AddonValidationErrorBody {
   cluster: string
   addon: string
   problems: string[]
+}
+
+// ─── v3 → v4 repo migration (v4 Wave 2, Epic 5 backend / migration-ui) ─────
+//
+// Three endpoints, in the order a person uses them:
+//   GET  /api/v1/migration/status   — is there anything to migrate?
+//   POST /api/v1/migration/preview  — show me every file it would touch
+//   POST /api/v1/migration/migrate  — do it, one pull request, all or nothing
+
+/** Response for GET /api/v1/migration/status. */
+export interface MigrationStatus {
+  /** "v3", "v4", or "empty". */
+  format: 'v3' | 'v4' | 'empty'
+  /** True only for "v3" — the one state with something to convert. */
+  migration_available: boolean
+  /** Plain-English sentence the UI can render as-is. */
+  message: string
+}
+
+/** One file the migration pull request would add, convert, or remove. */
+export interface MigrationFileChange {
+  path: string
+  from_path?: string
+  action: 'add' | 'convert' | 'remove'
+  /** Rendered body for adds/conversions, redacted like every other preview. */
+  content?: string
+}
+
+/** Response for POST /api/v1/migration/preview, and the `plan` field on migrate. */
+export interface MigrationPlan {
+  format: string
+  add: MigrationFileChange[]
+  convert: MigrationFileChange[]
+  remove: MigrationFileChange[]
+  /** Plain-English notes about anything that could not be carried across
+   * (e.g. a v3 catalog `secrets:` block, which has no v4 home yet). */
+  notes: string[]
+  pr_title: string
+}
+
+/** Request body for POST /api/v1/migration/migrate. */
+export interface MigrationMigrateRequest {
+  dry_run?: boolean
+  yes: boolean
+  auto_merge?: boolean
+}
+
+/** Response for POST /api/v1/migration/migrate. */
+export interface MigrateResult {
+  /** "migrated", "preview", or "already_migrated". */
+  status: 'migrated' | 'preview' | 'already_migrated'
+  plan?: MigrationPlan
+  git?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+  }
 }

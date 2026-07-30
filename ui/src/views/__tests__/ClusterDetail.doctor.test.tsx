@@ -39,6 +39,9 @@ vi.mock('@/services/api', async () => {
       getAIStatus: vi.fn().mockResolvedValue({ enabled: false }),
       getClusterHistory: vi.fn().mockResolvedValue({ history: [] }),
       getClusterChanges: vi.fn().mockResolvedValue({ changes: [] }),
+      // v4-wave2 8.1: Diagnostics also probes global connection health.
+      testConnection: vi.fn().mockResolvedValue({ git: { status: 'ok' }, argocd: { status: 'ok' } }),
+      testProvider: vi.fn().mockResolvedValue({ status: 'connected' }),
     },
     fetchTrackedPRs: (...args: unknown[]) => mockFetchTrackedPRs(...args),
     doctorCluster: (...args: unknown[]) => mockDoctorCluster(...args),

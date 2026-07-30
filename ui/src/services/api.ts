@@ -21,6 +21,10 @@ import type {
   DropLegacyLabelsRequestBody,
   DropLegacyLabelsResponse,
   DryRunResult,
+  MigrateResult,
+  MigrationMigrateRequest,
+  MigrationPlan,
+  MigrationStatus,
   ObservabilityOverviewResponse,
   PullRequestsResponse,
   RegisterClusterResult,
@@ -821,6 +825,17 @@ export async function upgradeAddon(name: string, data: { version: string; cluste
   return postJSON<PRWriteResult>(`/addons/${encodeURIComponent(name)}/upgrade`, data)
 }
 
+// upgradeAddonClusters — Epic 7 Story 7.2 (v4 Wave 2): bump one addon's
+// version pin on a CHOSEN SUBSET of clusters in a single PR
+// (POST /addons/{name}/upgrade-clusters). Pass dry_run: true to preview
+// every file the PR would touch before opening it.
+export async function upgradeAddonClusters(
+  name: string,
+  data: { clusters: string[]; version: string; dry_run?: boolean; yes?: boolean; auto_merge?: boolean },
+): Promise<V4GitResult> {
+  return postJSON<V4GitResult>(`/addons/${encodeURIComponent(name)}/upgrade-clusters`, data)
+}
+
 // Overloads for configureAddon
 export async function configureAddon(
   name: string,
@@ -1141,7 +1156,7 @@ export const api = {
   updateConnection: (name: string, data: unknown) => putJSON(`/connections/${encodeURIComponent(name)}`, data),
   deleteConnection: (name: string) => deleteJSON(`/connections/${encodeURIComponent(name)}`),
   setActiveConnection: (name: string) => postJSON('/connections/active', { connection_name: name }),
-  testConnection: () => postJSON<{ git: { status: string }; argocd: { status: string } }>('/connections/test'),
+  testConnection: () => postJSON<{ git: { status: string; message?: string }; argocd: { status: string; message?: string } }>('/connections/test'),
   // `data` may include `use_saved: true` + `name` to instruct the backend
   // to fetch the named saved connection's stored credentials and test with
   // those (instead of the request body's tokens). Unlocks the wizard's
@@ -1421,6 +1436,14 @@ export const api = {
         | null
       available_types: import('./models').ProviderType[]
     }>('/providers'),
+
+  // Tests the configured secrets/cluster-credentials provider ("vault" in
+  // plain terms — AWS Secrets Manager, Kubernetes Secrets, or the ArgoCD
+  // cluster-secret backend) by listing cluster credential entries. Mirrors
+  // testConnection()/testCredentials() for git+ArgoCD — same plain-words
+  // pass/fail contract, never a raw Go/SDK error (v4-wave2 8.1).
+  testProvider: () =>
+    postJSON<{ status: string; message?: string; clusters_found?: number }>('/providers/test', {}),
 
   // Repo status — `bootstrap_synced` reports whether the canonical ArgoCD
   // application `cluster-addons-bootstrap` exists AND is Sync=Synced AND
@@ -1703,4 +1726,10 @@ export const api = {
     (addons: string[], dryRun?: false): Promise<{ pr_url: string; pr_id: number; message?: string }>
   },
 
+  // v3 -> v4 repo migration (v4 Wave 2, Epic 5 / migration-ui). Three
+  // doors, in the order a person uses them: status (is there anything to
+  // migrate?), preview (show me every file), migrate (do it, one PR).
+  getMigrationStatus: () => fetchJSON<MigrationStatus>('/migration/status'),
+  previewMigration: () => postJSON<MigrationPlan>('/migration/preview', {}),
+  migrateRepo: (req: MigrationMigrateRequest = { yes: true }) => postJSON<MigrateResult>('/migration/migrate', req),
 }

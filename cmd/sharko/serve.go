@@ -294,6 +294,10 @@ var serveCmd = &cobra.Command{
 		// catalog/addons.yaml delta the same way handleListMergedCatalogDelta
 		// does (internal/api/catalog_delta.go).
 		addonSvc.SetCuratedCatalog(cat)
+		// v4 Wave 2 Epic 7 Story 7.3: UpgradeService.ListVersions/
+		// CheckUpgrade/GetRecommendations' v4 branch needs the same
+		// curated catalog, for the identical reason.
+		upgradeSvc.SetCuratedCatalog(cat)
 
 		// Third-party catalog sources moved to after ReinitializeFromConnection
 		// so we can try file-then-env (V3-P3.1). See below.

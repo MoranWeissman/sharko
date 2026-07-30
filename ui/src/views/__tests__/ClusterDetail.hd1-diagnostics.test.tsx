@@ -30,6 +30,8 @@ const mockGetAddonCatalog = vi.fn();
 const mockTestClusterConnection = vi.fn();
 const mockDiagnoseCluster = vi.fn();
 const mockDoctorCluster = vi.fn();
+const mockTestConnection = vi.fn();
+const mockTestProvider = vi.fn();
 
 vi.mock('@/services/api', async () => {
   const actual = await vi.importActual<typeof import('@/services/api')>('@/services/api');
@@ -42,6 +44,12 @@ vi.mock('@/services/api', async () => {
       getAIStatus: vi.fn().mockResolvedValue({ enabled: false }),
       getClusterHistory: vi.fn().mockResolvedValue({ history: [] }),
       getClusterChanges: vi.fn().mockResolvedValue({ changes: [] }),
+      // v4-wave2 8.1: the Diagnostics section now also probes global
+      // connection health (git/ArgoCD/vault) via useConnectionHealth.
+      // Default to healthy so existing diagnostics assertions are
+      // unaffected; the dedicated connection-health test overrides these.
+      testConnection: (...args: unknown[]) => mockTestConnection(...args),
+      testProvider: (...args: unknown[]) => mockTestProvider(...args),
     },
     fetchTrackedPRs: (...args: unknown[]) => mockFetchTrackedPRs(...args),
     testClusterConnection: (...args: unknown[]) => mockTestClusterConnection(...args),
@@ -107,6 +115,8 @@ describe('ClusterDetail — HD1 Diagnostics section (V3)', () => {
     mockGetClusterComparison.mockResolvedValue(comparisonResponse);
     mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
     mockGetAddonCatalog.mockResolvedValue({ addons: [] });
+    mockTestConnection.mockResolvedValue({ git: { status: 'ok' }, argocd: { status: 'ok' } });
+    mockTestProvider.mockResolvedValue({ status: 'connected' });
   });
 
   it('renders a "Diagnostics" nav section that routes to ?section=diagnostics', async () => {
@@ -231,6 +241,53 @@ describe('ClusterDetail — HD1 Diagnostics section (V3)', () => {
       expect(screen.getByText('Test Connection Result')).toBeInTheDocument();
     });
     expect(screen.getByText(/Cluster reachable/)).toBeInTheDocument();
+  });
+
+  // v4-wave2 8.1 — "a failing connection surfaces in diagnostics, not just
+  // on the connections page". The banner reuses the same test endpoints
+  // the Connections settings page calls, and only fires once Diagnostics
+  // is actually open (asserted by the second test below).
+  it('shows a plain-words banner when a global connection is failing', async () => {
+    mockTestConnection.mockResolvedValue({
+      git: { status: 'error', message: "Sharko can't reach your Git host — the credentials were rejected." },
+      argocd: { status: 'ok' },
+    });
+    mockTestProvider.mockResolvedValue({ status: 'connected' });
+
+    renderView();
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
+
+    expect(
+      await screen.findByText('A connection Sharko depends on is currently failing'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Sharko can't reach your Git host — the credentials were rejected."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Fix it in Settings/ })).toHaveAttribute(
+      'href',
+      '/settings?section=connections',
+    );
+  });
+
+  it('does not probe global connection health until the Diagnostics tab is opened', async () => {
+    renderView();
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    expect(mockTestConnection).not.toHaveBeenCalled();
+    expect(mockTestProvider).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
+
+    await waitFor(() => {
+      expect(mockTestConnection).toHaveBeenCalled();
+      expect(mockTestProvider).toHaveBeenCalled();
+    });
   });
 
   it('header renders no bare refresh icon (HD1 removal)', async () => {

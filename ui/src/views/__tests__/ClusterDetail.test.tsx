@@ -77,6 +77,9 @@ vi.mock('@/services/api', async () => {
       // V2-cleanup-84.2: the Changes tab's "Completed changes" half is
       // CompletedChangesPanel, which calls api.getClusterChanges directly.
       getClusterChanges: (...args: unknown[]) => mockGetClusterChanges(...args),
+      // v4-wave2 8.1: Diagnostics also probes global connection health.
+      testConnection: vi.fn().mockResolvedValue({ git: { status: 'ok' }, argocd: { status: 'ok' } }),
+      testProvider: vi.fn().mockResolvedValue({ status: 'connected' }),
     },
     testClusterConnection: (...args: unknown[]) => mockTestClusterConnection(...args),
     deregisterCluster: (...args: unknown[]) => mockDeregisterCluster(...args),

@@ -1467,6 +1467,33 @@ definitions:
         description: '"success", "partial", "failed"'
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.UpgradeAddonClustersV4Request:
+    properties:
+      addon:
+        type: string
+      auto_merge:
+        type: boolean
+      clusters:
+        description: |-
+          Clusters is the chosen subset to upgrade. Duplicates are dropped and
+          the set is sorted before writing, so the resulting PR diff and dry
+          run preview are deterministic regardless of request order.
+        items:
+          type: string
+        type: array
+      dry_run:
+        type: boolean
+      version:
+        description: |-
+          Version is the new pin, written identically to every selected
+          cluster's clusters/<cluster>.yaml. Required and non-empty — this
+          endpoint always sets an explicit pin; use DisableAddonV4/
+          EnableAddonV4(version: nil) to remove a pin and fall back to the
+          catalog default.
+        type: string
+      "yes":
+        type: boolean
+    type: object
   github_com_MoranWeissman_sharko_internal_takeover.Finding:
     properties:
       application_sets:
@@ -3081,6 +3108,63 @@ paths:
       security:
       - BearerAuth: []
       summary: Upgrade addon
+      tags:
+      - addons
+  /addons/{name}/upgrade-clusters:
+    post:
+      consumes:
+      - application/json
+      description: Bumps one addon's version pin to a new value on exactly the clusters
+        listed in the request, in ONE pull request — the fleet-upgrade "one action,
+        one PR" flow (v4 Wave 2 Epic 7 Story 7.2). Writes clusters/{cluster}.yaml
+        (kind ClusterAddons) for every selected cluster only; clusters left out of
+        the list are untouched, so the diff is one small block per cluster. Every
+        selected cluster must already have the addon enabled — this endpoint never
+        enables an addon as a side effect of upgrading it. Requires yes=true for confirmation
+        (or dry_run=true to preview every file the PR would change before it opens).
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Subset upgrade request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.UpgradeAddonClustersV4Request'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Upgrade committed (or dry-run preview)
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+        "400":
+          description: Bad request or missing confirmation
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error — including a cluster missing its assignment
+            file, or the addon not enabled on a selected cluster
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upgrade addon on a chosen subset of clusters (v4 format)
       tags:
       - addons
   /addons/{name}/values:

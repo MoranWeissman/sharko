@@ -219,7 +219,32 @@ func (s *Server) handleGetVersionMatrix(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	s.enrichVersionMatrixFreshness(resp)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// enrichVersionMatrixFreshness fills NewestAvailable/LastChecked on every
+// row from the catalog version-freshness scheduler's background snapshots
+// (v4 Wave 2 Epic 7 Story 7.1) — reusing the daily-cadence data
+// catalog_freshness.go already exposes rather than issuing a live Helm
+// fetch per addon on every matrix load. A nil scheduler (freshness
+// disabled) or a row with no snapshot yet leaves both fields empty —
+// never an error, matching the rest of the freshness surface's
+// graceful-degrade contract.
+func (s *Server) enrichVersionMatrixFreshness(resp *models.VersionMatrixResponse) {
+	if s.freshness == nil || resp == nil {
+		return
+	}
+	for i := range resp.Addons {
+		snap, ok := s.freshness.VersionSnapshot(resp.Addons[i].AddonName)
+		if !ok || snap.Unknown || len(snap.Versions) == 0 {
+			continue
+		}
+		resp.Addons[i].NewestAvailable = snap.Versions[0].Version
+		if !snap.CheckedAt.IsZero() {
+			resp.Addons[i].LastChecked = snap.CheckedAt.UTC().Format(time.RFC3339)
+		}
+	}
 }
 
 // filterAddons filters an AddonCatalogEntry slice by the given filter expression.

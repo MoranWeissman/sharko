@@ -1,16 +1,22 @@
 package service
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/advisories"
+	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/helm"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // mockAdvisorySource implements advisorySource for tests.
@@ -587,5 +593,293 @@ func TestGetRecommendations_BuildCardsRejectsDowngradeLatest(t *testing.T) {
 	cards, _ := buildCards(cur, "", "", "", "11.4.0", nil)
 	if len(cards) != 0 {
 		t.Errorf("expected no cards from a sole-downgrade latestVer, got %+v", cards)
+	}
+}
+
+// --- v4 Wave 2 Epic 7 Story 7.3: ListVersions/CheckUpgrade/GetRecommendations
+// re-pointed to the v4 data model (clusters/*.yaml + catalog/addons.yaml)
+// instead of the v3 addons-catalog.yaml / managed-clusters.yaml /
+// configuration/addons-*-values files. ---
+
+// v4DeltaYAML builds a catalog/addons.yaml delta with a single addon entry
+// carrying its own repoURL/chart/version (OriginInternal shape — no curated
+// catalog needs to be wired for these tests, mirroring
+// TestGetVersionMatrix_V4Repo's approach in addon_test.go).
+func v4DeltaYAML(t *testing.T, addon, repoURL, chart, version string) []byte {
+	t.Helper()
+	body, err := config.SaveAddonCatalogDelta(config.AddonCatalogDeltaSpec{
+		Addons: map[string]config.AddonCatalogDeltaEntry{
+			addon: {RepoURL: repoURL, Chart: chart, Version: version},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building catalog delta: %v", err)
+	}
+	return body
+}
+
+// buildChartTarballGz builds a minimal chart .tgz containing only
+// <chart>/values.yaml with the given content — enough for
+// helm.Fetcher.FetchValues to extract it.
+func buildChartTarballGz(t *testing.T, chart, valuesYAML string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	content := []byte(valuesYAML)
+	if err := tw.WriteHeader(&tar.Header{Name: chart + "/values.yaml", Mode: 0644, Size: int64(len(content))}); err != nil {
+		t.Fatalf("tar header: %v", err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		t.Fatalf("tar write: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("tar close: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// newHelmServerWithTarballs starts a test Helm repo serving index.yaml for
+// every version in versionsValues plus a real downloadable tarball for
+// each, so FetchValues (and therefore CheckUpgrade's full pipeline) works
+// against it, not just ListVersions.
+func newHelmServerWithTarballs(t *testing.T, chart string, versionsValues map[string]string) *httptest.Server {
+	t.Helper()
+	versions := make([]string, 0, len(versionsValues))
+	for v := range versionsValues {
+		versions = append(versions, v)
+	}
+	// Relative URLs (not helmIndexYAMLFor's hardcoded https://example.com/) —
+	// FetchValues resolves a relative chart URL against repoURL, so the
+	// tarball actually gets downloaded from THIS test server.
+	entries := ""
+	for _, v := range versions {
+		entries += fmt.Sprintf("  - version: %q\n    urls:\n    - \"%s-%s.tgz\"\n", v, chart, v)
+	}
+	indexContent := fmt.Sprintf("apiVersion: v1\nentries:\n  %s:\n%s", chart, entries)
+	tarballs := make(map[string][]byte, len(versionsValues))
+	for v, values := range versionsValues {
+		tarballs[fmt.Sprintf("/%s-%s.tgz", chart, v)] = buildChartTarballGz(t, chart, values)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/index.yaml" {
+			w.Header().Set("Content-Type", "text/yaml")
+			fmt.Fprint(w, indexContent)
+			return
+		}
+		if body, ok := tarballs[r.URL.Path]; ok {
+			w.Header().Set("Content-Type", "application/gzip")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestListVersions_V4Repo(t *testing.T) {
+	const addon = "cert-manager"
+	const chart = "cert-manager"
+	helmSrv := newHelmServer(t, chart, []string{"1.14.5", "1.12.0"})
+
+	svc := newTestUpgradeSvc(nil)
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			config.AddonCatalogDeltaPath: v4DeltaYAML(t, addon, helmSrv.URL, chart, "1.14.5"),
+			// A v3 catalog is ALSO present, with a DIFFERENT repo URL, to
+			// prove it is ignored once the engine pin routes this to the
+			// v4 branch — same proof shape as TestGetVersionMatrix_V4Repo.
+			"configuration/addons-catalog.yaml": catalogYAML(addon, chart, "https://v3-should-be-ignored.example.com", "0.0.1"),
+		},
+	}
+
+	resp, err := svc.ListVersions(context.Background(), addon, gp)
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if resp.RepoURL != helmSrv.URL {
+		t.Errorf("RepoURL = %q, want the v4 delta's repo (%q) — v3 catalog must be ignored", resp.RepoURL, helmSrv.URL)
+	}
+	if resp.CurrentVersion != "1.14.5" {
+		t.Errorf("CurrentVersion = %q, want 1.14.5 (from the v4 delta)", resp.CurrentVersion)
+	}
+	if len(resp.Versions) != 2 {
+		t.Errorf("expected 2 versions from the Helm index, got %d", len(resp.Versions))
+	}
+}
+
+func TestGetRecommendations_V4Repo(t *testing.T) {
+	const addon = "cert-manager"
+	const chart = "cert-manager"
+	helmSrv := newHelmServer(t, chart, []string{"1.20.2", "1.20.1", "1.19.0"})
+
+	svc := newTestUpgradeSvc(nil)
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:          []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			config.AddonCatalogDeltaPath:        v4DeltaYAML(t, addon, helmSrv.URL, chart, "1.20.1"),
+			"configuration/addons-catalog.yaml": catalogYAML(addon, chart, "https://v3-should-be-ignored.example.com", "0.0.1"),
+		},
+	}
+
+	rec, err := svc.GetRecommendations(context.Background(), addon, gp)
+	if err != nil {
+		t.Fatalf("GetRecommendations: %v", err)
+	}
+	if rec.CurrentVersion != "1.20.1" {
+		t.Fatalf("CurrentVersion = %q, want 1.20.1 (from the v4 delta, not the v3 catalog's 0.0.1)", rec.CurrentVersion)
+	}
+	if rec.NextPatch != "1.20.2" {
+		t.Errorf("NextPatch = %q, want 1.20.2", rec.NextPatch)
+	}
+}
+
+// TestCheckUpgrade_V4Repo_ConflictsUseV4Paths proves CheckUpgrade's
+// per-cluster conflict pass reads values/global/<addon>.yaml and
+// values/clusters/<cluster>/<addon>.yaml (design doc §2.2) — not the v3
+// configuration/addons-global-values / addons-cluster-values paths, which
+// are ALSO present here (with a value that WOULD conflict if read) to prove
+// they are never consulted on a v4 repo.
+func TestCheckUpgrade_V4Repo_ConflictsUseV4Paths(t *testing.T) {
+	const addon = "cert-manager"
+	const chart = "cert-manager"
+	oldValues := "replicaCount: 1\n"
+	newValues := "replicaCount: 2\n"
+	helmSrv := newHelmServerWithTarballs(t, chart, map[string]string{
+		"1.12.0": oldValues,
+		"1.14.5": newValues,
+	})
+
+	prodEU, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "prod-eu",
+		Addons: map[string]models.ClusterAddonsAddon{
+			addon: {Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("seeding clusters/prod-eu.yaml: %v", err)
+	}
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			config.AddonCatalogDeltaPath: v4DeltaYAML(t, addon, helmSrv.URL, chart, "1.12.0"),
+			"clusters/prod-eu.yaml":      prodEU,
+			fmt.Sprintf("%s/%s/%s.yaml", orchestrator.V4ClusterValuesDir, "prod-eu", addon): []byte("replicaCount: 3\n"),
+			// v3 paths ALSO present, with a configured value that would
+			// ALSO conflict — if the v3 branch ran by mistake this would
+			// show up as a SECOND conflict entry with Source "v3-only-cluster".
+			"configuration/addons-cluster-values/v3-only-cluster/cert-manager.yaml": []byte("replicaCount: 9\n"),
+			"configuration/managed-clusters.yaml":                                   []byte("clusters:\n  - name: v3-only-cluster\n    labels:\n      cert-manager: enabled\n"),
+		},
+	}
+
+	svc := newTestUpgradeSvc(nil)
+	resp, err := svc.CheckUpgrade(context.Background(), addon, "1.14.5", gp)
+	if err != nil {
+		t.Fatalf("CheckUpgrade: %v", err)
+	}
+	if resp.CurrentVersion != "1.12.0" {
+		t.Fatalf("CurrentVersion = %q, want 1.12.0 (from the v4 delta)", resp.CurrentVersion)
+	}
+	if resp.BaselineUnavailable {
+		t.Fatalf("expected a baseline comparison to succeed, got BaselineUnavailable with note %q", resp.BaselineNote)
+	}
+
+	var sawProdEU bool
+	for _, c := range resp.Conflicts {
+		if c.Source == "v3-only-cluster" {
+			t.Errorf("v3 cluster values were read on a v4 repo: conflict entry %+v", c)
+		}
+		if c.Source == "prod-eu" {
+			sawProdEU = true
+			if c.ConfiguredValue != "3" && c.ConfiguredValue != "" {
+				// FindConflicts' exact string form isn't the point of this
+				// test — just that the SOURCE is the v4 cluster, proving
+				// values/clusters/prod-eu/cert-manager.yaml was read.
+				t.Logf("prod-eu conflict configured value: %q", c.ConfiguredValue)
+			}
+		}
+	}
+	if !sawProdEU {
+		t.Errorf("expected a conflict sourced from prod-eu (values/clusters/prod-eu/cert-manager.yaml), got %+v", resp.Conflicts)
+	}
+}
+
+// TestGetAISummary_ChainedFromV4CheckUpgrade is Story 7.4: with an AI key
+// configured, the summary summarizes the ALREADY-COMPUTED CheckUpgrade
+// result — GetAISummary's signature (result *models.UpgradeCheckResponse)
+// makes it structurally incapable of computing its own facts: it has no
+// GitProvider, no context beyond the passed-in struct, so it cannot read
+// git or re-derive versions itself. This chains a real v4-repo CheckUpgrade
+// result into GetAISummary against a fake local LLM and asserts the
+// resulting summary is exactly what the fake server returned — proving no
+// extra fact-finding happened in between.
+func TestGetAISummary_ChainedFromV4CheckUpgrade(t *testing.T) {
+	const addon = "cert-manager"
+	const chart = "cert-manager"
+	helmSrv := newHelmServerWithTarballs(t, chart, map[string]string{
+		"1.12.0": "replicaCount: 1\n",
+		"1.14.5": "replicaCount: 2\n",
+	})
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			config.AddonCatalogDeltaPath: v4DeltaYAML(t, addon, helmSrv.URL, chart, "1.12.0"),
+		},
+	}
+
+	const fakeSummary = "cert-manager 1.12.0 -> 1.14.5: one value changed, no conflicts."
+	fakeLLM := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/generate" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"response": %q}`, fakeSummary)
+	}))
+	defer fakeLLM.Close()
+
+	aiClient := ai.NewClient(ai.Config{Provider: ai.ProviderOllama, OllamaURL: fakeLLM.URL, OllamaModel: "test-model"})
+	svc := NewUpgradeService(aiClient, nil, "")
+	if !svc.IsAIEnabled() {
+		t.Fatal("expected IsAIEnabled() true with a configured provider")
+	}
+
+	checkResult, err := svc.CheckUpgrade(context.Background(), addon, "1.14.5", gp)
+	if err != nil {
+		t.Fatalf("CheckUpgrade: %v", err)
+	}
+	if checkResult.CurrentVersion != "1.12.0" {
+		t.Fatalf("expected the v4-resolved current version 1.12.0, got %q", checkResult.CurrentVersion)
+	}
+
+	summary, err := svc.GetAISummary(context.Background(), checkResult)
+	if err != nil {
+		t.Fatalf("GetAISummary: %v", err)
+	}
+	if summary != fakeSummary {
+		t.Errorf("summary = %q, want %q (verbatim from the fake LLM — GetAISummary must not alter or recompute facts)", summary, fakeSummary)
+	}
+}
+
+// TestGetAISummary_WithoutAIConfigured is Story 7.4's other half: without
+// an AI key, CheckUpgrade's result is identical (same v4-resolved data),
+// and GetAISummary simply refuses with a clear error — the caller (the API
+// handler) is expected to skip the summary, not the check.
+func TestGetAISummary_WithoutAIConfigured(t *testing.T) {
+	svc := NewUpgradeService(ai.NewClient(ai.Config{Provider: ai.ProviderNone}), nil, "")
+	if svc.IsAIEnabled() {
+		t.Fatal("expected IsAIEnabled() false with ProviderNone")
+	}
+
+	_, err := svc.GetAISummary(context.Background(), &models.UpgradeCheckResponse{AddonName: "cert-manager"})
+	if err == nil || !strings.Contains(err.Error(), "AI not configured") {
+		t.Fatalf("expected an 'AI not configured' error, got: %v", err)
 	}
 }

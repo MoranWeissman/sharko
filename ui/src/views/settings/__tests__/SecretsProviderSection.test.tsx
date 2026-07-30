@@ -34,11 +34,13 @@ import { showToast } from '@/components/ToastNotification'
 
 const getProvidersMock = vi.fn()
 const updateConnectionMock = vi.fn()
+const testProviderMock = vi.fn()
 
 vi.mock('@/services/api', () => ({
   api: {
     getProviders: () => getProvidersMock(),
     updateConnection: (name: string, data: unknown) => updateConnectionMock(name, data),
+    testProvider: () => testProviderMock(),
   },
 }))
 
@@ -86,6 +88,7 @@ describe('SecretsProviderSection', () => {
   beforeEach(() => {
     getProvidersMock.mockReset()
     updateConnectionMock.mockReset()
+    testProviderMock.mockReset()
     refreshConnectionsMock.mockReset()
     useConnectionsMock.mockReset()
     vi.mocked(showToast).mockReset()
@@ -899,6 +902,53 @@ describe('SecretsProviderSection', () => {
 
       expect(
         screen.getByText(/Sharko is a GitOps agent with an API: your portal or pipeline asks for "a cluster with these addons," and Sharko opens a pull request — it never changes your cluster behind your back/i),
+      ).toBeInTheDocument()
+    })
+  })
+
+  // v4-wave2 8.1 — "Test Secrets Store" action (mirrors Test Git / Test
+  // ArgoCD in ConnectionSection). Calls POST /providers/test on demand and
+  // shows a plain-words pass/fail result, distinct from the passive status
+  // card above (which only reflects health as of page load).
+  describe('Test Secrets Store action (v4-wave2 8.1)', () => {
+    it('shows a plain success message on a working provider', async () => {
+      const user = userEvent.setup()
+      getProvidersMock.mockResolvedValue({
+        configured_provider: { type: 'aws-sm', region: 'eu-west-1', status: 'connected' },
+        available_types: ['aws-sm', 'k8s-secrets'],
+      })
+      testProviderMock.mockResolvedValue({
+        status: 'connected',
+        message: 'Connected to aws-sm, found 3 cluster secrets',
+      })
+      setupHook([{ ...sampleConnection, provider: { type: 'aws-sm', region: 'eu-west-1' } }])
+      render(<SecretsProviderSection />)
+
+      const button = await screen.findByRole('button', { name: /Test Secrets Store/i })
+      await user.click(button)
+
+      expect(await screen.findByText('Connected to aws-sm, found 3 cluster secrets')).toBeInTheDocument()
+      expect(testProviderMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows the plain-words failure message when the test fails (never a raw error)', async () => {
+      const user = userEvent.setup()
+      getProvidersMock.mockResolvedValue({
+        configured_provider: { type: 'aws-sm', region: 'eu-west-1', status: 'error', error: 'boom' },
+        available_types: ['aws-sm', 'k8s-secrets'],
+      })
+      testProviderMock.mockResolvedValue({
+        status: 'error',
+        message: "Sharko can't reach your secrets store — the request timed out. Check the URL and network access.",
+      })
+      setupHook([{ ...sampleConnection, provider: { type: 'aws-sm', region: 'eu-west-1' } }])
+      render(<SecretsProviderSection />)
+
+      const button = await screen.findByRole('button', { name: /Test Secrets Store/i })
+      await user.click(button)
+
+      expect(
+        await screen.findByText("Sharko can't reach your secrets store — the request timed out. Check the URL and network access."),
       ).toBeInTheDocument()
     })
   })

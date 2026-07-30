@@ -51,6 +51,10 @@ vi.mock('@/services/api', () => ({
       },
       addons: { total_available: 15, total_deployments: 100, enabled_deployments: 85 },
     }),
+    // migration-ui: Dashboard renders <MigrationBanner/>, which probes
+    // migration status on mount. "empty" keeps it a no-op for existing
+    // Dashboard tests (no active connection to migrate yet).
+    getMigrationStatus: vi.fn().mockResolvedValue({ format: 'empty', migration_available: false, message: '' }),
   },
 }));
 

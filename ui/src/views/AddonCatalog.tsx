@@ -15,6 +15,7 @@ import {
   GitPullRequest,
   LayoutGrid,
   LayoutList,
+  Table,
   Plus,
   Loader2,
   RefreshCw,
@@ -44,6 +45,7 @@ import {
   type SubmitPhase,
 } from '@/components/AddAddonFlow'
 import { PRModelExplainer } from '@/components/PRFeedback'
+import { VersionMatrixTable } from '@/components/VersionMatrixTable'
 import {
   Dialog,
   DialogContent,
@@ -520,7 +522,7 @@ export function AddonCatalog() {
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'matrix'>('grid')
   const [search, setSearch] = useState('')
   // The Dashboard's "addons with drift" button deep-links here with
   // `?drift=true` (carried through the /version-matrix redirect by 61.1's
@@ -1527,7 +1529,7 @@ export function AddonCatalog() {
           <button
             type="button"
             onClick={() => setViewMode('list')}
-            className={`rounded-r-lg p-2 ${
+            className={`p-2 ${
               viewMode === 'list'
                 ? 'bg-teal-600 text-white'
                 : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
@@ -1537,9 +1539,26 @@ export function AddonCatalog() {
           >
             <LayoutList className="h-4 w-4" />
           </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('matrix')}
+            className={`rounded-r-lg p-2 ${
+              viewMode === 'matrix'
+                ? 'bg-teal-600 text-white'
+                : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+            }`}
+            aria-label="Version matrix view"
+            title="Version matrix — every addon across every cluster"
+          >
+            <Table className="h-4 w-4" />
+          </button>
         </div>
       </div>
 
+      {viewMode === 'matrix' && <VersionMatrixTable />}
+
+      {viewMode !== 'matrix' && (
+      <>
       {/* Results count + top pagination */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
@@ -1603,6 +1622,8 @@ export function AddonCatalog() {
             onPageChange={setPage}
           />
         </div>
+      )}
+      </>
       )}
     </div>
   )

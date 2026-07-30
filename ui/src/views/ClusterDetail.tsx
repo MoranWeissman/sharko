@@ -57,6 +57,7 @@ import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { YamlViewer } from '@/components/YamlViewer';
 import { RoleGuard } from '@/components/RoleGuard';
+import { useConnectionHealth } from '@/hooks/useConnectionHealth';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
 import { DiagnoseResultView } from '@/components/DiagnoseModal';
@@ -235,6 +236,10 @@ export function ClusterDetail() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [searchParams, setSearchParams] = useSearchParams();
   const activeSection = searchParams.get('section') || 'addons';
+  // v4-wave2 8.1: a failing git/ArgoCD/vault connection surfaces here too,
+  // not just on the Connections settings page. Only fires the two health
+  // probes once the Diagnostics tab is actually open.
+  const connHealth = useConnectionHealth(activeSection === 'diagnostics');
   // When switching section, preserve other query params (notably ?addon=…
   // which drives the deep-link scroll + highlight for the addons section).
   const setActiveSection = (s: string) => {
@@ -2103,6 +2108,31 @@ export function ClusterDetail() {
               <HelperText className="text-xs">
                 Run these checks when troubleshooting connectivity issues or after rotating credentials. Results persist here until you re-run.
               </HelperText>
+              {/* v4-wave2 8.1 — a failing git/ArgoCD/vault connection surfaces
+                * here too, not just on the Connections settings page, since a
+                * broken global connection is often the real reason the checks
+                * below fail. */}
+              {connHealth.anyFailing && (
+                <div className="flex items-start gap-3 rounded-lg ring-2 ring-red-300 bg-red-50 p-4 dark:ring-red-800 dark:bg-red-900/20">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-600 dark:text-red-400" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-red-800 dark:text-red-300">
+                      A connection Sharko depends on is currently failing
+                    </p>
+                    <ul className="mt-1 space-y-0.5 text-sm text-red-700 dark:text-red-400">
+                      {connHealth.failingMessages.map((msg, i) => (
+                        <li key={i}>{msg}</li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-sm text-red-700 dark:text-red-400">
+                      The checks below may fail for the same reason.{' '}
+                      <Link to="/settings?section=connections" className="underline hover:text-red-900 dark:hover:text-red-300">
+                        Fix it in Settings → Connections
+                      </Link>
+                    </p>
+                  </div>
+                </div>
+              )}
               <RoleGuard roles={['admin', 'operator']}>
                 <div className="space-y-3">
                   {/* Test connection result (also triggered from header) */}

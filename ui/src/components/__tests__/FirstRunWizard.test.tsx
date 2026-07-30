@@ -75,6 +75,10 @@ vi.mock('@/services/api', () => {
       testGitConnection: vi.fn().mockResolvedValue({ ok: true }),
       testArgocdConnection: vi.fn().mockResolvedValue({ ok: true }),
       saveConnection: vi.fn().mockResolvedValue({ ok: true }),
+      // migration-ui: step 4 renders <MigrationBanner/>, which probes
+      // migration status on mount. "empty" keeps it a no-op for every
+      // existing wizard test (no active connection to migrate yet).
+      getMigrationStatus: vi.fn().mockResolvedValue({ format: 'empty', migration_available: false, message: '' }),
     },
     // V2-cleanup-9: Step 4 probes repo state on mount. Default to "empty" so
     // existing resume-mode / init tests still see the Initialize offer; the
