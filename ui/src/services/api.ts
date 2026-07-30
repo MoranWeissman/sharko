@@ -872,8 +872,12 @@ export async function initRepo(data?: { bootstrap_argocd?: boolean; auto_merge?:
  *   - "empty"        — the GitOps repo has not been initialized yet.
  *   - "initialized"  — repo is set up AND the ArgoCD bootstrap is healthy.
  *   - "partial"      — repo files exist but the ArgoCD bootstrap is genuinely
- *                      missing or degraded (re-init can repair it); `detail`
- *                      carries the ArgoCD diagnostic.
+ *                      missing or degraded; `detail` carries the ArgoCD
+ *                      diagnostic. Check `repairable` (w2-q2) before promising
+ *                      a fix: true means the bootstrap app was simply never
+ *                      created and POST /init can repair it with no PR; false
+ *                      means the app already exists but is degraded, and
+ *                      re-running Initialize cannot fix a live app.
  *   - "unreachable"  — repo files exist but ArgoCD simply CAN'T reach/compare
  *                      the repo right now (a connection/network problem, e.g. a
  *                      corporate Zscaler proxy). Re-initializing won't fix it;
@@ -883,6 +887,8 @@ export async function initRepo(data?: { bootstrap_argocd?: boolean; auto_merge?:
 export interface InitStatus {
   state: 'empty' | 'initialized' | 'partial' | 'unreachable'
   detail: string
+  /** Only meaningful when state is "partial" — see the state doc above. */
+  repairable?: boolean
 }
 
 /**

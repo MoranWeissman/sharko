@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
@@ -189,7 +190,20 @@ func (s *Server) runInitOperation(
 	// than falling through and seeding the v4 folder tree over a live v3
 	// repo. InitRepo refuses that case as well; this is the earlier, nicer
 	// stop.
-	switch state, detail, _ := probeRepoState(ctx, gp, ac, gitopsCfg.BaseBranch); state {
+	//
+	// w2-q2: RepoStatePartial used to be a blanket Fail — the wizard's
+	// banner said "Re-run initialize to repair it" but the backend refused
+	// every time, a dead end. It now splits on the raw bootstrap status
+	// (bootstrapStatus, from probeRepoStateWithBootstrapStatus):
+	//   - bootstrapAbsent   → REAL repair: files are fine, only the ArgoCD
+	//     bootstrap Application is missing. No git writes, no PR, no
+	//     re-seeding — just (re-)create the Application and wait for sync.
+	//   - bootstrapUnhealthy → the Application already exists but is
+	//     degraded. Re-running Initialize cannot fix a live app, so this
+	//     stays a refusal — just with a clearer message.
+	// RepoStateUnreachable (Sync=Unknown, a connection problem) also stays a
+	// refusal — re-init cannot repair a repo ArgoCD can't reach.
+	switch state, detail, _, bootstrapStatus := probeRepoStateWithBootstrapStatus(ctx, gp, ac, gitopsCfg.BaseBranch); state {
 	case RepoStateInitialized:
 		// Advance every step as already-completed so the wizard's
 		// step-list UI shows a clean checkmarked sequence. We know the
@@ -206,18 +220,46 @@ func (s *Server) runInitOperation(
 		// instead of mislabeling it as "missing or unhealthy" (V2-cleanup-10).
 		s.opsStore.Fail(sessionID, detail)
 		return
-	case RepoStatePartial, RepoStateUnreachable:
-		// Both mean: repo files exist but the ArgoCD bootstrap is not healthy.
-		// On the POST /init (repair) path we Fail identically — re-bootstrapping
-		// an already-seeded repo is not the move, and a Sync=Unknown
-		// (unreachable) repo can't be repaired by re-init either. The
-		// unreachable/partial distinction is only surfaced on the read-only
-		// GET /init/status path (which feeds the wizard); here we MUST NOT fall
-		// through to the bootstrap flow, so we keep both in this Fail branch
-		// (V2-cleanup-51).
-		s.opsStore.Fail(sessionID,
-			fmt.Sprintf("repo initialized but ArgoCD bootstrap is missing or unhealthy: %s",
-				detail))
+	case RepoStatePartial:
+		if bootstrapStatus == bootstrapAbsent {
+			// REPAIR: the repo files are already in place — the only thing
+			// missing is the ArgoCD bootstrap Application itself. Mark the
+			// git-side steps (1-4: files/push/PR/wait-for-merge) as
+			// already-done — no git writes, no PR, no re-seeding — then run
+			// only the ArgoCD bootstrap + wait-for-sync steps (5-6).
+			markGitStepsAlreadyDone(s.opsStore, sessionID,
+				"already initialized — repairing ArgoCD bootstrap only")
+			if ac == nil {
+				s.opsStore.Fail(sessionID, "cannot repair: no ArgoCD client configured")
+				return
+			}
+			if !s.runBootstrapSteps(ctx, sessionID, orch, req, gitopsCfg, ac) {
+				return
+			}
+			s.auditLog.Add(audit.Entry{
+				Level:    "info",
+				Event:    "init_repair",
+				User:     "sharko",
+				Action:   "init_repair",
+				Resource: "argocd bootstrap application created (repair, no git changes)",
+				Source:   "api",
+				Result:   "success",
+			})
+			s.opsStore.Complete(sessionID, "repaired — the ArgoCD bootstrap application was created")
+			return
+		}
+		// bootstrapUnhealthy: the Application already exists but is
+		// degraded (OutOfSync/Degraded, or the probe itself failed to
+		// resolve one). Re-running Initialize cannot fix a live
+		// application — refuse plainly instead of re-seeding anything.
+		s.opsStore.Fail(sessionID, unhealthyRepairRefusalMessage(detail))
+		return
+	case RepoStateUnreachable:
+		// Sync=Unknown — ArgoCD's repo-server can't reach/evaluate the Git
+		// repo. That is a connection problem; re-running Initialize cannot
+		// fix it, so this stays a refusal (V2-cleanup-51).
+		s.opsStore.Fail(sessionID, fmt.Sprintf(
+			"repo initialized but ArgoCD cannot reach or evaluate the repository: %s", detail))
 		return
 	}
 	// RepoStateEmpty falls through to the normal bootstrap flow below.
@@ -284,50 +326,11 @@ func (s *Server) runInitOperation(
 		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "PR merged")
 	}
 
-	// Step 5: Bootstrap ArgoCD.
+	// Step 5+6: Bootstrap ArgoCD and wait for sync.
 	if req.BootstrapArgoCD && ac != nil {
-		// Add repository to ArgoCD.
-		if req.GitUsername != "" && req.GitToken != "" {
-			if addRepoErr := ac.AddRepository(ctx, gitopsCfg.RepoURL, req.GitUsername, req.GitToken); addRepoErr != nil {
-				slog.Warn("failed to add repository to ArgoCD", "error", addRepoErr)
-				// Non-fatal — continue with bootstrap.
-			}
-		}
-
-		rootAppContent, readErr := orch.ReadRootAppTemplate(ctx)
-		if readErr != nil {
-			s.opsStore.UpdateStep(sessionID, operations.StatusFailed, readErr.Error())
-			s.opsStore.Fail(sessionID, "failed to read root-app template: "+readErr.Error())
+		if !s.runBootstrapSteps(ctx, sessionID, orch, req, gitopsCfg, ac) {
 			return
 		}
-
-		if bootstrapErr := orch.BootstrapArgoCD(ctx, rootAppContent); bootstrapErr != nil {
-			s.opsStore.UpdateStep(sessionID, operations.StatusFailed, bootstrapErr.Error())
-			s.opsStore.Fail(sessionID, "ArgoCD bootstrap failed: "+bootstrapErr.Error())
-			return
-		}
-		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "ArgoCD bootstrapped")
-
-		// Step 6: Wait for sync. The canonical bootstrap app name is
-		// verified by templates_test.go to match metadata.name in
-		// templates/bootstrap/root-app.yaml — drift breaks first-run init.
-		syncStatus, syncErr := orch.WaitForSync(ctx, orchestrator.BootstrapRootAppName, 2*time.Minute)
-		detail := syncStatus
-		if syncErr != "" {
-			detail = syncStatus + ": " + syncErr
-		}
-		if syncStatus != "synced" {
-			// A sync timeout/failure must Fail the operation, not
-			// Complete it. The wizard treats `completed` as success
-			// and would otherwise show "Repository initialized
-			// successfully" while ArgoCD silently never reached Synced.
-			s.opsStore.UpdateStep(sessionID, operations.StatusFailed, detail)
-			s.opsStore.Fail(sessionID, fmt.Sprintf(
-				"argocd application %q did not reach synced state: %s",
-				orchestrator.BootstrapRootAppName, detail))
-			return
-		}
-		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "synced")
 		s.opsStore.Complete(sessionID, "init complete")
 	} else {
 		// Skip steps 5 and 6 — advance them as skipped.
@@ -345,6 +348,89 @@ func (s *Server) runInitOperation(
 		Source:   "api",
 		Result:   "success",
 	})
+}
+
+// runBootstrapSteps performs the ArgoCD-bootstrap half of init (step 5:
+// ReadRootAppTemplate + BootstrapArgoCD) and the wait-for-sync half (step 6),
+// recording progress on the session's next two pending steps exactly as the
+// original inline code did. Shared by two callers (w2-q2):
+//   - the normal first-time-init flow, once the bootstrap PR has merged;
+//   - the RepoStatePartial + bootstrapAbsent repair path in runInitOperation,
+//     which skips straight to this without any git writes or PR.
+//
+// Returns true on success. On failure it has already recorded the failed
+// step and called s.opsStore.Fail with a descriptive message — the caller
+// must return immediately without calling Complete.
+func (s *Server) runBootstrapSteps(
+	ctx context.Context,
+	sessionID string,
+	orch *orchestrator.Orchestrator,
+	req orchestrator.InitRepoRequest,
+	gitopsCfg orchestrator.GitOpsConfig,
+	ac orchestrator.ArgocdClient,
+) bool {
+	// Add repository to ArgoCD.
+	if req.GitUsername != "" && req.GitToken != "" {
+		if addRepoErr := ac.AddRepository(ctx, gitopsCfg.RepoURL, req.GitUsername, req.GitToken); addRepoErr != nil {
+			slog.Warn("failed to add repository to ArgoCD", "error", addRepoErr)
+			// Non-fatal — continue with bootstrap.
+		}
+	}
+
+	rootAppContent, readErr := orch.ReadRootAppTemplate(ctx)
+	if readErr != nil {
+		s.opsStore.UpdateStep(sessionID, operations.StatusFailed, readErr.Error())
+		s.opsStore.Fail(sessionID, "failed to read root-app template: "+readErr.Error())
+		return false
+	}
+
+	if bootstrapErr := orch.BootstrapArgoCD(ctx, rootAppContent); bootstrapErr != nil {
+		s.opsStore.UpdateStep(sessionID, operations.StatusFailed, bootstrapErr.Error())
+		s.opsStore.Fail(sessionID, "ArgoCD bootstrap failed: "+bootstrapErr.Error())
+		return false
+	}
+	s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "ArgoCD bootstrapped")
+
+	// Wait for sync. The canonical bootstrap app name is verified by
+	// templates_test.go to match metadata.name in
+	// templates/bootstrap/root-app.yaml — drift breaks first-run init.
+	syncStatus, syncErr := orch.WaitForSync(ctx, orchestrator.BootstrapRootAppName, 2*time.Minute)
+	detail := syncStatus
+	if syncErr != "" {
+		detail = syncStatus + ": " + syncErr
+	}
+	if syncStatus != "synced" {
+		// A sync timeout/failure must Fail the operation, not Complete it.
+		// The wizard treats `completed` as success and would otherwise show
+		// "Repository initialized successfully" while ArgoCD silently never
+		// reached Synced.
+		s.opsStore.UpdateStep(sessionID, operations.StatusFailed, detail)
+		s.opsStore.Fail(sessionID, fmt.Sprintf(
+			"argocd application %q did not reach synced state: %s",
+			orchestrator.BootstrapRootAppName, detail))
+		return false
+	}
+	s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "synced")
+	return true
+}
+
+// unhealthyRepairRefusalMessage builds the POST /init failure message for
+// the RepoStatePartial + bootstrapUnhealthy case (w2-q2). When argoDetail
+// carries a resolved app's sync/health values (the "argocd app %q sync=...
+// health=..." shape ProbeBootstrapApp emits once it has actually found the
+// application), the message says so explicitly: the app already exists, so
+// re-running Initialize will not fix it, and points at ArgoCD/diagnostics
+// instead. When the probe couldn't even resolve an app (e.g. the ArgoCD LIST
+// call itself failed for a non-permission reason), we don't actually know
+// whether the app exists — keep the original, more conservative wording
+// rather than asserting something we can't confirm.
+func unhealthyRepairRefusalMessage(argoDetail string) string {
+	if !strings.Contains(argoDetail, "sync=") {
+		return fmt.Sprintf("repo initialized but ArgoCD bootstrap is missing or unhealthy: %s", argoDetail)
+	}
+	return fmt.Sprintf(
+		"%s — this ArgoCD application already exists, so re-running Initialize will not fix it. Check the application's sync and health status in ArgoCD directly, or use the diagnostics tools, before retrying.",
+		argoDetail)
 }
 
 // pollPRMergeInterval is the cadence at which pollPRMerge probes the
@@ -572,6 +658,35 @@ func markAllStepsAlreadyInitialized(store *operations.Store, sessionID string) {
 	// UpdateStep advances internally; one call per step is correct.
 	for range sess.Steps {
 		store.UpdateStep(sessionID, operations.StatusCompleted, "already initialized")
+	}
+}
+
+// gitStepCount is the number of session steps that belong to the git side of
+// init (see the `steps` slice built in handleInit): "Creating bootstrap
+// files", "Pushing to branch", "Creating pull request", "Waiting for PR
+// merge". The remaining two ("Bootstrapping ArgoCD", "Waiting for sync") are
+// the ArgoCD side, driven by runBootstrapSteps.
+const gitStepCount = 4
+
+// markGitStepsAlreadyDone advances the git-side steps (the first
+// gitStepCount of the session, or fewer if the step list is ever shorter) to
+// completed with the given detail, without doing any real work. Used by the
+// w2-q2 repair path: the repo files already exist (no git writes, no PR, no
+// re-seeding needed), so only the ArgoCD-bootstrap steps that follow
+// (runBootstrapSteps) do real work. Mirrors markAllStepsAlreadyInitialized's
+// approach of walking UpdateStep one call per step so the wizard's step list
+// renders a clean checkmarked sequence instead of blank/pending entries.
+func markGitStepsAlreadyDone(store *operations.Store, sessionID, detail string) {
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		return
+	}
+	n := gitStepCount
+	if n > len(sess.Steps) {
+		n = len(sess.Steps)
+	}
+	for i := 0; i < n; i++ {
+		store.UpdateStep(sessionID, operations.StatusCompleted, detail)
 	}
 }
 

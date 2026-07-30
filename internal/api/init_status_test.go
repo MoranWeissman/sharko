@@ -137,6 +137,27 @@ func TestHandleInitStatus_Partial_AppDegraded(t *testing.T) {
 	if body.Detail == "" {
 		t.Error("expected a non-empty detail for degraded bootstrap app")
 	}
+	// w2-q2: a degraded (but existing) app is NOT repairable — the wizard
+	// must not promise "re-run initialize to repair it" for a live app.
+	if body.Repairable {
+		t.Error("expected repairable=false for a degraded (but existing) bootstrap app")
+	}
+}
+
+// w2-q2: state=partial because the bootstrap Application was never created
+// (LIST ok, empty result — the "absent" classification) IS repairable —
+// POST /init's repair path can fix it with no PR. This is the wire-level
+// signal the wizard banner uses to decide whether "Re-run initialize to
+// repair it" is an honest promise.
+func TestHandleInitStatus_Partial_AppAbsent_IsRepairable(t *testing.T) {
+	ac := &initFakeArgocd{listApps: []models.ArgocdApplication{}}
+	body := initStatusBody(t, initializedRepoGit(), ac)
+	if body.State != RepoStatePartial {
+		t.Errorf("expected state=%q, got %q", RepoStatePartial, body.State)
+	}
+	if !body.Repairable {
+		t.Error("expected repairable=true when the bootstrap app was simply never created")
+	}
 }
 
 // V2-cleanup-51.1: bootstrap app reports Sync=Unknown → state "unreachable".
