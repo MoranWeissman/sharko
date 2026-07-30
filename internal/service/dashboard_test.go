@@ -11,8 +11,10 @@ import (
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // inMemoryConnStore is a minimal config.Store implementation for dashboard
@@ -174,5 +176,112 @@ func TestGetStats_EmptyResponseHasNoLeakedError(t *testing.T) {
 	}
 	if strings.Contains(string(body), "file not found") {
 		t.Errorf("response body leaked error string: %s", string(body))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Wave 2 ride-along w2-q6 item 4: dashboard git-side stats must be v4-aware
+// (fleet/connections.yaml + clusters/*.yaml + catalog/addons.yaml delta)
+// instead of only ever reading the v3 files. fakeGitProvider (defined in
+// addon_test.go, same package) is reused here because — unlike fakeGP — its
+// ListDirectory derives real entries from the files map, which the v4
+// clusters/*.yaml listing needs.
+// ---------------------------------------------------------------------------
+
+// TestGetStats_V4Repo_UsesV4Sources proves GetStats detects a v4 repo (the
+// same engine-pin probe AddonService.GetVersionMatrix uses) and counts
+// clusters/addons from fleet/connections.yaml + clusters/*.yaml +
+// catalog/addons.yaml instead of the v3 files — even when v3 files are
+// ALSO present (a repo mid-migration), the v4 branch must win once the
+// engine pin exists.
+func TestGetStats_V4Repo_UsesV4Sources(t *testing.T) {
+	connSvc := NewConnectionService(&inMemoryConnStore{})
+	svc := NewDashboardService(connSvc, "")
+
+	prodEU, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "prod-eu",
+		Addons: map[string]models.ClusterAddonsAddon{
+			"cert-manager": {Enabled: true},
+			"external-dns": {Enabled: false},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building prod-eu assignment: %v", err)
+	}
+	stagingUS, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "staging-us",
+		Addons: map[string]models.ClusterAddonsAddon{
+			"cert-manager": {Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building staging-us assignment: %v", err)
+	}
+	delta, err := config.SaveAddonCatalogDelta(config.AddonCatalogDeltaSpec{
+		Addons: map[string]config.AddonCatalogDeltaEntry{
+			"cert-manager": {RepoURL: "https://charts.jetstack.io", Chart: "cert-manager", Version: "1.14.5"},
+			"external-dns": {RepoURL: "https://kubernetes-sigs.github.io/external-dns", Chart: "external-dns", Version: "1.14.0"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building catalog delta: %v", err)
+	}
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:     []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			orchestrator.V4ConnectionsPath: []byte("clusters:\n  - name: prod-eu\n  - name: staging-us\n"),
+			"clusters/prod-eu.yaml":        prodEU,
+			"clusters/staging-us.yaml":     stagingUS,
+			config.AddonCatalogDeltaPath:   delta,
+			// v3 files ALSO present, to prove they are ignored once the
+			// engine pin routes this to the v4 branch.
+			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-only-cluster\n    labels: {}\n"),
+			"configuration/addons-catalog.yaml":   []byte("applicationsets:\n  - name: v3-only-addon\n"),
+		},
+	}
+
+	resp, err := svc.GetStats(context.Background(), gp, argocdEmptyStub(t))
+	if err != nil {
+		t.Fatalf("GetStats returned error: %v", err)
+	}
+	if resp.Clusters.Total != 2 {
+		t.Errorf("Clusters.Total = %d, want 2 (v4 fleet/connections.yaml) — v3 managed-clusters.yaml must be ignored", resp.Clusters.Total)
+	}
+	if resp.Addons.TotalAvailable != 2 {
+		t.Errorf("Addons.TotalAvailable = %d, want 2 (v4 catalog/addons.yaml delta entries)", resp.Addons.TotalAvailable)
+	}
+	// prod-eu.cert-manager (enabled) + staging-us.cert-manager (enabled);
+	// prod-eu.external-dns is enabled=false and must not count.
+	if resp.Addons.EnabledDeployments != 2 {
+		t.Errorf("Addons.EnabledDeployments = %d, want 2", resp.Addons.EnabledDeployments)
+	}
+}
+
+// TestGetStats_V4Repo_MissingFilesReturnsZeroState mirrors
+// TestGetStats_MissingFileReturnsZeroState for the v4 branch: a v4 repo
+// (engine pin present) with no clusters or catalog delta yet degrades to
+// zero-state stats, never a 500.
+func TestGetStats_V4Repo_MissingFilesReturnsZeroState(t *testing.T) {
+	connSvc := NewConnectionService(&inMemoryConnStore{})
+	svc := NewDashboardService(connSvc, "")
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath: []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+		},
+	}
+
+	resp, err := svc.GetStats(context.Background(), gp, argocdEmptyStub(t))
+	if err != nil {
+		t.Fatalf("GetStats returned err on v4 missing-file path: %v", err)
+	}
+	if resp.Clusters.Total != 0 {
+		t.Errorf("expected 0 clusters, got %d", resp.Clusters.Total)
+	}
+	if resp.Addons.TotalAvailable != 0 {
+		t.Errorf("expected 0 addons available, got %d", resp.Addons.TotalAvailable)
+	}
+	if resp.Addons.EnabledDeployments != 0 {
+		t.Errorf("expected 0 enabled deployments, got %d", resp.Addons.EnabledDeployments)
 	}
 }

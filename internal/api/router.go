@@ -130,6 +130,16 @@ func (s *Server) gitopsConfig() orchestrator.GitOpsConfig {
 	return orchestrator.GitOpsConfig{}
 }
 
+// GitopsBaseBranch is the exported form of gitopsConfig().BaseBranch — the
+// single seam packages outside internal/api (e.g. internal/service's
+// AddonService via SetBaseBranchFn, internal/notifications' ServiceProvider)
+// use to read the configured base branch instead of hardcoding "main". Live
+// (reads the current published snapshot, not a value captured at wiring
+// time), so it stays correct across ReinitializeFromConnection hot-reloads.
+func (s *Server) GitopsBaseBranch() string {
+	return s.gitopsConfig().BaseBranch
+}
+
 // publishGitopsCfg atomically publishes a new GitOps config snapshot. The
 // ONLY writer path for gitops config (SetWriteAPIDeps at boot,
 // ReinitializeFromConnection on hot-reload, tests via their seams). GF2.

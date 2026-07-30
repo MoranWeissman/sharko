@@ -51,6 +51,49 @@ func validateV4PathNames(w http.ResponseWriter, clusterName, addonName string) e
 	return nil
 }
 
+// friendlyBodyDecodeError turns a JSON request-body decode error into a
+// plain-English message safe to hand back to a caller. encoding/json's own
+// error text is a Go implementation detail — "json: cannot unmarshal
+// string into Go struct field EnableAddonV4Request.values of type
+// map[string]interface {}" — that a Helm user has no way to act on; Moran
+// hit exactly this raw message live via the enable-addon dialog's values
+// box (Wave 2 ride-along w2-q6 item 2). A *json.UnmarshalTypeError naming
+// the "values" field gets the specific, actionable example; every other
+// decode failure (bad syntax, wrong type elsewhere) gets a generic
+// "not valid JSON" message — never the raw encoding/json string.
+func friendlyBodyDecodeError(err error) string {
+	var terr *json.UnmarshalTypeError
+	if errors.As(err, &terr) && terr.Field == "values" {
+		return `values must be a set of key: value pairs, e.g. {"installCRDs": true}`
+	}
+	return "request body is not valid JSON"
+}
+
+// writeV4OrchestratorError maps an error returned by EnableAddonV4 /
+// DisableAddonV4 to the right HTTP status — honest codes instead of a
+// blanket 502 (Wave 2 ride-along w2-q6 item 2):
+//
+//   - confirmation-required            -> 400 (already-well-formed request, missing yes:true)
+//   - *orchestrator.V4SemanticValidationError -> 422, structured (handled by the caller BEFORE this helper)
+//   - orchestrator.ErrV4AddonNotInCatalog     -> 422, plain "not in the catalog" wording
+//   - orchestrator.ErrV4ClusterNotFound       -> 404
+//   - anything else                           -> 502 (a real upstream/git failure)
+func writeV4OrchestratorError(w http.ResponseWriter, err error) {
+	if err.Error() == "confirmation required: set yes: true in request body" {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if errors.Is(err, orchestrator.ErrV4ClusterNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if errors.Is(err, orchestrator.ErrV4AddonNotInCatalog) {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeError(w, http.StatusBadGateway, err.Error())
+}
+
 // handleEnableAddonV4 godoc
 //
 // @Summary Enable addon on cluster (v4 format)
@@ -63,9 +106,10 @@ func validateV4PathNames(w http.ResponseWriter, clusterName, addonName string) e
 // @Param addon path string true "Addon name"
 // @Param body body orchestrator.EnableAddonV4Request true "Enable addon request"
 // @Success 200 {object} orchestrator.GitResult "Addon enabled (or dry-run preview)"
-// @Failure 400 {object} map[string]interface{} "Bad request or missing confirmation"
+// @Failure 400 {object} map[string]interface{} "Bad request, invalid JSON body, or missing confirmation"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 422 {object} map[string]interface{} "Semantic validation failed — missing required values or undeclared secrets, listed by name"
+// @Failure 404 {object} map[string]interface{} "Cluster is not registered"
+// @Failure 422 {object} map[string]interface{} "Semantic validation failed (missing required values or undeclared secrets, listed by name) or the addon is not in the catalog"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /v4/clusters/{name}/addons/{addon} [post]
 func (s *Server) handleEnableAddonV4(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +137,7 @@ func (s *Server) handleEnableAddonV4(w http.ResponseWriter, r *http.Request) {
 	var req orchestrator.EnableAddonV4Request
 	if r.Body != nil && r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			writeError(w, http.StatusBadRequest, friendlyBodyDecodeError(err))
 			return
 		}
 	}
@@ -106,10 +150,6 @@ func (s *Server) handleEnableAddonV4(w http.ResponseWriter, r *http.Request) {
 
 	result, orchErr := orch.EnableAddonV4(r.Context(), req)
 	if orchErr != nil {
-		if orchErr.Error() == "confirmation required: set yes: true in request body" {
-			writeError(w, http.StatusBadRequest, orchErr.Error())
-			return
-		}
 		var verr *orchestrator.V4SemanticValidationError
 		if errors.As(orchErr, &verr) {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]interface{}{
@@ -120,7 +160,7 @@ func (s *Server) handleEnableAddonV4(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		writeError(w, http.StatusBadGateway, orchErr.Error())
+		writeV4OrchestratorError(w, orchErr)
 		return
 	}
 
@@ -152,8 +192,9 @@ func (s *Server) handleEnableAddonV4(w http.ResponseWriter, r *http.Request) {
 // @Param addon path string true "Addon name"
 // @Param body body orchestrator.DisableAddonV4Request true "Disable addon request"
 // @Success 200 {object} orchestrator.GitResult "Addon disabled (or dry-run preview)"
-// @Failure 400 {object} map[string]interface{} "Bad request or missing confirmation"
+// @Failure 400 {object} map[string]interface{} "Bad request, invalid JSON body, or missing confirmation"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Cluster is not registered, or has nothing to disable"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /v4/clusters/{name}/addons/{addon} [delete]
 func (s *Server) handleDisableAddonV4(w http.ResponseWriter, r *http.Request) {
@@ -181,7 +222,7 @@ func (s *Server) handleDisableAddonV4(w http.ResponseWriter, r *http.Request) {
 	var req orchestrator.DisableAddonV4Request
 	if r.Body != nil && r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			writeError(w, http.StatusBadRequest, friendlyBodyDecodeError(err))
 			return
 		}
 	}
@@ -193,11 +234,7 @@ func (s *Server) handleDisableAddonV4(w http.ResponseWriter, r *http.Request) {
 
 	result, orchErr := orch.DisableAddonV4(r.Context(), req)
 	if orchErr != nil {
-		if orchErr.Error() == "confirmation required: set yes: true in request body" {
-			writeError(w, http.StatusBadRequest, orchErr.Error())
-			return
-		}
-		writeError(w, http.StatusBadGateway, orchErr.Error())
+		writeV4OrchestratorError(w, orchErr)
 		return
 	}
 

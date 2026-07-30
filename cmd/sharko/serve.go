@@ -222,6 +222,11 @@ var serveCmd = &cobra.Command{
 		srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
 		srv.SetVersion(version)                 // Propagate ldflags-injected version to health endpoint
 		srv.SetTemplateFS(templates.TemplateFS) // Always available — init doesn't need a provider
+		// v4 read paths must honor the configured GitOps base branch
+		// instead of hardcoding "main" (Wave 2 ride-along w2-q6 item 1).
+		// srv.GitopsBaseBranch reads the live published gitops snapshot,
+		// so this stays correct across ReinitializeFromConnection.
+		addonSvc.SetBaseBranchFn(srv.GitopsBaseBranch)
 
 		// Construct the cosign-keyless verifier, shared between:
 		//

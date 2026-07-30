@@ -336,3 +336,104 @@ func TestMergeDelta_MutatingResultDoesNotAffectCatalog(t *testing.T) {
 		t.Errorf("mutating the merged result's Quirks slice leaked back into the Catalog: %+v", e.Quirks)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Wave 2 ride-along w2-q6 item 3: Go MergeDelta vs Helm mergeOverwrite
+// divergence on nested maps. CatalogEntry (the curated side) does not carry
+// a Settings or ExtraHelmValues field yet, so these tests exercise
+// applyDeltaOverlay directly against a hand-built starting MergedAddon —
+// standing in for "once curated settings ship" (the exact scenario the
+// review flagged as latent). See applyDeltaOverlay's doc comment in
+// delta_merge.go for which side is canonical (Helm's mergeOverwrite) and
+// why each field type merges the way it does.
+// ---------------------------------------------------------------------------
+
+func boolPtrTest(b bool) *bool { return &b }
+
+// TestApplyDeltaOverlay_SettingsFieldsMergeNotWholeReplace is the actual
+// bug fix: a delta that sets only ONE Settings field must not erase every
+// other field the base (eventually: curated) side already had — Sprig's
+// mergeOverwrite recurses into nested dicts field by field, it does not
+// replace the whole dict the moment any key is present.
+func TestApplyDeltaOverlay_SettingsFieldsMergeNotWholeReplace(t *testing.T) {
+	m := &MergedAddon{
+		Name: "cert-manager",
+		Settings: &config.AddonSettings{
+			Namespace:   "cert-manager-system",
+			Prune:       boolPtrTest(true),
+			SyncOptions: []string{"ServerSideApply=true"},
+		},
+	}
+	d := config.AddonCatalogDeltaEntry{
+		Settings: &config.AddonSettings{
+			SelfHeal: boolPtrTest(true), // touches ONLY SelfHeal
+		},
+	}
+	applyDeltaOverlay(m, d)
+
+	if m.Settings.Namespace != "cert-manager-system" {
+		t.Errorf("Namespace = %q, want the base value preserved (delta did not set it)", m.Settings.Namespace)
+	}
+	if m.Settings.Prune == nil || !*m.Settings.Prune {
+		t.Errorf("Prune = %v, want the base true preserved", m.Settings.Prune)
+	}
+	if len(m.Settings.SyncOptions) != 1 || m.Settings.SyncOptions[0] != "ServerSideApply=true" {
+		t.Errorf("SyncOptions = %v, want the base list preserved (delta did not set it)", m.Settings.SyncOptions)
+	}
+	if m.Settings.SelfHeal == nil || !*m.Settings.SelfHeal {
+		t.Errorf("SelfHeal = %v, want the delta's true", m.Settings.SelfHeal)
+	}
+}
+
+// TestApplyDeltaOverlay_SettingsListFieldsReplaceWhole proves SyncOptions/
+// IgnoreDifferences still replace whole when the delta sets them — design
+// doc §3.3 D12, and matches Sprig's leaf-value treatment of slices.
+func TestApplyDeltaOverlay_SettingsListFieldsReplaceWhole(t *testing.T) {
+	m := &MergedAddon{
+		Settings: &config.AddonSettings{
+			SyncOptions: []string{"ServerSideApply=true", "Old=true"},
+		},
+	}
+	d := config.AddonCatalogDeltaEntry{
+		Settings: &config.AddonSettings{
+			SyncOptions: []string{"New=true"},
+		},
+	}
+	applyDeltaOverlay(m, d)
+	if len(m.Settings.SyncOptions) != 1 || m.Settings.SyncOptions[0] != "New=true" {
+		t.Errorf("SyncOptions = %v, want whole-replace to [New=true]", m.Settings.SyncOptions)
+	}
+}
+
+// TestApplyDeltaOverlay_ExtraHelmValuesMergePerKey is ExtraHelmValues'
+// twin of the Settings fix: it is a map too, so it must merge key by key,
+// not replace wholesale.
+func TestApplyDeltaOverlay_ExtraHelmValuesMergePerKey(t *testing.T) {
+	m := &MergedAddon{
+		ExtraHelmValues: map[string]string{"replicaCount": "2", "foo": "bar"},
+	}
+	d := config.AddonCatalogDeltaEntry{
+		ExtraHelmValues: map[string]string{"foo": "baz"}, // overrides ONE key
+	}
+	applyDeltaOverlay(m, d)
+	if m.ExtraHelmValues["replicaCount"] != "2" {
+		t.Errorf("replicaCount = %q, want the untouched base key preserved", m.ExtraHelmValues["replicaCount"])
+	}
+	if m.ExtraHelmValues["foo"] != "baz" {
+		t.Errorf("foo = %q, want the delta's override", m.ExtraHelmValues["foo"])
+	}
+}
+
+// TestApplyDeltaOverlay_ExtraHelmValuesDoesNotAliasSourceMap guards the
+// same deepCopy invariant TestMergeDelta_MutatingResultDoesNotAffectCatalog
+// covers at the Catalog level, one layer down: merging must never mutate
+// the caller's original map in place.
+func TestApplyDeltaOverlay_ExtraHelmValuesDoesNotAliasSourceMap(t *testing.T) {
+	base := map[string]string{"replicaCount": "2"}
+	m := &MergedAddon{ExtraHelmValues: base}
+	d := config.AddonCatalogDeltaEntry{ExtraHelmValues: map[string]string{"foo": "bar"}}
+	applyDeltaOverlay(m, d)
+	if _, ok := base["foo"]; ok {
+		t.Error("applyDeltaOverlay mutated the caller's original map in place")
+	}
+}

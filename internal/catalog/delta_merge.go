@@ -159,6 +159,30 @@ func mergedFromCurated(e CatalogEntry) MergedAddon {
 // (deployment fields) can be overridden; knowledge fields (Description,
 // DocsURL, ...) have no delta-side equivalent and are left exactly as
 // mergedFromCurated set them (or zero-value, for an internal addon).
+//
+// CANONICAL SIDE (Wave 2 ride-along w2-q6 item 3): the engine chart's Helm
+// merge (charts/sharko-engine/templates/_helpers.tpl,
+// sharko-engine.mergedAddons: `mergeOverwrite(deepCopy(curated.addons),
+// spec.addons)`) is the canonical definition of "merged" — it is what
+// actually reaches ArgoCD. This Go implementation exists so the API/CLI can
+// show the same merged view without invoking Helm, and MUST match Sprig's
+// mergeOverwrite semantics field type by field type:
+//
+//   - scalar/pointer fields (Namespace, RepoURL, Chart, Version, and every
+//     *bool in AddonSettings): the delta's value wins when set, exactly a
+//     leaf-value overwrite — Go and mergeOverwrite already agree here.
+//   - MAP fields (ExtraHelmValues, and AddonSettings itself once treated as
+//     a dict): mergeOverwrite recurses into nested maps and merges key by
+//     key — a delta that sets only ONE key does not erase the curated
+//     side's other keys. A whole-value replace (`m.X = d.X`) diverges from
+//     this the moment the curated side ever sets the same map (Settings
+//     has no curated-side source yet — CatalogEntry carries no settings
+//     field — so this was latent; ExtraHelmValues has the identical gap).
+//   - LIST/SLICE fields (AdditionalSources; AddonSettings.SyncOptions and
+//     .IgnoreDifferences): mergeOverwrite treats a slice as a single leaf
+//     value, not a thing to merge index-by-index, so whole-replace-when-set
+//     is CORRECT here and matches design doc §3.3 decision D12 ("list
+//     fields replace whole").
 func applyDeltaOverlay(m *MergedAddon, d config.AddonCatalogDeltaEntry) {
 	m.Customized = true
 	if d.RepoURL != "" {
@@ -175,18 +199,70 @@ func applyDeltaOverlay(m *MergedAddon, d config.AddonCatalogDeltaEntry) {
 		m.Namespace = d.Namespace
 	}
 	if d.Settings != nil {
-		// List fields replace whole (design doc §3.3 D12) — trivially true
-		// here because the curated side never sets Settings at all today,
-		// but the assignment is unconditional-replace by construction so
-		// the rule holds the moment a curated quirk-default settings block
-		// exists (engine chart wiring, Story 2.4).
-		m.Settings = d.Settings
+		// AddonSettings renders as a nested Helm dict — field-by-field
+		// merge (MergeAddonSettings), NOT a whole-pointer replace, so a
+		// curated field the delta does not mention survives exactly as
+		// mergeOverwrite would leave it.
+		base := &config.AddonSettings{}
+		if m.Settings != nil {
+			cp := *m.Settings
+			base = &cp
+		}
+		MergeAddonSettings(base, d.Settings)
+		m.Settings = base
 	}
 	if len(d.AdditionalSources) > 0 {
+		// Slice — whole-replace matches mergeOverwrite's leaf-value
+		// treatment of lists (design doc §3.3 D12).
 		m.AdditionalSources = d.AdditionalSources
 	}
 	if len(d.ExtraHelmValues) > 0 {
-		m.ExtraHelmValues = d.ExtraHelmValues
+		// Map — merge key by key, matching mergeOverwrite's recursive
+		// merge of nested dicts. A whole-replace here would silently drop
+		// any curated key the delta's map does not repeat.
+		merged := make(map[string]string, len(m.ExtraHelmValues)+len(d.ExtraHelmValues))
+		for k, v := range m.ExtraHelmValues {
+			merged[k] = v
+		}
+		for k, v := range d.ExtraHelmValues {
+			merged[k] = v
+		}
+		m.ExtraHelmValues = merged
+	}
+}
+
+// MergeAddonSettings applies delta's fields onto base, field by field —
+// the delta wins whenever it sets a field. Slice fields (SyncOptions,
+// IgnoreDifferences) replace base's slice whole rather than merging
+// element-by-element, matching Sprig's mergeOverwrite treatment of a slice
+// value as an atomic leaf (design doc §3.3 D12). Scalar/pointer fields the
+// delta does not set are left exactly as base had them. See
+// applyDeltaOverlay's doc comment for why this is the canonical shape.
+// Exported (beyond applyDeltaOverlay's own use) so
+// tests/enginerender can cross-check this Go implementation against a real
+// `helm template` invocation of the identical Sprig mergeOverwrite call
+// the engine chart makes (Wave 2 ride-along w2-q6 item 3).
+func MergeAddonSettings(base, delta *config.AddonSettings) {
+	if delta.Namespace != "" {
+		base.Namespace = delta.Namespace
+	}
+	if delta.CreateNamespace != nil {
+		base.CreateNamespace = delta.CreateNamespace
+	}
+	if len(delta.SyncOptions) > 0 {
+		base.SyncOptions = delta.SyncOptions
+	}
+	if len(delta.IgnoreDifferences) > 0 {
+		base.IgnoreDifferences = delta.IgnoreDifferences
+	}
+	if delta.Prune != nil {
+		base.Prune = delta.Prune
+	}
+	if delta.SelfHeal != nil {
+		base.SelfHeal = delta.SelfHeal
+	}
+	if delta.PreserveResourcesOnDeletion != nil {
+		base.PreserveResourcesOnDeletion = delta.PreserveResourcesOnDeletion
 	}
 }
 

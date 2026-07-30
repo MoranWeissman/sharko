@@ -88,6 +88,15 @@ func clusterValsPath(t *testing.T, cluster, addon string) string {
 
 func newV4TestOrchestrator(t *testing.T, git *mockGitProvider) *Orchestrator {
 	t.Helper()
+	// Every existing v4 test writes against cluster "prod-eu"; seed it into
+	// fleet/connections.yaml (the v4 cluster registry, design doc §2.4) so
+	// the v4ClusterExists pre-check (Wave 2 ride-along w2-q6 items 2/6)
+	// does not turn every one of them into a 404. Tests that specifically
+	// exercise the not-found path build their own bare mockGitProvider
+	// instead of going through this helper.
+	if _, ok := git.files[V4ConnectionsPath]; !ok {
+		git.files[V4ConnectionsPath] = []byte("clusters:\n  - name: prod-eu\n")
+	}
 	orch := New(nil, nil, newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 	orch.SetCuratedCatalog(v4TestCuratedCatalog(t))
 	return orch
@@ -450,3 +459,66 @@ func TestDisableAddonV4_Remove_DeletesEntry(t *testing.T) {
 }
 
 func strPtrTest(s string) *string { return &s }
+
+// TestEnableAddonV4_UnknownCluster_ReturnsErrV4ClusterNotFound_BeforeAnyGitWrite
+// proves EnableAddonV4 refuses a cluster that is not in fleet/connections.yaml
+// (and has no clusters/<name>.yaml either) BEFORE writing anything — the API
+// layer maps ErrV4ClusterNotFound to 404 (Wave 2 ride-along w2-q6 items 2/6).
+func TestEnableAddonV4_UnknownCluster_ReturnsErrV4ClusterNotFound_BeforeAnyGitWrite(t *testing.T) {
+	git := newMockGitProvider() // deliberately NOT going through newV4TestOrchestrator's seed
+	orch := New(nil, nil, newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
+	orch.SetCuratedCatalog(v4TestCuratedCatalog(t))
+
+	_, err := orch.EnableAddonV4(context.Background(), EnableAddonV4Request{
+		Cluster: "no-such-cluster",
+		Addon:   "metrics-server",
+		Yes:     true,
+	})
+	if !errors.Is(err, ErrV4ClusterNotFound) {
+		t.Fatalf("expected ErrV4ClusterNotFound, got %T: %v", err, err)
+	}
+	if len(git.branches) != 0 || len(git.prs) != 0 {
+		t.Error("expected zero git side effects for an unknown cluster")
+	}
+	if _, ok := git.files[assignPath(t, "no-such-cluster")]; ok {
+		t.Error("expected no clusters/no-such-cluster.yaml write for an unregistered cluster")
+	}
+}
+
+// TestEnableAddonV4_UnknownAddon_ReturnsErrV4AddonNotInCatalog proves an
+// addon name absent from the merged catalog (curated + delta) surfaces as
+// ErrV4AddonNotInCatalog with the plain "not in the catalog" wording — the
+// API layer maps this to 422, not the 502 default.
+func TestEnableAddonV4_UnknownAddon_ReturnsErrV4AddonNotInCatalog(t *testing.T) {
+	git := newMockGitProvider()
+	orch := newV4TestOrchestrator(t, git)
+
+	_, err := orch.EnableAddonV4(context.Background(), EnableAddonV4Request{
+		Cluster: "prod-eu",
+		Addon:   "does-not-exist",
+		Yes:     true,
+	})
+	if !errors.Is(err, ErrV4AddonNotInCatalog) {
+		t.Fatalf("expected ErrV4AddonNotInCatalog, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "not in the catalog") {
+		t.Errorf("error = %q, want it to say \"not in the catalog\"", err.Error())
+	}
+}
+
+// TestDisableAddonV4_UnknownCluster_ReturnsErrV4ClusterNotFound mirrors the
+// enable-side test for the disable route.
+func TestDisableAddonV4_UnknownCluster_ReturnsErrV4ClusterNotFound(t *testing.T) {
+	git := newMockGitProvider()
+	orch := New(nil, nil, newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
+	orch.SetCuratedCatalog(v4TestCuratedCatalog(t))
+
+	_, err := orch.DisableAddonV4(context.Background(), DisableAddonV4Request{
+		Cluster: "no-such-cluster",
+		Addon:   "metrics-server",
+		Yes:     true,
+	})
+	if !errors.Is(err, ErrV4ClusterNotFound) {
+		t.Fatalf("expected ErrV4ClusterNotFound, got %T: %v", err, err)
+	}
+}

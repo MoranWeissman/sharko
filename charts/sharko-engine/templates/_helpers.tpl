@@ -23,10 +23,33 @@ file wins, field by field").
 Usage: {{ include "sharko-engine.mergedAddons" . }} returns a YAML dict;
 callers assign it with `fromYaml` since Helm has no way to return a live Go
 value from a named template.
+
+Null-entry guard (Wave 2 ride-along w2-q6 item 6): a user's own
+catalog/addons.yaml can carry a bare `<addon>:` key with no value — YAML
+parses that as null (a hand-edit mistake, or a "blank it out" habit carried
+over from other tools). mergeOverwrite does NOT drop a nil value the way
+Helm's OWN --values-file layering drops a null override; it keeps the key
+and OVERWRITES whatever the curated side had there with that literal nil —
+clobbering the curated definition, not just leaving it alone the way a
+genuinely ABSENT delta entry would (verified empirically: an unfiltered nil
+in $delta reaches $merged with that addon's key still present but nil,
+wiping out the curated side's own repoURL/chart entirely for that addon.
+Filtering nil
+entries out of $delta before the merge — rather than only guarding against
+nil AFTER the merge (appset.yaml's own `$addon | default dict` belt-and-
+braces guard) — means a null delta entry behaves exactly like an ABSENT
+one: the curated definition passes through untouched, matching design doc
+D16 ("missing means empty").
 */}}
 {{- define "sharko-engine.mergedAddons" -}}
 {{- $curated := .Values.curated.addons | default dict -}}
-{{- $delta := .Values.spec.addons | default dict -}}
+{{- $rawDelta := .Values.spec.addons | default dict -}}
+{{- $delta := dict -}}
+{{- range $name, $entry := $rawDelta -}}
+{{- if $entry -}}
+{{- $_ := set $delta $name $entry -}}
+{{- end -}}
+{{- end -}}
 {{- mergeOverwrite (deepCopy $curated) $delta | toYaml -}}
 {{- end -}}
 
