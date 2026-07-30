@@ -116,11 +116,61 @@ func simHasKey(d map[string]interface{}, key string) (result bool, err error) {
 
 func simDictFn() map[string]interface{} { return map[string]interface{}{} }
 
+// simWithout mirrors Sprig's without(list, omit...) — returns list with
+// every element deep-equal to one of omit removed, preserving order.
+// Needed to execute templatePatch's full "both createNamespace and
+// syncOptions overridden" branch (Wave 2 ride-along w2-q6 item 5c), which
+// nilsafety_test.go's narrower fragments never reached.
+func simWithout(list interface{}, omit ...interface{}) []interface{} {
+	items, _ := list.([]interface{})
+	out := make([]interface{}, 0, len(items))
+	for _, item := range items {
+		skip := false
+		for _, o := range omit {
+			if reflect.DeepEqual(item, o) {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// simToYaml mirrors Sprig's toYaml(v) — marshals v to a YAML string with
+// the trailing newline trimmed (toYaml's own documented behavior, since
+// callers pipe it into nindent which adds its own leading newline).
+func simToYaml(v interface{}) string {
+	b, err := yaml.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("error marshaling to YAML: %v", err)
+	}
+	return strings.TrimSuffix(string(b), "\n")
+}
+
+// simNindent mirrors Sprig's nindent(spaces, s) — indents every line of s
+// by spaces and prefixes the whole result with a newline, matching how
+// `{{ toYaml $x | nindent 8 }}` is meant to be dropped into an
+// already-indented YAML context.
+func simNindent(spaces int, s string) string {
+	pad := strings.Repeat(" ", spaces)
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = pad + l
+	}
+	return "\n" + strings.Join(lines, "\n")
+}
+
 var simFuncMap = template.FuncMap{
 	"dig":     simDig,
 	"default": simDefault,
 	"hasKey":  simHasKey,
 	"dict":    simDictFn,
+	"without": simWithout,
+	"toYaml":  simToYaml,
+	"nindent": simNindent,
 }
 
 // execRoundTwo parses and executes a round-two Go-template fragment with

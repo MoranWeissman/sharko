@@ -7961,12 +7961,17 @@ paths:
           schema:
             $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
         "400":
-          description: Bad request or missing confirmation
+          description: Bad request, invalid JSON body, or missing confirmation
           schema:
             additionalProperties: true
             type: object
         "401":
           description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Cluster is not registered, or has nothing to disable
           schema:
             additionalProperties: true
             type: object
@@ -8021,7 +8026,7 @@ paths:
           schema:
             $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
         "400":
-          description: Bad request or missing confirmation
+          description: Bad request, invalid JSON body, or missing confirmation
           schema:
             additionalProperties: true
             type: object
@@ -8030,9 +8035,14 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "404":
+          description: Cluster is not registered
+          schema:
+            additionalProperties: true
+            type: object
         "422":
-          description: Semantic validation failed — missing required values or undeclared
-            secrets, listed by name
+          description: Semantic validation failed (missing required values or undeclared
+            secrets, listed by name) or the addon is not in the catalog
           schema:
             additionalProperties: true
             type: object

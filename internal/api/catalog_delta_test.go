@@ -11,6 +11,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // fakeDeltaGitProvider is a minimal gitprovider.GitProvider whose only
@@ -212,6 +213,38 @@ func TestLoadCatalogDelta_RealErrorPropagates(t *testing.T) {
 	_, err := srv.loadCatalogDelta(context.Background(), &realErrorGitProvider{})
 	if err == nil {
 		t.Fatalf("expected a real error to propagate")
+	}
+}
+
+// refRecordingDeltaGitProvider wraps fakeDeltaGitProvider and records the
+// git ref (branch) every GetFileContent call was made against, so tests can
+// prove loadCatalogDelta honors the connection's configured base branch
+// instead of a hardcoded "main" (Wave 2 ride-along w2-q6 item 1).
+type refRecordingDeltaGitProvider struct {
+	fakeDeltaGitProvider
+	lastRef string
+}
+
+func (f *refRecordingDeltaGitProvider) GetFileContent(ctx context.Context, path, ref string) ([]byte, error) {
+	f.lastRef = ref
+	return f.fakeDeltaGitProvider.GetFileContent(ctx, path, ref)
+}
+
+// TestLoadCatalogDelta_HonorsConfiguredBaseBranch proves loadCatalogDelta
+// reads catalog/addons.yaml from s.gitopsConfig().BaseBranch rather than a
+// hardcoded "main" — a connection with base_branch: "release" is a real
+// Sharko configuration (models.Connection.GitOps.BaseBranch).
+func TestLoadCatalogDelta_HonorsConfiguredBaseBranch(t *testing.T) {
+	const configuredBranch = "release"
+	srv := &Server{}
+	srv.publishGitopsCfg(orchestrator.GitOpsConfig{BaseBranch: configuredBranch})
+
+	gp := &refRecordingDeltaGitProvider{}
+	if _, err := srv.loadCatalogDelta(context.Background(), gp); err != nil {
+		t.Fatalf("loadCatalogDelta: %v", err)
+	}
+	if gp.lastRef != configuredBranch {
+		t.Errorf("loadCatalogDelta read ref %q, want the configured base branch %q", gp.lastRef, configuredBranch)
 	}
 }
 

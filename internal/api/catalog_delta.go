@@ -32,7 +32,7 @@ import (
 // zero-value spec instead, the same isGitFileNotFound convention already
 // used by the v3 read handlers (e.g. AddonService.GetVersionMatrix).
 func (s *Server) loadCatalogDelta(ctx context.Context, gp gitprovider.GitProvider) (config.AddonCatalogDeltaSpec, error) {
-	data, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, "main")
+	data, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, s.gitopsConfig().BaseBranch)
 	if err != nil {
 		if errors.Is(err, gitprovider.ErrFileNotFound) {
 			return config.AddonCatalogDeltaSpec{}, nil

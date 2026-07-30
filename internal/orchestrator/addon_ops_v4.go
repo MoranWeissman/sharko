@@ -19,6 +19,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -42,6 +43,48 @@ type V4SemanticValidationError struct {
 
 func (e *V4SemanticValidationError) Error() string {
 	return fmt.Sprintf("cannot enable %s on %s: %s", e.Addon, e.Cluster, strings.Join(e.Problems, "; "))
+}
+
+// ErrV4AddonNotInCatalog marks an EnableAddonV4/DisableAddonV4 request
+// naming an addon that is not in the caller's merged catalog (curated +
+// catalog/addons.yaml delta). The API layer (internal/api/addon_ops_v4.go)
+// maps this to 422 — the request names something that does not exist,
+// distinct from the 502 "upstream failed" default (Wave 2 ride-along
+// w2-q6 item 2).
+var ErrV4AddonNotInCatalog = errors.New("addon not in catalog")
+
+// ErrV4ClusterNotFound marks a v4 write naming a cluster that is not
+// registered — absent from both fleet/connections.yaml (the v4 cluster
+// registry, design doc §2.4) and clusters/<name>.yaml. The API layer maps
+// this to 404 (Wave 2 ride-along w2-q6 items 2 and 6): EnableAddonV4/
+// DisableAddonV4 must refuse BEFORE any git write rather than silently
+// bootstrapping a brand-new clusters/<name>.yaml for a cluster nobody
+// registered.
+var ErrV4ClusterNotFound = errors.New("cluster not found")
+
+// v4ClusterExists reports whether clusterName is a known v4 cluster —
+// present in fleet/connections.yaml (the registry every RegisterCluster/
+// AdoptClusters v4 write populates) or already has a clusters/<name>.yaml
+// assignment file. Checking both means a cluster that has never had an
+// addon touched (no assignment file yet, connections-only) still passes,
+// while a name that is not registered anywhere gets refused before any
+// write. Read-only — safe to call before any git mutation.
+func (o *Orchestrator) v4ClusterExists(ctx context.Context, clusterName string) bool {
+	if data, ok := o.readFileIfExists(ctx, V4ConnectionsPath); ok && len(data) > 0 {
+		if spec, err := models.LoadManagedClusters(data); err == nil {
+			for _, c := range spec.Clusters {
+				if c.Name == clusterName {
+					return true
+				}
+			}
+		}
+	}
+	if clusterPath, err := v4ClusterAddonsPath(clusterName); err == nil {
+		if _, exists := o.readFileIfExists(ctx, clusterPath); exists {
+			return true
+		}
+	}
+	return false
 }
 
 // EnableAddonV4Request is the input for EnableAddonV4.
@@ -108,8 +151,8 @@ func (o *Orchestrator) mergedAddonForV4(ctx context.Context, addonName string) (
 	entry, ok := merged[addonName]
 	if !ok {
 		return catalog.MergedAddon{}, fmt.Errorf(
-			"addon %q is not in the catalog — add it to your catalog/addons.yaml first (via the internal-addon API) or check the spelling",
-			addonName,
+			"%w: addon %q is not in the catalog — add it to your catalog/addons.yaml first (via the internal-addon API) or check the spelling",
+			ErrV4AddonNotInCatalog, addonName,
 		)
 	}
 	return entry, nil
@@ -204,6 +247,17 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 	clusterValuesPath, err := v4ClusterValuesPath(req.Cluster, req.Addon)
 	if err != nil {
 		return nil, err
+	}
+
+	// Refuse a cluster nobody registered BEFORE any git write — without
+	// this, SetClusterAddonsAddon happily bootstraps a brand-new
+	// clusters/<name>.yaml for a typo'd or never-registered cluster name
+	// (Wave 2 ride-along w2-q6 item 6). Runs AFTER the path-safety checks
+	// above (so a traversal name still fails with "invalid cluster name",
+	// not a generic not-found) and is read-only, so it costs nothing on
+	// the (overwhelmingly common) already-registered path.
+	if !o.v4ClusterExists(ctx, req.Cluster) {
+		return nil, fmt.Errorf("%w: %q", ErrV4ClusterNotFound, req.Cluster)
 	}
 
 	merged, err := o.mergedAddonForV4(ctx, req.Addon)
@@ -333,9 +387,18 @@ func (o *Orchestrator) DisableAddonV4(ctx context.Context, req DisableAddonV4Req
 	if err != nil {
 		return nil, err
 	}
+
+	// Same refusal as EnableAddonV4 — a cluster nobody registered gets a
+	// clean 404, not a confusing "nothing to disable" (Wave 2 ride-along
+	// w2-q6 items 2 and 6). Runs AFTER the path-safety checks above, so a
+	// traversal name still fails with "invalid cluster/addon name".
+	if !o.v4ClusterExists(ctx, req.Cluster) {
+		return nil, fmt.Errorf("%w: %q", ErrV4ClusterNotFound, req.Cluster)
+	}
+
 	existing, ok := o.readFileIfExists(ctx, clusterPath)
 	if !ok {
-		return nil, fmt.Errorf("cluster %q has no assignment file at %s — nothing to disable", req.Cluster, clusterPath)
+		return nil, fmt.Errorf("%w: cluster %q has no assignment file at %s — nothing to disable", ErrV4ClusterNotFound, req.Cluster, clusterPath)
 	}
 
 	var updated []byte

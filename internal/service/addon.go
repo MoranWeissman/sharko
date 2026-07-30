@@ -74,6 +74,16 @@ type AddonService struct {
 	// against the shipped set — catalog.MergeDelta's own contract. nil is
 	// safe: every addon then merges as catalog.OriginInternal.
 	curated *catalog.Catalog
+
+	// baseBranchFn is the per-instance test seam (matches the nowFn /
+	// tickInterval / gitProviderFn convention used across the codebase)
+	// for the configured GitOps base branch. Wired via SetBaseBranchFn to
+	// api.Server.GitopsBaseBranch in production so every read in this file
+	// follows the connection's configured branch instead of a hardcoded
+	// "main" (Wave 2 ride-along w2-q6 item 1). nil (the zero value, e.g.
+	// in tests and the e2e harness that never call the setter) falls back
+	// to "main" via the branch() helper below.
+	baseBranchFn func() string
 }
 
 // SetCuratedCatalog wires in the shipped curated catalog so
@@ -84,6 +94,26 @@ type AddonService struct {
 // s.catalog (Server.catalog is itself optional, per router.go).
 func (s *AddonService) SetCuratedCatalog(c *catalog.Catalog) {
 	s.curated = c
+}
+
+// SetBaseBranchFn wires in a live accessor for the configured GitOps base
+// branch (e.g. api.Server.GitopsBaseBranch). The function is called on
+// every read rather than snapshotted once, so it stays correct across
+// ReinitializeFromConnection hot-reloads.
+func (s *AddonService) SetBaseBranchFn(fn func() string) {
+	s.baseBranchFn = fn
+}
+
+// branch returns the configured GitOps base branch, defaulting to "main"
+// when no seam is wired (tests, e2e harness) or it resolves to "".
+func (s *AddonService) branch() string {
+	if s.baseBranchFn == nil {
+		return "main"
+	}
+	if b := s.baseBranchFn(); b != "" {
+		return b
+	}
+	return "main"
 }
 
 // NewAddonService creates a new AddonService.
@@ -101,7 +131,7 @@ func NewAddonService(managedClustersPath string) *AddonService {
 
 // ListAddons returns the raw addon catalog from Git.
 func (s *AddonService) ListAddons(ctx context.Context, gp gitprovider.GitProvider) ([]models.AddonCatalogEntry, error) {
-	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
+	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			catalogData = []byte("applicationsets: []")
@@ -116,7 +146,7 @@ func (s *AddonService) ListAddons(ctx context.Context, gp gitprovider.GitProvide
 // GetCatalog returns the full addon catalog with deployment stats across clusters.
 func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.AddonCatalogResponse, error) {
 	log := logging.LoggerFromContext(ctx)
-	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
+	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, s.branch())
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			clusterData = []byte("clusters: []")
@@ -125,7 +155,7 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 		}
 	}
 
-	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
+	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			catalogData = []byte("applicationsets: []")
@@ -331,12 +361,12 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 	// (nil, nil) rather than an error for an unknown path — matching the
 	// stricter check keeps v4 detection correct against both real
 	// providers (which error) and those doubles.
-	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, "main"); pinErr == nil && len(pinContent) > 0 {
+	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, s.branch()); pinErr == nil && len(pinContent) > 0 {
 		return s.getVersionMatrixV4(ctx, gp, ac)
 	}
 
 	log := logging.LoggerFromContext(ctx)
-	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
+	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, s.branch())
 	if err != nil {
 		if isGitFileNotFound(err) {
 			clusterData = []byte("clusters: []")
@@ -345,7 +375,7 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 		}
 	}
 
-	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
+	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
 	if err != nil {
 		if isGitFileNotFound(err) {
 			catalogData = []byte("applicationsets: []")
@@ -457,12 +487,12 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.VersionMatrixResponse, error) {
 	log := logging.LoggerFromContext(ctx)
 
-	clusterAddons, err := listClusterAddonsSpecs(ctx, gp)
+	clusterAddons, err := listClusterAddonsSpecs(ctx, gp, s.branch())
 	if err != nil {
 		return nil, fmt.Errorf("reading clusters/*.yaml: %w", err)
 	}
 
-	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, "main")
+	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, s.branch())
 	var delta config.AddonCatalogDeltaSpec
 	if err != nil {
 		if !isGitFileNotFound(err) {
@@ -562,8 +592,8 @@ func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.Gi
 // ClusterAddonsSpec, keyed by cluster name. An empty (or absent —
 // pre-first-cluster v4 repos have only clusters/.gitkeep) directory
 // returns an empty, non-nil map rather than an error.
-func listClusterAddonsSpecs(ctx context.Context, gp gitprovider.GitProvider) (map[string]models.ClusterAddonsSpec, error) {
-	entries, err := gp.ListDirectory(ctx, "clusters", "main")
+func listClusterAddonsSpecs(ctx context.Context, gp gitprovider.GitProvider, baseBranch string) (map[string]models.ClusterAddonsSpec, error) {
+	entries, err := gp.ListDirectory(ctx, "clusters", baseBranch)
 	if err != nil {
 		if isGitFileNotFound(err) {
 			return map[string]models.ClusterAddonsSpec{}, nil
@@ -576,7 +606,7 @@ func listClusterAddonsSpecs(ctx context.Context, gp gitprovider.GitProvider) (ma
 		if !strings.HasSuffix(name, ".yaml") {
 			continue // .gitkeep and any non-YAML entry
 		}
-		data, readErr := gp.GetFileContent(ctx, path.Join("clusters", name), "main")
+		data, readErr := gp.GetFileContent(ctx, path.Join("clusters", name), baseBranch)
 		if readErr != nil {
 			return nil, fmt.Errorf("reading clusters/%s: %w", name, readErr)
 		}
@@ -592,7 +622,7 @@ func listClusterAddonsSpecs(ctx context.Context, gp gitprovider.GitProvider) (ma
 // GetAddonValues returns the global default values YAML for a specific addon.
 func (s *AddonService) GetAddonValues(ctx context.Context, addonName string, gp gitprovider.GitProvider) (*models.AddonValuesResponse, error) {
 	path := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)
-	data, err := gp.GetFileContent(ctx, path, "main")
+	data, err := gp.GetFileContent(ctx, path, s.branch())
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch global values for addon %s: %w", addonName, err)
 	}
@@ -620,7 +650,7 @@ func (s *AddonService) GetAddonValuesAndSchema(ctx context.Context, addonName st
 
 	valuesPath := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)
 	current := ""
-	if data, err := gp.GetFileContent(ctx, valuesPath, "main"); err == nil {
+	if data, err := gp.GetFileContent(ctx, valuesPath, s.branch()); err == nil {
 		current = string(data)
 	} else {
 		log.Info("global values file missing — opening editor blank", "addon", addonName, "path", valuesPath)
@@ -632,7 +662,7 @@ func (s *AddonService) GetAddonValuesAndSchema(ctx context.Context, addonName st
 	}
 
 	schemaPath := fmt.Sprintf("configuration/addons-global-values/%s.schema.json", addonName)
-	if schemaData, err := gp.GetFileContent(ctx, schemaPath, "main"); err == nil && len(schemaData) > 0 {
+	if schemaData, err := gp.GetFileContent(ctx, schemaPath, s.branch()); err == nil && len(schemaData) > 0 {
 		schema, perr := parseJSONObject(schemaData)
 		if perr != nil {
 			log.Warn("ignoring unparseable values schema", "addon", addonName, "error", perr)

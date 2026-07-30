@@ -6,6 +6,9 @@
 package api
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -186,6 +189,77 @@ metrics:
 	}
 	if summary.NoOp {
 		t.Error("NoOp should be false when starting from empty")
+	}
+}
+
+// TestPreviewMergeBodies_ParseErrorEchoesRawFileBytes documents the exact
+// leak class the handler-side fix guards against (Wave 2 ride-along w2-q6
+// item 6): gopkg.in/yaml.v3's decoder.terror echoes up to 7 bytes of the
+// offending scalar VALUE — i.e. actual file content — into its own error
+// message (`value[:7] + "..."` when the value is longer than 10
+// characters). A malformed "current" values file therefore produces an
+// error whose text contains a snippet of that file's bytes. This is why
+// handlePreviewMergeAddonValues (values_preview_merge.go) must never hand
+// this error's .Error() straight to writeError — see
+// TestPreviewMergeBodies_ParseErrorSanitizedByWriteServerError below for
+// the other half of the proof.
+func TestPreviewMergeBodies_ParseErrorEchoesRawFileBytes(t *testing.T) {
+	// "SECRET-TOKEN-VALUE-DO-NOT-LEAK" is a string where a map is expected
+	// (replicaCount wants an int-shaped scalar for THIS test's purposes —
+	// simplest reliable trigger is a top-level scalar where a mapping is
+	// expected, which yaml.v3 reports via the same terror path).
+	current := []byte("SECRET-TOKEN-VALUE-DO-NOT-LEAK\n")
+	upstream := []byte("replicaCount: 1\n")
+
+	_, _, err := previewMergeBodies("cert-manager", current, upstream)
+	if err == nil {
+		t.Fatal("expected a parse error for a scalar document where a mapping is required")
+	}
+	// Prove the vulnerability class is real: the raw error DOES contain a
+	// prefix of the file's own bytes. If this assertion ever starts
+	// failing because yaml.v3 changed its error format, that's fine — it
+	// just means this specific trigger no longer demonstrates the leak;
+	// the sanitization in the test below must hold regardless of why.
+	if !strings.Contains(err.Error(), "SECRET-") {
+		t.Skipf("this yaml.v3 version no longer echoes raw scalar bytes in TypeError text (got: %v) — trigger needs updating, sanitization test below is unaffected", err)
+	}
+}
+
+// TestPreviewMergeBodies_ParseErrorSanitizedByWriteServerError is the
+// other half: even though previewMergeBodies' error can carry raw file
+// bytes (proven above), routing it through writeServerError — what
+// handlePreviewMergeAddonValues now does instead of writeError — means
+// the HTTP response body never contains them. Mirrors
+// TestWriteUpstreamError_PreservesSanitization's shape for this specific
+// call site.
+func TestPreviewMergeBodies_ParseErrorSanitizedByWriteServerError(t *testing.T) {
+	current := []byte("SECRET-TOKEN-VALUE-DO-NOT-LEAK\n")
+	upstream := []byte("replicaCount: 1\n")
+
+	_, _, mergeErr := previewMergeBodies("cert-manager", current, upstream)
+	if mergeErr == nil {
+		t.Fatal("expected a parse error")
+	}
+
+	w := httptest.NewRecorder()
+	writeServerError(w, http.StatusBadGateway, "preview_merge_addon_values", mergeErr)
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", w.Code)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "SECRET-") {
+		t.Errorf("response body leaked file content: %s", body)
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &parsed); err != nil {
+		t.Fatalf("response body is not valid JSON: %v", err)
+	}
+	if parsed["error"] != http.StatusText(http.StatusBadGateway) {
+		t.Errorf("error field = %q, want %q", parsed["error"], http.StatusText(http.StatusBadGateway))
+	}
+	if parsed["op"] != "preview_merge_addon_values" {
+		t.Errorf("op field = %q, want %q", parsed["op"], "preview_merge_addon_values")
 	}
 }
 

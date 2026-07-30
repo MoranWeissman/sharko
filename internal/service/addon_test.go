@@ -721,3 +721,93 @@ func TestGetVersionMatrix_V4Repo(t *testing.T) {
 		t.Errorf("prod-eu external-dns health = %q, want %q", cell.Health, "not_enabled")
 	}
 }
+
+// refRecordingGitProvider wraps fakeGitProvider and records every git ref
+// (branch) it was asked to read from, so tests can prove a caller used the
+// configured base branch instead of a hardcoded "main" (Wave 2 ride-along
+// w2-q6 item 1: v4 read paths must honor BaseBranch).
+type refRecordingGitProvider struct {
+	fakeGitProvider
+	refs map[string]bool
+}
+
+func newRefRecordingGitProvider(files map[string][]byte) *refRecordingGitProvider {
+	return &refRecordingGitProvider{
+		fakeGitProvider: fakeGitProvider{files: files},
+		refs:            make(map[string]bool),
+	}
+}
+
+func (f *refRecordingGitProvider) GetFileContent(ctx context.Context, path, ref string) ([]byte, error) {
+	f.refs[ref] = true
+	return f.fakeGitProvider.GetFileContent(ctx, path, ref)
+}
+
+func (f *refRecordingGitProvider) ListDirectory(ctx context.Context, dir, ref string) ([]string, error) {
+	f.refs[ref] = true
+	return f.fakeGitProvider.ListDirectory(ctx, dir, ref)
+}
+
+// TestGetVersionMatrix_V4Repo_HonorsBaseBranch proves the v4 branch of
+// GetVersionMatrix (the engine-pin probe, the clusters/*.yaml listing, and
+// the catalog/addons.yaml delta read) reads from the connection's
+// configured GitOps base branch — wired via SetBaseBranchFn — rather than a
+// hardcoded "main". A connection with base_branch: "release" is a real
+// Sharko configuration (see models.Connection.GitOps.BaseBranch); if any of
+// these reads regress to a literal "main", this test fails even though a
+// same-content-on-every-branch fake would otherwise mask the bug.
+func TestGetVersionMatrix_V4Repo_HonorsBaseBranch(t *testing.T) {
+	const configuredBranch = "release"
+
+	prodEU, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "prod-eu",
+		Addons: map[string]models.ClusterAddonsAddon{
+			"cert-manager": {Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building prod-eu assignment: %v", err)
+	}
+	delta, err := config.SaveAddonCatalogDelta(config.AddonCatalogDeltaSpec{
+		Addons: map[string]config.AddonCatalogDeltaEntry{
+			"cert-manager": {
+				RepoURL: "https://charts.jetstack.io",
+				Chart:   "cert-manager",
+				Version: "1.14.5",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building catalog delta: %v", err)
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"items": []map[string]interface{}{}})
+	}))
+	defer ts.Close()
+
+	gp := newRefRecordingGitProvider(map[string][]byte{
+		orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+		"clusters/prod-eu.yaml":      prodEU,
+		config.AddonCatalogDeltaPath: delta,
+	})
+	ac := argocd.NewClient(ts.URL, "fake-token", false)
+	svc := NewAddonService("")
+	svc.SetBaseBranchFn(func() string { return configuredBranch })
+
+	resp, err := svc.GetVersionMatrix(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetVersionMatrix returned error: %v", err)
+	}
+	if len(resp.Clusters) != 1 || resp.Clusters[0] != "prod-eu" {
+		t.Fatalf("expected clusters [prod-eu], got %v — v4 branch did not run as expected", resp.Clusters)
+	}
+
+	if gp.refs["main"] {
+		t.Errorf("GetVersionMatrix read from hardcoded %q even though the connection's base branch is configured as %q — refs seen: %v", "main", configuredBranch, gp.refs)
+	}
+	if !gp.refs[configuredBranch] {
+		t.Errorf("expected GetVersionMatrix to read from the configured base branch %q, refs seen: %v", configuredBranch, gp.refs)
+	}
+}

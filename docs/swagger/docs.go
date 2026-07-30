@@ -7922,7 +7922,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad request or missing confirmation",
+                        "description": "Bad request, invalid JSON body, or missing confirmation",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -7935,8 +7935,15 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "404": {
+                        "description": "Cluster is not registered",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "422": {
-                        "description": "Semantic validation failed — missing required values or undeclared secrets, listed by name",
+                        "description": "Semantic validation failed (missing required values or undeclared secrets, listed by name) or the addon is not in the catalog",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -8001,7 +8008,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad request or missing confirmation",
+                        "description": "Bad request, invalid JSON body, or missing confirmation",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -8009,6 +8016,13 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Cluster is not registered, or has nothing to disable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

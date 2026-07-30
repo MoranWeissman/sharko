@@ -168,9 +168,18 @@ func (s *Server) handlePreviewMergeAddonValues(w http.ResponseWriter, r *http.Re
 	upstream = orchestrator.UnwrapChartNameRoot(upstream, name, chart)
 
 	// Run the additive merge.
+	//
+	// A parse failure here wraps a yaml.v3 TypeError, which itself echoes
+	// up to 7 bytes of the offending scalar VALUE from the file
+	// (gopkg.in/yaml.v3's decoder.terror: `value[:7] + "..."`) — i.e. real
+	// file content, verbatim, from a file the caller does not necessarily
+	// own (the chart's own upstream values.yaml). writeError would put
+	// that straight in the response body; writeServerError is this
+	// codebase's sanitized 5xx path — same op-tagged log server-side,
+	// generic "Bad Gateway" body (Wave 2 ride-along w2-q6 item 6).
 	mergedBody, summary, mergeErr := previewMergeBodies(name, current, upstream)
 	if mergeErr != nil {
-		writeError(w, http.StatusBadGateway, "merging values: "+mergeErr.Error())
+		writeServerError(w, http.StatusBadGateway, "preview_merge_addon_values", mergeErr)
 		return
 	}
 

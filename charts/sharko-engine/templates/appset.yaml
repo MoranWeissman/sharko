@@ -44,6 +44,25 @@ assignment file's own spec), never from metadata.
 {{- $projectName := .Values.project.name | default "sharko-addons" -}}
 
 {{- range $name, $addon := $merged }}
+{{/*
+  A user's own catalog/addons.yaml can set an addon entry to a bare key
+  with no value (a bare "<addon-name>:" line, which YAML parses as null) — e.g. a
+  hand-edit mistake, or a "commented out by blanking" habit carried over
+  from other YAML tools. Sprig's mergeOverwrite does NOT drop that key the
+  way Helm's own --values-file layering drops a null override (proven
+  empirically: see tests/enginerender's null-delta-addon cross-check) — it
+  keeps the key with a literal nil value, so `$merged[$name]` can genuinely
+  be nil here. Without this guard, `$addon.settings` on the next line
+  panics the whole render ("nil pointer evaluating interface {}.settings")
+  for every addon in the catalog, not just the null one — one bad line in
+  a user's delta file must not be able to take down the entire fleet's
+  render. Defaulting to an empty dict makes a null delta entry behave
+  exactly like an ABSENT one: falls back to the curated definition (or, for
+  an addon with no curated entry either, empty settings/no version — the
+  same MergeDelta requiredness check that already validates the Go-side
+  merge covers that case) — never a crash (Wave 2 ride-along w2-q6 item 6).
+*/}}
+{{- $addon = $addon | default dict }}
 {{- $settings := $addon.settings | default dict }}
 {{- $namespace := $settings.namespace | default ($addon.namespace | default $name) }}
 {{- $createNamespace := dig "createNamespace" true $settings }}
@@ -148,6 +167,25 @@ spec:
         {{- range $addon.additionalSources }}
         # Extra source declared on the catalog entry (carried over from v3
         # unchanged, design doc section 2.3).
+        #
+        # `path:` entries mean "another directory in the SAME git repo" —
+        # defaulting repoURL/targetRevision to $repoURL/$revision (the
+        # engine's own git source) is exactly right there. `chart:` entries
+        # mean an independent Helm chart (its own repo, own version), so
+        # the SAME defaulting is a bug: it silently points the chart lookup
+        # at the fleet's gitops repo/revision instead, which fails to
+        # resolve as a chart at ArgoCD sync time with a confusing error far
+        # from the actual mistake (a delta entry missing repoURL/version).
+        # Fail the render here instead, naming the addon and the missing
+        # field (Wave 2 ride-along w2-q6 item 5d).
+        {{- if .chart }}
+        {{- if not .repoURL }}
+        {{ fail (printf "addon %q: additionalSources chart %q has no repoURL — a Helm chart source needs its own repo URL, it cannot default to the gitops repo" $name .chart) }}
+        {{- end }}
+        {{- if not .version }}
+        {{ fail (printf "addon %q: additionalSources chart %q has no version — a Helm chart source needs an explicit version, it cannot default to the gitops repo's revision" $name .chart) }}
+        {{- end }}
+        {{- end }}
         - repoURL: {{ .repoURL | default $repoURL }}
           targetRevision: {{ .version | default $revision }}
           {{- if .path }}
