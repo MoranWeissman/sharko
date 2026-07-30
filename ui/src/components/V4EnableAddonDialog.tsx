@@ -265,7 +265,7 @@ export function V4EnableAddonDialog({
           >
             <p className="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-300">
               <AlertTriangle className="h-4 w-4 shrink-0" />
-              Sharko can&apos;t enable {addon} on {cluster} yet
+              Sharko can&apos;t {mode === 'enable' ? 'enable' : 'disable'} {addon} on {cluster} yet
             </p>
             <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-800 dark:text-amber-300">
               {problems.map((p, i) => (

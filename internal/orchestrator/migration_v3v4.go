@@ -66,6 +66,31 @@ type MigrationStatusResult struct {
 	MigrationAvailable bool `json:"migration_available"`
 	// Message is a plain-English sentence the UI can show as-is.
 	Message string `json:"message"`
+	// MigrationPRURL / MigrationPRNumber are set (format "v3" only) when a
+	// previous migrate call already opened a pull request that is still
+	// open. Their presence is server truth that "Open migration PR" should
+	// not be offered again — a UI component that remounts (and so loses
+	// whatever in-memory "I already opened one" flag it kept) still learns
+	// the right thing from the next status poll instead of minting a
+	// second PR for the same repo.
+	MigrationPRURL    string `json:"migration_pr_url,omitempty"`
+	MigrationPRNumber int    `json:"migration_pr_number,omitempty"`
+}
+
+// ErrMigrationPROpen is returned by MigrateV3ToV4 when a previous attempt
+// already opened a migration pull request that is still open. The
+// migration branch name carries a random suffix and no cluster/addon name
+// to key a retry off of (unlike findOpenPRForCluster's title-pattern
+// match), so a blind retry would strand the first PR and open a second one
+// that touches the same files. Refusing and pointing back at the existing
+// PR is the honest answer.
+type ErrMigrationPROpen struct {
+	PRURL    string
+	PRNumber int
+}
+
+func (e *ErrMigrationPROpen) Error() string {
+	return fmt.Sprintf("a migration pull request is already open: %s", e.PRURL)
 }
 
 // MigrationFileChange is one file the migration PR would add, convert, or
@@ -137,11 +162,19 @@ func (o *Orchestrator) MigrationStatus(ctx context.Context) *MigrationStatusResu
 			Message:            "this repo already uses the current format — nothing to migrate",
 		}
 	case o.hasV3Markers(ctx):
-		return &MigrationStatusResult{
+		result := &MigrationStatusResult{
 			Format:             RepoFormatV3,
 			MigrationAvailable: true,
 			Message:            "v3 format — migration available: one pull request moves this repo across, and everything keeps running",
 		}
+		// Best-effort: a listing failure here must not hide the v3 status
+		// itself — the "is there a PR already" question is a bonus fact on
+		// top of it, not a precondition for answering it.
+		if pr, err := o.findOpenMigrationPR(ctx); err == nil && pr != nil {
+			result.MigrationPRURL = pr.URL
+			result.MigrationPRNumber = pr.ID
+		}
+		return result
 	default:
 		return &MigrationStatusResult{
 			Format:             RepoFormatEmpty,
@@ -183,6 +216,15 @@ func (o *Orchestrator) MigrateV3ToV4(ctx context.Context, req MigrateRequest) (*
 	}
 	if status.Format == RepoFormatEmpty {
 		return nil, errors.New(status.Message)
+	}
+
+	// A real run refuses to open a second migration PR when one from a
+	// previous attempt is already open — see ErrMigrationPROpen. A dry
+	// run has zero side effects regardless, so it stays available (it is
+	// how the UI would show "here is what's still pending" if it wanted
+	// to), and status already carried this fact for free.
+	if !req.DryRun && status.MigrationPRURL != "" {
+		return nil, &ErrMigrationPROpen{PRURL: status.MigrationPRURL, PRNumber: status.MigrationPRNumber}
 	}
 
 	// Build and validate EVERYTHING first. Every error path below this
@@ -789,6 +831,27 @@ func migrationPRBody(b *migrationBuild) string {
 	}
 	sb.WriteString("If anything looks wrong after merging, revert this one pull request and the repository is exactly as it was.\n")
 	return sb.String()
+}
+
+// findOpenMigrationPR searches for an existing open PR from a previous
+// migration attempt. Same idempotent-retry shape as findOpenPRForCluster in
+// git_helpers.go, but keyed on the branch prefix rather than the PR title:
+// a migration branch (see commitMigrationPR) carries a random suffix and
+// no cluster/addon name, so title-pattern matching has nothing to match
+// on — the branch prefix is the one stable thing every migration branch
+// shares.
+func (o *Orchestrator) findOpenMigrationPR(ctx context.Context) (*gitprovider.PullRequest, error) {
+	prs, err := o.git.ListPullRequests(ctx, "open")
+	if err != nil {
+		return nil, fmt.Errorf("listing open PRs: %w", err)
+	}
+	prefix := o.gitops.BranchPrefix + "migrate-to-v4-"
+	for i := range prs {
+		if strings.HasPrefix(prs[i].SourceBranch, prefix) {
+			return &prs[i], nil
+		}
+	}
+	return nil, nil
 }
 
 // ─── the single, all-or-nothing PR ───────────────────────────────────────

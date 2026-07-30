@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 
 function renderConfirmationModal(props: Partial<Parameters<typeof ConfirmationModal>[0]> = {}) {
@@ -54,5 +54,40 @@ describe('ConfirmationModal', () => {
     // Footer buttons should still be in the document (not scrolled out)
     expect(screen.getByText('Cancel')).toBeInTheDocument();
     expect(screen.getByText('Confirm')).toBeInTheDocument();
+  });
+
+  // ClusterDetail review fix — the unregister confirm must stay disabled
+  // until UnregisterConsequencesPanel (rendered as extraContent) has
+  // actually shown something. confirmDisabled is the generic mechanism
+  // any embedded panel can use for that.
+  it('confirmDisabled keeps the confirm button disabled even with no typeToConfirm requirement', () => {
+    const onConfirm = vi.fn();
+    renderConfirmationModal({ confirmDisabled: true, onConfirm });
+
+    const confirmBtn = screen.getByRole('button', { name: 'Confirm' });
+    expect(confirmBtn).toBeDisabled();
+    fireEvent.click(confirmBtn);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it('confirmDisabled=false (default) leaves confirm enabled with no typeToConfirm requirement', () => {
+    const onConfirm = vi.fn();
+    renderConfirmationModal({ onConfirm });
+
+    const confirmBtn = screen.getByRole('button', { name: 'Confirm' });
+    expect(confirmBtn).not.toBeDisabled();
+    fireEvent.click(confirmBtn);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('confirmDisabled stays gating even after typeToConfirm is satisfied', () => {
+    const onConfirm = vi.fn();
+    renderConfirmationModal({ confirmDisabled: true, typeToConfirm: 'DELETE', onConfirm });
+
+    fireEvent.change(screen.getByPlaceholderText('DELETE'), { target: { value: 'DELETE' } });
+    const confirmBtn = screen.getByRole('button', { name: 'Confirm' });
+    expect(confirmBtn).toBeDisabled();
+    fireEvent.click(confirmBtn);
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 });

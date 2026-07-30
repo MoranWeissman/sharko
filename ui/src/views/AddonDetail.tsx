@@ -922,8 +922,20 @@ function SubsetUpgradePanel({
   const [applying, setApplying] = useState(false)
   const [applyError, setApplyError] = useState<string | null>(null)
   const [result, setResult] = useState<V4GitResult | null>(null)
+  const [downgradeConfirmOpen, setDowngradeConfirmOpen] = useState(false)
 
   if (drifted.length < 2) return null
+
+  // "drifted" is deployedVersion !== catalogVersion — that includes
+  // clusters AHEAD of the catalog, not just behind. A cluster ahead of
+  // targetVersion moves BACKWARD if it's applied, so the direction has to
+  // be worked out per row (isDowngrade, shared with PerClusterUpgradeRow)
+  // rather than assumed from "drifted = behind".
+  const anyAheadOfCatalog = drifted.some((c) => isDowngrade(catalogVersion, c.deployedVersion))
+  const selectedHasDowngrade = Array.from(selected).some((name) => {
+    const c = drifted.find((d) => d.name === name)
+    return c ? isDowngrade(c.deployedVersion, targetVersion) : false
+  })
 
   const toggle = (name: string) => {
     setPreview(null)
@@ -953,6 +965,7 @@ function SubsetUpgradePanel({
   }
 
   const handleApply = async () => {
+    setDowngradeConfirmOpen(false)
     setApplying(true)
     setApplyError(null)
     try {
@@ -970,16 +983,42 @@ function SubsetUpgradePanel({
     }
   }
 
+  // Same gate the single-cluster path (PerClusterUpgradeRow) requires
+  // before a downgrade: applying a selection that would move any cluster
+  // backward needs the typed confirmation, not just a click.
+  const handleApplyClick = () => {
+    if (selectedHasDowngrade) {
+      setDowngradeConfirmOpen(true)
+    } else {
+      void handleApply()
+    }
+  }
+
   const { merged } = extractPR(result)
 
   return (
     <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
+      {/* Downgrade typed-confirmation modal — same gate the single-cluster
+        * PerClusterUpgradeRow requires before applying a downgrade. */}
+      <ConfirmationModal
+        open={downgradeConfirmOpen}
+        onClose={() => setDowngradeConfirmOpen(false)}
+        onConfirm={handleApply}
+        title={`Downgrade ${selected.size} cluster${selected.size === 1 ? '' : 's'}?`}
+        description={`At least one selected cluster is ahead of ${targetVersion}. Applying this moves it backward. Helm values may not be backward-compatible.`}
+        confirmText="Confirm Downgrade"
+        typeToConfirm="DOWNGRADE"
+        destructive
+        loading={applying}
+      />
+
       <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
         Upgrade multiple clusters at once
       </h3>
       <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-        {drifted.length} of {clusters.length} clusters are behind. Pick which ones move
-        together — one pull request, one small diff per cluster.
+        {anyAheadOfCatalog
+          ? `${drifted.length} of ${clusters.length} clusters are on a different version. Pick which ones move together — one pull request, one small diff per cluster.`
+          : `${drifted.length} of ${clusters.length} clusters are behind. Pick which ones move together — one pull request, one small diff per cluster.`}
       </p>
 
       {!result && (
@@ -1002,23 +1041,42 @@ function SubsetUpgradePanel({
           </div>
 
           <div className="mt-2 space-y-1.5">
-            {drifted.map((c) => (
-              <label
-                key={c.name}
-                className="flex items-center gap-2 rounded-lg bg-[#e0f0ff] px-3 py-2 text-sm dark:bg-gray-700"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(c.name)}
-                  onChange={() => toggle(c.name)}
-                  className="h-4 w-4 rounded border-[#5a9dd0]"
-                />
-                <span className="font-medium text-[#0a2a4a] dark:text-gray-100">{c.name}</span>
-                <span className="font-mono text-xs text-[#5a8aaa] dark:text-gray-400">
-                  {c.deployedVersion} &rarr; {targetVersion}
-                </span>
-              </label>
-            ))}
+            {drifted.map((c) => {
+              const rowIsDowngrade = isDowngrade(c.deployedVersion, targetVersion)
+              return (
+                <label
+                  key={c.name}
+                  className="flex items-center gap-2 rounded-lg bg-[#e0f0ff] px-3 py-2 text-sm dark:bg-gray-700"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(c.name)}
+                    onChange={() => toggle(c.name)}
+                    className="h-4 w-4 rounded border-[#5a9dd0]"
+                  />
+                  <span className="font-medium text-[#0a2a4a] dark:text-gray-100">{c.name}</span>
+                  <span className="font-mono text-xs text-[#5a8aaa] dark:text-gray-400">
+                    {c.deployedVersion} &rarr; {targetVersion}
+                  </span>
+                  {rowIsDowngrade ? (
+                    <span
+                      data-testid={`subset-upgrade-badge-${c.name}`}
+                      className="flex items-center gap-0.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                    >
+                      <AlertTriangle className="h-3 w-3" />
+                      Downgrade
+                    </span>
+                  ) : (
+                    <span
+                      data-testid={`subset-upgrade-badge-${c.name}`}
+                      className="rounded-full bg-teal-100 px-2 py-0.5 text-xs font-semibold text-teal-700 dark:bg-teal-900/30 dark:text-teal-400"
+                    >
+                      Upgrade
+                    </span>
+                  )}
+                </label>
+              )
+            })}
           </div>
 
           <div className="mt-3 flex items-center gap-2">
@@ -1032,6 +1090,13 @@ function SubsetUpgradePanel({
               className="rounded-md border border-[#5a9dd0] bg-[#e8f4ff] px-2 py-1 font-mono text-xs text-[#0a2a4a] dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
             />
           </div>
+
+          {selectedHasDowngrade && (
+            <div className="mt-3 flex items-center gap-2 rounded-md bg-amber-50 px-3 py-1.5 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+              <span>Some selected clusters are ahead of {targetVersion}. Applying will move them backward.</span>
+            </div>
+          )}
 
           <div className="mt-4 flex flex-wrap gap-2">
             <button
@@ -1047,7 +1112,7 @@ function SubsetUpgradePanel({
               <button
                 type="button"
                 disabled={applying}
-                onClick={handleApply}
+                onClick={handleApplyClick}
                 className="inline-flex items-center gap-1.5 rounded-md bg-[#0a2a4a] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#14466e] disabled:opacity-50 dark:bg-blue-700 dark:hover:bg-blue-600"
               >
                 {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
@@ -2467,20 +2532,25 @@ export function AddonDetail() {
                 )}
               </div>
 
-              {/* Subset upgrade — one action, one PR (Epic 7 Story 7.2) */}
-              <SubsetUpgradePanel
-                addonName={addon.addon_name}
-                catalogVersion={addon.version}
-                clusters={enabledApps.map((app) => {
-                  const deployedVersion = app.deployed_version ?? app.configured_version ?? 'N/A'
-                  return {
-                    name: app.cluster_name,
-                    deployedVersion,
-                    drifted: deployedVersion !== addon.version && deployedVersion !== 'N/A',
-                  }
-                })}
-                onComplete={() => fetchAddonData(true)}
-              />
+              {/* Subset upgrade — one action, one PR (Epic 7 Story 7.2).
+                * Admin-only, like the per-cluster rows above it — a batch
+                * that can silently include a downgrade is at least as
+                * consequential as a single-cluster upgrade. */}
+              <RoleGuard adminOnly>
+                <SubsetUpgradePanel
+                  addonName={addon.addon_name}
+                  catalogVersion={addon.version}
+                  clusters={enabledApps.map((app) => {
+                    const deployedVersion = app.deployed_version ?? app.configured_version ?? 'N/A'
+                    return {
+                      name: app.cluster_name,
+                      deployedVersion,
+                      drifted: deployedVersion !== addon.version && deployedVersion !== 'N/A',
+                    }
+                  })}
+                  onComplete={() => fetchAddonData(true)}
+                />
+              </RoleGuard>
             </div>
           )}
 

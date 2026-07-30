@@ -5,11 +5,13 @@ package api
 // blocked on a v3 repo while READS keep working.
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
@@ -134,6 +136,83 @@ func TestMigrate_RequiresAdmin(t *testing.T) {
 		if w.Code != http.StatusForbidden {
 			t.Errorf("%s: status = %d, want 403 (body=%s)", role, w.Code, w.Body.String())
 		}
+	}
+}
+
+// TestMigrationStatus_ReportsOpenMigrationPR — GET /migration/status must
+// surface a previous attempt's still-open PR as migration_pr_url /
+// migration_pr_number, so the UI banner can render "migration PR open"
+// from server truth on every load instead of trusting its own component
+// state (which a remount wipes).
+func TestMigrationStatus_ReportsOpenMigrationPR(t *testing.T) {
+	srv := newMigrationTestServer(t, migrationV3Files())
+	prefix := srv.gitopsConfig().BranchPrefix
+	fakeGit := &handlerFakeGitProvider{
+		files: migrationV3Files(),
+		prs: []gitprovider.PullRequest{
+			{ID: 9, URL: "https://example.com/pull/9", SourceBranch: prefix + "migrate-to-v4-cafebabe", TargetBranch: "main"},
+		},
+	}
+	srv.connSvc.SetGitProviderOverride(fakeGit)
+
+	w := getJSON(t, srv, http.MethodGet, "/api/v1/migration/status", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+
+	var got orchestrator.MigrationStatusResult
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, w.Body.String())
+	}
+	if got.MigrationPRURL != "https://example.com/pull/9" {
+		t.Errorf("MigrationPRURL = %q, want the open PR's URL", got.MigrationPRURL)
+	}
+	if got.MigrationPRNumber != 9 {
+		t.Errorf("MigrationPRNumber = %d, want 9", got.MigrationPRNumber)
+	}
+}
+
+// TestMigrate_RefusesWithOpenMigrationPR is the pinning test for the
+// migration-banner double-PR bug: POST /migration/migrate must refuse with
+// a 409 (not open a second PR) when a previous attempt's PR is still
+// open, and the body must carry that PR's link back to the caller.
+func TestMigrate_RefusesWithOpenMigrationPR(t *testing.T) {
+	srv := newMigrationTestServer(t, migrationV3Files())
+	prefix := srv.gitopsConfig().BranchPrefix
+	fakeGit := &handlerFakeGitProvider{
+		files: migrationV3Files(),
+		prs: []gitprovider.PullRequest{
+			{ID: 9, URL: "https://example.com/pull/9", SourceBranch: prefix + "migrate-to-v4-cafebabe", TargetBranch: "main"},
+		},
+	}
+	srv.connSvc.SetGitProviderOverride(fakeGit)
+
+	body, err := json.Marshal(map[string]interface{}{"yes": true})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/migration/migrate", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withRole(req, "admin")
+	w := httptest.NewRecorder()
+	NewRouter(srv, nil).ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body=%s)", w.Code, w.Body.String())
+	}
+
+	var got map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, w.Body.String())
+	}
+	if got["code"] != "migration_pr_already_open" {
+		t.Errorf("code = %v, want %q", got["code"], "migration_pr_already_open")
+	}
+	if got["migration_pr_url"] != "https://example.com/pull/9" {
+		t.Errorf("migration_pr_url = %v, want the existing PR's URL", got["migration_pr_url"])
+	}
+	if got["migration_pr_number"] != float64(9) {
+		t.Errorf("migration_pr_number = %v, want 9", got["migration_pr_number"])
 	}
 }
 

@@ -293,6 +293,11 @@ export function ClusterDetail() {
   const [removePreview, setRemovePreview] = useState<DryRunResult | null>(null);
   const [removePreviewLoading, setRemovePreviewLoading] = useState(false);
   const [removePreviewError, setRemovePreviewError] = useState<string | null>(null);
+  // Story 6.5 review fix — the consequences panel has to actually have
+  // rendered (data OR an error the user has seen) before the confirm
+  // button unlocks. Defaults to false so a freshly-opened modal always
+  // starts locked, never briefly enabled before the panel reports in.
+  const [consequencesReady, setConsequencesReady] = useState(false);
 
   // Brownfield takeover (v4 Wave 2, Epic 6). Both dialogs start on a
   // read — the preflight for the takeover, a dry run for the label drop —
@@ -1272,12 +1277,22 @@ export function ClusterDetail() {
         confirmText="Remove"
         destructive
         loading={removing}
+        confirmDisabled={!consequencesReady}
         extraContent={
           <div className="space-y-3">
             {/* Story 6.5 — the consequences come FIRST, before the preview
               * button and before the confirm. Nothing has been deleted at
-              * this point and nothing will be until the confirm below. */}
-            {name && <UnregisterConsequencesPanel clusterName={name} open={removeModalOpen} />}
+              * this point and nothing will be until the confirm below.
+              * onReadyChange gates the confirm button itself (see
+              * confirmDisabled above) — no removing a cluster before this
+              * panel has actually shown what removing it does. */}
+            {name && (
+              <UnregisterConsequencesPanel
+                clusterName={name}
+                open={removeModalOpen}
+                onReadyChange={setConsequencesReady}
+              />
+            )}
             {!removePreview && !removePreviewLoading && (
               <button
                 type="button"

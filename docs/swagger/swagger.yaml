@@ -1312,6 +1312,18 @@ definitions:
           MigrationAvailable is true only for "v3" — the one state where
           there is something to convert.
         type: boolean
+      migration_pr_number:
+        type: integer
+      migration_pr_url:
+        description: |-
+          MigrationPRURL / MigrationPRNumber are set (format "v3" only) when a
+          previous migrate call already opened a pull request that is still
+          open. Their presence is server truth that "Open migration PR" should
+          not be offered again — a UI component that remounts (and so loses
+          whatever in-memory "I already opened one" flag it kept) still learns
+          the right thing from the next status poll instead of minting a
+          second PR for the same repo.
+        type: string
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.RegisterClusterRequest:
     properties:
@@ -7122,6 +7134,12 @@ paths:
             type: object
         "401":
           description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: A migration pull request from a previous attempt is already
+            open
           schema:
             additionalProperties: true
             type: object

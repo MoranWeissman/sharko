@@ -42,6 +42,17 @@ const mockGetAddonCatalog = vi.fn();
 const mockRestartAddonSync = vi.fn();
 const mockGetClusterHistory = vi.fn();
 const mockGetClusterChanges = vi.fn();
+// UnregisterConsequencesPanel (story 6.5 / v4-wave2 review confirm-gate
+// fix) fetches this the moment the remove modal opens. Default to a
+// quick, minimal resolve so existing remove-flow tests — which click
+// Remove right after the modal appears — aren't left staring at a
+// confirm button the ready-gate is still holding disabled.
+const mockUnregisterConsequences = vi.fn().mockResolvedValue({
+  cluster: 'prod-eu',
+  summary: 'Nothing worth flagging.',
+  confirmation_required: 'Nothing here has happened yet.',
+  consequences: [],
+});
 
 // V2-cleanup-13: capture toast calls so the removal-feedback assertions can
 // distinguish "cluster removed" (auto-merged) from "removal PR opened".
@@ -82,6 +93,7 @@ vi.mock('@/services/api', async () => {
       testProvider: vi.fn().mockResolvedValue({ status: 'connected' }),
     },
     testClusterConnection: (...args: unknown[]) => mockTestClusterConnection(...args),
+    unregisterConsequences: (...args: unknown[]) => mockUnregisterConsequences(...args),
     deregisterCluster: (...args: unknown[]) => mockDeregisterCluster(...args),
     updateClusterAddons: (...args: unknown[]) => mockUpdateClusterAddons(...args),
     updateClusterSettings: (...args: unknown[]) => mockUpdateClusterSettings(...args),
@@ -906,6 +918,13 @@ describe('ClusterDetail', () => {
       await waitFor(() => {
         expect(screen.getByText(/Remove cluster "prod-eu"\?/i)).toBeInTheDocument();
       });
+      // Review fix — the confirm button stays disabled until
+      // UnregisterConsequencesPanel has loaded. Wait for it so the
+      // existing click-Remove-immediately flow in these tests keeps
+      // working against a real (not accidentally-disabled) button.
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /^Remove$/i })).not.toBeDisabled();
+      });
     }
 
     it('does NOT render the "Merge PR automatically" toggle — global setting governs', async () => {
@@ -985,6 +1004,48 @@ describe('ClusterDetail', () => {
       });
       // Must NOT navigate away on failure.
       expect(mockNavigate).not.toHaveBeenCalled();
+    });
+  });
+
+  // v4-wave2 review fix — no removing a cluster before the consequences
+  // panel has actually rendered something. The confirm button must stay
+  // disabled while UnregisterConsequencesPanel is still loading, and
+  // unlock once it has (data OR error — either counts as "shown").
+  describe('remove-cluster confirm gate — UnregisterConsequencesPanel must load first', () => {
+    it('the confirm button starts disabled and stays disabled while the consequences are still loading', async () => {
+      let resolveConsequences: (v: unknown) => void = () => {};
+      mockUnregisterConsequences.mockReturnValueOnce(new Promise((resolve) => { resolveConsequences = resolve; }));
+
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      fireEvent.click(screen.getByRole('button', { name: /Remove Cluster/i }));
+      await waitFor(() => expect(screen.getByText(/Remove cluster "prod-eu"\?/i)).toBeInTheDocument());
+
+      const confirmBtn = screen.getByRole('button', { name: /^Remove$/i });
+      expect(confirmBtn).toBeDisabled();
+      fireEvent.click(confirmBtn);
+      expect(mockDeregisterCluster).not.toHaveBeenCalled();
+
+      // Unblock the fetch — now it should unlock.
+      resolveConsequences({
+        cluster: 'prod-eu',
+        summary: 'Nothing worth flagging.',
+        confirmation_required: 'Nothing here has happened yet.',
+        consequences: [],
+      });
+      await waitFor(() => expect(confirmBtn).not.toBeDisabled());
+    });
+
+    it('a failed consequences fetch still unlocks the confirm button — the error IS the thing the user was shown', async () => {
+      mockUnregisterConsequences.mockRejectedValueOnce(new Error('argocd unreachable'));
+
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      fireEvent.click(screen.getByRole('button', { name: /Remove Cluster/i }));
+      await waitFor(() => expect(screen.getByText(/Remove cluster "prod-eu"\?/i)).toBeInTheDocument());
+
+      await waitFor(() => expect(screen.getByTestId('unregister-consequences-error')).toBeInTheDocument());
+      expect(screen.getByRole('button', { name: /^Remove$/i })).not.toBeDisabled();
     });
   });
 

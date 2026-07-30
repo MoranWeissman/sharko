@@ -471,6 +471,25 @@ export class V4AddonValidationError extends Error {
   }
 }
 
+/**
+ * MigrationPRAlreadyOpenError — thrown by migrateRepo when the server
+ * returns 409 (a previous migrate call already opened a pull request that
+ * is still open). Distinct from a plain Error so MigrationBanner can link
+ * straight to the existing PR instead of showing a generic failure and
+ * inviting a retry that would just 409 again.
+ */
+export class MigrationPRAlreadyOpenError extends Error {
+  prUrl: string
+  prNumber?: number
+
+  constructor(body: { error?: string; migration_pr_url?: string; migration_pr_number?: number }) {
+    super(body.error || 'a migration pull request is already open')
+    this.name = 'MigrationPRAlreadyOpenError'
+    this.prUrl = body.migration_pr_url || ''
+    this.prNumber = body.migration_pr_number
+  }
+}
+
 export interface EnableAddonV4Request {
   version?: string
   values?: Record<string, unknown>
@@ -1126,6 +1145,35 @@ export interface HealthResponse {
   [key: string]: unknown
 }
 
+/**
+ * migrateRepoRequest — POST /api/v1/migration/migrate. A dedicated fetch
+ * (rather than the generic postJSON) so a 409 (a previous attempt's PR is
+ * still open) throws MigrationPRAlreadyOpenError with the existing PR's
+ * link, instead of the generic postJSON Error that would drop everything
+ * but the summary sentence.
+ */
+async function migrateRepoRequest(req: MigrationMigrateRequest): Promise<MigrateResult> {
+  const res = await fetch(`${BASE_URL}/migration/migrate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(req),
+  })
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (res.status === 409) {
+    const errBody = await res.json().catch(() => ({}))
+    throw new MigrationPRAlreadyOpenError(errBody)
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error || res.statusText)
+  }
+  return res.json()
+}
+
 export const api = {
   // Health
   health: () => fetchJSON<HealthResponse>('/health'),
@@ -1731,5 +1779,5 @@ export const api = {
   // migrate?), preview (show me every file), migrate (do it, one PR).
   getMigrationStatus: () => fetchJSON<MigrationStatus>('/migration/status'),
   previewMigration: () => postJSON<MigrationPlan>('/migration/preview', {}),
-  migrateRepo: (req: MigrationMigrateRequest = { yes: true }) => postJSON<MigrateResult>('/migration/migrate', req),
+  migrateRepo: (req: MigrationMigrateRequest = { yes: true }) => migrateRepoRequest(req),
 }

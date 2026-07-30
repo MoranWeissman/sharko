@@ -21,6 +21,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
@@ -131,6 +132,7 @@ func (s *Server) handleMigrationPreview(w http.ResponseWriter, r *http.Request) 
 // @Success 200 {object} orchestrator.MigrateResult "Migration pull request (or dry-run plan)"
 // @Failure 400 {object} map[string]interface{} "Missing confirmation, or the repo cannot be migrated as it stands"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 409 {object} map[string]interface{} "A migration pull request from a previous attempt is already open"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /migration/migrate [post]
 func (s *Server) handleMigrateRepo(w http.ResponseWriter, r *http.Request) {
@@ -171,6 +173,21 @@ func (s *Server) handleMigrateRepo(w http.ResponseWriter, r *http.Request) {
 		AutoMerge: req.AutoMerge,
 	})
 	if err != nil {
+		// A previous attempt's migration PR is still open — refuse with a
+		// plain-words 409 and the existing PR link rather than opening a
+		// second PR for the same repo. Structured body so the banner can
+		// render "migration PR open" from server truth even after a
+		// remount (component state can't be trusted to remember it).
+		var prOpenErr *orchestrator.ErrMigrationPROpen
+		if errors.As(err, &prOpenErr) {
+			writeJSON(w, http.StatusConflict, map[string]interface{}{
+				"error":               "a migration pull request is already open",
+				"code":                "migration_pr_already_open",
+				"migration_pr_url":    prOpenErr.PRURL,
+				"migration_pr_number": prOpenErr.PRNumber,
+			})
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

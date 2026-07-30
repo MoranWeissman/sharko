@@ -198,6 +198,42 @@ describe('TakeoverDialog', () => {
     await waitFor(() => expect(screen.getByTestId('takeover-error')).toHaveTextContent('argocd unreachable'));
     expect(screen.queryByTestId('takeover-confirm')).not.toBeInTheDocument();
   });
+
+  // v4-wave2 review fix — a failed initial preflight fetch must offer a
+  // way back in, not strand the user on a dead error box.
+  it('a failed initial preflight fetch gets a Retry button that re-runs the check', async () => {
+    mockPreflight.mockRejectedValueOnce(new Error('argocd unreachable')).mockResolvedValueOnce(okReport);
+    render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('takeover-error')).toBeInTheDocument());
+    const retryBtn = screen.getByTestId('takeover-retry');
+    await userEvent.click(retryBtn);
+
+    await waitFor(() => expect(screen.getByTestId('takeover-summary')).toHaveTextContent('ready to take over'));
+    expect(mockPreflight).toHaveBeenCalledTimes(2);
+  });
+
+  it('disables "Check again" while a check is already in flight', async () => {
+    let resolveSecond: (v: TakeoverReport) => void = () => {};
+    mockPreflight
+      .mockResolvedValueOnce(blockedReport)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveSecond = resolve; }));
+    render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('takeover-recheck')).toBeInTheDocument());
+    const recheckBtn = screen.getByTestId('takeover-recheck');
+    expect(recheckBtn).not.toBeDisabled();
+
+    await userEvent.click(recheckBtn);
+    // The report-driven view unmounts while loading (report is still the
+    // stale one and the spinner takes over), so re-querying confirms the
+    // recheck button is gone rather than clickable again mid-flight.
+    expect(screen.queryByTestId('takeover-recheck')).not.toBeInTheDocument();
+
+    resolveSecond(okReport);
+    await waitFor(() => expect(screen.getByTestId('takeover-recheck')).not.toBeDisabled());
+    expect(mockPreflight).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('DropLegacyLabelsDialog', () => {
@@ -254,5 +290,20 @@ describe('DropLegacyLabelsDialog', () => {
 
     await waitFor(() => expect(screen.getByText(/nothing to remove/)).toBeInTheDocument());
     expect(screen.queryByTestId('drop-labels-confirm')).not.toBeInTheDocument();
+  });
+
+  // v4-wave2 review fix — a failed initial dry-run fetch gets a Retry
+  // button rather than stranding the user on a dead error box.
+  it('a failed initial dry-run fetch gets a Retry button that re-runs it', async () => {
+    mockDropLabels
+      .mockRejectedValueOnce(new Error('argocd unreachable'))
+      .mockResolvedValueOnce(planWithWarning);
+    render(<DropLegacyLabelsDialog clusterName="prod-eu" open onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('drop-labels-error')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('drop-labels-retry'));
+
+    await waitFor(() => expect(screen.getByTestId('drop-labels-warnings')).toBeInTheDocument());
+    expect(mockDropLabels).toHaveBeenCalledTimes(2);
   });
 });

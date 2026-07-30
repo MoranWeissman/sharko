@@ -1518,6 +1518,12 @@ export interface MigrationStatus {
   migration_available: boolean
   /** Plain-English sentence the UI can render as-is. */
   message: string
+  /** Set (format "v3" only) when a previous migrate call already opened a
+   * pull request that is still open — server truth, so a remounted banner
+   * learns this from the next status poll instead of trusting component
+   * state that a remount would have wiped. */
+  migration_pr_url?: string
+  migration_pr_number?: number
 }
 
 /** One file the migration pull request would add, convert, or remove. */

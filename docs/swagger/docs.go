@@ -6208,6 +6208,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "A migration pull request from a previous attempt is already open",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Gateway error",
                         "schema": {
@@ -10222,6 +10229,13 @@ const docTemplate = `{
                 "migration_available": {
                     "description": "MigrationAvailable is true only for \"v3\" — the one state where\nthere is something to convert.",
                     "type": "boolean"
+                },
+                "migration_pr_number": {
+                    "type": "integer"
+                },
+                "migration_pr_url": {
+                    "description": "MigrationPRURL / MigrationPRNumber are set (format \"v3\" only) when a\nprevious migrate call already opened a pull request that is still\nopen. Their presence is server truth that \"Open migration PR\" should\nnot be offered again — a UI component that remounts (and so loses\nwhatever in-memory \"I already opened one\" flag it kept) still learns\nthe right thing from the next status poll instead of minting a\nsecond PR for the same repo.",
+                    "type": "string"
                 }
             }
         },

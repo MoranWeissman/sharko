@@ -20,9 +20,18 @@ interface Props {
   clusterName: string
   /** Only fetches while the confirmation is actually on screen. */
   open: boolean
+  /**
+   * Fires whenever the "has this rendered something the user can act on"
+   * state changes: false while loading (or closed), true once either the
+   * consequences list or the error state is actually on screen. The
+   * parent confirmation dialog gates its confirm button on this — removing
+   * a cluster without ever having shown what that removal does is the bug
+   * this callback exists to prevent.
+   */
+  onReadyChange?: (ready: boolean) => void
 }
 
-export function UnregisterConsequencesPanel({ clusterName, open }: Props) {
+export function UnregisterConsequencesPanel({ clusterName, open, onReadyChange }: Props) {
   const [data, setData] = useState<UnregisterConsequencesResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -31,15 +40,28 @@ export function UnregisterConsequencesPanel({ clusterName, open }: Props) {
     if (!open) {
       setData(null)
       setError(null)
+      onReadyChange?.(false)
       return
     }
     setLoading(true)
     setError(null)
+    onReadyChange?.(false)
     unregisterConsequences(clusterName)
       .then(setData)
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not work out what this would do'))
       .finally(() => setLoading(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, clusterName])
+
+  // Reports "ready" the moment either the data or the error state has
+  // actually rendered — loading is never ready, and a fetch failure still
+  // counts as ready because the error IS the thing the user needs to see
+  // before deciding to go ahead anyway.
+  useEffect(() => {
+    if (!open || loading) return
+    onReadyChange?.(data !== null || error !== null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, loading, data, error])
 
   if (loading) {
     return (
