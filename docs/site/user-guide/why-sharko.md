@@ -119,7 +119,7 @@ This is a real trade-off. A skeptical platform engineer can't debug Sharko's des
 **The roadmap to close this gap:**
 
 - **Near-term:** ESO integration (optional) — for teams that already run ESO, Sharko can emit `ExternalSecret` manifests instead of pushing secrets directly. This makes the secret-value path kubectl-visible.
-- **Longer-term:** CRD + operator mode — Sharko's desired state becomes a real Kubernetes object (`kubectl get sharkoclusterassignment` shows desired state + status + errors). This is the full kubectl-native transparency model, analogous to how ArgoCD's `Application` resource works.
+- **Longer-term:** CRD + operator mode — Sharko's desired state becomes a real Kubernetes object (`kubectl get sharkoclusteraddons` shows desired state + status + errors). This is the full kubectl-native transparency model, analogous to how ArgoCD's `Application` resource works.
 
 Neither gates v3.0.0. Today's transparency model (UI + API + events) is honest about what it is, and the roadmap items above are tracked in [Roadmap](../community/roadmap.md).
 

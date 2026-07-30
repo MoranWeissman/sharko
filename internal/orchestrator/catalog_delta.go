@@ -41,7 +41,7 @@ type AddInternalAddonRequest struct {
 //
 // This writes ONLY the delta file — it does not touch clusters/*.yaml. An
 // addon added here is immediately assignable to a cluster (referencing it
-// by name in a ClusterAssignment's spec.addons map has no catalog-
+// by name in a ClusterAddons's spec.addons map has no catalog-
 // membership precondition in the v4 schema) and appears in the merged
 // catalog view (catalog.MergeDelta, Origin=OriginInternal) the moment the
 // PR merges.

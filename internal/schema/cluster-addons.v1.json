@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-assignment.v1.json",
+  "$id": "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-addons.v1.json",
   "properties": {
     "apiVersion": {
       "enum": [
@@ -9,7 +9,7 @@
       ]
     },
     "kind": {
-      "const": "ClusterAssignment"
+      "const": "ClusterAddons"
     },
     "metadata": {
       "properties": {
@@ -99,6 +99,6 @@
     "metadata",
     "spec"
   ],
-  "title": "Sharko ClusterAssignment",
+  "title": "Sharko ClusterAddons",
   "description": "clusters/\u003ccluster-name\u003e.yaml — which addons run on this cluster, at which version, tuned how (v4)."
 }

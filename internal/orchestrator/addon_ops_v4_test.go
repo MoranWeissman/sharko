@@ -57,9 +57,9 @@ func v4TestCuratedCatalog(t *testing.T) *catalog.Catalog {
 // plain valid one, so an error here is a bug in the test itself.
 func assignPath(t *testing.T, cluster string) string {
 	t.Helper()
-	p, err := v4ClusterAssignmentPath(cluster)
+	p, err := v4ClusterAddonsPath(cluster)
 	if err != nil {
-		t.Fatalf("v4ClusterAssignmentPath(%q): %v", cluster, err)
+		t.Fatalf("v4ClusterAddonsPath(%q): %v", cluster, err)
 	}
 	return p
 }
@@ -182,9 +182,9 @@ func TestEnableAddonV4_ValidInputs_WritesExpectedFiles(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected %s to be written", clusterPath)
 	}
-	spec, err := models.LoadClusterAssignment(clusterBytes)
+	spec, err := models.LoadClusterAddons(clusterBytes)
 	if err != nil {
-		t.Fatalf("clusters/prod-eu.yaml failed to round-trip through LoadClusterAssignment: %v", err)
+		t.Fatalf("clusters/prod-eu.yaml failed to round-trip through LoadClusterAddons: %v", err)
 	}
 	entry, ok := spec.Addons["cert-manager"]
 	if !ok || !entry.Enabled || entry.Version != "1.12.0" {
@@ -192,11 +192,11 @@ func TestEnableAddonV4_ValidInputs_WritesExpectedFiles(t *testing.T) {
 	}
 
 	// Gate requirement: generated files pass sharko validate (the JSON
-	// Schema validator). LoadClusterAssignment already ran it once inside
-	// SaveClusterAssignment before this byte slice was ever committed;
+	// Schema validator). LoadClusterAddons already ran it once inside
+	// SaveClusterAddons before this byte slice was ever committed;
 	// this is the explicit round-trip proof the story's gate asks for.
 	if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
-		if err := validator.Validate(schema.KindClusterAssignment, clusterBytes); err != nil {
+		if err := validator.Validate(schema.KindClusterAddons, clusterBytes); err != nil {
 			t.Errorf("clusters/prod-eu.yaml failed sharko validate: %v", err)
 		}
 	}
@@ -287,7 +287,7 @@ func TestDisableAddonV4_PreservesVersionPin(t *testing.T) {
 		Cluster: "prod-eu",
 		Addon:   "metrics-server",
 		Version: strPtrTest("3.12.1"),
-		Settings: &models.ClusterAssignmentAddonSettings{
+		Settings: &models.ClusterAddonsAddonSettings{
 			Namespace: seedNamespace,
 			Prune:     &seedPrune,
 		},
@@ -296,7 +296,7 @@ func TestDisableAddonV4_PreservesVersionPin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed enable: %v", err)
 	}
-	seeded, _ := models.LoadClusterAssignment(git.files[assignPath(t, "prod-eu")])
+	seeded, _ := models.LoadClusterAddons(git.files[assignPath(t, "prod-eu")])
 	seededEntry := seeded.Addons["metrics-server"]
 	if !seededEntry.Enabled {
 		t.Fatal("seed did not enable metrics-server")
@@ -314,7 +314,7 @@ func TestDisableAddonV4_PreservesVersionPin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	spec, err := models.LoadClusterAssignment(git.files[assignPath(t, "prod-eu")])
+	spec, err := models.LoadClusterAddons(git.files[assignPath(t, "prod-eu")])
 	if err != nil {
 		t.Fatalf("parse after disable: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestDisableAddonV4_Remove_DeletesEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("disable+remove: %v", err)
 	}
-	spec, err := models.LoadClusterAssignment(git.files[assignPath(t, "prod-eu")])
+	spec, err := models.LoadClusterAddons(git.files[assignPath(t, "prod-eu")])
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

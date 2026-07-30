@@ -15,7 +15,7 @@ import (
 // actually validates. `sharko validate-config` (cmd/sharko/validate_config.go)
 // is a thin CLI wrapper around exactly the two checks this test runs
 // directly: schema.DefaultValidator().ValidateAutoDetect for every
-// Sharko-enveloped file, plus the ClusterAssignment
+// Sharko-enveloped file, plus the ClusterAddons
 // filename-must-equal-spec.cluster invariant the CLI enforces
 // separately (design doc §2.1) because a generic JSON Schema has no way
 // to see the file's own path. Running the same validator function the
@@ -58,14 +58,14 @@ func TestV4DemoFilesPassSchemaValidation(t *testing.T) {
 			continue
 		}
 
-		// ClusterAssignment's file-name invariant (design doc §2.1):
+		// ClusterAddons's file-name invariant (design doc §2.1):
 		// spec.cluster must equal the file's basename without .yaml —
 		// validate-config checks this in addition to the JSON Schema
 		// because the schema itself has no access to the file's path.
 		if strings.HasPrefix(path, orchestrator.V4ClustersDir+"/") {
-			spec, err := models.LoadClusterAssignment(body)
+			spec, err := models.LoadClusterAddons(body)
 			if err != nil {
-				t.Errorf("%s: LoadClusterAssignment: %v", path, err)
+				t.Errorf("%s: LoadClusterAddons: %v", path, err)
 				continue
 			}
 			wantCluster := strings.TrimSuffix(strings.TrimPrefix(path, orchestrator.V4ClustersDir+"/"), ".yaml")
@@ -75,7 +75,7 @@ func TestV4DemoFilesPassSchemaValidation(t *testing.T) {
 		}
 	}
 
-	// Sanity: every fixture cluster has a ClusterAssignment file, every
+	// Sanity: every fixture cluster has a ClusterAddons file, every
 	// pinned addon has a corresponding catalog delta entry (or is a
 	// bare "follow the catalog default" reference), and the delta has
 	// at least one entry that is NOT in the shipped/curated catalog
@@ -118,9 +118,9 @@ func TestV4DemoProdEuMatchesWorkedExample(t *testing.T) {
 	if !ok {
 		t.Fatal("missing clusters/prod-eu.yaml")
 	}
-	spec, err := models.LoadClusterAssignment(body)
+	spec, err := models.LoadClusterAddons(body)
 	if err != nil {
-		t.Fatalf("LoadClusterAssignment: %v", err)
+		t.Fatalf("LoadClusterAddons: %v", err)
 	}
 
 	cm, ok := spec.Addons["cert-manager"]

@@ -1,5 +1,5 @@
 // v4 Wave 1 Story 2.6 — validate-config CLI coverage for the two new v4
-// kinds (ClusterAssignment, AddonCatalogDelta), the file-name/line
+// kinds (ClusterAddons, AddonCatalogDelta), the file-name/line
 // reporting they add, and the v4-layout fixture-repo end-to-end path.
 // Kept in a separate file from validate_config_test.go so the v3 and v4
 // suites can evolve independently — none of the existing tests in that
@@ -16,12 +16,12 @@ import (
 	"testing"
 )
 
-// validClusterAssignment mirrors the design doc's §2.1 worked example
+// validClusterAddons mirrors the design doc's §2.1 worked example
 // (docs/design/2026-07-30-v4-data-file-format.md). File name must be
 // prod-eu.yaml to match spec.cluster.
-const validClusterAssignment = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-assignment.v1.json
+const validClusterAddons = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-addons.v1.json
 apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: prod-eu
 spec:
@@ -56,16 +56,16 @@ spec:
       version: "3.12.1"
 `
 
-// TestValidateConfig_ClusterAssignment_Valid_Exit0 — a well-formed
+// TestValidateConfig_ClusterAddons_Valid_Exit0 — a well-formed
 // clusters/<name>.yaml validates cleanly.
-func TestValidateConfig_ClusterAssignment_Valid_Exit0(t *testing.T) {
+func TestValidateConfig_ClusterAddons_Valid_Exit0(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	clustersDir := filepath.Join(dir, "clusters")
 	if err := os.Mkdir(clustersDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	path := writeTempFile(t, clustersDir, "prod-eu.yaml", validClusterAssignment)
+	path := writeTempFile(t, clustersDir, "prod-eu.yaml", validClusterAddons)
 
 	var buf bytes.Buffer
 	if err := runValidateConfig(&buf, path, false); err != nil {
@@ -76,10 +76,10 @@ func TestValidateConfig_ClusterAssignment_Valid_Exit0(t *testing.T) {
 	}
 }
 
-// TestValidateConfig_ClusterAssignment_MissingEnabled_FailsWithLine —
+// TestValidateConfig_ClusterAddons_MissingEnabled_FailsWithLine —
 // a required-field schema violation must name the file, the reason, and
 // a source line (Story 2.6's headline AC).
-func TestValidateConfig_ClusterAssignment_MissingEnabled_FailsWithLine(t *testing.T) {
+func TestValidateConfig_ClusterAddons_MissingEnabled_FailsWithLine(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	clustersDir := filepath.Join(dir, "clusters")
@@ -87,7 +87,7 @@ func TestValidateConfig_ClusterAssignment_MissingEnabled_FailsWithLine(t *testin
 		t.Fatalf("mkdir: %v", err)
 	}
 	body := `apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: prod-eu
 spec:
@@ -106,7 +106,7 @@ spec:
 	out := buf.String()
 	for _, want := range []string{
 		"✘ " + path + ":",
-		"schema violations (kind: ClusterAssignment)",
+		"schema violations (kind: ClusterAddons)",
 		"enabled",
 		"line 9", // the cert-manager block's only present field ("version")
 		"1 file(s) failed validation",
@@ -117,11 +117,11 @@ spec:
 	}
 }
 
-// TestValidateConfig_ClusterAssignment_PreserveResourcesOnDeletion_Rejected
+// TestValidateConfig_ClusterAddons_PreserveResourcesOnDeletion_Rejected
 // pins the contract-specific redirect message (design doc §3.2 "Two
 // tiers"): the file, the addon name, the line of the forbidden key, and
 // where the field belongs.
-func TestValidateConfig_ClusterAssignment_PreserveResourcesOnDeletion_Rejected(t *testing.T) {
+func TestValidateConfig_ClusterAddons_PreserveResourcesOnDeletion_Rejected(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	clustersDir := filepath.Join(dir, "clusters")
@@ -129,7 +129,7 @@ func TestValidateConfig_ClusterAssignment_PreserveResourcesOnDeletion_Rejected(t
 		t.Fatalf("mkdir: %v", err)
 	}
 	body := `apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: prod-eu
 spec:
@@ -167,9 +167,9 @@ spec:
 	}
 }
 
-// TestValidateConfig_ClusterAssignment_FilenameMismatch_Fails — the file
+// TestValidateConfig_ClusterAddons_FilenameMismatch_Fails — the file
 // name (minus .yaml) must equal spec.cluster (design doc §2.1).
-func TestValidateConfig_ClusterAssignment_FilenameMismatch_Fails(t *testing.T) {
+func TestValidateConfig_ClusterAddons_FilenameMismatch_Fails(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	clustersDir := filepath.Join(dir, "clusters")
@@ -177,7 +177,7 @@ func TestValidateConfig_ClusterAssignment_FilenameMismatch_Fails(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	body := `apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: prod-eu
 spec:
@@ -272,9 +272,9 @@ func buildV4FixtureRepo(t *testing.T) string {
 	mustMkdirAll(t, filepath.Join(dir, "engine"))
 
 	writeTempFile(t, filepath.Join(dir, "catalog"), "addons.yaml", validAddonCatalogDelta)
-	writeTempFile(t, filepath.Join(dir, "clusters"), "prod-eu.yaml", validClusterAssignment)
+	writeTempFile(t, filepath.Join(dir, "clusters"), "prod-eu.yaml", validClusterAddons)
 	writeTempFile(t, filepath.Join(dir, "clusters"), "staging-us.yaml", `apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: staging-us
 spec:
@@ -331,7 +331,7 @@ func mustMkdirAll(t *testing.T, path string) {
 // TestValidateConfig_V4FixtureRepo_EndToEnd_Exit0 is the Story 2.6 AC
 // "a valid repo passes with exit code 0", exercised against the design
 // doc's actual §6 worked example end to end via the CLI: two
-// ClusterAssignment files, an AddonCatalogDelta, a ManagedClusters
+// ClusterAddons files, an AddonCatalogDelta, a ManagedClusters
 // connections file, plain Helm values (skipped — syntax-check only,
 // no schema), and a real ArgoCD Application (skipped, not a Sharko
 // envelope).
@@ -375,7 +375,7 @@ func TestValidateConfig_V4FixtureRepo_BrokenFile_Exit1_NamesFileReasonLine(t *te
 
 	brokenPath := filepath.Join(dir, "clusters", "staging-us.yaml")
 	broken := `apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: staging-us
 spec:

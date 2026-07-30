@@ -8,7 +8,7 @@
 // catalog) — the "internal addon" case v4 Wave 1 Story 3.3 added.
 //
 // This file builds that layout using the SAME Go helpers a real Sharko
-// server uses to write it (models.SaveClusterAssignment,
+// server uses to write it (models.SaveClusterAddons,
 // config.SaveAddonCatalogDelta, models.SaveManagedClusters) rather than
 // hand-typed YAML strings, so the fixture can never drift from what the
 // real read/write path actually accepts.
@@ -41,7 +41,7 @@ import (
 type v4ClusterAddonPin struct {
 	name     string
 	version  string // "" means "no per-cluster pin — follow the catalog default"
-	settings *models.ClusterAssignmentAddonSettings
+	settings *models.ClusterAddonsAddonSettings
 }
 
 // buildV4DemoFiles renders the v4-format demo repo layout (design doc
@@ -89,7 +89,7 @@ func buildV4DemoFiles() (map[string][]byte, error) {
 	}
 	files[config.AddonCatalogDeltaPath] = deltaBytes
 
-	// ---- clusters/<name>.yaml (one ClusterAssignment per cluster) ----
+	// ---- clusters/<name>.yaml (one ClusterAddons per cluster) ----
 	//
 	// prod-eu carries the design doc's worked example verbatim (§6):
 	// cert-manager pinned to an older version with the webhook
@@ -99,7 +99,7 @@ func buildV4DemoFiles() (map[string][]byte, error) {
 	// layouts tell the same story about the same fleet.
 	clusterAddons := map[string][]v4ClusterAddonPin{
 		"prod-eu": {
-			{name: "cert-manager", version: "1.12.0", settings: &models.ClusterAssignmentAddonSettings{
+			{name: "cert-manager", version: "1.12.0", settings: &models.ClusterAddonsAddonSettings{
 				IgnoreDifferences: []map[string]interface{}{
 					{
 						"group": "admissionregistration.k8s.io",
@@ -144,16 +144,16 @@ func buildV4DemoFiles() (map[string][]byte, error) {
 	// care about insertion order itself.
 	for _, clusterName := range []string{"prod-eu", "prod-us", "staging-eu", "dev-us", "perf-asia"} {
 		pins := clusterAddons[clusterName]
-		addons := make(map[string]models.ClusterAssignmentAddon, len(pins))
+		addons := make(map[string]models.ClusterAddonsAddon, len(pins))
 		for _, p := range pins {
-			addons[p.name] = models.ClusterAssignmentAddon{
+			addons[p.name] = models.ClusterAddonsAddon{
 				Enabled:  true,
 				Version:  p.version,
 				Settings: p.settings,
 			}
 		}
-		spec := models.ClusterAssignmentSpec{Cluster: clusterName, Addons: addons}
-		body, err := models.SaveClusterAssignment(spec)
+		spec := models.ClusterAddonsSpec{Cluster: clusterName, Addons: addons}
+		body, err := models.SaveClusterAddons(spec)
 		if err != nil {
 			return nil, fmt.Errorf("rendering demo clusters/%s.yaml: %w", clusterName, err)
 		}

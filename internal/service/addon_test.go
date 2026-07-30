@@ -556,15 +556,15 @@ applicationsets:
 // TestGetVersionMatrix_V4Repo is the v4 Wave 1 Story 4.2 counterpart to
 // TestGetVersionMatrix: the presence of the engine pin
 // (orchestrator.EnginePinPath) routes GetVersionMatrix through
-// getVersionMatrixV4, which reads clusters/*.yaml (ClusterAssignment) and
+// getVersionMatrixV4, which reads clusters/*.yaml (ClusterAddons) and
 // the delta-merged catalog (catalog/addons.yaml overlaid on the curated
 // set) instead of the v3 managed-clusters.yaml / addons-catalog.yaml
 // files — even though both v3 files are ALSO present in this fixture, to
 // prove the v4 branch is the one that actually ran.
 func TestGetVersionMatrix_V4Repo(t *testing.T) {
-	prodEU, err := models.SaveClusterAssignment(models.ClusterAssignmentSpec{
+	prodEU, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
 		Cluster: "prod-eu",
-		Addons: map[string]models.ClusterAssignmentAddon{
+		Addons: map[string]models.ClusterAddonsAddon{
 			"cert-manager": {Enabled: true, Version: "1.12.0"}, // per-cluster pin
 			"external-dns": {Enabled: false},
 		},
@@ -572,9 +572,9 @@ func TestGetVersionMatrix_V4Repo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("building prod-eu assignment: %v", err)
 	}
-	stagingUS, err := models.SaveClusterAssignment(models.ClusterAssignmentSpec{
+	stagingUS, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
 		Cluster: "staging-us",
-		Addons: map[string]models.ClusterAssignmentAddon{
+		Addons: map[string]models.ClusterAddonsAddon{
 			"cert-manager": {Enabled: true}, // follows catalog default
 		},
 	})

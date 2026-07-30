@@ -6,7 +6,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// lineLocFixture is a small ClusterAssignment-shaped body with a mix of
+// lineLocFixture is a small ClusterAddons-shaped body with a mix of
 // mapping and sequence nesting so tests can exercise both step kinds.
 // Line numbers below are pinned by literal position in this string —
 // counting starts at 1, same as an editor's gutter. Note yaml.v3's
@@ -16,7 +16,7 @@ import (
 // Line is 9, the first line inside it).
 //
 //	1  apiVersion: sharko.dev/v1
-//	2  kind: ClusterAssignment
+//	2  kind: ClusterAddons
 //	3  metadata:
 //	4    name: prod-eu
 //	5  spec:
@@ -32,7 +32,7 @@ import (
 //	15      metrics-server:
 //	16        enabled: true
 const lineLocFixture = `apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: prod-eu
 spec:
@@ -142,7 +142,7 @@ func TestLineForInstanceLocation_OutOfRangeIndex_FallsBackToContainer(t *testing
 }
 
 // TestMappingValue_ResolvesKeyAndValueNodes pins the exported helper
-// cmd/sharko's validate-config CLI uses to build its ClusterAssignment
+// cmd/sharko's validate-config CLI uses to build its ClusterAddons
 // semantic checks (filename-vs-spec.cluster, the
 // preserveResourcesOnDeletion redirect) — both need the KEY node's own
 // line (to point at exactly where a forbidden field was written), not

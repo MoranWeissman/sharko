@@ -8,7 +8,7 @@
 //
 // Output (six schemas, each mirrored to two locations, overwritten if
 // they exist): managed-clusters, addons-catalog, default-addons,
-// marketplace-sources, cluster-assignment, addon-catalog-delta — the
+// marketplace-sources, cluster-addons, addon-catalog-delta — the
 // last two are the v4 Wave 1 Story 2.6 kinds. Every schema lands at
 // both:
 //
@@ -121,14 +121,14 @@ type marketplaceSourcesDoc struct {
 	Spec       config.MarketplaceSourcesSpec `json:"spec"`
 }
 
-// clusterAssignmentDoc mirrors schema.Envelope[models.ClusterAssignmentSpec]
+// clusterAddonsDoc mirrors schema.Envelope[models.ClusterAddonsSpec]
 // for the same reason as managedClustersDoc. Same parity invariant
 // applies. v4 Wave 1 Story 2.6.
-type clusterAssignmentDoc struct {
+type clusterAddonsDoc struct {
 	APIVersion string                       `json:"apiVersion"`
 	Kind       string                       `json:"kind"`
 	Metadata   schema.Metadata              `json:"metadata"`
-	Spec       models.ClusterAssignmentSpec `json:"spec"`
+	Spec       models.ClusterAddonsSpec `json:"spec"`
 }
 
 // addonCatalogDeltaDoc mirrors schema.Envelope[config.AddonCatalogDeltaSpec]
@@ -232,18 +232,18 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	// cluster-assignment.v1.json (v4 Wave 1 Story 2.6)
+	// cluster-addons.v1.json (v4 Wave 1 Story 2.6)
 	caBytes, err := schema.GenerateSchema(
-		&clusterAssignmentDoc{},
-		schema.ClusterAssignmentSchemaID,
-		"Sharko ClusterAssignment",
+		&clusterAddonsDoc{},
+		schema.ClusterAddonsSchemaID,
+		"Sharko ClusterAddons",
 		"clusters/<cluster-name>.yaml — which addons run on this cluster, at which version, tuned how (v4).",
-		schema.KindClusterAssignment,
+		schema.KindClusterAddons,
 	)
 	if err != nil {
-		return fmt.Errorf("generating cluster-assignment schema: %w", err)
+		return fmt.Errorf("generating cluster-addons schema: %w", err)
 	}
-	caDocsPath, caEmbedPath, err := writeSchemaToBoth("cluster-assignment.v1.json", caBytes)
+	caDocsPath, caEmbedPath, err := writeSchemaToBoth("cluster-addons.v1.json", caBytes)
 	if err != nil {
 		return err
 	}
@@ -273,12 +273,12 @@ func run(logger *slog.Logger) error {
 		"default_addons_embed", daEmbedPath,
 		"marketplace_sources_docs", msDocsPath,
 		"marketplace_sources_embed", msEmbedPath,
-		"cluster_assignment_docs", caDocsPath,
-		"cluster_assignment_embed", caEmbedPath,
+		"cluster_addons_docs", caDocsPath,
+		"cluster_addons_embed", caEmbedPath,
 		"addon_catalog_delta_docs", acdDocsPath,
 		"addon_catalog_delta_embed", acdEmbedPath,
 	)
-	fmt.Printf("generated 6 schemas to %s + %s: managed-clusters.v1.json, addons-catalog.v1.json, default-addons.v1.json, marketplace-sources.v1.json, cluster-assignment.v1.json, addon-catalog-delta.v1.json\n",
+	fmt.Printf("generated 6 schemas to %s + %s: managed-clusters.v1.json, addons-catalog.v1.json, default-addons.v1.json, marketplace-sources.v1.json, cluster-addons.v1.json, addon-catalog-delta.v1.json\n",
 		docsOutputDir, embedOutputDir)
 	return nil
 }

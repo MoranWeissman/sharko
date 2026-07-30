@@ -311,7 +311,7 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 // uses the identical probe for the same reason: "no pin found" is the
 // ordinary, non-error "not a v4 repo yet" case, never a hard failure. When
 // the pin is present, the matrix is built from clusters/*.yaml (kind
-// ClusterAssignment) and the delta-merged catalog (catalog/addons.yaml
+// ClusterAddons) and the delta-merged catalog (catalog/addons.yaml
 // overlaid on s.curated, wired via SetCuratedCatalog) instead of
 // managed-clusters.yaml labels and addons-catalog.yaml. s.curated may be
 // nil (no embedded catalog loaded); every addon then merges as
@@ -447,7 +447,7 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 }
 
 // getVersionMatrixV4 is GetVersionMatrix's v4-repo branch (v4 Wave 1 Story
-// 4.2). It reads clusters/*.yaml (kind ClusterAssignment, one file per
+// 4.2). It reads clusters/*.yaml (kind ClusterAddons, one file per
 // cluster — design doc §2.1) instead of managed-clusters.yaml labels, and
 // the delta-merged catalog (catalog.MergeDelta(curated, catalog/addons.yaml))
 // instead of addons-catalog.yaml. ArgoCD Application health is looked up by
@@ -457,7 +457,7 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.VersionMatrixResponse, error) {
 	log := logging.LoggerFromContext(ctx)
 
-	assignments, err := listClusterAssignments(ctx, gp)
+	clusterAddons, err := listClusterAddonsSpecs(ctx, gp)
 	if err != nil {
 		return nil, fmt.Errorf("reading clusters/*.yaml: %w", err)
 	}
@@ -492,8 +492,8 @@ func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.Gi
 		appMap[app.Name] = app
 	}
 
-	clusterNames := make([]string, 0, len(assignments))
-	for name := range assignments {
+	clusterNames := make([]string, 0, len(clusterAddons))
+	for name := range clusterAddons {
 		clusterNames = append(clusterNames, name)
 	}
 	sort.Strings(clusterNames)
@@ -515,7 +515,7 @@ func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.Gi
 		}
 
 		for _, clusterName := range clusterNames {
-			ca, hasAddon := assignments[clusterName].Addons[addonName]
+			ca, hasAddon := clusterAddons[clusterName].Addons[addonName]
 			if !hasAddon {
 				continue
 			}
@@ -558,20 +558,20 @@ func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.Gi
 	}, nil
 }
 
-// listClusterAssignments lists clusters/*.yaml and parses each into a
-// ClusterAssignmentSpec, keyed by cluster name. An empty (or absent —
+// listClusterAddonsSpecs lists clusters/*.yaml and parses each into a
+// ClusterAddonsSpec, keyed by cluster name. An empty (or absent —
 // pre-first-cluster v4 repos have only clusters/.gitkeep) directory
 // returns an empty, non-nil map rather than an error.
-func listClusterAssignments(ctx context.Context, gp gitprovider.GitProvider) (map[string]models.ClusterAssignmentSpec, error) {
+func listClusterAddonsSpecs(ctx context.Context, gp gitprovider.GitProvider) (map[string]models.ClusterAddonsSpec, error) {
 	entries, err := gp.ListDirectory(ctx, "clusters", "main")
 	if err != nil {
 		if isGitFileNotFound(err) {
-			return map[string]models.ClusterAssignmentSpec{}, nil
+			return map[string]models.ClusterAddonsSpec{}, nil
 		}
 		return nil, err
 	}
 
-	out := make(map[string]models.ClusterAssignmentSpec, len(entries))
+	out := make(map[string]models.ClusterAddonsSpec, len(entries))
 	for _, name := range entries {
 		if !strings.HasSuffix(name, ".yaml") {
 			continue // .gitkeep and any non-YAML entry
@@ -580,7 +580,7 @@ func listClusterAssignments(ctx context.Context, gp gitprovider.GitProvider) (ma
 		if readErr != nil {
 			return nil, fmt.Errorf("reading clusters/%s: %w", name, readErr)
 		}
-		spec, parseErr := models.LoadClusterAssignment(data)
+		spec, parseErr := models.LoadClusterAddons(data)
 		if parseErr != nil {
 			return nil, fmt.Errorf("parsing clusters/%s: %w", name, parseErr)
 		}

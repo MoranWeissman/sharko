@@ -10,12 +10,12 @@ import (
 	"github.com/MoranWeissman/sharko/internal/schema"
 )
 
-// ClusterAssignmentSchemaHeader is the yaml-language-server header line
+// ClusterAddonsSchemaHeader is the yaml-language-server header line
 // written as the first line of every Sharko-emitted clusters/<name>.yaml
 // file. Mirrors ManagedClustersSchemaHeader's pattern.
-const ClusterAssignmentSchemaHeader = "# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-assignment.v1.json"
+const ClusterAddonsSchemaHeader = "# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-addons.v1.json"
 
-// ClusterAssignmentAddonSettings is the PER-APPLICATION tier of the v1
+// ClusterAddonsAddonSettings is the PER-APPLICATION tier of the v1
 // settings schema (docs/design/2026-07-30-v4-data-file-format.md §3.2) as
 // it appears inside a clusters/<name>.yaml file: six of the seven v1
 // settings fields — every one EXCEPT PreserveResourcesOnDeletion.
@@ -33,7 +33,7 @@ const ClusterAssignmentSchemaHeader = "# yaml-language-server: $schema=https://r
 // catalog/addons.yaml (suspenders). See config.AddonSettings for the
 // seven-field sibling used in AddonCatalogDelta entries, where the field
 // IS legal (fleet-wide, addon-wide).
-type ClusterAssignmentAddonSettings struct {
+type ClusterAddonsAddonSettings struct {
 	// Namespace overrides which namespace this addon installs into on
 	// this cluster. Falls back to the addon's shipped/delta namespace,
 	// then to the addon name.
@@ -63,12 +63,12 @@ type ClusterAssignmentAddonSettings struct {
 	SelfHeal *bool `json:"selfHeal,omitempty" yaml:"selfHeal,omitempty"`
 }
 
-// ClusterAssignmentAddon is one entry in a ClusterAssignmentSpec.Addons
+// ClusterAddonsAddon is one entry in a ClusterAddonsSpec.Addons
 // map, keyed by addon name. Enabled and Version follow the precedence
 // chain in design doc §3.3: Version absent means "follow the catalog
 // default" — the only per-cluster version pin location in the whole v4
 // format (§2.1 "Where per-cluster version pins live, exactly").
-type ClusterAssignmentAddon struct {
+type ClusterAddonsAddon struct {
 	// Enabled: true deploys the addon on this cluster. false keeps the
 	// entry (and its Settings/Version) but stops deploying — switching
 	// it back on later is a one-word change. Required, no omitempty:
@@ -82,16 +82,16 @@ type ClusterAssignmentAddon struct {
 	// addon. Pointer (not a plain struct) so "no settings block at all"
 	// is distinguishable from "an all-zero-value settings block" —
 	// encoding/json's `omitempty` never omits a non-pointer struct.
-	Settings *ClusterAssignmentAddonSettings `json:"settings,omitempty" yaml:"settings,omitempty"`
+	Settings *ClusterAddonsAddonSettings `json:"settings,omitempty" yaml:"settings,omitempty"`
 }
 
-// ClusterAssignmentSpec is the spec block of a clusters/<cluster-name>.yaml
-// envelope (kind: ClusterAssignment). One file per cluster; the file name
+// ClusterAddonsSpec is the spec block of a clusters/<cluster-name>.yaml
+// envelope (kind: ClusterAddons). One file per cluster; the file name
 // (minus .yaml) MUST equal Cluster — that invariant is enforced by
 // cmd/sharko's validate-config CLI (which has the file path in hand),
 // not by this type or its JSON Schema (neither has access to the
 // filename).
-type ClusterAssignmentSpec struct {
+type ClusterAddonsSpec struct {
 	// Cluster is the cluster name. Must equal the file's basename
 	// (without .yaml). Required.
 	Cluster string `json:"cluster" yaml:"cluster"`
@@ -99,71 +99,71 @@ type ClusterAssignmentSpec struct {
 	// a pull request touching one addon's config is a one-block diff,
 	// and the engine can look an addon up directly. Required, but may
 	// be an empty map ({}).
-	Addons map[string]ClusterAssignmentAddon `json:"addons" yaml:"addons"`
+	Addons map[string]ClusterAddonsAddon `json:"addons" yaml:"addons"`
 }
 
-// ClusterAssignmentDoc is the on-disk shape for an enveloped
+// ClusterAddonsDoc is the on-disk shape for an enveloped
 // clusters/<cluster-name>.yaml (apiVersion: sharko.dev/v1,
-// kind: ClusterAssignment). It is the canonical Save target; the reader
-// only ever accepts this enveloped shape — ClusterAssignment is a v4-only
+// kind: ClusterAddons). It is the canonical Save target; the reader
+// only ever accepts this enveloped shape — ClusterAddons is a v4-only
 // kind with no legacy bare-YAML precedent to stay backward compatible
 // with.
-type ClusterAssignmentDoc = schema.Envelope[ClusterAssignmentSpec]
+type ClusterAddonsDoc = schema.Envelope[ClusterAddonsSpec]
 
-// LoadClusterAssignment parses the on-disk bytes of a
+// LoadClusterAddons parses the on-disk bytes of a
 // clusters/<cluster-name>.yaml document and returns its spec.
 //
 // Unlike LoadManagedClusters, there is no legacy bare-YAML branch:
-// ClusterAssignment is a brand-new v4 kind (design doc §8 "Kinds added"),
+// ClusterAddons is a brand-new v4 kind (design doc §8 "Kinds added"),
 // so every valid document is enveloped and JSON-Schema-validated. A body
 // that isn't enveloped, or is enveloped under the wrong kind, is a hard
 // error — never a silent "zero addons" fallthrough (the same H2 failure
 // class internal/schema/envelope.go's UnknownSharkoAPIVersionError guards
 // against elsewhere).
-func LoadClusterAssignment(body []byte) (ClusterAssignmentSpec, error) {
+func LoadClusterAddons(body []byte) (ClusterAddonsSpec, error) {
 	enveloped, err := schema.IsEnveloped(body)
 	if err != nil {
-		return ClusterAssignmentSpec{}, fmt.Errorf("parsing cluster assignment: %w", err)
+		return ClusterAddonsSpec{}, fmt.Errorf("parsing cluster assignment: %w", err)
 	}
 	if !enveloped {
-		return ClusterAssignmentSpec{}, fmt.Errorf(
+		return ClusterAddonsSpec{}, fmt.Errorf(
 			"parsing cluster assignment: not a Sharko-enveloped document (apiVersion missing or not %s)",
 			schema.APIVersion,
 		)
 	}
 
-	var doc ClusterAssignmentDoc
+	var doc ClusterAddonsDoc
 	if err := yaml.Unmarshal(body, &doc); err != nil {
-		return ClusterAssignmentSpec{}, fmt.Errorf("parsing cluster assignment envelope: %w", err)
+		return ClusterAddonsSpec{}, fmt.Errorf("parsing cluster assignment envelope: %w", err)
 	}
-	if doc.Kind != schema.KindClusterAssignment {
-		return ClusterAssignmentSpec{}, fmt.Errorf(
+	if doc.Kind != schema.KindClusterAddons {
+		return ClusterAddonsSpec{}, fmt.Errorf(
 			"cluster assignment envelope kind %q, expected %q",
-			doc.Kind, schema.KindClusterAssignment,
+			doc.Kind, schema.KindClusterAddons,
 		)
 	}
 
 	if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
-		if err := validator.Validate(schema.KindClusterAssignment, body); err != nil {
+		if err := validator.Validate(schema.KindClusterAddons, body); err != nil {
 			var vf *schema.ValidationFailure
 			if errors.As(err, &vf) {
-				schema.LogValidationFailure("cluster-assignment", vf)
+				schema.LogValidationFailure("cluster-addons", vf)
 			}
-			return ClusterAssignmentSpec{}, fmt.Errorf("validating cluster assignment envelope: %w", err)
+			return ClusterAddonsSpec{}, fmt.Errorf("validating cluster assignment envelope: %w", err)
 		}
 	}
 	return doc.Spec, nil
 }
 
-// SaveClusterAssignment renders spec as an enveloped
+// SaveClusterAddons renders spec as an enveloped
 // clusters/<cluster-name>.yaml document. metadata.name is set to
 // spec.Cluster so the envelope's own identity matches the file's — the
 // design doc's worked example (§2.1) shows `metadata.name: prod-eu` for
 // `clusters/prod-eu.yaml`.
-func SaveClusterAssignment(spec ClusterAssignmentSpec) ([]byte, error) {
-	doc := ClusterAssignmentDoc{
+func SaveClusterAddons(spec ClusterAddonsSpec) ([]byte, error) {
+	doc := ClusterAddonsDoc{
 		APIVersion: schema.APIVersion,
-		Kind:       schema.KindClusterAssignment,
+		Kind:       schema.KindClusterAddons,
 		Metadata:   schema.Metadata{Name: spec.Cluster},
 		Spec:       spec,
 	}
@@ -178,17 +178,17 @@ func SaveClusterAssignment(spec ClusterAssignmentSpec) ([]byte, error) {
 	// rather than committing something that would fail validate-config
 	// downstream.
 	if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
-		if err := validator.Validate(schema.KindClusterAssignment, body); err != nil {
+		if err := validator.Validate(schema.KindClusterAddons, body); err != nil {
 			var vf *schema.ValidationFailure
 			if errors.As(err, &vf) {
-				schema.LogValidationFailure("cluster-assignment (write)", vf)
+				schema.LogValidationFailure("cluster-addons (write)", vf)
 			}
 			return nil, fmt.Errorf("validating cluster assignment before write: %w", err)
 		}
 	}
 
 	var buf bytes.Buffer
-	buf.WriteString(ClusterAssignmentSchemaHeader)
+	buf.WriteString(ClusterAddonsSchemaHeader)
 	buf.WriteByte('\n')
 	buf.Write(body)
 	return buf.Bytes(), nil

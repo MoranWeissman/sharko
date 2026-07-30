@@ -1,4 +1,4 @@
-# Fixture clusters/prod-eu.yaml — ClusterAssignment, exactly as the worked
+# Fixture clusters/prod-eu.yaml — ClusterAddons, exactly as the worked
 # example in docs/design/2026-07-30-v4-data-file-format.md section 6 shows
 # it. cert-manager is pinned older than the fleet default with a webhook
 # ignore-diff quirk; metrics-server follows the catalog default.
@@ -9,7 +9,7 @@
 # engine's `dig "addons" "<name>" "version" ... .spec` calls are written to
 # consume, and it is asserted directly for shape/content by the render test.
 apiVersion: sharko.dev/v1
-kind: ClusterAssignment
+kind: ClusterAddons
 metadata:
   name: prod-eu
 spec:
