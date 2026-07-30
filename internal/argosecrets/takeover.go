@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -142,6 +143,11 @@ type TakeOverResult struct {
 	// DroppedLabels are the previous owner's labels that were removed
 	// because the caller explicitly asked not to preserve them.
 	DroppedLabels map[string]string
+	// ProtectionRepaired is true when Sharko already owned the connection
+	// but the record of which labels came from the previous owner was
+	// missing, and this call wrote it back. See the AlreadyOwned branch of
+	// TakeOverClusterSecret for why that record is worth repairing.
+	ProtectionRepaired bool
 	// Server is the cluster's API address, unchanged by the swap.
 	Server string
 }
@@ -204,6 +210,28 @@ func (m *Manager) TakeOverClusterSecret(ctx context.Context, name string, preser
 
 	if existing.Labels[LabelManagedBy] == ManagedByValue {
 		res.AlreadyOwned = true
+		// Sharko owns it already — but does it have the record of WHICH
+		// labels came from whoever had it before?
+		//
+		// A cluster brought in by the older adopt path carries Sharko's
+		// ownership label and the adopted marker, yet nothing ever wrote
+		// the preserved-labels list. That list is what tells the rest of
+		// Sharko "these keys are not mine, leave them alone". Without it,
+		// the next label sync reads those keys as Sharko's own, sees they
+		// are not in git, and reports them as drift — and a self-heal run
+		// takes them off the connection entirely.
+		//
+		// So re-running a takeover repairs it. One metadata-only write:
+		// the annotation goes on, and Data/StringData are not touched
+		// (there is no code path below that assigns to them).
+		repaired, repairErr := m.repairPreservedLabelsRecord(ctx, existing, legacyKeyFn)
+		if repairErr != nil {
+			return res, repairErr
+		}
+		if len(repaired) > 0 {
+			res.ProtectionRepaired = true
+			res.PreservedLabels = repaired
+		}
 		return res, nil
 	}
 
@@ -268,6 +296,50 @@ func (m *Manager) TakeOverClusterSecret(ctx context.Context, name string, preser
 		"preserved_labels", len(preserved), "dropped_labels", len(dropped),
 	)
 	return res, nil
+}
+
+// repairPreservedLabelsRecord stamps the preserved-labels annotation onto a
+// connection Sharko already owns whose annotation is missing, and returns the
+// labels it recorded. It returns nil (and writes nothing) when there is
+// nothing to record or the record is already there — so it is safe to call on
+// every re-run.
+//
+// Metadata only: the annotation map on a DeepCopy is the sole thing written.
+// Labels, Data and StringData are never assigned to.
+func (m *Manager) repairPreservedLabelsRecord(ctx context.Context, existing *corev1.Secret, legacyKeyFn func(key string) bool) (map[string]string, error) {
+	// Already recorded — nothing to repair. An existing list is left exactly
+	// as it is; this function only ever fills a hole.
+	if strings.TrimSpace(existing.Annotations[AnnotationTakeoverPreservedLabels]) != "" {
+		return nil, nil
+	}
+
+	legacy := map[string]string{}
+	for k, v := range existing.Labels {
+		if legacyKeyFn(k) {
+			legacy[k] = v
+		}
+	}
+	if len(legacy) == 0 {
+		return nil, nil
+	}
+
+	updated := existing.DeepCopy()
+	if updated.Annotations == nil {
+		updated.Annotations = map[string]string{}
+	}
+	keys := make([]string, 0, len(legacy))
+	for k := range legacy {
+		keys = append(keys, k)
+	}
+	updated.Annotations[AnnotationTakeoverPreservedLabels] = EncodePreservedLabelKeys(keys)
+
+	if _, updErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updErr != nil {
+		return nil, fmt.Errorf("recording the carried-over labels on secret %q in namespace %q: %w", existing.Name, m.namespace, updErr)
+	}
+	slog.Info("[argosecrets] cluster already owned by Sharko — restored the record of which labels came from the previous owner",
+		"cluster", existing.Name, "namespace", m.namespace, "preserved_labels", len(legacy),
+	)
+	return legacy, nil
 }
 
 // DropLabels removes the named label keys from a cluster Secret Sharko owns

@@ -390,6 +390,95 @@ spec:
 	}
 }
 
+// A taken-over cluster with no addons turned on is the ordinary state right
+// after a takeover: the addon file is empty on purpose, and the connection
+// still carries the previous owner's labels, recorded by key.
+//
+// Before this fix, "Re-sync now" on such a cluster reported Failed forever
+// and listed the previous owner's labels as Removed — labels nothing had
+// touched. This pins the honest answer: success, and no diff rows.
+func TestResyncClusterLabels_TakenOverCluster_NoAddonsIsNotDrift(t *testing.T) {
+	client := fake.NewSimpleClientset()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "brownfield-eu",
+			Namespace: "argocd",
+			Labels: map[string]string{
+				LabelManagedBy:                   LabelValueSharko,
+				"argocd.argoproj.io/secret-type": "cluster",
+				"env":                            "prod",     // carried over
+				"team":                           "platform", // carried over
+			},
+			Annotations: map[string]string{
+				"sharko.dev/adopted":                   "true",
+				"sharko.dev/takeover-preserved-labels": "env,team",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"name":   []byte("brownfield-eu"),
+			"server": []byte("https://brownfield-eu.example.com"),
+			"config": []byte(`{"execProviderConfig":{}}`),
+		},
+	}
+	if _, err := client.CoreV1().Secrets("argocd").Create(context.Background(), secret, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("seed secret: %v", err)
+	}
+
+	// In the fleet record with no addon labels at all — exactly what a
+	// takeover writes.
+	var gp fakeGit
+	gp.files = map[string][]byte{
+		"configuration/managed-clusters.yaml": []byte(`
+apiVersion: sharko.io/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  clusters:
+    - name: brownfield-eu
+      secretPath: brownfield-eu
+`),
+	}
+
+	r := New(Deps{
+		GitProvider: func() gitprovider.GitProvider { return &gp },
+		ArgoClient:  client,
+		Vault:       &fakeVault{},
+		AuditFn:     func(audit.Entry) {},
+		Namespace:   "argocd",
+	})
+
+	result, err := r.ResyncClusterLabels(context.Background(), "brownfield-eu")
+	if err != nil {
+		t.Fatalf("ResyncClusterLabels: %v", err)
+	}
+	if result.Outcome != OutcomeSucceeded {
+		t.Errorf("outcome = %v, want %v (msg=%q)", result.Outcome, OutcomeSucceeded, result.Message)
+	}
+	if len(result.Added) != 0 || len(result.Removed) != 0 || len(result.Changed) != 0 {
+		t.Errorf("a taken-over cluster with no addons reported a diff: added=%v removed=%v changed=%v",
+			result.Added, result.Removed, result.Changed)
+	}
+
+	rec, ok := r.LastReconcile("brownfield-eu")
+	if !ok {
+		t.Fatal("expected a LastReconcile record after resync")
+	}
+	if rec.LabelDrift != nil {
+		t.Errorf("residual drift reported on a taken-over cluster: %+v", rec.LabelDrift)
+	}
+
+	updated, err := client.CoreV1().Secrets("argocd").Get(context.Background(), "brownfield-eu", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get updated secret: %v", err)
+	}
+	if updated.Labels["env"] != "prod" || updated.Labels["team"] != "platform" {
+		t.Errorf("the previous owner's labels were removed by the resync: %v", updated.Labels)
+	}
+}
+
 // TestResyncClusterLabels_NoGitProvider_ReturnsError guards the
 // precondition checks — no fake providers.ClusterCredentialsProvider
 // dependency is needed since resync never fetches credentials, only labels.

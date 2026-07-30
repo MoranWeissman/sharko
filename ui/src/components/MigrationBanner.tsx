@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { AlertTriangle, ChevronRight, ExternalLink, Loader2, CheckCircle, FileEdit, FilePlus, FileMinus } from 'lucide-react'
-import { api } from '@/services/api'
+import { api, MigrationPRAlreadyOpenError } from '@/services/api'
 import type { MigrationPlan } from '@/services/models'
 import { RoleGuard } from '@/components/RoleGuard'
 
@@ -33,15 +33,33 @@ export function MigrationBanner() {
 
   const [migrating, setMigrating] = useState(false)
   const [migrateError, setMigrateError] = useState<string | null>(null)
+  // prUrl/prNumber are server truth, not "did this component's own call
+  // just open one" — set from GET /migration/status on every load
+  // (including the very first, after a remount) as well as after a
+  // successful migrate. That is what stops a remounted banner from
+  // forgetting a PR is already open and offering to mint a second one.
   const [prUrl, setPrUrl] = useState<string | null>(null)
+  const [prNumber, setPrNumber] = useState<number | null>(null)
+  const [alreadyMigrated, setAlreadyMigrated] = useState(false)
 
-  const fetchStatus = useCallback(() => {
+  // isPoll distinguishes the initial load from the background 30s check:
+  // a failed initial load says nothing (this banner is a bonus notice,
+  // never a hard requirement to render) and hides itself, but a failed
+  // background poll must NOT clear an already-showing banner — a blip in
+  // connectivity is not the same fact as "this repo is now v4", and
+  // flashing the banner away and back is worse than just leaving the
+  // last-known state on screen until the next successful poll.
+  const fetchStatus = useCallback((isPoll = false) => {
     api
       .getMigrationStatus()
-      .then((res) => setFormat(res.format))
-      // No active connection, not authenticated yet, etc. — say nothing;
-      // this banner is a bonus notice, never a hard requirement to render.
-      .catch(() => setFormat(null))
+      .then((res) => {
+        setFormat(res.format)
+        setPrUrl(res.migration_pr_url ?? null)
+        setPrNumber(res.migration_pr_number ?? null)
+      })
+      .catch(() => {
+        if (!isPoll) setFormat(null)
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -54,13 +72,19 @@ export function MigrationBanner() {
   // dismiss button needed.
   useEffect(() => {
     if (format !== 'v3') return
-    const interval = setInterval(fetchStatus, 30000)
+    const interval = setInterval(() => fetchStatus(true), 30000)
     return () => clearInterval(interval)
   }, [format, fetchStatus])
 
   async function handlePreview() {
-    setShowPreview((v) => !v)
-    if (plan || previewLoading) return
+    // Only fetch when actually OPENING — computing the next value up
+    // front (rather than reading showPreview after the async setState)
+    // stops a collapse click from triggering a fetch too, which is what
+    // the old "if (plan || previewLoading) return" guard let happen: it
+    // says nothing about which direction the toggle is going.
+    const opening = !showPreview
+    setShowPreview(opening)
+    if (!opening || plan || previewLoading) return
     setPreviewLoading(true)
     setPreviewError(null)
     try {
@@ -78,16 +102,31 @@ export function MigrationBanner() {
     setMigrateError(null)
     try {
       const result = await api.migrateRepo({ yes: true })
-      if (result.git?.pr_url) setPrUrl(result.git.pr_url)
+      if (result.status === 'already_migrated') {
+        setAlreadyMigrated(true)
+      } else if (result.git?.pr_url) {
+        setPrUrl(result.git.pr_url)
+        setPrNumber(result.git.pr_id ?? null)
+      }
       fetchStatus()
     } catch (err) {
-      setMigrateError(err instanceof Error ? err.message : 'The migration pull request could not be opened.')
+      if (err instanceof MigrationPRAlreadyOpenError) {
+        // The backend refused because an earlier attempt's PR is still
+        // open — that is server truth, not a failure to show as red text.
+        setPrUrl(err.prUrl || null)
+        setPrNumber(err.prNumber ?? null)
+      } else {
+        setMigrateError(err instanceof Error ? err.message : 'The migration pull request could not be opened.')
+      }
     } finally {
       setMigrating(false)
     }
   }
 
-  if (loading || format !== 'v3') return null
+  // alreadyMigrated keeps the banner up to show its own confirmation even
+  // after fetchStatus() flips format to "v4" — without this the message
+  // would render for one tick and vanish before anyone reads it.
+  if (loading || (format !== 'v3' && !alreadyMigrated)) return null
 
   return (
     <div
@@ -104,7 +143,15 @@ export function MigrationBanner() {
             One pull request migrates it. Reads keep working until then.
           </p>
 
-          {prUrl ? (
+          {alreadyMigrated ? (
+            <div
+              data-testid="migration-already-migrated"
+              className="mt-3 flex items-center gap-2 text-sm text-green-700 dark:text-green-400"
+            >
+              <CheckCircle className="h-4 w-4 shrink-0" />
+              <span>This repo was already on the current format — nothing to migrate.</span>
+            </div>
+          ) : prUrl ? (
             <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-green-700 dark:text-green-400">
               <CheckCircle className="h-4 w-4 shrink-0" />
               <span>Migration pull request open.</span>
@@ -112,6 +159,7 @@ export function MigrationBanner() {
                 href={prUrl}
                 target="_blank"
                 rel="noopener noreferrer"
+                title={prNumber ? `Pull request #${prNumber}` : undefined}
                 className="inline-flex items-center gap-1 underline hover:text-green-900 dark:hover:text-green-300"
               >
                 View it <ExternalLink className="h-3 w-3" />
@@ -146,7 +194,7 @@ export function MigrationBanner() {
             <p className="mt-2 text-sm text-red-600 dark:text-red-400">{migrateError}</p>
           )}
 
-          {showPreview && !prUrl && (
+          {showPreview && !prUrl && !alreadyMigrated && (
             <div className="mt-3 rounded-lg bg-amber-100/70 p-3 dark:bg-amber-950/30">
               {previewLoading && (
                 <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">

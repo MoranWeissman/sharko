@@ -171,6 +171,16 @@ export function CarriedLabelsPanel({ report }: { report: TakeoverReport }) {
   )
 }
 
+/**
+ * warningFindingIDs — the ids of the findings currently shown as warnings.
+ * These are exactly what the confirmation covers: the user ticked the box
+ * having read THESE rows, so THESE are the ids sent back.
+ */
+function warningFindingIDs(report: TakeoverReport | null): string[] {
+  if (!report) return []
+  return report.findings.filter((f) => f.status === 'warning').map((f) => f.id)
+}
+
 export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverDialogProps) {
   const [report, setReport] = useState<TakeoverReport | null>(null)
   const [loading, setLoading] = useState(false)
@@ -215,7 +225,12 @@ export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverD
     try {
       const res = await takeoverCluster(clusterName, {
         yes: true,
-        acknowledge_warnings: acknowledged,
+        // Name the warnings that were actually on screen. The server
+        // re-runs the checks and refuses if it finds one this list does
+        // not cover — which is the point: a warning that turned up while
+        // the dialog was open must not be waved through by a tickbox
+        // ticked against a different set of findings.
+        acknowledged_findings: acknowledged ? warningFindingIDs(report) : [],
         preserve_legacy_labels: preserve,
       })
       setResult(res)
@@ -247,7 +262,15 @@ export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverD
             data-testid="takeover-error"
             className="rounded-md bg-red-50 p-4 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400"
           >
-            {error}
+            <p>{error}</p>
+            <button
+              type="button"
+              onClick={runPreflight}
+              data-testid="takeover-retry"
+              className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/30"
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> Retry
+            </button>
           </div>
         )}
 
@@ -284,8 +307,9 @@ export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverD
               <button
                 type="button"
                 onClick={runPreflight}
+                disabled={loading}
                 data-testid="takeover-recheck"
-                className="inline-flex items-center gap-1.5 rounded-md border border-[#cfe3f2] px-3 py-1.5 text-sm font-medium text-[#2a5a7a] hover:bg-[#f0f7ff] dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                className="inline-flex items-center gap-1.5 rounded-md border border-[#cfe3f2] px-3 py-1.5 text-sm font-medium text-[#2a5a7a] hover:bg-[#f0f7ff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 <RefreshCw className="h-3.5 w-3.5" /> Check again
               </button>
@@ -369,14 +393,7 @@ export function DropLegacyLabelsDialog({ clusterName, open, onClose, onDone }: D
   const [error, setError] = useState<string | null>(null)
   const [acknowledged, setAcknowledged] = useState(false)
 
-  useEffect(() => {
-    if (!open) {
-      setPlan(null)
-      setResult(null)
-      setError(null)
-      setAcknowledged(false)
-      return
-    }
+  const runDryRun = useCallback(() => {
     setLoading(true)
     setError(null)
     // The dry run is what produces the warning list. It is always run
@@ -385,7 +402,18 @@ export function DropLegacyLabelsDialog({ clusterName, open, onClose, onDone }: D
       .then(setPlan)
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not work out what would be removed'))
       .finally(() => setLoading(false))
-  }, [open, clusterName])
+  }, [clusterName])
+
+  useEffect(() => {
+    if (!open) {
+      setPlan(null)
+      setResult(null)
+      setError(null)
+      setAcknowledged(false)
+      return
+    }
+    runDryRun()
+  }, [open, runDryRun])
 
   const nothingToDo = !!plan && (plan.removed?.length ?? 0) === 0
   const hasWarnings = (plan?.warnings?.length ?? 0) > 0
@@ -399,7 +427,9 @@ export function DropLegacyLabelsDialog({ clusterName, open, onClose, onDone }: D
       const res = await dropLegacyLabels(clusterName, {
         yes: true,
         labels: plan.removed,
-        acknowledge_warnings: acknowledged,
+        // Same rule as the takeover: echo back the ids of the warnings the
+        // dry run put on screen, not a blanket "I read them".
+        acknowledged_findings: acknowledged ? (plan.warning_ids ?? []) : [],
       })
       setResult(res)
       onDone?.()
@@ -429,7 +459,16 @@ export function DropLegacyLabelsDialog({ clusterName, open, onClose, onDone }: D
             data-testid="drop-labels-error"
             className="rounded-md bg-red-50 p-4 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400"
           >
-            {error}
+            <p>{error}</p>
+            <button
+              type="button"
+              onClick={runDryRun}
+              disabled={loading}
+              data-testid="drop-labels-retry"
+              className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/30"
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> Retry
+            </button>
           </div>
         )}
 

@@ -18,6 +18,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -28,6 +29,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/takeover"
@@ -40,12 +42,21 @@ type TakeoverRequest struct {
 	// DryRun returns the plan and writes nothing. A dry run does not need
 	// a confirmation.
 	DryRun bool `json:"dry_run,omitempty"`
-	// AcknowledgeWarnings must be true when the preflight raised
-	// warnings. It is a separate flag from Yes on purpose: "I want to do
-	// this" and "I have read the things that could go wrong" are two
-	// different statements, and folding them into one makes the second
-	// one free.
-	AcknowledgeWarnings bool `json:"acknowledge_warnings,omitempty"`
+	// AcknowledgedFindings names the warnings the caller has read, by the
+	// finding id the preflight gave each one (for example
+	// "appset-deletion-safety"). It is separate from Yes on purpose: "I
+	// want to do this" and "I have read the things that could go wrong"
+	// are two different statements, and folding them into one makes the
+	// second one free.
+	//
+	// It is a list of ids rather than a single "yes I read them" flag
+	// because the checks are re-run on this very call. A flag would
+	// silently cover a warning that appeared in the seconds since the
+	// caller looked — someone else pointing an ApplicationSet at this
+	// cluster, say. An id can only cover a warning that was actually on
+	// the screen. Any warning in the fresh report whose id is not in this
+	// list comes back as a 409 naming it.
+	AcknowledgedFindings []string `json:"acknowledged_findings,omitempty"`
 	// PreserveLegacyLabels carries the previous owner's labels over to
 	// Sharko's connection. Defaults to true — omit it and the labels are
 	// kept. Set it to false only if you already know nothing selects on
@@ -77,6 +88,10 @@ type TakeoverResponse struct {
 	// Sharko's.
 	SecretSwapped bool `json:"secret_swapped"`
 	AlreadyOwned  bool `json:"already_owned,omitempty"`
+	// ProtectionRepaired is true when Sharko already owned the connection
+	// but had no record of which labels came from the previous owner, and
+	// this call wrote that record back.
+	ProtectionRepaired bool `json:"protection_repaired,omitempty"`
 
 	Git       *orchestrator.GitResult    `json:"git,omitempty"`
 	DryRun    *orchestrator.DryRunResult `json:"dry_run,omitempty"`
@@ -95,9 +110,11 @@ type DropLegacyLabelsRequest struct {
 	// Labels narrows the drop to specific keys. Empty means "every label
 	// the takeover carried over".
 	Labels []string `json:"labels,omitempty"`
-	// AcknowledgeWarnings must be true when an ApplicationSet still
-	// selects on one of the labels being removed.
-	AcknowledgeWarnings bool `json:"acknowledge_warnings,omitempty"`
+	// AcknowledgedFindings names the warnings the caller has read, by the
+	// ids the dry run returned in warning_ids. Same reasoning as the
+	// takeover call: the warnings are recomputed on this request, so only
+	// an id can prove a warning was actually seen.
+	AcknowledgedFindings []string `json:"acknowledged_findings,omitempty"`
 }
 
 // DropLegacyLabelsResponse reports the outcome.
@@ -111,7 +128,10 @@ type DropLegacyLabelsResponse struct {
 	// Warnings names any ApplicationSet that selects on a label being
 	// removed, and says what it would do about it.
 	Warnings []string `json:"warnings,omitempty"`
-	Message  string   `json:"message"`
+	// WarningIDs are the stable ids of those same warnings, in the same
+	// order, to send back in acknowledged_findings.
+	WarningIDs []string `json:"warning_ids,omitempty"`
+	Message    string   `json:"message"`
 }
 
 // UnregisterConsequence is one thing that will happen if you go ahead.
@@ -184,40 +204,61 @@ func (s *Server) gatherPreflightInputs(r *http.Request, name string) (takeover.I
 	}
 
 	// (d) a name clash with a cluster Sharko already has.
-	in.RegisteredClusters = s.registeredClusterNames(r)
+	names, namesErr := s.registeredClusterNames(r)
+	if namesErr != nil {
+		in.RegisteredClustersError = namesErr.Error()
+	}
+	in.RegisteredClusters = names
 	in.AlreadyTakenOver = detail.ManagedBy == argosecrets.ManagedByValue
 
 	return in, nil
 }
 
 // registeredClusterNames reads the v4 fleet record and returns the cluster
-// names in it. A read failure yields nil — the name-collision check then
-// reports the name as free, which is the same answer it gives for an empty
-// fleet. That is safe here because the takeover itself re-reads the file
-// through AddClusterEntry, which skips duplicates.
-func (s *Server) registeredClusterNames(r *http.Request) []string {
+// names in it.
+//
+// A fleet record that is not there yet is an ordinary answer: no names, no
+// error. Anything else — no Git connection, an unreadable file, a file that
+// does not parse — comes back as an error, and the name-collision check then
+// says it could not check rather than "the name is free".
+//
+// The difference is not cosmetic. "The name is free" is what lets the
+// takeover stamp Sharko's ownership onto the ArgoCD connection of a cluster
+// that happens to share a name with one Sharko already has — two different
+// clusters, one name, and the settings of the first start being applied to
+// the second.
+func (s *Server) registeredClusterNames(r *http.Request) ([]string, error) {
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("Sharko has no Git connection to read its own list of clusters from: %w", err)
 	}
 	branch := s.gitopsConfig().BaseBranch
 	if branch == "" {
 		branch = "main"
 	}
 	data, err := gp.GetFileContent(r.Context(), orchestrator.V4ConnectionsPath, branch)
-	if err != nil || len(data) == 0 {
-		return nil
+	if err != nil {
+		if errors.Is(err, gitprovider.ErrFileNotFound) {
+			// No fleet record yet — Sharko genuinely has no clusters.
+			return nil, nil
+		}
+		return nil, fmt.Errorf("Sharko could not read its own list of clusters from %s on the %s branch: %w",
+			orchestrator.V4ConnectionsPath, branch, err)
+	}
+	if len(data) == 0 {
+		return nil, nil
 	}
 	spec, err := models.LoadManagedClusters(data)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("Sharko could not make sense of its own list of clusters in %s: %w",
+			orchestrator.V4ConnectionsPath, err)
 	}
 	out := make([]string, 0, len(spec.Clusters))
 	for _, c := range spec.Clusters {
 		out = append(out, c.Name)
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -265,7 +306,7 @@ func (s *Server) handleClusterTakeoverPreflight(w http.ResponseWriter, r *http.R
 //
 // @Summary Take over a cluster ArgoCD already manages
 // @Description Makes Sharko the owner of an existing cluster's ArgoCD connection, keeping the same name, the same API address and — by default — every label the previous owner left on it. Adds the cluster to Sharko's fleet through a pull request and creates an empty addon file for it; no addon is turned on.
-// @Description Nothing is written without "yes": true in the body. When the preflight raised warnings, "acknowledge_warnings": true is required as well. Send "dry_run": true to see the plan and change nothing.
+// @Description Nothing is written without "yes": true in the body. The checks are re-run on this call, and every warning they raise has to be named in "acknowledged_findings" by its finding id — a warning that appeared since you last looked comes back as a 409 naming it. Send "dry_run": true to see the plan and change nothing.
 // @Tags clusters
 // @Accept json
 // @Produce json
@@ -277,7 +318,7 @@ func (s *Server) handleClusterTakeoverPreflight(w http.ResponseWriter, r *http.R
 // @Failure 400 {object} map[string]interface{} "Bad request, or the confirmation is missing"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
-// @Failure 409 {object} map[string]interface{} "The preflight is blocking, or the warnings were not acknowledged, or the repo has not been migrated"
+// @Failure 409 {object} map[string]interface{} "The preflight is blocking, or a warning was not named in acknowledged_findings, or the repo has not been migrated"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Failure 503 {object} map[string]interface{} "Sharko cannot reach the cluster's connection in this install"
 // @Router /clusters/{name}/takeover [post]
@@ -320,12 +361,18 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if report.NeedsAcknowledgement && !req.AcknowledgeWarnings && !req.DryRun {
-		writeJSON(w, http.StatusConflict, map[string]interface{}{
-			"error":     "the checks raised warnings you have to read first — send acknowledge_warnings: true once you have: " + report.Summary,
-			"preflight": report,
-		})
-		return
+	if !req.DryRun {
+		if unacked := unacknowledgedFindings(report, req.AcknowledgedFindings); len(unacked) > 0 {
+			writeJSON(w, http.StatusConflict, map[string]interface{}{
+				"error": fmt.Sprintf(
+					"%s %s not been read yet — look at %s in the checks below, then send %s back in acknowledged_findings: %s",
+					plural(len(unacked), "warning", "warnings"), wasWere(len(unacked)),
+					joinList(unacked), pluralIt(len(unacked)), report.Summary),
+				"unacknowledged_findings": unacked,
+				"preflight":               report,
+			})
+			return
+		}
 	}
 	if !req.DryRun && !req.Yes {
 		writeError(w, http.StatusBadRequest, "confirmation required: set yes: true in the request body")
@@ -347,21 +394,20 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	// is; making the record before changing the live cluster means an
 	// interrupted takeover leaves a reviewable pull request rather than a
 	// relabelled Secret nobody wrote down.
-	git, err := s.connSvc.GetActiveGitProvider()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
-		return
-	}
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
 		return
 	}
-	ctx, tieredGit, _, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
-	if err == nil && tieredGit != nil {
-		git = tieredGit
-	} else {
-		ctx = r.Context()
+	// The tiered resolver is the ONLY way this commit gets attributed to the
+	// person who asked for it, and the only way the audit entry gets stamped
+	// with a tier. Carrying on with an unattributed provider when it fails
+	// would open a pull request nobody's name is on (v4-wave2 review M1), so
+	// this fails hard — same stance as handleMigrateRepo.
+	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		return
 	}
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsConfig(), s.repoPaths, nil)
@@ -394,7 +440,7 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 			resp.DroppedLabels = report.LegacyLabels
 		}
 		resp.Message = takeoverPlanMessage(name, preserve, report.LegacyLabels)
-		writeJSON(w, http.StatusOK, resp)
+		writeJSON(w, http.StatusOK, withAttributionWarning(resp, tokRes))
 		return
 	}
 
@@ -429,18 +475,19 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	resp.Status = "success"
 	resp.SecretSwapped = swap.Changed
 	resp.AlreadyOwned = swap.AlreadyOwned
+	resp.ProtectionRepaired = swap.ProtectionRepaired
 	resp.PreservedLabels = swap.PreservedLabels
 	resp.DroppedLabels = swap.DroppedLabels
 	if swap.Server != "" {
 		resp.Server = swap.Server
 	}
-	resp.Message = takeoverDoneMessage(name, swap.AlreadyOwned, swap.PreservedLabels, swap.DroppedLabels)
+	resp.Message = takeoverDoneMessage(name, swap.AlreadyOwned, swap.ProtectionRepaired, swap.PreservedLabels, swap.DroppedLabels)
 
 	if s.clusterRecon != nil {
 		s.clusterRecon.Trigger()
 	}
 	audit.Enrich(ctx, audit.Fields{Event: "cluster_taken_over", Resource: "cluster:" + name})
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, withAttributionWarning(resp, tokRes))
 }
 
 // takeoverLegacyLabelKey is the classifier handed to the swap: it decides
@@ -471,8 +518,13 @@ func takeoverPlanMessage(name string, preserve bool, legacy map[string]string) s
 		name, len(keys), joinList(keys))
 }
 
-func takeoverDoneMessage(name string, alreadyOwned bool, preserved, dropped map[string]string) string {
+func takeoverDoneMessage(name string, alreadyOwned, protectionRepaired bool, preserved, dropped map[string]string) string {
 	if alreadyOwned {
+		if protectionRepaired {
+			return fmt.Sprintf(
+				"Sharko already owned %s's connection. Its address, its credentials and its labels were not touched — but the note saying which of those labels came from the previous owner was missing, so Sharko wrote it back: %s. That note is what stops a later re-sync taking those labels off.",
+				name, joinList(takeover.SortedKeys(preserved)))
+		}
 		return fmt.Sprintf("Sharko already owned %s's connection, so nothing about it changed. Its fleet record is up to date.", name)
 	}
 	base := fmt.Sprintf("Sharko now owns %s's ArgoCD connection. It kept the same name and the same address, and nothing was deleted.", name)
@@ -495,7 +547,7 @@ func takeoverDoneMessage(name string, alreadyOwned bool, preserved, dropped map[
 //
 // @Summary Remove the labels a takeover carried over
 // @Description Takes the previous owner's labels off a cluster's connection. Warns first — by name — about any ApplicationSet that still picks clusters using one of those labels, because removing it is what makes this cluster fall out of that ApplicationSet.
-// @Description Nothing is removed without "yes": true. Send "dry_run": true to see what would go.
+// @Description Nothing is removed without "yes": true. The dry run returns each warning with a stable id in "warning_ids"; every one of those ids has to come back in "acknowledged_findings" before the removal runs. Send "dry_run": true to see what would go.
 // @Tags clusters
 // @Accept json
 // @Produce json
@@ -507,7 +559,7 @@ func takeoverDoneMessage(name string, alreadyOwned bool, preserved, dropped map[
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Failure 404 {object} map[string]interface{} "No connection with that name"
-// @Failure 409 {object} map[string]interface{} "An ApplicationSet still selects one of these labels and the warning was not acknowledged"
+// @Failure 409 {object} map[string]interface{} "An ApplicationSet still selects one of these labels and that warning was not named in acknowledged_findings"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Failure 503 {object} map[string]interface{} "Sharko cannot reach the cluster's connection in this install"
 // @Router /clusters/{name}/takeover/legacy-labels/drop [post]
@@ -575,11 +627,16 @@ func (s *Server) handleClusterDropLegacyLabels(w http.ResponseWriter, r *http.Re
 	// The warning: which ApplicationSets still pick clusters using one of
 	// these labels, and what each of them does when a cluster stops
 	// matching. This is the read the whole story exists for.
-	var warnings []string
+	// Each warning carries a stable id alongside its sentence, so the
+	// confirmation names the warnings it covers instead of covering
+	// whatever this call happens to find.
+	var warnings, warningIDs []string
 	if s.appSetReader == nil {
 		warnings = append(warnings, "Sharko has no read access to ApplicationSets in this install, so it cannot tell you whether anything still selects these labels. Check by hand before you go ahead.")
+		warningIDs = append(warningIDs, dropWarningAppSetsUnreadable)
 	} else if list, listErr := s.appSetReader.List(ctx); listErr != nil {
 		warnings = append(warnings, "Sharko could not read the ApplicationSets ("+listErr.Error()+"), so it cannot tell you whether anything still selects these labels. Check by hand before you go ahead.")
+		warningIDs = append(warningIDs, dropWarningAppSetsUnreadable)
 	} else {
 		for _, as := range appsets.SelectingLabelKeys(list, targets) {
 			var keys []string
@@ -595,9 +652,11 @@ func (s *Server) handleClusterDropLegacyLabels(w http.ResponseWriter, r *http.Re
 			warnings = append(warnings, fmt.Sprintf(
 				"The ApplicationSet %q picks clusters using %s. Remove %s and this cluster stops matching it — %s.",
 				as.Name, joinList(keys), pluralThat(len(keys)), consequence))
+			warningIDs = append(warningIDs, dropWarningAppSetPrefix+as.Name)
 		}
 	}
 	resp.Warnings = warnings
+	resp.WarningIDs = warningIDs
 
 	if req.DryRun {
 		resp.Status = "planned"
@@ -607,11 +666,16 @@ func (s *Server) handleClusterDropLegacyLabels(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
-	if len(warnings) > 0 && !req.AcknowledgeWarnings {
+	if unacked := missingIDs(warningIDs, req.AcknowledgedFindings); len(unacked) > 0 {
 		writeJSON(w, http.StatusConflict, map[string]interface{}{
-			"error":    "something still selects clusters using these labels — read the warnings, then send acknowledge_warnings: true",
-			"warnings": warnings,
-			"labels":   targets,
+			"error": fmt.Sprintf(
+				"%s %s not been read yet — read %s below, then send %s back in acknowledged_findings.",
+				plural(len(unacked), "warning", "warnings"), wasWere(len(unacked)),
+				joinList(unacked), pluralIt(len(unacked))),
+			"unacknowledged_findings": unacked,
+			"warnings":                warnings,
+			"warning_ids":             warningIDs,
+			"labels":                  targets,
 		})
 		return
 	}
@@ -678,10 +742,38 @@ func (s *Server) handleClusterUnregisterConsequences(w http.ResponseWriter, r *h
 	}
 	ctx := r.Context()
 
-	resp := UnregisterConsequencesResponse{
-		Cluster: name,
-		ConfirmationRequired: "Nothing here has happened yet. To go ahead, send DELETE /api/v1/clusters/" + name +
-			" with \"yes\": true in the body. Add \"cleanup\": \"git\" to take the cluster out of Sharko's records but leave its ArgoCD connection alone.",
+	// Is removal even available on this repo? On a v4-format repo it is not
+	// yet: RemoveCluster still writes the v3 registry and refuses outright
+	// (orchestrator.ErrV4RepoUnsupported). Telling somebody to send a DELETE
+	// that is going to be refused wastes their time and makes Sharko look
+	// like it is broken, so this page says so instead.
+	//
+	// A Git connection Sharko cannot reach answers "not v4" — the same
+	// direction every other format probe takes — so a hiccup shows the
+	// ordinary instructions rather than a scary "not available".
+	v4Repo := false
+	if s.connSvc != nil {
+		if gp, gpErr := s.connSvc.GetActiveGitProvider(); gpErr == nil {
+			v4Repo = s.isV4Repo(ctx, gp)
+		}
+	}
+
+	resp := UnregisterConsequencesResponse{Cluster: name}
+	if v4Repo {
+		resp.ConfirmationRequired = "Nothing here has happened yet — and on this repo there is nothing you can send yet either. Taking a cluster back out of Sharko is not built for the new repo layout, so the removal call refuses. It arrives with the unregister work. Until then, everything below is what removal WILL do, so you can plan for it."
+	} else {
+		resp.ConfirmationRequired = "Nothing here has happened yet. To go ahead, send DELETE /api/v1/clusters/" + name +
+			" with \"yes\": true in the body. Add \"cleanup\": \"git\" to take the cluster out of Sharko's records but leave its ArgoCD connection alone."
+	}
+
+	if v4Repo {
+		resp.Consequences = append(resp.Consequences, UnregisterConsequence{
+			ID:          "removal-not-available",
+			Title:       "Removing a cluster is not available on this repo yet",
+			Detail:      "This repo uses Sharko's newer file layout, and the remove-a-cluster call has not been rebuilt for it — it refuses rather than writing the old files and breaking the fleet record.",
+			WhatItMeans: "Nothing below can be carried out today. It is here so you know what removal will do when it lands, and so you can decide now whether you want it to. Nothing is at risk in the meantime: the cluster stays exactly as it is.",
+			Severity:    "warning",
+		})
 	}
 
 	resp.Consequences = append(resp.Consequences, UnregisterConsequence{
@@ -789,17 +881,106 @@ func (s *Server) handleClusterUnregisterConsequences(w http.ResponseWriter, r *h
 			warnCount++
 		}
 	}
-	if warnCount == 0 {
+	switch {
+	case v4Repo:
+		resp.Summary = fmt.Sprintf(
+			"Removing %s is not something Sharko can do on this repo yet — it lands with the unregister work. The list below is what it will do when it does, so nothing here is a surprise later. Nothing has been changed.",
+			name)
+	case warnCount == 0:
 		resp.Summary = fmt.Sprintf("Unregistering %s looks straightforward — read the list below, then confirm.", name)
-	} else {
+	default:
 		resp.Summary = fmt.Sprintf("Unregistering %s has %d thing(s) worth reading carefully first. Nothing has been changed yet.", name, warnCount)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Acknowledging warnings — by name, not by flag
+// ─────────────────────────────────────────────────────────────────────────
+
+// Warning ids for the drop-labels call. The preflight's findings already have
+// their own ids (takeover.Finding*); these cover the drop-labels warnings,
+// which are computed here rather than in the takeover package.
+const (
+	// dropWarningAppSetPrefix + the ApplicationSet's name identifies "this
+	// ApplicationSet still picks clusters using one of these labels".
+	dropWarningAppSetPrefix = "appset:"
+	// dropWarningAppSetsUnreadable is the "I could not check" warning.
+	dropWarningAppSetsUnreadable = "appsets-unreadable"
+)
+
+// unacknowledgedFindings returns the ids of every warning in the FRESH
+// preflight report that the caller did not name in acknowledged_findings,
+// sorted so the message reads the same every time.
+//
+// The report is recomputed on the write call, so this is the check that
+// catches a warning which appeared after the caller looked at the page. A
+// blanket "yes I read them" flag could not: it would cover a warning nobody
+// ever saw.
+func unacknowledgedFindings(report takeover.Report, acknowledged []string) []string {
+	var warned []string
+	for _, f := range report.Findings {
+		if f.Status == takeover.StatusWarning {
+			warned = append(warned, f.ID)
+		}
+	}
+	return missingIDs(warned, acknowledged)
+}
+
+// missingIDs returns the entries of required that are absent from
+// acknowledged, sorted and de-duplicated.
+func missingIDs(required, acknowledged []string) []string {
+	if len(required) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(acknowledged))
+	for _, id := range acknowledged {
+		seen[id] = struct{}{}
+	}
+	out := []string{}
+	added := make(map[string]struct{}, len(required))
+	for _, id := range required {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		if _, dup := added[id]; dup {
+			continue
+		}
+		added[id] = struct{}{}
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // small helpers
 // ─────────────────────────────────────────────────────────────────────────
+
+// plural renders a count with its noun: "1 warning", "3 warnings".
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+func wasWere(n int) string {
+	if n == 1 {
+		return "has"
+	}
+	return "have"
+}
+
+func pluralIt(n int) string {
+	if n == 1 {
+		return "its id"
+	}
+	return "their ids"
+}
 
 func containsStr(haystack []string, needle string) bool {
 	for _, s := range haystack {

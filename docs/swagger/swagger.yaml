@@ -4,6 +4,14 @@ definitions:
     properties:
       created_at:
         type: string
+      created_by:
+        description: |-
+          CreatedBy is the username of whoever asked for this token. It is what
+          the own/other split on renew keys off (see TokenOwnedBy). Empty for
+          tokens minted outside a request — bootstrap, tests, or any token that
+          already existed before this field did — and an empty value is owned by
+          nobody, so only an admin can renew those.
+        type: string
       expired:
         type: boolean
       expires_at:
@@ -1312,6 +1320,18 @@ definitions:
           MigrationAvailable is true only for "v3" — the one state where
           there is something to convert.
         type: boolean
+      migration_pr_number:
+        type: integer
+      migration_pr_url:
+        description: |-
+          MigrationPRURL / MigrationPRNumber are set (format "v3" only) when a
+          previous migrate call already opened a pull request that is still
+          open. Their presence is server truth that "Open migration PR" should
+          not be offered again — a UI component that remounts (and so loses
+          whatever in-memory "I already opened one" flag it kept) still learns
+          the right thing from the next status poll instead of minting a
+          second PR for the same repo.
+        type: string
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.RegisterClusterRequest:
     properties:
@@ -1680,11 +1700,15 @@ definitions:
     type: object
   internal_api.DropLegacyLabelsRequest:
     properties:
-      acknowledge_warnings:
+      acknowledged_findings:
         description: |-
-          AcknowledgeWarnings must be true when an ApplicationSet still
-          selects on one of the labels being removed.
-        type: boolean
+          AcknowledgedFindings names the warnings the caller has read, by the
+          ids the dry run returned in warning_ids. Same reasoning as the
+          takeover call: the warnings are recomputed on this request, so only
+          an id can prove a warning was actually seen.
+        items:
+          type: string
+        type: array
       dry_run:
         description: DryRun reports what would be removed and removes nothing.
         type: boolean
@@ -1717,6 +1741,13 @@ definitions:
         type: array
       status:
         type: string
+      warning_ids:
+        description: |-
+          WarningIDs are the stable ids of those same warnings, in the same
+          order, to send back in acknowledged_findings.
+        items:
+          type: string
+        type: array
       warnings:
         description: |-
           Warnings names any ApplicationSet that selects on a label being
@@ -1885,14 +1916,25 @@ definitions:
     type: object
   internal_api.TakeoverRequest:
     properties:
-      acknowledge_warnings:
+      acknowledged_findings:
         description: |-
-          AcknowledgeWarnings must be true when the preflight raised
-          warnings. It is a separate flag from Yes on purpose: "I want to do
-          this" and "I have read the things that could go wrong" are two
-          different statements, and folding them into one makes the second
-          one free.
-        type: boolean
+          AcknowledgedFindings names the warnings the caller has read, by the
+          finding id the preflight gave each one (for example
+          "appset-deletion-safety"). It is separate from Yes on purpose: "I
+          want to do this" and "I have read the things that could go wrong"
+          are two different statements, and folding them into one makes the
+          second one free.
+
+          It is a list of ids rather than a single "yes I read them" flag
+          because the checks are re-run on this very call. A flag would
+          silently cover a warning that appeared in the seconds since the
+          caller looked — someone else pointing an ApplicationSet at this
+          cluster, say. An id can only cover a warning that was actually on
+          the screen. Any warning in the fresh report whose id is not in this
+          list comes back as a 409 naming it.
+        items:
+          type: string
+        type: array
       auto_merge:
         description: |-
           AutoMerge overrides the connection's auto-merge default for this
@@ -1945,6 +1987,12 @@ definitions:
           PreservedLabels are the previous owner's labels now carried on
           Sharko's connection.
         type: object
+      protection_repaired:
+        description: |-
+          ProtectionRepaired is true when Sharko already owned the connection
+          but had no record of which labels came from the previous owner, and
+          this call wrote that record back.
+        type: boolean
       secret_swapped:
         description: |-
           SecretSwapped is true when the connection's owner actually changed
@@ -3153,6 +3201,12 @@ paths:
             type: object
         "403":
           description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: The connected repo is still in the v3 format and has to be
+            migrated first
           schema:
             additionalProperties: true
             type: object
@@ -5908,7 +5962,7 @@ paths:
       - application/json
       description: |-
         Makes Sharko the owner of an existing cluster's ArgoCD connection, keeping the same name, the same API address and — by default — every label the previous owner left on it. Adds the cluster to Sharko's fleet through a pull request and creates an empty addon file for it; no addon is turned on.
-        Nothing is written without "yes": true in the body. When the preflight raised warnings, "acknowledge_warnings": true is required as well. Send "dry_run": true to see the plan and change nothing.
+        Nothing is written without "yes": true in the body. The checks are re-run on this call, and every warning they raise has to be named in "acknowledged_findings" by its finding id — a warning that appeared since you last looked comes back as a 409 naming it. Send "dry_run": true to see the plan and change nothing.
       parameters:
       - description: Cluster name
         in: path
@@ -5948,7 +6002,7 @@ paths:
             additionalProperties: true
             type: object
         "409":
-          description: The preflight is blocking, or the warnings were not acknowledged,
+          description: The preflight is blocking, or a warning was not named in acknowledged_findings,
             or the repo has not been migrated
           schema:
             additionalProperties: true
@@ -5974,7 +6028,7 @@ paths:
       - application/json
       description: |-
         Takes the previous owner's labels off a cluster's connection. Warns first — by name — about any ApplicationSet that still picks clusters using one of those labels, because removing it is what makes this cluster fall out of that ApplicationSet.
-        Nothing is removed without "yes": true. Send "dry_run": true to see what would go.
+        Nothing is removed without "yes": true. The dry run returns each warning with a stable id in "warning_ids"; every one of those ids has to come back in "acknowledged_findings" before the removal runs. Send "dry_run": true to see what would go.
       parameters:
       - description: Cluster name
         in: path
@@ -6015,8 +6069,8 @@ paths:
             additionalProperties: true
             type: object
         "409":
-          description: An ApplicationSet still selects one of these labels and the
-            warning was not acknowledged
+          description: An ApplicationSet still selects one of these labels and that
+            warning was not named in acknowledged_findings
           schema:
             additionalProperties: true
             type: object
@@ -6616,6 +6670,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Test active connection
@@ -6646,6 +6705,17 @@ paths:
             type: object
         "400":
           description: Bad request (e.g. use_saved=true but no matching saved connection)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: A saved credential was needed for an address that is not the
+            saved connection's own
           schema:
             additionalProperties: true
             type: object
@@ -7125,6 +7195,12 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "409":
+          description: A migration pull request from a previous attempt is already
+            open
+          schema:
+            additionalProperties: true
+            type: object
         "502":
           description: Gateway error
           schema:
@@ -7402,6 +7478,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
         "501":
           description: No provider configured
           schema:
@@ -7435,6 +7516,11 @@ paths:
             type: object
         "400":
           description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties: true
             type: object
@@ -7964,7 +8050,9 @@ paths:
       - application/json
       description: Creates a new long-lived API token for programmatic access. The
         token expires after 90 days unless expires_in_days (1-365) says otherwise.
-        The plaintext value is shown once and never again.
+        The plaintext value is shown once and never again. A token can carry at most
+        the role of the caller who created it — asking for a higher role is refused
+        with 403.
       parameters:
       - description: Token name, role, and optional expiry window
         in: body
@@ -8048,7 +8136,8 @@ paths:
       - application/json
       description: Pushes a token's expiry out by a fresh window (90 days by default,
         or expires_in_days between 1 and 365). The secret value does not change, so
-        every client using the token keeps working.
+        every client using the token keeps working. An operator may renew tokens they
+        own; renewing anyone else's token requires an admin.
       parameters:
       - description: Token name
         in: path

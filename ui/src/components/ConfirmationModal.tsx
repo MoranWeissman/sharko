@@ -23,6 +23,11 @@ interface ConfirmationModalProps {
   // Optional extra content rendered between the description and the footer —
   // e.g. an auto-merge / manual-PR choice for PR-producing operations.
   extraContent?: ReactNode
+  // Extra gate on top of typeToConfirm/loading — e.g. "the consequences
+  // panel embedded in extraContent hasn't finished loading yet". The
+  // confirm button stays disabled while this is true, independent of
+  // whatever the user has typed.
+  confirmDisabled?: boolean
 }
 
 export function ConfirmationModal({
@@ -36,10 +41,11 @@ export function ConfirmationModal({
   destructive = false,
   loading = false,
   extraContent,
+  confirmDisabled = false,
 }: ConfirmationModalProps) {
   const [typed, setTyped] = useState('')
 
-  const canConfirm = typeToConfirm ? typed === typeToConfirm : true
+  const canConfirm = (typeToConfirm ? typed === typeToConfirm : true) && !confirmDisabled
 
   function handleClose() {
     if (loading) return // block close during in-flight operations

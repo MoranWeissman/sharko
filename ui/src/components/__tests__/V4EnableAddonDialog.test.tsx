@@ -205,6 +205,49 @@ describe('V4EnableAddonDialog', () => {
     });
   });
 
+  // v4-wave2 review fix — the problems header hardcoded "enable" even in
+  // disable mode. disableAddonV4 can hit the same 422 problems-first path
+  // (see the component's own "route it through the same problems-first
+  // surface if it does" comment), so the copy must match the actual mode.
+  it('disable mode: a 422 problems header says "disable", not "enable"', async () => {
+    mockDisableAddonV4.mockRejectedValue(
+      new V4AddonValidationError({
+        error: 'cannot disable cert-manager on prod-eu: still referenced by vault',
+        cluster: 'prod-eu',
+        addon: 'cert-manager',
+        problems: ['still referenced by vault — remove that dependency first'],
+      }),
+    );
+
+    renderDialog({ mode: 'disable' });
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('v4-problems')).toBeInTheDocument();
+    });
+    expect(screen.getByText("Sharko can't disable cert-manager on prod-eu yet")).toBeInTheDocument();
+    expect(screen.queryByText("Sharko can't enable cert-manager on prod-eu yet")).not.toBeInTheDocument();
+  });
+
+  it('enable mode: a 422 problems header still says "enable"', async () => {
+    mockEnableAddonV4.mockRejectedValue(
+      new V4AddonValidationError({
+        error: 'cannot enable cert-manager on prod-eu: missing required value',
+        cluster: 'prod-eu',
+        addon: 'cert-manager',
+        problems: ['missing required value "server.ha.enabled"'],
+      }),
+    );
+
+    renderDialog({ mode: 'enable' });
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('v4-problems')).toBeInTheDocument();
+    });
+    expect(screen.getByText("Sharko can't enable cert-manager on prod-eu yet")).toBeInTheDocument();
+  });
+
   it('rejects malformed YAML in the values field before calling the API', () => {
     renderDialog();
     fireEvent.change(screen.getByTestId('v4-enable-values'), { target: { value: '{not json' } });

@@ -399,9 +399,10 @@ export async function takeoverPreflight(name: string) {
  * takeoverCluster — POST /clusters/{name}/takeover (story 6.3). Makes
  * Sharko the owner of an existing cluster's ArgoCD connection: same name,
  * same address, and by default every label the previous owner left on it.
- * Refuses without `yes: true`, and refuses again without
- * `acknowledge_warnings: true` when the preflight raised warnings. Pass
- * `dry_run: true` for the plan.
+ * Refuses without `yes: true`. The checks are re-run server-side on this
+ * call, and every warning they raise has to be named by its finding id in
+ * `acknowledged_findings` — anything left out comes back as a 409 listing
+ * it. Pass `dry_run: true` for the plan.
  */
 export async function takeoverCluster(name: string, body: TakeoverRequestBody) {
   return postJSON<TakeoverResponse>(`/clusters/${encodeURIComponent(name)}/takeover`, body)
@@ -411,8 +412,9 @@ export async function takeoverCluster(name: string, body: TakeoverRequestBody) {
  * dropLegacyLabels — POST /clusters/{name}/takeover/legacy-labels/drop
  * (story 6.4). Removes the labels the takeover carried over. The response
  * carries `warnings` naming any ApplicationSet that still picks clusters
- * using one of them — the caller must show those and send
- * `acknowledge_warnings: true` before the removal is allowed.
+ * using one of them, and `warning_ids` alongside them — the caller must
+ * show the warnings and send those ids back in `acknowledged_findings`
+ * before the removal is allowed.
  */
 export async function dropLegacyLabels(name: string, body: DropLegacyLabelsRequestBody) {
   return postJSON<DropLegacyLabelsResponse>(
@@ -468,6 +470,25 @@ export class V4AddonValidationError extends Error {
     this.cluster = body.cluster
     this.addon = body.addon
     this.problems = body.problems ?? []
+  }
+}
+
+/**
+ * MigrationPRAlreadyOpenError — thrown by migrateRepo when the server
+ * returns 409 (a previous migrate call already opened a pull request that
+ * is still open). Distinct from a plain Error so MigrationBanner can link
+ * straight to the existing PR instead of showing a generic failure and
+ * inviting a retry that would just 409 again.
+ */
+export class MigrationPRAlreadyOpenError extends Error {
+  prUrl: string
+  prNumber?: number
+
+  constructor(body: { error?: string; migration_pr_url?: string; migration_pr_number?: number }) {
+    super(body.error || 'a migration pull request is already open')
+    this.name = 'MigrationPRAlreadyOpenError'
+    this.prUrl = body.migration_pr_url || ''
+    this.prNumber = body.migration_pr_number
   }
 }
 
@@ -1126,6 +1147,35 @@ export interface HealthResponse {
   [key: string]: unknown
 }
 
+/**
+ * migrateRepoRequest — POST /api/v1/migration/migrate. A dedicated fetch
+ * (rather than the generic postJSON) so a 409 (a previous attempt's PR is
+ * still open) throws MigrationPRAlreadyOpenError with the existing PR's
+ * link, instead of the generic postJSON Error that would drop everything
+ * but the summary sentence.
+ */
+async function migrateRepoRequest(req: MigrationMigrateRequest): Promise<MigrateResult> {
+  const res = await fetch(`${BASE_URL}/migration/migrate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(req),
+  })
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (res.status === 409) {
+    const errBody = await res.json().catch(() => ({}))
+    throw new MigrationPRAlreadyOpenError(errBody)
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error || res.statusText)
+  }
+  return res.json()
+}
+
 export const api = {
   // Health
   health: () => fetchJSON<HealthResponse>('/health'),
@@ -1731,5 +1781,5 @@ export const api = {
   // migrate?), preview (show me every file), migrate (do it, one PR).
   getMigrationStatus: () => fetchJSON<MigrationStatus>('/migration/status'),
   previewMigration: () => postJSON<MigrationPlan>('/migration/preview', {}),
-  migrateRepo: (req: MigrationMigrateRequest = { yes: true }) => postJSON<MigrateResult>('/migration/migrate', req),
+  migrateRepo: (req: MigrationMigrateRequest = { yes: true }) => migrateRepoRequest(req),
 }

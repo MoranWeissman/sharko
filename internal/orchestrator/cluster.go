@@ -598,9 +598,24 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			clusterAddonsPath = "configuration/managed-clusters.yaml"
 		}
 	}
-	clusterAddonsData, clusterAddonsErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+	// Fail-closed: only a genuinely absent registry file is bootstrapped from
+	// an empty document. Any other read failure stops the registration — the
+	// entry is added to whatever this read returned and the whole file is
+	// written back, so a swallowed error would open a pull request that drops
+	// every other cluster out of the registry, and the orphan sweep would then
+	// delete their ArgoCD connections.
+	clusterAddonsData, clusterAddonsExists, clusterAddonsErr := o.readFileForRewrite(ctx, clusterAddonsPath)
 	if clusterAddonsErr != nil {
-		// File doesn't exist yet — bootstrap a minimal document.
+		log.Error("RegisterCluster: could not read the cluster registry — refusing to rewrite it from scratch",
+			"cluster", req.Name, "path", clusterAddonsPath, "error", clusterAddonsErr)
+		result.Status = "partial"
+		result.CompletedSteps = steps
+		result.FailedStep = "read_cluster_registry"
+		result.Error = clusterAddonsErr.Error()
+		result.Message = "Sharko could not read the cluster registry from Git, so it stopped before opening a pull request — writing one built from an empty file would have dropped every other cluster out of the registry. Nothing was committed. Try again once Git is reachable."
+		return result, nil
+	}
+	if !clusterAddonsExists {
 		log.Info("cluster registry file not found, bootstrapping", "cluster", req.Name, "path", clusterAddonsPath)
 		clusterAddonsData = []byte("clusters:\n")
 	}

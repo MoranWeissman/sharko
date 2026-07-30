@@ -45,6 +45,11 @@ type migrationFakeGit struct {
 	deletedBranches []string
 	prs             []gitprovider.PullRequest
 
+	// openPRs is what ListPullRequests("open") answers — set directly by
+	// tests exercising the idempotent-retry check (findOpenMigrationPR),
+	// independent of whatever CreatePullRequest has recorded in prs.
+	openPRs []gitprovider.PullRequest
+
 	// Failure injection.
 	batchErr      error
 	deleteFileErr error
@@ -91,7 +96,9 @@ func (f *migrationFakeGit) ListDirectory(_ context.Context, dir, _ string) ([]st
 }
 
 func (f *migrationFakeGit) ListPullRequests(context.Context, string) ([]gitprovider.PullRequest, error) {
-	return nil, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.openPRs, nil
 }
 func (f *migrationFakeGit) TestConnection(context.Context) error { return nil }
 
@@ -378,6 +385,91 @@ func TestMigrationStatus_EmptyRepo_SaysInitializeInstead(t *testing.T) {
 	}
 	if got.MigrationAvailable {
 		t.Error("MigrationAvailable = true on an empty repo; want false")
+	}
+}
+
+// TestMigrationStatus_ReportsOpenMigrationPR is the "server truth" half of
+// the migration-banner double-PR fix: once a previous migrate call opened
+// a PR that is still open, GET /migration/status must surface it — a UI
+// component that lost its own in-memory "PR is open" flag on remount can
+// still learn the right thing from the next status poll.
+func TestMigrationStatus_ReportsOpenMigrationPR(t *testing.T) {
+	git := newMigrationFakeGit(newV3FixtureRepo())
+	git.openPRs = []gitprovider.PullRequest{
+		{ID: 42, URL: "https://example.com/pull/42", SourceBranch: "sharko/migrate-to-v4-abcd1234", TargetBranch: "main"},
+	}
+	orch := newMigrationOrchestrator(t, git)
+
+	got := orch.MigrationStatus(context.Background())
+
+	if got.MigrationPRURL != "https://example.com/pull/42" {
+		t.Errorf("MigrationPRURL = %q, want the open PR's URL", got.MigrationPRURL)
+	}
+	if got.MigrationPRNumber != 42 {
+		t.Errorf("MigrationPRNumber = %d, want 42", got.MigrationPRNumber)
+	}
+}
+
+// TestMigrationStatus_NoOpenMigrationPR_FieldsEmpty is the negative case —
+// a v3 repo with no migration attempt yet reports no PR fields at all.
+func TestMigrationStatus_NoOpenMigrationPR_FieldsEmpty(t *testing.T) {
+	orch := newMigrationOrchestrator(t, newMigrationFakeGit(newV3FixtureRepo()))
+
+	got := orch.MigrationStatus(context.Background())
+
+	if got.MigrationPRURL != "" || got.MigrationPRNumber != 0 {
+		t.Errorf("expected no PR fields, got url=%q number=%d", got.MigrationPRURL, got.MigrationPRNumber)
+	}
+}
+
+// TestMigrate_RefusesWhenMigrationPROpen is the pinning test for the
+// double-PR bug: a real (non-dry-run) migrate call must refuse — not open
+// a second PR — when a previous attempt's PR is still open, and the
+// refusal must carry the existing PR's link back to the caller.
+func TestMigrate_RefusesWhenMigrationPROpen(t *testing.T) {
+	git := newMigrationFakeGit(newV3FixtureRepo())
+	git.openPRs = []gitprovider.PullRequest{
+		{ID: 7, URL: "https://example.com/pull/7", SourceBranch: "sharko/migrate-to-v4-deadbeef", TargetBranch: "main"},
+	}
+	orch := newMigrationOrchestrator(t, git)
+
+	_, err := orch.MigrateV3ToV4(context.Background(), MigrateRequest{Yes: true})
+	if err == nil {
+		t.Fatal("expected an error when a migration PR is already open")
+	}
+	var prOpenErr *ErrMigrationPROpen
+	if !errors.As(err, &prOpenErr) {
+		t.Fatalf("error = %v (%T), want *ErrMigrationPROpen", err, err)
+	}
+	if prOpenErr.PRURL != "https://example.com/pull/7" {
+		t.Errorf("PRURL = %q, want the existing PR's URL", prOpenErr.PRURL)
+	}
+	if prOpenErr.PRNumber != 7 {
+		t.Errorf("PRNumber = %d, want 7", prOpenErr.PRNumber)
+	}
+
+	// And, crucially, no second PR was opened.
+	if len(git.prs) != 0 {
+		t.Errorf("commitMigrationPR ran anyway; got %d PR(s) created, want 0", len(git.prs))
+	}
+}
+
+// TestMigrate_DryRun_AllowedWhenMigrationPROpen — a dry run has zero side
+// effects regardless, so it must not be blocked by the open-PR check; that
+// check only guards the real, PR-creating path.
+func TestMigrate_DryRun_AllowedWhenMigrationPROpen(t *testing.T) {
+	git := newMigrationFakeGit(newV3FixtureRepo())
+	git.openPRs = []gitprovider.PullRequest{
+		{ID: 7, URL: "https://example.com/pull/7", SourceBranch: "sharko/migrate-to-v4-deadbeef", TargetBranch: "main"},
+	}
+	orch := newMigrationOrchestrator(t, git)
+
+	result, err := orch.MigrateV3ToV4(context.Background(), MigrateRequest{DryRun: true})
+	if err != nil {
+		t.Fatalf("dry run should not be blocked by an open migration PR: %v", err)
+	}
+	if result.Status != "preview" {
+		t.Errorf("Status = %q, want %q", result.Status, "preview")
 	}
 }
 

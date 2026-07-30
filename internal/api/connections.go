@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
@@ -251,8 +252,13 @@ func (s *Server) handleSetActiveConnection(w http.ResponseWriter, r *http.Reques
 // @Param body body models.CreateConnectionRequest true "Connection credentials to test (set use_saved=true with name to test the saved credentials of an existing connection)"
 // @Success 200 {object} map[string]interface{} "Credential test result"
 // @Failure 400 {object} map[string]interface{} "Bad request (e.g. use_saved=true but no matching saved connection)"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Failure 422 {object} map[string]interface{} "A saved credential was needed for an address that is not the saved connection's own"
 // @Router /connections/test-credentials [post]
 func (s *Server) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "connection.test") {
+		return
+	}
 	var req models.CreateConnectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -300,15 +306,19 @@ func (s *Server) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
 	} else if conn.Name != "" {
 		// For edits: if token fields are empty, fill from saved connection.
 		// Back-compat for partial-body submits.
+		//
+		// SECURITY (v4-wave2 review B1): the caller controls the ADDRESS in
+		// this same body — git.repo_url, git.provider, argocd.server_url.
+		// Back-filling a stored secret into a body that names a different
+		// address would hand that secret to an address the caller picked
+		// (a self-hosted Git host, or an ArgoCD server, of their choosing).
+		// So the stored secret is pinned to the connection's own address:
+		// it is filled in only when the submitted address IS the saved one.
+		// Ask about a different address and the answer is a refusal, not a
+		// silent credential loan.
 		if saved, err := s.connSvc.GetConnection(conn.Name); err == nil && saved != nil {
-			if conn.Git.Token == "" {
-				conn.Git.Token = saved.Git.Token
-			}
-			if conn.Git.PAT == "" {
-				conn.Git.PAT = saved.Git.PAT
-			}
-			if conn.Argocd.Token == "" {
-				conn.Argocd.Token = saved.Argocd.Token
+			if !backfillSavedCredentials(w, conn, saved) {
+				return
 			}
 		}
 	}
@@ -344,6 +354,99 @@ func (s *Server) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// backfillSavedCredentials fills the blank credential fields of a
+// test-credentials request from the saved connection of the same name — but
+// only for an address that belongs to that saved connection.
+//
+// It returns true when the request may go on to be tested, and false when it
+// has already answered the caller with a 422 refusal.
+//
+// Why the pin exists (v4-wave2 review B1): the stored Git token and ArgoCD
+// token are secrets the caller never typed and, for a viewer or an operator,
+// may never have been allowed to see. The rest of the same request body says
+// WHERE to send them. Filling in the secret without checking the address is
+// what turns a connectivity test into a way to read the stored credentials
+// out of the server. Nothing is pinned when there is no stored secret to
+// lend, and nothing is pinned when the caller gave no address at all —
+// there is nothing to leak in either case.
+func backfillSavedCredentials(w http.ResponseWriter, conn, saved *models.Connection) bool {
+	// --- Git ---
+	if conn.Git.Token == "" && conn.Git.PAT == "" &&
+		(saved.Git.Token != "" || saved.Git.PAT != "") &&
+		submittedGitAddress(conn.Git) {
+
+		if !sameGitAddress(conn.Git, saved.Git) {
+			writeError(w, http.StatusUnprocessableEntity, savedCredentialRefusal("Git repository"))
+			return false
+		}
+		conn.Git.Token = saved.Git.Token
+		conn.Git.PAT = saved.Git.PAT
+	}
+
+	// --- ArgoCD ---
+	if conn.Argocd.Token == "" && saved.Argocd.Token != "" && conn.Argocd.ServerURL != "" {
+		if !sameEndpoint(conn.Argocd.ServerURL, saved.Argocd.ServerURL) {
+			writeError(w, http.StatusUnprocessableEntity, savedCredentialRefusal("ArgoCD server"))
+			return false
+		}
+		conn.Argocd.Token = saved.Argocd.Token
+	}
+
+	return true
+}
+
+// savedCredentialRefusal is the plain-words body of the 422 above. It says
+// what happened and what to do instead, and it deliberately does NOT echo the
+// saved address back — that would answer "what is this connection pointing
+// at?" for a caller who only asked to test something else.
+func savedCredentialRefusal(what string) string {
+	return "the saved credential for this connection belongs to a different " + what +
+		" address than the one you sent, so it was not used. To test a different address, submit its credentials explicitly."
+}
+
+// submittedGitAddress reports whether the caller named a Git address at all.
+// A body with no address has nowhere to send a token, so there is nothing to
+// pin — the test simply fails downstream on the missing configuration, the
+// same as it always did.
+func submittedGitAddress(g models.GitRepoConfig) bool {
+	return g.RepoURL != "" || g.Owner != "" || g.Organization != ""
+}
+
+// sameGitAddress reports whether the submitted Git block points at the same
+// place the saved connection does.
+//
+// The comparison runs over the SAME derivation the test path itself uses:
+// ParseRepoURL fills in the provider from the URL's host when the caller left
+// it out, and the provider is what decides whether the token goes to
+// api.github.com or to a self-hosted address taken straight out of repo_url.
+// Comparing the derived provider plus the URL therefore covers every way the
+// token's destination host can be chosen. Differences BELOW the host —
+// owner, repo, project — are not part of the check: those stay on the saved
+// connection's own host, which the token already belongs to.
+func sameGitAddress(submitted, saved models.GitRepoConfig) bool {
+	probe := submitted // copy — ParseRepoURL mutates its receiver
+	_ = probe.ParseRepoURL()
+	if probe.Provider != saved.Provider {
+		return false
+	}
+	return sameEndpoint(probe.RepoURL, saved.RepoURL)
+}
+
+// sameEndpoint compares two addresses the way a Git host or an ArgoCD server
+// would: case-insensitively, ignoring a trailing slash and the optional .git
+// suffix. Anything beyond that cosmetic difference counts as a different
+// address.
+func sameEndpoint(a, b string) bool {
+	return strings.EqualFold(normalizeEndpoint(a), normalizeEndpoint(b))
+}
+
+func normalizeEndpoint(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimSuffix(s, "/")
+	s = strings.TrimSuffix(s, ".git")
+	return strings.TrimSuffix(s, "/")
+}
+
 // handleDiscoverArgocd godoc
 //
 // @Summary Discover ArgoCD URL
@@ -377,8 +480,12 @@ func (s *Server) handleDiscoverArgocd(w http.ResponseWriter, r *http.Request) {
 // @Produce json
 // @Security BearerAuth
 // @Success 200 {object} map[string]interface{} "Connection test result"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Router /connections/test [post]
 func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "connection.test") {
+		return
+	}
 	gitErr, argocdErr := s.connSvc.TestConnection(r.Context())
 
 	result := map[string]interface{}{

@@ -137,7 +137,9 @@ func TestListTokensHandler_LegacyTokenReadsAsNoExpiry(t *testing.T) {
 func TestRenewTokenHandler(t *testing.T) {
 	srv := newTestServer()
 
-	if _, err := srv.authStore.CreateToken("renewable", "operator", 5); err != nil {
+	// withRole stamps X-Sharko-User as "<role>-user", so this is a token the
+	// caller below owns — the operator-tier branch of the renew split.
+	if _, err := srv.authStore.CreateTokenFor("operator-user", "renewable", "operator", 5); err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
 
@@ -192,6 +194,159 @@ func TestRenewTokenHandler_UnknownTokenIs404(t *testing.T) {
 	if rw.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body = %s", rw.Code, rw.Body.String())
 	}
+}
+
+// ─── v4-wave2 security review, finding B2 ────────────────────────────────
+//
+// POST /tokens gated on token.create (operator+) and then passed the
+// requested role straight to the store. An operator could therefore ask for
+// an admin token and hold, one request later, every permission their own
+// account is refused. A token now carries at most the role of whoever asked
+// for it.
+
+func TestCreateTokenHandler_OperatorCannotMintAnAdminToken(t *testing.T) {
+	srv := newTestServer()
+
+	body := strings.NewReader(`{"name":"escalate","role":"admin"}`)
+	req := withRole(httptest.NewRequest(http.MethodPost, "/api/v1/tokens", body), "operator")
+	rw := httptest.NewRecorder()
+	srv.handleCreateToken(rw, req)
+
+	if rw.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body = %s", rw.Code, rw.Body.String())
+	}
+	if strings.Contains(rw.Body.String(), "sharko_") {
+		t.Fatal("the refusal handed out a token anyway")
+	}
+	if _, ok := srv.authStore.GetToken("escalate"); ok {
+		t.Fatal("the refused token was stored")
+	}
+}
+
+func TestCreateTokenHandler_OperatorMayMintAtOrBelowTheirOwnRole(t *testing.T) {
+	for _, role := range []string{"operator", "viewer"} {
+		t.Run(role, func(t *testing.T) {
+			srv := newTestServer()
+
+			body := strings.NewReader(`{"name":"ci-` + role + `","role":"` + role + `"}`)
+			req := withRole(httptest.NewRequest(http.MethodPost, "/api/v1/tokens", body), "operator")
+			rw := httptest.NewRecorder()
+			srv.handleCreateToken(rw, req)
+
+			if rw.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want 201; body = %s", rw.Code, rw.Body.String())
+			}
+			var resp CreateTokenResponse
+			if err := json.Unmarshal(rw.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v; body = %s", err, rw.Body.String())
+			}
+			if resp.Role != role {
+				t.Errorf("role = %q, want %q", resp.Role, role)
+			}
+		})
+	}
+}
+
+func TestCreateTokenHandler_AdminMayStillMintAnAdminToken(t *testing.T) {
+	srv := newTestServer()
+
+	body := strings.NewReader(`{"name":"break-glass","role":"admin"}`)
+	req := withRole(httptest.NewRequest(http.MethodPost, "/api/v1/tokens", body), "admin")
+	rw := httptest.NewRecorder()
+	srv.handleCreateToken(rw, req)
+
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", rw.Code, rw.Body.String())
+	}
+	stored, ok := srv.authStore.GetToken("break-glass")
+	if !ok {
+		t.Fatal("the token was not stored")
+	}
+	if stored.Role != "admin" {
+		t.Errorf("stored role = %q, want admin", stored.Role)
+	}
+	if stored.CreatedBy != "admin-user" {
+		t.Errorf("created_by = %q, want the caller's username", stored.CreatedBy)
+	}
+}
+
+// ─── v4-wave2 security review, finding H1 ────────────────────────────────
+//
+// Renewing kept ANY token alive for ANY operator. It now follows the same
+// own/other split revoking does.
+
+func TestRenewTokenHandler_OperatorCannotRenewSomebodyElsesToken(t *testing.T) {
+	srv := newTestServer()
+	if _, err := srv.authStore.CreateTokenFor("alice", "alices-token", "operator", 5); err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+
+	req := withRole(httptest.NewRequest(http.MethodPost, "/api/v1/tokens/alices-token/renew", nil), "operator")
+	req.SetPathValue("name", "alices-token")
+	rw := httptest.NewRecorder()
+	srv.handleRenewToken(rw, req)
+
+	assert403(t, rw)
+	if !strings.Contains(rw.Body.String(), "token.renew-other") {
+		t.Errorf("the refusal should name the admin-tier action; got %s", rw.Body.String())
+	}
+}
+
+// A token created before anyone was recorded against it is owned by nobody,
+// so it falls to the admin branch rather than being open to every operator.
+func TestRenewTokenHandler_UnownedTokenNeedsAnAdmin(t *testing.T) {
+	srv := newTestServer()
+	if _, err := srv.authStore.CreateToken("nobodys-token", "operator", 5); err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+
+	req := withRole(httptest.NewRequest(http.MethodPost, "/api/v1/tokens/nobodys-token/renew", nil), "operator")
+	req.SetPathValue("name", "nobodys-token")
+	rw := httptest.NewRecorder()
+	srv.handleRenewToken(rw, req)
+	assert403(t, rw)
+
+	admin := withRole(httptest.NewRequest(http.MethodPost, "/api/v1/tokens/nobodys-token/renew", nil), "admin")
+	admin.SetPathValue("name", "nobodys-token")
+	adminRW := httptest.NewRecorder()
+	srv.handleRenewToken(adminRW, admin)
+	if adminRW.Code != http.StatusOK {
+		t.Fatalf("admin renew: status = %d, want 200; body = %s", adminRW.Code, adminRW.Body.String())
+	}
+}
+
+// An API key authenticates as its own name, so a token renewing itself is
+// the same "my own credential" case as one you created.
+func TestRenewTokenHandler_ATokenMayRenewItself(t *testing.T) {
+	srv := newTestServer()
+	if _, err := srv.authStore.CreateToken("nightly-sync", "operator", 5); err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tokens/nightly-sync/renew", nil)
+	req.Header.Set("X-Sharko-User", "nightly-sync")
+	req.Header.Set("X-Sharko-Role", "operator")
+	req.SetPathValue("name", "nightly-sync")
+	rw := httptest.NewRecorder()
+	srv.handleRenewToken(rw, req)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rw.Code, rw.Body.String())
+	}
+}
+
+// A token nobody can see must not become visible through the refusal: an
+// operator asking about a name that does not exist gets the same 403 as one
+// asking about a token they do not own, never a 404.
+func TestRenewTokenHandler_UnknownTokenDoesNotLeakToAnOperator(t *testing.T) {
+	srv := newTestServer()
+
+	req := withRole(httptest.NewRequest(http.MethodPost, "/api/v1/tokens/ghost/renew", nil), "operator")
+	req.SetPathValue("name", "ghost")
+	rw := httptest.NewRecorder()
+	srv.handleRenewToken(rw, req)
+
+	assert403(t, rw)
 }
 
 // An expired API token gets a 401 that says, in plain words, which token ran

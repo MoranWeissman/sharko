@@ -70,4 +70,37 @@ describe('UnregisterConsequencesPanel', () => {
     await waitFor(() => expect(screen.getByTestId('unregister-consequences-error')).toBeInTheDocument());
     expect(screen.getByTestId('unregister-consequences-error')).toHaveTextContent('is not the same as "nothing"');
   });
+
+  // ClusterDetail review fix — onReadyChange is what the parent confirm
+  // dialog gates its confirm button on. Not ready while loading; ready
+  // once the data OR the error has actually rendered.
+  it('onReadyChange reports false while loading, then true once the consequences render', async () => {
+    let resolveFetch: (v: UnregisterConsequencesResponse) => void = () => {};
+    mockConsequences.mockReturnValue(new Promise((resolve) => { resolveFetch = resolve; }));
+    const onReadyChange = vi.fn();
+    render(<UnregisterConsequencesPanel clusterName="prod-eu" open onReadyChange={onReadyChange} />);
+
+    await waitFor(() => expect(onReadyChange).toHaveBeenCalledWith(false));
+    expect(onReadyChange).not.toHaveBeenCalledWith(true);
+
+    resolveFetch(response);
+    await waitFor(() => expect(onReadyChange).toHaveBeenCalledWith(true));
+  });
+
+  it('onReadyChange reports true once the error state has rendered — a failure still counts as "shown"', async () => {
+    mockConsequences.mockRejectedValue(new Error('argocd unreachable'));
+    const onReadyChange = vi.fn();
+    render(<UnregisterConsequencesPanel clusterName="prod-eu" open onReadyChange={onReadyChange} />);
+
+    await waitFor(() => expect(screen.getByTestId('unregister-consequences-error')).toBeInTheDocument());
+    expect(onReadyChange).toHaveBeenCalledWith(true);
+  });
+
+  it('onReadyChange reports false while the confirmation is closed', () => {
+    mockConsequences.mockResolvedValue(response);
+    const onReadyChange = vi.fn();
+    render(<UnregisterConsequencesPanel clusterName="prod-eu" open={false} onReadyChange={onReadyChange} />);
+    expect(onReadyChange).toHaveBeenCalledWith(false);
+    expect(mockConsequences).not.toHaveBeenCalled();
+  });
 });

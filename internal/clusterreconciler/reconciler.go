@@ -751,7 +751,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 				// drift stays nil — labels are in sync
 			} else {
 				// Labels differ — compute concrete diff for G1 OutOfSync state
-				drift = computeLabelDrift(desiredLabels, secret.Labels)
+				drift = computeLabelDrift(desiredLabels, secret.Labels, annotationsOf(secret))
 				// msg stays "cluster Secret present" — not claiming "verified"
 				// when they don't match (honest reporting, same as before G1)
 
@@ -984,8 +984,23 @@ func labelsMatch(want, have map[string]string) bool {
 //	wants for this cluster per managed-clusters.yaml.
 //
 // have: the live Secret's full Labels map (includes ownership labels).
-func computeLabelDrift(desired, have map[string]string) *LabelDrift {
+// haveAnnotations: the live Secret's annotations, read for the takeover's
+//
+//	record of which label keys belong to the previous owner. Pass the
+//	Secret's real annotations — nil is fine and means "no such record".
+func computeLabelDrift(desired, have, haveAnnotations map[string]string) *LabelDrift {
 	drift := &LabelDrift{}
+
+	// Labels a takeover carried over from whoever owned the cluster before.
+	// They sit on the Secret unqualified (e.g. "env: prod"), which is the
+	// same shape as a v3 addon key — so without this list they would be read
+	// as Sharko's own, reported as drift that never goes away, and stripped
+	// by a self-heal run. The takeover wrote down the exact keys precisely so
+	// this comparison does not have to guess.
+	preserved := make(map[string]struct{})
+	for _, k := range argosecrets.PreservedLabelKeys(haveAnnotations) {
+		preserved[k] = struct{}{}
+	}
 
 	// Extract just Sharko's addon-enablement keys from the live Secret.
 	// argosecrets.IsAddonLabelKey is the precise boundary: an addon key is
@@ -998,6 +1013,11 @@ func computeLabelDrift(desired, have map[string]string) *LabelDrift {
 	liveAddonLabels := make(map[string]string)
 	for k, v := range have {
 		if !argosecrets.IsAddonLabelKey(k) {
+			continue
+		}
+		if _, carried := preserved[k]; carried {
+			// Somebody else's label. Not Sharko's to report on, and
+			// certainly not Sharko's to remove.
 			continue
 		}
 		liveAddonLabels[k] = v
@@ -1242,7 +1262,7 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 			"Sharko wrote the self-heal but couldn't re-read the cluster Secret to confirm it converged: "+getErr.Error(), nil)
 		return
 	}
-	residual := computeLabelDrift(desiredLabels, fresh.Labels)
+	residual := computeLabelDrift(desiredLabels, fresh.Labels, fresh.Annotations)
 	ownershipLost := !res.Adopted && !IsManagedBySharko(fresh)
 	if residual != nil || ownershipLost {
 		stats.Errors++
@@ -1366,13 +1386,14 @@ func (r *Reconciler) ResyncClusterLabels(ctx context.Context, name string) (Resy
 	// Snapshot the live Secret's labels BEFORE the write, purely to report
 	// an honest "what this resync applied" diff — the write itself is done
 	// entirely by the reused primitive below, not by anything here.
-	var before map[string]string
+	var before, beforeAnnotations map[string]string
 	if secret, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, name, metav1.GetOptions{}); getErr == nil {
 		before = secret.Labels
+		beforeAnnotations = secret.Annotations
 	} else if !apierrors.IsNotFound(getErr) {
 		return ResyncResult{}, fmt.Errorf("reading cluster secret: %w", getErr)
 	}
-	drift := computeLabelDrift(desired, before)
+	drift := computeLabelDrift(desired, before, beforeAnnotations)
 	unchanged := unchangedAddonLabelKeys(desired, before)
 
 	stats := reconcileStats{}

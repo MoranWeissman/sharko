@@ -872,6 +872,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "The connected repo is still in the v3 format and has to be migrated first",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Gateway error — including a cluster missing its assignment file, or the addon not enabled on a selected cluster",
                         "schema": {
@@ -4639,7 +4646,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Makes Sharko the owner of an existing cluster's ArgoCD connection, keeping the same name, the same API address and — by default — every label the previous owner left on it. Adds the cluster to Sharko's fleet through a pull request and creates an empty addon file for it; no addon is turned on.\nNothing is written without \"yes\": true in the body. When the preflight raised warnings, \"acknowledge_warnings\": true is required as well. Send \"dry_run\": true to see the plan and change nothing.",
+                "description": "Makes Sharko the owner of an existing cluster's ArgoCD connection, keeping the same name, the same API address and — by default — every label the previous owner left on it. Adds the cluster to Sharko's fleet through a pull request and creates an empty addon file for it; no addon is turned on.\nNothing is written without \"yes\": true in the body. The checks are re-run on this call, and every warning they raise has to be named in \"acknowledged_findings\" by its finding id — a warning that appeared since you last looked comes back as a 409 naming it. Send \"dry_run\": true to see the plan and change nothing.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4703,7 +4710,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "The preflight is blocking, or the warnings were not acknowledged, or the repo has not been migrated",
+                        "description": "The preflight is blocking, or a warning was not named in acknowledged_findings, or the repo has not been migrated",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -4733,7 +4740,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Takes the previous owner's labels off a cluster's connection. Warns first — by name — about any ApplicationSet that still picks clusters using one of those labels, because removing it is what makes this cluster fall out of that ApplicationSet.\nNothing is removed without \"yes\": true. Send \"dry_run\": true to see what would go.",
+                "description": "Takes the previous owner's labels off a cluster's connection. Warns first — by name — about any ApplicationSet that still picks clusters using one of those labels, because removing it is what makes this cluster fall out of that ApplicationSet.\nNothing is removed without \"yes\": true. The dry run returns each warning with a stable id in \"warning_ids\"; every one of those ids has to come back in \"acknowledged_findings\" before the removal runs. Send \"dry_run\": true to see what would go.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4798,7 +4805,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "An ApplicationSet still selects one of these labels and the warning was not acknowledged",
+                        "description": "An ApplicationSet still selects one of these labels and that warning was not named in acknowledged_findings",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -5368,6 +5375,13 @@ const docTemplate = `{
                             "type": "object",
                             "additionalProperties": true
                         }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     }
                 }
             }
@@ -5411,6 +5425,20 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad request (e.g. use_saved=true but no matching saved connection)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "A saved credential was needed for an address that is not the saved connection's own",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -6208,6 +6236,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "A migration pull request from a previous attempt is already open",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Gateway error",
                         "schema": {
@@ -6619,6 +6654,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "501": {
                         "description": "No provider configured",
                         "schema": {
@@ -6669,6 +6711,13 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -7443,7 +7492,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a new long-lived API token for programmatic access. The token expires after 90 days unless expires_in_days (1-365) says otherwise. The plaintext value is shown once and never again.",
+                "description": "Creates a new long-lived API token for programmatic access. The token expires after 90 days unless expires_in_days (1-365) says otherwise. The plaintext value is shown once and never again. A token can carry at most the role of the caller who created it — asking for a higher role is refused with 403.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7566,7 +7615,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Pushes a token's expiry out by a fresh window (90 days by default, or expires_in_days between 1 and 365). The secret value does not change, so every client using the token keeps working.",
+                "description": "Pushes a token's expiry out by a fresh window (90 days by default, or expires_in_days between 1 and 365). The secret value does not change, so every client using the token keeps working. An operator may renew tokens they own; renewing anyone else's token requires an admin.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8559,6 +8608,10 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "description": "CreatedBy is the username of whoever asked for this token. It is what\nthe own/other split on renew keys off (see TokenOwnedBy). Empty for\ntokens minted outside a request — bootstrap, tests, or any token that\nalready existed before this field did — and an empty value is owned by\nnobody, so only an admin can renew those.",
                     "type": "string"
                 },
                 "expired": {
@@ -10222,6 +10275,13 @@ const docTemplate = `{
                 "migration_available": {
                     "description": "MigrationAvailable is true only for \"v3\" — the one state where\nthere is something to convert.",
                     "type": "boolean"
+                },
+                "migration_pr_number": {
+                    "type": "integer"
+                },
+                "migration_pr_url": {
+                    "description": "MigrationPRURL / MigrationPRNumber are set (format \"v3\" only) when a\nprevious migrate call already opened a pull request that is still\nopen. Their presence is server truth that \"Open migration PR\" should\nnot be offered again — a UI component that remounts (and so loses\nwhatever in-memory \"I already opened one\" flag it kept) still learns\nthe right thing from the next status poll instead of minting a\nsecond PR for the same repo.",
+                    "type": "string"
                 }
             }
         },
@@ -10652,9 +10712,12 @@ const docTemplate = `{
         "internal_api.DropLegacyLabelsRequest": {
             "type": "object",
             "properties": {
-                "acknowledge_warnings": {
-                    "description": "AcknowledgeWarnings must be true when an ApplicationSet still\nselects on one of the labels being removed.",
-                    "type": "boolean"
+                "acknowledged_findings": {
+                    "description": "AcknowledgedFindings names the warnings the caller has read, by the\nids the dry run returned in warning_ids. Same reasoning as the\ntakeover call: the warnings are recomputed on this request, so only\nan id can prove a warning was actually seen.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "dry_run": {
                     "description": "DryRun reports what would be removed and removes nothing.",
@@ -10698,6 +10761,13 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "warning_ids": {
+                    "description": "WarningIDs are the stable ids of those same warnings, in the same\norder, to send back in acknowledged_findings.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "warnings": {
                     "description": "Warnings names any ApplicationSet that selects on a label being\nremoved, and says what it would do about it.",
@@ -10930,9 +11000,12 @@ const docTemplate = `{
         "internal_api.TakeoverRequest": {
             "type": "object",
             "properties": {
-                "acknowledge_warnings": {
-                    "description": "AcknowledgeWarnings must be true when the preflight raised\nwarnings. It is a separate flag from Yes on purpose: \"I want to do\nthis\" and \"I have read the things that could go wrong\" are two\ndifferent statements, and folding them into one makes the second\none free.",
-                    "type": "boolean"
+                "acknowledged_findings": {
+                    "description": "AcknowledgedFindings names the warnings the caller has read, by the\nfinding id the preflight gave each one (for example\n\"appset-deletion-safety\"). It is separate from Yes on purpose: \"I\nwant to do this\" and \"I have read the things that could go wrong\"\nare two different statements, and folding them into one makes the\nsecond one free.\n\nIt is a list of ids rather than a single \"yes I read them\" flag\nbecause the checks are re-run on this very call. A flag would\nsilently cover a warning that appeared in the seconds since the\ncaller looked — someone else pointing an ApplicationSet at this\ncluster, say. An id can only cover a warning that was actually on\nthe screen. Any warning in the fresh report whose id is not in this\nlist comes back as a 409 naming it.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "auto_merge": {
                     "description": "AutoMerge overrides the connection's auto-merge default for this\npull request only.",
@@ -10990,6 +11063,10 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
+                },
+                "protection_repaired": {
+                    "description": "ProtectionRepaired is true when Sharko already owned the connection\nbut had no record of which labels came from the previous owner, and\nthis call wrote that record back.",
+                    "type": "boolean"
                 },
                 "secret_swapped": {
                     "description": "SecretSwapped is true when the connection's owner actually changed\non this call. False with AlreadyOwned true means it was already\nSharko's.",

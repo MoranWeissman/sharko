@@ -228,6 +228,49 @@ func TestRenewToken_ExtendsExpiryWithoutChangingSecret(t *testing.T) {
 	}
 }
 
+// v4-wave2 review H1: ownership is what the renew split keys off. A token
+// belongs to whoever created it, or to itself — nothing else counts, and a
+// token with no creator recorded belongs to nobody.
+func TestTokenOwnedBy(t *testing.T) {
+	s := testStore()
+
+	if _, err := s.CreateTokenFor("alice", "alices-ci", "operator", 0); err != nil {
+		t.Fatalf("CreateTokenFor: %v", err)
+	}
+	if _, err := s.CreateToken("orphan", "operator", 0); err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+
+	cases := []struct {
+		name, user string
+		want       bool
+	}{
+		{"alices-ci", "alice", true}, // she created it
+		{"alices-ci", "bob", false},  // he did not
+		{"orphan", "orphan", true},   // a token authenticates as itself
+		{"orphan", "alice", false},   // nobody is recorded against it
+		{"orphan", "", false},        // an unauthenticated caller owns nothing
+		{"no-such-token", "alice", false},
+	}
+	for _, c := range cases {
+		if got := s.TokenOwnedBy(c.name, c.user); got != c.want {
+			t.Errorf("TokenOwnedBy(%q, %q) = %v, want %v", c.name, c.user, got, c.want)
+		}
+	}
+
+	// The creator is visible on the read shape, and the hash still is not.
+	view, ok := s.GetToken("alices-ci")
+	if !ok {
+		t.Fatal("GetToken: token missing")
+	}
+	if view.CreatedBy != "alice" {
+		t.Errorf("CreatedBy = %q, want alice", view.CreatedBy)
+	}
+	if view.Hash != "" {
+		t.Error("the read shape must never carry the hash")
+	}
+}
+
 func TestRenewToken_RevivesAnExpiredToken(t *testing.T) {
 	s := testStore()
 
@@ -254,8 +297,20 @@ func TestRenewToken_RevivesAnExpiredToken(t *testing.T) {
 func TestRenewToken_NotFoundAndBadWindow(t *testing.T) {
 	s := testStore()
 
-	if _, err := s.RenewToken("nope", 0); err == nil {
+	_, err := s.RenewToken("nope", 0)
+	if err == nil {
 		t.Error("renewing an unknown token should fail")
+	}
+	// v4-wave2 review L1: the handler decides its 404 on this type, not on
+	// the word "not found" appearing somewhere in the message.
+	var notFound *TokenNotFoundError
+	if !errors.As(err, &notFound) {
+		t.Errorf("RenewToken should return *TokenNotFoundError, got %T (%v)", err, err)
+	} else if notFound.Name != "nope" {
+		t.Errorf("the error should name the token asked for, got %q", notFound.Name)
+	}
+	if err := s.RevokeToken("nope"); !errors.As(err, &notFound) {
+		t.Errorf("RevokeToken should return *TokenNotFoundError, got %T (%v)", err, err)
 	}
 
 	if _, err := s.CreateToken("bounded", "viewer", 0); err != nil {

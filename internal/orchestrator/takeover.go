@@ -87,7 +87,15 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 
 	result := &TakeoverGitResult{Cluster: req.Name}
 
-	connectionsData, connectionsExists := o.readFileIfExists(ctx, V4ConnectionsPath)
+	// Fail-closed read. The fleet record is edited and written back, so a
+	// read error that quietly became "empty fleet" would open a pull request
+	// replacing every registered cluster with this one — and the orphan sweep
+	// would delete the rest of the fleet's connections once it merged. Only a
+	// genuinely absent file starts from an empty document.
+	connectionsData, connectionsExists, readErr := o.readFileForRewrite(ctx, V4ConnectionsPath)
+	if readErr != nil {
+		return nil, readErr
+	}
 	if !connectionsExists || len(connectionsData) == 0 {
 		connectionsData = []byte("clusters:\n")
 	}
@@ -114,7 +122,10 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 		return nil, fmt.Errorf("adding %q to %s: %w", req.Name, V4ConnectionsPath, addErr)
 	}
 
-	existingClusterAddons, clusterAddonsExists := o.readFileIfExists(ctx, clusterPath)
+	existingClusterAddons, clusterAddonsExists, addonsReadErr := o.readFileForRewrite(ctx, clusterPath)
+	if addonsReadErr != nil {
+		return nil, addonsReadErr
+	}
 	updatedClusterAddons := existingClusterAddons
 	if !clusterAddonsExists || len(existingClusterAddons) == 0 {
 		// An empty assignment file, not a missing one: it is the anchor
@@ -180,8 +191,10 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 	}
 	result.Git = gitResult
 
-	// Nudge the reconciler so the cluster shows up as part of the fleet as
-	// soon as the pull request merges instead of on the next safety tick.
-	o.fireReconcilerTrigger()
+	// No reconciler nudge here on purpose. The takeover is not finished when
+	// the pull request is open — the ownership swap on the ArgoCD Secret
+	// still has to happen, and the handler triggers the reconciler once,
+	// after that. Firing here as well would only make the reconciler look at
+	// a fleet that has not changed yet.
 	return result, nil
 }

@@ -70,8 +70,14 @@ func (f *fakeGit) ListDirectory(_ context.Context, dir, _ string) ([]string, err
 	sort.Strings(names)
 	return names, nil
 }
+// ListPullRequests is a real (if trivial) implementation: MigrationStatus
+// (called via PreviewMigration in the v4-migration-labels tests) reads
+// open PRs to report an already-open migration PR, and that is a
+// legitimate read the reconciler's read-only-against-git contract
+// tolerates same as GetFileContent/ListDirectory. Always "no open PRs" —
+// none of these fixtures seed one.
 func (f *fakeGit) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
-	panic("fakeGit: ListPullRequests not expected in clusterreconciler tests")
+	return nil, nil
 }
 func (f *fakeGit) TestConnection(_ context.Context) error { return nil }
 func (f *fakeGit) CreateBranch(_ context.Context, _, _ string) error {

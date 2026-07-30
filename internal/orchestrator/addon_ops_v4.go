@@ -265,9 +265,21 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 		return nil, err
 	}
 
-	existingClusterAddons, _ := o.readFileIfExists(ctx, clusterPath)
+	// Both of these are rewrite bases — the addon assignment file and the
+	// per-cluster values file are edited and committed back whole — so a
+	// swallowed read error would open a pull request that wipes every OTHER
+	// addon assignment (or every other value) on this cluster. Only a
+	// genuinely absent file starts from nothing. globalValuesPath below is
+	// read for validation only and never written back, so it stays lenient.
+	existingClusterAddons, _, readErr := o.readFileForRewrite(ctx, clusterPath)
+	if readErr != nil {
+		return nil, readErr
+	}
 	existingGlobalValuesRaw, _ := o.readFileIfExists(ctx, globalValuesPath)
-	existingClusterValuesRaw, _ := o.readFileIfExists(ctx, clusterValuesPath)
+	existingClusterValuesRaw, _, readErr := o.readFileForRewrite(ctx, clusterValuesPath)
+	if readErr != nil {
+		return nil, readErr
+	}
 
 	existingGlobalValues, err := parseYAMLMap(existingGlobalValuesRaw)
 	if err != nil {

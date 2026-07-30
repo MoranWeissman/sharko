@@ -181,12 +181,19 @@ func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request
 // @Failure 400 {object} map[string]interface{} "Bad request or missing confirmation"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Failure 409 {object} map[string]interface{} "The connected repo is still in the v3 format and has to be migrated first"
 // @Failure 502 {object} map[string]interface{} "Gateway error — including a cluster missing its assignment file, or the addon not enabled on a selected cluster"
 // @Router /addons/{name}/upgrade-clusters [post]
 // handleUpgradeAddonClustersV4 handles POST /api/v1/addons/{name}/upgrade-clusters.
 // Body: {"clusters": ["prod-eu", "staging-us"], "version": "1.15.0", "yes": true}
 func (s *Server) handleUpgradeAddonClustersV4(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.upgrade-clusters") {
+		return
+	}
+	// A v3 repo must migrate first (Story 5.1) — this handler writes the v4
+	// clusters/{cluster}.yaml files, which a v3 repo does not have. Missing
+	// here while every sibling write had it (v4-wave2 review L2).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
 		return
 	}
 
@@ -208,7 +215,10 @@ func (s *Server) handleUpgradeAddonClustersV4(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
 		return
 	}
-	git, err := s.connSvc.GetActiveGitProvider()
+	// Tiered resolver rather than the legacy provider, so the pull request
+	// this opens carries the caller's attribution and the audit entry gets
+	// its tier stamped (v4-wave2 review L2).
+	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
@@ -217,7 +227,7 @@ func (s *Server) handleUpgradeAddonClustersV4(w http.ResponseWriter, r *http.Req
 	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 
-	result, err := orch.UpgradeAddonClustersV4(r.Context(), req)
+	result, err := orch.UpgradeAddonClustersV4(ctx, req)
 	if err != nil {
 		if err.Error() == "confirmation required: set yes: true in request body" {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -228,14 +238,14 @@ func (s *Server) handleUpgradeAddonClustersV4(w http.ResponseWriter, r *http.Req
 	}
 
 	if req.DryRun {
-		writeJSON(w, http.StatusOK, result)
+		writeJSON(w, http.StatusOK, withAttributionWarning(result, tokRes))
 		return
 	}
 
-	audit.Enrich(r.Context(), audit.Fields{
+	audit.Enrich(ctx, audit.Fields{
 		Event:    "addon_upgraded_clusters_v4",
 		Resource: fmt.Sprintf("addon:%s", addonName),
 		Detail:   fmt.Sprintf("to=%s clusters=%d", req.Version, len(req.Clusters)),
 	})
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, withAttributionWarning(result, tokRes))
 }
