@@ -1331,6 +1331,24 @@ export const api = {
   refreshCatalogSources: () =>
     postJSON<import('./models').CatalogSourceRecord[]>('/catalog/sources/refresh', {}),
 
+  /**
+   * v4 wave 1 Story 3.4 — catalog-wide version-freshness summary (when
+   * Sharko last checked chart versions across the curated catalog + the
+   * engine pin). Powers the Marketplace Browse tab's "Last checked" line.
+   */
+  getCatalogFreshness: () =>
+    fetchJSON<import('./models').CatalogFreshnessResponse>('/catalog/freshness'),
+
+  /**
+   * Request an out-of-cycle freshness refresh (the Browse tab's "Refresh"
+   * action). Non-blocking — the pass runs in the background; callers
+   * re-fetch getCatalogFreshness / listCuratedCatalogVersions afterward to
+   * see updated timestamps. Tier-2 (operator); backend emits an audit
+   * entry.
+   */
+  refreshCatalogFreshness: () =>
+    postJSON<{ message: string }>('/catalog/freshness/refresh', {}),
+
   listCuratedCatalogVersions: (
     name: string,
     options?: { includePrereleases?: boolean },

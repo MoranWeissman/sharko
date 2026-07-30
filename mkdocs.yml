@@ -151,6 +151,7 @@ nav:
     - Runbook Style Guide: developer-guide/runbook-style-guide.md
   - Community:
     - Roadmap: community/roadmap.md
+    - Contributing a Catalog Entry: community/contributing-catalog-entries.md
 
 markdown_extensions:
   - admonition

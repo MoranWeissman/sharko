@@ -48,6 +48,11 @@ When filing, include:
 
 ## Opening a Pull Request
 
+**Adding or updating a curated addon?** Use the "catalog-entry" PR
+template (pick it from the compare-page template dropdown) and read
+[Contributing a Catalog Entry](docs/site/community/contributing-catalog-entries.md)
+first — it's a narrower, faster path than the general steps below.
+
 1. **Open or claim an issue first** for non-trivial changes. This
    avoids wasted work on a change the maintainers would reject for
    scope reasons.

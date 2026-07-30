@@ -2334,6 +2334,78 @@ const docTemplate = `{
                 }
             }
         },
+        "/catalog/freshness": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns when Sharko's background freshness scheduler last checked chart versions across the curated catalog and last checked the v4 engine pin, plus the configured refresh interval. Read-only. Per-addon detail lives on GET /catalog/addons/{name}/versions, which also carries a real last-checked timestamp.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Catalog version-freshness summary",
+                "responses": {
+                    "200": {
+                        "description": "Freshness summary",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogFreshnessResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/freshness/refresh": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requests an immediate freshness pass (chart versions across the curated catalog, plus the engine pin check) instead of waiting for the next scheduled tick. Non-blocking — the refresh runs in the background; poll GET /catalog/freshness or GET /catalog/addons/{name}/versions afterward to see updated timestamps. A request while a refresh is already pending is coalesced into that pending run.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Trigger an out-of-cycle catalog freshness refresh",
+                "responses": {
+                    "202": {
+                        "description": "Refresh requested",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Freshness scheduler not enabled",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/catalog/remote/{repo}/{name}": {
             "get": {
                 "security": [
@@ -9482,6 +9554,29 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api.catalogFreshnessResponse": {
+            "type": "object",
+            "properties": {
+                "addons_checked": {
+                    "type": "integer"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "engine_pin": {
+                    "$ref": "#/definitions/internal_api.enginePinFreshnessInfo"
+                },
+                "interval_seconds": {
+                    "type": "integer"
+                },
+                "last_run": {
+                    "type": "string"
+                },
+                "next_run": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_api.catalogListResponse": {
             "type": "object",
             "properties": {
@@ -9747,6 +9842,26 @@ const docTemplate = `{
                 },
                 "url": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.enginePinFreshnessInfo": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "last_checked": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "upgrade_available": {
+                    "type": "boolean"
+                },
+                "v4_repo": {
+                    "type": "boolean"
                 }
             }
         },

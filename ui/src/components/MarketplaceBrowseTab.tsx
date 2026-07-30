@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Sparkles } from 'lucide-react'
+import { RefreshCw, Sparkles } from 'lucide-react'
 import { api } from '@/services/api'
 import type {
   CatalogCategory,
   CatalogCuratedBy,
   CatalogEntry,
+  CatalogFreshnessResponse,
   CatalogSourceRecord,
 } from '@/services/models'
 import { LoadingState } from '@/components/LoadingState'
@@ -16,6 +17,7 @@ import {
   type MarketplaceFiltersValue,
   type ScoreTierFilter,
 } from '@/components/MarketplaceFilters'
+import { relativeTime } from '@/lib/time'
 /**
  * Curated-only filterable grid. Cards navigate to the in-page detail view
  * (?mp_addon=<name>), which the parent MarketplaceTab renders as a full-tab
@@ -200,6 +202,43 @@ export function MarketplaceBrowseTab() {
     }
   }, [])
 
+  // v4 wave 1 Story 3.4 — catalog-wide "last checked" line. Non-fatal on
+  // failure (older backends without the endpoint, or a server that hasn't
+  // wired the freshness scheduler) — the grid renders regardless; the
+  // caller just never sees the "Last checked" line.
+  const [freshness, setFreshness] = useState<CatalogFreshnessResponse | null>(
+    null,
+  )
+  const [refreshingFreshness, setRefreshingFreshness] = useState(false)
+
+  const loadFreshness = useCallback(() => {
+    if (typeof api.getCatalogFreshness !== 'function') return
+    api
+      .getCatalogFreshness()
+      .then((resp) => setFreshness(resp))
+      .catch(() => setFreshness(null))
+  }, [])
+
+  useEffect(() => {
+    loadFreshness()
+  }, [loadFreshness])
+
+  const handleRefreshFreshness = useCallback(async () => {
+    if (typeof api.refreshCatalogFreshness !== 'function') return
+    setRefreshingFreshness(true)
+    try {
+      await api.refreshCatalogFreshness()
+      // The refresh runs in the background on the server (non-blocking, a
+      // full pass over the catalog can take a while) — a short delay before
+      // re-polling gives the earliest addons in the pass a chance to land
+      // before we ask again. The timestamp will keep catching up on any
+      // later mount/navigation regardless.
+      setTimeout(loadFreshness, 1500)
+    } finally {
+      setRefreshingFreshness(false)
+    }
+  }, [loadFreshness])
+
   const sourceByURL = useMemo(
     () => Object.fromEntries(sources.map((s) => [s.url, s])),
     [sources],
@@ -282,12 +321,45 @@ export function MarketplaceBrowseTab() {
           </p>
         </div>
 
-        <header className="flex items-center justify-between">
+        <header className="flex items-center justify-between gap-2">
           <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
             <Sparkles className="mr-1 inline h-4 w-4 text-teal-600" aria-hidden="true" />
             Showing <strong className="text-[#0a2a4a] dark:text-gray-100">{filtered.length}</strong>{' '}
             of {entries.length} curated addons
           </p>
+
+          {/* v4 wave 1 Story 3.4 — catalog-wide "last checked". Silently
+              omitted when the backend hasn't wired the freshness scheduler
+              (freshness === null or enabled === false), matching the
+              non-fatal pattern the sources fetch above already uses. */}
+          {freshness?.enabled && (
+            <p
+              className="flex shrink-0 items-center gap-2 text-xs text-[#5a8aaa] dark:text-gray-500"
+              title={
+                freshness.last_run
+                  ? new Date(freshness.last_run).toLocaleString()
+                  : undefined
+              }
+            >
+              <span>
+                {freshness.last_run
+                  ? `Last checked: ${relativeTime(freshness.last_run)}`
+                  : 'Last checked: not yet'}
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleRefreshFreshness()}
+                disabled={refreshingFreshness}
+                className="flex items-center gap-1 rounded border border-[#c0ddf0] px-1.5 py-0.5 text-[#3a6a8a] transition-colors hover:bg-[#eaf4ff] disabled:opacity-50 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
+              >
+                <RefreshCw
+                  className={`h-3 w-3 ${refreshingFreshness ? 'animate-spin' : ''}`}
+                  aria-hidden="true"
+                />
+                Refresh
+              </button>
+            </p>
+          )}
         </header>
 
         {filtered.length === 0 ? (

@@ -129,6 +129,13 @@ var HandlerTier = map[string]audit.Tier{
 	// SHARKO_CATALOG_URLS entry) rather than a cluster operation.
 	"handleRefreshCatalogSources": audit.Tier2,
 
+	// v4 wave 1 Story 3.4 — out-of-cycle catalog version-freshness
+	// refresh trigger. Same tier as handleRefreshCatalogSources
+	// immediately above: no Git write, but it is an operator-initiated
+	// "go check now" action against external state (Helm repo indexes +
+	// the engine pin), not a passive read.
+	"handleRefreshCatalogFreshness": audit.Tier2,
+
 	// preview-merge is read-only — it returns a candidate body but does
 	// not write Git. Classified TierPersonal so it doesn't count as a
 	// real mutation in audit attribution. The actual mutation happens

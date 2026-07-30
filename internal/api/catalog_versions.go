@@ -119,6 +119,35 @@ func (s *Server) handleListCatalogVersions(w http.ResponseWriter, r *http.Reques
 		includePrereleases = v
 	}
 
+	// v4 wave 1 Story 3.4: prefer the freshness scheduler's daily snapshot
+	// over the ad hoc 15-minute request cache. The snapshot's CheckedAt is
+	// a real, durable "Sharko last checked this" timestamp — not merely
+	// "the last time somebody happened to open this modal" — so every
+	// caller (catalog list, addon detail, version picker) sees the same
+	// honest cadence. Only curated catalog entries are covered (the
+	// scheduler walks s.catalog, not the merged third-party view); a miss
+	// here (scheduler unset, entry not yet processed, or a third-party
+	// entry) falls through to the on-demand path unchanged.
+	if s.freshness != nil {
+		if snap, ok := s.freshness.VersionSnapshot(entry.Name); ok {
+			if snap.Unknown {
+				resp := catalogVersionsResponse{
+					Addon:               entry.Name,
+					Chart:               entry.Chart,
+					Repo:                entry.Repo,
+					CachedAt:            snap.CheckedAt.UTC().Format(time.RFC3339),
+					VersionCheckUnknown: true,
+				}
+				writeJSON(w, http.StatusOK, resp)
+				return
+			}
+			resp := buildVersionsResponse(entry.Name, entry.Chart, entry.Repo, snap.Versions)
+			resp.CachedAt = snap.CheckedAt.UTC().Format(time.RFC3339)
+			writeJSON(w, http.StatusOK, filterVersions(resp, includePrereleases))
+			return
+		}
+	}
+
 	cacheKey := entry.Repo + "|" + entry.Chart
 	if cached, ok := lookupCachedVersions(cacheKey); ok {
 		writeJSON(w, http.StatusOK, filterVersions(cached, includePrereleases))

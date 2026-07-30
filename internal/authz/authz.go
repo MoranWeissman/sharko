@@ -93,6 +93,7 @@ var ActionRequirements = map[string]Role{
 	"engine.pin-upgrade":            RoleOperator,
 	"catalog.add-internal-addon":    RoleOperator,
 	"reconciler.trigger":            RoleOperator,
+	"catalog.freshness.refresh":     RoleOperator,
 	"token.create":                  RoleOperator,
 	"token.revoke-own":              RoleOperator,
 	"init":                          RoleOperator,
@@ -121,6 +122,7 @@ var ActionRequirements = map[string]Role{
 	"metrics.read":            RoleViewer,
 	"addon-secret.list":       RoleViewer,
 	"engine.pin-check":        RoleViewer,
+	"catalog.freshness.read":  RoleViewer,
 
 	// Read-only first-run repo-state probe (GET /api/v1/init/status). The
 	// matching write action "init" is Operator+; the probe is read-only so

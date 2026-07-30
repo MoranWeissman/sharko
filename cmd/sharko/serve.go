@@ -29,6 +29,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/demo"
 	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/helm"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -289,6 +290,57 @@ var serveCmd = &cobra.Command{
 		scorecardSched := catalog.NewScheduler(cat, metrics.ScorecardMetricsAdapter{})
 		scorecardSched.Start(context.Background())
 		defer scorecardSched.Stop()
+
+		// v4 wave 1 Story 3.4 — catalog version-freshness scheduler. Walks
+		// the curated catalog on a fixed cadence (default 24h) and keeps a
+		// durable "last checked" snapshot per addon
+		// (internal/catalog.FreshnessScheduler), independent of who's
+		// browsing. Also runs the engine pin-bump check (Story 2.5) on the
+		// same cycle, so GET /api/v1/engine/pin can serve a recent result
+		// even with no live Git connection at request time. Configurable
+		// via SHARKO_CATALOG_FRESHNESS_ENABLED / _INTERVAL
+		// (charts/sharko/values.yaml catalog.freshness.{enabled,interval}),
+		// mirroring the connectivityCheck.enabled / autoRemediate.enabled
+		// toggle shape already used for other background jobs in this file.
+		freshnessEnabled := getEnvDefault("SHARKO_CATALOG_FRESHNESS_ENABLED", "true") != "false"
+		if freshnessEnabled {
+			freshnessIntervalRaw := getEnvDefault("SHARKO_CATALOG_FRESHNESS_INTERVAL", "24h")
+			freshnessInterval, parseErr := time.ParseDuration(freshnessIntervalRaw)
+			if parseErr != nil || freshnessInterval <= 0 {
+				slog.Warn("invalid SHARKO_CATALOG_FRESHNESS_INTERVAL, using default",
+					"value", freshnessIntervalRaw, "default", catalog.DefaultFreshnessInterval)
+				freshnessInterval = catalog.DefaultFreshnessInterval
+			}
+			// enginePinCheckFn closes over srv (already constructed above)
+			// rather than being wired later — CheckEnginePinLive resolves
+			// the active Git connection freshly on every call, so it is
+			// safe to hand this closure to the scheduler before
+			// ReinitializeFromConnection (below) has run. By the time the
+			// scheduler's first tick actually fires, the connection (if
+			// any) is initialized.
+			freshnessSched := catalog.NewFreshnessScheduler(cat, helm.NewFetcher(),
+				func(ctx context.Context) (*catalog.EnginePinStatus, error) {
+					result, checkErr := srv.CheckEnginePinLive(ctx)
+					if checkErr != nil {
+						return nil, checkErr
+					}
+					return &catalog.EnginePinStatus{
+						V4Repo:           result.V4Repo,
+						BundledVersion:   result.BundledVersion,
+						PinnedVersion:    result.PinnedVersion,
+						UpgradeAvailable: result.UpgradeAvailable,
+						Message:          result.Message,
+					}, nil
+				},
+				freshnessInterval,
+			)
+			srv.SetFreshness(freshnessSched)
+			freshnessSched.Start()
+			defer freshnessSched.Stop()
+			slog.Info("catalog freshness scheduler started", "interval", freshnessInterval)
+		} else {
+			slog.Info("catalog freshness scheduler disabled via SHARKO_CATALOG_FRESHNESS_ENABLED=false")
+		}
 
 		slog.Info("sharko starting", "version", version)
 

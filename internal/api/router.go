@@ -314,6 +314,14 @@ type Server struct {
 	// when no catalog sources are configured (embedded-only mode). The
 	// merge layer reads snapshots from this via SourcesFetcher().
 	sourcesFetcher *sources.Fetcher
+
+	// freshness is the v4 wave 1 Story 3.4 background scheduler that keeps
+	// a durable "last checked" snapshot of chart versions (per curated
+	// addon) and the engine pin check, independent of who's browsing. Nil
+	// is tolerated everywhere it's read — handlers fall back to their
+	// pre-Story-3.4 on-demand behavior when it's unset (tests, or a build
+	// that never wires one).
+	freshness *catalog.FreshnessScheduler
 }
 
 // NewServer creates a new API server.
@@ -913,6 +921,13 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Force-refresh every configured third-party catalog source
 	// synchronously. Tier 2 (admin). Audit-logged.
 	mux.HandleFunc("POST /api/v1/catalog/sources/refresh", srv.handleRefreshCatalogSources)
+	// v4 wave 1 Story 3.4 — catalog-wide version-freshness summary + an
+	// out-of-cycle refresh trigger for the background scheduler
+	// (internal/catalog.FreshnessScheduler). Distinct from
+	// /catalog/sources/refresh above: that one re-pulls third-party
+	// catalog FEEDS; this one re-checks chart VERSIONS + the engine pin.
+	mux.HandleFunc("GET /api/v1/catalog/freshness", srv.handleGetCatalogFreshness)
+	mux.HandleFunc("POST /api/v1/catalog/freshness/refresh", srv.handleRefreshCatalogFreshness)
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/versions", srv.handleListCatalogVersions)
 	// README proxy for the in-page Marketplace detail view. Resolves
 	// curated addon → ArtifactHub package, then returns the README

@@ -191,6 +191,38 @@ jobs:
             exit 1
           fi
 
+  # v4 Wave 1 Story 2.4 follow-up — the engine chart's `curated.addons`
+  # values block (charts/sharko-engine/values.yaml) is generated from
+  # catalog/addons.yaml, the monorepo's single source of truth for the
+  # shipped catalog (design doc section 4.7). Without this gate the two
+  # copies can drift silently: someone adds/edits a curated addon in
+  # catalog/addons.yaml (the Marketplace-facing copy) and forgets the
+  # engine chart never learns about it, so a user's per-cluster delta for
+  # that addon renders with an empty repoURL/chart/namespace. Mirrors the
+  # schemas-up-to-date / engine-version-up-to-date shape exactly.
+  engine-curated-up-to-date:
+    name: Engine Curated Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Regenerate engine curated defaults
+        run: make generate-engine-curated
+
+      - name: Check for diff
+        run: |
+          if ! git diff --exit-code -- charts/sharko-engine/values.yaml; then
+            echo "charts/sharko-engine/values.yaml's curated.addons block is out of date."
+            echo "Run 'make generate-engine-curated' and commit the result."
+            exit 1
+          fi
+
   # PR-time Sharko YAML validation.
   # On every pull request, this job builds the sharko CLI binary and
   # runs `sharko validate-config` against every changed *.yaml / *.yml
@@ -258,6 +290,42 @@ jobs:
             exit 1
           fi
           echo "All changed Sharko YAML validated cleanly."
+
+  # v4 wave 1 Story 3.5 — validates catalog/addons.yaml (the monorepo's own
+  # curated catalog, distinct from the v3 GitOps-repo deployed-catalog file
+  # validate-sharko-config above checks) on any PR that touches it. Shape
+  # mirrors validate-sharko-config exactly: build the CLI, run the existing
+  # loader's validation (internal/catalog.LoadBytes, exposed via
+  # `sharko validate-catalog` — zero new validation rules), fail loud and
+  # name the offending entry. Only runs when the PR diff touches the file,
+  # so most PRs skip this job entirely.
+  validate-catalog:
+    name: Catalog Format Validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Check whether catalog/addons.yaml changed
+        id: changed
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD -- catalog/addons.yaml | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate catalog/addons.yaml
+        if: steps.changed.outputs.changed == 'true'
+        run: go run ./cmd/sharko validate-catalog catalog/addons.yaml
 
   helm-validate:
     name: Helm Lint & Template

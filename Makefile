@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas generate-engine-version build-gitfake-image playground-up playground-status playground-tunnels playground-down operator-playground-up operator-playground-status operator-playground-tunnels operator-playground-down
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas generate-engine-version generate-engine-curated build-gitfake-image playground-up playground-status playground-tunnels playground-down operator-playground-up operator-playground-status operator-playground-tunnels operator-playground-down
 
 PORT ?= 8080
 
@@ -143,6 +143,16 @@ generate-schemas: ## Regenerate docs/schemas/*.v1.json + internal/schema/*.v1.js
 # charts/sharko-engine/Chart.yaml's version, run this target, commit both.
 generate-engine-version: ## Regenerate internal/engineversion/generated.go from charts/sharko-engine/Chart.yaml
 	go run ./cmd/gen-engine-version
+
+# v4 Wave 1 Story 2.4 follow-up (the flagged curated-defaults gap) — reads
+# catalog/addons.yaml (the monorepo's single source of truth for the
+# shipped catalog, design doc section 4.7) and regenerates the
+# `curated.addons` block inside charts/sharko-engine/values.yaml in place
+# (marker-spliced so the file's hand-written comments survive). Same shape
+# as generate-schemas / generate-engine-version: CI's "Engine Curated Up To
+# Date" job runs this target then `git diff --exit-code` on the output.
+generate-engine-curated: ## Regenerate charts/sharko-engine/values.yaml's curated.addons block from catalog/addons.yaml
+	go run ./cmd/gen-engine-curated
 
 clean: ## Remove build artifacts
 	rm -rf bin/ ui/dist/ _dist/

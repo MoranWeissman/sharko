@@ -245,6 +245,19 @@ autoRemediate:
   enabled: true
 
 # ---------------------------------------------------------------------------
+# Catalog Version Freshness (v4 Wave 1 Story 3.4)
+# ---------------------------------------------------------------------------
+# Background scheduler that walks the curated catalog on a fixed cadence,
+# keeping a durable "last checked" timestamp + chart-version snapshot per
+# addon (shown across the catalog list, addon detail, and version picker
+# views), and runs the v4 engine pin-bump check on the same cycle. Maps to
+# SHARKO_CATALOG_FRESHNESS_ENABLED / SHARKO_CATALOG_FRESHNESS_INTERVAL.
+catalog:
+  freshness:
+    enabled: true
+    interval: ""  # "" → code default (24h, daily). Accepts any Go duration string, e.g. "12h", "6h".
+
+# ---------------------------------------------------------------------------
 # GitOps Actions (v2 — PR creation from UI/AI)
 # ---------------------------------------------------------------------------
 gitops:
