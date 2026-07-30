@@ -17,6 +17,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/advisories"
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/api"
+	"github.com/MoranWeissman/sharko/internal/appsets"
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/catalog"
@@ -45,6 +46,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/settings"
 	"github.com/MoranWeissman/sharko/templates"
 	"github.com/spf13/cobra"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -838,6 +840,19 @@ var serveCmd = &cobra.Command{
 			argoManager = argosecrets.NewManager(k8sClient, argocdNamespace)
 			srv.SetArgoSecretManager(argoManager)
 			slog.Info("argocd cluster-secret manager wired", "namespace", argocdNamespace)
+
+			// Read-only ApplicationSet view for the brownfield-takeover
+			// checks (v4 Wave 2, Epic 6). Uses the dynamic client because
+			// ApplicationSet is a CRD; the chart grants get/list/watch on
+			// applicationsets.argoproj.io and nothing else. Failing to
+			// build it is not fatal — the takeover checks then say they
+			// could not check, which is the honest answer.
+			if dynClient, dynErr := dynamic.NewForConfig(inClusterCfg); dynErr != nil {
+				slog.Warn("could not create dynamic k8s client — takeover checks will not be able to read ApplicationSets", "error", dynErr)
+			} else {
+				srv.SetApplicationSetReader(appsets.NewDynamicReader(dynClient, argocdNamespace))
+				slog.Info("applicationset reader wired", "namespace", argocdNamespace)
+			}
 		}
 
 		// PR Tracker — polls Git provider for PR status changes and emits

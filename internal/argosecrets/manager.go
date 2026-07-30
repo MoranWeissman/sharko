@@ -968,8 +968,27 @@ func (m *Manager) SyncManagedClusterLabels(ctx context.Context, name string, des
 	if updated.Labels == nil {
 		updated.Labels = make(map[string]string, len(desired)+2)
 	}
+	// Labels a takeover carried over from the cluster's previous owner are
+	// NEVER convergence candidates (v4 Wave 2, Epic 6). They are recorded
+	// by key on the Secret itself, so this holds across restarts and no
+	// matter which writer runs.
+	//
+	// Without this the takeover promise would quietly break: a legacy label
+	// like "env: prod" has no "/" in it, so IsAddonLabelKey says yes, and
+	// the delete loop below would remove it on the very first self-heal
+	// tick — silently undoing the "all legacy labels preserved" contract
+	// the user confirmed. Removing those labels is its own explicit,
+	// confirmed action (see Manager.DropLabels), never a side effect.
+	preserved := make(map[string]struct{})
+	for _, k := range PreservedLabelKeys(existing.Annotations) {
+		preserved[k] = struct{}{}
+	}
+
 	// DELETE Sharko addon keys git no longer declares (full convergence).
 	for k := range updated.Labels {
+		if _, isPreserved := preserved[k]; isPreserved {
+			continue
+		}
 		if IsAddonLabelKey(k) {
 			if _, want := desired[k]; !want {
 				delete(updated.Labels, k)

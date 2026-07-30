@@ -1467,6 +1467,93 @@ definitions:
         description: '"success", "partial", "failed"'
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_takeover.Finding:
+    properties:
+      application_sets:
+        description: |-
+          ApplicationSets / Applications carry the names behind the sentence
+          so the UI can list them without re-parsing Detail.
+        items:
+          type: string
+        type: array
+      applications:
+        items:
+          type: string
+        type: array
+      detail:
+        description: 'Detail is the fact: what we actually found.'
+        type: string
+      id:
+        type: string
+      status:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_takeover.Status'
+      title:
+        type: string
+      what_it_means:
+        description: WhatItMeans explains the consequence in ordinary words.
+        type: string
+      what_to_do:
+        description: |-
+          WhatToDo is the action. On an ok finding it says there is nothing
+          to do, so the field is never empty and the UI never has a hole.
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_takeover.Report:
+    properties:
+      cluster:
+        type: string
+      findings:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_takeover.Finding'
+        type: array
+      legacy_labels:
+        additionalProperties:
+          type: string
+        description: |-
+          LegacyLabels are the labels already on the cluster's Secret that
+          are not Sharko's. Takeover carries every one of them over by
+          default — this is the list a person is shown before they confirm.
+        type: object
+      legacy_labels_selected_by:
+        additionalProperties:
+          items:
+            type: string
+          type: array
+        description: |-
+          LegacyLabelsSelectedBy maps each legacy label key to the
+          ApplicationSets that select on it, so the "who would notice if this
+          went away" question is answerable straight from the report.
+        type: object
+      needs_acknowledgement:
+        description: |-
+          NeedsAcknowledgement is true when at least one finding is a
+          warning. The takeover call refuses unless the caller says, in so
+          many words, that they have read the warnings.
+        type: boolean
+      ready:
+        description: |-
+          Ready is true when nothing is blocked. A ready report can still
+          carry warnings — see NeedsAcknowledgement.
+        type: boolean
+      server:
+        description: |-
+          Server is the cluster's API address as ArgoCD currently records it.
+          The takeover keeps this EXACTLY as it is.
+        type: string
+      summary:
+        description: Summary is the one-sentence version, for the top of the page.
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_takeover.Status:
+    enum:
+    - ok
+    - warning
+    - blocked
+    type: string
+    x-enum-varnames:
+    - StatusOK
+    - StatusWarning
+    - StatusBlocked
   github_com_MoranWeissman_sharko_internal_verify.ErrorCode:
     enum:
     - ERR_NETWORK
@@ -1560,6 +1647,53 @@ definitions:
   internal_api.DefaultAddonsResponse:
     properties:
       addons:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_api.DropLegacyLabelsRequest:
+    properties:
+      acknowledge_warnings:
+        description: |-
+          AcknowledgeWarnings must be true when an ApplicationSet still
+          selects on one of the labels being removed.
+        type: boolean
+      dry_run:
+        description: DryRun reports what would be removed and removes nothing.
+        type: boolean
+      labels:
+        description: |-
+          Labels narrows the drop to specific keys. Empty means "every label
+          the takeover carried over".
+        items:
+          type: string
+        type: array
+      "yes":
+        description: Yes is the explicit confirmation.
+        type: boolean
+    type: object
+  internal_api.DropLegacyLabelsResponse:
+    properties:
+      cluster:
+        type: string
+      message:
+        type: string
+      remaining:
+        description: Remaining are the carried-over labels still on the connection.
+        items:
+          type: string
+        type: array
+      removed:
+        description: Removed are the label keys actually taken off the connection.
+        items:
+          type: string
+        type: array
+      status:
+        type: string
+      warnings:
+        description: |-
+          Warnings names any ApplicationSet that selects on a label being
+          removed, and says what it would do about it.
         items:
           type: string
         type: array
@@ -1721,6 +1855,119 @@ definitions:
       terminated:
         description: true when a prior operation was terminated
         type: boolean
+    type: object
+  internal_api.TakeoverRequest:
+    properties:
+      acknowledge_warnings:
+        description: |-
+          AcknowledgeWarnings must be true when the preflight raised
+          warnings. It is a separate flag from Yes on purpose: "I want to do
+          this" and "I have read the things that could go wrong" are two
+          different statements, and folding them into one makes the second
+          one free.
+        type: boolean
+      auto_merge:
+        description: |-
+          AutoMerge overrides the connection's auto-merge default for this
+          pull request only.
+        type: boolean
+      dry_run:
+        description: |-
+          DryRun returns the plan and writes nothing. A dry run does not need
+          a confirmation.
+        type: boolean
+      preserve_legacy_labels:
+        description: |-
+          PreserveLegacyLabels carries the previous owner's labels over to
+          Sharko's connection. Defaults to true — omit it and the labels are
+          kept. Set it to false only if you already know nothing selects on
+          them.
+        type: boolean
+      region:
+        description: Region is optional and only recorded on the fleet entry.
+        type: string
+      "yes":
+        description: Yes is the explicit confirmation. Without it nothing happens.
+        type: boolean
+    type: object
+  internal_api.TakeoverResponse:
+    properties:
+      already_owned:
+        type: boolean
+      cluster:
+        type: string
+      dropped_labels:
+        additionalProperties:
+          type: string
+        description: |-
+          DroppedLabels are the previous owner's labels removed during the
+          takeover, when the caller asked for that.
+        type: object
+      dry_run:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult'
+      git:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+      message:
+        type: string
+      preflight:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_takeover.Report'
+      preserved_labels:
+        additionalProperties:
+          type: string
+        description: |-
+          PreservedLabels are the previous owner's labels now carried on
+          Sharko's connection.
+        type: object
+      secret_swapped:
+        description: |-
+          SecretSwapped is true when the connection's owner actually changed
+          on this call. False with AlreadyOwned true means it was already
+          Sharko's.
+        type: boolean
+      server:
+        description: |-
+          Server is the cluster's API address — unchanged by the takeover,
+          echoed back so the caller can see that for themselves.
+        type: string
+      status:
+        description: Status is "success", "partial" or "planned" (a dry run).
+        type: string
+      warnings:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_api.UnregisterConsequence:
+    properties:
+      detail:
+        type: string
+      id:
+        type: string
+      severity:
+        description: |-
+          Severity is "info" or "warning". Warnings are the ones that can
+          stop things running.
+        type: string
+      title:
+        type: string
+      what_it_means:
+        type: string
+    type: object
+  internal_api.UnregisterConsequencesResponse:
+    properties:
+      cluster:
+        type: string
+      confirmation_required:
+        description: |-
+          ConfirmationRequired restates how to actually do it, so the caller
+          never has to guess the shape of the confirmation.
+        type: string
+      consequences:
+        items:
+          $ref: '#/definitions/internal_api.UnregisterConsequence'
+        type: array
+      summary:
+        type: string
     type: object
   internal_api.aiAnnotateBlockedResponse:
     properties:
@@ -5571,6 +5818,182 @@ paths:
       summary: Refresh cluster secrets
       tags:
       - clusters
+  /clusters/{name}/takeover:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Makes Sharko the owner of an existing cluster's ArgoCD connection, keeping the same name, the same API address and — by default — every label the previous owner left on it. Adds the cluster to Sharko's fleet through a pull request and creates an empty addon file for it; no addon is turned on.
+        Nothing is written without "yes": true in the body. When the preflight raised warnings, "acknowledge_warnings": true is required as well. Send "dry_run": true to see the plan and change nothing.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Takeover request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.TakeoverRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cluster taken over (or the plan, on a dry run)
+          schema:
+            $ref: '#/definitions/internal_api.TakeoverResponse'
+        "207":
+          description: Partly done — see the message
+          schema:
+            $ref: '#/definitions/internal_api.TakeoverResponse'
+        "400":
+          description: Bad request, or the confirmation is missing
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: The preflight is blocking, or the warnings were not acknowledged,
+            or the repo has not been migrated
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Sharko cannot reach the cluster's connection in this install
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Take over a cluster ArgoCD already manages
+      tags:
+      - clusters
+  /clusters/{name}/takeover/legacy-labels/drop:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Takes the previous owner's labels off a cluster's connection. Warns first — by name — about any ApplicationSet that still picks clusters using one of those labels, because removing it is what makes this cluster fall out of that ApplicationSet.
+        Nothing is removed without "yes": true. Send "dry_run": true to see what would go.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Drop request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.DropLegacyLabelsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Labels removed (or the plan, on a dry run)
+          schema:
+            $ref: '#/definitions/internal_api.DropLegacyLabelsResponse'
+        "400":
+          description: Bad request, or the confirmation is missing
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: No connection with that name
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: An ApplicationSet still selects one of these labels and the
+            warning was not acknowledged
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Sharko cannot reach the cluster's connection in this install
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove the labels a takeover carried over
+      tags:
+      - clusters
+  /clusters/{name}/takeover/preflight:
+    get:
+      description: |-
+        Runs four read-only checks against a cluster ArgoCD already manages: who owns its connection today, which ApplicationSets would delete workloads if it stopped matching them, everything ArgoCD is deploying to it, and whether the name clashes with a cluster Sharko already has.
+        Writes nothing. Safe to re-run — fix something and run it again to see it go green.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The preflight report
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_takeover.Report'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Sharko cannot read the cluster's connection in this install
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Check whether a cluster can be taken over
+      tags:
+      - clusters
   /clusters/{name}/test:
     post:
       consumes:
@@ -5670,6 +6093,44 @@ paths:
       security:
       - BearerAuth: []
       summary: Un-adopt a cluster
+      tags:
+      - clusters
+  /clusters/{name}/unregister/consequences:
+    get:
+      description: |-
+        Reads out, one by one, what unregistering this cluster will do — what leaves the repo, what happens to its ArgoCD connection, what is deployed there today, and which ApplicationSets may react to the labels a takeover carried over.
+        Writes nothing and deletes nothing. It is the read that comes before the removal.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The consequences
+          schema:
+            $ref: '#/definitions/internal_api.UnregisterConsequencesResponse'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List what happens if you unregister a cluster
       tags:
       - clusters
   /clusters/{name}/values:

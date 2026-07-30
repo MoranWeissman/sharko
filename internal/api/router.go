@@ -26,6 +26,7 @@ import (
 
 	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/appsets"
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/auth"
@@ -252,6 +253,15 @@ type Server struct {
 
 	// obsStore persists cluster connectivity observations (optional — set via SetObservationsStore).
 	obsStore *observations.Store
+
+	// appSetReader is the READ-ONLY view of the ArgoCD ApplicationSets in
+	// the argocd namespace, used by the brownfield-takeover checks (v4
+	// Wave 2, Epic 6) to answer "would anything delete running workloads
+	// if this cluster's labels changed?". Optional — nil out-of-cluster,
+	// or when the install has not been given read access to
+	// ApplicationSets. Every caller nil-checks and reports "I could not
+	// check" rather than "all clear".
+	appSetReader appsets.Reader
 
 	// settingsStore persists server-wide settings such as probe_mode
 	// (optional — set via SetSettingsStore once the in-cluster K8s client
@@ -544,6 +554,15 @@ func (s *Server) ClusterReconciler() *clusterreconciler.Reconciler {
 	return s.clusterRecon
 }
 
+// SetApplicationSetReader wires the read-only ApplicationSet view the
+// brownfield-takeover checks use (v4 Wave 2, Epic 6). Call once at startup
+// when running in-cluster. Optional: leaving it nil is a valid state and
+// every caller reports "Sharko could not check" instead of claiming the
+// ApplicationSets are fine.
+func (s *Server) SetApplicationSetReader(r appsets.Reader) {
+	s.appSetReader = r
+}
+
 // ReinitializeFromConnection reads provider config and GitOps settings from the active connection
 // and rebuilds credProvider + providerCfg + gitopsCfg. Called after connection create/update/set-active
 // so that write-API operations pick up the new settings immediately without a restart.
@@ -823,6 +842,14 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/clusters/{name}/diagnose", srv.handleDiagnoseCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/doctor", srv.handleDoctorCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/unadopt", srv.handleUnadoptCluster)
+
+	// Brownfield takeover (v4 Wave 2, Epic 6). The two GETs write nothing
+	// and are safe to re-run; the two POSTs both refuse without an
+	// explicit confirmation in the body.
+	mux.HandleFunc("GET /api/v1/clusters/{name}/takeover/preflight", srv.handleClusterTakeoverPreflight)
+	mux.HandleFunc("POST /api/v1/clusters/{name}/takeover", srv.handleClusterTakeover)
+	mux.HandleFunc("POST /api/v1/clusters/{name}/takeover/legacy-labels/drop", srv.handleClusterDropLegacyLabels)
+	mux.HandleFunc("GET /api/v1/clusters/{name}/unregister/consequences", srv.handleClusterUnregisterConsequences)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}", srv.handleEnableAddon)
 	mux.HandleFunc("DELETE /api/v1/clusters/{name}/addons/{addon}", srv.handleDisableAddon)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}/restart-sync", srv.handleRestartAddonSync)

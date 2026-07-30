@@ -4558,6 +4558,257 @@ const docTemplate = `{
                 }
             }
         },
+        "/clusters/{name}/takeover": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Makes Sharko the owner of an existing cluster's ArgoCD connection, keeping the same name, the same API address and — by default — every label the previous owner left on it. Adds the cluster to Sharko's fleet through a pull request and creates an empty addon file for it; no addon is turned on.\nNothing is written without \"yes\": true in the body. When the preflight raised warnings, \"acknowledge_warnings\": true is required as well. Send \"dry_run\": true to see the plan and change nothing.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Take over a cluster ArgoCD already manages",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Takeover request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.TakeoverRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Cluster taken over (or the plan, on a dry run)",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.TakeoverResponse"
+                        }
+                    },
+                    "207": {
+                        "description": "Partly done — see the message",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.TakeoverResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request, or the confirmation is missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "The preflight is blocking, or the warnings were not acknowledged, or the repo has not been migrated",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Sharko cannot reach the cluster's connection in this install",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/clusters/{name}/takeover/legacy-labels/drop": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Takes the previous owner's labels off a cluster's connection. Warns first — by name — about any ApplicationSet that still picks clusters using one of those labels, because removing it is what makes this cluster fall out of that ApplicationSet.\nNothing is removed without \"yes\": true. Send \"dry_run\": true to see what would go.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Remove the labels a takeover carried over",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Drop request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.DropLegacyLabelsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Labels removed (or the plan, on a dry run)",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.DropLegacyLabelsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request, or the confirmation is missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "No connection with that name",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "An ApplicationSet still selects one of these labels and the warning was not acknowledged",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Sharko cannot reach the cluster's connection in this install",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/clusters/{name}/takeover/preflight": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Runs four read-only checks against a cluster ArgoCD already manages: who owns its connection today, which ApplicationSets would delete workloads if it stopped matching them, everything ArgoCD is deploying to it, and whether the name clashes with a cluster Sharko already has.\nWrites nothing. Safe to re-run — fix something and run it again to see it go green.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Check whether a cluster can be taken over",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The preflight report",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_takeover.Report"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Sharko cannot read the cluster's connection in this install",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/clusters/{name}/test": {
             "post": {
                 "security": [
@@ -4696,6 +4947,61 @@ const docTemplate = `{
                     },
                     "502": {
                         "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/clusters/{name}/unregister/consequences": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reads out, one by one, what unregistering this cluster will do — what leaves the repo, what happens to its ArgoCD connection, what is deployed there today, and which ApplicationSets may react to the labels a takeover carried over.\nWrites nothing and deletes nothing. It is the read that comes before the removal.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "List what happens if you unregister a cluster",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The consequences",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.UnregisterConsequencesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -10008,6 +10314,105 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_takeover.Finding": {
+            "type": "object",
+            "properties": {
+                "application_sets": {
+                    "description": "ApplicationSets / Applications carry the names behind the sentence\nso the UI can list them without re-parsing Detail.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "applications": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "detail": {
+                    "description": "Detail is the fact: what we actually found.",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_takeover.Status"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "what_it_means": {
+                    "description": "WhatItMeans explains the consequence in ordinary words.",
+                    "type": "string"
+                },
+                "what_to_do": {
+                    "description": "WhatToDo is the action. On an ok finding it says there is nothing\nto do, so the field is never empty and the UI never has a hole.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_takeover.Report": {
+            "type": "object",
+            "properties": {
+                "cluster": {
+                    "type": "string"
+                },
+                "findings": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_takeover.Finding"
+                    }
+                },
+                "legacy_labels": {
+                    "description": "LegacyLabels are the labels already on the cluster's Secret that\nare not Sharko's. Takeover carries every one of them over by\ndefault — this is the list a person is shown before they confirm.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "legacy_labels_selected_by": {
+                    "description": "LegacyLabelsSelectedBy maps each legacy label key to the\nApplicationSets that select on it, so the \"who would notice if this\nwent away\" question is answerable straight from the report.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "needs_acknowledgement": {
+                    "description": "NeedsAcknowledgement is true when at least one finding is a\nwarning. The takeover call refuses unless the caller says, in so\nmany words, that they have read the warnings.",
+                    "type": "boolean"
+                },
+                "ready": {
+                    "description": "Ready is true when nothing is blocked. A ready report can still\ncarry warnings — see NeedsAcknowledgement.",
+                    "type": "boolean"
+                },
+                "server": {
+                    "description": "Server is the cluster's API address as ArgoCD currently records it.\nThe takeover keeps this EXACTLY as it is.",
+                    "type": "string"
+                },
+                "summary": {
+                    "description": "Summary is the one-sentence version, for the top of the page.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_takeover.Status": {
+            "type": "string",
+            "enum": [
+                "ok",
+                "warning",
+                "blocked"
+            ],
+            "x-enum-varnames": [
+                "StatusOK",
+                "StatusWarning",
+                "StatusBlocked"
+            ]
+        },
         "github_com_MoranWeissman_sharko_internal_verify.ErrorCode": {
             "type": "string",
             "enum": [
@@ -10135,6 +10540,65 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "addons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_api.DropLegacyLabelsRequest": {
+            "type": "object",
+            "properties": {
+                "acknowledge_warnings": {
+                    "description": "AcknowledgeWarnings must be true when an ApplicationSet still\nselects on one of the labels being removed.",
+                    "type": "boolean"
+                },
+                "dry_run": {
+                    "description": "DryRun reports what would be removed and removes nothing.",
+                    "type": "boolean"
+                },
+                "labels": {
+                    "description": "Labels narrows the drop to specific keys. Empty means \"every label\nthe takeover carried over\".",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "yes": {
+                    "description": "Yes is the explicit confirmation.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.DropLegacyLabelsResponse": {
+            "type": "object",
+            "properties": {
+                "cluster": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "remaining": {
+                    "description": "Remaining are the carried-over labels still on the connection.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "removed": {
+                    "description": "Removed are the label keys actually taken off the connection.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "warnings": {
+                    "description": "Warnings names any ApplicationSet that selects on a label being\nremoved, and says what it would do about it.",
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -10358,6 +10822,132 @@ const docTemplate = `{
                 "terminated": {
                     "description": "true when a prior operation was terminated",
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_api.TakeoverRequest": {
+            "type": "object",
+            "properties": {
+                "acknowledge_warnings": {
+                    "description": "AcknowledgeWarnings must be true when the preflight raised\nwarnings. It is a separate flag from Yes on purpose: \"I want to do\nthis\" and \"I have read the things that could go wrong\" are two\ndifferent statements, and folding them into one makes the second\none free.",
+                    "type": "boolean"
+                },
+                "auto_merge": {
+                    "description": "AutoMerge overrides the connection's auto-merge default for this\npull request only.",
+                    "type": "boolean"
+                },
+                "dry_run": {
+                    "description": "DryRun returns the plan and writes nothing. A dry run does not need\na confirmation.",
+                    "type": "boolean"
+                },
+                "preserve_legacy_labels": {
+                    "description": "PreserveLegacyLabels carries the previous owner's labels over to\nSharko's connection. Defaults to true — omit it and the labels are\nkept. Set it to false only if you already know nothing selects on\nthem.",
+                    "type": "boolean"
+                },
+                "region": {
+                    "description": "Region is optional and only recorded on the fleet entry.",
+                    "type": "string"
+                },
+                "yes": {
+                    "description": "Yes is the explicit confirmation. Without it nothing happens.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.TakeoverResponse": {
+            "type": "object",
+            "properties": {
+                "already_owned": {
+                    "type": "boolean"
+                },
+                "cluster": {
+                    "type": "string"
+                },
+                "dropped_labels": {
+                    "description": "DroppedLabels are the previous owner's labels removed during the\ntakeover, when the caller asked for that.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "dry_run": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult"
+                },
+                "git": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "preflight": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_takeover.Report"
+                },
+                "preserved_labels": {
+                    "description": "PreservedLabels are the previous owner's labels now carried on\nSharko's connection.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "secret_swapped": {
+                    "description": "SecretSwapped is true when the connection's owner actually changed\non this call. False with AlreadyOwned true means it was already\nSharko's.",
+                    "type": "boolean"
+                },
+                "server": {
+                    "description": "Server is the cluster's API address — unchanged by the takeover,\nechoed back so the caller can see that for themselves.",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status is \"success\", \"partial\" or \"planned\" (a dry run).",
+                    "type": "string"
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_api.UnregisterConsequence": {
+            "type": "object",
+            "properties": {
+                "detail": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "severity": {
+                    "description": "Severity is \"info\" or \"warning\". Warnings are the ones that can\nstop things running.",
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "what_it_means": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.UnregisterConsequencesResponse": {
+            "type": "object",
+            "properties": {
+                "cluster": {
+                    "type": "string"
+                },
+                "confirmation_required": {
+                    "description": "ConfirmationRequired restates how to actually do it, so the caller\nnever has to guess the shape of the confirmation.",
+                    "type": "string"
+                },
+                "consequences": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.UnregisterConsequence"
+                    }
+                },
+                "summary": {
+                    "type": "string"
                 }
             }
         },
