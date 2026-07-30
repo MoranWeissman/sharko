@@ -1330,3 +1330,39 @@ export interface RegisterClusterResult {
   // rendered by another ArgoCD Application (V2-cleanup-89.5).
   warnings?: string[]
 }
+
+/**
+ * V4GitResult — mirrors the Go orchestrator.GitResult struct returned by
+ * the v4-format addon endpoints (POST/DELETE
+ * /api/v1/v4/clusters/{name}/addons/{addon} — v4 Wave 1 Story 4.3). Same
+ * PR fields every write endpoint returns (pr_url/pr_id/merged/branch),
+ * so PRResultBanner/extractPR (PRFeedback.tsx) read it directly with no
+ * adapter — plus dry_run, which carries the SAME DryRunResult shape as
+ * every other preview-capable write, so DryRunPreview also reads it
+ * directly.
+ */
+export interface V4GitResult {
+  pr_url?: string
+  pr_id?: number
+  branch?: string
+  merged?: boolean
+  commit_sha?: string
+  dry_run?: DryRunResult
+}
+
+/**
+ * V4AddonValidationErrorBody — the JSON body of a 422 from
+ * POST /api/v1/v4/clusters/{name}/addons/{addon} (orchestrator's
+ * "sharpened pipeline" semantic validation, v4 Wave 1 Story 4.3):
+ * every required value the merged catalog entry declares, and every
+ * declared secret, must resolve — checked BEFORE any branch or PR
+ * exists, so a failed dry-run preview never promises a PR the real call
+ * would then reject. `problems` is always non-empty, plain English, one
+ * sentence per missing thing — rendered verbatim, no further formatting.
+ */
+export interface V4AddonValidationErrorBody {
+  error: string
+  cluster: string
+  addon: string
+  problems: string[]
+}
