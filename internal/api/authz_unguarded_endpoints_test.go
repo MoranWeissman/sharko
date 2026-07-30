@@ -175,6 +175,22 @@ func TestReprobeArtifactHub_AdminAllowed(t *testing.T) {
 	}
 }
 
+// --- handlePutDefaultAddons (default-addons.update, operator+) ---
+//
+// v4-8-4 role gate audit finding: this handler had NO authz gate at all
+// before this fix — any authenticated caller, viewer included, could PUT a
+// new global default-addon set (affecting every future cluster
+// registration). Fixed alongside the mechanical completeness test in
+// authz_coverage_test.go; this regression test locks in the fix.
+
+func TestPutDefaultAddons_ViewerForbidden(t *testing.T) {
+	s := &Server{}
+	req := withRole(httptest.NewRequest(http.MethodPut, "/api/v1/default-addons", nil), "viewer")
+	rw := httptest.NewRecorder()
+	s.handlePutDefaultAddons(rw, req)
+	assert403(t, rw)
+}
+
 // --- handleMarkAllNotificationsRead (reconciler.trigger, operator+) ---
 
 func TestMarkAllNotificationsRead_ViewerForbidden(t *testing.T) {

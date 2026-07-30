@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/schema"
@@ -70,6 +71,16 @@ func (s *Server) handleGetDefaultAddons(w http.ResponseWriter, r *http.Request) 
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /default-addons [put]
 func (s *Server) handlePutDefaultAddons(w http.ResponseWriter, r *http.Request) {
+	// v4-8-4 role gate audit finding: this handler mutates the GLOBAL
+	// default-addon set (every future cluster registration is affected) via
+	// a real PR write, but had no authz gate at all before this fix — any
+	// authenticated caller, viewer included, could change it. Gated at the
+	// same Operator+ level as the other catalog-editing actions
+	// (addon.add-to-catalog / addon.update-catalog).
+	if !authz.RequireWithResponse(w, r, "default-addons.update") {
+		return
+	}
+
 	// Audit enrichment (mutating handler).
 	audit.Enrich(r.Context(), audit.Fields{
 		Event:    "default_addons_updated",
