@@ -800,12 +800,25 @@ export async function configureAddon(
   return patchJSON<PRWriteResult>(`/addons/${encodeURIComponent(name)}`, body)
 }
 
-export async function createToken(data: { name: string; role: string; expires?: string }) {
+/**
+ * Create an API token. Leave expires_in_days out for the default of 90 days;
+ * anything else must be between 1 and 365.
+ */
+export async function createToken(data: { name: string; role: string; expires_in_days?: number }) {
   return postJSON<any>('/tokens', data)
 }
 
 export async function listTokens() {
   return fetchJSON<APIToken[]>('/tokens')
+}
+
+/**
+ * Push a token's expiry out by a fresh window. The token value does not
+ * change, so anything already using it keeps working.
+ */
+export async function renewToken(name: string, expiresInDays?: number) {
+  const body = expiresInDays ? { expires_in_days: expiresInDays } : {}
+  return postJSON<APIToken>(`/tokens/${encodeURIComponent(name)}/renew`, body)
 }
 
 export async function revokeToken(name: string) {

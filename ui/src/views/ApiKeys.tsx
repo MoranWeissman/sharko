@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Key, Plus, Trash2, Loader2, Copy, Check, X, AlertTriangle, Clock } from 'lucide-react'
-import { listTokens, createToken, revokeToken } from '@/services/api'
+import { Key, Plus, Trash2, Loader2, Copy, Check, X, AlertTriangle, Clock, RefreshCw } from 'lucide-react'
+import { listTokens, createToken, renewToken, revokeToken } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { ConfirmationModal } from '@/components/ConfirmationModal'
@@ -14,12 +14,14 @@ import {
 } from '@/components/ui/dialog'
 import type { APIToken } from '@/services/models'
 
+// Every new key gets an expiry date. The server default is 90 days; anything
+// picked here must stay between 1 and 365 days.
+const DEFAULT_EXPIRY_DAYS = 90
 const EXPIRY_OPTIONS = [
-  { label: '30 days', value: '30d' },
-  { label: '90 days', value: '90d' },
-  { label: '180 days', value: '180d' },
-  { label: '365 days', value: '365d' },
-  { label: 'No expiry', value: '0' },
+  { label: '30 days', value: 30 },
+  { label: '90 days (default)', value: DEFAULT_EXPIRY_DAYS },
+  { label: '180 days', value: 180 },
+  { label: '365 days', value: 365 },
 ] as const
 
 function tokenStatusBadge(token: APIToken) {
@@ -28,6 +30,14 @@ function tokenStatusBadge(token: APIToken) {
       <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
         <X className="h-3 w-3" />
         Expired
+      </span>
+    )
+  }
+  if (token.status === 'legacy-no-expiry') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#0a3a5a] dark:bg-gray-700 dark:text-gray-300">
+        <Clock className="h-3 w-3" />
+        No expiry (older key)
       </span>
     )
   }
@@ -56,7 +66,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [newRole, setNewRole] = useState('viewer')
-  const [newExpires, setNewExpires] = useState('365d')
+  const [newExpires, setNewExpires] = useState<number>(DEFAULT_EXPIRY_DAYS)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [createdToken, setCreatedToken] = useState<string | null>(null)
@@ -66,6 +76,11 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
   const [revoking, setRevoking] = useState(false)
   const [revokeError, setRevokeError] = useState<string | null>(null)
+
+  // Renew token
+  const [renewing, setRenewing] = useState<string | null>(null)
+  const [renewNotice, setRenewNotice] = useState<string | null>(null)
+  const [renewError, setRenewError] = useState<string | null>(null)
 
   const fetchTokens = useCallback(async () => {
     try {
@@ -87,7 +102,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
     setCreateOpen(true)
     setNewName('')
     setNewRole('viewer')
-    setNewExpires('365d')
+    setNewExpires(DEFAULT_EXPIRY_DAYS)
     setCreateError(null)
     setCreatedToken(null)
     setCopied(false)
@@ -98,7 +113,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
     setCreating(true)
     setCreateError(null)
     try {
-      const result = await createToken({ name: newName.trim(), role: newRole, expires: newExpires })
+      const result = await createToken({ name: newName.trim(), role: newRole, expires_in_days: newExpires })
       const token = result?.token || result?.api_token || result?.value || JSON.stringify(result)
       setCreatedToken(token)
       void fetchTokens()
@@ -116,6 +131,21 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
       setTimeout(() => setCopied(false), 2000)
     }).catch(() => {})
   }, [createdToken])
+
+  const handleRenew = useCallback(async (name: string) => {
+    setRenewing(name)
+    setRenewNotice(null)
+    setRenewError(null)
+    try {
+      await renewToken(name)
+      setRenewNotice(`"${name}" now runs for another ${DEFAULT_EXPIRY_DAYS} days. The key itself did not change.`)
+      void fetchTokens()
+    } catch (e: unknown) {
+      setRenewError(e instanceof Error ? e.message : 'Failed to renew key')
+    } finally {
+      setRenewing(null)
+    }
+  }, [fetchTokens])
 
   const handleRevoke = useCallback(async () => {
     if (!revokeTarget) return
@@ -214,21 +244,37 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                       {formatDate(token.expires_at)}
                     </span>
                   ) : (
-                    <span className="text-[#5a8aaa]">Never</span>
+                    <span className="text-[#5a8aaa]" title="This key was made before Sharko put expiry dates on keys. It keeps working — create a new one to give it an expiry.">
+                      No expiry (older key)
+                    </span>
                   )}
                 </td>
                 <td className="px-6 py-3 text-[#2a5a7a] dark:text-gray-400">
                   {formatDate(token.last_used_at)}
                 </td>
                 <td className="px-6 py-3">
-                  <button
-                    type="button"
-                    onClick={() => { setRevokeError(null); setRevokeTarget(token.name) }}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-[#f0f7ff] px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Revoke
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleRenew(token.name)}
+                      disabled={renewing === token.name}
+                      title={`Give this key another ${DEFAULT_EXPIRY_DAYS} days. The key itself does not change.`}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2.5 py-1 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                    >
+                      {renewing === token.name
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <RefreshCw className="h-3.5 w-3.5" />}
+                      Renew
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setRevokeError(null); setRevokeTarget(token.name) }}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-[#f0f7ff] px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Revoke
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -242,6 +288,14 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
           </tbody>
         </table>
       </div>
+
+      {renewNotice && (
+        <p className="text-sm text-green-700 dark:text-green-400">{renewNotice}</p>
+      )}
+
+      {renewError && (
+        <p className="text-sm text-red-600 dark:text-red-400">{renewError}</p>
+      )}
 
       {revokeError && (
         <p className="text-sm text-red-600 dark:text-red-400">{revokeError}</p>
@@ -321,13 +375,16 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                 </label>
                 <select
                   value={newExpires}
-                  onChange={(e) => setNewExpires(e.target.value)}
+                  onChange={(e) => setNewExpires(Number(e.target.value))}
                   className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
                 >
                   {EXPIRY_OPTIONS.map(opt => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
+                <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-500">
+                  Every key expires. When it runs out, renew it from the list — the key value stays the same.
+                </p>
               </div>
               {createError && <p className="text-sm text-red-600 dark:text-red-400">{createError}</p>}
             </div>

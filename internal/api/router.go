@@ -1063,6 +1063,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// API tokens (admin only)
 	mux.HandleFunc("POST /api/v1/tokens", srv.handleCreateToken)
 	mux.HandleFunc("GET /api/v1/tokens", srv.handleListTokens)
+	mux.HandleFunc("POST /api/v1/tokens/{name}/renew", srv.handleRenewToken)
 	mux.HandleFunc("DELETE /api/v1/tokens/{name}", srv.handleRevokeToken)
 
 	// User management (admin only)
@@ -1465,14 +1466,21 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// refusal carries a specific, plain-English reason when the caller
+		// presented a real token that is no longer usable (expired). It stays
+		// empty for anything else so unknown tokens get a flat 401.
+		refusal := ""
+
 		// Check Bearer token
 		authHeader := r.Header.Get("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			token := strings.TrimPrefix(authHeader, "Bearer ")
-			if s.tryAuthenticateToken(r, token) {
+			ok, reason := s.tryAuthenticateToken(r, token)
+			if ok {
 				next.ServeHTTP(w, r)
 				return
 			}
+			refusal = reason
 		}
 
 		// EventSource (used by the audit Live Tail SSE stream in the UI)
@@ -1483,13 +1491,19 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 		// (V2-cleanup-85.2).
 		if isAuditStreamRequest(r) && !strings.HasPrefix(authHeader, "Bearer ") {
 			if token := r.URL.Query().Get("token"); token != "" {
-				if s.tryAuthenticateToken(r, token) {
+				ok, reason := s.tryAuthenticateToken(r, token)
+				if ok {
 					next.ServeHTTP(w, r)
 					return
 				}
+				refusal = reason
 			}
 		}
 
+		if refusal != "" {
+			writeError(w, http.StatusUnauthorized, refusal)
+			return
+		}
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 	})
 }
@@ -1504,10 +1518,16 @@ func isAuditStreamRequest(r *http.Request) bool {
 // tryAuthenticateToken validates token as either a session token or a
 // sharko_-prefixed API key — the SAME validation the Authorization: Bearer
 // path uses — and, on success, stamps X-Sharko-User / X-Sharko-Role on r.
-// Returns true iff authentication succeeded.
-func (s *Server) tryAuthenticateToken(r *http.Request, token string) bool {
+//
+// Returns (true, "") when authentication succeeded. On failure the second
+// value is a plain-English reason to show the caller, but ONLY when the
+// caller demonstrably holds the credential in question (an API token that
+// matched a stored hash but has expired). For an unknown or revoked token it
+// is empty, so the caller gets a flat "unauthorized" and learns nothing about
+// which token names exist.
+func (s *Server) tryAuthenticateToken(r *http.Request, token string) (bool, string) {
 	if token == "" {
-		return false
+		return false, ""
 	}
 	if isValidSession(token) {
 		username := getSessionUser(token)
@@ -1516,19 +1536,20 @@ func (s *Server) tryAuthenticateToken(r *http.Request, token string) bool {
 		if user := s.authStore.GetUser(username); user != nil {
 			r.Header.Set("X-Sharko-Role", user.Role)
 		}
-		return true
+		return true, ""
 	}
 
 	// Check if the token is an API key
 	if strings.HasPrefix(token, "sharko_") {
-		username, role, ok := s.authStore.ValidateToken(token)
-		if ok {
+		username, role, err := s.authStore.AuthenticateToken(token)
+		if err == nil {
 			r.Header.Set("X-Sharko-User", username)
 			r.Header.Set("X-Sharko-Role", role)
-			return true
+			return true, ""
 		}
+		return false, tokenRefusalMessage(err)
 	}
-	return false
+	return false, ""
 }
 
 // handleUpdatePassword godoc

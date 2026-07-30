@@ -99,10 +99,12 @@ func (c *Client) HashPassword(t *testing.T, plaintext string, opts ...RequestOpt
 // APITokenView mirrors auth.APIToken without the secret hash. Matches
 // the JSON ListTokens emits (`-` tag on Hash strips it).
 type APITokenView struct {
-	Name       string    `json:"name"`
-	Role       string    `json:"role"`
-	CreatedAt  time.Time `json:"created_at"`
-	LastUsedAt time.Time `json:"last_used_at,omitempty"`
+	Name       string     `json:"name"`
+	Role       string     `json:"role"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+	Status     string     `json:"status"`
+	LastUsedAt time.Time  `json:"last_used_at,omitempty"`
 }
 
 // CreateTokenResponse mirrors the JSON handleCreateToken returns.
@@ -111,9 +113,10 @@ type APITokenView struct {
 // time. The suite uses it immediately to drive an authenticated request,
 // then discards it.
 type CreateTokenResponse struct {
-	Name  string `json:"name"`
-	Token string `json:"token"`
-	Role  string `json:"role"`
+	Name      string `json:"name"`
+	Token     string `json:"token"`
+	Role      string `json:"role"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 // CreateToken POSTs /api/v1/tokens with the requested name + role.

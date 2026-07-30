@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Users, Plus, Shield, Eye, Wrench, Trash2, Key, Check, X, Copy, Loader2, AlertTriangle, Clock } from 'lucide-react'
-import { api, listTokens, createToken, revokeToken } from '@/services/api'
+import { Users, Plus, Shield, Eye, Wrench, Trash2, Key, Check, X, Copy, Loader2, AlertTriangle, Clock, RefreshCw } from 'lucide-react'
+import { api, listTokens, createToken, renewToken, revokeToken } from '@/services/api'
 import { Button } from '@/components/ui/button'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
@@ -13,12 +13,14 @@ interface UserAccount {
   role: string
 }
 
+// Every new token gets an expiry date. The server default is 90 days; anything
+// picked here must stay between 1 and 365 days.
+const DEFAULT_EXPIRY_DAYS = 90
 const EXPIRY_OPTIONS = [
-  { label: '30 days', value: '30d' },
-  { label: '90 days', value: '90d' },
-  { label: '180 days', value: '180d' },
-  { label: '365 days', value: '365d' },
-  { label: 'No expiry', value: '0' },
+  { label: '30 days', value: 30 },
+  { label: '90 days (default)', value: DEFAULT_EXPIRY_DAYS },
+  { label: '180 days', value: 180 },
+  { label: '365 days', value: 365 },
 ] as const
 
 const ROLE_COLORS: Record<string, string> = {
@@ -44,7 +46,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
   const [showTokenForm, setShowTokenForm] = useState(false)
   const [tokenName, setTokenName] = useState('')
   const [tokenRole, setTokenRole] = useState('viewer')
-  const [tokenExpires, setTokenExpires] = useState('365d')
+  const [tokenExpires, setTokenExpires] = useState<number>(DEFAULT_EXPIRY_DAYS)
   const [creatingToken, setCreatingToken] = useState(false)
   const [tokenCreateError, setTokenCreateError] = useState<string | null>(null)
   const [createdTokenValue, setCreatedTokenValue] = useState<string | null>(null)
@@ -52,6 +54,9 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
   const [revoking, setRevoking] = useState(false)
   const [revokeError, setRevokeError] = useState<string | null>(null)
+  const [renewing, setRenewing] = useState<string | null>(null)
+  const [renewNotice, setRenewNotice] = useState<string | null>(null)
+  const [renewError, setRenewError] = useState<string | null>(null)
 
   const fetchTokens = useCallback(async () => {
     try {
@@ -144,7 +149,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
     setShowTokenForm(true)
     setTokenName('')
     setTokenRole('viewer')
-    setTokenExpires('365d')
+    setTokenExpires(DEFAULT_EXPIRY_DAYS)
     setTokenCreateError(null)
     setCreatedTokenValue(null)
     setTokenCopied(false)
@@ -158,7 +163,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
       const result = await createToken({
         name: tokenName.trim(),
         role: tokenRole,
-        expires: tokenExpires,
+        expires_in_days: tokenExpires,
       })
       const token = result?.token || result?.api_token || result?.value || JSON.stringify(result)
       setCreatedTokenValue(token)
@@ -177,6 +182,21 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
       setTokenCopied(true)
       setTimeout(() => setTokenCopied(false), 2000)
     }).catch(() => {})
+  }
+
+  const handleRenewToken = async (name: string) => {
+    setRenewing(name)
+    setRenewNotice(null)
+    setRenewError(null)
+    try {
+      await renewToken(name)
+      setRenewNotice(`"${name}" now runs for another ${DEFAULT_EXPIRY_DAYS} days. The token value did not change.`)
+      void fetchTokens()
+    } catch (e: unknown) {
+      setRenewError(e instanceof Error ? e.message : 'Failed to renew token')
+    } finally {
+      setRenewing(null)
+    }
   }
 
   const handleRevokeToken = async () => {
@@ -211,6 +231,14 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
         <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
           <X className="h-3 w-3" />
           Expired
+        </span>
+      )
+    }
+    if (token.status === 'legacy-no-expiry') {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#0a3a5a] dark:bg-gray-700 dark:text-gray-300">
+          <Clock className="h-3 w-3" />
+          No expiry (older token)
         </span>
       )
     }
@@ -484,11 +512,11 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                   <option value="admin">Admin</option>
                 </select>
               </div>
-              <div className="w-36">
+              <div className="w-44">
                 <label className="mb-1 block text-xs font-medium text-[#1a4a6a] dark:text-gray-400">Expires in</label>
                 <select
                   value={tokenExpires}
-                  onChange={(e) => setTokenExpires(e.target.value)}
+                  onChange={(e) => setTokenExpires(Number(e.target.value))}
                   className="w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                 >
                   {EXPIRY_OPTIONS.map(opt => (
@@ -563,21 +591,37 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                           {formatDate(token.expires_at)}
                         </span>
                       ) : (
-                        <span className="text-[#5a8aaa]">Never</span>
+                        <span className="text-[#5a8aaa]" title="This token was made before Sharko put expiry dates on tokens. It keeps working — create a new one to give it an expiry.">
+                          No expiry (older token)
+                        </span>
                       )}
                     </td>
                     <td className="px-5 py-3 text-[#2a5a7a] dark:text-gray-400">
                       {formatDate(token.last_used_at)}
                     </td>
                     <td className="px-5 py-3">
-                      <button
-                        type="button"
-                        onClick={() => { setRevokeError(null); setRevokeTarget(token.name) }}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-[#f0f7ff] px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Revoke
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleRenewToken(token.name)}
+                          disabled={renewing === token.name}
+                          title={`Give this token another ${DEFAULT_EXPIRY_DAYS} days. The token itself does not change.`}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2.5 py-1 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                        >
+                          {renewing === token.name
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <RefreshCw className="h-3.5 w-3.5" />}
+                          Renew
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setRevokeError(null); setRevokeTarget(token.name) }}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-[#f0f7ff] px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Revoke
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -586,6 +630,14 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
           </div>
         )}
       </div>
+
+      {renewNotice && (
+        <p className="text-sm text-green-700 dark:text-green-400">{renewNotice}</p>
+      )}
+
+      {renewError && (
+        <p className="text-sm text-red-600 dark:text-red-400">{renewError}</p>
+      )}
 
       {revokeError && (
         <p className="text-sm text-red-600 dark:text-red-400">{revokeError}</p>

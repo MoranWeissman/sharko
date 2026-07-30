@@ -110,6 +110,7 @@ All write endpoints require the `admin` role.
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/v1/tokens` | Create an API key |
+| `POST` | `/api/v1/tokens/{name}/renew` | Give an existing API key a fresh window |
 | `DELETE` | `/api/v1/tokens/{name}` | Revoke an API key |
 
 ### Initialization
@@ -200,7 +201,18 @@ curl -X POST https://sharko.your-domain.com/api/v1/addons/upgrade-batch \
   }'
 ```
 
-### Create an API Key
+### API Keys (Tokens)
+
+API keys are the machine door into Sharko: a CI job, a Terraform run, or an
+internal tool holds one instead of a username and password.
+
+#### How long a key lasts
+
+**Every key you create expires after 90 days.** That is the default. Ask for a
+different window with `expires_in_days` — anything from **1 to 365 days**.
+There is no "never expires" option for new keys.
+
+#### Create a key
 
 ```bash
 curl -X POST https://sharko.your-domain.com/api/v1/tokens \
@@ -208,11 +220,95 @@ curl -X POST https://sharko.your-domain.com/api/v1/tokens \
   -H "Content-Type: application/json" \
   -d '{
     "name": "ci-pipeline",
-    "role": "viewer"
+    "role": "viewer",
+    "expires_in_days": 30
   }'
 ```
 
-Response includes the plaintext key — store it immediately.
+```json
+{
+  "name": "ci-pipeline",
+  "token": "sharko_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+  "role": "viewer",
+  "expires_at": "2026-08-29T09:14:22Z"
+}
+```
+
+The `token` value is shown **once**, right here. Store it immediately — Sharko
+keeps only a bcrypt hash and cannot show it to you again.
+
+#### List keys
+
+```bash
+curl https://sharko.your-domain.com/api/v1/tokens \
+  -H "Authorization: Bearer <token>"
+```
+
+Each entry carries a `status`:
+
+| `status` | What it means |
+|----------|---------------|
+| `active` | Has an expiry date that is still ahead. Works normally. |
+| `expired` | The expiry date has passed. Every request with it is refused. |
+| `legacy-no-expiry` | Stored before Sharko put expiry dates on keys, so it has none. It keeps working — we do not force it to expire. Create a replacement when you get the chance so it picks up an expiry. |
+
+Keys within 14 days of their expiry also report `expiring_soon: true`, so the
+UI can nudge you before anything breaks.
+
+The list never contains the key value or its hash — only the name, role,
+dates, and status.
+
+#### Renew a key
+
+Renewing pushes the expiry out by a fresh window, counted from now. **The key
+value does not change**, so every pipeline already holding it keeps working —
+nothing to redeploy.
+
+```bash
+curl -X POST https://sharko.your-domain.com/api/v1/tokens/ci-pipeline/renew \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"expires_in_days": 180}'
+```
+
+Leave the body out entirely to get the default 90 days. Renewing works on an
+expired key too — it starts working again straight away.
+
+#### Revoke a key
+
+```bash
+curl -X DELETE https://sharko.your-domain.com/api/v1/tokens/ci-pipeline \
+  -H "Authorization: Bearer <token>"
+```
+
+Revoking is immediate. There is no grace period and no undo — make a new key
+if you need one.
+
+#### What a refused key looks like
+
+An **expired** key gets a `401` that names it, because whoever sent it already
+holds it:
+
+```json
+{"error": "API token \"ci-pipeline\" expired on 2026-08-29 — renew it or create a new one, then try again"}
+```
+
+A key that was **revoked, mistyped, or never existed** gets a flat `401`:
+
+```json
+{"error": "unauthorized"}
+```
+
+That difference is deliberate: someone guessing at key names learns nothing.
+
+#### Who can do what
+
+| Action | Minimum role |
+|--------|--------------|
+| List keys | viewer |
+| Create a key | operator |
+| Renew a key | operator |
+| Revoke a key | admin |
 
 ### Poll an Operation
 

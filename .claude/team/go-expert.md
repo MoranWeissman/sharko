@@ -551,14 +551,28 @@ func (l *Log) Subscribe() (<-chan Entry, func()) // SSE support, buffered channe
 
 ### `internal/auth/` (updated in Epic 2)
 ```go
-// Token lifecycle additions:
-func (s *Store) CreateToken(name, role, creatorRole string, expiresIn time.Duration) (string, error)
-// Role bounding: creator can only create tokens with role ≤ own
-// Default expiry: 365 days; Admin can set no-expiry (-1)
-// ValidateToken rejects expired tokens
+// Token lifecycle (v4-wave2 8.2 — this is what actually ships):
+func (s *Store) CreateToken(name, role string, expiresInDays int) (string, error)
+func (s *Store) RenewToken(name string, expiresInDays int) (APIToken, error)
+func (s *Store) GetToken(name string) (APIToken, bool)
+func (s *Store) AuthenticateToken(plaintext string) (username, role string, err error)
+func (s *Store) ValidateToken(plaintext string) (username, role string, ok bool) // bool wrapper
+// Default expiry: DefaultTokenExpiryDays = 90; explicit window bounded 1-365
+//   (MinTokenExpiryDays / MaxTokenExpiryDays). expiresInDays == 0 → default.
+// APIToken.ExpiresAt is *time.Time — nil means "stored before expiry existed".
+//   Those are status "legacy-no-expiry": they keep working, never force-expired.
+// AuthenticateToken errors: ErrTokenNotFound (generic 401 — reveal nothing) or
+//   *TokenExpiredError (the caller holds the secret, so the 401 names the token).
+//   internal/api/tokens.go tokenRefusalMessage() maps that to the 401 body.
+// Renew extends the expiry WITHOUT changing the secret — clients keep working.
 // Bootstrap admin: auto-created on first startup if no users exist
-// SHARKO_INITIAL_ADMIN_PASSWORD env var overrides random password
+// SHARKO_BOOTSTRAP_ADMIN_PASSWORD env var supplies an operator password
 ```
+
+Human sessions live in `internal/api/router.go`: `DefaultSessionLifetime = 24 *
+time.Hour`, in-memory `activeSessions` map, expiry re-checked on EVERY request
+(`isValidSession` + `getSessionUser`) with an hourly sweep as housekeeping only.
+No refresh token, no remember-me.
 
 ### `internal/prtracker/` — PR Lifecycle Tracking
 ```go

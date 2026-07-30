@@ -1,5 +1,25 @@
 basePath: /api/v1
 definitions:
+  github_com_MoranWeissman_sharko_internal_auth.APIToken:
+    properties:
+      created_at:
+        type: string
+      expired:
+        type: boolean
+      expires_at:
+        type: string
+      expiring_soon:
+        type: boolean
+      last_used_at:
+        type: string
+      name:
+        type: string
+      role:
+        type: string
+      status:
+        description: Derived fields, filled in on read. Never stored.
+        type: string
+    type: object
   github_com_MoranWeissman_sharko_internal_capabilities.AWSIdentity:
     properties:
       detected:
@@ -1395,6 +1415,31 @@ definitions:
         description: '"pass", "fail", "skipped"'
         type: string
     type: object
+  internal_api.CreateTokenRequest:
+    properties:
+      expires_in_days:
+        description: |-
+          ExpiresInDays is how long the token stays usable, between 1 and 365.
+          Leave it out for the default of 90 days.
+        type: integer
+      name:
+        description: Name identifies the token in the list and in audit entries.
+        type: string
+      role:
+        description: Role is admin, operator, or viewer. Defaults to viewer.
+        type: string
+    type: object
+  internal_api.CreateTokenResponse:
+    properties:
+      expires_at:
+        type: string
+      name:
+        type: string
+      role:
+        type: string
+      token:
+        type: string
+    type: object
   internal_api.DefaultAddonsPutRequest:
     properties:
       addons:
@@ -1519,6 +1564,14 @@ definitions:
         items:
           $ref: '#/definitions/internal_api.PRItem'
         type: array
+    type: object
+  internal_api.RenewTokenRequest:
+    properties:
+      expires_in_days:
+        description: |-
+          ExpiresInDays is the new window, counted from now, between 1 and 365.
+          Leave it out for the default of 90 days.
+        type: integer
     type: object
   internal_api.RepoStatusResponse:
     properties:
@@ -7046,16 +7099,17 @@ paths:
       - system
   /tokens:
     get:
-      description: Returns all active API tokens without their secret values (admin
-        only)
+      description: Returns all API tokens without their secret values, each with its
+        expiry date and status (active, expired, or legacy-no-expiry)
       produces:
       - application/json
       responses:
         "200":
           description: Token list
           schema:
-            additionalProperties: true
-            type: object
+            items:
+              $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_auth.APIToken'
+            type: array
         "401":
           description: Unauthorized
           schema:
@@ -7074,24 +7128,23 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a new long-lived API token for programmatic access (admin
-        only)
+      description: Creates a new long-lived API token for programmatic access. The
+        token expires after 90 days unless expires_in_days (1-365) says otherwise.
+        The plaintext value is shown once and never again.
       parameters:
-      - description: Token name and role
+      - description: Token name, role, and optional expiry window
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/internal_api.CreateTokenRequest'
       produces:
       - application/json
       responses:
         "201":
-          description: Created token (shown only once)
+          description: Created token (plaintext shown only once)
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_api.CreateTokenResponse'
         "400":
           description: Bad request
           schema:
@@ -7114,7 +7167,8 @@ paths:
       - auth
   /tokens/{name}:
     delete:
-      description: Permanently revokes an API token by name (admin only)
+      description: Permanently revokes an API token by name. The token stops working
+        immediately — there is no grace period.
       parameters:
       - description: Token name
         in: path
@@ -7144,9 +7198,64 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "404":
+          description: Token not found
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Revoke API token
+      tags:
+      - auth
+  /tokens/{name}/renew:
+    post:
+      consumes:
+      - application/json
+      description: Pushes a token's expiry out by a fresh window (90 days by default,
+        or expires_in_days between 1 and 365). The secret value does not change, so
+        every client using the token keeps working.
+      parameters:
+      - description: Token name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Optional new expiry window
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/internal_api.RenewTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Renewed token metadata (no secret)
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_auth.APIToken'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Token not found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Renew API token
       tags:
       - auth
   /upgrade/{addonName}/recommendations:

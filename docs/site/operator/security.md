@@ -55,9 +55,40 @@ Check user configuration:
 kubectl get configmap sharko-users -n sharko -o yaml
 ```
 
+### Login Sessions
+
+A person logging in gets a session that **lasts 24 hours**. That window is the
+default and it is not configurable. When it runs out the session is gone: the
+next request comes back `401` and the person logs in again. There is no refresh
+token and no "remember me", so a stolen session token is useful to an attacker
+for at most 24 hours.
+
+Sessions live in memory, so a pod restart signs everyone out. A background
+sweep clears expired sessions every hour, but the sweep is only housekeeping —
+every single request re-checks the expiry, so an expired session is refused
+immediately whether or not the sweep has run.
+
 ### API Keys
 
 API keys use bcrypt hashing — the server never stores plaintext keys. The plaintext key is shown only once at creation time. Treat API keys as secrets; store them in your CI/CD vault (e.g., GitHub Actions secrets, Vault).
+
+**Keys expire after 90 days by default.** You can ask for anything from 1 to
+365 days when you create one. A key past its date is refused with a `401` that
+names the key and says it expired — the caller already holds that key, so
+naming it gives nothing away. A key that was revoked or never existed gets a
+flat `401` instead, so nobody can probe for real key names.
+
+**Renewing** a key pushes its expiry out without changing the key value, so
+pipelines holding it keep working with nothing to redeploy. **Revoking** takes
+effect immediately, with no grace period.
+
+**Keys created before expiry dates existed** have no expiry. Sharko does NOT
+force-expire them — they keep working, and they show up in the key list as
+`legacy-no-expiry` so you can spot them. Recreate them when convenient so they
+pick up an expiry date.
+
+Full request and response shapes are in the
+[API endpoints reference](../api/endpoints.md#api-keys-tokens).
 
 ## Pod Security
 

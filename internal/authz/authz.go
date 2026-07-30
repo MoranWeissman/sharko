@@ -95,6 +95,7 @@ var ActionRequirements = map[string]Role{
 	"reconciler.trigger":            RoleOperator,
 	"catalog.freshness.refresh":     RoleOperator,
 	"token.create":                  RoleOperator,
+	"token.renew":                   RoleOperator,
 	"token.revoke-own":              RoleOperator,
 	"init":                          RoleOperator,
 
