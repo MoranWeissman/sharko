@@ -1,13 +1,18 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/helm"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // buildChangelogText converts a slice of changelog entries into a human-readable
@@ -29,6 +34,64 @@ func buildChangelogText(addonName string, entries []changelogVersionEntry) strin
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+// resolveAddonChangelogEntry resolves an addon's chart name, repo URL, and
+// current version for the changelog endpoint — v4-aware, using the SAME
+// engine-pin probe AddonService.GetVersionMatrix's v4 branch uses (the
+// engine pin resolving to non-empty content on the configured GitOps base
+// branch) to decide whether to read the v3 configuration/addons-catalog.yaml
+// or the v4 delta-merged catalog (s.catalog overlaid with the caller's
+// catalog/addons.yaml, via s.loadCatalogDelta + catalog.MergeDelta — the
+// same helpers catalog_delta.go's handlers use). A v4 repo has no
+// addons-catalog.yaml at all (the v3→v4 migration deletes it and a fresh
+// v4 repo never had one) — reading it unconditionally is what turned every
+// v4-repo changelog request into a 500.
+//
+// Returns ("", "", "", nil) — not an error — when the addon isn't found in
+// either catalog, matching the pre-existing "addon not found" 404 contract
+// the caller already implements by checking chartName == "".
+func (s *Server) resolveAddonChangelogEntry(ctx context.Context, gp gitprovider.GitProvider, name string) (chartName, repoURL, currentVersion string, err error) {
+	baseBranch := s.gitopsConfig().BaseBranch
+
+	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, baseBranch); pinErr == nil && len(pinContent) > 0 {
+		if s.catalog == nil {
+			return "", "", "", fmt.Errorf("catalog not loaded")
+		}
+		delta, derr := s.loadCatalogDelta(ctx, gp)
+		if derr != nil {
+			return "", "", "", fmt.Errorf("loading catalog delta: %w", derr)
+		}
+		merged, merr := catalog.MergeDelta(s.catalog, delta)
+		if merr != nil {
+			return "", "", "", fmt.Errorf("merging catalog delta: %w", merr)
+		}
+		entry, ok := merged[name]
+		if !ok {
+			return "", "", "", nil
+		}
+		return entry.Chart, entry.RepoURL, entry.Version, nil
+	}
+
+	catalogData, cerr := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", baseBranch)
+	if cerr != nil {
+		if errors.Is(cerr, gitprovider.ErrFileNotFound) {
+			return "", "", "", nil
+		}
+		return "", "", "", fmt.Errorf("fetching addons catalog: %w", cerr)
+	}
+
+	parser := config.NewParser()
+	addons, perr := parser.ParseAddonsCatalog(catalogData)
+	if perr != nil {
+		return "", "", "", fmt.Errorf("parsing addons catalog: %w", perr)
+	}
+	for _, a := range addons {
+		if a.Name == name {
+			return a.Chart, a.RepoURL, a.Version, nil
+		}
+	}
+	return "", "", "", nil
 }
 
 // changelogVersionEntry is a single version entry returned by the changelog endpoint.
@@ -88,27 +151,10 @@ func (s *Server) handleGetAddonChangelog(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	catalogData, err := gp.GetFileContent(r.Context(), "configuration/addons-catalog.yaml", "main")
+	chartName, repoURL, currentVersion, err := s.resolveAddonChangelogEntry(r.Context(), gp, name)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("fetching addons catalog: %v", err))
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-
-	parser := config.NewParser()
-	addons, err := parser.ParseAddonsCatalog(catalogData)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("parsing addons catalog: %v", err))
-		return
-	}
-
-	var chartName, repoURL, currentVersion string
-	for _, a := range addons {
-		if a.Name == name {
-			chartName = a.Chart
-			repoURL = a.RepoURL
-			currentVersion = a.Version
-			break
-		}
 	}
 	if chartName == "" {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("addon %q not found in catalog", name))

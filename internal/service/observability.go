@@ -7,16 +7,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // ObservabilityService provides aggregated observability data from ArgoCD.
 type ObservabilityService struct {
 	clusterSvc *ClusterService
+
+	// baseBranchFn is the per-instance test seam for the configured GitOps
+	// base branch, mirroring AddonService.baseBranchFn (Wave 2 ride-along
+	// w2-q6 item 1). nil (tests, e2e harness) falls back to "main" via the
+	// branch() helper below.
+	baseBranchFn func() string
 }
 
 // NewObservabilityService creates a new ObservabilityService.
@@ -24,6 +30,25 @@ func NewObservabilityService(clusterSvc *ClusterService) *ObservabilityService {
 	return &ObservabilityService{
 		clusterSvc: clusterSvc,
 	}
+}
+
+// SetBaseBranchFn wires in a live accessor for the configured GitOps base
+// branch (e.g. api.Server.GitopsBaseBranch), matching
+// AddonService.SetBaseBranchFn.
+func (s *ObservabilityService) SetBaseBranchFn(fn func() string) {
+	s.baseBranchFn = fn
+}
+
+// branch returns the configured GitOps base branch, defaulting to "main"
+// when no seam is wired (tests, e2e harness) or it resolves to "".
+func (s *ObservabilityService) branch() string {
+	if s.baseBranchFn == nil {
+		return "main"
+	}
+	if b := s.baseBranchFn(); b != "" {
+		return b
+	}
+	return "main"
 }
 
 // GetOverview returns the full observability dashboard data.
@@ -235,16 +260,16 @@ func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Clien
 	totalAppSets := len(addonGroups)
 
 	controlPlane := models.ControlPlaneInfo{
-		ArgocdVersion:              versionInfo["Version"],
-		HelmVersion:                versionInfo["HelmVersion"],
-		KubectlVersion:             versionInfo["KubectlVersion"],
-		TotalApps:                  len(addonApps),
-		TotalClusters:              len(clusters),
-		ConfiguredClusters:         configuredClusters,
+		ArgocdVersion:               versionInfo["Version"],
+		HelmVersion:                 versionInfo["HelmVersion"],
+		KubectlVersion:              versionInfo["KubectlVersion"],
+		TotalApps:                   len(addonApps),
+		TotalClusters:               len(clusters),
+		ConfiguredClusters:          configuredClusters,
 		ConfiguredClustersAvailable: configuredClustersAvailable,
-		ConnectedClusters:          connectedClusters,
-		TotalAppSets:               totalAppSets,
-		HealthSummary:              healthSummary,
+		ConnectedClusters:           connectedClusters,
+		TotalAppSets:                totalAppSets,
+		HealthSummary:               healthSummary,
 	}
 
 	return &models.ObservabilityOverviewResponse{
@@ -380,7 +405,7 @@ func (s *ObservabilityService) checkResourceAlerts(ctx context.Context, gp gitpr
 
 	// Only check addons from the catalog that are actually deployed
 	parser := config.NewParser()
-	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
+	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
 	if err != nil {
 		return nil
 	}
@@ -395,7 +420,7 @@ func (s *ObservabilityService) checkResourceAlerts(ctx context.Context, gp gitpr
 		if !deployedAddons[addon.Name] {
 			continue
 		}
-		missing, detail := checkMissingResources(ctx, gp, addon.Name)
+		missing, detail := checkMissingResources(ctx, gp, addon.Name, s.branch())
 		if missing {
 			alerts = append(alerts, models.ResourceAlert{
 				AddonName: addon.Name,
@@ -415,9 +440,9 @@ func (s *ObservabilityService) checkResourceAlerts(ctx context.Context, gp gitpr
 
 // checkMissingResources checks if an addon's global values file contains resource configuration.
 // Returns false (no alert) if the addon has no values file — likely a CRD-only chart with no workloads.
-func checkMissingResources(ctx context.Context, gp gitprovider.GitProvider, addonName string) (bool, string) {
+func checkMissingResources(ctx context.Context, gp gitprovider.GitProvider, addonName, baseBranch string) (bool, string) {
 	path := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)
-	data, err := gp.GetFileContent(ctx, path, "main")
+	data, err := gp.GetFileContent(ctx, path, baseBranch)
 	if err != nil {
 		// No values file = likely a CRD-only or config-only chart (no pods to configure)
 		return false, ""

@@ -130,10 +130,20 @@ func NewAddonService(managedClustersPath string) *AddonService {
 }
 
 // ListAddons returns the raw addon catalog from Git.
+//
+// v4-repo detection: identical probe to GetVersionMatrix/GetCatalog — the
+// engine pin (orchestrator.EnginePinPath) resolving to non-empty content on
+// the base branch. A v4 repo has no configuration/addons-catalog.yaml (the
+// v3→v4 migration deletes it and a fresh v4 repo never had one), so the v4
+// branch reads the delta-merged catalog instead.
 func (s *AddonService) ListAddons(ctx context.Context, gp gitprovider.GitProvider) ([]models.AddonCatalogEntry, error) {
+	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, s.branch()); pinErr == nil && len(pinContent) > 0 {
+		return s.listAddonsV4(ctx, gp)
+	}
+
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if isGitFileNotFound(err) {
 			catalogData = []byte("applicationsets: []")
 		} else {
 			return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
@@ -143,12 +153,86 @@ func (s *AddonService) ListAddons(ctx context.Context, gp gitprovider.GitProvide
 	return s.parser.ParseAddonsCatalog(catalogData)
 }
 
+// listAddonsV4 is ListAddons' v4-repo branch. It merges the caller's
+// catalog/addons.yaml delta against the wired-in curated catalog
+// (s.curated, nil-safe) and flattens the result into the same
+// []models.AddonCatalogEntry shape ListAddons' v3 branch returns — callers
+// (handleListAddons, notifications.ServiceProvider) only ever read
+// Name/Chart/RepoURL/Version/Namespace off these entries, all of which a
+// catalog.MergedAddon carries directly.
+func (s *AddonService) listAddonsV4(ctx context.Context, gp gitprovider.GitProvider) ([]models.AddonCatalogEntry, error) {
+	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, s.branch())
+	var delta config.AddonCatalogDeltaSpec
+	if err != nil {
+		if !isGitFileNotFound(err) {
+			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogDeltaPath, err)
+		}
+	} else {
+		delta, err = config.LoadAddonCatalogDelta(deltaData)
+		if err != nil {
+			return nil, fmt.Errorf("parsing %s: %w", config.AddonCatalogDeltaPath, err)
+		}
+	}
+
+	merged, err := catalog.MergeDelta(s.curated, delta)
+	if err != nil {
+		return nil, fmt.Errorf("merging catalog delta: %w", err)
+	}
+
+	names := make([]string, 0, len(merged))
+	for name := range merged {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]models.AddonCatalogEntry, 0, len(names))
+	for _, name := range names {
+		out = append(out, mergedAddonToCatalogEntry(merged[name]))
+	}
+	return out, nil
+}
+
+// mergedAddonToCatalogEntry flattens a catalog.MergedAddon into the
+// []models.AddonCatalogEntry shape the v3 ListAddons/parser path returns.
+// Secrets is intentionally left empty — catalog.MergedAddon.Secrets carries
+// catalog.SecretRequirement (knowledge-doc "what secrets this addon needs
+// and why"), not models.AddonSecretRef (the deployment-time "which K8s
+// Secret to create" spec parsed from the v3 catalog file) — the two are
+// different concepts with no lossless conversion between them, and no v4
+// caller of ListAddons reads AddonCatalogEntry.Secrets today.
+func mergedAddonToCatalogEntry(m catalog.MergedAddon) models.AddonCatalogEntry {
+	entry := models.AddonCatalogEntry{
+		Name:              m.Name,
+		RepoURL:           m.RepoURL,
+		Chart:             m.Chart,
+		Version:           m.Version,
+		Namespace:         m.Namespace,
+		AdditionalSources: m.AdditionalSources,
+		ExtraHelmValues:   m.ExtraHelmValues,
+	}
+	if m.Settings != nil {
+		entry.SelfHeal = m.Settings.SelfHeal
+		entry.SyncOptions = m.Settings.SyncOptions
+		entry.IgnoreDifferences = m.Settings.IgnoreDifferences
+	}
+	return entry
+}
+
 // GetCatalog returns the full addon catalog with deployment stats across clusters.
+//
+// v4-repo detection: identical probe to GetVersionMatrix (the engine pin
+// resolving to non-empty content on the base branch). See getCatalogV4 for
+// the v4 branch. GetAddonDetail delegates to GetCatalog and needs no
+// separate v4 branch of its own.
 func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.AddonCatalogResponse, error) {
+	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, s.branch()); pinErr == nil && len(pinContent) > 0 {
+		return s.getCatalogV4(ctx, gp, ac)
+	}
+
 	log := logging.LoggerFromContext(ctx)
 	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, s.branch())
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if isGitFileNotFound(err) {
 			clusterData = []byte("clusters: []")
 		} else {
 			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
@@ -157,7 +241,7 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if isGitFileNotFound(err) {
 			catalogData = []byte("applicationsets: []")
 		} else {
 			return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
@@ -288,6 +372,160 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 		Addons:          items,
 		TotalAddons:     len(items),
 		TotalClusters:   totalClusters,
+		AddonsOnlyInGit: addonsOnlyInGit,
+	}, nil
+}
+
+// getCatalogV4 is GetCatalog's v4-repo branch. It builds the same
+// models.AddonCatalogResponse shape as the v3 branch (Marketplace/browse
+// surface — GET /addons/catalog), but sources per-cluster enablement from
+// clusters/*.yaml (kind ClusterAddons) instead of managed-clusters.yaml
+// labels, and the addon set from the delta-merged catalog
+// (catalog.MergeDelta(curated, catalog/addons.yaml)) instead of
+// addons-catalog.yaml — mirroring getVersionMatrixV4 exactly, including the
+// "<addon>-<cluster>" ArgoCD Application naming convention. GetAddonDetail
+// needs no v4 branch of its own: it delegates to GetCatalog and scans the
+// result for the requested addon name, so this branch covers it too.
+func (s *AddonService) getCatalogV4(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.AddonCatalogResponse, error) {
+	log := logging.LoggerFromContext(ctx)
+
+	clusterAddons, err := listClusterAddonsSpecs(ctx, gp, s.branch())
+	if err != nil {
+		return nil, fmt.Errorf("reading clusters/*.yaml: %w", err)
+	}
+
+	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, s.branch())
+	var delta config.AddonCatalogDeltaSpec
+	if err != nil {
+		if !isGitFileNotFound(err) {
+			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogDeltaPath, err)
+		}
+		// Missing catalog/addons.yaml means empty delta (design doc D16,
+		// "missing means empty") — matches getVersionMatrixV4.
+	} else {
+		delta, err = config.LoadAddonCatalogDelta(deltaData)
+		if err != nil {
+			return nil, fmt.Errorf("parsing %s: %w", config.AddonCatalogDeltaPath, err)
+		}
+	}
+
+	merged, err := catalog.MergeDelta(s.curated, delta)
+	if err != nil {
+		return nil, fmt.Errorf("merging catalog delta: %w", err)
+	}
+
+	allApps, err := ac.ListApplications(ctx)
+	if err != nil {
+		log.Warn("could not fetch argocd applications", "error", err)
+	}
+	appMap := make(map[string]models.ArgocdApplication, len(allApps))
+	for _, app := range allApps {
+		appMap[app.Name] = app
+	}
+
+	addonNames := make([]string, 0, len(merged))
+	for name := range merged {
+		addonNames = append(addonNames, name)
+	}
+	sort.Strings(addonNames)
+
+	clusterNames := make([]string, 0, len(clusterAddons))
+	for name := range clusterAddons {
+		clusterNames = append(clusterNames, name)
+	}
+	sort.Strings(clusterNames)
+
+	envList := loadEnvironments()
+	items := make([]models.AddonCatalogItem, 0, len(addonNames))
+	addonsOnlyInGit := 0
+
+	for _, addonName := range addonNames {
+		addon := merged[addonName]
+		item := models.AddonCatalogItem{
+			AddonName: addonName,
+			Chart:     addon.Chart,
+			RepoURL:   addon.RepoURL,
+			Namespace: addon.Namespace,
+			Version:   addon.Version,
+		}
+
+		deployments := make([]models.AddonDeploymentInfo, 0)
+		enabledCount, healthyCount, degradedCount, missingCount := 0, 0, 0, 0
+		deployedCount := 0
+
+		for _, clusterName := range clusterNames {
+			ca, hasAddon := clusterAddons[clusterName].Addons[addonName]
+			if !hasAddon {
+				continue
+			}
+
+			// Only care about enabled addons — disabled is the same as not
+			// configured, matching the v3 branch's semantics.
+			if !ca.Enabled {
+				continue
+			}
+			enabledCount++
+
+			// "No pin = follow the catalog default" (design doc §2.1) —
+			// the ONLY per-cluster version pin location in the v4 format.
+			version := ca.Version
+			if version == "" {
+				version = addon.Version
+			}
+
+			dep := models.AddonDeploymentInfo{
+				ClusterName:        clusterName,
+				ClusterEnvironment: extractEnvironment(clusterName, envList),
+				Enabled:            true,
+				ConfiguredVersion:  version,
+				Namespace:          addon.Namespace,
+			}
+
+			appName := addonName + "-" + clusterName
+			if app, ok := appMap[appName]; ok {
+				dep.SyncStatus = app.SyncStatus
+				dep.HealthStatus = app.HealthStatus
+				dep.DeployedVersion = app.SourceTargetRevision
+				dep.ApplicationName = app.Name
+
+				dep.Status, _ = classifyAddonApp(app)
+				switch dep.Status {
+				case "healthy":
+					healthyCount++
+				case "sync_failing", "unhealthy":
+					degradedCount++
+				}
+				if app.SyncStatus == "Synced" && app.HealthStatus == "Healthy" {
+					deployedCount++
+				}
+			} else {
+				dep.Status = "missing"
+				missingCount++
+			}
+
+			deployments = append(deployments, dep)
+		}
+
+		item.TotalClusters = len(deployments)
+		item.EnabledClusters = enabledCount
+		item.HealthyApplications = healthyCount
+		item.DegradedApplications = degradedCount
+		item.MissingApplications = missingCount
+		item.TotalTargetClusterCount = enabledCount
+		item.DeployedClusterCount = deployedCount
+		item.Applications = deployments
+
+		if enabledCount == 0 {
+			addonsOnlyInGit++
+		}
+
+		items = append(items, item)
+	}
+
+	return &models.AddonCatalogResponse{
+		Addons:          items,
+		TotalAddons:     len(items),
+		TotalClusters:   len(clusterAddons),
 		AddonsOnlyInGit: addonsOnlyInGit,
 	}, nil
 }

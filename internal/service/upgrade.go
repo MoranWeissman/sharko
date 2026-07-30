@@ -71,6 +71,12 @@ type UpgradeService struct {
 	// for the version matrix. nil is safe: every addon then merges as
 	// catalog.OriginInternal.
 	curated *catalog.Catalog
+
+	// baseBranchFn is the per-instance test seam for the configured GitOps
+	// base branch, mirroring AddonService.baseBranchFn (Wave 2 ride-along
+	// w2-q6 item 1). nil (tests, e2e harness) falls back to "main" via the
+	// branch() helper below.
+	baseBranchFn func() string
 }
 
 // SetCuratedCatalog wires in the shipped curated catalog so resolveAddon's
@@ -80,6 +86,25 @@ type UpgradeService struct {
 // catalog.OriginInternal.
 func (s *UpgradeService) SetCuratedCatalog(c *catalog.Catalog) {
 	s.curated = c
+}
+
+// SetBaseBranchFn wires in a live accessor for the configured GitOps base
+// branch (e.g. api.Server.GitopsBaseBranch), matching
+// AddonService.SetBaseBranchFn.
+func (s *UpgradeService) SetBaseBranchFn(fn func() string) {
+	s.baseBranchFn = fn
+}
+
+// branch returns the configured GitOps base branch, defaulting to "main"
+// when no seam is wired (tests, e2e harness) or it resolves to "".
+func (s *UpgradeService) branch() string {
+	if s.baseBranchFn == nil {
+		return "main"
+	}
+	if b := s.baseBranchFn(); b != "" {
+		return b
+	}
+	return "main"
 }
 
 // advisorySource is the subset of advisories.Service used by UpgradeService.
@@ -155,10 +180,11 @@ type resolvedAddon struct {
 
 // resolveAddon looks up addonName's chart location and current version,
 // using the SAME v4-repo probe GetVersionMatrix's v4 branch uses (the
-// engine pin resolving to non-empty content on "main") to decide whether
-// to read the v3 addons-catalog.yaml or the v4 delta-merged catalog.
+// engine pin resolving to non-empty content on the base branch) to decide
+// whether to read the v3 addons-catalog.yaml or the v4 delta-merged
+// catalog.
 func (s *UpgradeService) resolveAddon(ctx context.Context, addonName string, gp gitprovider.GitProvider) (resolvedAddon, error) {
-	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, "main"); pinErr == nil && len(pinContent) > 0 {
+	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, s.branch()); pinErr == nil && len(pinContent) > 0 {
 		merged, err := s.mergedAddonV4(ctx, addonName, gp)
 		if err != nil {
 			return resolvedAddon{}, err
@@ -166,9 +192,9 @@ func (s *UpgradeService) resolveAddon(ctx context.Context, addonName string, gp 
 		return resolvedAddon{RepoURL: merged.RepoURL, Chart: merged.Chart, Version: merged.Version, IsV4: true}, nil
 	}
 
-	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
+	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if isGitFileNotFound(err) {
 			catalogData = []byte("applicationsets: []")
 		} else {
 			return resolvedAddon{}, fmt.Errorf("fetching addons catalog: %w", err)
@@ -196,7 +222,7 @@ func (s *UpgradeService) resolveAddon(ctx context.Context, addonName string, gp 
 // a v4 repo with no curated catalog wired merges every addon as
 // catalog.OriginInternal (catalog.MergeDelta's own contract).
 func (s *UpgradeService) mergedAddonV4(ctx context.Context, addonName string, gp gitprovider.GitProvider) (catalog.MergedAddon, error) {
-	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, "main")
+	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, s.branch())
 	var delta config.AddonCatalogDeltaSpec
 	if err != nil {
 		if !isGitFileNotFound(err) {
@@ -354,7 +380,7 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 			// configuration/addons-global-values/ path.
 			globalValuesPath = fmt.Sprintf("%s/%s.yaml", orchestrator.V4GlobalValuesDir, addonName)
 		}
-		globalData, globalErr := gp.GetFileContent(ctx, globalValuesPath, "main")
+		globalData, globalErr := gp.GetFileContent(ctx, globalValuesPath, s.branch())
 		if globalErr != nil {
 			log.Warn("could not fetch global values", "addon", addonName, "error", globalErr)
 		} else {
@@ -410,8 +436,8 @@ func (s *UpgradeService) checkClusterConflictsV3(ctx context.Context, addonName,
 	log := logging.LoggerFromContext(ctx)
 	var out []models.ConflictCheckEntry
 
-	clusterData, clusterErr := gp.GetFileContent(ctx, s.managedClustersPath, "main")
-	if clusterErr != nil && strings.Contains(clusterErr.Error(), "404") {
+	clusterData, clusterErr := gp.GetFileContent(ctx, s.managedClustersPath, s.branch())
+	if clusterErr != nil && isGitFileNotFound(clusterErr) {
 		clusterData = []byte("clusters: []")
 		clusterErr = nil
 	}
@@ -433,7 +459,7 @@ func (s *UpgradeService) checkClusterConflictsV3(ctx context.Context, addonName,
 		}
 
 		clusterValuesPath := fmt.Sprintf("configuration/addons-cluster-values/%s/%s.yaml", cluster.Name, addonName)
-		clusterValuesData, cvErr := gp.GetFileContent(ctx, clusterValuesPath, "main")
+		clusterValuesData, cvErr := gp.GetFileContent(ctx, clusterValuesPath, s.branch())
 		if cvErr != nil {
 			continue
 		}
@@ -470,7 +496,7 @@ func (s *UpgradeService) checkClusterConflictsV4(ctx context.Context, addonName,
 	log := logging.LoggerFromContext(ctx)
 	var out []models.ConflictCheckEntry
 
-	clusterAddons, err := listClusterAddonsSpecs(ctx, gp, "main")
+	clusterAddons, err := listClusterAddonsSpecs(ctx, gp, s.branch())
 	if err != nil {
 		log.Warn("could not list clusters/*.yaml", "error", err)
 		return out
@@ -489,7 +515,7 @@ func (s *UpgradeService) checkClusterConflictsV4(ctx context.Context, addonName,
 		}
 
 		clusterValuesPath := fmt.Sprintf("%s/%s/%s.yaml", orchestrator.V4ClusterValuesDir, clusterName, addonName)
-		clusterValuesData, cvErr := gp.GetFileContent(ctx, clusterValuesPath, "main")
+		clusterValuesData, cvErr := gp.GetFileContent(ctx, clusterValuesPath, s.branch())
 		if cvErr != nil {
 			continue
 		}

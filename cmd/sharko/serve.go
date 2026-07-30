@@ -227,8 +227,16 @@ var serveCmd = &cobra.Command{
 		// v4 read paths must honor the configured GitOps base branch
 		// instead of hardcoding "main" (Wave 2 ride-along w2-q6 item 1).
 		// srv.GitopsBaseBranch reads the live published gitops snapshot,
-		// so this stays correct across ReinitializeFromConnection.
+		// so this stays correct across ReinitializeFromConnection. Every
+		// service that reads Git directly gets the same seam (Wave 2
+		// review "BaseBranch hardcode sweep" — #637 wired AddonService
+		// only, leaving the rest of the service layer reading "main"
+		// unconditionally on repos whose default branch isn't main).
 		addonSvc.SetBaseBranchFn(srv.GitopsBaseBranch)
+		clusterSvc.SetBaseBranchFn(srv.GitopsBaseBranch)
+		dashboardSvc.SetBaseBranchFn(srv.GitopsBaseBranch)
+		upgradeSvc.SetBaseBranchFn(srv.GitopsBaseBranch)
+		observabilitySvc.SetBaseBranchFn(srv.GitopsBaseBranch)
 
 		// Construct the cosign-keyless verifier, shared between:
 		//
@@ -298,6 +306,11 @@ var serveCmd = &cobra.Command{
 		// CheckUpgrade/GetRecommendations' v4 branch needs the same
 		// curated catalog, for the identical reason.
 		upgradeSvc.SetCuratedCatalog(cat)
+		// Wave 2 review fix: DashboardService.gitStatsV4's TotalAvailable
+		// needs the same curated catalog to count curated+delta merged
+		// addons instead of only the caller's delta (which reported 0 on
+		// every fresh v4 repo that hadn't customized the shipped catalog).
+		dashboardSvc.SetCuratedCatalog(cat)
 
 		// Third-party catalog sources moved to after ReinitializeFromConnection
 		// so we can try file-then-env (V3-P3.1). See below.

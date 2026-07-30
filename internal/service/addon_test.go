@@ -811,3 +811,230 @@ func TestGetVersionMatrix_V4Repo_HonorsBaseBranch(t *testing.T) {
 		t.Errorf("expected GetVersionMatrix to read from the configured base branch %q, refs seen: %v", configuredBranch, gp.refs)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Wave 2 review fix: GetCatalog (the Marketplace/browse surface behind
+// GET /addons/catalog) needs the same v4 branch GetVersionMatrix already
+// has. Before this fix, a v4 repo has no configuration/addons-catalog.yaml
+// (the v3→v4 migration deletes it and a fresh v4 repo never had one), and
+// the missing-file fallback checked strings.Contains(err.Error(), "404")
+// — which never matches the wrapped gitprovider.ErrFileNotFound providers
+// actually return — so the v3 branch's real (non-404-shaped) error
+// propagated as a 500 and the UI showed "Failed to load addon catalog".
+// ---------------------------------------------------------------------------
+
+// TestGetCatalog_V4Repo is the getCatalogV4 counterpart to
+// TestGetVersionMatrix_V4Repo: the engine pin routes GetCatalog through
+// getCatalogV4, which reads clusters/*.yaml (ClusterAddons) and the
+// delta-merged catalog instead of the v3 managed-clusters.yaml /
+// addons-catalog.yaml files — even though both v3 files are ALSO present
+// in this fixture, to prove the v4 branch is the one that actually ran.
+func TestGetCatalog_V4Repo(t *testing.T) {
+	prodEU, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "prod-eu",
+		Addons: map[string]models.ClusterAddonsAddon{
+			"cert-manager": {Enabled: true, Version: "1.12.0"}, // per-cluster pin
+			"external-dns": {Enabled: false},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building prod-eu assignment: %v", err)
+	}
+	stagingUS, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "staging-us",
+		Addons: map[string]models.ClusterAddonsAddon{
+			"cert-manager": {Enabled: true}, // follows catalog default
+		},
+	})
+	if err != nil {
+		t.Fatalf("building staging-us assignment: %v", err)
+	}
+
+	delta, err := config.SaveAddonCatalogDelta(config.AddonCatalogDeltaSpec{
+		Addons: map[string]config.AddonCatalogDeltaEntry{
+			"cert-manager": {
+				RepoURL: "https://charts.jetstack.io",
+				Chart:   "cert-manager",
+				Version: "1.14.5",
+			},
+			"external-dns": {
+				RepoURL: "https://kubernetes-sigs.github.io/external-dns",
+				Chart:   "external-dns",
+				Version: "1.14.0",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building catalog delta: %v", err)
+	}
+
+	argoApps := map[string]interface{}{
+		"items": []map[string]interface{}{
+			{
+				"metadata": map[string]interface{}{"name": "cert-manager-prod-eu", "namespace": "argocd"},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+			{
+				"metadata": map[string]interface{}{"name": "cert-manager-staging-us", "namespace": "argocd"},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "OutOfSync"},
+					"health": map[string]interface{}{"status": "Progressing"},
+				},
+			},
+		},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(argoApps)
+	}))
+	defer ts.Close()
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			"clusters/prod-eu.yaml":      prodEU,
+			"clusters/staging-us.yaml":   stagingUS,
+			config.AddonCatalogDeltaPath: delta,
+			// v3 files are ALSO present, to prove they are ignored once the
+			// engine pin routes this to the v4 branch.
+			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-only-cluster\n    labels: {}\n"),
+			"configuration/addons-catalog.yaml":   []byte("applicationsets:\n  - name: v3-only-addon\n"),
+		},
+	}
+	ac := argocd.NewClient(ts.URL, "fake-token", false)
+	svc := NewAddonService("")
+
+	resp, err := svc.GetCatalog(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetCatalog returned error: %v", err)
+	}
+	if resp.TotalClusters != 2 {
+		t.Errorf("TotalClusters = %d, want 2 (v4 clusters/*.yaml)", resp.TotalClusters)
+	}
+
+	byName := make(map[string]models.AddonCatalogItem)
+	for _, item := range resp.Addons {
+		byName[item.AddonName] = item
+	}
+	if _, ok := byName["v3-only-addon"]; ok {
+		t.Error("v3 addons-catalog.yaml entry leaked into the v4 catalog — the delta-merged catalog must be used instead")
+	}
+
+	certManager, ok := byName["cert-manager"]
+	if !ok {
+		t.Fatal("expected cert-manager item (curated + delta override)")
+	}
+	if certManager.Version != "1.14.5" {
+		t.Errorf("cert-manager Version = %q, want %q (from catalog/addons.yaml delta)", certManager.Version, "1.14.5")
+	}
+	// Enabled on both prod-eu and staging-us.
+	if certManager.EnabledClusters != 2 {
+		t.Errorf("cert-manager EnabledClusters = %d, want 2", certManager.EnabledClusters)
+	}
+	if certManager.TotalTargetClusterCount != 2 {
+		t.Errorf("cert-manager TotalTargetClusterCount = %d, want 2", certManager.TotalTargetClusterCount)
+	}
+	// Only prod-eu is Synced+Healthy.
+	if certManager.DeployedClusterCount != 1 {
+		t.Errorf("cert-manager DeployedClusterCount = %d, want 1 (only prod-eu is Synced+Healthy)", certManager.DeployedClusterCount)
+	}
+
+	var prodDep, stagingDep *models.AddonDeploymentInfo
+	for i := range certManager.Applications {
+		switch certManager.Applications[i].ClusterName {
+		case "prod-eu":
+			prodDep = &certManager.Applications[i]
+		case "staging-us":
+			stagingDep = &certManager.Applications[i]
+		}
+	}
+	if prodDep == nil || prodDep.ConfiguredVersion != "1.12.0" {
+		t.Errorf("prod-eu cert-manager deployment = %+v, want ConfiguredVersion=1.12.0 (per-cluster pin from clusters/prod-eu.yaml)", prodDep)
+	}
+	if stagingDep == nil || stagingDep.ConfiguredVersion != "1.14.5" {
+		t.Errorf("staging-us cert-manager deployment = %+v, want ConfiguredVersion=1.14.5 (no per-cluster pin — follows catalog default)", stagingDep)
+	}
+
+	externalDNS, ok := byName["external-dns"]
+	if !ok {
+		t.Fatal("expected external-dns item (curated, disabled on prod-eu)")
+	}
+	if externalDNS.EnabledClusters != 0 {
+		t.Errorf("external-dns EnabledClusters = %d, want 0 (disabled on its only assignment)", externalDNS.EnabledClusters)
+	}
+}
+
+// TestGetCatalog_MissingFileReturnsEmpty is the v3-repo counterpart to
+// TestGetVersionMatrix_MissingFileReturnsEmpty for GetCatalog: a v3 repo
+// with neither managed-clusters.yaml nor addons-catalog.yaml present (a
+// freshly-installed gitops repo, or the review's reported symptom of a v4
+// repo where the v3 files simply don't exist) MUST degrade to an empty
+// catalog rather than a 500. Backed by fakeGP, which returns a wrapped
+// gitprovider.ErrFileNotFound on every unlisted path — the isGitFileNotFound
+// contract every real provider honours.
+func TestGetCatalog_MissingFileReturnsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+	svc := NewAddonService("")
+	gp := &fakeGP{} // empty maps — every lookup returns ErrFileNotFound
+
+	resp, err := svc.GetCatalog(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetCatalog returned err on missing-file path: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response on missing-file path")
+	}
+	if len(resp.Addons) != 0 {
+		t.Errorf("expected 0 addons from missing-file path, got %d: %+v", len(resp.Addons), resp.Addons)
+	}
+	if resp.TotalClusters != 0 {
+		t.Errorf("expected 0 clusters from missing-file path, got %d", resp.TotalClusters)
+	}
+}
+
+// TestListAddons_V4Repo proves ListAddons' v4 branch flattens the
+// delta-merged catalog into the same []models.AddonCatalogEntry shape the
+// v3 parser path returns — the shape notifications.ServiceProvider and
+// handleListAddons both depend on (Name/Chart/RepoURL/Version).
+func TestListAddons_V4Repo(t *testing.T) {
+	delta, err := config.SaveAddonCatalogDelta(config.AddonCatalogDeltaSpec{
+		Addons: map[string]config.AddonCatalogDeltaEntry{
+			"cert-manager": {
+				RepoURL: "https://charts.jetstack.io",
+				Chart:   "cert-manager",
+				Version: "1.14.5",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building catalog delta: %v", err)
+	}
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:          []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			config.AddonCatalogDeltaPath:        delta,
+			"configuration/addons-catalog.yaml": []byte("applicationsets:\n  - name: v3-only-addon\n"),
+		},
+	}
+	svc := NewAddonService("")
+
+	entries, err := svc.ListAddons(context.Background(), gp)
+	if err != nil {
+		t.Fatalf("ListAddons returned error: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "cert-manager" {
+		t.Fatalf("expected [cert-manager], got %+v — v3 addons-catalog.yaml must be ignored on a v4 repo", entries)
+	}
+	if entries[0].RepoURL != "https://charts.jetstack.io" || entries[0].Chart != "cert-manager" || entries[0].Version != "1.14.5" {
+		t.Errorf("cert-manager entry = %+v, want RepoURL/Chart/Version from the delta", entries[0])
+	}
+}

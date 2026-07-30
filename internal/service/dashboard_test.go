@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -283,5 +284,74 @@ func TestGetStats_V4Repo_MissingFilesReturnsZeroState(t *testing.T) {
 	}
 	if resp.Addons.EnabledDeployments != 0 {
 		t.Errorf("expected 0 enabled deployments, got %d", resp.Addons.EnabledDeployments)
+	}
+}
+
+// dashboardCuratedFixture returns a small, hand-built curated catalog (3
+// addons) for TestGetStats_V4Repo_TotalAvailableUsesCuratedCatalog.
+func dashboardCuratedFixture(t *testing.T) *catalog.Catalog {
+	t.Helper()
+	y := `
+addons:
+  - name: cert-manager
+    description: Automated TLS certificate lifecycle management.
+    chart: cert-manager
+    repo: https://charts.jetstack.io
+    default_namespace: cert-manager
+    license: Apache-2.0
+    maintainers: [jetstack]
+    category: security
+    curated_by: [cncf-graduated]
+  - name: external-dns
+    description: Syncs Kubernetes Services/Ingresses to DNS providers.
+    chart: external-dns
+    repo: https://kubernetes-sigs.github.io/external-dns
+    default_namespace: external-dns
+    license: Apache-2.0
+    maintainers: [kubernetes-sigs]
+    category: networking
+    curated_by: [cncf-graduated]
+  - name: metrics-server
+    description: Resource metrics for kubectl top and HPA.
+    chart: metrics-server
+    repo: https://kubernetes-sigs.github.io/metrics-server/
+    default_namespace: kube-system
+    license: Apache-2.0
+    maintainers: [kubernetes-sigs]
+    category: observability
+    curated_by: [cncf-graduated]
+`
+	cat, err := catalog.LoadBytes([]byte(y))
+	if err != nil {
+		t.Fatalf("LoadBytes fixture: %v", err)
+	}
+	return cat
+}
+
+// TestGetStats_V4Repo_TotalAvailableUsesCuratedCatalog is the Fix 2
+// (Wave 2 review) regression test: on a fresh v4 repo with no
+// catalog/addons.yaml delta at all — the ordinary state before an operator
+// has customized anything — TotalAvailable must count the wired-in curated
+// catalog (via SetCuratedCatalog), not len(delta.Addons) alone (which would
+// report 0 here, the exact "Total Available: 0" symptom the review found).
+func TestGetStats_V4Repo_TotalAvailableUsesCuratedCatalog(t *testing.T) {
+	connSvc := NewConnectionService(&inMemoryConnStore{})
+	svc := NewDashboardService(connSvc, "")
+	svc.SetCuratedCatalog(dashboardCuratedFixture(t))
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:     []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			orchestrator.V4ConnectionsPath: []byte("clusters:\n  - name: prod-eu\n"),
+			// No catalog/addons.yaml at all — "missing means empty" delta.
+		},
+	}
+
+	resp, err := svc.GetStats(context.Background(), gp, argocdEmptyStub(t))
+	if err != nil {
+		t.Fatalf("GetStats returned error: %v", err)
+	}
+	if resp.Addons.TotalAvailable != 3 {
+		t.Errorf("Addons.TotalAvailable = %d, want 3 (the curated catalog count — no delta to override it)", resp.Addons.TotalAvailable)
 	}
 }
