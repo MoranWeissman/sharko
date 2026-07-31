@@ -9147,6 +9147,9 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "push": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSecretRef"
+                },
                 "required_for": {
                     "type": "string"
                 }
@@ -9170,6 +9173,14 @@ const docTemplate = `{
                 "name": {
                     "description": "Name is a short human label for the secret. It is not necessarily a\nliteral Kubernetes Secret name — addons differ in how they expect a\ncredential to be supplied.",
                     "type": "string"
+                },
+                "push": {
+                    "description": "Push, when set, says Sharko itself supplies this credential, and\nexactly how: which Kubernetes Secret to create, in which namespace,\nand which path in the secrets backend fills each of its data keys.\n\nThe secrets reconciler (internal/secrets) reads this block every few\nminutes and writes the Secret onto every cluster that has the addon\nswitched on — including after a rotation, when the value behind a\npath changes. Without it the requirement is documentation only: it\ntells a person what the addon needs, and a person puts it there.\n\nIt reuses models.AddonSecretRef — the same three fields, the same\nyaml keys, that a v3 catalog's ` + "`" + `secrets:` + "`" + ` block carried. That is\ndeliberate: a migrated repo keeps pushing the same Secret into the\nsame namespace from the same provider paths, and the reconciler has\nONE push implementation covering both repo layouts rather than two\nthat can drift.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSecretRef"
+                        }
+                    ]
                 },
                 "required_for": {
                     "description": "RequiredFor is SecretRequiredForInstall or SecretRequiredForRuntime.\nEmpty means install — the stricter reading, so an entry written\nbefore anyone classified it keeps blocking exactly as it did.",
@@ -9361,6 +9372,23 @@ const docTemplate = `{
                 },
                 "sync_status": {
                     "description": "ArgoCD status",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.AddonSecretRef": {
+            "type": "object",
+            "properties": {
+                "keys": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "secretName": {
                     "type": "string"
                 }
             }

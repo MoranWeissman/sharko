@@ -5,10 +5,45 @@ import "github.com/invopop/jsonschema"
 // AddonSecretRef describes a Kubernetes Secret that an addon needs on remote clusters.
 // Keys maps the secret data key (as it will appear in the K8s Secret) to the
 // provider path that holds the actual value (e.g. "secrets/datadog/api-key").
+//
+// This is the PUSH definition: the three things Sharko needs before it can
+// put a credential on a cluster by itself. It is the shape a v3 catalog's
+// `secrets:` block carried, and — since the v4 wave 2.5 secrets fix — the
+// shape a v4 catalog entry carries too, under
+// config.AddonSecretRequirement.Push. One type, one set of yaml keys, one
+// push implementation in internal/secrets for both repo layouts.
 type AddonSecretRef struct {
 	SecretName string            `json:"secretName" yaml:"secretName"`
 	Namespace  string            `json:"namespace" yaml:"namespace"`
 	Keys       map[string]string `json:"keys" yaml:"keys"`
+}
+
+// MissingFields names, in a fixed order, the parts of a push definition
+// that are blank. An empty result means Sharko can act on it.
+//
+// The JSON Schema already requires all three on any file that goes through
+// validate-on-read, so in practice this fires only where the schema cannot:
+// a definition built in memory, or a read that happened with no compiled
+// validator. It exists so those cases produce a sentence naming the missing
+// key instead of a confusing Kubernetes API error at push time.
+func (r AddonSecretRef) MissingFields() []string {
+	var missing []string
+	if r.SecretName == "" {
+		missing = append(missing, "secretName")
+	}
+	if r.Namespace == "" {
+		missing = append(missing, "namespace")
+	}
+	if len(r.Keys) == 0 {
+		missing = append(missing, "keys")
+	}
+	return missing
+}
+
+// Complete reports whether this push definition has everything Sharko needs
+// to create the Secret on a cluster.
+func (r AddonSecretRef) Complete() bool {
+	return len(r.MissingFields()) == 0
 }
 
 // AddonSource represents an additional Helm chart or manifest source for an addon.

@@ -70,6 +70,29 @@
                 },
                 "required_for": {
                   "type": "string"
+                },
+                "push": {
+                  "properties": {
+                    "secretName": {
+                      "type": "string"
+                    },
+                    "namespace": {
+                      "type": "string"
+                    },
+                    "keys": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "secretName",
+                    "namespace",
+                    "keys"
+                  ]
                 }
               },
               "additionalProperties": false,

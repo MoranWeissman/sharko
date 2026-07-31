@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"path"
 
 	"github.com/invopop/jsonschema"
 
@@ -22,6 +23,38 @@ import (
 // list addons that RUN, and a root addons.yaml would read as "deployed"
 // rather than "allowed".
 const AddonCatalogPath = "catalog.yaml"
+
+// V4ClustersDir is the folder holding one ClusterAddons file per cluster
+// in a v4 repo: "clusters/<cluster-name>.yaml" (design doc §2.1).
+//
+// Declared here, next to AddonCatalogPath, rather than imported from
+// internal/orchestrator: orchestrator imports config, not the other way
+// round — the same lockstep duplication V4ManagedClustersPath already
+// lives with. Keep the literal identical to orchestrator.V4ClustersDir;
+// TestLockstep_V4ClusterAddonsPath (internal/orchestrator) fails the build
+// if the two drift.
+const V4ClustersDir = "clusters"
+
+// V4ClusterAddonsPath returns the repo path of a cluster's assignment file
+// — which addons that cluster runs. It refuses a name that could climb out
+// of V4ClustersDir, so a hand-authored managed-clusters.yaml cannot aim a
+// reader at some other file in the repo.
+//
+// Mirrors internal/orchestrator's unexported v4ClusterAddonsPath, which
+// builds the same path on the WRITE side; the lockstep test pins the two
+// to the same answer for the same name.
+func V4ClusterAddonsPath(clusterName string) (string, error) {
+	if clusterName == "" {
+		return "", fmt.Errorf("cluster name is required")
+	}
+	if models.LooksLikePathSegmentEscape(clusterName) {
+		return "", fmt.Errorf("invalid cluster name %q: a name cannot contain a slash, a backslash, or \"..\"", clusterName)
+	}
+	if !models.IsValidResourceName(clusterName) {
+		return "", fmt.Errorf("invalid cluster name %q: %s", clusterName, models.InvalidResourceNameMessage)
+	}
+	return path.Join(V4ClustersDir, clusterName+".yaml"), nil
+}
 
 // AddonCatalogSchemaHeaderV4 is the yaml-language-server header line
 // written as the first line of every Sharko-emitted catalog.yaml.
@@ -69,6 +102,36 @@ type AddonSecretRequirement struct {
 	// Empty means install — the stricter reading, so an entry written
 	// before anyone classified it keeps blocking exactly as it did.
 	RequiredFor string `json:"required_for,omitempty" yaml:"required_for,omitempty"`
+	// Push, when set, says Sharko itself supplies this credential, and
+	// exactly how: which Kubernetes Secret to create, in which namespace,
+	// and which path in the secrets backend fills each of its data keys.
+	//
+	// The secrets reconciler (internal/secrets) reads this block every few
+	// minutes and writes the Secret onto every cluster that has the addon
+	// switched on — including after a rotation, when the value behind a
+	// path changes. Without it the requirement is documentation only: it
+	// tells a person what the addon needs, and a person puts it there.
+	//
+	// It reuses models.AddonSecretRef — the same three fields, the same
+	// yaml keys, that a v3 catalog's `secrets:` block carried. That is
+	// deliberate: a migrated repo keeps pushing the same Secret into the
+	// same namespace from the same provider paths, and the reconciler has
+	// ONE push implementation covering both repo layouts rather than two
+	// that can drift.
+	Push *models.AddonSecretRef `json:"push,omitempty" yaml:"push,omitempty"`
+}
+
+// PushDefinition returns the requirement's push block and whether Sharko
+// can act on it — false when there is no block at all, or when the block
+// is missing something (see models.AddonSecretRef.MissingFields).
+//
+// Callers that need to tell "no definition" apart from "an incomplete
+// definition" look at Push directly; this is the yes/no most callers want.
+func (s AddonSecretRequirement) PushDefinition() (models.AddonSecretRef, bool) {
+	if s.Push == nil {
+		return models.AddonSecretRef{}, false
+	}
+	return *s.Push, s.Push.Complete()
 }
 
 // EffectiveRequiredFor returns RequiredFor, defaulting empty to

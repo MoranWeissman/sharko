@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -75,6 +76,52 @@ func addonSecretRequirement(catalog []models.AddonCatalogEntry, addonName string
 		}
 	}
 	return false, 0
+}
+
+// v4PushSecretCount counts the secrets in a v4 catalog entry that Sharko
+// itself has to push onto the cluster — the requirements carrying a
+// complete `push:` block. A requirement that is only a plain-English
+// heads-up ("this addon needs an API key") is not counted: nobody is
+// waiting on Sharko's credentials for it.
+func v4PushSecretCount(addon catalog.CatalogAddon) int {
+	count := 0
+	for _, sr := range addon.Secrets {
+		if _, ok := sr.PushDefinition(); ok {
+			count++
+		}
+	}
+	return count
+}
+
+// v4PushCredentialProblems is the v4 twin of
+// requireClusterCredentialsForAddon: before opening a pull request that
+// switches on an addon Sharko must push secrets for, check Sharko can
+// actually reach the cluster to push them.
+//
+// Without it, an enable on a cluster with no resolvable credentials
+// succeeds, the pull request merges, the addon deploys — and the Secret it
+// needs never arrives, which is the same silent, weeks-later failure the
+// v3 gate was built to prevent (V2-cleanup-88.3).
+//
+// It returns PROBLEM SENTENCES rather than a *MissingClusterCredentialsError
+// on purpose. The v4 API handler turns a *V4SemanticValidationError into a
+// 422 listing the problems verbatim, and treats every other error as a 502;
+// returning the sentence gets the caller a plain-English 422 instead of an
+// "upstream failed" dead end. The wording itself comes from the shared
+// error type, so the v3 and v4 paths say exactly the same thing.
+func (o *Orchestrator) v4PushCredentialProblems(ctx context.Context, addon catalog.CatalogAddon, clusterName string) []string {
+	count := v4PushSecretCount(addon)
+	if count == 0 {
+		return nil
+	}
+	if o.clusterHasResolvableCredentials(ctx, clusterName) {
+		return nil
+	}
+	return []string{(&MissingClusterCredentialsError{
+		Addon:       addon.Name,
+		Cluster:     clusterName,
+		SecretCount: count,
+	}).Error()}
 }
 
 // requireClusterCredentialsForAddon is EnableAddon's pre-flight gate
