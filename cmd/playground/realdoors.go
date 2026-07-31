@@ -15,7 +15,7 @@ package main
 //  2. Cluster registration: POST /api/v1/clusters opens a real PR per spoke.
 //     The playground merges each PR the same way, then the cluster
 //     reconciler (internal/clusterreconciler) picks up the merged
-//     fleet/connections.yaml entry on its own tick and creates the ArgoCD
+//     managed-clusters.yaml entry on its own tick and creates the ArgoCD
 //     cluster Secret.
 //  3. Addon enable: POST /api/v1/v4/clusters/{name}/addons/{addon} opens a
 //     real PR. The playground merges it, then the engine (ApplicationSet)
@@ -187,7 +187,7 @@ func registerSpokeRealDoor(client *apiClient, giteaToken, name, kubeconfig strin
 	}
 
 	// Let the cluster reconciler (internal/clusterreconciler, ~30s tick)
-	// pick up the merged fleet/connections.yaml entry and create the ArgoCD
+	// pick up the merged managed-clusters.yaml entry and create the ArgoCD
 	// cluster Secret. This is a courtesy wait, not a hard requirement — the
 	// reconciler converges on its own regardless of whether we see it here.
 	fmt.Printf("      Waiting for the cluster reconciler to pick up %s...\n", name)

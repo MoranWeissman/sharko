@@ -11,16 +11,17 @@ import (
 // managed-clusters document, used when a caller passes an empty path.
 const DefaultManagedClustersPath = "configuration/managed-clusters.yaml"
 
-// V4ConnectionsPath is where the cluster registry lives in a v4 repo
-// (design doc docs/design/2026-07-30-v4-data-file-format.md §2.4 —
-// "fleet/connections.yaml"). Same ManagedClusters kind and shape this file
-// already parses; only the location changed.
+// V4ManagedClustersPath is where the list of clusters Sharko manages lives
+// in a v4 repo: a root file called "managed-clusters.yaml". Same
+// ManagedClusters kind and shape this file already parses; only the
+// location changed.
 //
 // Declared here rather than imported from internal/orchestrator because
 // orchestrator imports config, not the other way round — the same lockstep
 // duplication internal/clusterreconciler already carries for the same
-// reason. Keep the literal identical to orchestrator.V4ConnectionsPath.
-const V4ConnectionsPath = "fleet/connections.yaml"
+// reason. Keep the literal identical to
+// orchestrator.V4ManagedClustersPath.
+const V4ManagedClustersPath = "managed-clusters.yaml"
 
 // ManagedClustersReader is the minimal read-only Git surface the credential
 // lookup-key resolver needs. Both gitprovider.GitProvider and the various
@@ -77,7 +78,7 @@ func ResolveCredentialRouting(ctx context.Context, git ManagedClustersReader, ma
 	if err != nil || data == nil {
 		// The configured (v3) path did not resolve. Before giving up and
 		// falling back to the plain cluster name, try the v4 location —
-		// fleet/connections.yaml holds the same ManagedClusters document on
+		// managed-clusters.yaml holds the same ManagedClusters document on
 		// a v4 repo. Without this, a v4-registered cluster with a custom
 		// secretPath, credsSource, or roleARN silently loses all three:
 		// Sharko would fetch credentials by the raw cluster name against
@@ -89,7 +90,7 @@ func ResolveCredentialRouting(ctx context.Context, git ManagedClustersReader, ma
 		// clusterreconciler.pollOnce already use. A repo is one format or
 		// the other, so this costs one extra read only on the v3-absent
 		// path.
-		v4Data, v4Err := git.GetFileContent(ctx, V4ConnectionsPath, branch)
+		v4Data, v4Err := git.GetFileContent(ctx, V4ManagedClustersPath, branch)
 		if v4Err != nil || v4Data == nil {
 			return name, "", ""
 		}

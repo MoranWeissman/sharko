@@ -5,8 +5,8 @@
 // The shipped (curated) catalog is this package's Catalog — the same
 // entries the v3 Marketplace browse screen already reads, now carrying the
 // extended knowledge fields from Story 3.1. A user's fleet-wide overrides
-// live in their own git repo at catalog/addons.yaml (kind AddonCatalogDelta,
-// internal/config.AddonCatalogDeltaSpec) and hold ONLY their changes — never
+// live in their own git repo at catalog/addons.yaml (kind AddonCatalog,
+// internal/config.AddonCatalogSpec) and hold ONLY their changes — never
 // a copy of the curated set. MergeDelta produces the merged, per-addon view
 // both the engine chart (Helm's own mergeOverwrite, design doc §4.7) and the
 // Sharko server (this Go implementation) need, so the two never drift on
@@ -44,7 +44,7 @@ const (
 // shipped-catalog entry (Origin == OriginInternal) is missing one of the
 // three fields nothing else can supply — RepoURL, Chart, or Version (design
 // doc §2.3, "The note on required"). This is the merge-time enforcement the
-// AddonCatalogDeltaEntry doc comment defers to whichever story has the
+// AddonCatalogEntry doc comment defers to whichever story has the
 // shipped catalog in hand — that story is this one.
 type MissingRequiredFieldError struct {
 	Addon string
@@ -153,9 +153,9 @@ func mergedFromCurated(e CatalogEntry) MergedAddon {
 	}
 }
 
-// applyDeltaOverlay applies one AddonCatalogDeltaEntry onto m, field by
+// applyDeltaOverlay applies one AddonCatalogEntry onto m, field by
 // field, the delta winning whenever it sets a field — the `delta` half of
-// mergeOverwrite. Only fields AddonCatalogDeltaEntry actually carries
+// mergeOverwrite. Only fields AddonCatalogEntry actually carries
 // (deployment fields) can be overridden; knowledge fields (Description,
 // DocsURL, ...) have no delta-side equivalent and are left exactly as
 // mergedFromCurated set them (or zero-value, for an internal addon).
@@ -183,7 +183,7 @@ func mergedFromCurated(e CatalogEntry) MergedAddon {
 //     value, not a thing to merge index-by-index, so whole-replace-when-set
 //     is CORRECT here and matches design doc §3.3 decision D12 ("list
 //     fields replace whole").
-func applyDeltaOverlay(m *MergedAddon, d config.AddonCatalogDeltaEntry) {
+func applyDeltaOverlay(m *MergedAddon, d config.AddonCatalogEntry) {
 	m.Customized = true
 	if d.RepoURL != "" {
 		m.RepoURL = d.RepoURL
@@ -267,7 +267,7 @@ func MergeAddonSettings(base, delta *config.AddonSettings) {
 }
 
 // MergeDelta overlays a fleet-wide catalog delta (a user's
-// catalog/addons.yaml, kind AddonCatalogDelta) onto the shipped curated
+// catalog/addons.yaml, kind AddonCatalog) onto the shipped curated
 // catalog and returns the merged, per-addon view keyed by addon name.
 //
 // curated may be nil (no embedded catalog loaded) — every addon in delta
@@ -279,9 +279,9 @@ func MergeAddonSettings(base, delta *config.AddonSettings) {
 // field, for any addon that ends up with Origin == OriginInternal but is
 // missing RepoURL, Chart, or Version — the requiredness rule from design
 // doc §2.3 ("The note on required"), enforced at merge time per the
-// AddonCatalogDeltaEntry doc comment. Addons are checked in sorted-name
+// AddonCatalogEntry doc comment. Addons are checked in sorted-name
 // order so the reported failure is deterministic across runs.
-func MergeDelta(curated *Catalog, delta config.AddonCatalogDeltaSpec) (map[string]MergedAddon, error) {
+func MergeDelta(curated *Catalog, delta config.AddonCatalogSpec) (map[string]MergedAddon, error) {
 	out := make(map[string]MergedAddon)
 
 	if curated != nil {

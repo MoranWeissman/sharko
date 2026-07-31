@@ -53,7 +53,7 @@ addons:
 // (description, docs link, required values, quirks) intact.
 func TestMergeDelta_PureCuratedEntryUnmodified(t *testing.T) {
 	cat := curatedFixture(t)
-	merged, err := MergeDelta(cat, config.AddonCatalogDeltaSpec{})
+	merged, err := MergeDelta(cat, config.AddonCatalogSpec{})
 	if err != nil {
 		t.Fatalf("MergeDelta: %v", err)
 	}
@@ -82,8 +82,8 @@ func TestMergeDelta_PureCuratedEntryUnmodified(t *testing.T) {
 // winning on conflict."
 func TestMergeDelta_CuratedPlusUserVersionOverride(t *testing.T) {
 	cat := curatedFixture(t)
-	delta := config.AddonCatalogDeltaSpec{
-		Addons: map[string]config.AddonCatalogDeltaEntry{
+	delta := config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
 			"cert-manager": {Version: "1.14.5"},
 		},
 	}
@@ -124,12 +124,12 @@ func TestMergeDelta_CuratedPlusUserVersionOverride(t *testing.T) {
 }
 
 // TestMergeDelta_DeltaOverridesChartLocationToo confirms EVERY deployment
-// field on AddonCatalogDeltaEntry — not just Version — wins on conflict,
+// field on AddonCatalogEntry — not just Version — wins on conflict,
 // field by field, per design doc §4.7.
 func TestMergeDelta_DeltaOverridesChartLocationToo(t *testing.T) {
 	cat := curatedFixture(t)
-	delta := config.AddonCatalogDeltaSpec{
-		Addons: map[string]config.AddonCatalogDeltaEntry{
+	delta := config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
 			"cert-manager": {
 				RepoURL:   "oci://my-registry.example.com/mirror",
 				Namespace: "custom-cert-manager",
@@ -164,8 +164,8 @@ func TestMergeDelta_DeltaOverridesChartLocationToo(t *testing.T) {
 // with everything the engine needs to deploy it.
 func TestMergeDelta_InternalAddonFullyDefined(t *testing.T) {
 	cat := curatedFixture(t)
-	delta := config.AddonCatalogDeltaSpec{
-		Addons: map[string]config.AddonCatalogDeltaEntry{
+	delta := config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
 			"billing-api": {
 				RepoURL:   "oci://registry.example.com/charts",
 				Chart:     "billing-api",
@@ -204,37 +204,37 @@ func TestMergeDelta_InternalAddonFullyDefined(t *testing.T) {
 // TestMergeDelta_InternalAddonMissingRequiredField_RepoURL,
 // TestMergeDelta_InternalAddonMissingRequiredField_Chart, and
 // TestMergeDelta_InternalAddonMissingRequiredField_Version are the deferred
-// check named in AddonCatalogDeltaEntry's doc comment: an addon with no
+// check named in AddonCatalogEntry's doc comment: an addon with no
 // curated backing MUST carry repoURL, chart, and version, enforced here
 // (merge time) with an error naming the addon and the specific missing
 // field.
 func TestMergeDelta_InternalAddonMissingRequiredField(t *testing.T) {
 	cases := []struct {
 		name      string
-		entry     config.AddonCatalogDeltaEntry
+		entry     config.AddonCatalogEntry
 		wantField string
 	}{
 		{
 			name:      "missing repoURL",
-			entry:     config.AddonCatalogDeltaEntry{Chart: "billing-api", Version: "2.4.0"},
+			entry:     config.AddonCatalogEntry{Chart: "billing-api", Version: "2.4.0"},
 			wantField: "repoURL",
 		},
 		{
 			name:      "missing chart",
-			entry:     config.AddonCatalogDeltaEntry{RepoURL: "oci://registry.example.com/charts", Version: "2.4.0"},
+			entry:     config.AddonCatalogEntry{RepoURL: "oci://registry.example.com/charts", Version: "2.4.0"},
 			wantField: "chart",
 		},
 		{
 			name:      "missing version",
-			entry:     config.AddonCatalogDeltaEntry{RepoURL: "oci://registry.example.com/charts", Chart: "billing-api"},
+			entry:     config.AddonCatalogEntry{RepoURL: "oci://registry.example.com/charts", Chart: "billing-api"},
 			wantField: "version",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cat := curatedFixture(t)
-			delta := config.AddonCatalogDeltaSpec{
-				Addons: map[string]config.AddonCatalogDeltaEntry{"billing-api": tc.entry},
+			delta := config.AddonCatalogSpec{
+				Addons: map[string]config.AddonCatalogEntry{"billing-api": tc.entry},
 			}
 			_, err := MergeDelta(cat, delta)
 			if err == nil {
@@ -264,8 +264,8 @@ func TestMergeDelta_InternalAddonMissingRequiredField(t *testing.T) {
 // specifically about addons with NO shipped backing.
 func TestMergeDelta_CuratedAddonNeverTriggersRequirednessCheck(t *testing.T) {
 	cat := curatedFixture(t)
-	delta := config.AddonCatalogDeltaSpec{
-		Addons: map[string]config.AddonCatalogDeltaEntry{
+	delta := config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
 			"cert-manager": {Version: "1.14.5"},
 		},
 	}
@@ -278,8 +278,8 @@ func TestMergeDelta_CuratedAddonNeverTriggersRequirednessCheck(t *testing.T) {
 // path (e.g. embedded catalog failed to load) — every delta addon becomes
 // OriginInternal and is subject to the full requiredness check.
 func TestMergeDelta_NilCuratedEveryAddonIsInternal(t *testing.T) {
-	delta := config.AddonCatalogDeltaSpec{
-		Addons: map[string]config.AddonCatalogDeltaEntry{
+	delta := config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
 			"billing-api": {RepoURL: "oci://registry.example.com/charts", Chart: "billing-api", Version: "2.4.0"},
 		},
 	}
@@ -294,11 +294,11 @@ func TestMergeDelta_NilCuratedEveryAddonIsInternal(t *testing.T) {
 
 // TestMergeDelta_EmptyDeltaReturnsUntouchedCurated is design doc D16
 // ("missing means empty") applied to the merge: a zero-value
-// AddonCatalogDeltaSpec must not error and must return every curated entry
+// AddonCatalogSpec must not error and must return every curated entry
 // unmodified.
 func TestMergeDelta_EmptyDeltaReturnsUntouchedCurated(t *testing.T) {
 	cat := curatedFixture(t)
-	merged, err := MergeDelta(cat, config.AddonCatalogDeltaSpec{})
+	merged, err := MergeDelta(cat, config.AddonCatalogSpec{})
 	if err != nil {
 		t.Fatalf("MergeDelta: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestMergeDelta_EmptyDeltaReturnsUntouchedCurated(t *testing.T) {
 // Catalog's own backing arrays.
 func TestMergeDelta_MutatingResultDoesNotAffectCatalog(t *testing.T) {
 	cat := curatedFixture(t)
-	merged, err := MergeDelta(cat, config.AddonCatalogDeltaSpec{})
+	merged, err := MergeDelta(cat, config.AddonCatalogSpec{})
 	if err != nil {
 		t.Fatalf("MergeDelta: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestApplyDeltaOverlay_SettingsFieldsMergeNotWholeReplace(t *testing.T) {
 			SyncOptions: []string{"ServerSideApply=true"},
 		},
 	}
-	d := config.AddonCatalogDeltaEntry{
+	d := config.AddonCatalogEntry{
 		Settings: &config.AddonSettings{
 			SelfHeal: boolPtrTest(true), // touches ONLY SelfHeal
 		},
@@ -394,7 +394,7 @@ func TestApplyDeltaOverlay_SettingsListFieldsReplaceWhole(t *testing.T) {
 			SyncOptions: []string{"ServerSideApply=true", "Old=true"},
 		},
 	}
-	d := config.AddonCatalogDeltaEntry{
+	d := config.AddonCatalogEntry{
 		Settings: &config.AddonSettings{
 			SyncOptions: []string{"New=true"},
 		},
@@ -412,7 +412,7 @@ func TestApplyDeltaOverlay_ExtraHelmValuesMergePerKey(t *testing.T) {
 	m := &MergedAddon{
 		ExtraHelmValues: map[string]string{"replicaCount": "2", "foo": "bar"},
 	}
-	d := config.AddonCatalogDeltaEntry{
+	d := config.AddonCatalogEntry{
 		ExtraHelmValues: map[string]string{"foo": "baz"}, // overrides ONE key
 	}
 	applyDeltaOverlay(m, d)
@@ -431,7 +431,7 @@ func TestApplyDeltaOverlay_ExtraHelmValuesMergePerKey(t *testing.T) {
 func TestApplyDeltaOverlay_ExtraHelmValuesDoesNotAliasSourceMap(t *testing.T) {
 	base := map[string]string{"replicaCount": "2"}
 	m := &MergedAddon{ExtraHelmValues: base}
-	d := config.AddonCatalogDeltaEntry{ExtraHelmValues: map[string]string{"foo": "bar"}}
+	d := config.AddonCatalogEntry{ExtraHelmValues: map[string]string{"foo": "bar"}}
 	applyDeltaOverlay(m, d)
 	if _, ok := base["foo"]; ok {
 		t.Error("applyDeltaOverlay mutated the caller's original map in place")

@@ -183,44 +183,52 @@ func LoadManagedClusters(body []byte) (ManagedClustersSpec, error) {
 	}
 
 	if enveloped {
-		// Peek the kind BEFORE schema validation. The wrong-kind guard
-		// (an envelope with apiVersion sharko.dev/v1 but a kind other
-		// than ManagedClusters) must emit the canonical actionable
-		// error message that downstream consumers (validate-config
-		// CLI, reconciler audit log) depend on — running validation
-		// first would surface the generic "kind: value must be ..."
-		// schema violation instead.
-		var doc ManagedClustersDoc
-		if err := yaml.Unmarshal(body, &doc); err != nil {
-			return ManagedClustersSpec{}, fmt.Errorf("parsing managed-clusters envelope: %w", err)
-		}
-		if doc.Kind != schema.KindManagedClusters {
-			return ManagedClustersSpec{}, fmt.Errorf(
-				"managed-clusters envelope kind %q, expected %q",
-				doc.Kind, schema.KindManagedClusters,
-			)
+		// Accepts BOTH the flat shape Sharko writes today and the older
+		// spec:-wrapped one. This kind is the only one that spans the two
+		// repo layouts — a v3 repo keeps its wrapped
+		// configuration/managed-clusters.yaml and a v4 repo has a flat
+		// managed-clusters.yaml at the root, and the same reader serves
+		// both — so dropping the wrapped shape would stop every v3 repo
+		// dead, including the ones waiting to be migrated.
+		//
+		// The wrong-kind guard fires BEFORE schema validation (inside
+		// DecodeFlatOrWrapped). It must emit the canonical actionable
+		// error message that downstream consumers (validate-config CLI,
+		// reconciler audit log) depend on — validating first would
+		// surface the generic "kind: value must be ..." violation
+		// instead.
+		spec, wrapped, err := schema.DecodeFlatOrWrapped[ManagedClustersSpec](
+			body, schema.KindManagedClusters, "managed-clusters")
+		if err != nil {
+			return ManagedClustersSpec{}, err
 		}
 
-		// JSON Schema validation on the enveloped path only, AFTER the
-		// wrong-kind check so the error precedence is stable. Legacy
-		// bare YAML deliberately skips this step.
+		// Both shapes are schema-validated — each against the schema
+		// that describes IT. A wrapped v3 file keeps exactly the
+		// checking it has always had rather than being waved through,
+		// which matters because this reader is what a v3 repo's whole
+		// cluster registry comes through.
 		//
 		// If DefaultValidator returned an error (embed assets failed
 		// to compile — a build-time bug, not runtime data), we
-		// deliberately do NOT block the read: upstream
-		// envelope/structural checks already fired and a panic-on-read
-		// would brick the server on a corrupt build. The build-time
-		// invariant (TestNewValidator) is the actual gate.
+		// deliberately do NOT block the read: upstream structural
+		// checks already fired and a panic-on-read would brick the
+		// server on a corrupt build. The build-time invariant
+		// (TestNewValidator) is the actual gate.
+		schemaKey := schema.KindManagedClusters
+		if wrapped {
+			schemaKey = schema.SchemaKeyManagedClustersV3
+		}
 		if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
-			if err := validator.Validate(schema.KindManagedClusters, body); err != nil {
+			if err := validator.Validate(schemaKey, body); err != nil {
 				var vf *schema.ValidationFailure
 				if errors.As(err, &vf) {
 					schema.LogValidationFailure("managed-clusters.yaml", vf)
 				}
-				return ManagedClustersSpec{}, fmt.Errorf("validating managed-clusters envelope: %w", err)
+				return ManagedClustersSpec{}, fmt.Errorf("validating managed-clusters: %w", err)
 			}
 		}
-		return doc.Spec, nil
+		return spec, nil
 	}
 
 	// Legacy bare YAML: unmarshal directly as a spec. The legacy shape's
@@ -255,15 +263,9 @@ func LoadManagedClusters(body []byte) (ManagedClustersSpec, error) {
 // for the edit (whole-file regenerate → SaveManagedClusters; in-place
 // mutate → gitops mutator).
 func SaveManagedClusters(spec ManagedClustersSpec) ([]byte, error) {
-	doc := ManagedClustersDoc{
-		APIVersion: schema.APIVersion,
-		Kind:       schema.KindManagedClusters,
-		Metadata:   schema.Metadata{Name: ManagedClustersMetadataName},
-		Spec:       spec,
-	}
-	body, err := yaml.Marshal(doc)
+	body, err := schema.EncodeFlat(schema.KindManagedClusters, spec)
 	if err != nil {
-		return nil, fmt.Errorf("marshalling managed-clusters envelope: %w", err)
+		return nil, err
 	}
 
 	// Validate-before-commit safety net (V2-cleanup-22, Part 1 / decisions

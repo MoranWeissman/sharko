@@ -31,9 +31,9 @@ func TestTakeoverClusterGit_WritesBothV4FilesAndTurnsNothingOn(t *testing.T) {
 		t.Error("a fresh takeover should not report the cluster as already in the fleet")
 	}
 
-	connBytes, ok := git.files[V4ConnectionsPath]
+	connBytes, ok := git.files[V4ManagedClustersPath]
 	if !ok {
-		t.Fatalf("%s was not written; wrote: %v", V4ConnectionsPath, keysOf(git.files))
+		t.Fatalf("%s was not written; wrote: %v", V4ManagedClustersPath, keysOf(git.files))
 	}
 	spec, err := models.LoadManagedClusters(connBytes)
 	if err != nil {
@@ -79,7 +79,7 @@ func TestTakeoverClusterGit_RefusesWithoutConfirmation(t *testing.T) {
 	if !strings.Contains(err.Error(), "confirmation required") {
 		t.Errorf("error should name the missing confirmation: %v", err)
 	}
-	if _, ok := git.files[V4ConnectionsPath]; ok {
+	if _, ok := git.files[V4ManagedClustersPath]; ok {
 		t.Error("nothing may be written when the confirmation is missing")
 	}
 }
@@ -104,7 +104,7 @@ func TestTakeoverClusterGit_DryRunWritesNothingAndShowsBothFiles(t *testing.T) {
 	if len(res.DryRun.EffectiveAddons) != 0 {
 		t.Errorf("a takeover plan enables nothing, got %v", res.DryRun.EffectiveAddons)
 	}
-	if _, ok := git.files[V4ConnectionsPath]; ok {
+	if _, ok := git.files[V4ManagedClustersPath]; ok {
 		t.Error("a dry run wrote to the repo")
 	}
 	if _, ok := git.files["clusters/prod-eu.yaml"]; ok {
@@ -120,7 +120,7 @@ func TestTakeoverClusterGit_RefusesOnAV3Repo(t *testing.T) {
 	if err != ErrTakeoverNeedsV4Repo {
 		t.Fatalf("want ErrTakeoverNeedsV4Repo, got %v", err)
 	}
-	if _, ok := git.files[V4ConnectionsPath]; ok {
+	if _, ok := git.files[V4ManagedClustersPath]; ok {
 		t.Error("no v4 fleet record may be written on a v3 repo")
 	}
 	if _, ok := git.files["clusters/prod-eu.yaml"]; ok {
@@ -143,7 +143,7 @@ func TestTakeoverClusterGit_IsSafeToRepeat(t *testing.T) {
 		t.Error("a repeat takeover must report that the cluster is already in the fleet")
 	}
 
-	spec, err := models.LoadManagedClusters(git.files[V4ConnectionsPath])
+	spec, err := models.LoadManagedClusters(git.files[V4ManagedClustersPath])
 	if err != nil {
 		t.Fatalf("fleet record does not parse: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestTakeoverClusterGit_RefusesANameThatCouldEscapeTheClustersFolder(t *test
 	if err == nil {
 		t.Fatal("a traversal name must be refused")
 	}
-	if _, ok := git.files[V4ConnectionsPath]; ok {
+	if _, ok := git.files[V4ManagedClustersPath]; ok {
 		t.Error("nothing may be written for a refused name")
 	}
 	// The name is refused BEFORE the v4-repo probe, so the engine pin the

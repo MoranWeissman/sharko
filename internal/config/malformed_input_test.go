@@ -1,10 +1,36 @@
 package config
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/testutil/malformed"
 )
+
+// deepNestingFlat builds a FLAT (apiVersion + kind at the top level, no
+// spec: wrapper) Sharko document with `depth` levels of nesting under an
+// unrecognised key instead of clusters:.
+//
+// malformed.DeepNesting wraps the same nesting under spec:, which is the
+// legacy v3 shape ParseClusterAddons deliberately skips schema validation
+// for, so it can no longer prove anything here. This body is always
+// schema-validated, so the case keeps proving what it always proved:
+// pathological nesting in a real Sharko file must error, never quietly
+// parse as zero clusters. Mirrors the helper of the same name in
+// internal/models.
+func deepNestingFlat(depth int) []byte {
+	var b strings.Builder
+	b.WriteString("apiVersion: sharko.dev/v1\nkind: ManagedClusters\n")
+	indent := "  "
+	for i := 0; i < depth; i++ {
+		b.WriteString(strings.Repeat(indent, i+1))
+		b.WriteString(fmt.Sprintf("level%d:\n", i))
+	}
+	b.WriteString(strings.Repeat(indent, depth+1))
+	b.WriteString("leaf: true\n")
+	return []byte(b.String())
+}
 
 // This file is Story 8.6's (v4 Wave 2) all-or-nothing audit for the four
 // envelope/legacy readers this package owns:
@@ -12,7 +38,7 @@ import (
 //   - (*Parser).ParseClusterAddons — managed-clusters.yaml, both the legacy
 //     bare shape and the v4 envelope.
 //   - (*Parser).ParseAddonsCatalog — addons-catalog.yaml (v3), both shapes.
-//   - LoadAddonCatalogDelta — catalog/addons.yaml (v4 AddonCatalogDelta),
+//   - LoadAddonCatalog — catalog/addons.yaml (v4 AddonCatalog),
 //     enveloped only, no legacy shape.
 //   - LoadMarketplaceSourcesFromFile — configuration/marketplace-sources.yaml,
 //     enveloped only.
@@ -31,7 +57,7 @@ func TestMalformedInput_ParseClusterAddons(t *testing.T) {
 		"truncated_block_mapping":    malformed.TruncatedBlockMapping(),
 		"duplicate_top_level_keys":   malformed.DuplicateTopLevelKeys(),
 		"wrong_top_level_type":       malformed.WrongTopLevelType(),
-		"deep_nesting_200":           malformed.DeepNesting(200),
+		"deep_nesting_200":           deepNestingFlat(200),
 		"unknown_sharko_api_version": malformed.UnknownSharkoAPIVersion(),
 		"tab_indentation":            malformed.TabIndentation(),
 		"wrong_kind_envelope":        []byte("apiVersion: sharko.dev/v1\nkind: AddonCatalog\nspec:\n  applicationsets: []\n"),
@@ -90,7 +116,7 @@ func TestMalformedInput_ParseAddonsCatalog(t *testing.T) {
 		"truncated_block_mapping":    malformed.TruncatedBlockMapping(),
 		"duplicate_top_level_keys":   malformed.DuplicateTopLevelKeys(),
 		"wrong_top_level_type":       malformed.WrongTopLevelType(),
-		"deep_nesting_200":           malformed.DeepNesting(200),
+		"deep_nesting_200":           deepNestingFlat(200),
 		"unknown_sharko_api_version": []byte("apiVersion: sharko.dev/v99\nkind: AddonCatalog\nspec:\n  applicationsets: []\n"),
 		"wrong_kind_envelope":        []byte("apiVersion: sharko.dev/v1\nkind: ManagedClusters\nspec:\n  clusters: []\n"),
 		"legacy_bare_wrong_type":     []byte("applicationsets: \"not-a-list\"\n"),
@@ -111,7 +137,7 @@ func TestMalformedInput_ParseAddonsCatalog(t *testing.T) {
 	}
 }
 
-func TestMalformedInput_LoadAddonCatalogDelta(t *testing.T) {
+func TestMalformedInput_LoadAddonCatalog(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string][]byte{
@@ -121,13 +147,13 @@ func TestMalformedInput_LoadAddonCatalogDelta(t *testing.T) {
 		"null_bytes":                 malformed.NullBytes(),
 		"truncated_block_mapping":    malformed.TruncatedBlockMapping(),
 		"wrong_top_level_type":       malformed.WrongTopLevelType(),
-		"deep_nesting_200":           malformed.DeepNesting(200),
+		"deep_nesting_200":           deepNestingFlat(200),
 		"not_enveloped_at_all":       []byte("addons: {}\n"),
 		"wrong_kind":                 []byte("apiVersion: sharko.dev/v1\nkind: ManagedClusters\nspec:\n  clusters: []\n"),
-		"unknown_sharko_api_version": []byte("apiVersion: sharko.dev/v99\nkind: AddonCatalogDelta\nspec:\n  addons: {}\n"),
-		"addons_wrong_type_list":     []byte("apiVersion: sharko.dev/v1\nkind: AddonCatalogDelta\nspec:\n  addons:\n    - cert-manager\n"),
-		"addon_name_illegal_chars":   []byte("apiVersion: sharko.dev/v1\nkind: AddonCatalogDelta\nspec:\n  addons:\n    \"../../engine\":\n      chart: x\n      repoURL: https://example.com\n      version: 1.0.0\n"),
-		"settings_wrong_type":        []byte("apiVersion: sharko.dev/v1\nkind: AddonCatalogDelta\nspec:\n  addons:\n    cert-manager:\n      settings: \"not-an-object\"\n"),
+		"unknown_sharko_api_version": []byte("apiVersion: sharko.dev/v99\nkind: AddonCatalog\nspec:\n  addons: {}\n"),
+		"addons_wrong_type_list":     []byte("apiVersion: sharko.dev/v1\nkind: AddonCatalog\nspec:\n  addons:\n    - cert-manager\n"),
+		"addon_name_illegal_chars":   []byte("apiVersion: sharko.dev/v1\nkind: AddonCatalog\nspec:\n  addons:\n    \"../../engine\":\n      chart: x\n      repoURL: https://example.com\n      version: 1.0.0\n"),
+		"settings_wrong_type":        []byte("apiVersion: sharko.dev/v1\nkind: AddonCatalog\nspec:\n  addons:\n    cert-manager:\n      settings: \"not-an-object\"\n"),
 	}
 	for name, body := range cases {
 		body := body
@@ -135,10 +161,10 @@ func TestMalformedInput_LoadAddonCatalogDelta(t *testing.T) {
 			t.Parallel()
 			var err error
 			malformed.AssertNoPanic(t, name, func() {
-				_, err = LoadAddonCatalogDelta(body)
+				_, err = LoadAddonCatalog(body)
 			})
 			if err == nil {
-				t.Fatalf("LoadAddonCatalogDelta(%s): expected an error, got success", name)
+				t.Fatalf("LoadAddonCatalog(%s): expected an error, got success", name)
 			}
 		})
 	}
@@ -154,7 +180,7 @@ func TestMalformedInput_LoadMarketplaceSourcesFromFile(t *testing.T) {
 		"null_bytes":                 malformed.NullBytes(),
 		"truncated_block_mapping":    malformed.TruncatedBlockMapping(),
 		"wrong_top_level_type":       malformed.WrongTopLevelType(),
-		"deep_nesting_200":           malformed.DeepNesting(200),
+		"deep_nesting_200":           deepNestingFlat(200),
 		"not_enveloped_at_all":       []byte("sources: []\n"),
 		"wrong_kind":                 []byte("apiVersion: sharko.dev/v1\nkind: ManagedClusters\nspec:\n  clusters: []\n"),
 		"unknown_sharko_api_version": []byte("apiVersion: sharko.dev/v99\nkind: MarketplaceSources\nspec:\n  sources: []\n"),

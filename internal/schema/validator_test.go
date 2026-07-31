@@ -15,18 +15,15 @@ import (
 const validManagedClustersBody = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters:
-    - name: prod-eu
-      region: eu-west-1
-      secretPath: clusters/prod-eu
-      labels:
-        cert-manager: enabled
-    - name: staging-eu
-      labels:
-        metrics-server: enabled
+clusters:
+  - name: prod-eu
+    region: eu-west-1
+    secretPath: clusters/prod-eu
+    labels:
+      cert-manager: enabled
+  - name: staging-eu
+    labels:
+      metrics-server: enabled
 `
 
 const validAddonCatalogBody = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
@@ -132,13 +129,10 @@ func TestValidator_InvalidEnvelopedYAML_Reject(t *testing.T) {
 		wantValidationFn func(t *testing.T, vf *ValidationFailure)
 	}{
 		{
-			name: "missing required field spec.clusters",
+			name: "missing required field clusters",
 			kind: KindManagedClusters,
 			body: `apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec: {}
 `,
 			wantSubstr: []string{"clusters"},
 		},
@@ -147,23 +141,17 @@ spec: {}
 			kind: KindManagedClusters,
 			body: `apiVersion: 42
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters: []
+clusters: []
 `,
 			wantSubstr: []string{"apiVersion"},
 		},
 		{
-			name: "extra forbidden field at spec level (additionalProperties: false)",
+			name: "extra forbidden field at the top level (additionalProperties: false)",
 			kind: KindManagedClusters,
 			body: `apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters: []
-  unknownField: "x"
+clusters: []
+unknownField: "x"
 `,
 			wantSubstr: []string{"unknownField"},
 		},

@@ -567,7 +567,7 @@ func TestSaveCatalog_EmitsEnveloped(t *testing.T) {
 
 	// Round-trip through the envelope decoder to assert the apiVersion/kind/
 	// metadata/spec frame is structurally correct.
-	var doc schema.Envelope[AddonCatalogSpec]
+	var doc schema.Envelope[AddonCatalogV3Spec]
 	if err := yaml.Unmarshal(out, &doc); err != nil {
 		t.Fatalf("written bytes do not round-trip through Envelope decoder: %v", err)
 	}
@@ -637,12 +637,12 @@ func TestResolveAddonCatalogPath_Missing(t *testing.T) {
 //
 // NOT parallel — uses slog.SetDefault.
 func TestParseClusterAddons_EnvelopedInvalid_Reject(t *testing.T) {
+	// FLAT shape on purpose. A spec:-wrapped body is legacy v3 and
+	// deliberately skips schema validation, so it could never exercise
+	// the validation path this test is about.
 	body := []byte(`apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  unknownField: "x"
+unknownField: "x"
 `)
 
 	var buf bytes.Buffer

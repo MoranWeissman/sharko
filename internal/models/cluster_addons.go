@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/MoranWeissman/sharko/internal/schema"
 )
 
@@ -30,8 +28,8 @@ const ClusterAddonsSchemaHeader = "# yaml-language-server: $schema=https://raw.g
 // Schema validation outright (belt) — cmd/sharko's validate-config CLI
 // additionally detects this specific key ahead of the generic schema
 // error and reports the contract's plain-English redirect to
-// catalog/addons.yaml (suspenders). See config.AddonSettings for the
-// seven-field sibling used in AddonCatalogDelta entries, where the field
+// catalog.yaml (suspenders). See config.AddonSettings for the
+// seven-field sibling used in AddonCatalog entries, where the field
 // IS legal (fleet-wide, addon-wide).
 type ClusterAddonsAddonSettings struct {
 	// Namespace overrides which namespace this addon installs into on
@@ -76,7 +74,7 @@ type ClusterAddonsAddon struct {
 	// implicit false.
 	Enabled bool `json:"enabled" yaml:"enabled"`
 	// Version pins the chart version for THIS cluster only. Empty means
-	// "use whatever catalog/addons.yaml (or the shipped catalog) says".
+	// "use whatever catalog.yaml (or the shipped catalog) says".
 	Version string `json:"version,omitempty" yaml:"version,omitempty"`
 	// Settings holds this cluster's per-Application overrides for this
 	// addon. Pointer (not a plain struct) so "no settings block at all"
@@ -102,45 +100,25 @@ type ClusterAddonsSpec struct {
 	Addons map[string]ClusterAddonsAddon `json:"addons" yaml:"addons"`
 }
 
-// ClusterAddonsDoc is the on-disk shape for an enveloped
-// clusters/<cluster-name>.yaml (apiVersion: sharko.dev/v1,
-// kind: ClusterAddons). It is the canonical Save target; the reader
-// only ever accepts this enveloped shape — ClusterAddons is a v4-only
-// kind with no legacy bare-YAML precedent to stay backward compatible
-// with.
-type ClusterAddonsDoc = schema.Envelope[ClusterAddonsSpec]
+// clusterAddonsLabel names the file in parser errors.
+const clusterAddonsLabel = "cluster assignment"
 
 // LoadClusterAddons parses the on-disk bytes of a
 // clusters/<cluster-name>.yaml document and returns its spec.
 //
-// Unlike LoadManagedClusters, there is no legacy bare-YAML branch:
-// ClusterAddons is a brand-new v4 kind (design doc §8 "Kinds added"),
-// so every valid document is enveloped and JSON-Schema-validated. A body
-// that isn't enveloped, or is enveloped under the wrong kind, is a hard
-// error — never a silent "zero addons" fallthrough (the same H2 failure
-// class internal/schema/envelope.go's UnknownSharkoAPIVersionError guards
-// against elsewhere).
+// FLAT only: apiVersion + kind + cluster: and addons: at the top level, no
+// spec: wrapper (design doc 2026-07-31-catalog-approved-model.md §9).
+// ClusterAddons is a v4-only kind and v4 has not shipped, so there is no
+// older shape of this file anywhere to stay compatible with.
+//
+// A body that is not a Sharko document, or names the wrong kind, is a hard
+// error — never a silent "zero addons" fallthrough (the same failure class
+// internal/schema/envelope.go's UnknownSharkoAPIVersionError guards against
+// elsewhere: an empty read here reads as "this cluster runs nothing").
 func LoadClusterAddons(body []byte) (ClusterAddonsSpec, error) {
-	enveloped, err := schema.IsEnveloped(body)
+	spec, err := schema.DecodeFlat[ClusterAddonsSpec](body, schema.KindClusterAddons, clusterAddonsLabel)
 	if err != nil {
-		return ClusterAddonsSpec{}, fmt.Errorf("parsing cluster assignment: %w", err)
-	}
-	if !enveloped {
-		return ClusterAddonsSpec{}, fmt.Errorf(
-			"parsing cluster assignment: not a Sharko-enveloped document (apiVersion missing or not %s)",
-			schema.APIVersion,
-		)
-	}
-
-	var doc ClusterAddonsDoc
-	if err := yaml.Unmarshal(body, &doc); err != nil {
-		return ClusterAddonsSpec{}, fmt.Errorf("parsing cluster assignment envelope: %w", err)
-	}
-	if doc.Kind != schema.KindClusterAddons {
-		return ClusterAddonsSpec{}, fmt.Errorf(
-			"cluster assignment envelope kind %q, expected %q",
-			doc.Kind, schema.KindClusterAddons,
-		)
+		return ClusterAddonsSpec{}, err
 	}
 
 	if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
@@ -149,27 +127,24 @@ func LoadClusterAddons(body []byte) (ClusterAddonsSpec, error) {
 			if errors.As(err, &vf) {
 				schema.LogValidationFailure("cluster-addons", vf)
 			}
-			return ClusterAddonsSpec{}, fmt.Errorf("validating cluster assignment envelope: %w", err)
+			return ClusterAddonsSpec{}, fmt.Errorf("validating %s: %w", clusterAddonsLabel, err)
 		}
 	}
-	return doc.Spec, nil
+	return spec, nil
 }
 
-// SaveClusterAddons renders spec as an enveloped
-// clusters/<cluster-name>.yaml document. metadata.name is set to
-// spec.Cluster so the envelope's own identity matches the file's — the
-// design doc's worked example (§2.1) shows `metadata.name: prod-eu` for
-// `clusters/prod-eu.yaml`.
+// SaveClusterAddons renders spec as a clusters/<cluster-name>.yaml
+// document: apiVersion, kind, then cluster: and addons: at the top level.
+//
+// The file's identity is its NAME on disk — clusters/prod-eu.yaml is the
+// cluster called prod-eu — with spec.cluster inside repeating it so a
+// mismatch is catchable. There is no metadata.name to keep in step with
+// either of them any more, which is one fewer place for the three to
+// disagree.
 func SaveClusterAddons(spec ClusterAddonsSpec) ([]byte, error) {
-	doc := ClusterAddonsDoc{
-		APIVersion: schema.APIVersion,
-		Kind:       schema.KindClusterAddons,
-		Metadata:   schema.Metadata{Name: spec.Cluster},
-		Spec:       spec,
-	}
-	body, err := yaml.Marshal(doc)
+	body, err := schema.EncodeFlat(schema.KindClusterAddons, spec)
 	if err != nil {
-		return nil, fmt.Errorf("marshalling cluster assignment envelope: %w", err)
+		return nil, err
 	}
 
 	// Validate-before-write safety net — same stance as

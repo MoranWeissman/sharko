@@ -10,7 +10,7 @@ package ai_test
 // package, never this ai_test one.
 //
 // v3_gate.go duplicates the v3-write gate's marker paths and refusal
-// sentence locally (same reason, same precedent as v4EnginePinPath in
+// sentence locally (same reason, same precedent as V4EnginePinPath in
 // v4_gate.go) rather than importing orchestrator's originals. This test is
 // the guardrail that duplication needs: it fails the moment
 // internal/ai's copy and internal/orchestrator's source of truth drift.

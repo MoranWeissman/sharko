@@ -45,13 +45,13 @@ func TestAddInternalAddon_CreatesDeltaFile_MissingFileTreatedAsEmpty(t *testing.
 		t.Fatalf("expected a PR result, got %+v", result)
 	}
 
-	written, ok := git.files[config.AddonCatalogDeltaPath]
+	written, ok := git.files[config.AddonCatalogPath]
 	if !ok {
-		t.Fatalf("expected %s to be written", config.AddonCatalogDeltaPath)
+		t.Fatalf("expected %s to be written", config.AddonCatalogPath)
 	}
-	spec, err := config.LoadAddonCatalogDelta(written)
+	spec, err := config.LoadAddonCatalog(written)
 	if err != nil {
-		t.Fatalf("LoadAddonCatalogDelta on written file: %v", err)
+		t.Fatalf("LoadAddonCatalog on written file: %v", err)
 	}
 	entry, ok := spec.Addons["billing-api"]
 	if !ok {
@@ -68,21 +68,18 @@ func TestAddInternalAddon_CreatesDeltaFile_MissingFileTreatedAsEmpty(t *testing.
 // every addon the user has already added.
 func TestAddInternalAddon_UpsertsExistingDelta(t *testing.T) {
 	git := newMockGitProvider()
-	existing := `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addon-catalog-delta.v1.json
+	existing := `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/catalog.v1.json
 apiVersion: sharko.dev/v1
-kind: AddonCatalogDelta
-metadata:
-  name: addon-catalog-delta
-spec:
-  addons:
-    cert-manager:
-      version: "1.14.5"
-    billing-api:
-      repoURL: oci://registry.example.com/charts
-      chart: billing-api
-      version: "2.0.0"
+kind: AddonCatalog
+addons:
+  cert-manager:
+    version: "1.14.5"
+  billing-api:
+    repoURL: oci://registry.example.com/charts
+    chart: billing-api
+    version: "2.0.0"
 `
-	git.files[config.AddonCatalogDeltaPath] = []byte(existing)
+	git.files[config.AddonCatalogPath] = []byte(existing)
 
 	o := newTestOrchestratorForCatalogDelta(t, git)
 	_, err := o.AddInternalAddon(context.Background(), AddInternalAddonRequest{
@@ -95,10 +92,10 @@ spec:
 		t.Fatalf("AddInternalAddon: %v", err)
 	}
 
-	written := git.files[config.AddonCatalogDeltaPath]
-	spec, err := config.LoadAddonCatalogDelta(written)
+	written := git.files[config.AddonCatalogPath]
+	spec, err := config.LoadAddonCatalog(written)
 	if err != nil {
-		t.Fatalf("LoadAddonCatalogDelta: %v", err)
+		t.Fatalf("LoadAddonCatalog: %v", err)
 	}
 	if spec.Addons["billing-api"].Version != "2.4.0" {
 		t.Errorf("billing-api version not updated: %+v", spec.Addons["billing-api"])

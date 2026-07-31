@@ -559,10 +559,10 @@ func TestPreviewMigration_ListsEveryFile(t *testing.T) {
 	}
 
 	wantWritten := map[string]string{
-		"engine/application.yaml":                     "",
+		"engine.yaml":                     "",
 		"README.md":                                   "README.md",
-		"fleet/connections.yaml":                      "configuration/managed-clusters.yaml",
-		"catalog/addons.yaml":                         "configuration/addons-catalog.yaml",
+		"managed-clusters.yaml":                      "configuration/managed-clusters.yaml",
+		"catalog.yaml":                                "configuration/addons-catalog.yaml",
 		"clusters/prod-eu.yaml":                       "",
 		"clusters/staging-us.yaml":                    "",
 		"values/global/cert-manager.yaml":             "configuration/addons-global-values/cert-manager.yaml",
@@ -730,12 +730,12 @@ func TestMigrate_FullConversion(t *testing.T) {
 
 	// The connection record: connection data intact, addon keys gone,
 	// non-addon labels kept.
-	conns, err := models.LoadManagedClusters(git.branchWrites["fleet/connections.yaml"])
+	conns, err := models.LoadManagedClusters(git.branchWrites["managed-clusters.yaml"])
 	if err != nil {
-		t.Fatalf("fleet/connections.yaml does not read back: %v", err)
+		t.Fatalf("managed-clusters.yaml does not read back: %v", err)
 	}
 	if len(conns.Clusters) != 2 {
-		t.Fatalf("fleet/connections.yaml has %d clusters, want 2", len(conns.Clusters))
+		t.Fatalf("managed-clusters.yaml has %d clusters, want 2", len(conns.Clusters))
 	}
 	var prod models.ManagedClusterEntry
 	for _, c := range conns.Clusters {
@@ -927,7 +927,7 @@ func TestMigrate_CatalogDelta_RoundTrips(t *testing.T) {
 		t.Fatalf("MigrateV3ToV4: %v", err)
 	}
 
-	delta, err := config.LoadAddonCatalogDelta(git.branchWrites[config.AddonCatalogDeltaPath])
+	delta, err := config.LoadAddonCatalog(git.branchWrites[config.AddonCatalogPath])
 	if err != nil {
 		t.Fatalf("catalog/addons.yaml does not read back: %v", err)
 	}
@@ -983,7 +983,7 @@ func TestMigrate_CatalogDelta_DropsWhatTheShippedCatalogAlreadySays(t *testing.T
 	if _, err := orch.MigrateV3ToV4(context.Background(), MigrateRequest{Yes: true}); err != nil {
 		t.Fatalf("MigrateV3ToV4: %v", err)
 	}
-	delta, err := config.LoadAddonCatalogDelta(git.branchWrites[config.AddonCatalogDeltaPath])
+	delta, err := config.LoadAddonCatalog(git.branchWrites[config.AddonCatalogPath])
 	if err != nil {
 		t.Fatalf("catalog/addons.yaml does not read back: %v", err)
 	}

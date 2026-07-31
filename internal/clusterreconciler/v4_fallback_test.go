@@ -13,18 +13,18 @@ import (
 // TestPollOnce_V4Repo_ReadsFleetConnectionsFallback is the v4 Wave 1 Story
 // 4.4 regression guard: on a v4 repo, configuration/managed-clusters.yaml
 // (DefaultManagedClustersPath) genuinely does not exist — the cluster
-// registry lives at fleet/connections.yaml instead (design doc §2.4, same
+// registry lives at managed-clusters.yaml instead (design doc §2.4, same
 // kind/shape, different location). Before this fix the reconciler would
 // treat that as "empty desired state" and never create the ArgoCD cluster
 // Secret for a cluster registered on a v4 repo — this test proves the
-// fallback read picks up fleet/connections.yaml and reconciles normally.
+// fallback read picks up managed-clusters.yaml and reconciles normally.
 func TestPollOnce_V4Repo_ReadsFleetConnectionsFallback(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
 	body := envelopedManagedClusters("prod-eu")
 	gp := &fakeGit{files: map[string][]byte{
-		v4ConnectionsPath: body, // v3 DefaultManagedClustersPath is absent
+		v4ManagedClustersPath: body, // v3 DefaultManagedClustersPath is absent
 	}}
 	vault := &fakeVault{
 		creds: map[string]*providers.Kubeconfig{
@@ -43,7 +43,7 @@ func TestPollOnce_V4Repo_ReadsFleetConnectionsFallback(t *testing.T) {
 
 	secret, err := k8sClient.CoreV1().Secrets(DefaultArgoCDNamespace).Get(ctx, "prod-eu", metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("expected the v4-registered cluster's Secret to be created via the fleet/connections.yaml fallback: %v", err)
+		t.Fatalf("expected the v4-registered cluster's Secret to be created via the managed-clusters.yaml fallback: %v", err)
 	}
 	if !IsManagedBySharko(secret) {
 		t.Fatalf("created secret is missing the sharko ownership label: labels=%v", secret.Labels)
@@ -52,7 +52,7 @@ func TestPollOnce_V4Repo_ReadsFleetConnectionsFallback(t *testing.T) {
 
 // TestPollOnce_V3PathPresent_NeverTriesV4Fallback proves the fallback is
 // truly a fallback: when the configured v3 path resolves, the reconciler
-// must not also read fleet/connections.yaml (a real repo could have a
+// must not also read managed-clusters.yaml (a real repo could have a
 // stray file there, e.g. mid-migration, and it must never leak into the
 // v3 desired state).
 func TestPollOnce_V3PathPresent_NeverTriesV4Fallback(t *testing.T) {
@@ -63,7 +63,7 @@ func TestPollOnce_V3PathPresent_NeverTriesV4Fallback(t *testing.T) {
 	v4Body := envelopedManagedClusters("v4-cluster-should-be-ignored")
 	gp := &fakeGit{files: map[string][]byte{
 		DefaultManagedClustersPath: v3Body,
-		v4ConnectionsPath:          v4Body,
+		v4ManagedClustersPath:          v4Body,
 	}}
 	vault := &fakeVault{
 		creds: map[string]*providers.Kubeconfig{
@@ -81,6 +81,6 @@ func TestPollOnce_V3PathPresent_NeverTriesV4Fallback(t *testing.T) {
 		t.Fatalf("expected v3-cluster's Secret to be created: %v", err)
 	}
 	if _, err := k8sClient.CoreV1().Secrets(DefaultArgoCDNamespace).Get(ctx, "v4-cluster-should-be-ignored", metav1.GetOptions{}); err == nil {
-		t.Fatal("fleet/connections.yaml must be ignored when the v3 path resolves — it was read anyway")
+		t.Fatal("managed-clusters.yaml must be ignored when the v3 path resolves — it was read anyway")
 	}
 }

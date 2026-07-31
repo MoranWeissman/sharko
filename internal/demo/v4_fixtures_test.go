@@ -81,13 +81,13 @@ func TestV4DemoFilesPassSchemaValidation(t *testing.T) {
 	// at least one entry that is NOT in the shipped/curated catalog
 	// (the "one internal addon" AC — design doc §2.3, v4 Wave 1 Story
 	// 3.3's "origin: internal" marker).
-	deltaBody, ok := files[config.AddonCatalogDeltaPath]
+	deltaBody, ok := files[config.AddonCatalogPath]
 	if !ok {
-		t.Fatalf("missing %s in the v4 demo fixture", config.AddonCatalogDeltaPath)
+		t.Fatalf("missing %s in the v4 demo fixture", config.AddonCatalogPath)
 	}
-	delta, err := config.LoadAddonCatalogDelta(deltaBody)
+	delta, err := config.LoadAddonCatalog(deltaBody)
 	if err != nil {
-		t.Fatalf("LoadAddonCatalogDelta: %v", err)
+		t.Fatalf("LoadAddonCatalog: %v", err)
 	}
 	internalEntry, ok := delta.Addons["datadog"]
 	if !ok {

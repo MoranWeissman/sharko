@@ -11,7 +11,7 @@ import (
 // against a repo in the v4 data-file format.
 //
 // Why a refusal rather than a best-effort write: on a v4 repo the cluster
-// registry lives at fleet/connections.yaml (design doc §2.4). An operation
+// registry lives at managed-clusters.yaml (design doc §2.4). An operation
 // that writes managed-clusters.yaml there creates a SECOND registry file,
 // and the reconciler prefers the v3 file whenever both exist — so every
 // cluster registered the v4 way instantly disappears from the desired
@@ -44,7 +44,7 @@ func IsV4RepoUnsupported(err error) bool {
 // upstream error attached. The old behaviour treated an unanswerable
 // probe as "not a v4 repo" and let the v3 write proceed, which on a repo
 // that really was v4 recreates configuration/managed-clusters.yaml
-// alongside fleet/connections.yaml. The reconciler prefers the v3 file
+// alongside managed-clusters.yaml. The reconciler prefers the v3 file
 // whenever both exist, so every cluster registered the v4 way instantly
 // becomes an orphan and loses its ArgoCD connection Secret. Refusing
 // costs a retry; guessing costs the fleet.

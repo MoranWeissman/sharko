@@ -236,14 +236,14 @@ func (s *Server) registeredClusterNames(r *http.Request) ([]string, error) {
 	if branch == "" {
 		branch = "main"
 	}
-	data, err := gp.GetFileContent(r.Context(), orchestrator.V4ConnectionsPath, branch)
+	data, err := gp.GetFileContent(r.Context(), orchestrator.V4ManagedClustersPath, branch)
 	if err != nil {
 		if errors.Is(err, gitprovider.ErrFileNotFound) {
 			// No fleet record yet — Sharko genuinely has no clusters.
 			return nil, nil
 		}
 		return nil, fmt.Errorf("Sharko could not read its own list of clusters from %s on the %s branch: %w",
-			orchestrator.V4ConnectionsPath, branch, err)
+			orchestrator.V4ManagedClustersPath, branch, err)
 	}
 	if len(data) == 0 {
 		return nil, nil
@@ -251,7 +251,7 @@ func (s *Server) registeredClusterNames(r *http.Request) ([]string, error) {
 	spec, err := models.LoadManagedClusters(data)
 	if err != nil {
 		return nil, fmt.Errorf("Sharko could not make sense of its own list of clusters in %s: %w",
-			orchestrator.V4ConnectionsPath, err)
+			orchestrator.V4ManagedClustersPath, err)
 	}
 	out := make([]string, 0, len(spec.Clusters))
 	for _, c := range spec.Clusters {

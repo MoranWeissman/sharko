@@ -16,8 +16,8 @@ import (
 // gitDerivedDashboardStats is the git-sourced half of GetStats — cluster
 // names, valid "<addon>-<cluster>" ArgoCD Application names, and addon
 // counts — computed by EITHER the v3 branch (managed-clusters.yaml +
-// addons-catalog.yaml labels) or the v4 branch (fleet/connections.yaml +
-// clusters/*.yaml + catalog/addons.yaml delta), so the downstream
+// addons-catalog.yaml labels) or the v4 branch (managed-clusters.yaml +
+// clusters/*.yaml + catalog.yaml delta), so the downstream
 // ArgoCD-side stats code (cluster connectivity, application sync/health,
 // bootstrap app) runs identically regardless of repo format (Wave 2
 // ride-along w2-q6 item 4).
@@ -53,7 +53,7 @@ type DashboardService struct {
 }
 
 // SetCuratedCatalog wires in the shipped curated catalog so gitStatsV4 can
-// merge a caller's catalog/addons.yaml delta against it, the same way
+// merge a caller's catalog.yaml delta against it, the same way
 // AddonService.SetCuratedCatalog does for the version matrix and catalog
 // views. Pass nil (or skip the call) to leave every v4-repo addon merging
 // as catalog.OriginInternal.
@@ -144,8 +144,8 @@ func (s *DashboardService) gitStatsV3(ctx context.Context, gp gitprovider.GitPro
 }
 
 // gitStatsV4 computes gitDerivedDashboardStats from the v4 file shape
-// (fleet/connections.yaml for the cluster registry, clusters/*.yaml for
-// per-cluster addon enablement, catalog/addons.yaml for the delta's addon
+// (managed-clusters.yaml for the cluster registry, clusters/*.yaml for
+// per-cluster addon enablement, catalog.yaml for the delta's addon
 // count) — the v4-aware counterpart the review flagged as missing (Wave 2
 // ride-along w2-q6 item 4: "dashboard git-side stats v3-only"). Mirrors
 // AddonService.getVersionMatrixV4's "missing means empty" tolerance for
@@ -154,15 +154,15 @@ func (s *DashboardService) gitStatsV3(ctx context.Context, gp gitprovider.GitPro
 func (s *DashboardService) gitStatsV4(ctx context.Context, gp gitprovider.GitProvider) (gitDerivedDashboardStats, error) {
 	out := gitDerivedDashboardStats{validAddonApps: make(map[string]bool)}
 
-	connData, err := gp.GetFileContent(ctx, orchestrator.V4ConnectionsPath, s.branch())
+	connData, err := gp.GetFileContent(ctx, orchestrator.V4ManagedClustersPath, s.branch())
 	if err != nil {
 		if !isGitFileNotFound(err) {
-			return gitDerivedDashboardStats{}, fmt.Errorf("reading %s: %w", orchestrator.V4ConnectionsPath, err)
+			return gitDerivedDashboardStats{}, fmt.Errorf("reading %s: %w", orchestrator.V4ManagedClustersPath, err)
 		}
 	} else if len(connData) > 0 {
 		spec, perr := models.LoadManagedClusters(connData)
 		if perr != nil {
-			return gitDerivedDashboardStats{}, fmt.Errorf("parsing %s: %w", orchestrator.V4ConnectionsPath, perr)
+			return gitDerivedDashboardStats{}, fmt.Errorf("parsing %s: %w", orchestrator.V4ManagedClustersPath, perr)
 		}
 		for _, c := range spec.Clusters {
 			out.clusterNames = append(out.clusterNames, c.Name)
@@ -172,19 +172,19 @@ func (s *DashboardService) gitStatsV4(ctx context.Context, gp gitprovider.GitPro
 	// TotalAvailable is the curated+delta merged addon count — the same
 	// merge AddonService/UpgradeService use — NOT len(delta.Addons) alone.
 	// A repo that hasn't customized the shipped catalog yet (no
-	// catalog/addons.yaml, or one that only overrides a subset) still has
+	// catalog.yaml, or one that only overrides a subset) still has
 	// every curated addon "available"; counting only the delta reported 0
 	// on every fresh v4 repo (Wave 2 review finding).
-	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, s.branch())
-	var delta config.AddonCatalogDeltaSpec
+	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
+	var delta config.AddonCatalogSpec
 	if err != nil {
 		if !isGitFileNotFound(err) {
-			return gitDerivedDashboardStats{}, fmt.Errorf("reading %s: %w", config.AddonCatalogDeltaPath, err)
+			return gitDerivedDashboardStats{}, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 		}
 	} else if len(deltaData) > 0 {
-		delta, err = config.LoadAddonCatalogDelta(deltaData)
+		delta, err = config.LoadAddonCatalog(deltaData)
 		if err != nil {
-			return gitDerivedDashboardStats{}, fmt.Errorf("parsing %s: %w", config.AddonCatalogDeltaPath, err)
+			return gitDerivedDashboardStats{}, fmt.Errorf("parsing %s: %w", config.AddonCatalogPath, err)
 		}
 	}
 	merged, err := catalog.MergeDelta(s.curated, delta)

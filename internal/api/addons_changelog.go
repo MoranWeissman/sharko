@@ -42,7 +42,7 @@ func buildChangelogText(addonName string, entries []changelogVersionEntry) strin
 // engine pin resolving to non-empty content on the configured GitOps base
 // branch) to decide whether to read the v3 configuration/addons-catalog.yaml
 // or the v4 delta-merged catalog (s.catalog overlaid with the caller's
-// catalog/addons.yaml, via s.loadCatalogDelta + catalog.MergeDelta — the
+// catalog.yaml, via s.loadCatalogDelta + catalog.MergeDelta — the
 // same helpers catalog_delta.go's handlers use). A v4 repo has no
 // addons-catalog.yaml at all (the v3→v4 migration deletes it and a fresh
 // v4 repo never had one) — reading it unconditionally is what turned every

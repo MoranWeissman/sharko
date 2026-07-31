@@ -301,7 +301,7 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 
 	// v4 Wave 1 Story 2.6 — ClusterAddons carries two invariants a
 	// generic JSON Schema can't express: the file's own path must match
-	// spec.cluster, and spec.addons.*.settings.preserveResourcesOnDeletion
+	// the cluster: field, and the addons.*.settings.preserveResourcesOnDeletion
 	// is a validation error with a specific "it belongs somewhere else"
 	// message (design doc §3.2 "Two tiers"). The forbidden-field check
 	// runs BEFORE schema validation and returns immediately when it
@@ -318,7 +318,7 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 				kind:   "fail",
 				reason: fmt.Sprintf("preserveResourcesOnDeletion is not allowed on a per-cluster addon (addon %q)", addonName),
 				details: []string{fmt.Sprintf(
-					"line %d: preserveResourcesOnDeletion can only vary per addon, fleet-wide, because the engine builds one ApplicationSet per addon covering every cluster — set it in catalog/addons.yaml's addon settings instead, not in this clusters/*.yaml file",
+					"line %d: preserveResourcesOnDeletion can only vary per addon, fleet-wide, because the engine builds one ApplicationSet per addon covering every cluster — set it in catalog.yaml's addon settings instead, not in this clusters/*.yaml file",
 					line,
 				)},
 			}
@@ -332,7 +332,7 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 				path:    path,
 				kind:    "fail",
 				reason:  fmt.Sprintf("schema violations (kind: %s)", failure.Kind),
-				details: append(violationsWithLines(body, failure), fmt.Sprintf("→ for details: %s", schemaURLForKind(failure.Kind))),
+				details: append(violationsWithLines(body, failure), fmt.Sprintf("→ for details: %s", schemaURLForSchemaKey(failure.Kind))),
 			}
 		}
 		// Non-ValidationFailure error: unknown kind, decode failure,
@@ -349,7 +349,7 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 
 	// Schema passed. ClusterAddons has one more file-path-aware
 	// invariant the schema itself cannot check (design doc §2.1): the
-	// file name (minus .yaml) must equal spec.cluster, or the engine's
+	// file name (minus .yaml) must equal the cluster: field, or the engine's
 	// git-files generator (which finds a cluster's assignment file BY
 	// that name) silently gives the cluster nothing.
 	if header.Kind == sharkoschema.KindClusterAddons {
@@ -357,9 +357,9 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 			return fileVerdict{
 				path:   path,
 				kind:   "fail",
-				reason: fmt.Sprintf("file name and spec.cluster disagree (file implies %q, spec.cluster is %q)", wantCluster, gotCluster),
+				reason: fmt.Sprintf("file name and the cluster: field disagree (file implies %q, the cluster: field is %q)", wantCluster, gotCluster),
 				details: []string{fmt.Sprintf(
-					"line %d: spec.cluster must equal the file name without .yaml — the engine finds a cluster's assignment file by name, so a mismatch means the cluster silently gets nothing",
+					"line %d: the cluster: field must equal the file name without .yaml — the engine finds a cluster's assignment file by name, so a mismatch means the cluster silently gets nothing",
 					line,
 				)},
 			}
@@ -393,7 +393,7 @@ func violationsWithLines(body []byte, failure *sharkoschema.ValidationFailure) [
 }
 
 // detectClusterSettingsPreserveResourcesOnDeletion walks a
-// ClusterAddons body's spec.addons.*.settings blocks looking for a
+// ClusterAddons body's addons.*.settings blocks looking for a
 // hand-authored preserveResourcesOnDeletion key — the one v1 setting
 // (design doc §3.2) that is per-ApplicationSet, not per-Application, and
 // therefore cannot vary per cluster. Returns the addon name and the
@@ -405,11 +405,7 @@ func detectClusterSettingsPreserveResourcesOnDeletion(body []byte) (addonName st
 		return "", 0, false
 	}
 	root := doc.Content[0]
-	_, spec, ok := sharkoschema.MappingValue(root, "spec")
-	if !ok {
-		return "", 0, false
-	}
-	_, addons, ok := sharkoschema.MappingValue(spec, "addons")
+	_, addons, ok := sharkoschema.MappingValue(root, "addons")
 	if !ok || addons.Kind != yaml.MappingNode {
 		return "", 0, false
 	}
@@ -428,12 +424,12 @@ func detectClusterSettingsPreserveResourcesOnDeletion(body []byte) (addonName st
 }
 
 // detectClusterAddonsFilenameMismatch compares a ClusterAddons
-// body's spec.cluster against the file's own basename (design doc §2.1:
+// body's cluster: field against the file's own basename (design doc §2.1:
 // "clusters/prod-eu.yaml is the cluster called prod-eu... a mismatch
 // means the cluster silently gets nothing"). Returns the value on disk,
-// the value the filename implies, and the source line of the spec.cluster
+// the value the filename implies, and the source line of the cluster:
 // field. mismatch is false (and the other returns are zero) when the
-// document has no spec.cluster to compare (a separate schema violation
+// document has no cluster: field to compare (a separate schema violation
 // this function isn't responsible for) or the two agree.
 func detectClusterAddonsFilenameMismatch(path string, body []byte) (gotCluster, wantCluster string, line int, mismatch bool) {
 	var doc yaml.Node
@@ -441,11 +437,7 @@ func detectClusterAddonsFilenameMismatch(path string, body []byte) (gotCluster, 
 		return "", "", 0, false
 	}
 	root := doc.Content[0]
-	_, spec, ok := sharkoschema.MappingValue(root, "spec")
-	if !ok {
-		return "", "", 0, false
-	}
-	clusterKey, clusterVal, ok := sharkoschema.MappingValue(spec, "cluster")
+	clusterKey, clusterVal, ok := sharkoschema.MappingValue(root, "cluster")
 	if !ok || clusterVal.Kind != yaml.ScalarNode {
 		return "", "", 0, false
 	}
@@ -477,15 +469,21 @@ func looksLikeGoTemplate(body []byte) bool {
 // link see the actual schema in their browser, which (combined with
 // the violation list) is enough to fix most failures self-service.
 //
-// Unknown kinds fall back to the schemas index URL so the operator at
+// Unknown keys fall back to the schemas index URL so the operator at
 // least lands on a useful page rather than a 404. Should never happen
 // in practice because ValidateAutoDetect rejects unknown kinds before
 // we get here, but defensive default-case is cheap.
-func schemaURLForKind(kind string) string {
-	switch kind {
+//
+// It switches on the SCHEMA KEY rather than the on-disk kind, because the
+// two catalog formats share the kind AddonCatalog and would otherwise both
+// want this switch's same arm. The key is what a *ValidationFailure carries
+// (the validator records whatever key it was called with), so the failure
+// already tells us which of the two it was.
+func schemaURLForSchemaKey(key string) string {
+	switch key {
 	case sharkoschema.KindManagedClusters:
 		return sharkoschema.ManagedClustersSchemaID
-	case sharkoschema.KindAddonCatalog:
+	case sharkoschema.SchemaKeyAddonCatalogV3:
 		return sharkoschema.AddonCatalogSchemaID
 	case sharkoschema.KindDefaultAddons:
 		return sharkoschema.DefaultAddonsSchemaID
@@ -493,8 +491,8 @@ func schemaURLForKind(kind string) string {
 		return sharkoschema.MarketplaceSourcesSchemaID
 	case sharkoschema.KindClusterAddons:
 		return sharkoschema.ClusterAddonsSchemaID
-	case sharkoschema.KindAddonCatalogDelta:
-		return sharkoschema.AddonCatalogDeltaSchemaID
+	case sharkoschema.SchemaKeyAddonCatalogV4:
+		return sharkoschema.AddonCatalogV4SchemaID
 	default:
 		return "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/"
 	}

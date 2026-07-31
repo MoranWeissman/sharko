@@ -10,7 +10,7 @@ import (
 // TestRegisterCluster_V4Repo_WritesFleetConnectionsNoValuesFile is the v4
 // Wave 1 Story 4.4 regression guard: on a v4 repo (engine pin present),
 // RegisterCluster must write the connection record to
-// fleet/connections.yaml (design doc §2.4) instead of
+// managed-clusters.yaml (design doc §2.4) instead of
 // configuration/managed-clusters.yaml, must NOT write a combined
 // per-cluster values file (that concept does not exist in v4 — values
 // live under values/global|clusters/, written by EnableAddonV4), and must
@@ -34,15 +34,15 @@ func TestRegisterCluster_V4Repo_WritesFleetConnectionsNoValuesFile(t *testing.T)
 		t.Fatalf("unexpected partial result: %+v", result)
 	}
 
-	// fleet/connections.yaml written, and it round-trips through the same
+	// managed-clusters.yaml written, and it round-trips through the same
 	// ManagedClusters reader v3 uses (design doc §2.4 — "same shape").
-	connBytes, ok := git.files[V4ConnectionsPath]
+	connBytes, ok := git.files[V4ManagedClustersPath]
 	if !ok {
-		t.Fatalf("expected %s to be written; got files: %v", V4ConnectionsPath, keysOf(git.files))
+		t.Fatalf("expected %s to be written; got files: %v", V4ManagedClustersPath, keysOf(git.files))
 	}
 	spec, err := models.LoadManagedClusters(connBytes)
 	if err != nil {
-		t.Fatalf("fleet/connections.yaml failed to parse as ManagedClusters: %v", err)
+		t.Fatalf("managed-clusters.yaml failed to parse as ManagedClusters: %v", err)
 	}
 	found := false
 	for _, c := range spec.Clusters {
@@ -54,7 +54,7 @@ func TestRegisterCluster_V4Repo_WritesFleetConnectionsNoValuesFile(t *testing.T)
 		}
 	}
 	if !found {
-		t.Fatal("expected a prod-eu entry in fleet/connections.yaml")
+		t.Fatal("expected a prod-eu entry in managed-clusters.yaml")
 	}
 
 	// The v3 file must be untouched.
@@ -88,8 +88,8 @@ func TestRegisterCluster_V3Repo_UnaffectedByV4Detection(t *testing.T) {
 	if _, ok := git.files["configuration/managed-clusters.yaml"]; !ok {
 		t.Error("expected v3 configuration/managed-clusters.yaml to be written")
 	}
-	if _, ok := git.files[V4ConnectionsPath]; ok {
-		t.Error("v4 fleet/connections.yaml must not be written on a v3 repo")
+	if _, ok := git.files[V4ManagedClustersPath]; ok {
+		t.Error("v4 managed-clusters.yaml must not be written on a v3 repo")
 	}
 	valuesPath := defaultPaths().ClusterValues + "/prod-eu.yaml"
 	if _, ok := git.files[valuesPath]; !ok {

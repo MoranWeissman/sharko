@@ -1,16 +1,40 @@
 package models
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/testutil/malformed"
 )
 
+// deepNestingFlat builds a FLAT (apiVersion + kind at the top level, no
+// spec: wrapper) Sharko document with `depth` levels of nesting under an
+// unrecognised key instead of clusters:. Unlike malformed.DeepNesting
+// (which wraps the same nesting under spec: — the legacy v3 shape that
+// LoadManagedClusters deliberately skips schema validation for, see
+// TestMalformedInput_LoadManagedClusters_WrappedHugeListAccepted below),
+// this body is always schema-validated, so it keeps proving what the case
+// has always proven: pathological nesting in a real Sharko file must
+// error, never silently parse as zero clusters.
+func deepNestingFlat(depth int) []byte {
+	var b strings.Builder
+	b.WriteString("apiVersion: sharko.dev/v1\nkind: ManagedClusters\n")
+	indent := "  "
+	for i := 0; i < depth; i++ {
+		b.WriteString(strings.Repeat(indent, i+1))
+		b.WriteString(fmt.Sprintf("level%d:\n", i))
+	}
+	b.WriteString(strings.Repeat(indent, depth+1))
+	b.WriteString("leaf: true\n")
+	return []byte(b.String())
+}
+
 // TestMalformedInput_LoadManagedClusters and TestMalformedInput_LoadClusterAddons
 // are Story 8.6's (v4 Wave 2) all-or-nothing audit for the two envelope
 // readers this package owns:
 //
-//   - LoadManagedClusters — fleet/connections.yaml (v4) / managed-clusters.yaml
+//   - LoadManagedClusters — managed-clusters.yaml (v4) / managed-clusters.yaml
 //     (v3 legacy, still read by the migration and by ParseClusterAddons'
 //     enveloped branch).
 //   - LoadClusterAddons — clusters/<name>.yaml (v4 only, no legacy shape).
@@ -64,20 +88,29 @@ func TestMalformedInput_LoadManagedClusters(t *testing.T) {
 		"duplicate_top_level_keys":    malformed.DuplicateTopLevelKeys(),
 		"wrong_top_level_type_scalar": malformed.WrongTopLevelType(),
 		"wrong_top_level_type_seq":    malformed.WrongTopLevelSequence(),
-		"deep_nesting_200":            malformed.DeepNesting(200),
-		"huge_flat_list_5000":         malformed.HugeFlatList(5000),
-		"unknown_sharko_api_version":  malformed.UnknownSharkoAPIVersion(),
-		"go_template_directives":      malformed.GoTemplateDirectives(),
-		"tab_indentation":             malformed.TabIndentation(),
-		"wrong_kind_envelope":         []byte("apiVersion: sharko.dev/v1\nkind: AddonCatalog\nspec:\n  applicationsets: []\n"),
-		"clusters_wrong_type_string":  []byte("apiVersion: sharko.dev/v1\nkind: ManagedClusters\nspec:\n  clusters: \"not-a-list\"\n"),
-		"clusters_wrong_type_map":     []byte("apiVersion: sharko.dev/v1\nkind: ManagedClusters\nspec:\n  clusters:\n    name: prod-eu\n"),
-		"cluster_entry_not_object":    []byte("apiVersion: sharko.dev/v1\nkind: ManagedClusters\nspec:\n  clusters:\n    - \"just-a-string\"\n"),
-		"legacy_bare_binary_junk":     malformed.BinaryJunk(),
-		"legacy_bare_wrong_type":      []byte("clusters: \"not-a-list\"\n"),
-		"legacy_bare_truncated":       []byte("clusters:\n  - name: \"unterminated"),
-		"apiVersion_present_no_kind":  []byte("apiVersion: sharko.dev/v1\nspec:\n  clusters: []\n"),
-		"empty_kind_string":           []byte("apiVersion: sharko.dev/v1\nkind: \"\"\nspec:\n  clusters: []\n"),
+		// deep_nesting_200 is a FLAT body rather than
+		// malformed.DeepNesting(200), which wraps its nesting under
+		// spec:. Both shapes are still schema-validated, but the flat one
+		// is the shape Sharko writes, so this is the one worth pinning:
+		// no clusters: key plus an unrecognised nested structure must
+		// fail (missing required clusters:, additionalProperties: false
+		// rejects level0). Same thing the case always tested —
+		// pathological nesting must error, never silently parse as zero
+		// clusters.
+		"deep_nesting_200":           deepNestingFlat(200),
+		"huge_flat_list_5000":        malformed.HugeFlatList(5000),
+		"unknown_sharko_api_version": malformed.UnknownSharkoAPIVersion(),
+		"go_template_directives":     malformed.GoTemplateDirectives(),
+		"tab_indentation":            malformed.TabIndentation(),
+		"wrong_kind_envelope":        []byte("apiVersion: sharko.dev/v1\nkind: AddonCatalog\nspec:\n  applicationsets: []\n"),
+		"clusters_wrong_type_string": []byte("apiVersion: sharko.dev/v1\nkind: ManagedClusters\nspec:\n  clusters: \"not-a-list\"\n"),
+		"clusters_wrong_type_map":    []byte("apiVersion: sharko.dev/v1\nkind: ManagedClusters\nspec:\n  clusters:\n    name: prod-eu\n"),
+		"cluster_entry_not_object":   []byte("apiVersion: sharko.dev/v1\nkind: ManagedClusters\nspec:\n  clusters:\n    - \"just-a-string\"\n"),
+		"legacy_bare_binary_junk":    malformed.BinaryJunk(),
+		"legacy_bare_wrong_type":     []byte("clusters: \"not-a-list\"\n"),
+		"legacy_bare_truncated":      []byte("clusters:\n  - name: \"unterminated"),
+		"apiVersion_present_no_kind": []byte("apiVersion: sharko.dev/v1\nspec:\n  clusters: []\n"),
+		"empty_kind_string":          []byte("apiVersion: sharko.dev/v1\nkind: \"\"\nspec:\n  clusters: []\n"),
 	}
 
 	for name, body := range cases {

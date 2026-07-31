@@ -19,7 +19,7 @@ type v4PinProvider struct {
 
 func (p *v4PinProvider) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
 	p.readPaths = append(p.readPaths, path)
-	if path == v4EnginePinPath && p.v4 {
+	if path == V4EnginePinPath && p.v4 {
 		return []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"), nil
 	}
 	return nil, errFakeProvider

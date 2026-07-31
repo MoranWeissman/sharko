@@ -38,7 +38,7 @@ const v4ConnectionsYAML = `clusters:
 // secretPath / credsSource / roleARN entirely.
 func TestResolveCredentialRouting_V4Fallback(t *testing.T) {
 	reader := &pathRoutedReader{files: map[string][]byte{
-		V4ConnectionsPath: []byte(v4ConnectionsYAML),
+		V4ManagedClustersPath: []byte(v4ConnectionsYAML),
 	}}
 
 	key, source, role := ResolveCredentialRouting(context.Background(), reader, "", "main", "prod-eu")
@@ -52,18 +52,18 @@ func TestResolveCredentialRouting_V4Fallback(t *testing.T) {
 	if role != "arn:aws:iam::000000000000:role/SharkoEKSRead" {
 		t.Errorf("roleARN = %q, want the stored per-cluster role", role)
 	}
-	if len(reader.read) != 2 || reader.read[0] != DefaultManagedClustersPath || reader.read[1] != V4ConnectionsPath {
+	if len(reader.read) != 2 || reader.read[0] != DefaultManagedClustersPath || reader.read[1] != V4ManagedClustersPath {
 		t.Errorf("read order = %v, want the v3 path first then the v4 path", reader.read)
 	}
 }
 
 // TestResolveCredentialRouting_V3Unchanged — when the v3 file resolves, the
-// v4 path is never read, so a stray fleet/connections.yaml (e.g. mid
+// v4 path is never read, so a stray managed-clusters.yaml (e.g. mid
 // migration) can never leak into a v3 repo's credential routing.
 func TestResolveCredentialRouting_V3Unchanged(t *testing.T) {
 	reader := &pathRoutedReader{files: map[string][]byte{
 		DefaultManagedClustersPath: []byte(credLookupTestYAML),
-		V4ConnectionsPath:          []byte(v4ConnectionsYAML),
+		V4ManagedClustersPath:          []byte(v4ConnectionsYAML),
 	}}
 
 	key, _, _ := ResolveCredentialRouting(context.Background(), reader, "", "main", "moran")

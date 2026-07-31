@@ -1,5 +1,5 @@
 // v4 Wave 1 Story 2.6 — validate-config CLI coverage for the two new v4
-// kinds (ClusterAddons, AddonCatalogDelta), the file-name/line
+// kinds (ClusterAddons, AddonCatalog), the file-name/line
 // reporting they add, and the v4-layout fixture-repo end-to-end path.
 // Kept in a separate file from validate_config_test.go so the v3 and v4
 // suites can evolve independently — none of the existing tests in that
@@ -18,42 +18,36 @@ import (
 
 // validClusterAddons mirrors the design doc's §2.1 worked example
 // (docs/design/2026-07-30-v4-data-file-format.md). File name must be
-// prod-eu.yaml to match spec.cluster.
+// prod-eu.yaml to match cluster:.
 const validClusterAddons = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-addons.v1.json
 apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: prod-eu
-spec:
-  cluster: prod-eu
-  addons:
-    cert-manager:
-      enabled: true
-      version: "1.12.0"
-      settings:
-        ignoreDifferences:
-          - group: admissionregistration.k8s.io
-            kind: ValidatingWebhookConfiguration
-            jsonPointers:
-              - /webhooks/0/clientConfig/caBundle
-    metrics-server:
-      enabled: true
-    external-dns:
-      enabled: false
+cluster: prod-eu
+addons:
+  cert-manager:
+    enabled: true
+    version: "1.12.0"
+    settings:
+      ignoreDifferences:
+        - group: admissionregistration.k8s.io
+          kind: ValidatingWebhookConfiguration
+          jsonPointers:
+            - /webhooks/0/clientConfig/caBundle
+  metrics-server:
+    enabled: true
+  external-dns:
+    enabled: false
 `
 
-// validAddonCatalogDelta mirrors the design doc's §2.3 worked example.
-const validAddonCatalogDelta = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addon-catalog-delta.v1.json
+// validAddonCatalog mirrors the design doc's §2.3 worked example.
+const validAddonCatalog = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/catalog.v1.json
 apiVersion: sharko.dev/v1
-kind: AddonCatalogDelta
-metadata:
-  name: addon-catalog-delta
-spec:
-  addons:
-    cert-manager:
-      version: "1.14.5"
-    metrics-server:
-      version: "3.12.1"
+kind: AddonCatalog
+addons:
+  cert-manager:
+    version: "1.14.5"
+  metrics-server:
+    version: "3.12.1"
 `
 
 // TestValidateConfig_ClusterAddons_Valid_Exit0 — a well-formed
@@ -88,13 +82,10 @@ func TestValidateConfig_ClusterAddons_MissingEnabled_FailsWithLine(t *testing.T)
 	}
 	body := `apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: prod-eu
-spec:
-  cluster: prod-eu
-  addons:
-    cert-manager:
-      version: "1.12.0"
+cluster: prod-eu
+addons:
+  cert-manager:
+    version: "1.12.0"
 `
 	path := writeTempFile(t, clustersDir, "prod-eu.yaml", body)
 
@@ -108,7 +99,7 @@ spec:
 		"✘ " + path + ":",
 		"schema violations (kind: ClusterAddons)",
 		"enabled",
-		"line 9", // the cert-manager block's only present field ("version")
+		"line 6", // the cert-manager block's only present field ("version")
 		"1 file(s) failed validation",
 	} {
 		if !strings.Contains(out, want) {
@@ -130,15 +121,12 @@ func TestValidateConfig_ClusterAddons_PreserveResourcesOnDeletion_Rejected(t *te
 	}
 	body := `apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: prod-eu
-spec:
-  cluster: prod-eu
-  addons:
-    cert-manager:
-      enabled: true
-      settings:
-        preserveResourcesOnDeletion: false
+cluster: prod-eu
+addons:
+  cert-manager:
+    enabled: true
+    settings:
+      preserveResourcesOnDeletion: false
 `
 	path := writeTempFile(t, clustersDir, "prod-eu.yaml", body)
 
@@ -152,8 +140,8 @@ spec:
 		"✘ " + path + ":",
 		"preserveResourcesOnDeletion",
 		`addon "cert-manager"`,
-		"line 11", // the preserveResourcesOnDeletion key itself
-		"catalog/addons.yaml",
+		"line 8", // the preserveResourcesOnDeletion key itself
+		"catalog.yaml",
 		"1 file(s) failed validation",
 	} {
 		if !strings.Contains(out, want) {
@@ -178,15 +166,12 @@ func TestValidateConfig_ClusterAddons_FilenameMismatch_Fails(t *testing.T) {
 	}
 	body := `apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: prod-eu
-spec:
-  cluster: staging-us
-  addons:
-    cert-manager:
-      enabled: true
+cluster: staging-us
+addons:
+  cert-manager:
+    enabled: true
 `
-	// File is named prod-eu.yaml but spec.cluster says staging-us.
+	// File is named prod-eu.yaml but cluster: says staging-us.
 	path := writeTempFile(t, clustersDir, "prod-eu.yaml", body)
 
 	var buf bytes.Buffer
@@ -197,10 +182,10 @@ spec:
 	out := buf.String()
 	for _, want := range []string{
 		"✘ " + path + ":",
-		"file name and spec.cluster disagree",
+		"file name and the cluster: field disagree",
 		`"prod-eu"`,
 		`"staging-us"`,
-		"line 6", // the spec.cluster key
+		"line 3", // the cluster: key
 		"1 file(s) failed validation",
 	} {
 		if !strings.Contains(out, want) {
@@ -209,12 +194,12 @@ spec:
 	}
 }
 
-// TestValidateConfig_AddonCatalogDelta_Valid_Exit0 — a well-formed
+// TestValidateConfig_AddonCatalog_Valid_Exit0 — a well-formed
 // catalog/addons.yaml validates cleanly.
-func TestValidateConfig_AddonCatalogDelta_Valid_Exit0(t *testing.T) {
+func TestValidateConfig_AddonCatalog_Valid_Exit0(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := writeTempFile(t, dir, "addons.yaml", validAddonCatalogDelta)
+	path := writeTempFile(t, dir, "addons.yaml", validAddonCatalog)
 
 	var buf bytes.Buffer
 	if err := runValidateConfig(&buf, path, false); err != nil {
@@ -225,16 +210,13 @@ func TestValidateConfig_AddonCatalogDelta_Valid_Exit0(t *testing.T) {
 	}
 }
 
-// TestValidateConfig_AddonCatalogDelta_MissingAddons_FailsWithLine —
-// spec.addons is required even though it may be an empty map.
-func TestValidateConfig_AddonCatalogDelta_MissingAddons_FailsWithLine(t *testing.T) {
+// TestValidateConfig_AddonCatalog_MissingAddons_FailsWithLine —
+// addons: is required even though it may be an empty map.
+func TestValidateConfig_AddonCatalog_MissingAddons_FailsWithLine(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	body := `apiVersion: sharko.dev/v1
-kind: AddonCatalogDelta
-metadata:
-  name: addon-catalog-delta
-spec: {}
+kind: AddonCatalog
 `
 	path := writeTempFile(t, dir, "addons.yaml", body)
 
@@ -246,7 +228,7 @@ spec: {}
 	out := buf.String()
 	for _, want := range []string{
 		"✘ " + path + ":",
-		"schema violations (kind: AddonCatalogDelta)",
+		"schema violations (kind: AddonCatalog.v4)",
 		"addons",
 		"1 file(s) failed validation",
 	} {
@@ -257,46 +239,41 @@ spec: {}
 }
 
 // buildV4FixtureRepo lays out the design doc's §6 worked end-to-end
-// example on disk: two clusters, a catalog delta, connections, and a
-// values override — plus engine/application.yaml, which is a real
+// example on disk: two clusters, a catalog, cluster connections, and a
+// values override — plus engine.yaml, which is a real
 // ArgoCD Application (not a Sharko envelope) and must be silently
 // skipped, same as the plain Helm values files.
+//
+// The v4 repo layout is flat for the single-file kinds: catalog.yaml,
+// managed-clusters.yaml and engine.yaml all live at the repo root —
+// there is no catalog/, fleet/ or engine/ folder.
 func buildV4FixtureRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	mustMkdirAll(t, filepath.Join(dir, "clusters"))
-	mustMkdirAll(t, filepath.Join(dir, "catalog"))
-	mustMkdirAll(t, filepath.Join(dir, "fleet"))
 	mustMkdirAll(t, filepath.Join(dir, "values", "global"))
 	mustMkdirAll(t, filepath.Join(dir, "values", "clusters", "prod-eu"))
-	mustMkdirAll(t, filepath.Join(dir, "engine"))
 
-	writeTempFile(t, filepath.Join(dir, "catalog"), "addons.yaml", validAddonCatalogDelta)
+	writeTempFile(t, dir, "catalog.yaml", validAddonCatalog)
 	writeTempFile(t, filepath.Join(dir, "clusters"), "prod-eu.yaml", validClusterAddons)
 	writeTempFile(t, filepath.Join(dir, "clusters"), "staging-us.yaml", `apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: staging-us
-spec:
-  cluster: staging-us
-  addons:
-    cert-manager:
-      enabled: true
-    metrics-server:
-      enabled: true
+cluster: staging-us
+addons:
+  cert-manager:
+    enabled: true
+  metrics-server:
+    enabled: true
 `)
-	writeTempFile(t, filepath.Join(dir, "fleet"), "connections.yaml", `apiVersion: sharko.dev/v1
+	writeTempFile(t, dir, "managed-clusters.yaml", `apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: connections
-spec:
-  clusters:
-    - name: prod-eu
-      secretPath: k8s-prod-eu
-      region: eu-central-1
-    - name: staging-us
-      secretPath: k8s-staging-us
-      region: us-east-1
+clusters:
+  - name: prod-eu
+    secretPath: k8s-prod-eu
+    region: eu-central-1
+  - name: staging-us
+    secretPath: k8s-staging-us
+    region: us-east-1
 `)
 	writeTempFile(t, filepath.Join(dir, "values", "global"), "cert-manager.yaml", `installCRDs: true
 replicaCount: 2
@@ -307,7 +284,7 @@ resources:
 `)
 	writeTempFile(t, filepath.Join(dir, "values", "clusters", "prod-eu"), "cert-manager.yaml", `replicaCount: 3
 `)
-	writeTempFile(t, filepath.Join(dir, "engine"), "application.yaml", `apiVersion: argoproj.io/v1alpha1
+	writeTempFile(t, dir, "engine.yaml", `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: sharko-engine
@@ -331,8 +308,8 @@ func mustMkdirAll(t *testing.T, path string) {
 // TestValidateConfig_V4FixtureRepo_EndToEnd_Exit0 is the Story 2.6 AC
 // "a valid repo passes with exit code 0", exercised against the design
 // doc's actual §6 worked example end to end via the CLI: two
-// ClusterAddons files, an AddonCatalogDelta, a ManagedClusters
-// connections file, plain Helm values (skipped — syntax-check only,
+// ClusterAddons files, an AddonCatalog, a ManagedClusters
+// registry, plain Helm values (skipped — syntax-check only,
 // no schema), and a real ArgoCD Application (skipped, not a Sharko
 // envelope).
 func TestValidateConfig_V4FixtureRepo_EndToEnd_Exit0(t *testing.T) {
@@ -347,11 +324,11 @@ func TestValidateConfig_V4FixtureRepo_EndToEnd_Exit0(t *testing.T) {
 	for _, want := range []string{
 		"✓ " + filepath.Join(dir, "clusters", "prod-eu.yaml"),
 		"✓ " + filepath.Join(dir, "clusters", "staging-us.yaml"),
-		"✓ " + filepath.Join(dir, "catalog", "addons.yaml"),
-		"✓ " + filepath.Join(dir, "fleet", "connections.yaml"),
+		"✓ " + filepath.Join(dir, "catalog.yaml"),
+		"✓ " + filepath.Join(dir, "managed-clusters.yaml"),
 		"skip: " + filepath.Join(dir, "values", "global", "cert-manager.yaml"),
 		"skip: " + filepath.Join(dir, "values", "clusters", "prod-eu", "cert-manager.yaml"),
-		"skip: " + filepath.Join(dir, "engine", "application.yaml"),
+		"skip: " + filepath.Join(dir, "engine.yaml"),
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
@@ -363,7 +340,7 @@ func TestValidateConfig_V4FixtureRepo_EndToEnd_Exit0(t *testing.T) {
 // is the Story 2.6 AC "given a repo with one broken data file, sharko
 // validate in CI fails naming the file, the reason, and the line" —
 // exercised against the same fixture repo with exactly one file
-// corrupted (staging-us.yaml's spec.cluster renamed so it no longer
+// corrupted (staging-us.yaml's cluster: renamed so it no longer
 // matches the file name). Every OTHER file must still report pass or
 // skip: a broken file fails in isolation, it doesn't take the rest of
 // the repo down with it (part of "never half-applies" — validate-config
@@ -376,13 +353,10 @@ func TestValidateConfig_V4FixtureRepo_BrokenFile_Exit1_NamesFileReasonLine(t *te
 	brokenPath := filepath.Join(dir, "clusters", "staging-us.yaml")
 	broken := `apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: staging-us
-spec:
-  cluster: staging-eu
-  addons:
-    cert-manager:
-      enabled: true
+cluster: staging-eu
+addons:
+  cert-manager:
+    enabled: true
 `
 	if err := os.WriteFile(brokenPath, []byte(broken), 0o644); err != nil {
 		t.Fatalf("overwrite %s: %v", brokenPath, err)
@@ -396,13 +370,13 @@ spec:
 	out := buf.String()
 	for _, want := range []string{
 		"✘ " + brokenPath + ":",
-		"file name and spec.cluster disagree",
-		"line 6",
+		"file name and the cluster: field disagree",
+		"line 3",
 		"1 file(s) failed validation",
 		// every other file in the repo still gets its own clean verdict
 		"✓ " + filepath.Join(dir, "clusters", "prod-eu.yaml"),
-		"✓ " + filepath.Join(dir, "catalog", "addons.yaml"),
-		"✓ " + filepath.Join(dir, "fleet", "connections.yaml"),
+		"✓ " + filepath.Join(dir, "catalog.yaml"),
+		"✓ " + filepath.Join(dir, "managed-clusters.yaml"),
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
@@ -412,12 +386,12 @@ spec:
 
 // TestValidateConfig_V3AndV4_Coexist proves the two formats validate
 // side by side in the same directory walk: a v3 addons-catalog.yaml
-// (kind: AddonCatalog) next to a v4 catalog/addons.yaml (kind:
-// AddonCatalogDelta) — same base filename, different kind, different
-// schema, both pass. This is the concrete regression test for "v3
-// layouts must keep validating exactly as today" alongside the new v4
-// kinds, matching design doc decision D5's whole point (same apiVersion,
-// different kind, never cross-parsed).
+// (wrapped, kind: AddonCatalog) next to a v4 catalog.yaml (flat, kind:
+// AddonCatalog) — same kind, different shape, different schema, both
+// pass. This is the concrete regression test for "v3 layouts must keep
+// validating exactly as today" alongside the new v4 kinds, matching
+// design doc decision D5's whole point (same apiVersion, different
+// shape, never cross-parsed).
 func TestValidateConfig_V3AndV4_Coexist(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -434,7 +408,7 @@ spec:
       chart: cert-manager
       version: v1.16.1
 `)
-	v4Path := writeTempFile(t, dir, "v4-addons.yaml", validAddonCatalogDelta)
+	v4Path := writeTempFile(t, dir, "v4-addons.yaml", validAddonCatalog)
 
 	var buf bytes.Buffer
 	if err := runValidateConfig(&buf, dir, false); err != nil {

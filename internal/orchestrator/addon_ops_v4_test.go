@@ -89,13 +89,13 @@ func clusterValsPath(t *testing.T, cluster, addon string) string {
 func newV4TestOrchestrator(t *testing.T, git *mockGitProvider) *Orchestrator {
 	t.Helper()
 	// Every existing v4 test writes against cluster "prod-eu"; seed it into
-	// fleet/connections.yaml (the v4 cluster registry, design doc §2.4) so
+	// managed-clusters.yaml (the v4 cluster registry, design doc §2.4) so
 	// the v4ClusterExists pre-check (Wave 2 ride-along w2-q6 items 2/6)
 	// does not turn every one of them into a 404. Tests that specifically
 	// exercise the not-found path build their own bare mockGitProvider
 	// instead of going through this helper.
-	if _, ok := git.files[V4ConnectionsPath]; !ok {
-		git.files[V4ConnectionsPath] = []byte("clusters:\n  - name: prod-eu\n")
+	if _, ok := git.files[V4ManagedClustersPath]; !ok {
+		git.files[V4ManagedClustersPath] = []byte("clusters:\n  - name: prod-eu\n")
 	}
 	orch := New(nil, nil, newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 	orch.SetCuratedCatalog(v4TestCuratedCatalog(t))
@@ -461,7 +461,7 @@ func TestDisableAddonV4_Remove_DeletesEntry(t *testing.T) {
 func strPtrTest(s string) *string { return &s }
 
 // TestEnableAddonV4_UnknownCluster_ReturnsErrV4ClusterNotFound_BeforeAnyGitWrite
-// proves EnableAddonV4 refuses a cluster that is not in fleet/connections.yaml
+// proves EnableAddonV4 refuses a cluster that is not in managed-clusters.yaml
 // (and has no clusters/<name>.yaml either) BEFORE writing anything — the API
 // layer maps ErrV4ClusterNotFound to 404 (Wave 2 ride-along w2-q6 items 2/6).
 func TestEnableAddonV4_UnknownCluster_ReturnsErrV4ClusterNotFound_BeforeAnyGitWrite(t *testing.T) {

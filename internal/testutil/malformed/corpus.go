@@ -5,7 +5,7 @@
 //
 // These primitives are deliberately generic (not tied to any one Sharko
 // kind) — each reader package wraps them into its own kind-specific
-// envelopes (e.g. a ClusterAddons body, an AddonCatalogDelta body) in its
+// envelopes (e.g. a ClusterAddons body, an AddonCatalog body) in its
 // own test file, alongside kind-specific malformed cases (wrong types, wrong
 // kind, schema violations) that only make sense for that reader.
 //

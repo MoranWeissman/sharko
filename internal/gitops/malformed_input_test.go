@@ -2,9 +2,9 @@ package gitops
 
 // Story 8.6 (v4 Wave 2) — the all-or-nothing audit for
 // UpdateEnginePinVersion / EnginePinVersion, the two readers of
-// engine/application.yaml (design doc §2.5, "the engine pin"). This file
+// engine.yaml (design doc §2.5, "the engine pin"). This file
 // is different from the schema-validated envelope readers elsewhere in
-// the audit: engine/application.yaml is a real ArgoCD Application object,
+// the audit: engine.yaml is a real ArgoCD Application object,
 // not a Sharko envelope, so there is no JSON Schema gate here — the
 // locate-by-yaml.Node walk in locateEnginePinTargetRevision is the entire
 // defense. Every case below must come back as a Go error, never a panic,

@@ -202,7 +202,7 @@ func TestWriteTools_ProceedWhenNoV3MarkersPresent(t *testing.T) {
 // v3-migration message.
 func TestWriteTools_DoNotDoubleRefuseOnV4Repo(t *testing.T) {
 	gp := &v3GateGP{files: map[string][]byte{
-		v4EnginePinPath:                       []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+		V4EnginePinPath:                       []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
 		"configuration/managed-clusters.yaml": testManagedClustersYAML,
 	}}
 	e := NewToolExecutor(gp, nil, nil, nil, "")

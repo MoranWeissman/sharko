@@ -11,7 +11,7 @@ import (
 
 // AddInternalAddonRequest is the input for adding (or updating) one
 // first-class in-house addon in the caller's v4 catalog delta —
-// catalog/addons.yaml, kind AddonCatalogDelta (design doc §2.3, v4 wave 1
+// catalog.yaml, kind AddonCatalog (design doc §2.3, v4 wave 1
 // Story 3.3). RepoURL, Chart, and Version are all required: for an addon
 // with no shipped-catalog entry nothing else can supply them (the same
 // rule catalog.MergeDelta enforces at read time via
@@ -30,12 +30,12 @@ type AddInternalAddonRequest struct {
 }
 
 // AddInternalAddon adds or updates one entry in the caller's v4 catalog
-// delta file (catalog/addons.yaml, kind AddonCatalogDelta) and commits it
+// delta file (catalog.yaml, kind AddonCatalog) and commits it
 // via a pull request — "via PR, like everything" (v4 wave 1 Story 3.3 AC).
 //
 // The delta file is read-modify-write: a missing file is NOT an error
 // (design doc D16, "missing means empty") — AddInternalAddon starts from an
-// empty AddonCatalogDeltaSpec and creates the file. An existing entry for
+// empty AddonCatalogSpec and creates the file. An existing entry for
 // req.Name is overwritten in place (idempotent re-add / update), matching
 // AddAddon's upsert-by-name shape for the v3 catalog.
 //
@@ -48,7 +48,7 @@ type AddInternalAddonRequest struct {
 func (o *Orchestrator) AddInternalAddon(ctx context.Context, req AddInternalAddonRequest) (*GitResult, error) {
 	// Same name gate the v4 enable/disable paths use. An internal addon's
 	// name is not a path segment HERE (it is a map key in
-	// catalog/addons.yaml), but it becomes one the moment somebody enables
+	// catalog.yaml), but it becomes one the moment somebody enables
 	// the addon on a cluster (values/global/<addon>.yaml), and it becomes a
 	// Kubernetes label key on the cluster Secret. Rejecting it at the point
 	// it enters the repo is the only place that covers both.
@@ -67,25 +67,25 @@ func (o *Orchestrator) AddInternalAddon(ctx context.Context, req AddInternalAddo
 
 	spec, err := o.readCatalogDelta(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogDeltaPath, err)
+		return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 	}
 	if spec.Addons == nil {
-		spec.Addons = make(map[string]config.AddonCatalogDeltaEntry)
+		spec.Addons = make(map[string]config.AddonCatalogEntry)
 	}
-	spec.Addons[req.Name] = config.AddonCatalogDeltaEntry{
+	spec.Addons[req.Name] = config.AddonCatalogEntry{
 		RepoURL:   req.RepoURL,
 		Chart:     req.Chart,
 		Version:   req.Version,
 		Namespace: req.Namespace,
 	}
 
-	body, err := config.SaveAddonCatalogDelta(spec)
+	body, err := config.SaveAddonCatalog(spec)
 	if err != nil {
-		return nil, fmt.Errorf("rendering %s: %w", config.AddonCatalogDeltaPath, err)
+		return nil, fmt.Errorf("rendering %s: %w", config.AddonCatalogPath, err)
 	}
 
 	files := map[string][]byte{
-		config.AddonCatalogDeltaPath: body,
+		config.AddonCatalogPath: body,
 	}
 
 	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("add internal addon %s", req.Name),
@@ -97,18 +97,18 @@ func (o *Orchestrator) AddInternalAddon(ctx context.Context, req AddInternalAddo
 	return gitResult, nil
 }
 
-// readCatalogDelta reads and parses the caller's v4 catalog/addons.yaml. A
+// readCatalogDelta reads and parses the caller's v4 catalog.yaml. A
 // file that does not exist yet is NOT an error (design doc D16, "missing
-// means empty") — it returns a zero-value AddonCatalogDeltaSpec instead,
+// means empty") — it returns a zero-value AddonCatalogSpec instead,
 // mirroring the same gitprovider.ErrFileNotFound convention the read-side
 // API handlers use (internal/api/catalog_delta.go's loadCatalogDelta).
-func (o *Orchestrator) readCatalogDelta(ctx context.Context) (config.AddonCatalogDeltaSpec, error) {
-	data, err := o.git.GetFileContent(ctx, config.AddonCatalogDeltaPath, o.gitops.BaseBranch)
+func (o *Orchestrator) readCatalogDelta(ctx context.Context) (config.AddonCatalogSpec, error) {
+	data, err := o.git.GetFileContent(ctx, config.AddonCatalogPath, o.gitops.BaseBranch)
 	if err != nil {
 		if errors.Is(err, gitprovider.ErrFileNotFound) {
-			return config.AddonCatalogDeltaSpec{}, nil
+			return config.AddonCatalogSpec{}, nil
 		}
-		return config.AddonCatalogDeltaSpec{}, err
+		return config.AddonCatalogSpec{}, err
 	}
-	return config.LoadAddonCatalogDelta(data)
+	return config.LoadAddonCatalog(data)
 }

@@ -37,7 +37,7 @@ type addonCatalogDoc struct {
 	APIVersion string                  `json:"apiVersion"`
 	Kind       string                  `json:"kind"`
 	Metadata   sharkoschema.Metadata   `json:"metadata"`
-	Spec       config.AddonCatalogSpec `json:"spec"`
+	Spec       config.AddonCatalogV3Spec `json:"spec"`
 }
 
 // genManagedClusters is a test helper that calls the generator with the

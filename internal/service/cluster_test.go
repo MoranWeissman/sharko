@@ -582,8 +582,8 @@ applicationsets:
 // TestClusterService_ListClusters_V4Repo_ReadsFleetConnectionsFallback is
 // the v4 Wave 1 Story 4.4 regression guard: when the v3 path
 // (configuration/managed-clusters.yaml) is genuinely absent, ListClusters
-// must fall back to the v4 path (orchestrator.V4ConnectionsPath,
-// "fleet/connections.yaml" — design doc §2.4, same ManagedClusters shape)
+// must fall back to the v4 path (orchestrator.V4ManagedClustersPath,
+// "managed-clusters.yaml" — design doc §2.4, same ManagedClusters shape)
 // so a cluster registered on a v4 repo appears on the dashboard.
 func TestClusterService_ListClusters_V4Repo_ReadsFleetConnectionsFallback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -601,7 +601,7 @@ func TestClusterService_ListClusters_V4Repo_ReadsFleetConnectionsFallback(t *tes
 		files: map[string][]byte{
 			// v3 configuration/managed-clusters.yaml is intentionally
 			// absent — falls through to fakeGP's default ErrFileNotFound.
-			orchestrator.V4ConnectionsPath: []byte(`apiVersion: sharko.dev/v1
+			orchestrator.V4ManagedClustersPath: []byte(`apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: connections
@@ -626,7 +626,7 @@ spec:
 
 // TestClusterService_ListClusters_V3PathPresent_NeverTriesV4Fallback
 // proves the fallback is truly a fallback: when the v3 path resolves, a
-// stray fleet/connections.yaml (e.g. mid-migration) must never leak into
+// stray managed-clusters.yaml (e.g. mid-migration) must never leak into
 // the v3 desired state.
 func TestClusterService_ListClusters_V3PathPresent_NeverTriesV4Fallback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -643,7 +643,7 @@ func TestClusterService_ListClusters_V3PathPresent_NeverTriesV4Fallback(t *testi
 	gp := &fakeGP{
 		files: map[string][]byte{
 			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-cluster\n"),
-			orchestrator.V4ConnectionsPath:        []byte("clusters:\n  - name: v4-cluster-should-be-ignored\n"),
+			orchestrator.V4ManagedClustersPath:        []byte("clusters:\n  - name: v4-cluster-should-be-ignored\n"),
 		},
 	}
 

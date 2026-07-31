@@ -331,7 +331,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		// registration below uses the fail-closed form.
 		v4Repo := o.isV4RepoLenient(ctx)
 		valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
-		clusterAddonsPath := V4ConnectionsPath
+		clusterAddonsPath := V4ManagedClustersPath
 		if !v4Repo {
 			clusterAddonsPath = o.paths.ManagedClusters
 			if clusterAddonsPath == "" {
@@ -557,7 +557,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 
 	// v4 Wave 1 Story 4.4: on a v4 repo, cluster registration writes ONLY
-	// the connection record (fleet/connections.yaml, design doc §2.4) — no
+	// the connection record (managed-clusters.yaml, design doc §2.4) — no
 	// combined per-cluster values file (that concept doesn't exist in v4;
 	// values live under values/global|clusters/, written by
 	// EnableAddonV4), and no addon on/off labels (those live in
@@ -599,9 +599,9 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 
 	// Read the cluster registry and add this cluster's entry so the
 	// /api/v1/clusters endpoint recognises the cluster as managed after
-	// the PR merges. v4 repos use fleet/connections.yaml; v3 repos use
+	// the PR merges. v4 repos use managed-clusters.yaml; v3 repos use
 	// the server-configured (or default) managed-clusters.yaml path.
-	clusterAddonsPath := V4ConnectionsPath
+	clusterAddonsPath := V4ManagedClustersPath
 	if !v4Repo {
 		clusterAddonsPath = o.paths.ManagedClusters
 		if clusterAddonsPath == "" {

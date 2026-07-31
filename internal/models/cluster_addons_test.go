@@ -37,24 +37,21 @@ func TestLoadClusterAddons_ValidEnvelope_Accept(t *testing.T) {
 
 	body := []byte(`apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: prod-eu
-spec:
-  cluster: prod-eu
-  addons:
-    cert-manager:
-      enabled: true
-      version: "1.12.0"
-      settings:
-        ignoreDifferences:
-          - group: admissionregistration.k8s.io
-            kind: ValidatingWebhookConfiguration
-            jsonPointers:
-              - /webhooks/0/clientConfig/caBundle
-    metrics-server:
-      enabled: true
-    external-dns:
-      enabled: false
+cluster: prod-eu
+addons:
+  cert-manager:
+    enabled: true
+    version: "1.12.0"
+    settings:
+      ignoreDifferences:
+        - group: admissionregistration.k8s.io
+          kind: ValidatingWebhookConfiguration
+          jsonPointers:
+            - /webhooks/0/clientConfig/caBundle
+  metrics-server:
+    enabled: true
+  external-dns:
+    enabled: false
 `)
 
 	spec, err := LoadClusterAddons(body)
@@ -106,13 +103,10 @@ func TestLoadClusterAddons_MissingRequiredEnabled_Reject(t *testing.T) {
 
 	body := []byte(`apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: prod-eu
-spec:
-  cluster: prod-eu
-  addons:
-    cert-manager:
-      version: "1.12.0"
+cluster: prod-eu
+addons:
+  cert-manager:
+    version: "1.12.0"
 `)
 	_, err := LoadClusterAddons(body)
 	if err == nil {
@@ -134,15 +128,12 @@ func TestLoadClusterAddons_PreserveResourcesOnDeletion_SchemaReject(t *testing.T
 
 	body := []byte(`apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: prod-eu
-spec:
-  cluster: prod-eu
-  addons:
-    cert-manager:
-      enabled: true
-      settings:
-        preserveResourcesOnDeletion: false
+cluster: prod-eu
+addons:
+  cert-manager:
+    enabled: true
+    settings:
+      preserveResourcesOnDeletion: false
 `)
 	_, err := LoadClusterAddons(body)
 	if err == nil {
@@ -161,19 +152,16 @@ func TestLoadClusterAddons_WrongKind_Reject(t *testing.T) {
 	t.Parallel()
 
 	body := []byte(`apiVersion: sharko.dev/v1
-kind: AddonCatalogDelta
-metadata:
-  name: addon-catalog-delta
-spec:
-  addons: {}
+kind: AddonCatalog
+addons: {}
 `)
 	_, err := LoadClusterAddons(body)
 	if err == nil {
 		t.Fatal("LoadClusterAddons wrong kind: want error, got nil")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, `envelope kind "AddonCatalogDelta"`) {
-		t.Errorf("error %q: want substring %q", msg, `envelope kind "AddonCatalogDelta"`)
+	if !strings.Contains(msg, `kind "AddonCatalog"`) {
+		t.Errorf("error %q: want substring %q", msg, `kind "AddonCatalog"`)
 	}
 	if !strings.Contains(msg, `expected "ClusterAddons"`) {
 		t.Errorf("error %q: want substring %q", msg, `expected "ClusterAddons"`)
@@ -196,14 +184,15 @@ addons:
 	if err == nil {
 		t.Fatal("LoadClusterAddons: want error for non-enveloped body, got nil")
 	}
-	if !strings.Contains(err.Error(), "not a Sharko-enveloped document") {
-		t.Errorf("error %q: want substring \"not a Sharko-enveloped document\"", err.Error())
+	if !strings.Contains(err.Error(), "not a Sharko document") {
+		t.Errorf("error %q: want substring \"not a Sharko document\"", err.Error())
 	}
 }
 
 // TestSaveClusterAddons_RoundTrip pins the writer contract: line 1 is
-// the schema header, metadata.name equals spec.Cluster (design doc §2.1
-// worked example), and Load(Save(spec)) reproduces the same spec.
+// the schema header, the flat cluster: field carries spec.Cluster (there
+// is no metadata.name any more — the file's identity is its path on
+// disk, design doc §9), and Load(Save(spec)) reproduces the same spec.
 func TestSaveClusterAddons_RoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -232,8 +221,8 @@ func TestSaveClusterAddons_RoundTrip(t *testing.T) {
 	if lines[0] != ClusterAddonsSchemaHeader {
 		t.Errorf("line 1 = %q, want schema header %q", lines[0], ClusterAddonsSchemaHeader)
 	}
-	if !strings.Contains(string(body), "name: prod-eu") {
-		t.Errorf("output missing metadata.name: prod-eu:\n%s", body)
+	if !strings.Contains(string(body), "cluster: prod-eu") {
+		t.Errorf("output missing cluster: prod-eu:\n%s", body)
 	}
 
 	roundTripped, err := LoadClusterAddons(body)

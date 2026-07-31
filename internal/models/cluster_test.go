@@ -231,8 +231,8 @@ spec:
 	// reviewer changing the error string will see the diff in this test
 	// and update the consumers in lock-step.
 	msg := err.Error()
-	if !strings.Contains(msg, `envelope kind "AddonCatalog"`) {
-		t.Errorf("error %q: want substring %q", msg, `envelope kind "AddonCatalog"`)
+	if !strings.Contains(msg, `kind "AddonCatalog"`) {
+		t.Errorf("error %q: want substring %q", msg, `kind "AddonCatalog"`)
 	}
 	if !strings.Contains(msg, `expected "ManagedClusters"`) {
 		t.Errorf("error %q: want substring %q", msg, `expected "ManagedClusters"`)
@@ -243,12 +243,13 @@ spec:
 //
 //   - Line 1 of the output is the yaml-language-server schema header
 //     (editors use it to fetch the schema for inline validation).
-//   - The body contains the full envelope: apiVersion: sharko.dev/v1,
-//     kind: ManagedClusters, metadata.name: managed-clusters, and the
-//     spec block.
+//   - The body contains the flat header: apiVersion: sharko.dev/v1,
+//     kind: ManagedClusters, and the clusters: list at the SAME level
+//     (no metadata: block, no spec: wrapper — schema-flattening change,
+//     design doc 2026-07-31-catalog-approved-model.md §9).
 //
-// All four are verified explicitly so a regression in any one of them
-// fails this test with a clear locus instead of a vague "envelope wrong"
+// All are verified explicitly so a regression in any one of them fails
+// this test with a clear locus instead of a vague "envelope wrong"
 // message.
 func TestSaveManagedClusters_EmitsEnveloped(t *testing.T) {
 	t.Parallel()
@@ -280,24 +281,32 @@ func TestSaveManagedClusters_EmitsEnveloped(t *testing.T) {
 		t.Errorf("line 1 = %q, want %q", lines[0], ManagedClustersSchemaHeader)
 	}
 
-	// Envelope fields — parse back via yaml.Unmarshal to assert
+	// apiVersion/kind header — parsed back via yaml.Unmarshal to assert
 	// structural shape rather than substring-matching the output (which
 	// would be brittle to yaml.v3 formatting changes).
-	var doc ManagedClustersDoc
-	if err := yaml.Unmarshal(out, &doc); err != nil {
-		t.Fatalf("re-parse SaveManagedClusters output: %v\n%s", err, out)
+	var header struct {
+		APIVersion string `yaml:"apiVersion"`
+		Kind       string `yaml:"kind"`
 	}
-	if doc.APIVersion != schema.APIVersion {
-		t.Errorf("apiVersion = %q, want %q", doc.APIVersion, schema.APIVersion)
+	if err := yaml.Unmarshal(out, &header); err != nil {
+		t.Fatalf("re-parse SaveManagedClusters output header: %v\n%s", err, out)
 	}
-	if doc.Kind != schema.KindManagedClusters {
-		t.Errorf("kind = %q, want %q", doc.Kind, schema.KindManagedClusters)
+	if header.APIVersion != schema.APIVersion {
+		t.Errorf("apiVersion = %q, want %q", header.APIVersion, schema.APIVersion)
 	}
-	if doc.Metadata.Name != ManagedClustersMetadataName {
-		t.Errorf("metadata.name = %q, want %q", doc.Metadata.Name, ManagedClustersMetadataName)
+	if header.Kind != schema.KindManagedClusters {
+		t.Errorf("kind = %q, want %q", header.Kind, schema.KindManagedClusters)
 	}
-	if len(doc.Spec.Clusters) != 1 || doc.Spec.Clusters[0].Name != "prod-eu" {
-		t.Errorf("spec.clusters not preserved through Save: %+v", doc.Spec.Clusters)
+
+	// clusters: sits at the SAME level as apiVersion/kind now — no
+	// metadata.name to check any more, the file's identity is its path
+	// on disk.
+	var flat ManagedClustersSpec
+	if err := yaml.Unmarshal(out, &flat); err != nil {
+		t.Fatalf("re-parse SaveManagedClusters output clusters: %v\n%s", err, out)
+	}
+	if len(flat.Clusters) != 1 || flat.Clusters[0].Name != "prod-eu" {
+		t.Errorf("clusters not preserved through Save: %+v", flat.Clusters)
 	}
 }
 
@@ -458,16 +467,16 @@ spec:
 // NOT parallel — slog.SetDefault mutates a global; running side-by-side
 // with another slog-capturing test would race on the default handler.
 func TestLoadManagedClusters_EnvelopedInvalid_Reject(t *testing.T) {
-	// Body is enveloped (so the validator runs) but violates the schema
-	// in three ways: missing spec.clusters (required), extra field at
-	// spec level (additionalProperties: false), and apiVersion is the
-	// wrong const value (sharko.dev/v2 instead of sharko.dev/v1).
+	// Body must be FLAT to actually exercise the validator: a spec:-
+	// wrapped body is treated as the legacy v3 shape (schema.
+	// DecodeFlatOrWrapped) and deliberately SKIPS JSON Schema validation,
+	// so a wrapped invalid body would no longer fail this way. This body
+	// is flat but violates the schema in two ways: missing the required
+	// clusters: key, and an unknown field not permitted by
+	// additionalProperties: false.
 	body := []byte(`apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  unknownField: "x"
+unknownField: "x"
 `)
 
 	var buf bytes.Buffer

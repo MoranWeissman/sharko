@@ -78,6 +78,13 @@ import (
 // never drift apart.
 const ManagedClustersSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json"
 
+// ManagedClustersV3SchemaID is the public URL for the WRAPPED
+// managed-clusters schema — the spec:-wrapped shape a repo bootstrapped
+// before v4 still has at configuration/managed-clusters.yaml. Same payload
+// as ManagedClustersSchemaID's, one level down. See
+// schema.SchemaKeyManagedClustersV3.
+const ManagedClustersV3SchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters-v3.v1.json"
+
 // AddonCatalogSchemaID is the public URL embedded in every generated
 // addons-catalog.v1.json file's $id. Mirrors ManagedClustersSchemaID for the
 // addon-catalog kind. The literal value matches AddonCatalogSchemaHeader in
@@ -97,10 +104,14 @@ const MarketplaceSourcesSchemaID = "https://raw.githubusercontent.com/MoranWeiss
 // other schema ID constants.
 const ClusterAddonsSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-addons.v1.json"
 
-// AddonCatalogDeltaSchemaID is the public URL embedded in every generated
-// addon-catalog-delta.v1.json file's $id (v4 Wave 1 Story 2.6). Mirrors the
-// other schema ID constants.
-const AddonCatalogDeltaSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addon-catalog-delta.v1.json"
+// AddonCatalogV4SchemaID is the public URL embedded in every generated
+// catalog.v1.json file's $id — the schema for the v4 catalog.yaml, the
+// org's approved addon list. Mirrors the other schema ID constants.
+//
+// Named ...V4 rather than ...AddonCatalog because AddonCatalogSchemaID
+// above is already taken by the v3 addons-catalog.yaml schema; the two
+// formats share a kind but not a schema (see schema.KindAddonCatalog).
+const AddonCatalogV4SchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/catalog.v1.json"
 
 // SchemaDialect is the JSON Schema dialect URL emitted as $schema in every
 // generated file. Story 9.4's runtime validator (santhosh-tekuri/jsonschema

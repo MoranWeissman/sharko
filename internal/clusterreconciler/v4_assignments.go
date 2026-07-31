@@ -18,7 +18,7 @@ import (
 // literal (charts/sharko-engine/templates/appset.yaml), so a configurable
 // override here would let a repo silently stop matching what the engine
 // reads. Kept in lockstep with orchestrator.V4ClustersDir — clusterreconciler
-// cannot import orchestrator, the same dependency boundary v4ConnectionsPath
+// cannot import orchestrator, the same dependency boundary v4ManagedClustersPath
 // already lives with.
 const v4ClustersDir = "clusters"
 
@@ -29,7 +29,7 @@ const v4ClustersDir = "clusters"
 // on a v4 repo. The v4 engine's ApplicationSet selects clusters by
 // `addons.sharko.dev/<addon>: enabled` on the ArgoCD cluster Secret, but v4
 // registration writes NO labels onto the connection record
-// (fleet/connections.yaml's labels block stays empty by design — design doc
+// (managed-clusters.yaml's labels block stays empty by design — design doc
 // §2.4/D9 moved addon on/off out of it), and EnableAddonV4 writes only
 // clusters/<cluster>.yaml. Something has to turn the assignment file into
 // the label the engine matches on; that something is this reconciler, which
@@ -113,7 +113,7 @@ func v4LabelsFor(spec models.ClusterAddonsSpec) map[string]string {
 }
 
 // mergeV4AddonLabels combines the connection record's own labels (env,
-// region, anything a person put in fleet/connections.yaml's labels block)
+// region, anything a person put in managed-clusters.yaml's labels block)
 // with the addon labels derived from clusters/<name>.yaml. The derived
 // addon labels win on a key collision — clusters/<name>.yaml is the v4
 // source of truth for addon on/off, and nothing else is allowed to

@@ -69,7 +69,7 @@ func newTakeoverFakeGP() *takeoverFakeGP {
 			// A non-empty engine pin is what makes this a v4 repo, for both
 			// the v3-write gate and the takeover's own format check.
 			orchestrator.BootstrapRootAppPath: []byte("kind: Application\n"),
-			orchestrator.V4ConnectionsPath:    []byte("clusters:\n  - name: other-cluster\n"),
+			orchestrator.V4ManagedClustersPath:    []byte("clusters:\n  - name: other-cluster\n"),
 		},
 		readErr: map[string]error{},
 		written: map[string][]byte{},
@@ -495,7 +495,7 @@ func TestTakeover_DryRun_WritesNothingAnywhere(t *testing.T) {
 
 func TestTakeoverPreflight_BlocksWhenTheClusterListCannotBeRead(t *testing.T) {
 	gp := newTakeoverFakeGP()
-	gp.readErr[orchestrator.V4ConnectionsPath] = fmt.Errorf("403 rate limit exceeded")
+	gp.readErr[orchestrator.V4ManagedClustersPath] = fmt.Errorf("403 rate limit exceeded")
 	_, router, _ := takeoverTestServer(t, gp,
 		[]*corev1.Secret{brownfieldSecret("prod-eu", nil, nil)}, fakeAppSetReader{})
 
@@ -532,7 +532,7 @@ func TestTakeover_RefusedWhenTheFleetRecordCannotBeRead(t *testing.T) {
 	// became "empty fleet" would open a pull request dropping every other
 	// cluster — so the whole takeover is refused and no branch is created.
 	gp := newTakeoverFakeGP()
-	gp.readErr[orchestrator.V4ConnectionsPath] = fmt.Errorf("502 bad gateway")
+	gp.readErr[orchestrator.V4ManagedClustersPath] = fmt.Errorf("502 bad gateway")
 	_, router, k8s := takeoverTestServer(t, gp,
 		[]*corev1.Secret{brownfieldSecret("prod-eu", nil, nil)}, fakeAppSetReader{})
 
@@ -562,7 +562,7 @@ func TestTakeover_ProceedsWhenTheFleetRecordIsSimplyAbsent(t *testing.T) {
 	// The other half of the same distinction: a repo with no fleet record
 	// yet is an ordinary first takeover, not a failure.
 	gp := newTakeoverFakeGP()
-	delete(gp.files, orchestrator.V4ConnectionsPath)
+	delete(gp.files, orchestrator.V4ManagedClustersPath)
 	_, router, _ := takeoverTestServer(t, gp,
 		[]*corev1.Secret{brownfieldSecret("prod-eu", nil, nil)}, fakeAppSetReader{})
 

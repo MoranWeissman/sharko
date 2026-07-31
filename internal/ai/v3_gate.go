@@ -26,7 +26,7 @@ import (
 // internal/ai (for the smart-values annotation pass), so the reverse import
 // would be a cycle. The marker paths and the refusal sentence are therefore
 // declared here as the SAME literals, mirroring the exact pattern
-// v4EnginePinPath already uses in v4_gate.go for the same reason. A
+// V4EnginePinPath already uses in v4_gate.go for the same reason. A
 // cross-package test (v3_gate_pin_test.go, package ai_test) pins every
 // literal in this file against its internal/orchestrator source of truth so
 // the two can never silently drift.
@@ -56,7 +56,7 @@ func isV3Repo(ctx context.Context, gp gitprovider.GitProvider, branch string) bo
 	if branch == "" {
 		branch = "main"
 	}
-	if body, err := gp.GetFileContent(ctx, v4EnginePinPath, branch); err == nil && len(body) > 0 {
+	if body, err := gp.GetFileContent(ctx, V4EnginePinPath, branch); err == nil && len(body) > 0 {
 		return false // already v4 — the v4 gate owns that case, this must not double-refuse
 	}
 	for _, marker := range []string{v3BootstrapMarkerPath, v3SecondaryMarkerPath} {
@@ -105,6 +105,6 @@ func GetV3GateLiterals() V3GateLiterals {
 		BootstrapMarkerPath:      v3BootstrapMarkerPath,
 		SecondaryMarkerPath:      v3SecondaryMarkerPath,
 		MigrationRequiredMessage: v3MigrationRequiredMessage,
-		EnginePinPath:            v4EnginePinPath,
+		EnginePinPath:            V4EnginePinPath,
 	}
 }

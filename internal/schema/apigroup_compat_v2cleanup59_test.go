@@ -14,13 +14,10 @@ import (
 )
 
 const compatManagedClustersBody = `kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters:
-    - name: prod-eu
-      labels:
-        addon-datadog: enabled
+clusters:
+  - name: prod-eu
+    labels:
+      addon-datadog: enabled
 `
 
 func TestValidate_OldGroupEnvelopeValidatesClean(t *testing.T) {

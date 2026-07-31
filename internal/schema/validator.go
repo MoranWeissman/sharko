@@ -165,7 +165,10 @@ func NewValidator() (*Validator, error) {
 	if err := v.registerEmbedded(KindManagedClusters, ManagedClustersSchemaID, embeddedManagedClustersSchema); err != nil {
 		return nil, err
 	}
-	if err := v.registerEmbedded(KindAddonCatalog, AddonCatalogSchemaID, embeddedAddonCatalogSchema); err != nil {
+	if err := v.registerEmbedded(SchemaKeyAddonCatalogV3, AddonCatalogSchemaID, embeddedAddonCatalogSchema); err != nil {
+		return nil, err
+	}
+	if err := v.registerEmbedded(SchemaKeyManagedClustersV3, ManagedClustersV3SchemaID, embeddedManagedClustersV3Schema); err != nil {
 		return nil, err
 	}
 	if err := v.registerEmbedded(KindDefaultAddons, DefaultAddonsSchemaID, embeddedDefaultAddonsSchema); err != nil {
@@ -177,7 +180,7 @@ func NewValidator() (*Validator, error) {
 	if err := v.registerEmbedded(KindClusterAddons, ClusterAddonsSchemaID, embeddedClusterAddonsSchema); err != nil {
 		return nil, err
 	}
-	if err := v.registerEmbedded(KindAddonCatalogDelta, AddonCatalogDeltaSchemaID, embeddedAddonCatalogDeltaSchema); err != nil {
+	if err := v.registerEmbedded(SchemaKeyAddonCatalogV4, AddonCatalogV4SchemaID, embeddedAddonCatalogV4Schema); err != nil {
 		return nil, err
 	}
 	return v, nil
@@ -292,10 +295,40 @@ func (v *Validator) ValidateAutoDetect(body []byte) error {
 	if header.Kind == "" {
 		return errors.New("schema validator: auto-detect: envelope kind is empty")
 	}
-	if _, ok := v.schemas[header.Kind]; !ok {
+	key := SchemaKeyForBody(header.Kind, body)
+	if _, ok := v.schemas[key]; !ok {
 		return fmt.Errorf("schema validator: auto-detect: unknown kind %q (known kinds: %s)", header.Kind, knownKinds(v))
 	}
-	return v.Validate(header.Kind, body)
+	return v.Validate(key, body)
+}
+
+// SchemaKeyForBody picks the schema registry key for a document whose kind
+// is already known. For every kind but one it IS the kind string.
+//
+// The exception is the catalog: the flat v4 catalog.yaml and the wrapped v3
+// addons-catalog.yaml both declare kind AddonCatalog (see KindAddonCatalog),
+// so the kind alone cannot pick a schema. The tiebreak is the top-level
+// spec: key, which the v3 shape always has and the v4 shape never does.
+//
+// Only callers that genuinely do not know which format they hold need this
+// — in practice the validate-config CLI, which is handed arbitrary files.
+// Every loader in the codebase knows its own format and passes its schema
+// key directly, so nothing on the server's read or write paths guesses.
+func SchemaKeyForBody(kind string, body []byte) string {
+	switch kind {
+	case KindAddonCatalog:
+		if hasSpecKey(body) {
+			return SchemaKeyAddonCatalogV3
+		}
+		return SchemaKeyAddonCatalogV4
+	case KindManagedClusters:
+		if hasSpecKey(body) {
+			return SchemaKeyManagedClustersV3
+		}
+		return KindManagedClusters
+	default:
+		return kind
+	}
 }
 
 // LogValidationFailure writes a structured slog.Error for a validation
@@ -438,8 +471,8 @@ func knownKinds(v *Validator) string {
 	// generator's per-kind iteration in cmd/schema-gen/main.go.
 	var known []string
 	for _, k := range []string{
-		KindManagedClusters, KindAddonCatalog, KindDefaultAddons, KindMarketplaceSources,
-		KindClusterAddons, KindAddonCatalogDelta,
+		KindManagedClusters, SchemaKeyAddonCatalogV3, KindDefaultAddons, KindMarketplaceSources,
+		KindClusterAddons, SchemaKeyAddonCatalogV4, SchemaKeyManagedClustersV3,
 	} {
 		if _, ok := v.schemas[k]; ok {
 			known = append(known, k)

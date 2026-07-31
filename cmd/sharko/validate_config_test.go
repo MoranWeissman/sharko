@@ -41,29 +41,22 @@ import (
 const validEnvelopeManagedClusters = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters:
-    - name: prod-eu
-      region: eu-west-1
-      secretPath: clusters/prod-eu
-      labels:
-        cert-manager: enabled
+clusters:
+  - name: prod-eu
+    region: eu-west-1
+    secretPath: clusters/prod-eu
+    labels:
+      cert-manager: enabled
 `
 
-// invalidEnvelopeManagedClusters declares spec.clusters as an object
-// instead of the schema-required array. The validator should reject
-// with a /spec/clusters: ... violation that includes the schema URL
-// pointer line.
+// invalidEnvelopeManagedClusters declares clusters as an object instead
+// of the schema-required array. The validator should reject with a
+// /clusters: ... violation that includes the schema URL pointer line.
 const invalidEnvelopeManagedClusters = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters:
-    name: not-an-array
+clusters:
+  name: not-an-array
 `
 
 // nonShakroYAML is the kind of YAML the CI hook would encounter on a
@@ -409,6 +402,14 @@ func TestValidateConfig_HiddenDirsSkipped(t *testing.T) {
 // dispatch prompt) enforce manually; pinning it as a unit test means
 // any future change to the bootstrap templates that breaks the
 // envelope contract fails CI without needing a manual smoke step.
+//
+// templates/bootstrap/configuration/managed-clusters.yaml is the
+// embedded v3 scaffold's copy (see
+// internal/orchestrator/migration_scaffold.go) and is genuinely
+// v3-shaped (the old metadata:/spec: envelope) — it validates here
+// because the schema validator carries v3 compatibility for
+// ManagedClusters (managed-clusters-v3.v1.json) alongside the v4 flat
+// schema.
 //
 // The test is skipped when the bootstrap templates are unreadable
 // from the test working directory (e.g. when running in an oddly-

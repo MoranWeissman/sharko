@@ -19,13 +19,27 @@ import (
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
-// V4ConnectionsPath is where cluster credentials/registration info lives
-// in a v4 repo (design doc §2.4): "fleet/connections.yaml". Same kind
+// V4ManagedClustersPath is where the list of clusters Sharko manages lives
+// in a v4 repo: a root file called "managed-clusters.yaml". Same kind
 // (ManagedClusters) and shape models.LoadManagedClusters already reads —
-// only the path and, per design doc §2.4, the MEANING of the labels field
-// change (v4 no longer authors addon on/off keys there; that lives in
-// clusters/*.yaml instead — see EnableAddonV4/DisableAddonV4).
-const V4ConnectionsPath = "fleet/connections.yaml"
+// only the path and the MEANING of the labels field change (v4 no longer
+// authors addon on/off keys there; that lives in clusters/*.yaml instead —
+// see EnableAddonV4/DisableAddonV4).
+//
+// It used to be fleet/connections.yaml. Two things changed (design doc
+// 2026-07-31-catalog-approved-model.md §10): the "fleet" folder went away
+// because one file does not need a folder, and the word "connections" was
+// given up because it already meant something else — Settings, Connections
+// is where Sharko's OWN credentials for git, ArgoCD and vault live, which
+// are server state and never go in the repo. One name per idea now: the
+// file managed-clusters.yaml holds kind ManagedClusters and the UI page
+// that shows it is called Managed Clusters.
+//
+// This file, catalog.yaml and engine.yaml are ROOT files. They are fixed,
+// complete paths — no name from a request is ever joined onto them — so
+// they never go near checkV4PathSegment/joinUnder. Those guard the paths
+// that ARE built from user input: clusters/<name>.yaml and the values tree.
+const V4ManagedClustersPath = "managed-clusters.yaml"
 
 // V4ClustersDir is where one ClusterAddons file per cluster lives
 // (design doc §2.1): "clusters/<cluster-name>.yaml".
@@ -46,8 +60,8 @@ const V4ClusterValuesDir = "values/clusters"
 // match models.ResourceNamePattern, and this is the second, independent
 // check that runs no matter how the orchestrator was called (CLI, a future
 // caller, a test). It exists because path.Join CLEANS its result: joining
-// "clusters" with "../../engine/application.yaml" quietly yields
-// "engine/application.yaml", so an unchecked name here would let a caller
+// "clusters" with "../../engine.yaml" quietly yields "engine.yaml", so an
+// unchecked name here would let a caller
 // rewrite the engine pin — or any other file in the repo — through what
 // looks like an ordinary enable-addon request. Go 1.22's ServeMux hands a
 // URL-encoded "..%2F" to PathValue already decoded, so the traversal never

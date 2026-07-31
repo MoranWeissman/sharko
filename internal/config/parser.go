@@ -62,7 +62,7 @@ type clusterEntry struct {
 	RoleARN string `yaml:"roleArn,omitempty"`
 }
 
-// AddonCatalogSpec is the spec body of an enveloped addons-catalog.yaml.
+// AddonCatalogV3Spec is the spec body of an enveloped addons-catalog.yaml.
 // It holds the same payload as the legacy bare-YAML file (the
 // `applicationsets` list of AddonCatalogEntry). The envelope wraps this
 // struct in an apiVersion/kind/metadata frame so the file can be
@@ -71,7 +71,7 @@ type clusterEntry struct {
 // The YAML field name must remain `applicationsets` (lowercase, plural)
 // so legacy bare-YAML files keep deserializing into the same shape —
 // only the outer envelope is new.
-type AddonCatalogSpec struct {
+type AddonCatalogV3Spec struct {
 	ApplicationSets []models.AddonCatalogEntry `json:"applicationsets" yaml:"applicationsets"`
 }
 
@@ -137,38 +137,49 @@ func (p *Parser) ParseClusterAddons(data []byte) ([]models.Cluster, error) {
 
 	var file clusterAddonsFile
 	if enveloped {
-		// Wrong-kind check FIRST — same precedence as
-		// models.LoadManagedClusters so the actionable "wrong file
-		// handed to wrong loader" error surfaces ahead of any generic
-		// schema violation. Downstream tooling (reconciler audit log,
-		// validate-config CLI) depends on this format.
-		var env envelopedClusterAddonsFile
-		if err := yaml.Unmarshal(data, &env); err != nil {
-			return nil, fmt.Errorf("parsing managed-clusters envelope: %w", err)
+		// Accepts BOTH the flat shape Sharko writes today and the older
+		// spec:-wrapped one, exactly like models.LoadManagedClusters —
+		// this function and that one read the SAME file, so if they
+		// disagreed about its shape one of them would quietly return an
+		// empty cluster list for a perfectly good repo. That is not a
+		// hypothetical: this reader is what internal/service,
+		// internal/api, internal/secrets, internal/ai and
+		// internal/orchestrator all go through, and "zero clusters" is
+		// the reading that makes an orphan sweep delete every managed
+		// ArgoCD cluster Secret.
+		//
+		// The wrong-kind check happens inside DecodeFlatOrWrapped and
+		// still fires FIRST, ahead of any schema violation — downstream
+		// tooling (reconciler audit log, validate-config CLI) depends on
+		// that error's wording and precedence.
+		spec, wrapped, dErr := schema.DecodeFlatOrWrapped[clusterAddonsFile](
+			data, schema.KindManagedClusters, "managed-clusters")
+		if dErr != nil {
+			return nil, dErr
 		}
-		if env.Kind != schema.KindManagedClusters {
-			return nil, fmt.Errorf(
-				"managed-clusters envelope kind %q, expected %q",
-				env.Kind, schema.KindManagedClusters,
-			)
-		}
+		file = spec
 
-		// Validate AFTER wrong-kind check. Validator failures are
-		// surfaced as the canonical "validating managed-clusters
-		// envelope" wrapper so callers can errors.As into
-		// *schema.ValidationFailure (the validate-config CLI
-		// prefix-matches this string to render a user-friendly
-		// message).
+		// Both shapes are schema-validated — each against the schema
+		// that describes IT, exactly as models.LoadManagedClusters
+		// does. A wrapped v3 file keeps the checking it has always had.
+		//
+		// Failures are wrapped as "validating managed-clusters" so
+		// callers can errors.As into *schema.ValidationFailure (the
+		// validate-config CLI prefix-matches this string to render a
+		// user-friendly message).
+		schemaKey := schema.KindManagedClusters
+		if wrapped {
+			schemaKey = schema.SchemaKeyManagedClustersV3
+		}
 		if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
-			if err := validator.Validate(schema.KindManagedClusters, data); err != nil {
+			if err := validator.Validate(schemaKey, data); err != nil {
 				var vf *schema.ValidationFailure
 				if errors.As(err, &vf) {
 					schema.LogValidationFailure("managed-clusters.yaml", vf)
 				}
-				return nil, fmt.Errorf("validating managed-clusters envelope: %w", err)
+				return nil, fmt.Errorf("validating managed-clusters: %w", err)
 			}
 		}
-		file = env.Spec
 	} else {
 		// Legacy bare YAML — back-compat path, no validation by design.
 		if err := yaml.Unmarshal(data, &file); err != nil {
@@ -249,7 +260,7 @@ func (p *Parser) ParseAddonsCatalog(data []byte) ([]models.AddonCatalogEntry, er
 		// Wrong-kind check FIRST — same precedence as
 		// models.LoadManagedClusters and ParseClusterAddons. Pinned
 		// by TestLoadCatalog_EnvelopedWrongKind_Reject.
-		var doc schema.Envelope[AddonCatalogSpec]
+		var doc schema.Envelope[AddonCatalogV3Spec]
 		if err := yaml.Unmarshal(data, &doc); err != nil {
 			return nil, fmt.Errorf("parsing addons-catalog.yaml: %w", err)
 		}
@@ -306,11 +317,11 @@ func MarshalAddonCatalog(metadataName string, entries []models.AddonCatalogEntry
 		entries = []models.AddonCatalogEntry{}
 	}
 
-	doc := schema.Envelope[AddonCatalogSpec]{
+	doc := schema.Envelope[AddonCatalogV3Spec]{
 		APIVersion: schema.APIVersion,
 		Kind:       schema.KindAddonCatalog,
 		Metadata:   schema.Metadata{Name: metadataName},
-		Spec:       AddonCatalogSpec{ApplicationSets: entries},
+		Spec:       AddonCatalogV3Spec{ApplicationSets: entries},
 	}
 
 	body, err := yaml.Marshal(&doc)

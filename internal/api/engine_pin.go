@@ -60,7 +60,7 @@ func enginePinResultFromSnapshot(snap catalog.EnginePinSnapshot) *orchestrator.E
 // handleCheckEnginePin godoc
 //
 // @Summary Check engine pin
-// @Description Compares the engine chart version pinned in the connected repo's engine/application.yaml against the version bundled with this Sharko build. Responds cleanly (v4_repo=false) for v3 repos or repos not yet bootstrapped — never errors on a missing pin.
+// @Description Compares the engine chart version pinned in the connected repo's engine.yaml against the version bundled with this Sharko build. Responds cleanly (v4_repo=false) for v3 repos or repos not yet bootstrapped — never errors on a missing pin.
 // @Tags engine
 // @Produce json
 // @Security BearerAuth

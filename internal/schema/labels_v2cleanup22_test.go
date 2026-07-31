@@ -10,33 +10,24 @@ import "testing"
 
 const labelsObjectBody = `apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters:
-    - name: prod-eu
-      labels:
-        cert-manager: enabled
+clusters:
+  - name: prod-eu
+    labels:
+      cert-manager: enabled
 `
 
 const labelsScalarBody = `apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters:
-    - name: prod-eu
-      labels: oops
+clusters:
+  - name: prod-eu
+    labels: oops
 `
 
 const labelsArrayBody = `apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters:
-    - name: prod-eu
-      labels: []
+clusters:
+  - name: prod-eu
+    labels: []
 `
 
 // TestLabelsSchema_ObjectPasses: the legit object-with-string-values shape
