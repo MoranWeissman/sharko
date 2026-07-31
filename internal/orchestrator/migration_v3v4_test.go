@@ -559,9 +559,9 @@ func TestPreviewMigration_ListsEveryFile(t *testing.T) {
 	}
 
 	wantWritten := map[string]string{
-		"engine.yaml":                     "",
+		"engine.yaml":                                 "",
 		"README.md":                                   "README.md",
-		"managed-clusters.yaml":                      "configuration/managed-clusters.yaml",
+		"managed-clusters.yaml":                       "configuration/managed-clusters.yaml",
 		"catalog.yaml":                                "configuration/addons-catalog.yaml",
 		"clusters/prod-eu.yaml":                       "",
 		"clusters/staging-us.yaml":                    "",
@@ -1022,19 +1022,19 @@ func TestMigrate_CatalogConversion_CarriesEveryEntryWhole(t *testing.T) {
 	}
 }
 
-// TestBuildCatalog_KeepsAnEntryEvenWhenTheShippedListAgrees is the case
-// that used to disappear: a curated addon the user changed nothing about.
-// Under the approved-list model it is still an addon the org runs, so it
-// stays — and it stays whole.
-func TestBuildCatalog_KeepsAnEntryEvenWhenTheShippedListAgrees(t *testing.T) {
-	curated := migrationCuratedCatalog(t)
-	spec, _ := buildCatalogDelta([]models.AddonCatalogEntry{{
+// TestBuildCatalogFromV3_EntryIsSelfContained pins the whole point of
+// decision 7: there is no shipped list to compare against any more, so an
+// addon that happens to look exactly like a curated entry is carried
+// across whole regardless — nothing about the conversion asks whether a
+// curated catalog even exists.
+func TestBuildCatalogFromV3_EntryIsSelfContained(t *testing.T) {
+	spec, _ := buildCatalogFromV3([]models.AddonCatalogEntry{{
 		Name:      "cert-manager",
 		RepoURL:   "https://charts.jetstack.io",
 		Chart:     "cert-manager",
 		Namespace: "cert-manager",
 		Version:   "1.14.5",
-	}}, curated)
+	}})
 
 	got, present := spec.Addons["cert-manager"]
 	if !present {
@@ -1045,18 +1045,18 @@ func TestBuildCatalog_KeepsAnEntryEvenWhenTheShippedListAgrees(t *testing.T) {
 	}
 }
 
-// TestBuildCatalogDelta_NoCuratedCatalog_CarriesEverything: a server with
-// no shipped catalog loaded cannot tell curated from user-added, so the
-// lossless answer is to carry every entry across whole.
-func TestBuildCatalogDelta_NoCuratedCatalog_CarriesEverything(t *testing.T) {
+// TestBuildCatalogFromV3_CarriesEveryEntryWhole: every named v3 entry
+// becomes one full v4 entry, straight across — the lossless, no-comparison
+// answer decision 7 settled on.
+func TestBuildCatalogFromV3_CarriesEveryEntryWhole(t *testing.T) {
 	v3Entries, err := parseAddonsCatalog([]byte(migrationV3CatalogYAML))
 	if err != nil {
 		t.Fatalf("parsing the v3 fixture catalog: %v", err)
 	}
-	spec, _ := buildCatalogDelta(v3Entries, nil)
+	spec, _ := buildCatalogFromV3(v3Entries)
 
 	if len(spec.Addons) != len(v3Entries) {
-		t.Fatalf("delta has %d addons, want all %d", len(spec.Addons), len(v3Entries))
+		t.Fatalf("catalog has %d addons, want all %d", len(spec.Addons), len(v3Entries))
 	}
 	for _, v3 := range v3Entries {
 		got := spec.Addons[v3.Name]
@@ -1066,21 +1066,88 @@ func TestBuildCatalogDelta_NoCuratedCatalog_CarriesEverything(t *testing.T) {
 	}
 }
 
-// TestBuildCatalogDelta_NotesSecretsItCannotCarry: a v3 catalog entry can
-// declare secrets, and the v4 delta has nowhere to put them yet. Silently
-// dropping them would be discovered from a broken cluster; the note is how
-// somebody finds out before merging.
-func TestBuildCatalogDelta_NotesSecretsItCannotCarry(t *testing.T) {
-	_, notes := buildCatalogDelta([]models.AddonCatalogEntry{{
+// TestBuildCatalogFromV3_SecretsMoveIntoEntry: a v3 catalog entry's
+// secrets: block (a real push definition — SecretName/Namespace/Keys) moves
+// INTO the converted addon's own catalog entry, as a plain-English
+// needed-secrets requirement (design doc §7) — nothing is left behind only
+// in a PR-body side note.
+func TestBuildCatalogFromV3_SecretsMoveIntoEntry(t *testing.T) {
+	spec, notes := buildCatalogFromV3([]models.AddonCatalogEntry{{
 		Name:    "datadog",
 		RepoURL: "https://example.com",
 		Chart:   "datadog",
 		Version: "1.0.0",
-		Secrets: []models.AddonSecretRef{{SecretName: "datadog-keys"}},
-	}}, nil)
+		Secrets: []models.AddonSecretRef{{
+			SecretName: "datadog-keys",
+			Namespace:  "monitoring",
+			Keys:       map[string]string{"api-key": "secrets/datadog/api-key"},
+		}},
+	}})
 
-	if len(notes) == 0 || !strings.Contains(notes[0], "datadog") || !strings.Contains(notes[0], "secrets") {
+	entry, ok := spec.Addons["datadog"]
+	if !ok {
+		t.Fatal("datadog is missing from the converted catalog")
+	}
+	if len(entry.Secrets) != 1 {
+		t.Fatalf("entry.Secrets = %+v, want exactly 1", entry.Secrets)
+	}
+	got := entry.Secrets[0]
+	if got.Name != "datadog-keys" {
+		t.Errorf("Secrets[0].Name = %q, want %q", got.Name, "datadog-keys")
+	}
+	for _, want := range []string{"datadog-keys", "monitoring", "api-key"} {
+		if !strings.Contains(got.Description, want) {
+			t.Errorf("Description = %q, should mention %q", got.Description, want)
+		}
+	}
+	if got.RequiredFor != "" {
+		t.Errorf("RequiredFor = %q, want empty — unset defaults to install, the stricter reading these secrets always enforced (creds_gate.go)", got.RequiredFor)
+	}
+
+	if len(notes) == 0 {
+		t.Fatal("expected a note pointing at where the secrets moved to")
+	}
+	found := false
+	for _, n := range notes {
+		if strings.Contains(n, "datadog") && strings.Contains(n, "secrets") {
+			found = true
+		}
+	}
+	if !found {
 		t.Errorf("notes = %v, should name datadog and its secrets", notes)
+	}
+}
+
+// TestMigrate_ConvertedCatalog_ValidatesAndDeploys is the whole-migration
+// proof for decision 7: the catalog.yaml a real migration produces both
+// passes the v4 JSON Schema (config.LoadAddonCatalog enforces this on every
+// read) and comes back Deployable for every entry — the #650 sense of "the
+// engine can actually render this" — with no shipped list backing any of
+// it up.
+func TestMigrate_ConvertedCatalog_ValidatesAndDeploys(t *testing.T) {
+	git := newMigrationFakeGit(newV3FixtureRepo())
+	orch := newMigrationOrchestrator(t, git)
+
+	if _, err := orch.MigrateV3ToV4(context.Background(), MigrateRequest{Yes: true}); err != nil {
+		t.Fatalf("MigrateV3ToV4: %v", err)
+	}
+
+	spec, err := config.LoadAddonCatalog(git.branchWrites[config.AddonCatalogPath])
+	if err != nil {
+		t.Fatalf("catalog.yaml failed schema validation on read: %v", err)
+	}
+	if err := catalog.ValidateCatalogSpec(spec); err != nil {
+		t.Fatalf("catalog.yaml is not fully deployable: %v", err)
+	}
+
+	view := catalog.BuildCatalogView(nil, spec)
+	if len(view) != len(spec.Addons) {
+		t.Fatalf("view has %d addons, want %d", len(view), len(spec.Addons))
+	}
+	for name, addon := range view {
+		if !addon.Deployable {
+			t.Errorf("%s: Deployable = false, missing = %v", name, addon.MissingFields)
+		}
 	}
 }
 
@@ -1308,7 +1375,7 @@ func TestMigrate_AllOrNothing_OnMalformedInput(t *testing.T) {
     version: 1.15.0
 `)
 			},
-			// Gap fixed by this story: buildCatalogDelta folds entries into
+			// Gap fixed by this story: buildCatalogFromV3 folds entries into
 			// a map keyed by name, so a duplicate used to silently collapse
 			// into whichever entry sorted last — dropping the other one's
 			// fields with no note. readV3Catalog now refuses this before

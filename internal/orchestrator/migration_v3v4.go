@@ -5,9 +5,10 @@
 // ones, not a hand migration with a checklist: the scaffolded template
 // forest comes out, the engine pin goes in, the cluster registry and every
 // values file are rewritten into the v4 layout, and the full-copy catalog
-// becomes a delta of just the user's own changes. Merge it and everything
-// keeps running; revert that one merge and you are exactly back where you
-// started.
+// converts straight across into the v4 catalog — every v3 entry becomes
+// one full, self-contained catalog.yaml entry (migration_catalog.go). Merge
+// it and everything keeps running; revert that one merge and you are
+// exactly back where you started.
 //
 // All-or-nothing is structural, not aspirational: the ENTIRE file map is
 // built and validated through the real readers (schema + semantic) before
@@ -417,21 +418,22 @@ func (o *Orchestrator) buildMigration(ctx context.Context) (*migrationBuild, err
 	b.clusterCount = len(clusters)
 	b.addonNames = sortedBoolKeys(catalogNames)
 
-	// 3 — catalog.yaml (the delta).
-	deltaSpec, catalogNotes := buildCatalogDelta(v3Catalog, o.curated)
+	// 3 — catalog.yaml: the org's full approved list, straight across from
+	// the v3 full-copy catalog (migration_catalog.go).
+	catalogSpec, catalogNotes := buildCatalogFromV3(v3Catalog)
 	b.notes = append(b.notes, catalogNotes...)
-	deltaBody, err := config.SaveAddonCatalog(deltaSpec)
+	catalogBody, err := config.SaveAddonCatalog(catalogSpec)
 	if err != nil {
 		return nil, fmt.Errorf("building %s: %w", config.AddonCatalogPath, err)
 	}
-	b.files[config.AddonCatalogPath] = deltaBody
+	b.files[config.AddonCatalogPath] = catalogBody
 	b.convertedFrom[config.AddonCatalogPath] = paths.catalog
 
-	// Semantic gate: every converted entry must be complete on its own.
-	// There is no shipped list to fall back on any more, so an entry
-	// missing repoURL/chart/version fails HERE, in plain English, rather
-	// than after the PR merges and the engine cannot render it.
-	if err := catalog.ValidateCatalogSpec(deltaSpec); err != nil {
+	// Semantic gate: every converted entry must be complete on its own —
+	// repoURL/chart/version, straight from the v3 entry. An entry missing
+	// one fails HERE, in plain English, rather than after the PR merges
+	// and the engine cannot render it.
+	if err := catalog.ValidateCatalogSpec(catalogSpec); err != nil {
 		return nil, fmt.Errorf("the new catalog file would not be usable: %w", err)
 	}
 
@@ -488,7 +490,7 @@ func (o *Orchestrator) readV3Clusters(ctx context.Context, registryPath string) 
 // Story 8.6 gap fix (v4 Wave 2 all-or-nothing audit): parseAddonsCatalog's
 // legacy bare-YAML path (unlike internal/catalog.LoadBytes, which rejects
 // this outright) does not reject a catalog that names the same addon
-// twice — buildCatalogDelta folds entries into a map keyed by name, so a
+// twice — buildCatalogFromV3 folds entries into a map keyed by name, so a
 // duplicate silently collapses into whichever entry sorts last, with no
 // note telling the operator a whole entry's fields were dropped. That is
 // exactly the silent-data-loss failure class the migration's own design
@@ -513,7 +515,7 @@ func (o *Orchestrator) readV3Catalog(ctx context.Context, catalogPath string) ([
 
 // rejectDuplicateCatalogNames returns an error naming the first addon name
 // that appears more than once in entries, or nil when every name is
-// unique. Empty names are not this check's concern — buildCatalogDelta
+// unique. Empty names are not this check's concern — buildCatalogFromV3
 // already skips those with its own note.
 func rejectDuplicateCatalogNames(entries []models.AddonCatalogEntry) error {
 	seen := make(map[string]bool, len(entries))
@@ -1075,7 +1077,8 @@ func migrationPRBody(b *migrationBuild) string {
 	sb.WriteString("- Which addons run on which cluster moves into one file per cluster, under `clusters/`.\n")
 	sb.WriteString("- How Sharko reaches each cluster moves to `managed-clusters.yaml`.\n")
 	sb.WriteString("- Helm values move under `values/` — one file per addon, per cluster where it differs.\n")
-	sb.WriteString("- The addon list becomes `catalog.yaml`, holding only YOUR additions and changes. The addons Sharko ships now come with the engine, so they no longer need copying into your repository.\n\n")
+	sb.WriteString("- The addon list becomes `catalog.yaml`: your full list of addons approved for this org, moved across whole — every chart, repo, version and setting your old catalog file had, still there, still yours to review here.\n")
+	sb.WriteString("- Each addon's `secrets:` block, if it had one, moves into that same addon's entry in `catalog.yaml` — nothing is left behind in this description alone.\n\n")
 	sb.WriteString("Nothing about what is running changes. Every addon stays on the same cluster, at the same version, with the same values.\n\n")
 
 	// The runtime half. A person about to merge this deserves to see, on
