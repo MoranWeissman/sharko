@@ -9,7 +9,7 @@ import type { CatalogSourceRecord } from '@/services/models'
  * - Third-party entries render a deeper-blue badge containing the URL host
  *   (e.g. `catalogs.example.com`). When the optional `sourceRecord` prop is
  *   supplied, the tooltip also shows the last-fetched timestamp + status
- *   returned by `GET /api/v1/catalog/sources`.
+ *   returned by `GET /api/v1/marketplace/sources`.
  *
  * The full URL is NEVER rendered as a clickable link — URL paths may carry
  * auth tokens, and we don't want them leaking via Referer headers or
@@ -20,7 +20,7 @@ import type { CatalogSourceRecord } from '@/services/models'
 type SourceBadgeProps = {
   /** The `source` field on a `CatalogEntry`: `"embedded"`, a third-party URL, or undefined. */
   source: string | undefined
-  /** Matching record from `GET /api/v1/catalog/sources`. When absent the tooltip
+  /** Matching record from `GET /api/v1/marketplace/sources`. When absent the tooltip
    *  falls back to just the raw URL. */
   sourceRecord?: CatalogSourceRecord
   /** Tile size — true on Marketplace cards, false/omitted on the detail page. */

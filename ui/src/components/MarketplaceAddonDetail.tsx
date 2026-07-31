@@ -200,8 +200,8 @@ export function MarketplaceAddonDetail({
     setProjectReadmeLoading(true)
     const endpoint =
       source === 'curated'
-        ? `/api/v1/catalog/addons/${encodeURIComponent(addonName)}/project-readme`
-        : `/api/v1/catalog/remote/${encodeURIComponent(ahRepoName ?? '')}/${encodeURIComponent(addonName)}/project-readme`
+        ? `/api/v1/marketplace/addons/${encodeURIComponent(addonName)}/project-readme`
+        : `/api/v1/marketplace/remote/${encodeURIComponent(ahRepoName ?? '')}/${encodeURIComponent(addonName)}/project-readme`
     fetch(endpoint, {
       headers: sessionStorage.getItem('sharko-auth-token')
         ? { Authorization: `Bearer ${sessionStorage.getItem('sharko-auth-token') ?? ''}` }
@@ -725,10 +725,10 @@ export function MarketplaceAddonDetail({
             </code>{' '}
             out to your clusters, and adds an entry to your{' '}
             <code className="rounded bg-[#e8f3fb] px-1 py-0.5 font-mono text-xs text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300">
-              addons-catalog.yaml
+              catalog.yaml
             </code>
-            . The addon will be available to deploy on any cluster afterwards
-            (you enable it per-cluster from the Catalog tab).
+            . This only approves the addon — nothing deploys until you
+            enable it on a cluster (per-cluster, from the Catalog tab).
           </p>
         </header>
 
@@ -1122,6 +1122,16 @@ export function MarketplaceAddonDetail({
                 {entry.repo}
               </a>
             </span>
+          )}
+          {entry.homepage && (
+            <a
+              href={entry.homepage}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-teal-700 underline hover:no-underline dark:text-teal-400"
+            >
+              Project home <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
           )}
           {entry.docs_url && (
             <a

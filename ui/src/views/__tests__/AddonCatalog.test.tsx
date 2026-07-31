@@ -280,6 +280,60 @@ describe('AddonCatalog — empty catalog points to the Marketplace (V2-cleanup-6
       ).toBeInTheDocument()
     })
   })
+
+  // v4 wave 2.5 (decision 3) — day zero is a valid, empty catalog with two
+  // doors in: pick from the Marketplace, or add your own chart. Both are
+  // admin-only (RoleGuard), so this test renders with an admin session.
+  it('shows both empty-catalog doors ("Browse the Marketplace" + "Add your own chart") to an admin', async () => {
+    sessionStorage.clear()
+    sessionStorage.setItem('sharko-auth-token', 'test-token')
+    sessionStorage.setItem('sharko-auth-user', 'tester')
+    sessionStorage.setItem('sharko-auth-role', 'admin')
+
+    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce({
+      addons: [],
+      total_addons: 0,
+      total_clusters: 0,
+      addons_only_in_git: 0,
+    })
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <AddonCatalog />
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+
+    const emptyState = await screen.findByTestId('catalog-empty-state')
+    expect(
+      within(emptyState).getByText(/nothing runs in your org that you didn.t put here/i),
+    ).toBeInTheDocument()
+    expect(
+      within(emptyState).getByRole('button', { name: /browse the marketplace/i }),
+    ).toBeInTheDocument()
+    expect(
+      within(emptyState).getByRole('button', { name: /add your own chart/i }),
+    ).toBeInTheDocument()
+
+    sessionStorage.clear()
+  })
+
+  // The locked two-surface sentence (design decision 8) should be visible
+  // wherever Catalog and Marketplace are explained — the Addons page header.
+  it('shows the locked Catalog-vs-Marketplace sentence in the page header', async () => {
+    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce({
+      addons: [],
+      total_addons: 0,
+      total_clusters: 0,
+      addons_only_in_git: 0,
+    })
+    renderCatalog()
+    await waitFor(() => {
+      expect(
+        screen.getByText(/your clusters run only what.s enabled from the catalog/i),
+      ).toBeInTheDocument()
+    })
+  })
 })
 
 /**

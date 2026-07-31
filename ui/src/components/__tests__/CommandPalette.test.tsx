@@ -71,7 +71,7 @@ describe('CommandPalette — dialog behavior (V2-cleanup-61.4, G2)', () => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText('Clusters'));
+    fireEvent.click(screen.getByText('Managed Clusters'));
 
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

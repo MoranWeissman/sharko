@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   GitBranch,
@@ -17,6 +17,9 @@ import {
   KeyRound,
   WifiOff,
   Settings as SettingsIcon,
+  Store,
+  Plus,
+  Star,
 } from 'lucide-react'
 import {
   api,
@@ -27,6 +30,7 @@ import {
   isUnauthorizedError,
 } from '@/services/api'
 import type { OperationStep, InitStatus } from '@/services/api'
+import type { AddToCatalogResult, CatalogEntry, CatalogRepoChartsResponse } from '@/services/models'
 import { useConnections } from '@/hooks/useConnections'
 import { MigrationBanner } from '@/components/MigrationBanner'
 
@@ -497,11 +501,16 @@ function StepArgoCD({
 
 function StepInit({
   onDone,
+  onInitDone,
   onEscape,
   resumed,
   onBack,
 }: {
   onDone: () => void
+  // Called instead of onDone when initialize actually succeeds — takes the
+  // wizard to the new Catalog step (v4 wave 2.5) rather than straight to
+  // the Dashboard. Falls back to onDone when a caller doesn't pass it.
+  onInitDone?: () => void
   // w2-q2: the error-state "Skip, go to Dashboard" button must escape the
   // SAME way the header's X button does (set the sessionStorage dismiss
   // flag) — NOT just navigate. onDone alone leaves App.tsx's wizard gate
@@ -900,10 +909,10 @@ function StepInit({
           </div>
           <button
             type="button"
-            onClick={onDone}
+            onClick={onInitDone ?? onDone}
             className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
           >
-            Go to Dashboard
+            Continue
             <ArrowRight className="h-4 w-4" />
           </button>
         </div>
@@ -972,6 +981,408 @@ function StepInit({
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Step 5: Catalog (v4 wave 2.5 — "catalog = the approved list")      */
+/* ------------------------------------------------------------------ */
+
+// Common picks are highlighted (sorted to the top, labeled) but never
+// pre-selected — approving something is always a deliberate click
+// (design decision 3).
+const COMMON_PICKS = [
+  'cert-manager',
+  'ingress-nginx',
+  'external-dns',
+  'external-secrets',
+  'prometheus',
+]
+
+/** The "add your own chart" door — a small form backed by /catalog/repo-charts
+ *  (validate the repo, list its charts) and one POST /api/v1/catalog/addons
+ *  with from_marketplace: false. */
+function OwnChartForm({
+  onSubmitted,
+}: {
+  onSubmitted: (result: AddToCatalogResult) => void
+}) {
+  const [form, setForm] = useState({
+    name: '',
+    repo_url: '',
+    chart: '',
+    version: '',
+    namespace: '',
+  })
+  const [validating, setValidating] = useState(false)
+  const [validState, setValidState] = useState<'idle' | 'valid' | 'invalid'>('idle')
+  const [validError, setValidError] = useState<string | null>(null)
+  const [charts, setCharts] = useState<string[]>([])
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+
+  const handleValidate = async () => {
+    const url = form.repo_url.trim()
+    if (!url) return
+    setValidating(true)
+    setValidError(null)
+    try {
+      const resp: CatalogRepoChartsResponse = await api.listRepoCharts(url)
+      if (resp.valid && resp.charts) {
+        setValidState('valid')
+        setCharts(resp.charts)
+      } else {
+        setValidState('invalid')
+        setValidError(resp.message ?? 'Could not list charts at this URL')
+        setCharts([])
+      }
+    } catch (e: unknown) {
+      setValidState('invalid')
+      setValidError(e instanceof Error ? e.message : 'Repo validation failed')
+      setCharts([])
+    } finally {
+      setValidating(false)
+    }
+  }
+
+  const formValid =
+    !!form.name.trim() &&
+    !!form.chart.trim() &&
+    !!form.repo_url.trim() &&
+    !!form.version.trim() &&
+    validState === 'valid'
+
+  const handleSubmit = async () => {
+    if (!formValid) return
+    setSubmitting(true)
+    setSubmitError(null)
+    try {
+      const res = await api.addToCatalog({
+        addons: [
+          {
+            name: form.name.trim(),
+            from_marketplace: false,
+            repo_url: form.repo_url.trim(),
+            chart: form.chart.trim(),
+            version: form.version.trim(),
+            namespace: form.namespace.trim() || undefined,
+          },
+        ],
+      })
+      onSubmitted(res)
+    } catch (e: unknown) {
+      setSubmitError(e instanceof Error ? e.message : 'Failed to add chart')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg bg-[#e8f4ff] p-4 dark:bg-gray-800">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label className={labelCls}>Name</label>
+          <input
+            className={inputCls}
+            value={form.name}
+            onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+            placeholder="e.g. my-internal-addon"
+          />
+        </div>
+        <div>
+          <label className={labelCls}>Namespace</label>
+          <input
+            className={inputCls}
+            value={form.namespace}
+            onChange={(e) => setForm((p) => ({ ...p, namespace: e.target.value }))}
+            placeholder="optional, defaults to name"
+          />
+        </div>
+      </div>
+      <div>
+        <label className={labelCls}>Chart location (repo URL)</label>
+        <div className="mt-1 flex gap-2">
+          <input
+            className={`${inputCls} mt-0 flex-1`}
+            value={form.repo_url}
+            onChange={(e) => {
+              setForm((p) => ({ ...p, repo_url: e.target.value, chart: '' }))
+              setValidState('idle')
+            }}
+            placeholder="https://helm.example.com"
+          />
+          <button
+            type="button"
+            onClick={() => void handleValidate()}
+            disabled={!form.repo_url.trim() || validating}
+            className="shrink-0 rounded-lg border border-[#5a9dd0] px-3 py-2 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            {validating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Validate'}
+          </button>
+        </div>
+        {validState === 'valid' && (
+          <p className="mt-1 text-sm text-green-700 dark:text-green-400">
+            Reachable — {charts.length} chart{charts.length === 1 ? '' : 's'} found.
+          </p>
+        )}
+        {validState === 'invalid' && validError && (
+          <p className="mt-1 text-sm text-red-600 dark:text-red-400">{validError}</p>
+        )}
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label className={labelCls}>Chart</label>
+          <input
+            className={inputCls}
+            list="wizard-own-chart-list"
+            value={form.chart}
+            onChange={(e) => setForm((p) => ({ ...p, chart: e.target.value }))}
+            disabled={validState !== 'valid'}
+            placeholder={validState === 'valid' ? 'Pick or type a chart name' : 'Validate the repo first'}
+          />
+          <datalist id="wizard-own-chart-list">
+            {charts.map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+        </div>
+        <div>
+          <label className={labelCls}>Version</label>
+          <input
+            className={inputCls}
+            value={form.version}
+            onChange={(e) => setForm((p) => ({ ...p, version: e.target.value }))}
+            placeholder="e.g. 1.2.3"
+          />
+        </div>
+      </div>
+      {submitError && (
+        <p className="text-sm text-red-600 dark:text-red-400">{submitError}</p>
+      )}
+      <button
+        type="button"
+        onClick={() => void handleSubmit()}
+        disabled={!formValid || submitting}
+        className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+      >
+        {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+        Add chart to catalog
+      </button>
+    </div>
+  )
+}
+
+function StepCatalog({ onDone }: { onDone: () => void }) {
+  const [entries, setEntries] = useState<CatalogEntry[] | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  // Never pre-ticked — the operator picks, nothing is picked for them.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [result, setResult] = useState<AddToCatalogResult | null>(null)
+  const [ownChartOpen, setOwnChartOpen] = useState(false)
+  const [ownResult, setOwnResult] = useState<AddToCatalogResult | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .listCuratedCatalog()
+      .then((resp) => {
+        if (!cancelled) setEntries(resp.addons)
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setLoadError(e instanceof Error ? e.message : 'Failed to load the Marketplace')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Common picks first (highlighted, never pre-ticked), everything else
+  // after in the order the API returned it.
+  const sortedEntries = useMemo(() => {
+    if (!entries) return []
+    const common = entries.filter((e) => COMMON_PICKS.includes(e.name))
+    const rest = entries.filter((e) => !COMMON_PICKS.includes(e.name))
+    return [...common, ...rest]
+  }, [entries])
+
+  const toggle = (name: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const handleAddSelected = async () => {
+    if (selected.size === 0) return
+    setSubmitting(true)
+    setSubmitError(null)
+    try {
+      // One batch PR for every picked addon, never one PR per addon.
+      const res = await api.addToCatalog({
+        addons: Array.from(selected).map((name) => ({
+          name,
+          from_marketplace: true,
+        })),
+      })
+      setResult(res)
+      setSelected(new Set())
+    } catch (e: unknown) {
+      setSubmitError(e instanceof Error ? e.message : 'Failed to add addons to catalog')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center gap-2">
+        <Store className="h-5 w-5 text-[#1a3d5c] dark:text-blue-400" />
+        <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
+          Build your catalog
+        </h3>
+      </div>
+      <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
+        Your catalog starts empty — nothing runs in your org until you put
+        it there. This step is optional; you can skip it and add addons
+        later from the Addons page.
+      </p>
+
+      {(result || ownResult) && (
+        <div
+          role="status"
+          className="rounded-lg border border-green-300 bg-green-50 p-3 text-sm text-green-900 dark:border-green-700 dark:bg-green-950/40 dark:text-green-200"
+        >
+          <p className="font-medium">
+            {(result?.added.length ?? 0) + (ownResult ? 1 : 0)} addon
+            {(result?.added.length ?? 0) + (ownResult ? 1 : 0) === 1 ? '' : 's'} added to your catalog.
+          </p>
+          {(result?.pr_url || ownResult?.pr_url) && (
+            <a
+              href={result?.pr_url || ownResult?.pr_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 inline-block text-xs underline hover:no-underline"
+            >
+              View the pull request
+            </a>
+          )}
+        </div>
+      )}
+
+      {/* Door 1 — pick from the Marketplace. */}
+      <div className="space-y-2">
+        <h4 className="text-sm font-semibold text-[#0a3a5a] dark:text-gray-200">
+          Pick from the Marketplace
+        </h4>
+        {loadError && (
+          <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>
+        )}
+        {!entries && !loadError && (
+          <div className="flex items-center gap-2 text-sm text-[#2a5a7a] dark:text-gray-400">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading the Marketplace…
+          </div>
+        )}
+        {entries && (
+          <div className="max-h-64 space-y-1 overflow-y-auto rounded-lg ring-1 ring-[#c0ddf0] p-2 dark:ring-gray-700">
+            {sortedEntries.map((entry) => {
+              const isCommon = COMMON_PICKS.includes(entry.name)
+              return (
+                <label
+                  key={entry.name}
+                  className="flex cursor-pointer items-start gap-2 rounded-md p-1.5 hover:bg-[#e8f4ff] dark:hover:bg-gray-800"
+                >
+                  <input
+                    type="checkbox"
+                    data-testid={`wizard-catalog-pick-${entry.name}`}
+                    checked={selected.has(entry.name)}
+                    onChange={() => toggle(entry.name)}
+                    className="mt-0.5 h-4 w-4 rounded border-[#5a9dd0]"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
+                        {entry.name}
+                      </span>
+                      {isCommon && (
+                        <span
+                          data-testid="wizard-catalog-common-badge"
+                          className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                        >
+                          <Star className="h-2.5 w-2.5 fill-current" aria-hidden="true" />
+                          Common pick
+                        </span>
+                      )}
+                    </span>
+                    <span className="block truncate text-xs text-[#3a6a8a] dark:text-gray-500">
+                      {entry.description}
+                    </span>
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+        )}
+        {submitError && (
+          <p className="text-sm text-red-600 dark:text-red-400">{submitError}</p>
+        )}
+        <button
+          type="button"
+          onClick={() => void handleAddSelected()}
+          disabled={selected.size === 0 || submitting}
+          className="inline-flex items-center gap-2 rounded-lg bg-[#0a2a4a] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0d3558] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-blue-700 dark:hover:bg-blue-600"
+        >
+          {submitting ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Store className="h-4 w-4" />
+          )}
+          Add {selected.size > 0 ? selected.size : ''} addon{selected.size === 1 ? '' : 's'} to catalog
+        </button>
+      </div>
+
+      {/* Door 2 — add your own chart. */}
+      <div className="border-t border-[#bee0ff] pt-3 dark:border-gray-700">
+        <button
+          type="button"
+          onClick={() => setOwnChartOpen((v) => !v)}
+          className="flex items-center gap-2 text-sm font-medium text-[#3a6a8a] hover:text-[#0a3a5a] dark:text-gray-500 dark:hover:text-gray-300"
+        >
+          {ownChartOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          <Plus className="h-4 w-4" />
+          Add your own chart
+        </button>
+        {ownChartOpen && (
+          <div className="mt-3">
+            <OwnChartForm onSubmitted={(res) => { setOwnResult(res); setOwnChartOpen(false) }} />
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between pt-2 border-t border-[#bee0ff] dark:border-gray-700">
+        <button
+          type="button"
+          onClick={onDone}
+          className="text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400"
+        >
+          Skip for now
+        </button>
+        <button
+          type="button"
+          onClick={onDone}
+          className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+        >
+          Go to Dashboard
+          <ArrowRight className="h-4 w-4" />
+        </button>
+      </div>
     </div>
   )
 }
@@ -1243,7 +1654,7 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
     }
   }, [form.argocd_server_url])
 
-  const stepLabels = ['Welcome', 'Git', 'ArgoCD', 'Initialize']
+  const stepLabels = ['Welcome', 'Git', 'ArgoCD', 'Initialize', 'Catalog']
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#bee0ff] dark:bg-gray-950 p-4">
@@ -1262,7 +1673,7 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
               </span>
             </div>
             <div className="flex items-center gap-3">
-              <StepIndicator current={step} total={4} />
+              <StepIndicator current={step} total={5} />
               <button
                 type="button"
                 onClick={handleEscape}
@@ -1338,11 +1749,13 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
             {step === 4 && (
               <StepInit
                 onDone={handleDone}
+                onInitDone={() => setStep(5)}
                 onEscape={handleEscape}
                 resumed={initialStep === 4}
                 onBack={initialStep === 4 ? () => setStep(3) : undefined}
               />
             )}
+            {step === 5 && <StepCatalog onDone={handleDone} />}
           </div>
         </div>
 
