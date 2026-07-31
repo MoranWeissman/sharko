@@ -137,8 +137,8 @@ describe('MigrationBanner', () => {
     });
     mockedApi.previewMigration.mockResolvedValue({
       format: 'v3',
-      add: [{ path: 'engine/application.yaml', action: 'add' }],
-      convert: [{ path: 'fleet/connections.yaml', from_path: 'configuration/managed-clusters.yaml', action: 'convert' }],
+      add: [{ path: 'engine.yaml', action: 'add' }],
+      convert: [{ path: 'managed-clusters.yaml', from_path: 'configuration/managed-clusters.yaml', action: 'convert' }],
       remove: [{ path: 'bootstrap/Chart.yaml', action: 'remove' }],
       notes: [
         'configuration/addons-catalog.yaml lists secrets in your old catalog file. The new catalog file has no place for them yet, so they are not carried over — the addon still deploys, but check its secrets before you rely on them',
@@ -149,8 +149,8 @@ describe('MigrationBanner', () => {
     fireEvent.click(await screen.findByText('Preview migration'));
 
     expect(await screen.findByText('Files this pull request would touch (3)')).toBeInTheDocument();
-    expect(screen.getByText('engine/application.yaml')).toBeInTheDocument();
-    expect(screen.getByText('configuration/managed-clusters.yaml → fleet/connections.yaml')).toBeInTheDocument();
+    expect(screen.getByText('engine.yaml')).toBeInTheDocument();
+    expect(screen.getByText('configuration/managed-clusters.yaml → managed-clusters.yaml')).toBeInTheDocument();
     expect(screen.getByText(/lists secrets in your old catalog file/)).toBeInTheDocument();
   });
 

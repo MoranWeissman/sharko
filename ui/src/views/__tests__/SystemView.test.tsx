@@ -413,7 +413,7 @@ describe('SystemView', () => {
     expect(settingsLinks).toHaveLength(2)
     settingsLinks.forEach((l) => expect(l).toHaveAttribute('href', '/settings?section=connections'))
 
-    const clustersLinks = screen.getAllByRole('link', { name: /Open the Clusters page/ })
+    const clustersLinks = screen.getAllByRole('link', { name: /Open the Managed Clusters page/ })
     expect(clustersLinks).toHaveLength(2)
     clustersLinks.forEach((l) => expect(l).toHaveAttribute('href', '/clusters'))
 

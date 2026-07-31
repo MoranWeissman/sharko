@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import { MarketplaceBrowseTab } from '@/components/MarketplaceBrowseTab'
 import { MarketplaceSearchTab } from '@/components/MarketplaceSearchTab'
 import { MarketplaceAddonDetail } from '@/components/MarketplaceAddonDetail'
+import { MarketplaceHonestyStrip } from '@/components/MarketplaceHonestyStrip'
 
 /**
  * Top-level container rendered inside the AddonCatalog page.
@@ -92,6 +93,8 @@ export function MarketplaceTab() {
 
   return (
     <div className="flex flex-col gap-4">
+      <MarketplaceHonestyStrip />
+
       <div
         role="tablist"
         aria-label="Marketplace view"

@@ -26,7 +26,7 @@ interface SearchResult {
 // match the sidebar and stop reading as a typo of "Dashboard" above it.
 const PAGE_RESULTS: SearchResult[] = [
   { label: 'Dashboard', type: 'page', path: '/dashboard', icon: LayoutDashboard },
-  { label: 'Clusters', type: 'page', path: '/clusters', icon: Server },
+  { label: 'Managed Clusters', type: 'page', path: '/clusters', icon: Server },
   { label: 'Addons Catalog', type: 'page', path: '/addons', icon: Package },
   { label: 'System', type: 'page', path: '/system', icon: Network },
   { label: 'Observability', type: 'page', path: '/observability', icon: Activity },

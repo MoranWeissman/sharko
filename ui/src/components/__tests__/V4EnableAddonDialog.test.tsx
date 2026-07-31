@@ -14,6 +14,7 @@ import { V4AddonValidationError } from '@/services/api';
 
 const mockEnableAddonV4 = vi.fn();
 const mockDisableAddonV4 = vi.fn();
+const mockAddToCatalog = vi.fn();
 
 vi.mock('@/services/api', async () => {
   const actual = await vi.importActual<typeof import('@/services/api')>('@/services/api');
@@ -21,6 +22,10 @@ vi.mock('@/services/api', async () => {
     ...actual,
     enableAddonV4: (...args: unknown[]) => mockEnableAddonV4(...args),
     disableAddonV4: (...args: unknown[]) => mockDisableAddonV4(...args),
+    api: {
+      ...actual.api,
+      addToCatalog: (...args: unknown[]) => mockAddToCatalog(...args),
+    },
   };
 });
 
@@ -44,6 +49,7 @@ function renderDialog(overrides: Partial<React.ComponentProps<typeof V4EnableAdd
 beforeEach(() => {
   mockEnableAddonV4.mockReset();
   mockDisableAddonV4.mockReset();
+  mockAddToCatalog.mockReset();
 });
 
 describe('V4EnableAddonDialog', () => {
@@ -99,6 +105,52 @@ describe('V4EnableAddonDialog', () => {
     // No preview, no confirm/PR button — problems come before any PR talk.
     expect(screen.queryByTestId('v4-confirm')).not.toBeInTheDocument();
     expect(screen.queryByText(/PR merged|PR opened/)).not.toBeInTheDocument();
+  });
+
+  // v4 wave 2.5 (design decision 4) — enabling now requires catalog
+  // membership. Instead of leaving the operator at a dead 422, the dialog
+  // offers the one-PR combo: add to catalog AND enable, together.
+  it('a "not in catalog" 422 offers the add-to-catalog-and-enable combo instead of a dead end', async () => {
+    mockEnableAddonV4.mockRejectedValue(
+      new V4AddonValidationError({
+        error: 'cannot enable cert-manager on prod-eu: cert-manager is not in your catalog',
+        cluster: 'prod-eu',
+        addon: 'cert-manager',
+        problems: ['cert-manager is not in your catalog yet — add it before enabling it here'],
+      }),
+    );
+    mockAddToCatalog.mockResolvedValue({
+      added: ['cert-manager'],
+      enabled: ['cert-manager'],
+      cluster: 'prod-eu',
+      pr_url: 'https://github.com/demo/sharko-addons/pull/101',
+      branch: 'sharko/catalog-cert-manager',
+    });
+
+    renderDialog();
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    await waitFor(() => {
+      expect(screen.getByTestId('v4-catalog-gate-combo')).toBeInTheDocument();
+    });
+
+    const combo = screen.getByRole('button', {
+      name: /add to catalog and enable on prod-eu/i,
+    });
+    fireEvent.click(combo);
+
+    await waitFor(() => {
+      expect(mockAddToCatalog).toHaveBeenCalledWith({
+        addons: [{ name: 'cert-manager', from_marketplace: true }],
+        enable_on_cluster: 'prod-eu',
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/PR opened/)).toBeInTheDocument();
+    });
+    expect(screen.getByRole('link', { name: /view pr/i })).toHaveAttribute(
+      'href',
+      'https://github.com/demo/sharko-addons/pull/101',
+    );
   });
 
   it('success shows the PR reference', async () => {

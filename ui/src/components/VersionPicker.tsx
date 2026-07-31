@@ -219,6 +219,15 @@ export function VersionPicker({
         </p>
       )}
 
+      {/* v4 wave 2.5 — a source the freshness scanner couldn't read (e.g.
+          an org-added chart repo it can't reach) gets this plain sentence
+          instead of a fake "up to date" claim or a raw error. */}
+      {versionsResp?.no_data_reason && (
+        <p className="text-xs text-amber-700 dark:text-amber-400">
+          {versionsResp.no_data_reason}
+        </p>
+      )}
+
       {error && (
         <p className="flex items-center gap-1 text-sm text-red-600 dark:text-red-400">
           <AlertCircle className="h-3 w-3" aria-hidden="true" />

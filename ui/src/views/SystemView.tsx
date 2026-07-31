@@ -534,13 +534,13 @@ export function SystemView() {
         <div className="grid gap-4 md:grid-cols-2">
           <ArrowCard
             from="Sharko"
-            to="Clusters"
+            to="Managed Clusters"
             caption={<span className="text-xs font-medium text-[#5a8aaa] dark:text-gray-500">{SHARKO_CONN_LABEL}</span>}
             status={sharkoClusterAgg.status}
             statusLabel={sharkoClusterAgg.label}
             detail={SHARKO_CONN_TOOLTIP}
             actionTo="/clusters"
-            actionLabel="Open the Clusters page"
+            actionLabel="Open the Managed Clusters page"
           >
             <ClusterList
               clusters={managedClusters}
@@ -551,13 +551,13 @@ export function SystemView() {
           </ArrowCard>
           <ArrowCard
             from="ArgoCD"
-            to="Clusters"
+            to="Managed Clusters"
             caption={<span className="text-xs font-medium text-[#5a8aaa] dark:text-gray-500">{ARGOCD_CONN_LABEL}</span>}
             status={argoClusterAgg.status}
             statusLabel={argoClusterAgg.label}
             detail={ARGOCD_CONN_TOOLTIP}
             actionTo="/clusters"
-            actionLabel="Open the Clusters page"
+            actionLabel="Open the Managed Clusters page"
           >
             <ClusterList
               clusters={managedClusters}
