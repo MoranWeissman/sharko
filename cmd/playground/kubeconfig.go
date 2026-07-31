@@ -39,7 +39,7 @@ func buildKubeconfigInCluster(clusterName, saName string) (string, error) {
 	}
 
 	// 3. Fetch the SA token (CreateServiceAccountOnCluster must have run).
-	token, err := kubectlCreateToken(kubeconfigPath, context, saName, "1h")
+	token, err := kubectlCreateToken(kubeconfigPath, context, saName, SpokeTokenDuration)
 	if err != nil {
 		return "", fmt.Errorf("buildKubeconfigInCluster(%s): create token: %w", clusterName, err)
 	}

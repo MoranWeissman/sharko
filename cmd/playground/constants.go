@@ -42,6 +42,24 @@ const (
 	// kubeconfig generation.
 	ServiceAccountName = "sharko-spoke-admin"
 
+	// SpokeTokenDuration is how long the ServiceAccount bearer token baked into
+	// each spoke's registration kubeconfig (and thus into the ArgoCD cluster
+	// Secret) stays valid.
+	//
+	// Why 30 days and not something short: the playground is a throwaway LOCAL
+	// dev environment, so a long-lived token is the right call here — this is
+	// NOT a pattern to copy for a real fleet, which needs proper credential
+	// management (short-lived tokens + rotation). kind's kube-apiserver has no
+	// max-token-expiration set, so it honors whatever duration we ask for.
+	//
+	// What breaks if this is too short: once the token expires, ArgoCD's
+	// spoke cluster test-connection starts returning 401 ("the server has
+	// asked for the client to provide credentials") and ArgoCD loses access
+	// to the spoke while still showing a stale green status. This was found
+	// live during a walkthrough when the old 1h duration expired mid-session
+	// and silently broke the whole fleet's auth.
+	SpokeTokenDuration = "720h"
+
 	// DefaultSpokes is the number of spoke clusters to create when
 	// PLAYGROUND_SPOKES is not set.
 	DefaultSpokes = 2
