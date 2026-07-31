@@ -128,6 +128,9 @@ func (e *ToolExecutor) enableAddon(ctx context.Context, connectionName, clusterN
 	if msg, refused := refuseV3Write(ctx, gp, baseBranch); refused {
 		return msg, nil
 	}
+	if msg, refused := refuseV4Write(ctx, gp, baseBranch); refused {
+		return msg, nil
+	}
 
 	data, err := gp.GetFileContent(ctx, e.managedClustersPath, baseBranch)
 	if err != nil {
@@ -192,6 +195,9 @@ func (e *ToolExecutor) disableAddon(ctx context.Context, connectionName, cluster
 	if msg, refused := refuseV3Write(ctx, gp, baseBranch); refused {
 		return msg, nil
 	}
+	if msg, refused := refuseV4Write(ctx, gp, baseBranch); refused {
+		return msg, nil
+	}
 
 	data, err := gp.GetFileContent(ctx, e.managedClustersPath, baseBranch)
 	if err != nil {
@@ -253,6 +259,9 @@ func (e *ToolExecutor) updateAddonVersion(ctx context.Context, connectionName, a
 	gp := e.resolveProvider(connectionName)
 	baseBranch := e.branch()
 	if msg, refused := refuseV3Write(ctx, gp, baseBranch); refused {
+		return msg, nil
+	}
+	if msg, refused := refuseV4Write(ctx, gp, baseBranch); refused {
 		return msg, nil
 	}
 

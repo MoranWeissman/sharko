@@ -166,7 +166,7 @@ func (s *UpgradeService) GetAISummary(ctx context.Context, result *models.Upgrad
 // and GetRecommendations all need: where its chart lives, and the version
 // currently running. resolveAddon (below) is the single place that decides
 // WHERE that comes from — the v3 addons-catalog.yaml, or (v4 Wave 2 Epic 7
-// Story 7.3) the delta-merged catalog on a v4 repo — so all three verified
+// Story 7.3) the org's catalog on a v4 repo — so all three verified
 // deterministic-check entry points read the same v4 data the version
 // matrix (AddonService.GetVersionMatrix) already does. This is a
 // re-pointing, not a rebuild: none of the version-comparison, diffing, or
@@ -214,34 +214,27 @@ func (s *UpgradeService) resolveAddon(ctx context.Context, addonName string, gp 
 	return resolvedAddon{}, fmt.Errorf("addon %q not found in catalog", addonName)
 }
 
-// mergedAddonV4 reads the caller's catalog.yaml delta and merges it
-// against the wired-in curated catalog (s.curated — nil-safe), returning
-// the single merged entry for addonName. Mirrors
-// AddonService.mergedAddonForV4 (internal/orchestrator/addon_ops_v4.go)
-// exactly — "missing means empty" for the delta file (design doc D16), and
-// a v4 repo with no curated catalog wired merges every addon as
-// catalog.OriginInternal (catalog.MergeDelta's own contract).
-func (s *UpgradeService) mergedAddonV4(ctx context.Context, addonName string, gp gitprovider.GitProvider) (catalog.MergedAddon, error) {
+// mergedAddonV4 reads the org's catalog.yaml and returns the entry for
+// addonName. Mirrors Orchestrator.catalogAddonForV4 — a missing file means
+// nothing is approved, so every lookup misses, and an addon that is not in
+// the file is not something this fleet runs.
+func (s *UpgradeService) mergedAddonV4(ctx context.Context, addonName string, gp gitprovider.GitProvider) (catalog.CatalogAddon, error) {
 	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
 	var delta config.AddonCatalogSpec
 	if err != nil {
 		if !isGitFileNotFound(err) {
-			return catalog.MergedAddon{}, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
+			return catalog.CatalogAddon{}, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 		}
 	} else {
 		delta, err = config.LoadAddonCatalog(deltaData)
 		if err != nil {
-			return catalog.MergedAddon{}, fmt.Errorf("parsing %s: %w", config.AddonCatalogPath, err)
+			return catalog.CatalogAddon{}, fmt.Errorf("parsing %s: %w", config.AddonCatalogPath, err)
 		}
 	}
 
-	merged, err := catalog.MergeDelta(s.curated, delta)
-	if err != nil {
-		return catalog.MergedAddon{}, fmt.Errorf("merging catalog delta: %w", err)
-	}
-	entry, ok := merged[addonName]
+	entry, ok := catalog.BuildCatalogView(s.curated, delta)[addonName]
 	if !ok {
-		return catalog.MergedAddon{}, fmt.Errorf("addon %q not found in catalog", addonName)
+		return catalog.CatalogAddon{}, fmt.Errorf("%s is not in your catalog — add it first", addonName)
 	}
 	return entry, nil
 }

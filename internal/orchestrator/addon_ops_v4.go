@@ -26,12 +26,13 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
+	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // V4SemanticValidationError is returned by EnableAddonV4 (and reused by
-// any future v4 write path) when the merged catalog entry's requirements
+// any future v4 write path) when the catalog entry's requirements
 // are not met. Problems is always non-empty and each entry is a complete,
 // plain-English sentence — the API handler renders the list verbatim,
 // with no further formatting.
@@ -45,12 +46,18 @@ func (e *V4SemanticValidationError) Error() string {
 	return fmt.Sprintf("cannot enable %s on %s: %s", e.Addon, e.Cluster, strings.Join(e.Problems, "; "))
 }
 
-// ErrV4AddonNotInCatalog marks an EnableAddonV4/DisableAddonV4 request
-// naming an addon that is not in the caller's merged catalog (curated +
-// catalog.yaml delta). The API layer (internal/api/addon_ops_v4.go)
-// maps this to 422 — the request names something that does not exist,
-// distinct from the 502 "upstream failed" default (Wave 2 ride-along
-// w2-q6 item 2).
+// ErrV4AddonNotInCatalog marks an enable request naming an addon the org
+// has not approved — it is not in catalog.yaml.
+//
+// This is the gate the whole "catalog is the approved list" model rests on
+// (design doc §4): a cluster can only run what the org allowed. It used to
+// be dead code, because the read path seeded every shipped curated addon
+// into the catalog before checking, so nothing was ever missing. The
+// seeding is gone; this check is now real.
+//
+// The API layer (internal/api/addon_ops_v4.go) maps it to 422 — the request
+// names something that is not there, distinct from the 502 "upstream
+// failed" default.
 var ErrV4AddonNotInCatalog = errors.New("addon not in catalog")
 
 // ErrV4ClusterNotFound marks a v4 write naming a cluster that is not
@@ -133,33 +140,39 @@ type DisableAddonV4Request struct {
 	AutoMerge *bool `json:"auto_merge,omitempty"`
 }
 
-// mergedAddonForV4 reads the caller's catalog.yaml delta and
-// merges it against the wired-in curated catalog (o.curated — nil-safe),
-// returning the single merged entry for addonName. Propagates
-// *catalog.MissingRequiredFieldError verbatim when an internal addon in
-// the delta is missing repoURL/chart/version — that error already names
-// the addon and the field in plain English, so no re-wrapping is needed.
-func (o *Orchestrator) mergedAddonForV4(ctx context.Context, addonName string) (catalog.MergedAddon, error) {
-	delta, err := o.readCatalogDelta(ctx)
+// catalogAddonForV4 reads the org's catalog.yaml and returns the entry for
+// addonName. An addon that is not in the file is refused — that is the
+// approval gate, and the only thing standing between the Marketplace and
+// somebody's production fleet.
+func (o *Orchestrator) catalogAddonForV4(ctx context.Context, addonName string) (catalog.CatalogAddon, error) {
+	spec, err := o.readCatalog(ctx)
 	if err != nil {
-		return catalog.MergedAddon{}, fmt.Errorf("reading catalog delta: %w", err)
+		return catalog.CatalogAddon{}, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 	}
-	merged, err := catalog.MergeDelta(o.curated, delta)
-	if err != nil {
-		return catalog.MergedAddon{}, err
-	}
-	entry, ok := merged[addonName]
+	entry, ok := catalog.BuildCatalogView(o.curated, spec)[addonName]
 	if !ok {
-		return catalog.MergedAddon{}, fmt.Errorf(
-			"%w: addon %q is not in the catalog — add it to your catalog.yaml first (via the internal-addon API) or check the spelling",
+		return catalog.CatalogAddon{}, fmt.Errorf(
+			"%w: %s is not in your catalog — add it first",
 			ErrV4AddonNotInCatalog, addonName,
 		)
 	}
 	return entry, nil
 }
 
+// incompleteEntryProblems turns a half-written catalog entry into
+// plain-English sentences the API renders verbatim.
+func incompleteEntryProblems(addonName string, missing []string) []string {
+	problems := make([]string, 0, len(missing))
+	for _, field := range missing {
+		problems = append(problems, fmt.Sprintf(
+			"the catalog entry for %s has no %s — fill it in in %s",
+			addonName, field, config.AddonCatalogPath))
+	}
+	return problems
+}
+
 // validateV4AddonInputs is the "sharpened pipeline" semantic-validation
-// gate (Story 4.3 AC): every RequiredValue the merged catalog entry
+// gate (Story 4.3 AC): every RequiredValue the catalog entry
 // declares must resolve to a non-empty value somewhere across the merged
 // values layers, and every declared secret must be one Sharko has an
 // AddonSecretDefinition for (o.secretDefs — the one thing Sharko can
@@ -176,7 +189,7 @@ func (o *Orchestrator) mergedAddonForV4(ctx context.Context, addonName string) (
 // just flags that the secret will matter later. Returns problems (each a
 // complete sentence — blocks the enable when non-empty) and warnings
 // (each a complete sentence — never blocks).
-func (o *Orchestrator) validateV4AddonInputs(addon catalog.MergedAddon, mergedValues map[string]interface{}) (problems []string, warnings []string) {
+func (o *Orchestrator) validateV4AddonInputs(addon catalog.CatalogAddon, mergedValues map[string]interface{}) (problems []string, warnings []string) {
 	for _, rv := range addon.RequiredValues {
 		val, ok := lookupDottedValue(mergedValues, rv.Key)
 		if !ok || isEmptyYAMLValue(val) {
@@ -260,9 +273,19 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 		return nil, fmt.Errorf("%w: %q", ErrV4ClusterNotFound, req.Cluster)
 	}
 
-	merged, err := o.mergedAddonForV4(ctx, req.Addon)
+	// The approval gate: only an addon the org put in catalog.yaml can be
+	// switched on. Runs before any read of the values layers, and long
+	// before a branch exists.
+	merged, err := o.catalogAddonForV4(ctx, req.Addon)
 	if err != nil {
 		return nil, err
+	}
+	if !merged.Deployable {
+		return nil, &V4SemanticValidationError{
+			Cluster:  req.Cluster,
+			Addon:    req.Addon,
+			Problems: incompleteEntryProblems(req.Addon, merged.MissingFields),
+		}
 	}
 
 	// Both of these are rewrite bases — the addon assignment file and the

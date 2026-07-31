@@ -181,14 +181,13 @@ type Orchestrator struct {
 	// never blocks on a settings-store outage.
 	allowInlineCredentialsFn func(ctx context.Context) bool
 
-	// curated is the shipped curated addon catalog, wired via
-	// SetCuratedCatalog (v4 Wave 1 Story 4.3). Used by the v4 addon
-	// enable/disable pipeline (addon_ops_v4.go) to merge a caller's
-	// catalog.yaml delta against the shipped set before running
-	// semantic validation (required values, declared secrets) — the same
-	// catalog.MergeDelta the read-side /catalog/delta/addons handler
-	// already uses. nil is safe: every addon then merges as
-	// catalog.OriginInternal.
+	// curated is the Marketplace's curated addon list, wired via
+	// SetCuratedCatalog. It supplies the display and knowledge fields
+	// (description, required values, known gotchas) for an approved addon
+	// the Marketplace happens to know by name, and it is what the
+	// from_marketplace shortcut copies a chart location out of. It NEVER
+	// adds an addon to the catalog: catalog.yaml is the whole list. nil is
+	// safe — every approved addon is then catalog.OriginInternal.
 	curated *catalog.Catalog
 
 	// appSets is the ApplicationSet read+write surface the v3 → v4 runtime

@@ -68,7 +68,7 @@ type projectReadmeResponse struct {
 // @Param name path string true "Curated addon name"
 // @Success 200 {object} projectReadmeResponse
 // @Failure 404 {object} map[string]interface{} "Addon not found"
-// @Router /catalog/addons/{name}/project-readme [get]
+// @Router /marketplace/addons/{name}/project-readme [get]
 func (s *Server) handleGetCuratedProjectReadme(w http.ResponseWriter, r *http.Request) {
 	if s.catalog == nil {
 		writeError(w, http.StatusServiceUnavailable, "catalog not loaded")
@@ -105,7 +105,7 @@ func (s *Server) handleGetCuratedProjectReadme(w http.ResponseWriter, r *http.Re
 // @Param repo path string true "ArtifactHub repo name"
 // @Param name path string true "ArtifactHub package name"
 // @Success 200 {object} projectReadmeResponse
-// @Router /catalog/remote/{repo}/{name}/project-readme [get]
+// @Router /marketplace/remote/{repo}/{name}/project-readme [get]
 func (s *Server) handleGetRemoteProjectReadme(w http.ResponseWriter, r *http.Request) {
 	repo := strings.TrimSpace(r.PathValue("repo"))
 	pkg := strings.TrimSpace(r.PathValue("name"))

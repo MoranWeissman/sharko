@@ -80,16 +80,16 @@ func TestDisableAddonV4Route_URLEncodedTraversalClusterName_Rejected(t *testing.
 	assertPlainWords400(t, w, "invalid cluster name")
 }
 
-// TestAddInternalAddonRoute_TraversalName_Rejected covers the third write
+// TestAddToCatalogRoute_TraversalName_Rejected covers the third write
 // surface: the addon name in the POST body becomes a
 // values/global/<addon>.yaml path segment (and a Kubernetes label key) the
 // moment somebody enables the addon.
-func TestAddInternalAddonRoute_TraversalName_Rejected(t *testing.T) {
+func TestAddToCatalogRoute_TraversalName_Rejected(t *testing.T) {
 	srv := newIsolatedTestServer(t)
 	router := NewRouter(srv, nil)
 
-	body := `{"name":"../../engine/application","repo_url":"https://charts.example.com","chart":"evil","version":"1.0.0"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/catalog/delta/addons", bytes.NewReader([]byte(body)))
+	body := `{"addons":[{"name":"../../engine/application","repo_url":"https://charts.example.com","chart":"evil","version":"1.0.0"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/catalog/addons", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)

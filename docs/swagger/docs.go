@@ -2016,314 +2016,19 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the Sharko-native curated catalog of addons that ships embedded in the binary. The list is filterable by category, curated_by tag, license, minimum OpenSSF Scorecard score, and by free-text over name/description/maintainers. Read-only; requires authentication.",
+                "description": "Returns the contents of catalog.yaml in your git repo — the addons this org allows on its clusters, and nothing else. The list Sharko ships is NOT included: it lives on GET /marketplace/addons as discovery only. Each entry is self-contained (chart, chart repo, version, namespace, settings, needed secrets) and carries ` + "`" + `origin` + "`" + `: \"curated\" when the Marketplace also knows this addon by name (so a description and docs link are filled in), \"internal\" when only your own entry describes it. An entry missing its chart location comes back with ` + "`" + `deployable: false` + "`" + ` and ` + "`" + `missing_fields` + "`" + ` naming what to fill in, rather than failing the whole list. A repo with no catalog.yaml returns an empty list — a fresh repo approves nothing on purpose.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "catalog"
                 ],
-                "summary": "List curated catalog addons",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Primary category (e.g. security, observability)",
-                        "name": "category",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Comma-separated curation tags; entry must carry ALL tags",
-                        "name": "curated_by",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "SPDX license identifier (exact match, case-insensitive)",
-                        "name": "license",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Free-text substring match on name/description/maintainers",
-                        "name": "q",
-                        "in": "query"
-                    },
-                    {
-                        "type": "number",
-                        "description": "Minimum OpenSSF Scorecard aggregate score (0-10); entries with unknown score are excluded when \u003e 0",
-                        "name": "min_score",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Caller's Kubernetes version; entries requiring a newer cluster are excluded",
-                        "name": "min_k8s_version",
-                        "in": "query"
-                    },
-                    {
-                        "type": "boolean",
-                        "description": "Include deprecated entries (default false)",
-                        "name": "include_deprecated",
-                        "in": "query"
-                    }
-                ],
+                "summary": "List the addons your org approved",
                 "responses": {
                     "200": {
-                        "description": "Filtered curated catalog",
+                        "description": "The org's approved addons",
                         "schema": {
-                            "$ref": "#/definitions/internal_api.catalogListResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "Catalog not loaded",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/catalog/addons/{name}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns the full curated catalog entry for a single addon, including its OpenSSF Scorecard security score + derived tier label (Strong / Moderate / Weak) and last-refresh date. Read-only; requires authentication.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "catalog"
-                ],
-                "summary": "Get a curated catalog addon by name",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Addon name (case-sensitive, matches catalog.name)",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Curated catalog entry",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry"
-                        }
-                    },
-                    "404": {
-                        "description": "Addon not found in curated catalog",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "503": {
-                        "description": "Catalog not loaded",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/catalog/addons/{name}/project-readme": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Fetches the project's own README from GitHub (distinct from the Helm chart README). Resolves via the curated entry's ` + "`" + `source_url` + "`" + ` or ` + "`" + `homepage` + "`" + `; returns an empty body + reason when the entry doesn't point at a GitHub repo. Cached server-side so the upstream GitHub API is not hit on every page view.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "catalog"
-                ],
-                "summary": "Get the upstream project README for a curated catalog addon",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Curated addon name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/internal_api.projectReadmeResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Addon not found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/catalog/addons/{name}/readme": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Resolves a curated catalog entry to its ArtifactHub package and returns the README markdown for the in-page Marketplace detail view (v1.21 QA Bundle 2). The lookup uses the chart name (case-insensitive) against ArtifactHub's ` + "`" + `/packages/search` + "`" + `, prefers verified-publisher hits, and tie-breaks by stars. Returns 200 with ` + "`" + `readme: \"\"` + "`" + ` when the chart was found but didn't ship a README. Returns 404 only when no ArtifactHub package matches the curated chart name. Read-only; requires authentication.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "catalog"
-                ],
-                "summary": "Get the README markdown for a curated catalog addon",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Curated addon name (case-sensitive, matches catalog.name)",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "README content + ArtifactHub coordinates",
-                        "schema": {
-                            "$ref": "#/definitions/internal_api.catalogReadmeResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Missing addon name",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Addon not in curated catalog or no ArtifactHub match",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "502": {
-                        "description": "ArtifactHub unreachable and no cached value available",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "503": {
-                        "description": "Catalog not loaded",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/catalog/addons/{name}/versions": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns the chart versions reported by the upstream Helm repo ` + "`" + `index.yaml` + "`" + ` for the curated catalog entry identified by ` + "`" + `name` + "`" + `. Versions are sorted newest-first and tagged with ` + "`" + `prerelease=true` + "`" + ` when the SemVer build/prerelease segment is present. The first non-prerelease version is returned in ` + "`" + `latest_stable` + "`" + `. Responses are cached server-side for 15 minutes per repo+chart pair. Read-only; requires authentication.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "catalog"
-                ],
-                "summary": "List chart versions for a curated catalog addon",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Curated catalog addon name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "boolean",
-                        "description": "Include prerelease versions in the response (default true; the UI filters by the per-entry prerelease flag)",
-                        "name": "include_prereleases",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Sorted chart versions for the addon",
-                        "schema": {
-                            "$ref": "#/definitions/internal_api.catalogVersionsResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Addon not found in curated catalog",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "502": {
-                        "description": "Upstream Helm repo unreachable",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "503": {
-                        "description": "Catalog not loaded",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/catalog/delta/addons": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Overlays the caller's own git catalog.yaml (kind AddonCatalog) onto the shipped curated catalog and returns the merged, per-addon view: chart location, version (and where it came from), settings, and — for curated addons — the extended knowledge fields (description, required values, secrets, quirks, docs link). Every addon carries an ` + "`" + `origin` + "`" + ` of \"curated\" or \"internal\" (v4 wave 1 Story 3.3's in-house-addon marker). A repo with no catalog.yaml yet returns the curated set untouched (design doc D16, \"missing means empty\").",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "catalog"
-                ],
-                "summary": "List the merged v4 catalog (curated + your delta)",
-                "responses": {
-                    "200": {
-                        "description": "Merged catalog",
-                        "schema": {
-                            "$ref": "#/definitions/internal_api.mergedCatalogListResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "An internal addon in your delta is missing repoURL, chart, or version",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/internal_api.orgCatalogListResponse"
                         }
                     },
                     "502": {
@@ -2334,7 +2039,7 @@ const docTemplate = `{
                         }
                     },
                     "503": {
-                        "description": "Catalog not loaded or no active Git connection",
+                        "description": "No active Git connection",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2348,7 +2053,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Adds (or updates) one first-class in-house addon entry in your catalog.yaml (kind AddonCatalog), committed via a pull request like every other Sharko write. repo_url, chart, and version are all required — nothing else can supply them for an addon with no shipped catalog entry (design doc §2.3). The addon becomes assignable to clusters and appears in the merged catalog view (origin=internal) once the PR merges.",
+                "description": "Writes one or more full addon entries into catalog.yaml and opens a pull request — the approval step, and the only way anything enters the org. Three shapes, one endpoint: ONE addon (a single-element ` + "`" + `addons` + "`" + ` list); MANY addons (several elements — still exactly ONE pull request, which is what the first-run wizard needs); and add-AND-enable (` + "`" + `enable_on_cluster` + "`" + ` set — one pull request touching catalog.yaml and clusters/\u003cname\u003e.yaml together, so the reviewer sees both halves in one diff and one merge makes both true). Set ` + "`" + `from_marketplace: true` + "`" + ` on an entry to copy the chart location, default namespace and needed-secrets list out of the curated list; you still choose the version, because the curated list deliberately ships none. Nothing is written unless everything checks out: an unknown cluster, an entry with no chart location, or an addon whose required values are not set all fail before a branch exists.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2358,24 +2063,23 @@ const docTemplate = `{
                 "tags": [
                     "catalog"
                 ],
-                "summary": "Add an in-house addon to your v4 catalog delta",
+                "summary": "Add addons to your org's catalog",
                 "parameters": [
                     {
-                        "description": "Internal addon request",
+                        "description": "Addons to add",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddInternalAddonRequest"
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddToCatalogRequest"
                         }
                     }
                 ],
                 "responses": {
                     "201": {
-                        "description": "Internal addon added",
+                        "description": "Pull request opened",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddToCatalogResult"
                         }
                     },
                     "400": {
@@ -2392,6 +2096,20 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "404": {
+                        "description": "Cluster not registered",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "The addons cannot be enabled as asked",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Gateway error",
                         "schema": {
@@ -2402,21 +2120,21 @@ const docTemplate = `{
                 }
             }
         },
-        "/catalog/delta/addons/{name}": {
+        "/catalog/addons/{name}": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Single-addon form of GET /catalog/delta/addons — the curated entry (if any) overlaid with the caller's own catalog.yaml override or, for an in-house addon, defined entirely by it.",
+                "description": "Single-addon form of GET /catalog/addons. 404 means the addon is not in your catalog.yaml — your org has not approved it, so it cannot be enabled on a cluster until somebody adds it.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "catalog"
                 ],
-                "summary": "Get one addon's merged v4 catalog view",
+                "summary": "Get one approved addon",
                 "parameters": [
                     {
                         "type": "string",
@@ -2428,20 +2146,20 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Merged catalog entry",
+                        "description": "The approved addon",
                         "schema": {
-                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.MergedAddon"
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogAddon"
                         }
                     },
-                    "404": {
-                        "description": "Addon not found in the curated catalog or your delta",
+                    "400": {
+                        "description": "Addon name missing",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "422": {
-                        "description": "An internal addon in your delta is missing repoURL, chart, or version",
+                    "404": {
+                        "description": "Addon is not in your catalog",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2455,7 +2173,7 @@ const docTemplate = `{
                         }
                     },
                     "503": {
-                        "description": "Catalog not loaded or no active Git connection",
+                        "description": "No active Git connection",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2471,7 +2189,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns when Sharko's background freshness scheduler last checked chart versions across the curated catalog and last checked the v4 engine pin, plus the configured refresh interval. Read-only. Per-addon detail lives on GET /catalog/addons/{name}/versions, which also carries a real last-checked timestamp.",
+                "description": "Returns when Sharko last checked chart versions and the v4 engine pin, plus the configured refresh interval. The background scheduler watches BOTH lists: the Marketplace entries Sharko ships (addons_checked) and the addons your org approved in catalog.yaml (catalog_addons_checked), so a chart you added yourself gets a newer-version signal too. Where a chart repo has no version index Sharko can read, the per-addon detail says so in plain words rather than showing a blank. Read-only. Per-addon detail lives on GET /marketplace/addons/{name}/versions.",
                 "produces": [
                     "application/json"
                 ],
@@ -2503,7 +2221,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Requests an immediate freshness pass (chart versions across the curated catalog, plus the engine pin check) instead of waiting for the next scheduled tick. Non-blocking — the refresh runs in the background; poll GET /catalog/freshness or GET /catalog/addons/{name}/versions afterward to see updated timestamps. A request while a refresh is already pending is coalesced into that pending run.",
+                "description": "Requests an immediate freshness pass (chart versions across the Marketplace list AND your org catalog, plus the engine pin check) instead of waiting for the next scheduled tick. Non-blocking — the refresh runs in the background; poll GET /catalog/freshness or GET /catalog/addons/{name}/versions afterward to see updated timestamps. A request while a refresh is already pending is coalesced into that pending run.",
                 "produces": [
                     "application/json"
                 ],
@@ -2531,109 +2249,6 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/catalog/remote/{repo}/{name}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Proxies the ArtifactHub package detail endpoint for one Helm chart so the browser does not call ArtifactHub directly (avoids CORS issues and lets Sharko apply rate-limit handling). Returns the trimmed package shape (description, maintainers, available_versions, links, license, repo metadata). Responses are cached server-side for 1 hour; on upstream failure the last cached value is served (stale up to 24 h) with ` + "`" + `stale: true` + "`" + `. The ` + "`" + `{repo}` + "`" + ` path segment is the ArtifactHub repository name, ` + "`" + `{name}` + "`" + ` is the chart name.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "catalog"
-                ],
-                "summary": "ArtifactHub package detail proxy",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "ArtifactHub repository name (e.g. jetstack)",
-                        "name": "repo",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Chart name (e.g. cert-manager)",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Package detail",
-                        "schema": {
-                            "$ref": "#/definitions/internal_api.catalogRemotePackageResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Missing repo or name",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Package not found on ArtifactHub",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "502": {
-                        "description": "ArtifactHub unreachable and no cached value available",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/catalog/remote/{repo}/{name}/project-readme": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Same as the curated variant but resolves the GitHub repo from the ArtifactHub package's ` + "`" + `home_url` + "`" + `. Used for Marketplace entries that came from ArtifactHub search rather than Sharko's curated list.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "catalog"
-                ],
-                "summary": "Get the upstream project README for an ArtifactHub-discovered addon",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "ArtifactHub repo name",
-                        "name": "repo",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "ArtifactHub package name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/internal_api.projectReadmeResponse"
                         }
                     }
                 }
@@ -2672,169 +2287,6 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Missing or malformed repo query parameter",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/catalog/reprobe": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Resets the in-memory backoff/circuit-breaker for ArtifactHub, purges the search and package-detail caches, and issues a probe against the ArtifactHub API root. Returns whether ArtifactHub is currently reachable from this Sharko process. Used by the UI's \"Retry\" button on the search-unreachable banner. Tier 1 (operational); audit-logged.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "catalog"
-                ],
-                "summary": "Force ArtifactHub connectivity re-check",
-                "responses": {
-                    "200": {
-                        "description": "Probe result",
-                        "schema": {
-                            "$ref": "#/definitions/internal_api.catalogReprobeResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthenticated",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/catalog/search": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns curated catalog matches and ArtifactHub Helm chart matches for the same query in one envelope. Curated hits are returned as full catalog entries; ArtifactHub hits are slimmed to the fields the marketplace UI renders. When the upstream ArtifactHub call fails, curated hits are still returned and ` + "`" + `artifacthub_error` + "`" + ` is set with a classification (rate_limited / server_error / timeout / not_found / malformed). Search results are cached server-side for 10 minutes; on upstream failure the last cached value is served (stale up to 24 h) with ` + "`" + `stale: true` + "`" + `.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "catalog"
-                ],
-                "summary": "Blended catalog search (curated + ArtifactHub)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Search term (case-insensitive substring on curated; full-text on ArtifactHub)",
-                        "name": "q",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Maximum ArtifactHub hits to return (default 20, max 60)",
-                        "name": "limit",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Blended search response",
-                        "schema": {
-                            "$ref": "#/definitions/internal_api.catalogSearchResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Empty query",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "503": {
-                        "description": "Catalog not loaded",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/catalog/sources": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns one record per catalog source — the embedded binary catalog (url=\"embedded\", always first) plus each configured third-party URL from SHARKO_CATALOG_URLS. Per-source fields: url, status (ok|stale|failed), last_fetched (RFC3339 or null), entry_count, verified (cosign-verified), and optional issuer when verified. Read-only; requires authentication.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "catalog"
-                ],
-                "summary": "List catalog sources with fetch status",
-                "responses": {
-                    "200": {
-                        "description": "Catalog sources with per-source fetch status",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/internal_api.catalogSourceRecord"
-                            }
-                        }
-                    },
-                    "503": {
-                        "description": "Catalog not loaded",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/catalog/sources/refresh": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Synchronously re-fetches every configured third-party catalog source without waiting for the next cadence tick. Returns the refreshed list in the same shape as GET /catalog/sources. The embedded catalog is always included as a pseudo-source. Requires authentication AND admin role — classified Tier 2 and audit-logged; the audit Detail carries the list of attempted URLs and their per-URL status. The endpoint is a no-op in embedded-only mode (no fetcher wired) and returns just the embedded record.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "catalog"
-                ],
-                "summary": "Force-refresh all catalog sources (Tier 2, admin-only)",
-                "responses": {
-                    "200": {
-                        "description": "Refreshed catalog sources with per-source fetch status",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/internal_api.catalogSourceRecord"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Caller role lacks the catalog.sources.refresh action",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "503": {
-                        "description": "Catalog not loaded",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -6187,6 +5639,560 @@ const docTemplate = `{
                 }
             }
         },
+        "/marketplace/addons": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the Sharko-native curated catalog of addons that ships embedded in the binary. The list is filterable by category, curated_by tag, license, minimum OpenSSF Scorecard score, and by free-text over name/description/maintainers. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List curated catalog addons",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Primary category (e.g. security, observability)",
+                        "name": "category",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated curation tags; entry must carry ALL tags",
+                        "name": "curated_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "SPDX license identifier (exact match, case-insensitive)",
+                        "name": "license",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Free-text substring match on name/description/maintainers",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Minimum OpenSSF Scorecard aggregate score (0-10); entries with unknown score are excluded when \u003e 0",
+                        "name": "min_score",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Caller's Kubernetes version; entries requiring a newer cluster are excluded",
+                        "name": "min_k8s_version",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include deprecated entries (default false)",
+                        "name": "include_deprecated",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Filtered curated catalog",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogListResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/marketplace/addons/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the full curated catalog entry for a single addon, including its OpenSSF Scorecard security score + derived tier label (Strong / Moderate / Weak) and last-refresh date. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Get a curated catalog addon by name",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name (case-sensitive, matches catalog.name)",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Curated catalog entry",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry"
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found in curated catalog",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/marketplace/addons/{name}/project-readme": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Fetches the project's own README from GitHub (distinct from the Helm chart README). Resolves via the curated entry's ` + "`" + `source_url` + "`" + ` or ` + "`" + `homepage` + "`" + `; returns an empty body + reason when the entry doesn't point at a GitHub repo. Cached server-side so the upstream GitHub API is not hit on every page view.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Get the upstream project README for a curated catalog addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Curated addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.projectReadmeResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/marketplace/addons/{name}/readme": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Resolves a curated catalog entry to its ArtifactHub package and returns the README markdown for the in-page Marketplace detail view (v1.21 QA Bundle 2). The lookup uses the chart name (case-insensitive) against ArtifactHub's ` + "`" + `/packages/search` + "`" + `, prefers verified-publisher hits, and tie-breaks by stars. Returns 200 with ` + "`" + `readme: \"\"` + "`" + ` when the chart was found but didn't ship a README. Returns 404 only when no ArtifactHub package matches the curated chart name. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Get the README markdown for a curated catalog addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Curated addon name (case-sensitive, matches catalog.name)",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "README content + ArtifactHub coordinates",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogReadmeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing addon name",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not in curated catalog or no ArtifactHub match",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "ArtifactHub unreachable and no cached value available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/marketplace/addons/{name}/versions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the chart versions reported by the upstream Helm repo ` + "`" + `index.yaml` + "`" + ` for the curated catalog entry identified by ` + "`" + `name` + "`" + `. Versions are sorted newest-first and tagged with ` + "`" + `prerelease=true` + "`" + ` when the SemVer build/prerelease segment is present. The first non-prerelease version is returned in ` + "`" + `latest_stable` + "`" + `. Responses are cached server-side for 15 minutes per repo+chart pair. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List chart versions for a curated catalog addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Curated catalog addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include prerelease versions in the response (default true; the UI filters by the per-entry prerelease flag)",
+                        "name": "include_prereleases",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Sorted chart versions for the addon",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogVersionsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found in curated catalog",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Upstream Helm repo unreachable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/marketplace/remote/{repo}/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Proxies the ArtifactHub package detail endpoint for one Helm chart so the browser does not call ArtifactHub directly (avoids CORS issues and lets Sharko apply rate-limit handling). Returns the trimmed package shape (description, maintainers, available_versions, links, license, repo metadata). Responses are cached server-side for 1 hour; on upstream failure the last cached value is served (stale up to 24 h) with ` + "`" + `stale: true` + "`" + `. The ` + "`" + `{repo}` + "`" + ` path segment is the ArtifactHub repository name, ` + "`" + `{name}` + "`" + ` is the chart name.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "ArtifactHub package detail proxy",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ArtifactHub repository name (e.g. jetstack)",
+                        "name": "repo",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Chart name (e.g. cert-manager)",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Package detail",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogRemotePackageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing repo or name",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Package not found on ArtifactHub",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "ArtifactHub unreachable and no cached value available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/marketplace/remote/{repo}/{name}/project-readme": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Same as the curated variant but resolves the GitHub repo from the ArtifactHub package's ` + "`" + `home_url` + "`" + `. Used for Marketplace entries that came from ArtifactHub search rather than Sharko's curated list.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Get the upstream project README for an ArtifactHub-discovered addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ArtifactHub repo name",
+                        "name": "repo",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "ArtifactHub package name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.projectReadmeResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/marketplace/reprobe": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Resets the in-memory backoff/circuit-breaker for ArtifactHub, purges the search and package-detail caches, and issues a probe against the ArtifactHub API root. Returns whether ArtifactHub is currently reachable from this Sharko process. Used by the UI's \"Retry\" button on the search-unreachable banner. Tier 1 (operational); audit-logged.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Force ArtifactHub connectivity re-check",
+                "responses": {
+                    "200": {
+                        "description": "Probe result",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogReprobeResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthenticated",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/marketplace/search": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns curated catalog matches and ArtifactHub Helm chart matches for the same query in one envelope. Curated hits are returned as full catalog entries; ArtifactHub hits are slimmed to the fields the marketplace UI renders. When the upstream ArtifactHub call fails, curated hits are still returned and ` + "`" + `artifacthub_error` + "`" + ` is set with a classification (rate_limited / server_error / timeout / not_found / malformed). Search results are cached server-side for 10 minutes; on upstream failure the last cached value is served (stale up to 24 h) with ` + "`" + `stale: true` + "`" + `.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Blended catalog search (curated + ArtifactHub)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search term (case-insensitive substring on curated; full-text on ArtifactHub)",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum ArtifactHub hits to return (default 20, max 60)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Blended search response",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogSearchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Empty query",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/marketplace/sources": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns one record per catalog source — the embedded binary catalog (url=\"embedded\", always first) plus each configured third-party URL from SHARKO_CATALOG_URLS. Per-source fields: url, status (ok|stale|failed), last_fetched (RFC3339 or null), entry_count, verified (cosign-verified), and optional issuer when verified. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List catalog sources with fetch status",
+                "responses": {
+                    "200": {
+                        "description": "Catalog sources with per-source fetch status",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api.catalogSourceRecord"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/marketplace/sources/refresh": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Synchronously re-fetches every configured third-party catalog source without waiting for the next cadence tick. Returns the refreshed list in the same shape as GET /catalog/sources. The embedded catalog is always included as a pseudo-source. Requires authentication AND admin role — classified Tier 2 and audit-logged; the audit Detail carries the list of attempted URLs and their per-URL status. The endpoint is a no-op in embedded-only mode (no fetcher wired) and returns just the embedded record.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Force-refresh all catalog sources (Tier 2, admin-only)",
+                "responses": {
+                    "200": {
+                        "description": "Refreshed catalog sources with per-source fetch status",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api.catalogSourceRecord"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Caller role lacks the catalog.sources.refresh action",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/migration/complete": {
             "post": {
                 "security": [
@@ -8418,7 +8424,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Enables an addon on a cluster by writing clusters/{name}.yaml (kind ClusterAddons) and, when values are supplied, values/clusters/{name}/{addon}.yaml — the v4 data-file format (design doc 2026-07-30-v4-data-file-format.md). Runs semantic validation BEFORE any branch or pull request exists: every required value the merged catalog entry declares must be present (in the supplied values or already on disk), and every secret the addon declares as needed to INSTALL must have a Sharko secret definition wired up. A validation failure returns 422 naming exactly what is missing, in plain English — nothing is written, not even a branch. Secrets the addon only needs at RUNTIME (required_for: runtime on the catalog entry) never block the install; a missing one is instead listed in the response's warnings field, both on a dry-run preview and on the real enable. Requires yes=true for confirmation (or dry_run=true to preview, which also runs validation first).",
+                "description": "Enables an addon on a cluster by writing clusters/{name}.yaml (kind ClusterAddons) and, when values are supplied, values/clusters/{name}/{addon}.yaml — the v4 data-file format (design doc 2026-07-30-v4-data-file-format.md). Runs semantic validation BEFORE any branch or pull request exists: every required value the catalog entry declares must be present (in the supplied values or already on disk), and every secret the addon declares as needed to INSTALL must have a Sharko secret definition wired up. A validation failure returns 422 naming exactly what is missing, in plain English — nothing is written, not even a branch. Secrets the addon only needs at RUNTIME (required_for: runtime on the catalog entry) never block the install; a missing one is instead listed in the response's warnings field, both on a dry-run preview and on the real enable. Requires yes=true for confirmation (or dry_run=true to preview, which also runs validation first).",
                 "consumes": [
                     "application/json"
                 ],
@@ -8865,6 +8871,129 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_catalog.CatalogAddon": {
+            "type": "object",
+            "properties": {
+                "additional_sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource"
+                    }
+                },
+                "category": {
+                    "type": "string"
+                },
+                "chart": {
+                    "type": "string"
+                },
+                "curated_by": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "deployable": {
+                    "description": "Deployable is false when the entry is missing something the engine\nneeds. MissingFields names what, so a list view can flag a\nhalf-written entry instead of the whole page failing over one bad\nline somebody hand-edited.",
+                    "type": "boolean"
+                },
+                "deprecated": {
+                    "type": "boolean"
+                },
+                "description": {
+                    "description": "Knowledge fields — from the Marketplace's curated entry of the same\nname. Always zero-value when Origin is OriginInternal.",
+                    "type": "string"
+                },
+                "docs_url": {
+                    "type": "string"
+                },
+                "extra_helm_values": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "github_stars": {
+                    "type": "integer"
+                },
+                "homepage": {
+                    "type": "string"
+                },
+                "license": {
+                    "type": "string"
+                },
+                "maintainers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "min_kubernetes_version": {
+                    "type": "string"
+                },
+                "missing_fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "origin": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.Origin"
+                },
+                "quirks": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "repo_url": {
+                    "description": "Deployment fields — always, only, from catalog.yaml.",
+                    "type": "string"
+                },
+                "required_values": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.RequiredValue"
+                    }
+                },
+                "secrets": {
+                    "description": "Secrets: the credentials this addon needs before it works. Read from\nthe entry itself. When the entry carries none and the Marketplace\nknows the addon, the curated list's own secrets list stands in — it\nis knowledge about the chart, and an entry somebody hand-wrote\nwithout it should still get the heads-up.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.SecretRequirement"
+                    }
+                },
+                "security_score": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.ScoreValue"
+                },
+                "security_tier": {
+                    "type": "string"
+                },
+                "settings": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_config.AddonSettings"
+                },
+                "signature_identity": {
+                    "type": "string"
+                },
+                "source_url": {
+                    "type": "string"
+                },
+                "superseded_by": {
+                    "type": "string"
+                },
+                "verified": {
+                    "type": "boolean"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry": {
             "type": "object",
             "properties": {
@@ -8974,126 +9103,6 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_MoranWeissman_sharko_internal_catalog.MergedAddon": {
-            "type": "object",
-            "properties": {
-                "additional_sources": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource"
-                    }
-                },
-                "category": {
-                    "type": "string"
-                },
-                "chart": {
-                    "type": "string"
-                },
-                "curated_by": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "customized": {
-                    "description": "Customized is true when the user's delta carries an entry for this\naddon at all — i.e. it touched at least one field, even if Origin is\nOriginCurated. False means \"shown exactly as the shipped catalog\nships it, untouched by your git\".",
-                    "type": "boolean"
-                },
-                "deprecated": {
-                    "type": "boolean"
-                },
-                "description": {
-                    "description": "Knowledge fields — Story 3.1's extended entry, carried straight\nthrough from the curated CatalogEntry. Always zero-value for\nOriginInternal addons: nothing but the user's own delta (which has\nno knowledge fields) has ever described them.",
-                    "type": "string"
-                },
-                "docs_url": {
-                    "type": "string"
-                },
-                "extra_helm_values": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "github_stars": {
-                    "type": "integer"
-                },
-                "homepage": {
-                    "type": "string"
-                },
-                "license": {
-                    "type": "string"
-                },
-                "maintainers": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "min_kubernetes_version": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "namespace": {
-                    "type": "string"
-                },
-                "origin": {
-                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.Origin"
-                },
-                "quirks": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "repo_url": {
-                    "description": "Deployment fields — what the engine actually needs to render an\nApplicationSet for this addon.",
-                    "type": "string"
-                },
-                "required_values": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.RequiredValue"
-                    }
-                },
-                "secrets": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.SecretRequirement"
-                    }
-                },
-                "security_score": {
-                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.ScoreValue"
-                },
-                "security_tier": {
-                    "type": "string"
-                },
-                "settings": {
-                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_config.AddonSettings"
-                },
-                "signature_identity": {
-                    "type": "string"
-                },
-                "source_url": {
-                    "type": "string"
-                },
-                "superseded_by": {
-                    "type": "string"
-                },
-                "verified": {
-                    "type": "boolean"
-                },
-                "version": {
-                    "type": "string"
-                },
-                "version_source": {
-                    "description": "VersionSource names where Version came from: \"delta\" when the user's\ncatalog/addons.yaml set it, \"\" when nothing has (per design doc D7,\nthe shipped catalog itself never carries a version — a shipped\nversion would go stale inside a signed artefact). A per-cluster\nclusters/\u003cname\u003e.yaml pin (design doc §2.1) is a later precedence\nstep this merge does not see; VersionSource only speaks to the\ncurated/delta layer.",
-                    "type": "string"
-                }
-            }
-        },
         "github_com_MoranWeissman_sharko_internal_catalog.Origin": {
             "type": "string",
             "enum": [
@@ -9147,6 +9156,23 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "bundle": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_config.AddonSecretRequirement": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "description": "Description says what the secret is for and, where it helps, how it\nis normally wired in (env var, mounted file, IRSA role).",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name is a short human label for the secret. It is not necessarily a\nliteral Kubernetes Secret name — addons differ in how they expect a\ncredential to be supplied.",
+                    "type": "string"
+                },
+                "required_for": {
+                    "description": "RequiredFor is SecretRequiredForInstall or SecretRequiredForRuntime.\nEmpty means install — the stricter reading, so an entry written\nbefore anyone classified it keeps blocking exactly as it did.",
                     "type": "string"
                 }
             }
@@ -9755,27 +9781,81 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_MoranWeissman_sharko_internal_orchestrator.AddInternalAddonRequest": {
+        "github_com_MoranWeissman_sharko_internal_orchestrator.AddToCatalogRequest": {
             "type": "object",
             "properties": {
+                "addons": {
+                    "description": "Addons is the list to add. One element is the ordinary single add;\nseveral elements still produce exactly ONE pull request.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.CatalogAddonInput"
+                    }
+                },
                 "auto_merge": {
-                    "description": "AutoMerge is the per-request auto-merge decision. nil means \"fall\nback to the connection-level PRAutoMerge default\"; a non-nil value\noverrides it for this operation only. Mirrors AddAddonRequest.",
+                    "description": "AutoMerge is the per-request auto-merge decision. nil falls back to\nthe connection-level default.",
                     "type": "boolean"
                 },
-                "chart": {
+                "dry_run": {
+                    "type": "boolean"
+                },
+                "enable_on_cluster": {
+                    "description": "EnableOnCluster, when set, also switches every addon in this request\non for that cluster — one pull request touching catalog.yaml and\nclusters/\u003cname\u003e.yaml together. Empty means catalog only.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.AddToCatalogResult": {
+            "type": "object",
+            "properties": {
+                "added": {
+                    "description": "Added names the addons written into catalog.yaml, sorted.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "branch": {
                     "type": "string"
                 },
-                "name": {
+                "cluster": {
                     "type": "string"
                 },
-                "namespace": {
+                "commit_sha": {
                     "type": "string"
                 },
-                "repo_url": {
+                "dry_run": {
+                    "description": "DryRun holds the preview result when the caller requested dry_run=true.\nWhen set, NO git side effects occurred (no branch, no commit, no PR) —\nthe other GitResult fields are empty. omitempty keeps the non-dry-run\nresponse shape byte-identical to before this field existed. Mirrors the\nDryRun field on RegisterClusterResult so the UI reuses the same preview\nrender for both flows.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult"
+                        }
+                    ]
+                },
+                "enabled": {
+                    "description": "Enabled names the addons also switched on, and on which cluster.\nEmpty when the request was catalog-only.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "merged": {
+                    "type": "boolean"
+                },
+                "pr_id": {
+                    "type": "integer"
+                },
+                "pr_url": {
                     "type": "string"
                 },
-                "version": {
+                "values_file": {
                     "type": "string"
+                },
+                "warnings": {
+                    "description": "Warnings holds plain-English advisories that do NOT block the\noperation — e.g. EnableAddonV4's needed-at-runtime secrets (v4 wave 2\nw2-q4): the addon installs fine now, but will need the secret later.\nSet on both the dry-run preview response and the real (non-dry-run)\nresponse, per the same GitResult. Empty/omitted when there is\nnothing to warn about. Mirrors the Warnings field on\nRegisterClusterResult/AdoptClusterResult (V2-cleanup-89.5).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -9859,6 +9939,51 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult"
                     }
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.CatalogAddonInput": {
+            "type": "object",
+            "properties": {
+                "additional_sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource"
+                    }
+                },
+                "chart": {
+                    "type": "string"
+                },
+                "extra_helm_values": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "from_marketplace": {
+                    "description": "FromMarketplace copies the chart location, default namespace and\nneeded-secrets list out of the Marketplace's curated entry for this\nname. Anything set explicitly below still wins. An unknown name is\nan error rather than a silent empty entry — a pre-filled shortcut\nthat quietly filled in nothing would produce a broken catalog.",
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "repo_url": {
+                    "type": "string"
+                },
+                "secrets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_config.AddonSecretRequirement"
+                    }
+                },
+                "settings": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_config.AddonSettings"
+                },
+                "version": {
+                    "type": "string"
                 }
             }
         },
@@ -11323,6 +11448,11 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "addons_checked": {
+                    "description": "AddonsChecked is how many entries the Marketplace's own list has.",
+                    "type": "integer"
+                },
+                "catalog_addons_checked": {
+                    "description": "CatalogAddonsChecked is how many of the org's approved addons the\nlast pass walked. Zero on a fresh repo — nothing is approved yet.",
                     "type": "integer"
                 },
                 "enabled": {
@@ -11533,6 +11663,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "latest_stable": {
+                    "type": "string"
+                },
+                "no_data_reason": {
+                    "description": "NoDataReason is a complete, plain-English sentence for why there is\nno version list, empty when there is one. The UI renders it verbatim\nso a chart repo with no readable index says so, instead of leaving a\nblank that reads like \"nothing newer out there\".",
                     "type": "string"
                 },
                 "repo": {
@@ -11760,13 +11894,13 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_api.mergedCatalogListResponse": {
+        "internal_api.orgCatalogListResponse": {
             "type": "object",
             "properties": {
                 "addons": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.MergedAddon"
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogAddon"
                     }
                 },
                 "total": {

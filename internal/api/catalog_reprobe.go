@@ -40,7 +40,7 @@ type catalogReprobeResponse struct {
 // @Security BearerAuth
 // @Success 200 {object} catalogReprobeResponse "Probe result"
 // @Failure 401 {object} map[string]interface{} "Unauthenticated"
-// @Router /catalog/reprobe [post]
+// @Router /marketplace/reprobe [post]
 func (s *Server) handleReprobeArtifactHub(w http.ResponseWriter, r *http.Request) {
 	// This endpoint refreshes the catalog data-source (ArtifactHub) connectivity
 	// and purges its caches — the same "refresh the catalog source" intent the

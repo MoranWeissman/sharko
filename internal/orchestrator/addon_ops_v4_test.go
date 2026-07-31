@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
+	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/schema"
 )
@@ -97,9 +98,44 @@ func newV4TestOrchestrator(t *testing.T, git *mockGitProvider) *Orchestrator {
 	if _, ok := git.files[V4ManagedClustersPath]; !ok {
 		git.files[V4ManagedClustersPath] = []byte("clusters:\n  - name: prod-eu\n")
 	}
+	// The enable gate is real now: only an addon in catalog.yaml can be
+	// switched on. These tests are about the semantic validation that runs
+	// AFTER the gate, so seed the three addons they use as approved. The
+	// gate itself has its own test, which deliberately asks for a name
+	// that is not here.
+	if _, ok := git.files[config.AddonCatalogPath]; !ok {
+		git.files[config.AddonCatalogPath] = v4TestApprovedCatalog(t)
+	}
 	orch := New(nil, nil, newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 	orch.SetCuratedCatalog(v4TestCuratedCatalog(t))
 	return orch
+}
+
+// v4TestApprovedCatalog renders a catalog.yaml approving the three addons
+// the v4 enable/disable tests use. Full entries, because that is what the
+// format is — nothing fills a blank in behind the file.
+func v4TestApprovedCatalog(t *testing.T) []byte {
+	t.Helper()
+	body, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
+			"cert-manager": {
+				RepoURL: "https://charts.jetstack.io", Chart: "cert-manager",
+				Version: "1.14.5", Namespace: "cert-manager",
+			},
+			"metrics-server": {
+				RepoURL: "https://kubernetes-sigs.github.io/metrics-server", Chart: "metrics-server",
+				Version: "3.12.1", Namespace: "metrics-server",
+			},
+			"external-secrets": {
+				RepoURL: "https://charts.external-secrets.io", Chart: "external-secrets",
+				Version: "0.9.19", Namespace: "external-secrets",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveAddonCatalog: %v", err)
+	}
+	return body
 }
 
 func TestEnableAddonV4_BlocksOnMissingRequiredValue_BeforeAnyGitWrite(t *testing.T) {
@@ -487,7 +523,7 @@ func TestEnableAddonV4_UnknownCluster_ReturnsErrV4ClusterNotFound_BeforeAnyGitWr
 
 // TestEnableAddonV4_UnknownAddon_ReturnsErrV4AddonNotInCatalog proves an
 // addon name absent from the merged catalog (curated + delta) surfaces as
-// ErrV4AddonNotInCatalog with the plain "not in the catalog" wording — the
+// ErrV4AddonNotInCatalog with the plain "not in your catalog" wording — the
 // API layer maps this to 422, not the 502 default.
 func TestEnableAddonV4_UnknownAddon_ReturnsErrV4AddonNotInCatalog(t *testing.T) {
 	git := newMockGitProvider()
@@ -501,7 +537,7 @@ func TestEnableAddonV4_UnknownAddon_ReturnsErrV4AddonNotInCatalog(t *testing.T) 
 	if !errors.Is(err, ErrV4AddonNotInCatalog) {
 		t.Fatalf("expected ErrV4AddonNotInCatalog, got %T: %v", err, err)
 	}
-	if !strings.Contains(err.Error(), "not in the catalog") {
+	if !strings.Contains(err.Error(), "not in your catalog") {
 		t.Errorf("error = %q, want it to say \"not in the catalog\"", err.Error())
 	}
 }

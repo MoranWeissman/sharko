@@ -3,9 +3,8 @@
 // docs/design/2026-07-30-v4-data-file-format.md's worked example (§6) is
 // the template: a handful of clusters, one addon pinned older with a
 // known quirk on one cluster, another addon following the catalog
-// default everywhere, and one in-house addon that only exists in the
-// caller's own catalog/addons.yaml delta (never in the shipped curated
-// catalog) — the "internal addon" case v4 Wave 1 Story 3.3 added.
+// default everywhere, and one in-house chart the Marketplace has never
+// heard of.
 //
 // This file builds that layout using the SAME Go helpers a real Sharko
 // server uses to write it (models.SaveClusterAddons,
@@ -21,7 +20,7 @@
 // doc's §8 "what this changes in the existing code" list, not something
 // this UI/demo-fixture lane owns. Keeping both layouts side by side means
 // the v4-aware reads (AddonService.GetVersionMatrix's v4 branch, the
-// catalog/delta endpoints, EnableAddonV4/DisableAddonV4 and their
+// catalog endpoints, EnableAddonV4/DisableAddonV4 and their
 // dry-run previews) light up on real v4 data while every already-working
 // v3-driven view (cluster comparison, the dashboard tile) keeps working
 // exactly as it did before this story.
@@ -35,9 +34,8 @@ import (
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
-// v4CatalogDeltaAddon is one entry this fixture writes into the demo's
-// catalog/addons.yaml delta, alongside the (cluster, pin) combinations
-// that reference it from clusters/*.yaml.
+// v4ClusterAddonPin is one (cluster, addon) pairing this fixture writes
+// into clusters/*.yaml, with the per-cluster version pin when there is one.
 type v4ClusterAddonPin struct {
 	name     string
 	version  string // "" means "no per-cluster pin — follow the catalog default"
@@ -47,47 +45,81 @@ type v4ClusterAddonPin struct {
 // buildV4DemoFiles renders the v4-format demo repo layout (design doc
 // §1, §2) for the same five clusters the v3 fixture already seeds
 // (prod-eu, prod-us, staging-eu, dev-us, perf-asia — see
-// clusterAddonsYAML in mock_git.go). Every addon used here already
-// exists in the real shipped/curated catalog (catalog/addons.yaml at
-// the repo root, embedded at build time) EXCEPT datadog, which is not
-// curated (it ships from a real public Helm repo but isn't part of
-// Sharko's open-source curated set) — that gap is exactly what makes it
-// the "one internal addon" the merged-catalog view (GET
-// /api/v1/catalog/delta/addons) is meant to show: same shape, same
-// version field, same everything as a curated addon, just sourced by
-// the caller's own delta instead of the shipped set (design doc §2.3).
+// clusterAddonsYAML in mock_git.go). Five of the six approved addons are
+// also in the Marketplace's curated list; datadog is not (it ships from
+// a real public Helm repo but is not part of Sharko's open-source curated
+// set). That gap is the point: it shows an in-house chart deploying from
+// exactly the same fields as a curated one, with the only difference
+// being that nothing else has a description for it.
 //
 // Returns path -> rendered file bytes, ready to merge into
 // MockGitProvider.files.
 func buildV4DemoFiles() (map[string][]byte, error) {
 	files := make(map[string][]byte)
 
-	// ---- catalog/addons.yaml (AddonCatalog) ----------------------
+	// ---- catalog.yaml (AddonCatalog) -----------------------------
 	//
-	// Fleet-wide "this is the version we run" entries for every curated
-	// addon the demo clusters use, plus datadog as a full in-house
-	// entry (repoURL/chart/version/namespace all required — none of
-	// them come from a shipped catalog entry, because there isn't one).
-	deltaSpec := config.AddonCatalogSpec{
+	// The six addons this demo org approved, and nothing else. Every
+	// entry is full and self-contained — chart, chart repo, version,
+	// namespace — because that is what the format is now: the file alone
+	// says what the fleet is allowed to run, with nothing filled in
+	// behind it from a list that ships inside Sharko.
+	//
+	// Five of these names are also in the Marketplace's curated list, so
+	// the API fills in their description and docs link and marks them
+	// origin=curated. datadog is not, so it comes back origin=internal
+	// with no knowledge fields — the in-house-chart case, and the demo's
+	// way of showing that both kinds deploy from exactly the same fields.
+	catalogSpec := config.AddonCatalogSpec{
 		Addons: map[string]config.AddonCatalogEntry{
-			"cert-manager":          {Version: "1.14.5"},
-			"metrics-server":        {Version: "3.12.1"},
-			"kube-prometheus-stack": {Version: "58.2.1"},
-			"external-dns":          {Version: "1.14.4"},
-			"vault":                 {Version: "0.28.0"},
+			"cert-manager": {
+				RepoURL:   "https://charts.jetstack.io",
+				Chart:     "cert-manager",
+				Version:   "1.14.5",
+				Namespace: "cert-manager",
+			},
+			"metrics-server": {
+				RepoURL:   "https://kubernetes-sigs.github.io/metrics-server/",
+				Chart:     "metrics-server",
+				Version:   "3.12.1",
+				Namespace: "kube-system",
+			},
+			"kube-prometheus-stack": {
+				RepoURL:   "https://prometheus-community.github.io/helm-charts",
+				Chart:     "kube-prometheus-stack",
+				Version:   "58.2.1",
+				Namespace: "monitoring",
+			},
+			"external-dns": {
+				RepoURL:   "https://kubernetes-sigs.github.io/external-dns/",
+				Chart:     "external-dns",
+				Version:   "1.14.4",
+				Namespace: "external-dns",
+			},
+			"vault": {
+				RepoURL:   "https://helm.releases.hashicorp.com",
+				Chart:     "vault",
+				Version:   "0.28.0",
+				Namespace: "vault",
+			},
 			"datadog": {
 				RepoURL:   "https://helm.datadoghq.com",
 				Chart:     "datadog",
 				Version:   "3.69.0",
 				Namespace: "datadog",
+				Secrets: []config.AddonSecretRequirement{{
+					Name:        "Datadog API key",
+					Description: "the account's API key, read by the agent at start-up",
+					RequiredFor: config.SecretRequiredForInstall,
+				}},
 			},
 		},
 	}
-	deltaBytes, err := config.SaveAddonCatalog(deltaSpec)
+	catalogBytes, err := config.SaveAddonCatalog(catalogSpec)
 	if err != nil {
 		return nil, fmt.Errorf("rendering demo %s: %w", config.AddonCatalogPath, err)
 	}
-	files[config.AddonCatalogPath] = deltaBytes
+	files[config.AddonCatalogPath] = catalogBytes
 
 	// ---- clusters/<name>.yaml (one ClusterAddons per cluster) ----
 	//

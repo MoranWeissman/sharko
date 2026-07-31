@@ -53,7 +53,7 @@ type catalogSourceRecord struct {
 // @Security BearerAuth
 // @Success 200 {array} catalogSourceRecord "Catalog sources with per-source fetch status"
 // @Failure 503 {object} map[string]interface{} "Catalog not loaded"
-// @Router /catalog/sources [get]
+// @Router /marketplace/sources [get]
 func (s *Server) handleListCatalogSources(w http.ResponseWriter, r *http.Request) {
 	if s.catalog == nil {
 		writeError(w, http.StatusServiceUnavailable, "catalog not loaded")

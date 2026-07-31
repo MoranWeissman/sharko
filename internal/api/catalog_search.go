@@ -49,7 +49,7 @@ type catalogSearchResponse struct {
 // @Success 200 {object} catalogSearchResponse "Blended search response"
 // @Failure 400 {object} map[string]interface{} "Empty query"
 // @Failure 503 {object} map[string]interface{} "Catalog not loaded"
-// @Router /catalog/search [get]
+// @Router /marketplace/search [get]
 func (s *Server) handleSearchCatalog(w http.ResponseWriter, r *http.Request) {
 	if s.catalog == nil {
 		writeError(w, http.StatusServiceUnavailable, "catalog not loaded")

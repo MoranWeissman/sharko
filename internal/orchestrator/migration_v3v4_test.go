@@ -891,8 +891,9 @@ func TestMigrate_AllOrNothing_OnWriteFailure(t *testing.T) {
 // the build, before a branch exists at all.
 func TestMigrate_RefusesBeforeAnyWrite_OnUnmigratableRepo(t *testing.T) {
 	files := newV3FixtureRepo()
-	// An in-house addon with no version: catalog.MergeDelta cannot make it
-	// deployable, so the migration must say so instead of shipping it.
+	// An in-house addon with no version: nothing can fill that in, so the
+	// migration must say so instead of shipping a catalog the engine
+	// cannot render.
 	files["configuration/addons-catalog.yaml"] = []byte(`applicationsets:
   - name: inhouse-api
     repoURL: oci://registry.example.com/charts
@@ -916,9 +917,10 @@ func TestMigrate_RefusesBeforeAnyWrite_OnUnmigratableRepo(t *testing.T) {
 // ─── Story 5.2: the catalog delta round trip ─────────────────────────────
 
 // TestMigrate_CatalogDelta_RoundTrips is the invariant that makes the
-// subtraction safe: merging the delta back onto the shipped catalog must
-// reproduce the user's effective v3 entry, field for field, for EVERY
-// addon they had.
+// conversion safe: reading the converted catalog.yaml back must reproduce
+// the user's effective v3 entry, field for field, for EVERY addon they had.
+// Nothing fills a blank in behind it any more, so this is now a straight
+// comparison against the file itself.
 func TestMigrate_CatalogDelta_RoundTrips(t *testing.T) {
 	git := newMigrationFakeGit(newV3FixtureRepo())
 	orch := newMigrationOrchestrator(t, git)
@@ -929,12 +931,9 @@ func TestMigrate_CatalogDelta_RoundTrips(t *testing.T) {
 
 	delta, err := config.LoadAddonCatalog(git.branchWrites[config.AddonCatalogPath])
 	if err != nil {
-		t.Fatalf("catalog/addons.yaml does not read back: %v", err)
+		t.Fatalf("catalog.yaml does not read back: %v", err)
 	}
-	merged, err := catalog.MergeDelta(migrationCuratedCatalog(t), delta)
-	if err != nil {
-		t.Fatalf("the delta does not merge: %v", err)
-	}
+	merged := catalog.BuildCatalogView(migrationCuratedCatalog(t), delta)
 
 	v3Entries, err := parseAddonsCatalog([]byte(migrationV3CatalogYAML))
 	if err != nil {
@@ -973,74 +972,76 @@ func TestMigrate_CatalogDelta_RoundTrips(t *testing.T) {
 	}
 }
 
-// TestMigrate_CatalogDelta_DropsWhatTheShippedCatalogAlreadySays is the
-// "delta, not a copy" half: a field the shipped catalog supplies with the
-// same value must NOT be repeated in the user's file.
-func TestMigrate_CatalogDelta_DropsWhatTheShippedCatalogAlreadySays(t *testing.T) {
+// TestMigrate_CatalogConversion_CarriesEveryEntryWhole is the full-entry
+// half: the converted file is self-contained, so a field the shipped list
+// happens to say the same thing about is written out anyway. Dropping it
+// would leave a catalog the engine cannot render, because nothing fills a
+// blank in behind the file any more.
+func TestMigrate_CatalogConversion_CarriesEveryEntryWhole(t *testing.T) {
 	git := newMigrationFakeGit(newV3FixtureRepo())
 	orch := newMigrationOrchestrator(t, git)
 
 	if _, err := orch.MigrateV3ToV4(context.Background(), MigrateRequest{Yes: true}); err != nil {
 		t.Fatalf("MigrateV3ToV4: %v", err)
 	}
-	delta, err := config.LoadAddonCatalog(git.branchWrites[config.AddonCatalogPath])
+	converted, err := config.LoadAddonCatalog(git.branchWrites[config.AddonCatalogPath])
 	if err != nil {
-		t.Fatalf("catalog/addons.yaml does not read back: %v", err)
+		t.Fatalf("catalog.yaml does not read back: %v", err)
 	}
 
-	// cert-manager matches the shipped entry on repo, chart, and namespace.
-	// Only the version — which the shipped catalog never carries — is the
-	// user's, so that is all their file should hold.
-	cert, ok := delta.Addons["cert-manager"]
+	// cert-manager matches the shipped entry on repo, chart and namespace,
+	// and every one of those is still written out.
+	cert, ok := converted.Addons["cert-manager"]
 	if !ok {
-		t.Fatal("cert-manager is missing from the delta (its version pin is the user's)")
+		t.Fatal("cert-manager is missing from the converted catalog")
 	}
-	if cert.RepoURL != "" || cert.Chart != "" || cert.Namespace != "" {
-		t.Errorf("cert-manager repeats what Sharko already ships: %+v", cert)
-	}
-	if cert.Version != "1.14.5" {
-		t.Errorf("cert-manager version = %q, want 1.14.5", cert.Version)
+	if cert.RepoURL == "" || cert.Chart == "" || cert.Version != "1.14.5" {
+		t.Errorf("cert-manager is not a complete entry: %+v", cert)
 	}
 
-	// metrics-server differs from the shipped entry on namespace, so that
-	// one field IS the user's and must stay.
-	ms, ok := delta.Addons["metrics-server"]
+	// metrics-server differs from the shipped entry on namespace — the
+	// user's own choice, and it must survive the conversion untouched.
+	ms, ok := converted.Addons["metrics-server"]
 	if !ok {
-		t.Fatal("metrics-server is missing from the delta")
+		t.Fatal("metrics-server is missing from the converted catalog")
 	}
 	if ms.Namespace != "kube-system" {
 		t.Errorf("metrics-server namespace = %q, want kube-system — this is the user's own change", ms.Namespace)
 	}
-	if ms.RepoURL != "" || ms.Chart != "" {
-		t.Errorf("metrics-server repeats the shipped repo/chart: %+v", ms)
+	if ms.RepoURL == "" || ms.Chart == "" {
+		t.Errorf("metrics-server is not a complete entry: %+v", ms)
 	}
 
-	// The in-house addon has no shipped entry, so every field is the user's.
-	inhouse, ok := delta.Addons["inhouse-api"]
+	// The in-house addon has no shipped entry at all.
+	inhouse, ok := converted.Addons["inhouse-api"]
 	if !ok {
-		t.Fatal("inhouse-api is missing from the delta — it would stop being deployable")
+		t.Fatal("inhouse-api is missing — it would stop being deployable")
 	}
 	if inhouse.RepoURL == "" || inhouse.Chart == "" || inhouse.Version == "" {
 		t.Errorf("inhouse-api lost a required field: %+v", inhouse)
 	}
 }
 
-// TestBuildCatalogDelta_DropsAnEntryWithNothingLeft covers the one case
-// where a whole entry disappears: a curated addon the user changed nothing
-// about at all.
-func TestBuildCatalogDelta_DropsAnEntryWithNothingLeft(t *testing.T) {
+// TestBuildCatalog_KeepsAnEntryEvenWhenTheShippedListAgrees is the case
+// that used to disappear: a curated addon the user changed nothing about.
+// Under the approved-list model it is still an addon the org runs, so it
+// stays — and it stays whole.
+func TestBuildCatalog_KeepsAnEntryEvenWhenTheShippedListAgrees(t *testing.T) {
 	curated := migrationCuratedCatalog(t)
 	spec, _ := buildCatalogDelta([]models.AddonCatalogEntry{{
 		Name:      "cert-manager",
 		RepoURL:   "https://charts.jetstack.io",
 		Chart:     "cert-manager",
 		Namespace: "cert-manager",
-		// no version, no settings — nothing the shipped catalog does not
-		// already say
+		Version:   "1.14.5",
 	}}, curated)
 
-	if _, present := spec.Addons["cert-manager"]; present {
-		t.Errorf("an untouched curated addon should not appear in the delta at all; got %+v", spec.Addons)
+	got, present := spec.Addons["cert-manager"]
+	if !present {
+		t.Fatalf("an approved addon must stay in the catalog; got %+v", spec.Addons)
+	}
+	if got.RepoURL != "https://charts.jetstack.io" || got.Chart != "cert-manager" || got.Version != "1.14.5" {
+		t.Errorf("the entry is not self-contained: %+v", got)
 	}
 }
 

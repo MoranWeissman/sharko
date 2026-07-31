@@ -23,15 +23,15 @@ import (
 	"github.com/MoranWeissman/sharko/internal/catalog"
 )
 
-// CatalogListResponse is the wire shape of GET /api/v1/catalog/addons. Mirrors
+// CatalogListResponse is the wire shape of GET /api/v1/marketplace/addons. Mirrors
 // the unexported catalogListResponse in internal/api/catalog.go.
 type CatalogListResponse struct {
 	Addons []catalog.CatalogEntry `json:"addons"`
 	Total  int                    `json:"total"`
 }
 
-// CatalogSourceRecord is one row of GET /api/v1/catalog/sources and the
-// POST /catalog/sources/refresh response. Mirrors the unexported
+// CatalogSourceRecord is one row of GET /api/v1/marketplace/sources and the
+// POST /marketplace/sources/refresh response. Mirrors the unexported
 // catalogSourceRecord in internal/api/catalog_sources.go.
 type CatalogSourceRecord struct {
 	URL         string     `json:"url"`
@@ -132,34 +132,34 @@ type CatalogReprobeResponse struct {
 // typed wrappers — keep these thin; tests assert on the typed shape.
 // ---------------------------------------------------------------------------
 
-// ListCatalogAddons fetches GET /api/v1/catalog/addons (no filters).
+// ListCatalogAddons fetches GET /api/v1/marketplace/addons (no filters).
 func (c *Client) ListCatalogAddons(t *testing.T) CatalogListResponse {
 	t.Helper()
 	var out CatalogListResponse
-	c.GetJSON(t, "/api/v1/catalog/addons", &out)
+	c.GetJSON(t, "/api/v1/marketplace/addons", &out)
 	return out
 }
 
-// GetCatalogAddon fetches GET /api/v1/catalog/addons/{name}.
+// GetCatalogAddon fetches GET /api/v1/marketplace/addons/{name}.
 func (c *Client) GetCatalogAddon(t *testing.T, name string) catalog.CatalogEntry {
 	t.Helper()
 	var out catalog.CatalogEntry
-	c.GetJSON(t, "/api/v1/catalog/addons/"+url.PathEscape(name), &out)
+	c.GetJSON(t, "/api/v1/marketplace/addons/"+url.PathEscape(name), &out)
 	return out
 }
 
-// ListCatalogVersions fetches GET /api/v1/catalog/addons/{name}/versions.
+// ListCatalogVersions fetches GET /api/v1/marketplace/addons/{name}/versions.
 //
 // Network-touching: hits the upstream Helm repo for the named chart. Tests
 // that exercise this should gate on E2E_OFFLINE.
 func (c *Client) ListCatalogVersions(t *testing.T, name string) CatalogVersionsResponse {
 	t.Helper()
 	var out CatalogVersionsResponse
-	c.GetJSON(t, "/api/v1/catalog/addons/"+url.PathEscape(name)+"/versions", &out)
+	c.GetJSON(t, "/api/v1/marketplace/addons/"+url.PathEscape(name)+"/versions", &out)
 	return out
 }
 
-// GetCatalogReadme fetches GET /api/v1/catalog/addons/{name}/readme.
+// GetCatalogReadme fetches GET /api/v1/marketplace/addons/{name}/readme.
 //
 // Network-touching: resolves via ArtifactHub. Returns 200 even on upstream
 // failure (the response carries an empty body); tests can gate on E2E_OFFLINE
@@ -167,22 +167,22 @@ func (c *Client) ListCatalogVersions(t *testing.T, name string) CatalogVersionsR
 func (c *Client) GetCatalogReadme(t *testing.T, name string) CatalogReadmeResponse {
 	t.Helper()
 	var out CatalogReadmeResponse
-	c.GetJSON(t, "/api/v1/catalog/addons/"+url.PathEscape(name)+"/readme", &out)
+	c.GetJSON(t, "/api/v1/marketplace/addons/"+url.PathEscape(name)+"/readme", &out)
 	return out
 }
 
-// GetCatalogProjectReadme fetches GET /api/v1/catalog/addons/{name}/project-readme.
+// GetCatalogProjectReadme fetches GET /api/v1/marketplace/addons/{name}/project-readme.
 //
 // Network-touching: hits the GitHub README API. Always returns 200 (degrades
 // to Available=false on failure).
 func (c *Client) GetCatalogProjectReadme(t *testing.T, name string) ProjectReadmeResponse {
 	t.Helper()
 	var out ProjectReadmeResponse
-	c.GetJSON(t, "/api/v1/catalog/addons/"+url.PathEscape(name)+"/project-readme", &out)
+	c.GetJSON(t, "/api/v1/marketplace/addons/"+url.PathEscape(name)+"/project-readme", &out)
 	return out
 }
 
-// SearchCatalog fetches GET /api/v1/catalog/search?q=<q>.
+// SearchCatalog fetches GET /api/v1/marketplace/search?q=<q>.
 //
 // Network-tolerant: curated half always populated; artifacthub half may carry
 // `artifacthub_error` when the upstream is unreachable. Always 200 on a
@@ -190,11 +190,11 @@ func (c *Client) GetCatalogProjectReadme(t *testing.T, name string) ProjectReadm
 func (c *Client) SearchCatalog(t *testing.T, q string) CatalogSearchResponse {
 	t.Helper()
 	var out CatalogSearchResponse
-	c.GetJSON(t, "/api/v1/catalog/search?q="+url.QueryEscape(q), &out)
+	c.GetJSON(t, "/api/v1/marketplace/search?q="+url.QueryEscape(q), &out)
 	return out
 }
 
-// ListCatalogSources fetches GET /api/v1/catalog/sources.
+// ListCatalogSources fetches GET /api/v1/marketplace/sources.
 //
 // Local-only: embedded pseudo-source plus any wired third-party fetcher
 // snapshots. In the in-process boot path no fetcher is wired so the response
@@ -202,18 +202,18 @@ func (c *Client) SearchCatalog(t *testing.T, q string) CatalogSearchResponse {
 func (c *Client) ListCatalogSources(t *testing.T) []CatalogSourceRecord {
 	t.Helper()
 	var out []CatalogSourceRecord
-	c.GetJSON(t, "/api/v1/catalog/sources", &out)
+	c.GetJSON(t, "/api/v1/marketplace/sources", &out)
 	return out
 }
 
-// RefreshCatalogSources POSTs /api/v1/catalog/sources/refresh.
+// RefreshCatalogSources POSTs /api/v1/marketplace/sources/refresh.
 //
 // Admin-only (catalog.sources.refresh action). Local-only when no fetcher is
 // wired. Returns the same shape as ListCatalogSources after the refresh.
 func (c *Client) RefreshCatalogSources(t *testing.T) []CatalogSourceRecord {
 	t.Helper()
 	var out []CatalogSourceRecord
-	c.PostJSON(t, "/api/v1/catalog/sources/refresh", nil, &out)
+	c.PostJSON(t, "/api/v1/marketplace/sources/refresh", nil, &out)
 	return out
 }
 
@@ -243,44 +243,44 @@ func (c *Client) ListRepoCharts(t *testing.T, repo string) RepoChartsResponse {
 	return out
 }
 
-// GetRemotePackage fetches GET /api/v1/catalog/remote/{repo}/{name}.
+// GetRemotePackage fetches GET /api/v1/marketplace/remote/{repo}/{name}.
 //
 // Network-touching: proxies ArtifactHub. Hermetic test runs should gate via
 // E2E_OFFLINE since 502 (no cache) is the offline outcome.
 func (c *Client) GetRemotePackage(t *testing.T, repo, name string) CatalogRemotePackageResponse {
 	t.Helper()
 	var out CatalogRemotePackageResponse
-	c.GetJSON(t, "/api/v1/catalog/remote/"+url.PathEscape(repo)+"/"+url.PathEscape(name), &out)
+	c.GetJSON(t, "/api/v1/marketplace/remote/"+url.PathEscape(repo)+"/"+url.PathEscape(name), &out)
 	return out
 }
 
-// GetRemoteProjectReadme fetches /api/v1/catalog/remote/{repo}/{name}/project-readme.
+// GetRemoteProjectReadme fetches /api/v1/marketplace/remote/{repo}/{name}/project-readme.
 //
 // Network-touching but gracefully degrades: always 200; Available=false on
 // upstream failure.
 func (c *Client) GetRemoteProjectReadme(t *testing.T, repo, name string) ProjectReadmeResponse {
 	t.Helper()
 	var out ProjectReadmeResponse
-	c.GetJSON(t, "/api/v1/catalog/remote/"+url.PathEscape(repo)+"/"+url.PathEscape(name)+"/project-readme", &out)
+	c.GetJSON(t, "/api/v1/marketplace/remote/"+url.PathEscape(repo)+"/"+url.PathEscape(name)+"/project-readme", &out)
 	return out
 }
 
-// ReprobeArtifactHub POSTs /api/v1/catalog/reprobe. Tier-1 (admin operational).
+// ReprobeArtifactHub POSTs /api/v1/marketplace/reprobe. Tier-1 (admin operational).
 //
 // Network-touching: probes ArtifactHub. Always 200; Reachable=false on
 // upstream failure.
 func (c *Client) ReprobeArtifactHub(t *testing.T) CatalogReprobeResponse {
 	t.Helper()
 	var out CatalogReprobeResponse
-	c.PostJSON(t, "/api/v1/catalog/reprobe", nil, &out)
+	c.PostJSON(t, "/api/v1/marketplace/reprobe", nil, &out)
 	return out
 }
 
-// RefreshCatalogSourcesStatus POSTs /api/v1/catalog/sources/refresh and returns
+// RefreshCatalogSourcesStatus POSTs /api/v1/marketplace/sources/refresh and returns
 // the raw HTTP status — for RBAC negative tests that intentionally drive a 403.
 func (c *Client) RefreshCatalogSourcesStatus(t *testing.T) int {
 	t.Helper()
-	resp := c.Do(t, http.MethodPost, "/api/v1/catalog/sources/refresh", nil)
+	resp := c.Do(t, http.MethodPost, "/api/v1/marketplace/sources/refresh", nil)
 	defer resp.Body.Close()
 	return resp.StatusCode
 }

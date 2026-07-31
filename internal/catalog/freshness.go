@@ -26,6 +26,7 @@ package catalog
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -45,8 +46,8 @@ type VersionsLister interface {
 	ListVersions(ctx context.Context, repo, chart string) ([]helm.ChartVersion, error)
 }
 
-// VersionSnapshot is the last-known state of one catalog entry's chart
-// versions, as of CheckedAt. Unknown mirrors the graceful-degrade contract
+// VersionSnapshot is the last-known state of one addon's chart versions, as
+// of CheckedAt. Unknown mirrors the graceful-degrade contract
 // catalog_versions.go already established for oci:// repos (v4 wave 1 Story
 // 3.3) — extended here to ANY fetch failure, so a transient repo outage
 // during a scheduled pass shows "last checked at <time>, unknown" rather
@@ -57,7 +58,48 @@ type VersionSnapshot struct {
 	CheckedAt time.Time
 	Unknown   bool
 	Err       string // informational only; never surfaced as an HTTP error
+
+	// Scope says which list this snapshot came from: ScopeCatalog for an
+	// addon the org approved (its repoURL, read out of catalog.yaml) or
+	// ScopeMarketplace for one that only exists in the list Sharko ships.
+	// An approved addon wins when both lists carry the name — what the org
+	// actually deploys is the entry in its own file.
+	Scope string
+
+	// NoDataReason is a complete, plain-English sentence for why there is
+	// no version list, empty when there is one. It exists so the UI can say
+	// "no freshness data for this source" and mean it, instead of a blank
+	// cell that reads like "up to date". Never invent a result: a chart
+	// repo Sharko cannot read an index for has no answer, and saying so is
+	// the answer.
+	NoDataReason string
 }
+
+// Scope values for VersionSnapshot.Scope.
+const (
+	// ScopeCatalog — the addon is in the org's catalog.yaml.
+	ScopeCatalog = "catalog"
+	// ScopeMarketplace — the addon is only in the list Sharko ships.
+	ScopeMarketplace = "marketplace"
+)
+
+// ApprovedAddon is one entry from the org's catalog.yaml, reduced to what
+// a version check needs.
+type ApprovedAddon struct {
+	Name    string
+	RepoURL string
+	Chart   string
+}
+
+// ApprovedAddonsFunc returns the org's approved addons for one scheduler
+// pass. It is a closure over the live Git connection, supplied by
+// cmd/sharko/serve.go, because this package has no business knowing about
+// Git providers.
+//
+// Returning an error is the ordinary case when no Git connection is
+// configured yet — the pass logs it and carries on with the Marketplace's
+// own entries; it never stops.
+type ApprovedAddonsFunc func(ctx context.Context) ([]ApprovedAddon, error)
 
 // EnginePinStatus mirrors orchestrator.EnginePinCheckResult's fields
 // without importing internal/orchestrator — this package has no business
@@ -100,6 +142,7 @@ type FreshnessScheduler struct {
 	cat              *Catalog
 	versions         VersionsLister
 	enginePinCheckFn EnginePinCheckFunc // nil = engine pin check disabled this cycle
+	approvedFn       ApprovedAddonsFunc // nil = the org's own catalog is not scanned
 	interval         time.Duration
 	now              func() time.Time // injected for tests
 
@@ -107,10 +150,11 @@ type FreshnessScheduler struct {
 	stopCh    chan struct{}
 	stopOnce  sync.Once
 
-	mu        sync.RWMutex
-	snapshots map[string]VersionSnapshot
-	enginePin *EnginePinSnapshot // nil until the first engine-pin check runs
-	lastRun   time.Time
+	mu           sync.RWMutex
+	snapshots    map[string]VersionSnapshot
+	enginePin    *EnginePinSnapshot // nil until the first engine-pin check runs
+	lastRun      time.Time
+	catalogCount int // approved addons walked on the last pass
 }
 
 // NewFreshnessScheduler builds a FreshnessScheduler. enginePinCheckFn may be
@@ -140,6 +184,28 @@ func (s *FreshnessScheduler) WithNowFunc(now func() time.Time) *FreshnessSchedul
 		s.now = now
 	}
 	return s
+}
+
+// WithApprovedAddons wires in the org's own catalog.yaml so the scheduler
+// watches the charts the fleet actually runs, not only the ones Sharko
+// happens to ship.
+//
+// Without this, an org that added its own chart got no "a newer version is
+// out" signal at all — the scheduler only ever walked the shipped list.
+// Nothing here can invent an answer: a repo whose index cannot be read gets
+// a snapshot that says so in plain words.
+func (s *FreshnessScheduler) WithApprovedAddons(fn ApprovedAddonsFunc) *FreshnessScheduler {
+	s.approvedFn = fn
+	return s
+}
+
+// CatalogAddonsChecked returns how many approved addons the last pass
+// walked. Zero when the org's catalog is not wired, is empty, or could not
+// be read.
+func (s *FreshnessScheduler) CatalogAddonsChecked() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.catalogCount
 }
 
 // Start launches the background refresh loop. Runs one pass immediately,
@@ -251,14 +317,32 @@ func (s *FreshnessScheduler) refresh() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	// The Marketplace's own list first, then the org's approved addons on
+	// top: when a name is in both, what the org actually deploys is the
+	// repoURL in its own file, so that one wins.
 	checked := 0
 	if s.cat != nil && s.versions != nil {
 		for _, e := range s.cat.Entries() {
-			snap := s.fetchOne(ctx, e)
+			snap := s.fetchOne(ctx, e.Name, e.Repo, e.Chart, ScopeMarketplace)
 			s.mu.Lock()
 			s.snapshots[e.Name] = snap
 			s.mu.Unlock()
 			checked++
+		}
+	}
+
+	approvedChecked := 0
+	if s.approvedFn != nil && s.versions != nil {
+		approved, err := s.approvedFn(ctx)
+		if err != nil {
+			log.Warn("[freshness] could not read the org's catalog", "err", err)
+		}
+		for _, a := range approved {
+			snap := s.fetchOne(ctx, a.Name, a.RepoURL, a.Chart, ScopeCatalog)
+			s.mu.Lock()
+			s.snapshots[a.Name] = snap
+			s.mu.Unlock()
+			approvedChecked++
 		}
 	}
 
@@ -279,27 +363,50 @@ func (s *FreshnessScheduler) refresh() {
 
 	s.mu.Lock()
 	s.lastRun = now
+	s.catalogCount = approvedChecked
 	s.mu.Unlock()
 
-	log.Info("[freshness] refresh complete", "addons_checked", checked)
+	log.Info("[freshness] refresh complete",
+		"marketplace_addons_checked", checked,
+		"catalog_addons_checked", approvedChecked)
 }
 
-// fetchOne resolves one catalog entry's version list. Every failure —
-// including the documented oci:// "unsupported" sentinel — degrades to
-// Unknown rather than propagating an error, per the story's "every fetch
-// failure → stale-but-dated data shown, never an error page" requirement.
-func (s *FreshnessScheduler) fetchOne(ctx context.Context, e CatalogEntry) VersionSnapshot {
-	snap := VersionSnapshot{CheckedAt: s.now()}
-	versions, err := s.versions.ListVersions(ctx, e.Repo, e.Chart)
-	if err != nil {
+// fetchOne resolves one addon's version list from its chart repo. Every
+// failure degrades to Unknown with a plain-English NoDataReason rather than
+// propagating an error: one broken repo must not stall the pass or wipe
+// every other addon's snapshot, and a person looking at the screen should
+// read why there is nothing rather than see a blank that looks like "fine".
+func (s *FreshnessScheduler) fetchOne(ctx context.Context, name, repoURL, chart, scope string) VersionSnapshot {
+	snap := VersionSnapshot{CheckedAt: s.now(), Scope: scope}
+
+	if repoURL == "" || chart == "" {
 		snap.Unknown = true
-		if !errors.Is(err, helm.ErrOCIVersionCheckUnsupported) {
-			snap.Err = err.Error()
-			slog.Default().With("component", "catalog-freshness").Warn(
-				"[freshness] version fetch failed", "addon", e.Name, "err", err)
-		}
+		snap.NoDataReason = fmt.Sprintf(
+			"no freshness data for %s — its entry has no chart repository to check", name)
 		return snap
 	}
+
+	versions, err := s.versions.ListVersions(ctx, repoURL, chart)
+	if err != nil {
+		snap.Unknown = true
+		if errors.Is(err, helm.ErrOCIVersionCheckUnsupported) {
+			snap.NoDataReason = fmt.Sprintf(
+				"no freshness data for this source — %s has no version index Sharko can read", repoURL)
+			return snap
+		}
+		snap.Err = err.Error()
+		snap.NoDataReason = fmt.Sprintf(
+			"no freshness data for this source — Sharko could not read the version index at %s", repoURL)
+		slog.Default().With("component", "catalog-freshness").Warn(
+			"[freshness] version fetch failed", "addon", name, "repo", repoURL, "err", err)
+		return snap
+	}
+
 	snap.Versions = versions
+	if len(versions) == 0 {
+		snap.Unknown = true
+		snap.NoDataReason = fmt.Sprintf(
+			"no freshness data for this source — %s lists no versions of %s", repoURL, chart)
+	}
 	return snap
 }

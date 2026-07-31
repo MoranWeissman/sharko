@@ -72,7 +72,7 @@ var mutatingPatternTier = map[string]audit.Tier{
 	// Force-refresh third-party catalog sources. Tier 2 because it's an
 	// admin configuration-time action (verifying a newly added
 	// SHARKO_CATALOG_URLS entry).
-	"POST /api/v1/catalog/sources/refresh": audit.Tier2,
+	"POST /api/v1/marketplace/sources/refresh": audit.Tier2,
 
 	// Values editor — Tier 2.
 	"PUT /api/v1/addons/{name}/values":                    audit.Tier2,

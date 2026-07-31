@@ -51,6 +51,11 @@ type catalogVersionsResponse struct {
 	LatestStable        string                `json:"latest_stable,omitempty"`
 	CachedAt            string                `json:"cached_at"`
 	VersionCheckUnknown bool                  `json:"version_check_unknown,omitempty"`
+	// NoDataReason is a complete, plain-English sentence for why there is
+	// no version list, empty when there is one. The UI renders it verbatim
+	// so a chart repo with no readable index says so, instead of leaving a
+	// blank that reads like "nothing newer out there".
+	NoDataReason string `json:"no_data_reason,omitempty"`
 }
 
 // catalogVersionsCacheEntry holds a previously-fetched version list plus the
@@ -90,7 +95,7 @@ var (
 // @Failure 404 {object} map[string]interface{} "Addon not found in curated catalog"
 // @Failure 502 {object} map[string]interface{} "Upstream Helm repo unreachable"
 // @Failure 503 {object} map[string]interface{} "Catalog not loaded"
-// @Router /catalog/addons/{name}/versions [get]
+// @Router /marketplace/addons/{name}/versions [get]
 func (s *Server) handleListCatalogVersions(w http.ResponseWriter, r *http.Request) {
 	if s.catalog == nil {
 		writeError(w, http.StatusServiceUnavailable, "catalog not loaded")
@@ -137,6 +142,7 @@ func (s *Server) handleListCatalogVersions(w http.ResponseWriter, r *http.Reques
 					Repo:                entry.Repo,
 					CachedAt:            snap.CheckedAt.UTC().Format(time.RFC3339),
 					VersionCheckUnknown: true,
+					NoDataReason:        snap.NoDataReason,
 				}
 				writeJSON(w, http.StatusOK, resp)
 				return
@@ -172,6 +178,7 @@ func (s *Server) handleListCatalogVersions(w http.ResponseWriter, r *http.Reques
 				Repo:                entry.Repo,
 				CachedAt:            time.Now().UTC().Format(time.RFC3339),
 				VersionCheckUnknown: true,
+				NoDataReason:        "no freshness data for this source — " + entry.Repo + " has no version index Sharko can read",
 			}
 			// Deliberately NOT cached — a registry that gains credentials
 			// later (Story 3.4) should be re-checked on the next call
