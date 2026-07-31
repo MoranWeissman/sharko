@@ -23,10 +23,11 @@ import {
   Boxes,
   Store,
 } from 'lucide-react'
-import { api, addAddon, type AddAddonResponse } from '@/services/api'
+import { api } from '@/services/api'
 import type {
   AddonCatalogItem,
   AddonCatalogResponse,
+  AddToCatalogResult,
   CatalogRepoChartsResponse,
   CatalogValidateResponse,
   CatalogVersionsResponse,
@@ -558,7 +559,7 @@ export function AddonCatalog() {
   const [addAddonPreviewing, setAddAddonPreviewing] = useState(false)
   const [addAddonPhase, setAddAddonPhase] = useState<SubmitPhase>('idle')
   const [addAddonResult, setAddAddonResult] =
-    useState<AddAddonResponse | null>(null)
+    useState<AddToCatalogResult | null>(null)
   // Captured at submit time so the "View addon" terminal button still knows
   // the name after the form is reset (V2-cleanup-66.1).
   const [addAddonSubmittedName, setAddAddonSubmittedName] = useState('')
@@ -751,16 +752,22 @@ export function AddonCatalog() {
   }, [addAddonOpen, addonForm.chart, addonForm.repo_url, repoValidState])
 
   // Shared request payload for both the preview and the real submit so the
-  // dry-run previews exactly what the real call will write. `source: manual`
-  // marks this as the legacy direct "Register addon" path (not Marketplace).
+  // dry-run previews exactly what the real call will write. This is the
+  // "add your own chart" door — a non-marketplace catalog entry — so it
+  // posts to POST /api/v1/catalog/addons (v4 wave 2.5 review B-3; the old
+  // legacy POST /addons 409s on a v4 repo).
   const buildAddRequest = useCallback(
     (dryRun: boolean) => ({
-      name: addonForm.name.trim(),
-      chart: addonForm.chart.trim(),
-      repo_url: addonForm.repo_url.trim(),
-      version: addonForm.version.trim(),
-      namespace: addonForm.namespace.trim() || undefined,
-      source: 'manual' as const,
+      addons: [
+        {
+          name: addonForm.name.trim(),
+          from_marketplace: false,
+          chart: addonForm.chart.trim(),
+          repo_url: addonForm.repo_url.trim(),
+          version: addonForm.version.trim(),
+          namespace: addonForm.namespace.trim() || undefined,
+        },
+      ],
       // auto_merge omitted — falls back to the global GitOps setting.
       dry_run: dryRun,
     }),
@@ -794,7 +801,7 @@ export function AddonCatalog() {
     setAddAddonError(null)
     setAddAddonDryRun(null)
     try {
-      const res = await addAddon(buildAddRequest(true))
+      const res = await api.addToCatalog(buildAddRequest(true))
       if (res.dry_run) setAddAddonDryRun(res.dry_run)
     } catch (e: unknown) {
       setAddAddonError(e instanceof Error ? e.message : 'Failed to preview')
@@ -811,9 +818,9 @@ export function AddonCatalog() {
     const addonName = addonForm.name.trim()
     setAddAddonSubmittedName(addonName)
     try {
-      const result = await addAddon(buildAddRequest(false))
+      const result = await api.addToCatalog(buildAddRequest(false))
       setAddAddonResult(result)
-      const prUrl = result.pr_url || result.result?.pr_url || result.pull_request_url
+      const prUrl = result.pr_url || result.result?.pr_url
       const prId = result.pr_id ?? result.result?.pr_id
       const wasMerged = result.merged ?? result.result?.merged ?? false
       const label = prId ? `PR #${prId}` : 'PR'
@@ -941,7 +948,7 @@ export function AddonCatalog() {
         <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
           {tab === 'catalog'
             ? 'All addons defined in your Git catalog. See deployment coverage, health, and version per addon.'
-            : 'Discover approved addons for your deployable catalog.'}
+            : 'Browse addons you could add to your catalog.'}
         </p>
         {/* The two-surface sentence (v4 wave 2.5, decision 8) — said once,
             plainly, wherever Catalog and Marketplace meet. */}
@@ -1088,7 +1095,7 @@ export function AddonCatalog() {
       >
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Register New Addon</DialogTitle>
+            <DialogTitle>Add your own chart</DialogTitle>
             <DialogDescription>
               For Helm charts <strong>not in the Marketplace</strong>. For
               curated addons, browse the{' '}
@@ -1424,7 +1431,7 @@ export function AddonCatalog() {
                   className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
                 >
                   {addAddonSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                  Register Addon
+                  Add to catalog
                 </button>
               </>
             )}

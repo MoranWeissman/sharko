@@ -27,7 +27,7 @@ export function MarketplaceHonestyStrip() {
           <p>
             This list is kept by the Sharko project, in the open.{' '}
             <a
-              href="https://github.com/MoranWeissman/sharko/blob/main/templates/bootstrap/configuration/addons-catalog.yaml"
+              href="https://github.com/MoranWeissman/sharko/blob/main/catalog/addons.yaml"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-0.5 font-medium text-teal-700 underline hover:no-underline dark:text-teal-400"
@@ -36,7 +36,7 @@ export function MarketplaceHonestyStrip() {
             </a>{' '}
             or{' '}
             <a
-              href="https://github.com/MoranWeissman/sharko/blob/main/CONTRIBUTING.md"
+              href="https://github.com/MoranWeissman/sharko/blob/main/docs/site/community/contributing-catalog-entries.md"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-0.5 font-medium text-teal-700 underline hover:no-underline dark:text-teal-400"

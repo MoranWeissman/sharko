@@ -35,17 +35,6 @@ import {
 } from '@/services/api'
 import type { AddToCatalogResult, V4GitResult } from '@/services/models'
 
-/**
- * v4 wave 2.5 (design decision 4) — enabling now REQUIRES the addon to be
- * in catalog.yaml first. The 422 `problems` list is plain English with no
- * error code, so this is a best-effort heuristic: any problem sentence
- * that mentions "catalog" is treated as the catalog gate, and the dialog
- * offers the one-PR combo instead of leaving the operator at a dead end.
- */
-function isCatalogGateProblem(problems: string[]): boolean {
-  return problems.some((p) => /catalog/i.test(p))
-}
-
 /** Plain-words error shown for any values input that doesn't parse to a
  * mapping — e.g. a quoted string like `"installCRDs: true"`, a bare number,
  * or a YAML/JSON array. Used both by the client-side check below and (for
@@ -116,6 +105,11 @@ export function V4EnableAddonDialog({
   const [valuesError, setValuesError] = useState<string | null>(null)
   const [preview, setPreview] = useState<V4GitResult | null>(null)
   const [problems, setProblems] = useState<string[]>([])
+  // The machine-readable code off the last 422 (v4 wave 2.5 review B-2) —
+  // this, not the message text, decides whether the catalog-gate combo
+  // shows and whether the problems list renders.
+  const [errorCode, setErrorCode] = useState<string | undefined>(undefined)
+  const [lastErrorMessage, setLastErrorMessage] = useState<string | null>(null)
   const [result, setResult] = useState<V4GitResult | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
@@ -131,6 +125,8 @@ export function V4EnableAddonDialog({
     setValuesError(null)
     setPreview(null)
     setProblems([])
+    setErrorCode(undefined)
+    setLastErrorMessage(null)
     setResult(null)
     setErrorMessage(null)
     setComboSubmitting(false)
@@ -196,6 +192,8 @@ export function V4EnableAddonDialog({
     } catch (e: unknown) {
       if (e instanceof V4AddonValidationError) {
         setProblems(e.problems)
+        setErrorCode(e.code)
+        setLastErrorMessage(e.message)
         setPhase('problems')
         return
       }
@@ -227,6 +225,8 @@ export function V4EnableAddonDialog({
         // Shouldn't happen post-preview (preview already validated), but
         // route it through the same problems-first surface if it does.
         setProblems(e.problems)
+        setErrorCode(e.code)
+        setLastErrorMessage(e.message)
         setPhase('problems')
         return
       }
@@ -247,6 +247,7 @@ export function V4EnableAddonDialog({
       const res = await api.addToCatalog({
         addons: [{ name: addon, from_marketplace: true }],
         enable_on_cluster: cluster,
+        yes: true,
       })
       setComboResult(res)
       if (res.pr_url) {
@@ -262,7 +263,11 @@ export function V4EnableAddonDialog({
   }
 
   const title = mode === 'enable' ? `Enable ${addon} on ${cluster}` : `Disable ${addon} on ${cluster}`
-  const catalogGateHit = mode === 'enable' && phase === 'problems' && isCatalogGateProblem(problems)
+  // v4 wave 2.5 review B-2 — the combo is keyed on the machine-readable
+  // `code`, never on the problem text. `incomplete_entry` means the addon
+  // IS in the catalog (its entry is just half-written), so it does NOT
+  // offer the combo — the fix there is editing the entry, not re-adding it.
+  const catalogGateHit = mode === 'enable' && phase === 'problems' && errorCode === 'not_in_catalog'
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose() }}>
@@ -305,8 +310,12 @@ export function V4EnableAddonDialog({
           </div>
         )}
 
-        {/* 422 — the problems list, shown BEFORE any PR talk, in place of a preview. */}
-        {phase === 'problems' && (
+        {/* 422 — the problems list, shown BEFORE any PR talk, in place of a
+            preview. Not shown for the not-in-catalog gate (no problems to
+            list there — that case renders only the combo box below) or
+            once the combo has already succeeded (M-7: a stale "nothing was
+            written" box must not sit above the success banner). */}
+        {phase === 'problems' && !catalogGateHit && !comboResult && (
           <div
             data-testid="v4-problems"
             className="rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-950/30"
@@ -315,11 +324,23 @@ export function V4EnableAddonDialog({
               <AlertTriangle className="h-4 w-4 shrink-0" />
               Sharko can&apos;t {mode === 'enable' ? 'enable' : 'disable'} {addon} on {cluster} yet
             </p>
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-800 dark:text-amber-300">
-              {problems.map((p, i) => (
-                <li key={i}>{p}</li>
-              ))}
-            </ul>
+            {problems.length > 0 ? (
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-800 dark:text-amber-300">
+                {problems.map((p, i) => (
+                  <li key={i}>{p}</li>
+                ))}
+              </ul>
+            ) : (
+              lastErrorMessage && (
+                <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">{lastErrorMessage}</p>
+              )
+            )}
+            {errorCode === 'incomplete_entry' && (
+              <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">
+                {addon} is in your catalog, but its entry is missing pieces — edit the entry in the
+                Catalog tab (or catalog.yaml) and try again.
+              </p>
+            )}
             <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">
               Nothing was written — no branch, no pull request.
             </p>
@@ -328,7 +349,7 @@ export function V4EnableAddonDialog({
 
         {/* v4 wave 2.5 (design decision 4) — instead of a dead end, offer
             the one-PR combo when the block is specifically "not in the
-            catalog yet". */}
+            catalog yet" (code not_in_catalog). */}
         {catalogGateHit && !comboResult && (
           <div
             data-testid="v4-catalog-gate-combo"

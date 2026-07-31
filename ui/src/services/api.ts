@@ -452,15 +452,20 @@ export async function previewEnableAddon(clusterName: string, addonName: string)
 }
 
 /**
- * V4AddonValidationError — thrown by enableAddonV4 when the server
- * returns 422 (v4 Wave 1 Story 4.3's "sharpened pipeline": every
- * required value and declared secret the merged catalog entry needs is
- * checked BEFORE any branch or PR exists). Distinct from a plain Error
- * so callers can show the plain-English `problems` list instead of just
- * the summary sentence — the AC is "shows the problems list BEFORE any
- * PR talk", which needs the full list, not just message.
+ * V4AddonValidationError — thrown by enableAddonV4 on ANY 422 (v4 wave 2.5
+ * review fix round, B-2). Two shapes share this error: the "sharpened
+ * pipeline" semantic-validation 422 (code `incomplete_entry` /
+ * `validation_failed`, plain-English `problems` list, checked BEFORE any
+ * branch or PR exists) and the plain coded 422 the catalog gate returns
+ * (code `not_in_catalog` / `empty_catalog_file`, no `problems`). Callers
+ * branch on `code` — never on the message text, which is the exact bug
+ * this closes: the catalog-gate combo used to fire on any problem sentence
+ * containing the word "catalog", which both false-fired on unrelated 422s
+ * and never fired on the real not-in-catalog error (that body has no
+ * `problems` array at all).
  */
 export class V4AddonValidationError extends Error {
+  code?: string
   cluster: string
   addon: string
   problems: string[]
@@ -468,9 +473,41 @@ export class V4AddonValidationError extends Error {
   constructor(body: V4AddonValidationErrorBody) {
     super(body.error)
     this.name = 'V4AddonValidationError'
+    this.code = body.code
+    this.cluster = body.cluster ?? ''
+    this.addon = body.addon ?? ''
+    this.problems = body.problems ?? []
+  }
+}
+
+/**
+ * CatalogAddError — thrown by addToCatalog on any 4xx from POST
+ * /api/v1/catalog/addons. Every 4xx body carries a machine-readable `code`
+ * next to the plain-English `error` (v4 wave 2.5 review fix round, B-2/B-3):
+ * `incomplete_entry` and `validation_failed` additionally carry `problems`
+ * (`validation_failed` also carries `cluster`/`addon`). Callers branch on
+ * `code`, never on the message text. A 502 (genuine upstream failure) has
+ * no code — `addToCatalog` throws a plain Error for that case.
+ */
+export class CatalogAddError extends Error {
+  code?: string
+  problems: string[]
+  cluster?: string
+  addon?: string
+
+  constructor(body: {
+    error?: string
+    code?: string
+    problems?: string[]
+    cluster?: string
+    addon?: string
+  }) {
+    super(body.error || 'Failed to add to catalog')
+    this.name = 'CatalogAddError'
+    this.code = body.code
+    this.problems = body.problems ?? []
     this.cluster = body.cluster
     this.addon = body.addon
-    this.problems = body.problems ?? []
   }
 }
 
@@ -538,15 +575,49 @@ export async function enableAddonV4(
     throw new Error('Session expired')
   }
   if (res.status === 422) {
-    const errBody = await res.json().catch(() => null)
-    if (errBody && Array.isArray(errBody.problems)) {
-      throw new V4AddonValidationError(errBody as V4AddonValidationErrorBody)
-    }
-    throw new Error(errBody?.error || 'Validation failed')
+    // Every 422 from this endpoint carries a machine-readable `code`
+    // (not_in_catalog / empty_catalog_file / incomplete_entry /
+    // validation_failed) — thrown as V4AddonValidationError regardless of
+    // whether this particular code carries a `problems` array, so callers
+    // always get a typed error to branch on (v4 wave 2.5 review B-2).
+    const errBody = await res.json().catch(() => ({ error: 'Validation failed' }))
+    throw new V4AddonValidationError({
+      error: errBody?.error || 'Validation failed',
+      code: errBody?.code,
+      cluster: errBody?.cluster ?? clusterName,
+      addon: errBody?.addon ?? addonName,
+      problems: errBody?.problems,
+    })
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error || res.statusText)
+  }
+  return res.json()
+}
+
+/**
+ * addToCatalog — POST /api/v1/catalog/addons. Raw fetch (not postJSON) so a
+ * 4xx becomes a typed CatalogAddError carrying the machine-readable `code`
+ * instead of postJSON's generic Error (message only) — the combo/wizard
+ * doors need the code to branch correctly (v4 wave 2.5 review B-2/B-3).
+ */
+export async function addToCatalog(
+  req: import('./models').AddToCatalogRequest,
+): Promise<import('./models').AddToCatalogResult> {
+  const res = await fetch(`${BASE_URL}/catalog/addons`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(req),
+  })
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({ error: res.statusText }))
+    throw new CatalogAddError(errBody)
   }
   return res.json()
 }
@@ -1587,8 +1658,7 @@ export const api = {
    * never N. Passing `enable_on_cluster` makes it the combo: one PR that
    * touches both catalog.yaml and clusters/<name>.yaml.
    */
-  addToCatalog: (req: import('./models').AddToCatalogRequest) =>
-    postJSON<import('./models').AddToCatalogResult>('/catalog/addons', req),
+  addToCatalog,
 
   /**
    * List configured catalog sources (embedded + third-party). Powers the

@@ -40,7 +40,7 @@ export interface MarketplaceCardProps {
    *  swaps to the in-page detail view. */
   onOpen?: (entry: CatalogEntry) => void
   /** When true, the addon's name is already present in the user's
-   *  addons-catalog.yaml. The card flips to a "View in catalog" affordance
+   *  catalog.yaml. The card flips to a "View in catalog" affordance
    *  with a green check badge and tinted styling. */
   inCatalog?: boolean
   /** Optional `CatalogSourceRecord` matching `entry.source`. Powers the
@@ -165,7 +165,7 @@ export function MarketplaceCard({
           {inCatalog && (
             <span
               className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-green-800 dark:bg-green-900/40 dark:text-green-300"
-              title="Already present in your addons-catalog.yaml"
+              title="Already present in your catalog.yaml"
             >
               <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
               In your catalog

@@ -75,6 +75,26 @@ describe('PullRequestsPanel V125-1-6', () => {
     })
   })
 
+  // v4 wave 2.5 review, L — the catalog-add op codes had no UI mapping, so
+  // every catalog approval PR landed in the gray "Other" bucket instead of
+  // a teal Addons badge.
+  it('renders a named badge for catalog-add and catalog-add-enable (not the gray "Other" fallback)', async () => {
+    vi.mocked(api.fetchTrackedPRs).mockResolvedValue({
+      prs: [
+        trackedPR({ pr_id: 5, operation: 'catalog-add', pr_title: 'Add cert-manager to catalog' }),
+        trackedPR({ pr_id: 6, operation: 'catalog-add-enable', pr_title: 'Add + enable vault' }),
+      ],
+    })
+
+    renderPanel()
+
+    await waitFor(() => {
+      expect(screen.getByText('Catalog: add addon(s)')).toBeInTheDocument()
+      expect(screen.getByText('Catalog: add + enable')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Other')).not.toBeInTheDocument()
+  })
+
   it('clicking the Clusters filter chip sends the cluster operation CSV', async () => {
     // Seed one pending PR so the panel STAYS on the Pending tab. With the
     // LW-8 auto-default, an empty pending list switches to Merged (which

@@ -24,7 +24,7 @@ vi.mock('react-router-dom', async () => {
   return { ...actual, useNavigate: () => mockNavigate }
 })
 
-const mockAddAddon = vi.fn()
+const mockAddToCatalog = vi.fn()
 const mockShowToast = vi.fn()
 
 vi.mock('@/components/ToastNotification', () => ({
@@ -32,9 +32,8 @@ vi.mock('@/components/ToastNotification', () => ({
 }))
 
 vi.mock('@/services/api', () => ({
-  addAddon: (...args: unknown[]) => mockAddAddon(...args),
-  isAddonAlreadyExistsError: () => false,
   api: {
+    addToCatalog: (...args: unknown[]) => mockAddToCatalog(...args),
     getCuratedCatalogEntry: vi.fn().mockResolvedValue({
       name: 'prometheus',
       description: 'Monitoring',
@@ -100,8 +99,14 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
   })
 
   // V2-cleanup-40: per-flow auto-merge toggle removed. Global GitOps setting governs.
+  //
+  // v4 wave 2.5 review fix round, B-3 — this button now posts to
+  // POST /api/v1/catalog/addons (the legacy POST /addons 409s on a v4
+  // repo). The request is the AddToCatalogRequest shape: one `addons`
+  // entry with `from_marketplace: true` (name unchanged from the curated
+  // entry), not the old flat addAddon body.
   it('does NOT render the auto-merge toggle and does NOT send auto_merge', async () => {
-    mockAddAddon.mockResolvedValue({ pr_id: 8, pr_url: 'https://gh/pr/8', merged: false })
+    mockAddToCatalog.mockResolvedValue({ added: ['prometheus'], enabled: [], pr_id: 8, pr_url: 'https://gh/pr/8', merged: false })
     renderDetail()
     await waitForActionPanel()
 
@@ -113,21 +118,26 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /add to catalog/i }))
 
-    await waitFor(() => expect(mockAddAddon).toHaveBeenCalled())
-    const arg = mockAddAddon.mock.calls[0][0]
+    await waitFor(() => expect(mockAddToCatalog).toHaveBeenCalled())
+    const arg = mockAddToCatalog.mock.calls[0][0]
     // auto_merge must NOT be present on the call.
     expect(arg.auto_merge).toBeUndefined()
     expect(arg.dry_run).toBe(false)
+    expect(arg.addons).toEqual([
+      expect.objectContaining({ name: 'prometheus', from_marketplace: true }),
+    ])
   })
 
   it('previews the files that would be written (dry-run) without opening a PR', async () => {
-    mockAddAddon.mockResolvedValue({
+    mockAddToCatalog.mockResolvedValue({
+      added: [],
+      enabled: [],
       dry_run: {
-        pr_title: 'sharko: add addon prometheus',
+        pr_title: 'sharko: add prometheus to catalog',
         effective_addons: ['prometheus'],
         files_to_write: [
-          { path: 'configuration/addons-catalog.yaml', action: 'update' },
-          { path: 'configuration/addons-global-values/prometheus.yaml', action: 'create' },
+          { path: 'catalog.yaml', action: 'update' },
+          { path: 'values/global/prometheus.yaml', action: 'create' },
         ],
         secrets_to_create: [],
       },
@@ -139,14 +149,12 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText('configuration/addons-global-values/prometheus.yaml'),
+        screen.getByText('values/global/prometheus.yaml'),
       ).toBeInTheDocument(),
     )
-    expect(
-      screen.getByText('configuration/addons-catalog.yaml'),
-    ).toBeInTheDocument()
+    expect(screen.getAllByText('catalog.yaml').length).toBeGreaterThan(0)
     // The preview call set dry_run:true.
-    expect(mockAddAddon.mock.calls[0][0].dry_run).toBe(true)
+    expect(mockAddToCatalog.mock.calls[0][0].dry_run).toBe(true)
   })
 
   // V2-cleanup-66.1 — a merged PR used to navigate away the instant the POST
@@ -154,7 +162,7 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
   // page STAYS PUT showing the terminal "Merged" state, and the user leaves
   // via an explicit "View addon" button.
   it('keeps the page open on merge, toasts, and only navigates when "View addon" is clicked', async () => {
-    mockAddAddon.mockResolvedValue({ pr_id: 9, pr_url: 'https://gh/pr/9', merged: true })
+    mockAddToCatalog.mockResolvedValue({ added: ['prometheus'], enabled: [], pr_id: 9, pr_url: 'https://gh/pr/9', merged: true })
     renderDetail()
     await waitForActionPanel()
 
@@ -176,7 +184,7 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
   // the catalog yet. The page stays put; the user opts into the Dashboard's
   // pending-PR view via an explicit button instead of an automatic jump.
   it('keeps the page open when a PR is opened for review, and only navigates when "Track on Dashboard" is clicked', async () => {
-    mockAddAddon.mockResolvedValue({ pr_id: 10, pr_url: 'https://gh/pr/10', merged: false })
+    mockAddToCatalog.mockResolvedValue({ added: ['prometheus'], enabled: [], pr_id: 10, pr_url: 'https://gh/pr/10', merged: false })
     renderDetail()
     await waitForActionPanel()
 
@@ -191,6 +199,30 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
 
     fireEvent.click(trackBtn)
     expect(mockNavigate).toHaveBeenCalledWith('/dashboard?prs_state=pending')
+  })
+
+  // v4 wave 2.5 review fix round, B-1/B-3 — the version-resolving contract:
+  // sending no version is now valid when from_marketplace is true, and the
+  // wizard/combo NO-version payloads work. This screen still collects a
+  // version (pre-filled from the version picker), but a 422 with code
+  // version_required must surface as a plain message, not a raw 502.
+  it('surfaces a plain version_required message instead of a raw gateway error', async () => {
+    // The real error is a CatalogAddError (carries .code), but the catch
+    // path here only reads .message — a plain Error exercises the same
+    // branch without needing the class from the (mocked-away) api module.
+    mockAddToCatalog.mockRejectedValue(
+      new Error('pick a version — Sharko has no version data for prometheus'),
+    )
+    renderDetail()
+    await waitForActionPanel()
+
+    fireEvent.click(screen.getByRole('button', { name: /add to catalog/i }))
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/no version data for prometheus/i),
+      ).toBeInTheDocument()
+    })
   })
 
   // V2-cleanup-70.1 — the embedded-catalog "Internal" source badge showed the

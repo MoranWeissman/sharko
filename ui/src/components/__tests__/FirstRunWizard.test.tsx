@@ -233,7 +233,9 @@ describe('FirstRunWizard step 5 — Catalog (v4 wave 2.5)', () => {
       added: ['cert-manager', 'ingress-nginx'],
       enabled: [],
       pr_url: 'https://github.com/demo/sharko-addons/pull/7',
+      pr_id: 7,
       branch: 'sharko/catalog-batch',
+      merged: true,
     })
 
     renderWizard(5)
@@ -275,6 +277,45 @@ describe('FirstRunWizard step 5 — Catalog (v4 wave 2.5)', () => {
     await waitFor(() => {
       expect(screen.getByText(/2 addons added to your catalog/i)).toBeInTheDocument()
     })
+    expect(screen.getByText(/PR merged/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /view pr/i })).toHaveAttribute(
+      'href',
+      'https://github.com/demo/sharko-addons/pull/7',
+    )
+  })
+
+  // v4 wave 2.5 review fix round, M-6 — the success message used to say
+  // "added" unconditionally, even when the PR was only opened (not yet
+  // merged). It must say "PR opened" and not overclaim the addon already
+  // landed in the catalog.
+  it('says "PR opened" (not "added") when the batch PR has not merged yet', async () => {
+    const listCuratedCatalogMock = apiModule.api.listCuratedCatalog as ReturnType<typeof vi.fn>
+    const addToCatalogMock = apiModule.api.addToCatalog as ReturnType<typeof vi.fn>
+    listCuratedCatalogMock.mockResolvedValue({
+      addons: [
+        { name: 'cert-manager', description: 'TLS certs', chart: 'cert-manager', repo: 'https://charts.jetstack.io', default_namespace: 'cert-manager', maintainers: [], license: 'Apache-2.0', category: 'security', curated_by: [] },
+      ],
+      total: 1,
+    })
+    addToCatalogMock.mockResolvedValue({
+      added: ['cert-manager'],
+      enabled: [],
+      pr_url: 'https://github.com/demo/sharko-addons/pull/8',
+      pr_id: 8,
+      branch: 'sharko/catalog-cert-manager',
+      merged: false,
+    })
+
+    renderWizard(5)
+    const certCheckbox = (await screen.findByTestId('wizard-catalog-pick-cert-manager')) as HTMLInputElement
+    fireEvent.click(certCheckbox)
+    fireEvent.click(screen.getByRole('button', { name: /add 1 addon to catalog/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/1 addon submitted — merge the pull request below/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/PR opened/i)).toBeInTheDocument()
+    expect(screen.queryByText(/added to your catalog\./i)).not.toBeInTheDocument()
   })
 
   it('the Catalog step is skippable — day zero with an empty catalog is a valid choice', async () => {
