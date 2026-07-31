@@ -21,11 +21,17 @@
 //
 // The v3 secrets: block (internal/models.AddonSecretRef — a real
 // secret-push definition: a Kubernetes Secret name, a namespace, and a
-// data-key -> provider-path map) has no v4 field of the same shape. It
-// converts into the addon's needed-secrets list
-// (config.AddonSecretRequirement — the plain-English install/runtime split
-// shipped in Wave 2 #634), which is the extension point this data now
-// lives in. See secretRequirementsForV3.
+// data-key -> provider-path map) moves into the addon's needed-secrets
+// list WHOLE. Each v3 ref becomes one config.AddonSecretRequirement: the
+// plain-English half (name, description, install/runtime timing) plus a
+// `push:` block holding the very same AddonSecretRef the v3 file carried.
+//
+// Carrying the push block, rather than describing it in prose, is what
+// keeps a migrated repo's credentials alive: the secrets reconciler reads
+// those blocks and keeps pushing the same Secret to the same namespace
+// from the same provider paths, so the first credential rotation after a
+// migration lands on the clusters exactly as it did before. See
+// secretRequirementsForV3.
 package orchestrator
 
 import (
@@ -101,19 +107,27 @@ func settingsForV3(v3 models.AddonCatalogEntry) *config.AddonSettings {
 }
 
 // secretRequirementsForV3 converts the v3 secrets: block into the v4
-// needed-secrets list.
+// needed-secrets list, whole.
 //
-// The two shapes describe different things: a v3 AddonSecretRef is a
-// push definition (the Kubernetes Secret name and namespace Sharko
-// creates, and which provider path fills each data key), while a v4
-// AddonSecretRequirement is a plain-English "the addon needs this, and
-// when" declaration. There is no lossless field mapping between them, so
-// the conversion writes a plain-English description naming what the old
-// definition said, and leaves RequiredFor unset. Unset defaults to
-// "install" — the stricter reading (config.AddonSecretRequirement docs) —
-// which matches how these secrets already behaved: EnableAddon has always
-// refused to run without them (creds_gate.go), for every v3 secret, with
-// no install/runtime distinction to preserve.
+// A v4 requirement has two halves. The plain-English half (name,
+// description) says what the credential is for; the `push:` half is the
+// machine-readable definition — which Kubernetes Secret Sharko creates, in
+// which namespace, and which provider path fills each data key. The v3
+// block IS that second half, so it goes across as-is, in the same
+// models.AddonSecretRef type with the same yaml keys.
+//
+// Nothing is left behind in git history. That matters more than it sounds:
+// an earlier version of this converter flattened the push definition into a
+// sentence, which meant a migrated repo had no machine-readable definition
+// left anywhere, and the secrets reconciler had nothing to act on — the
+// clusters kept the credentials they already had until the first rotation,
+// then quietly went stale (v4 wave 2.5 review, finding F1).
+//
+// RequiredFor is left unset. Unset defaults to "install" — the stricter
+// reading (config.AddonSecretRequirement docs) — which matches how these
+// secrets already behaved: EnableAddon has always refused to run without
+// them (creds_gate.go), for every v3 secret, with no install/runtime
+// distinction to preserve.
 func secretRequirementsForV3(v3 []models.AddonSecretRef) []config.AddonSecretRequirement {
 	if len(v3) == 0 {
 		return nil
@@ -132,18 +146,34 @@ func secretRequirementsForV3(v3 []models.AddonSecretRef) []config.AddonSecretReq
 		sort.Strings(keys)
 
 		var desc strings.Builder
-		desc.WriteString(fmt.Sprintf("Migrated from your old catalog file: the Kubernetes Secret %q", name))
+		desc.WriteString(fmt.Sprintf("Sharko creates the Kubernetes Secret %q", name))
 		if ref.Namespace != "" {
 			desc.WriteString(fmt.Sprintf(" in namespace %q", ref.Namespace))
 		}
+		desc.WriteString(" on every cluster running this addon")
 		if len(keys) > 0 {
 			desc.WriteString(fmt.Sprintf(", with keys: %s", strings.Join(keys, ", ")))
 		}
-		desc.WriteString(".")
+		desc.WriteString(". The paths it reads those values from are in the push block below, carried over from your old catalog file.")
+
+		// The push block is a COPY — the Keys map especially, so the
+		// converted entry can never share a map with the parsed v3
+		// document.
+		push := models.AddonSecretRef{
+			SecretName: ref.SecretName,
+			Namespace:  ref.Namespace,
+		}
+		if len(ref.Keys) > 0 {
+			push.Keys = make(map[string]string, len(ref.Keys))
+			for k, v := range ref.Keys {
+				push.Keys[k] = v
+			}
+		}
 
 		out = append(out, config.AddonSecretRequirement{
 			Name:        name,
 			Description: desc.String(),
+			Push:        &push,
 		})
 	}
 	return out
@@ -177,7 +207,7 @@ func buildCatalogFromV3(v3Entries []models.AddonCatalogEntry) (config.AddonCatal
 
 		if len(v3.Secrets) > 0 {
 			notes = append(notes, fmt.Sprintf(
-				"%s's secrets from your old catalog file now live inside its own entry in the new catalog file, under \"secrets\" — check the descriptions still match your provider setup",
+				"%s's secrets moved into its own entry in the new catalog file, under \"secrets\" — the secret name, namespace and provider paths came across unchanged, so Sharko keeps pushing them to your clusters exactly as before",
 				v3.Name))
 		}
 	}

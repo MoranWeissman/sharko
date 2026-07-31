@@ -174,11 +174,26 @@ func incompleteEntryProblems(addonName string, missing []string) []string {
 // validateV4AddonInputs is the "sharpened pipeline" semantic-validation
 // gate (Story 4.3 AC): every RequiredValue the catalog entry
 // declares must resolve to a non-empty value somewhere across the merged
-// values layers, and every declared secret must be one Sharko has an
-// AddonSecretDefinition for (o.secretDefs — the one thing Sharko can
-// check without live cluster access; whether the SECRET VALUE actually
-// exists in the secrets backend is a runtime concern EnableAddon's
-// pre-flight credentials gate already owns, not this static check).
+// values layers, and every declared secret must have a definition Sharko
+// can act on. There are now two places a definition can come from, and
+// either satisfies the gate:
+//
+//   - the catalog ENTRY itself, when the requirement carries a `push:`
+//     block (v4 wave 2.5 review F2). The entry IS the definition: it names
+//     the Kubernetes Secret, the namespace and the provider path behind
+//     each key, which is everything the secrets reconciler needs. This is
+//     what every migrated v3 addon has, and before this fix those addons
+//     were unenableable — the gate demanded a server-side definition, and
+//     registering one did not make anything get pushed either.
+//   - a server-side AddonSecretDefinition (o.secretDefs), the pre-existing
+//     source, still honoured unchanged.
+//
+// A push block that is present but half-written is its own, clearly named
+// problem rather than a generic "no definition" — the fix is different
+// (fill in the missing key) and the user should be told which.
+//
+// Whether the secret VALUE actually exists in the secrets backend stays a
+// runtime concern the credentials gate owns, not this static check.
 //
 // v4 wave 2 w2-q4 ("needed-secrets gate") split what happens on a missing
 // secret by SecretRequirement.EffectiveRequiredFor(): a missing
@@ -202,6 +217,16 @@ func (o *Orchestrator) validateV4AddonInputs(addon catalog.CatalogAddon, mergedV
 	}
 
 	for _, sr := range addon.Secrets {
+		if sr.Push != nil {
+			if missing := sr.Push.MissingFields(); len(missing) > 0 {
+				problems = append(problems, fmt.Sprintf(
+					"the secret %q in %s's catalog entry has a push block with no %s — fill that in in %s, or Sharko cannot create the Secret on the cluster",
+					sr.Name, addon.Name, strings.Join(missing, " and no "), config.AddonCatalogPath))
+			}
+			// A complete push block IS the definition — nothing else to
+			// check, and no warning either: this secret gets pushed.
+			continue
+		}
 		if _, declared := o.secretDefs[addon.Name]; declared {
 			continue
 		}
@@ -328,6 +353,12 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 	deepMergeYAMLMaps(mergedValues, finalClusterValues)
 
 	problems, warnings := o.validateV4AddonInputs(merged, mergedValues)
+	// Only worth a real credentials fetch when nothing else is wrong —
+	// a request that is already going to be refused should not also go
+	// out to the secrets backend.
+	if len(problems) == 0 {
+		problems = o.v4PushCredentialProblems(ctx, merged, req.Cluster)
+	}
 	if len(problems) > 0 {
 		return nil, &V4SemanticValidationError{Cluster: req.Cluster, Addon: req.Addon, Problems: problems}
 	}

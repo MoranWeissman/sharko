@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -17,6 +20,19 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+)
+
+// v3CatalogPath is where a v3 repo keeps its addon catalog. The v4 repo's
+// two files are config.AddonCatalogPath (catalog.yaml) and
+// config.V4ManagedClustersPath (managed-clusters.yaml) — imported, never
+// re-typed here, so this package cannot drift away from what the rest of
+// Sharko reads and quietly conclude a v4 repo has no secrets in it.
+const v3CatalogPath = "configuration/addons-catalog.yaml"
+
+// Repo layouts this reconciler knows how to read. Used in log lines only.
+const (
+	layoutV3 = "v3"
+	layoutV4 = "v4"
 )
 
 // GitReader abstracts the read-only Git operations needed by the reconciler.
@@ -37,6 +53,18 @@ type AuditFunc func(clusterName string, created, updated int)
 // Reconciler periodically fetches secret definitions from the Git catalog and
 // ensures the corresponding K8s Secrets exist and are up-to-date on every
 // remote cluster that has the owning addon enabled.
+//
+// It reads BOTH repo layouts:
+//
+//   - v3 — configuration/addons-catalog.yaml (an entry's `secrets:` block)
+//     plus the configured managed-clusters path, with the cluster's addon
+//     labels saying which addons it runs.
+//   - v4 — catalog.yaml (a requirement's `push:` block) plus the root
+//     managed-clusters.yaml, with clusters/<name>.yaml saying which addons
+//     it runs.
+//
+// Both flatten into the same list of pushes, so a rotation lands on a
+// migrated repo exactly as it did before the migration.
 //
 // It supports three triggers:
 //  1. Periodic timer (default 5 min)
@@ -182,7 +210,7 @@ func (r *Reconciler) GetErrors() []string {
 func (r *Reconciler) reconcile() {
 	start := time.Now()
 	stats := ReconcileStats{}
-	var errors []string
+	var errs []string
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -191,92 +219,64 @@ func (r *Reconciler) reconcile() {
 
 	log.Info("[secrets] reconcile started")
 
-	// 1. Get Git reader — bail early when no connection is configured.
+	// 1. Get Git reader — bail when no connection is configured. This one
+	// stays a silent no-op: "no git connection yet" is a setup state, not a
+	// failure of a run, and Connections already says so on its own page.
 	gr := r.gitReader()
 	if gr == nil {
 		log.Warn("[secrets] no Git connection — skipping reconcile")
 		return
 	}
 
-	// 2. Read catalog.
-	catalogData, err := gr.GetFileContent(ctx, "configuration/addons-catalog.yaml", r.baseBranch)
+	// 2. Work out what should be pushed where, on whichever repo layout
+	// this is.
+	//
+	// A failure here used to warn-log and return BEFORE the status fields
+	// were written, which meant the API's secrets status kept showing the
+	// last good run with no errors while nothing was being pushed at all
+	// (v4 wave 2.5 review, finding F1). Now it lands in lastErrors, where
+	// the status endpoint and the UI can see it.
+	plan, err := r.planPushes(ctx, gr)
 	if err != nil {
-		log.Warn("[secrets] failed to read catalog", "error", err)
+		stats.Errors = 1
+		errs = []string{err.Error()}
+		log.Error("[secrets] could not work out which secrets to push — nothing was pushed this run", "error", err)
+		r.recordRun(start, stats, errs)
 		return
 	}
-	catalog, err := r.parser.ParseAddonsCatalog(catalogData)
-	if err != nil {
-		log.Warn("[secrets] failed to parse catalog", "error", err)
-		return
-	}
-
-	// 3. Build addon→secrets map (only addons that declare secrets).
-	type addonSecrets struct {
-		addon   models.AddonCatalogEntry
-		secrets []models.AddonSecretRef
-	}
-	secretAddons := make(map[string]addonSecrets)
-	for _, entry := range catalog {
-		if len(entry.Secrets) > 0 {
-			secretAddons[entry.Name] = addonSecrets{addon: entry, secrets: entry.Secrets}
-		}
-	}
-	if len(secretAddons) == 0 {
-		log.Info("[secrets] no addons with secret definitions — nothing to reconcile")
-		return
-	}
-
-	// 4. Read managed-clusters.yaml.
-	clusterData, err := gr.GetFileContent(ctx, r.managedClustersPath, r.baseBranch)
-	if err != nil {
-		log.Warn("[secrets] failed to read managed-clusters", "error", err, "path", r.managedClustersPath)
-		return
-	}
-	clusters, err := r.parser.ParseClusterAddons(clusterData)
-	if err != nil {
-		log.Warn("[secrets] failed to parse managed-clusters", "error", err)
-		return
-	}
-
-	// 5. For each cluster reconcile every secret defined for its enabled addons.
-	for _, cluster := range clusters {
-		enabledAddons := r.parser.GetEnabledAddons(cluster, catalog)
-		for _, enabledAddon := range enabledAddons {
-			as, ok := secretAddons[enabledAddon.AddonName]
-			if !ok {
-				continue
-			}
-			for _, secretRef := range as.secrets {
-				stats.Checked++
-				// Use secretPath for credential lookup when explicitly set on the
-				// cluster (shared resolver — V2-cleanup-55.1).
-				credLookup := cluster.CredentialLookupKey()
-				if err := r.reconcileSecret(ctx, &stats, credLookup, as.addon.Name, secretRef); err != nil {
-					stats.Errors++
-					errMsg := fmt.Sprintf("cluster=%s addon=%s secret=%s: %v",
-						cluster.Name, as.addon.Name, secretRef.SecretName, err)
-					errors = append(errors, errMsg)
-					log.Error("[secrets] reconcile failed",
-						"cluster", cluster.Name,
-						"addon", as.addon.Name,
-						"secret", secretRef.SecretName,
-						"error", err,
-					)
-				}
-			}
+	if len(plan.problems) > 0 {
+		stats.Errors += len(plan.problems)
+		errs = append(errs, plan.problems...)
+		for _, p := range plan.problems {
+			log.Error("[secrets] part of the repo could not be read — those clusters were skipped", "problem", p)
 		}
 	}
 
-	stats.Duration = time.Since(start).String()
-	stats.LastRun = time.Now()
+	if len(plan.work) == 0 && len(errs) == 0 {
+		log.Info("[secrets] no addons with secret definitions — nothing to reconcile", "layout", plan.layout)
+		return
+	}
 
-	r.mu.Lock()
-	r.lastRun = time.Now()
-	r.lastStats = stats
-	r.lastErrors = errors
-	r.mu.Unlock()
+	// 3. Push every secret the plan asks for.
+	for _, w := range plan.work {
+		stats.Checked++
+		if err := r.reconcileSecret(ctx, &stats, w.credLookup, w.addon, w.push); err != nil {
+			stats.Errors++
+			errs = append(errs, fmt.Sprintf("cluster=%s addon=%s secret=%s: %v",
+				w.clusterName, w.addon, w.push.SecretName, err))
+			log.Error("[secrets] reconcile failed",
+				"cluster", w.clusterName,
+				"addon", w.addon,
+				"secret", w.push.SecretName,
+				"error", err,
+			)
+		}
+	}
+
+	r.recordRun(start, stats, errs)
 
 	log.Info("[secrets] reconcile complete",
+		"layout", plan.layout,
 		"checked", stats.Checked,
 		"created", stats.Created,
 		"updated", stats.Updated,
@@ -292,6 +292,238 @@ func (r *Reconciler) reconcile() {
 	}
 }
 
+// recordRun publishes one pass's outcome to the status fields GetStats and
+// GetErrors serve. Every path that gets far enough to have an outcome —
+// including a pass that failed before pushing anything — goes through here,
+// so "the status says fine" and "secrets are being pushed" cannot come
+// apart.
+func (r *Reconciler) recordRun(start time.Time, stats ReconcileStats, errs []string) {
+	stats.Duration = time.Since(start).String()
+	stats.LastRun = time.Now()
+
+	r.mu.Lock()
+	r.lastRun = stats.LastRun
+	r.lastStats = stats
+	r.lastErrors = errs
+	r.mu.Unlock()
+}
+
+// secretWork is one thing to push: a single Kubernetes Secret, for one
+// addon, onto one cluster. Both repo layouts are flattened into this, so
+// the push itself has exactly one implementation.
+type secretWork struct {
+	clusterName string
+	// credLookup is the key to fetch the cluster's credentials with — the
+	// stored secretPath when the cluster record has one, else the plain
+	// name (shared resolver, V2-cleanup-55.1).
+	credLookup string
+	addon      string
+	push       models.AddonSecretRef
+}
+
+// pushPlan is everything one reconcile pass intends to do.
+type pushPlan struct {
+	layout string
+	work   []secretWork
+	// problems are things that went wrong for PART of the repo — one
+	// unreadable cluster file, one cluster name that cannot be a path.
+	// The rest of the plan still runs; these are recorded in the status
+	// so a half-working run never looks like a clean one.
+	problems []string
+}
+
+// planPushes reads the connected repo and works out every secret that
+// should be on every cluster.
+//
+// The repo is one layout or the other. v3 is checked first — the same
+// order internal/config's credential resolver and the cluster reconciler
+// use — so a v3 repo behaves exactly as it always has, and a repo that
+// somehow has both files keeps its v3 answer rather than switching
+// underneath the other readers.
+//
+// An error return means nothing could be read at all and nothing will be
+// pushed this pass; the caller puts it in the status.
+func (r *Reconciler) planPushes(ctx context.Context, gr GitReader) (pushPlan, error) {
+	v3Data, v3Err := gr.GetFileContent(ctx, v3CatalogPath, r.baseBranch)
+	if v3Err == nil && len(v3Data) > 0 {
+		return r.planV3(ctx, gr, v3Data)
+	}
+
+	v4Data, v4Err := gr.GetFileContent(ctx, config.AddonCatalogPath, r.baseBranch)
+	if v4Err == nil && len(v4Data) > 0 {
+		return r.planV4(ctx, gr, v4Data)
+	}
+
+	return pushPlan{}, fmt.Errorf(
+		"no addon catalog could be read on branch %q, so no addon secrets can be pushed: %s: %v; %s: %v",
+		r.baseBranch,
+		config.AddonCatalogPath, readProblem(v4Data, v4Err),
+		v3CatalogPath, readProblem(v3Data, v3Err),
+	)
+}
+
+// readProblem turns a read result into the reason it was not usable, so
+// the "no catalog" message says what actually happened to each file rather
+// than just naming them.
+func readProblem(data []byte, err error) error {
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return errors.New("the file is empty")
+	}
+	return nil
+}
+
+// planV3 builds the plan from a v3 repo: configuration/addons-catalog.yaml
+// for the push definitions, the configured managed-clusters path for the
+// clusters, and the cluster's addon LABELS for which addons it runs.
+// Unchanged behaviour — this is the pre-v4 path, moved into its own
+// function.
+func (r *Reconciler) planV3(ctx context.Context, gr GitReader, catalogData []byte) (pushPlan, error) {
+	plan := pushPlan{layout: layoutV3}
+
+	catalogEntries, err := r.parser.ParseAddonsCatalog(catalogData)
+	if err != nil {
+		return plan, fmt.Errorf("could not read %s: %w", v3CatalogPath, err)
+	}
+
+	pushesByAddon := make(map[string][]models.AddonSecretRef)
+	for _, entry := range catalogEntries {
+		if len(entry.Secrets) > 0 {
+			pushesByAddon[entry.Name] = entry.Secrets
+		}
+	}
+	if len(pushesByAddon) == 0 {
+		return plan, nil
+	}
+
+	clusterData, err := gr.GetFileContent(ctx, r.managedClustersPath, r.baseBranch)
+	if err != nil {
+		return plan, fmt.Errorf("could not read %s: %w", r.managedClustersPath, err)
+	}
+	clusters, err := r.parser.ParseClusterAddons(clusterData)
+	if err != nil {
+		return plan, fmt.Errorf("could not read %s: %w", r.managedClustersPath, err)
+	}
+
+	for _, cluster := range clusters {
+		for _, enabled := range r.parser.GetEnabledAddons(cluster, catalogEntries) {
+			for _, ref := range pushesByAddon[enabled.AddonName] {
+				plan.work = append(plan.work, secretWork{
+					clusterName: cluster.Name,
+					credLookup:  cluster.CredentialLookupKey(),
+					addon:       enabled.AddonName,
+					push:        ref,
+				})
+			}
+		}
+	}
+	return plan, nil
+}
+
+// planV4 builds the plan from a v4 repo: catalog.yaml for the push
+// definitions each approved addon carries, the root managed-clusters.yaml
+// for the clusters, and clusters/<name>.yaml for which addons each one
+// actually runs.
+//
+// A cluster with no assignment file yet is not an error — it is a
+// registered cluster that has not been given any addon. Anything else that
+// stops one cluster being read is recorded as a problem and the other
+// clusters still get their secrets.
+func (r *Reconciler) planV4(ctx context.Context, gr GitReader, catalogData []byte) (pushPlan, error) {
+	plan := pushPlan{layout: layoutV4}
+
+	spec, err := config.LoadAddonCatalog(catalogData)
+	if err != nil {
+		return plan, fmt.Errorf("could not read %s: %w", config.AddonCatalogPath, err)
+	}
+
+	// Only the requirements carrying a push block are Sharko's to create.
+	// A plain-English requirement with no push block is a note for a
+	// person; there is nothing for the reconciler to do about it.
+	pushesByAddon := make(map[string][]models.AddonSecretRef)
+	for addonName, entry := range spec.Addons {
+		for _, req := range entry.Secrets {
+			if req.Push == nil {
+				continue
+			}
+			pushesByAddon[addonName] = append(pushesByAddon[addonName], *req.Push)
+		}
+	}
+	if len(pushesByAddon) == 0 {
+		return plan, nil
+	}
+
+	clusterData, err := gr.GetFileContent(ctx, config.V4ManagedClustersPath, r.baseBranch)
+	if err != nil {
+		return plan, fmt.Errorf("could not read %s: %w", config.V4ManagedClustersPath, err)
+	}
+	clusters, err := r.parser.ParseClusterAddons(clusterData)
+	if err != nil {
+		return plan, fmt.Errorf("could not read %s: %w", config.V4ManagedClustersPath, err)
+	}
+
+	for _, cluster := range clusters {
+		assignPath, pathErr := config.V4ClusterAddonsPath(cluster.Name)
+		if pathErr != nil {
+			plan.problems = append(plan.problems, fmt.Sprintf(
+				"cluster %q in %s cannot be looked up (%v), so no addon secrets were pushed to it",
+				cluster.Name, config.V4ManagedClustersPath, pathErr))
+			continue
+		}
+
+		body, readErr := gr.GetFileContent(ctx, assignPath, r.baseBranch)
+		if readErr != nil {
+			if errors.Is(readErr, gitprovider.ErrFileNotFound) {
+				// Registered, but no addon has been switched on for it yet.
+				continue
+			}
+			plan.problems = append(plan.problems, fmt.Sprintf(
+				"could not read %s (%v), so no addon secrets were pushed to cluster %q",
+				assignPath, readErr, cluster.Name))
+			continue
+		}
+		if len(body) == 0 {
+			continue
+		}
+
+		assignment, parseErr := models.LoadClusterAddons(body)
+		if parseErr != nil {
+			plan.problems = append(plan.problems, fmt.Sprintf(
+				"could not read %s (%v), so no addon secrets were pushed to cluster %q",
+				assignPath, parseErr, cluster.Name))
+			continue
+		}
+
+		for _, addonName := range enabledAddonNames(assignment) {
+			for _, ref := range pushesByAddon[addonName] {
+				plan.work = append(plan.work, secretWork{
+					clusterName: cluster.Name,
+					credLookup:  cluster.CredentialLookupKey(),
+					addon:       addonName,
+					push:        ref,
+				})
+			}
+		}
+	}
+	return plan, nil
+}
+
+// enabledAddonNames lists the addons a v4 cluster actually runs, sorted so
+// two identical repos produce the same work order (and the same log lines)
+// every pass.
+func enabledAddonNames(spec models.ClusterAddonsSpec) []string {
+	names := make([]string, 0, len(spec.Addons))
+	for name, entry := range spec.Addons {
+		if entry.Enabled {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 // reconcileSecret ensures a single K8s Secret exists and is current on the
 // named remote cluster. It increments Created, Updated, or Skipped on stats.
 func (r *Reconciler) reconcileSecret(
@@ -301,6 +533,15 @@ func (r *Reconciler) reconcileSecret(
 	ref models.AddonSecretRef,
 ) error {
 	log := logging.LoggerFromContext(ctx)
+
+	// A half-written definition would otherwise surface as a confusing
+	// Kubernetes API error (a Secret with no name, or no namespace to put
+	// it in). Say which part is missing instead.
+	if missing := ref.MissingFields(); len(missing) > 0 {
+		return fmt.Errorf("the secret definition in the catalog has no %s — fill that in and Sharko can push it",
+			strings.Join(missing, " and no "))
+	}
+
 	// Get kubeconfig for the cluster.
 	log.Info("[reconciler] connecting to cluster", "cluster", clusterName)
 	creds, err := r.credProvider.GetCredentials(clusterName)

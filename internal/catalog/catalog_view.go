@@ -129,9 +129,30 @@ func entrySecrets(in []config.AddonSecretRequirement) []SecretRequirement {
 			Name:        s.Name,
 			Description: s.Description,
 			RequiredFor: s.RequiredFor,
+			Push:        copyPushDefinition(s.Push),
 		})
 	}
 	return out
+}
+
+// copyPushDefinition deep-copies a push block so the converted requirement
+// never shares its Keys map with the entry it came from — one caller
+// editing a copy must not reach back into the parsed catalog.
+func copyPushDefinition(in *models.AddonSecretRef) *models.AddonSecretRef {
+	if in == nil {
+		return nil
+	}
+	out := models.AddonSecretRef{
+		SecretName: in.SecretName,
+		Namespace:  in.Namespace,
+	}
+	if len(in.Keys) > 0 {
+		out.Keys = make(map[string]string, len(in.Keys))
+		for k, v := range in.Keys {
+			out.Keys[k] = v
+		}
+	}
+	return &out
 }
 
 // CuratedSecretsForEntry converts a curated entry's secrets list into the
@@ -147,6 +168,7 @@ func CuratedSecretsForEntry(in []SecretRequirement) []config.AddonSecretRequirem
 			Name:        s.Name,
 			Description: s.Description,
 			RequiredFor: s.RequiredFor,
+			Push:        copyPushDefinition(s.Push),
 		})
 	}
 	return out

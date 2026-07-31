@@ -21,6 +21,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	catalogembed "github.com/MoranWeissman/sharko/catalog"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // allowedCategories mirrors catalog/schema.json / design §4.2.1. Mutating the
@@ -112,10 +113,29 @@ const (
 // entry written before this field existed keeps blocking exactly as it did.
 // Use EffectiveRequiredFor rather than reading the field directly so that
 // default resolution lives in one place.
+//
+// Push is the machine-readable half, and mirrors
+// config.AddonSecretRequirement.Push field-for-field: when it is set, the
+// org's catalog entry says Sharko itself creates this Secret on every
+// cluster running the addon, and names the provider path behind each data
+// key. It is what lets the enable gate treat the entry AS the definition,
+// and it is what the secrets reconciler pushes. Nil on every curated
+// Marketplace entry — the shipped list describes charts, it does not know
+// anybody's provider paths.
 type SecretRequirement struct {
-	Name        string `yaml:"name" json:"name"`
-	Description string `yaml:"description" json:"description"`
-	RequiredFor string `yaml:"required_for,omitempty" json:"required_for,omitempty"`
+	Name        string                 `yaml:"name" json:"name"`
+	Description string                 `yaml:"description" json:"description"`
+	RequiredFor string                 `yaml:"required_for,omitempty" json:"required_for,omitempty"`
+	Push        *models.AddonSecretRef `yaml:"push,omitempty" json:"push,omitempty"`
+}
+
+// PushDefinition returns the requirement's push block and whether Sharko
+// can act on it. Mirrors config.AddonSecretRequirement.PushDefinition.
+func (s SecretRequirement) PushDefinition() (models.AddonSecretRef, bool) {
+	if s.Push == nil {
+		return models.AddonSecretRef{}, false
+	}
+	return *s.Push, s.Push.Complete()
 }
 
 // EffectiveRequiredFor returns s.RequiredFor, defaulting an empty value to
