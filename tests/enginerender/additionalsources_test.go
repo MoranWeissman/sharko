@@ -31,7 +31,6 @@ func renderEngineChartExpectingFailure(t *testing.T, extraValuesYAML string) (st
 	root := repoRoot(t)
 	chartDir := filepath.Join(root, "charts", "sharko-engine")
 	dataDir := filepath.Join(root, "tests", "enginerender", "testdata")
-	nullFile := nullOutNonFixtureCuratedAddons(t)
 
 	extraFile := filepath.Join(t.TempDir(), "extra-values.yaml")
 	if err := os.WriteFile(extraFile, []byte(extraValuesYAML), 0o644); err != nil {
@@ -39,9 +38,8 @@ func renderEngineChartExpectingFailure(t *testing.T, extraValuesYAML string) (st
 	}
 
 	cmd := exec.Command(helmBin, "template", "testengine", chartDir,
-		"--values", nullFile,
 		"--values", filepath.Join(dataDir, "engine-values.yaml"),
-		"--values", filepath.Join(dataDir, "catalog", "addons.yaml"),
+		"--values", filepath.Join(dataDir, "catalog.yaml"),
 		"--values", extraFile,
 	)
 	out, err := cmd.CombinedOutput()
@@ -55,12 +53,11 @@ func renderEngineChartExpectingFailure(t *testing.T, extraValuesYAML string) (st
 // ArgoCD sync time, with a confusing "chart not found in this repo" error).
 func TestEngineChartAdditionalSourcesChartRequiresRepoURL(t *testing.T) {
 	extra := `
-spec:
-  addons:
-    cert-manager:
-      additionalSources:
-        - chart: common-config
-          version: "1.0.0"
+addons:
+  cert-manager:
+    additionalSources:
+      - chart: common-config
+        version: "1.0.0"
 `
 	out, err := renderEngineChartExpectingFailure(t, extra)
 	if err == nil {
@@ -77,12 +74,11 @@ spec:
 // twin of the repoURL test above.
 func TestEngineChartAdditionalSourcesChartRequiresVersion(t *testing.T) {
 	extra := `
-spec:
-  addons:
-    cert-manager:
-      additionalSources:
-        - chart: common-config
-          repoURL: https://charts.example.com
+addons:
+  cert-manager:
+    additionalSources:
+      - chart: common-config
+        repoURL: https://charts.example.com
 `
 	out, err := renderEngineChartExpectingFailure(t, extra)
 	if err == nil {
@@ -101,13 +97,12 @@ spec:
 // a blanket rejection of chart-type entries.
 func TestEngineChartAdditionalSourcesChartWithRepoURLAndVersion_Succeeds(t *testing.T) {
 	extra := `
-spec:
-  addons:
-    cert-manager:
-      additionalSources:
-        - chart: common-config
-          repoURL: https://charts.example.com
-          version: "1.0.0"
+addons:
+  cert-manager:
+    additionalSources:
+      - chart: common-config
+        repoURL: https://charts.example.com
+        version: "1.0.0"
 `
 	rendered := renderEngineChartWithExtra(t, extra)
 	doc := extractApplicationSetDoc(t, rendered, "sharko-cert-manager")
@@ -130,11 +125,10 @@ spec:
 // on path-type entries too.
 func TestEngineChartAdditionalSourcesPath_StillDefaultsToGitopsRepo(t *testing.T) {
 	extra := `
-spec:
-  addons:
-    cert-manager:
-      additionalSources:
-        - path: charts/common-config
+addons:
+  cert-manager:
+    additionalSources:
+      - path: charts/common-config
 `
 	rendered := renderEngineChartWithExtra(t, extra)
 	doc := extractApplicationSetDoc(t, rendered, "sharko-cert-manager")

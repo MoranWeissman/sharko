@@ -1,22 +1,27 @@
 // Package enginerender holds a render-level regression test for the Sharko
 // v4 "engine" Helm chart (charts/sharko-engine), which replaces
 // templates/bootstrap/ as the thing that turns a user's GitOps repo into
-// ArgoCD ApplicationSets — see docs/design/2026-07-30-v4-data-file-format.md.
+// ArgoCD ApplicationSets — see docs/design/2026-07-30-v4-data-file-format.md
+// for the render mechanics and
+// .bmad/output/architecture/2026-07-31-catalog-approved-model.md for the
+// "catalog = the approved list" model this file's fixtures follow.
 //
 // The fixture at testdata/ is the design doc's own worked example (section
-// 6): two clusters, prod-eu and staging-us; cert-manager pinned older on
-// prod-eu with a webhook ignore-diff quirk; metrics-server everywhere on
-// the catalog default. testdata/engine-values.yaml plus
-// testdata/catalog/addons.yaml are exactly the two Helm values sources the
-// real engine pin (engine/application.yaml) would pass at render time
-// (design doc sections 2.5 / 4.7): repo/host/project plumbing and shipped
-// catalog defaults, then the user's own catalog/addons.yaml delta.
+// 6), updated for the approved-list model: two clusters, prod-eu and
+// staging-us; cert-manager pinned older on prod-eu with a webhook ignore-diff
+// quirk; metrics-server everywhere on the catalog default.
+// testdata/engine-values.yaml plus testdata/catalog.yaml are exactly the two
+// Helm values sources the real engine pin (engine.yaml) would pass at render
+// time (design doc sections 2.5 / decision D6): repo/host/project plumbing,
+// then the org's own catalog.yaml — now the ONLY source of addon
+// definitions, since decision 6 removed the chart's baked curated block
+// entirely.
 //
 // What this test proves, and what it does not (design intentionally, per
 // the story brief — there is no live ArgoCD available here):
 //
 //   - PROVEN by `helm template`: the chart renders one AppProject and one
-//     ApplicationSet per enabled addon, with the version pin, values
+//     ApplicationSet per catalog.yaml addon, with the version pin, values
 //     layering paths, settings pass-through, and preserveResourcesOnDeletion
 //     default all wired correctly — including the exact `dig`/`hasKey`
 //     Go-template calls (with the correct addon name and the correct
@@ -35,7 +40,6 @@
 package enginerender
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,8 +49,6 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/MoranWeissman/sharko/internal/catalog"
 )
 
 // repoRoot resolves the repository root from this test file's location so
@@ -62,67 +64,11 @@ func repoRoot(t *testing.T) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
 }
 
-// fixtureAddons is the small, controlled addon set every fixture-based test
-// in this file (renderEngineChart) expects to see — exactly the two addons
-// testdata/engine-values.yaml and testdata/catalog/addons.yaml describe, and
-// the design doc's own worked example (section 6).
-var fixtureAddons = map[string]bool{
-	"cert-manager":   true,
-	"metrics-server": true,
-}
-
-// nullOutNonFixtureCuratedAddons writes a temp Helm values file that sets
-// `curated.addons.<name>: null` for every REAL catalog entry (from
-// catalog.Load(), i.e. catalog/addons.yaml as regenerated into
-// charts/sharko-engine/values.yaml by cmd/gen-engine-curated) that is not in
-// fixtureAddons.
-//
-// Why this exists: before cmd/gen-engine-curated existed, the chart's own
-// default curated.addons was `{}`, so passing --values engine-values.yaml
-// (2 addons) gave a clean 2-addon world for free. Now the chart ships all
-// real curated addons by default, and `helm template`/`helm install` deep-
-// merge nested maps across --values sources — a later file that only sets
-// 2 of the 45 curated.addons keys does NOT replace the other 43, it adds to
-// them. Verified empirically: a null literal at a specific nested map key
-// (via a values FILE, not just --set) DOES delete that one key from the
-// merged result without touching its siblings — that is the documented Helm
-// "null removes a value" mechanism, and it is the only reliable way to get
-// back to an isolated small-world fixture for these tests.
-//
-// This keeps the design's real, intentional behavior (every install ships
-// the full curated catalog — TestEngineChartRendersOneApplicationSetPerShippedAddon
-// covers that) while letting the ORIGINAL fixture-based tests keep testing
-// exactly the 2-addon scenario they were written for.
-func nullOutNonFixtureCuratedAddons(t *testing.T) string {
-	t.Helper()
-	cat, err := catalog.Load()
-	if err != nil {
-		t.Fatalf("loading catalog/addons.yaml: %v", err)
-	}
-
-	var b strings.Builder
-	b.WriteString("curated:\n  addons:\n")
-	for _, e := range cat.Entries() {
-		if fixtureAddons[e.Name] {
-			continue
-		}
-		fmt.Fprintf(&b, "    %s: null\n", e.Name)
-	}
-
-	path := filepath.Join(t.TempDir(), "null-non-fixture-curated.yaml")
-	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
-		t.Fatalf("writing temp null-out values file: %v", err)
-	}
-	return path
-}
-
 // renderEngineChart runs `helm template` against charts/sharko-engine with
-// the fixture engine config and the fixture catalog delta — the same two
-// values sources the real engine pin passes — after nulling out every
-// shipped curated addon outside the small fixture set (see
-// nullOutNonFixtureCuratedAddons). Skips (not fails) if helm is not
-// installed, matching tests/bootstraprender's convention: the helm-validate
-// CI job is the hard guard when helm is unavailable locally.
+// the fixture engine config and the fixture org catalog — the same two
+// values sources the real engine pin passes. Skips (not fails) if helm is
+// not installed, matching tests/bootstraprender's convention: the
+// helm-validate CI job is the hard guard when helm is unavailable locally.
 func renderEngineChart(t *testing.T) string {
 	t.Helper()
 	helmBin, err := exec.LookPath("helm")
@@ -133,12 +79,10 @@ func renderEngineChart(t *testing.T) string {
 	root := repoRoot(t)
 	chartDir := filepath.Join(root, "charts", "sharko-engine")
 	dataDir := filepath.Join(root, "tests", "enginerender", "testdata")
-	nullFile := nullOutNonFixtureCuratedAddons(t)
 
 	cmd := exec.Command(helmBin, "template", "testengine", chartDir,
-		"--values", nullFile,
 		"--values", filepath.Join(dataDir, "engine-values.yaml"),
-		"--values", filepath.Join(dataDir, "catalog", "addons.yaml"),
+		"--values", filepath.Join(dataDir, "catalog.yaml"),
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -149,7 +93,7 @@ func renderEngineChart(t *testing.T) string {
 
 // renderEngineChartWithExtra layers one additional --values file (highest
 // precedence — Helm's own last-wins ordering) on top of renderEngineChart's
-// usual three sources. Used by tests that need one addon's fleet-wide
+// usual two sources. Used by tests that need one addon's fleet-wide
 // settings to carry a specific quirk (e.g. a syncOptions list that already
 // contains CreateNamespace=true) without perturbing every other render
 // test's shared fixture.
@@ -163,7 +107,6 @@ func renderEngineChartWithExtra(t *testing.T, extraValuesYAML string) string {
 	root := repoRoot(t)
 	chartDir := filepath.Join(root, "charts", "sharko-engine")
 	dataDir := filepath.Join(root, "tests", "enginerender", "testdata")
-	nullFile := nullOutNonFixtureCuratedAddons(t)
 
 	extraFile := filepath.Join(t.TempDir(), "extra-values.yaml")
 	if err := os.WriteFile(extraFile, []byte(extraValuesYAML), 0o644); err != nil {
@@ -171,9 +114,8 @@ func renderEngineChartWithExtra(t *testing.T, extraValuesYAML string) string {
 	}
 
 	cmd := exec.Command(helmBin, "template", "testengine", chartDir,
-		"--values", nullFile,
 		"--values", filepath.Join(dataDir, "engine-values.yaml"),
-		"--values", filepath.Join(dataDir, "catalog", "addons.yaml"),
+		"--values", filepath.Join(dataDir, "catalog.yaml"),
 		"--values", extraFile,
 	)
 	out, err := cmd.CombinedOutput()
@@ -218,7 +160,7 @@ func extractBetween(t *testing.T, s, start, end string) string {
 
 // TestEngineChartRendersProjectAndApplicationSets asserts the chart emits
 // exactly the shared AppProject (design decision D17 — one project, not one
-// per addon) plus one ApplicationSet per enabled addon, named
+// per addon) plus one ApplicationSet per addon in catalog.yaml, named
 // "sharko-<addon>".
 func TestEngineChartRendersProjectAndApplicationSets(t *testing.T) {
 	rendered := renderEngineChart(t)
@@ -243,18 +185,18 @@ func TestEngineChartRendersProjectAndApplicationSets(t *testing.T) {
 
 // TestEngineChartVersionPinBakedDefaults asserts the version-pin dig call
 // baked into targetRevision names the right addon and carries the right
-// fleet-wide default — the default Helm bakes in from the merged catalog
-// (design doc section 4.4), which the ApplicationSet controller falls back
-// to when a cluster's assignment file has no per-cluster override.
+// fleet-wide default — the default Helm bakes in from catalog.yaml (design
+// doc section 4.4), which the ApplicationSet controller falls back to when a
+// cluster's assignment file has no per-cluster override.
 func TestEngineChartVersionPinBakedDefaults(t *testing.T) {
 	rendered := renderEngineChart(t)
 
 	cases := map[string]string{
-		"cert-manager":   "1.14.5", // catalog/addons.yaml fleet-wide delta
-		"metrics-server": "3.12.1", // catalog/addons.yaml fleet-wide delta
+		"cert-manager":   "1.14.5", // catalog.yaml
+		"metrics-server": "3.12.1", // catalog.yaml
 	}
 	for addon, version := range cases {
-		want := `targetRevision: '{{ dig "addons" "` + addon + `" "version" "` + version + `" (.spec | default dict) }}'`
+		want := `targetRevision: '{{ dig "addons" "` + addon + `" "version" "` + version + `" (. | default dict) }}'`
 		if !strings.Contains(rendered, want) {
 			t.Errorf("missing exact version-pin dig call for %s.\nwant substring: %s\n--- rendered ---\n%s", addon, want, rendered)
 		}
@@ -375,7 +317,7 @@ func TestEngineChartTemplatePatchSettingsPassthrough(t *testing.T) {
 	rendered := renderEngineChart(t)
 
 	for _, addon := range []string{"cert-manager", "metrics-server"} {
-		settingsDig := `dig "addons" "` + addon + `" "settings" dict (.spec | default dict) | default dict`
+		settingsDig := `dig "addons" "` + addon + `" "settings" dict (. | default dict) | default dict`
 		if !strings.Contains(rendered, settingsDig) {
 			t.Errorf("missing per-cluster settings lookup for %s: %q\n--- rendered ---\n%s", addon, settingsDig, rendered)
 		}
@@ -398,10 +340,11 @@ func TestEngineChartTemplatePatchSettingsPassthrough(t *testing.T) {
 
 // TestEngineChartFixtureClusterAddons asserts the fixture repo's
 // clusters/*.yaml files match the design doc's worked example (section 6)
-// exactly: prod-eu pins cert-manager older with the webhook ignore-diff
-// quirk, staging-us has no override, both enable metrics-server on the
-// catalog default. This is the DATA half of the version-pin proof — the
-// engine template half is TestEngineChartVersionPinBakedDefaults and
+// exactly, in the flat shape (decision 9 — no `metadata:`/`spec:` wrapper):
+// prod-eu pins cert-manager older with the webhook ignore-diff quirk,
+// staging-us has no override, both enable metrics-server on the catalog
+// default. This is the DATA half of the version-pin proof — the engine
+// template half is TestEngineChartVersionPinBakedDefaults and
 // TestEngineChartTemplatePatchSettingsPassthrough above.
 func TestEngineChartFixtureClusterAddons(t *testing.T) {
 	root := repoRoot(t)
@@ -413,10 +356,8 @@ func TestEngineChartFixtureClusterAddons(t *testing.T) {
 		Settings map[string]interface{} `yaml:"settings"`
 	}
 	type clusterAddons struct {
-		Spec struct {
-			Cluster string               `yaml:"cluster"`
-			Addons  map[string]addonSpec `yaml:"addons"`
-		} `yaml:"spec"`
+		Cluster string               `yaml:"cluster"`
+		Addons  map[string]addonSpec `yaml:"addons"`
 	}
 
 	load := func(name string) clusterAddons {
@@ -429,14 +370,14 @@ func TestEngineChartFixtureClusterAddons(t *testing.T) {
 		if err := yaml.Unmarshal(data, &ca); err != nil {
 			t.Fatalf("clusters/%s.yaml is not valid YAML: %v", name, err)
 		}
-		if ca.Spec.Cluster != name {
-			t.Errorf("clusters/%s.yaml: spec.cluster = %q, want %q (design doc section 2.1 — file name must equal spec.cluster)", name, ca.Spec.Cluster, name)
+		if ca.Cluster != name {
+			t.Errorf("clusters/%s.yaml: cluster = %q, want %q (design doc section 2.1 — file name must equal the in-file cluster field)", name, ca.Cluster, name)
 		}
 		return ca
 	}
 
 	prodEU := load("prod-eu")
-	cm, ok := prodEU.Spec.Addons["cert-manager"]
+	cm, ok := prodEU.Addons["cert-manager"]
 	if !ok || !cm.Enabled {
 		t.Fatalf("clusters/prod-eu.yaml: cert-manager must be enabled")
 	}
@@ -446,7 +387,7 @@ func TestEngineChartFixtureClusterAddons(t *testing.T) {
 	if cm.Settings == nil || cm.Settings["ignoreDifferences"] == nil {
 		t.Errorf("clusters/prod-eu.yaml: cert-manager is missing the webhook ignoreDifferences quirk from the worked example")
 	}
-	ms, ok := prodEU.Spec.Addons["metrics-server"]
+	ms, ok := prodEU.Addons["metrics-server"]
 	if !ok || !ms.Enabled {
 		t.Fatalf("clusters/prod-eu.yaml: metrics-server must be enabled")
 	}
@@ -455,7 +396,7 @@ func TestEngineChartFixtureClusterAddons(t *testing.T) {
 	}
 
 	stagingUS := load("staging-us")
-	cm2, ok := stagingUS.Spec.Addons["cert-manager"]
+	cm2, ok := stagingUS.Addons["cert-manager"]
 	if !ok || !cm2.Enabled {
 		t.Fatalf("clusters/staging-us.yaml: cert-manager must be enabled")
 	}
@@ -465,7 +406,7 @@ func TestEngineChartFixtureClusterAddons(t *testing.T) {
 	if cm2.Settings != nil && cm2.Settings["ignoreDifferences"] != nil {
 		t.Errorf("clusters/staging-us.yaml: cert-manager must NOT carry the prod-eu-only webhook quirk")
 	}
-	ms2, ok := stagingUS.Spec.Addons["metrics-server"]
+	ms2, ok := stagingUS.Addons["metrics-server"]
 	if !ok || !ms2.Enabled {
 		t.Fatalf("clusters/staging-us.yaml: metrics-server must be enabled")
 	}
@@ -506,52 +447,27 @@ func TestEngineChartFixtureValuesLayeringFiles(t *testing.T) {
 	}
 }
 
-// TestEngineChartRendersOneApplicationSetPerShippedAddon asserts a totally
-// fresh install — chart defaults only, no user delta — renders one
-// ApplicationSet per SHIPPED (curated) addon, plus the shared AppProject.
-//
-// This used to assert zero ApplicationSets, back when
-// charts/sharko-engine/values.yaml's curated.addons block was still the
-// placeholder `{}` (the flagged gap this test file's own generator,
-// cmd/gen-engine-curated, now closes — see design doc section 4.7). Design
-// doc section 4.7's merge formula is a UNION of curated.addons and
-// spec.addons keys, not delta-only:
-//
-//	merged = mergeOverwrite(deepCopy(curated.addons), spec.addons)
-//
-// so every shipped addon gets an ApplicationSet even with an empty user
-// delta. That ApplicationSet is inert at round two — its matrix generator's
-// clusters arm selects zero clusters until one carries the matching
-// addons.sharko.dev/<name>: enabled label — so this is the locked design's
-// intentional behavior, not a bug. The expected count is read from
-// catalog.Load() rather than hardcoded, so this test tracks the shipped
-// catalog's real size instead of silently rotting as it grows.
-//
-// Design doc section 2.5's kill-Sharko promise ("Sharko itself, not this
-// chart, is the thing a user deletes") still holds regardless of this
-// count: every one of these ApplicationSets does nothing to a cluster
-// unless that cluster's own assignment file switches the addon on.
-func TestEngineChartRendersOneApplicationSetPerShippedAddon(t *testing.T) {
+// TestEngineChartRendersZeroApplicationSetsWithEmptyCatalog asserts a
+// totally fresh install — chart defaults only, no catalog.yaml passed at
+// all — renders ZERO addon ApplicationSets, plus the shared AppProject.
+// This is the "catalog = the approved list" model's day-zero promise
+// (.bmad/output/architecture/2026-07-31-catalog-approved-model.md decisions
+// 3 and 6): nothing runs in a fresh org's fleet until an addon is approved
+// into catalog.yaml. The engine chart carries no baked curated defaults any
+// more — values.yaml's own default is addons: {}, so chart-defaults-only is
+// exactly the empty-catalog case.
+func TestEngineChartRendersZeroApplicationSetsWithEmptyCatalog(t *testing.T) {
 	helmBin, err := exec.LookPath("helm")
 	if err != nil {
 		t.Skip("helm not installed; skipping engine render test (CI helm-validate job is the hard guard)")
 	}
 
-	cat, err := catalog.Load()
-	if err != nil {
-		t.Fatalf("loading catalog/addons.yaml: %v", err)
-	}
-	want := cat.Len()
-	if want == 0 {
-		t.Fatal("catalog/addons.yaml loaded zero entries — cannot assert a meaningful ApplicationSet count")
-	}
-
 	root := repoRoot(t)
 	chartDir := filepath.Join(root, "charts", "sharko-engine")
 
-	// Deliberately no --values at all: chart defaults now ship the
-	// generated curated.addons block (cmd/gen-engine-curated) and an empty
-	// spec.addons (values.yaml), so the merged catalog equals curated.addons.
+	// Deliberately no --values at all: chart defaults are repo/hostCluster/
+	// project placeholders plus addons: {} (values.yaml) — the same shape an
+	// org's real, empty catalog.yaml would pass.
 	cmd := exec.Command(helmBin, "template", "testengine", chartDir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -559,66 +475,16 @@ func TestEngineChartRendersOneApplicationSetPerShippedAddon(t *testing.T) {
 	}
 	rendered := string(out)
 
-	if got := strings.Count(rendered, "kind: ApplicationSet"); got != want {
-		t.Errorf("expected %d ApplicationSets (one per shipped curated addon, catalog/addons.yaml has %d entries), got %d.\n--- rendered head ---\n%s", want, want, got, truncate(rendered, 2000))
+	if got := strings.Count(rendered, "kind: ApplicationSet"); got != 0 {
+		t.Errorf("expected zero ApplicationSets with an empty catalog (chart defaults only), got %d.\n--- rendered ---\n%s", got, rendered)
 	}
 	if !strings.Contains(rendered, "kind: AppProject") {
-		t.Errorf("expected the shared AppProject to still render with an empty user delta.\n--- rendered ---\n%s", rendered)
+		t.Errorf("expected the shared AppProject to still render with an empty catalog.\n--- rendered ---\n%s", rendered)
 	}
 }
 
-// TestEngineChartCuratedNamespaceQuirkFlowsThroughWithoutOverride proves the
-// flagged gap this story closes: charts/sharko-engine/values.yaml's
-// curated.addons block (cmd/gen-engine-curated, generated from
-// catalog/addons.yaml) actually reaches the rendered Application when the
-// user's own delta doesn't repeat the field.
-//
-// sealed-secrets is a real "known quirk" pick, not a fabricated one:
-// catalog/addons.yaml pins its default_namespace to kube-system, not
-// "sealed-secrets" (the addon's own name) — the chart's namespace fallback
-// is `settings.namespace | default (addon.namespace | default name)`, so
-// without the curated default this would render "sealed-secrets", the
-// wrong namespace. A user who writes only
-// `sealed-secrets: {version: "..."}` in their own catalog/addons.yaml (no
-// namespace override, matching design doc section 2.3 — "for an addon
-// Sharko already ships, every field is optional") must still get
-// kube-system.
-func TestEngineChartCuratedNamespaceQuirkFlowsThroughWithoutOverride(t *testing.T) {
-	helmBin, err := exec.LookPath("helm")
-	if err != nil {
-		t.Skip("helm not installed; skipping engine render test (CI helm-validate job is the hard guard)")
-	}
-
-	root := repoRoot(t)
-	chartDir := filepath.Join(root, "charts", "sharko-engine")
-
-	// Only --set the user's delta (mimicking spec.addons from a real
-	// catalog/addons.yaml). repo/hostCluster/project and curated.addons all
-	// come from the chart's own real (generated) values.yaml — unlike
-	// renderEngineChart's fixture helper, which overrides curated.addons
-	// entirely via testdata/engine-values.yaml. sealed-secrets carries no
-	// namespace override here, so the rendered destination must come from
-	// the curated default alone.
-	cmd := exec.Command(helmBin, "template", "testengine", chartDir,
-		"--set", "spec.addons.sealed-secrets.version=2.17.4",
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("helm template failed: %v\n%s", err, out)
-	}
-	rendered := string(out)
-
-	if !strings.Contains(rendered, "name: 'sharko-sealed-secrets'") {
-		t.Fatalf("expected an ApplicationSet for sealed-secrets.\n--- rendered ---\n%s", truncate(rendered, 4000))
-	}
-	want := `namespace: '{{ dig "addons" "sealed-secrets" "settings" "namespace" "kube-system" (.spec | default dict) }}'`
-	if !strings.Contains(rendered, want) {
-		t.Errorf("sealed-secrets curated namespace default (kube-system, from catalog/addons.yaml's default_namespace) did not flow through the merge.\nwant substring: %s\n--- rendered ---\n%s", want, truncate(rendered, 4000))
-	}
-}
-
-// truncate keeps failure output readable when the full 45-addon render
-// would otherwise dump thousands of lines into a test failure message.
+// truncate keeps failure output readable when a full render would otherwise
+// dump thousands of lines into a test failure message.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s

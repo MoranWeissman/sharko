@@ -1,28 +1,29 @@
-# Fixture clusters/prod-eu.yaml — ClusterAddons, exactly as the worked
-# example in docs/design/2026-07-30-v4-data-file-format.md section 6 shows
-# it. cert-manager is pinned older than the fleet default with a webhook
-# ignore-diff quirk; metrics-server follows the catalog default.
+# Fixture clusters/prod-eu.yaml — ClusterAddons, flat (decision 9 of
+# .bmad/output/architecture/2026-07-31-catalog-approved-model.md — the
+# kustomize school: apiVersion + kind + top-level fields, no `spec:`
+# wrapper, no `metadata:` block; cluster identity is the file's own
+# basename, cross-checked against the in-file `cluster:` field). cert-manager
+# is pinned older than the fleet default with a webhook ignore-diff quirk;
+# metrics-server follows the catalog default.
 #
 # This file is not read by `helm template` (it is a git-files generator
 # input the real ArgoCD ApplicationSet controller reads at round two, per
 # design doc section 4.1) — it is fixture data proving the repo shape the
-# engine's `dig "addons" "<name>" "version" ... .spec` calls are written to
-# consume, and it is asserted directly for shape/content by the render test.
+# engine's `dig "addons" "<name>" "version" ... (. | default dict)` calls
+# are written to consume, and it is asserted directly for shape/content by
+# the render test.
 apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: prod-eu
-spec:
-  cluster: prod-eu
-  addons:
-    cert-manager:
-      enabled: true
-      version: "1.12.0"
-      settings:
-        ignoreDifferences:
-          - group: admissionregistration.k8s.io
-            kind: ValidatingWebhookConfiguration
-            jsonPointers:
-              - /webhooks/0/clientConfig/caBundle
-    metrics-server:
-      enabled: true
+cluster: prod-eu
+addons:
+  cert-manager:
+    enabled: true
+    version: "1.12.0"
+    settings:
+      ignoreDifferences:
+        - group: admissionregistration.k8s.io
+          kind: ValidatingWebhookConfiguration
+          jsonPointers:
+            - /webhooks/0/clientConfig/caBundle
+  metrics-server:
+    enabled: true

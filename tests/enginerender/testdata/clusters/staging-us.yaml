@@ -1,15 +1,11 @@
-# Fixture clusters/staging-us.yaml — ClusterAddons, exactly as the
-# worked example in docs/design/2026-07-30-v4-data-file-format.md section 6
-# shows it. Neither addon has a per-cluster override: both follow whatever
-# catalog/addons.yaml (the fleet-wide delta) says.
+# Fixture clusters/staging-us.yaml — ClusterAddons, flat (decision 9). Neither
+# addon has a per-cluster override: both follow whatever catalog.yaml (the
+# org's approved list) says.
 apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: staging-us
-spec:
-  cluster: staging-us
-  addons:
-    cert-manager:
-      enabled: true
-    metrics-server:
-      enabled: true
+cluster: staging-us
+addons:
+  cert-manager:
+    enabled: true
+  metrics-server:
+    enabled: true

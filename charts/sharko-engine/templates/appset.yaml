@@ -33,11 +33,14 @@ matrix-generator merge deep-merges nested maps, so that field ends up a
 hybrid of the assignment file's envelope name and the real cluster
 secret's labels/annotations. It is never a clean handoff to either side.
 The only cluster-identity fields safe to use here are `.name` and
-`.server`. Per-cluster settings and version pins come from `.spec` (the
-assignment file's own spec), never from metadata.
+`.server`. Per-cluster settings and version pins come from the assignment
+file's own top-level fields (clusters/<name>.yaml has no `spec:` wrapper —
+decision 9 of the 2026-07-31 catalog-approved-model design doc, the
+kustomize school: apiVersion + kind + top-level fields, no spec), never
+from metadata.
 */}}
 
-{{- $merged := include "sharko-engine.mergedAddons" . | fromYaml -}}
+{{- $merged := include "sharko-engine.catalogAddons" . | fromYaml -}}
 {{- $repoURL := .Values.repo.url -}}
 {{- $revision := .Values.repo.revision -}}
 {{- $hostClusterName := .Values.hostCluster.name | default "" -}}
@@ -140,15 +143,18 @@ spec:
         - repoURL: {{ $addon.repoURL }}
           chart: {{ $addon.chart }}
           # "No pin = follow the catalog" (design doc section 2.1): dig for
-          # a per-cluster pin in the assignment file's spec, falling back to
-          # the fleet-wide merged version baked in by Helm above. If neither
-          # exists this bakes an empty string and the Application fails to
-          # sync with a clear ArgoCD error rather than guessing a version.
-          # `.spec | default dict` guards a clusters/<cluster>.yaml file
-          # with no `spec:` key at all — without it, dig's own nil map type
-          # assertion crashes round two instead of falling back cleanly
-          # (review fix FIX-3, v4 Wave 1 R2).
-          targetRevision: '{{`{{ dig "addons" "`}}{{ $name }}{{`" "version" "`}}{{ $version }}{{`" (.spec | default dict) }}`}}'
+          # a per-cluster pin in the assignment file's own top-level fields,
+          # falling back to the fleet-wide merged version baked in by Helm
+          # above. If neither exists this bakes an empty string and the
+          # Application fails to sync with a clear ArgoCD error rather than
+          # guessing a version. `. | default dict` guards a
+          # clusters/<cluster>.yaml file that produced no fields at all
+          # (an empty file) — without it, dig's own nil map type assertion
+          # crashes round two instead of falling back cleanly (review fix
+          # FIX-3, v4 Wave 1 R2; updated for the flat clusters/<name>.yaml
+          # shape — no more `spec:` wrapper to dig into, decision 9 of the
+          # 2026-07-31 catalog-approved-model design doc).
+          targetRevision: '{{`{{ dig "addons" "`}}{{ $name }}{{`" "version" "`}}{{ $version }}{{`" (. | default dict) }}`}}'
           helm:
             ignoreMissingValueFiles: true
             valueFiles:
@@ -225,10 +231,11 @@ spec:
         # namespace is a string field, so it can be templated directly here
         # instead of needing templatePatch (design doc section 4.5) — dig
         # for a per-cluster override, falling back to the fleet-wide merged
-        # namespace baked in by Helm above. `.spec | default dict` guards a
-        # clusters/<cluster>.yaml file with no `spec:` key at all (review
-        # fix FIX-3, v4 Wave 1 R2 — see the targetRevision comment above).
-        namespace: '{{`{{ dig "addons" "`}}{{ $name }}{{`" "settings" "namespace" "`}}{{ $namespace }}{{`" (.spec | default dict) }}`}}'
+        # namespace baked in by Helm above. `. | default dict` guards a
+        # clusters/<cluster>.yaml file that produced no fields at all
+        # (review fix FIX-3, v4 Wave 1 R2 — see the targetRevision comment
+        # above).
+        namespace: '{{`{{ dig "addons" "`}}{{ $name }}{{`" "settings" "namespace" "`}}{{ $namespace }}{{`" (. | default dict) }}`}}'
       syncPolicy:
         automated:
           prune: {{ $prune }}
@@ -257,15 +264,17 @@ spec:
   # so no index+default fallback is needed here.
   templatePatch: |
     spec:
-      # `(.spec | default dict)` guards a clusters/<cluster>.yaml file with
-      # no `spec:` key at all; the trailing `| default dict` guards an
+      # `(. | default dict)` guards a clusters/<cluster>.yaml file that
+      # produced no fields at all; the trailing `| default dict` guards an
       # addon's `settings:` key being present but explicitly YAML `null`
       # (dig finds the key and returns the literal nil it holds, it does
       # NOT fall back to its own "dict" default in that case — that default
       # only fires when the key is *missing*). Without both guards, $s can
       # be a nil map and every hasKey/dot-access on it below panics at
-      # round two (review fix FIX-3, v4 Wave 1 R2).
-      {{`{{- $s := dig "addons" "`}}{{ $name }}{{`" "settings" dict (.spec | default dict) | default dict }}`}}
+      # round two (review fix FIX-3, v4 Wave 1 R2; updated for the flat
+      # clusters/<name>.yaml shape — no more `spec:` wrapper, decision 9 of
+      # the 2026-07-31 catalog-approved-model design doc).
+      {{`{{- $s := dig "addons" "`}}{{ $name }}{{`" "settings" dict (. | default dict) | default dict }}`}}
       syncPolicy:
         automated:
           prune: {{`{{ dig "prune" `}}{{ $prune }}{{` $s }}`}}
