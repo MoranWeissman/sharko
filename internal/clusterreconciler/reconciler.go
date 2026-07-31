@@ -225,6 +225,13 @@ type Deps struct {
 	// nil means "no settings store wired" — defaults to false (drift
 	// detection only, no automatic re-apply). Wired from
 	// settings.Store.IsManagedClusterSelfHealEnabled in cmd/sharko/serve.go.
+	//
+	// It does NOT gate the v4 addons.sharko.dev/ labels. Those are derived
+	// from clusters/<name>.yaml and are the only way an enabled addon ever
+	// reaches a cluster, so applying them is ordinary convergence and runs
+	// on every tick regardless of this setting — see reconcileDiff and
+	// applyV4AddonLabels. This setting still governs everything else,
+	// including every v3 repo, exactly as it did before.
 	SelfHealFn func(ctx context.Context) bool
 }
 
@@ -465,7 +472,7 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 	// desired-label set this tick would, from the SAME read path, instead
 	// of a second git-reading path that could drift out of sync with this
 	// one over time.
-	spec, v4Labels, fileNonEmpty, err := r.readDesiredState(ctx, gp)
+	spec, v4, fileNonEmpty, err := r.readDesiredState(ctx, gp)
 	if err != nil {
 		var rdErr *desiredStateReadError
 		if !errors.As(err, &rdErr) {
@@ -526,12 +533,12 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 	// clusters desired", same as before this was extracted. fileNonEmpty
 	// (V2-cleanup-60.2 orphan-sweep sanity guard) is false in that case too.
 	if spec == nil {
-		log.Info("[clusterreconciler] neither managed-clusters.yaml nor managed-clusters.yaml found in git — treating as empty desired state",
+		log.Info("[clusterreconciler] no managed-clusters file found in git at either the configured path or the v4 path — treating as empty desired state",
 			"v3_path", r.managedClustersPath, "v4_path", V4ManagedClustersPath, "branch", r.branch,
 		)
 	}
 
-	r.reconcileDiff(ctx, spec, fileNonEmpty, v4Labels, &stats)
+	r.reconcileDiff(ctx, spec, fileNonEmpty, v4, &stats)
 	r.emitSummaryAudit(ctx, stats)
 }
 
@@ -569,7 +576,7 @@ func (e *desiredStateReadError) Unwrap() error { return e.Err }
 // fresh repo before the first cluster registration) — callers should treat
 // that as "zero clusters desired". A non-nil error is always a
 // *desiredStateReadError.
-func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitProvider) (spec *models.ManagedClustersSpec, v4Labels map[string]map[string]string, fileNonEmpty bool, err error) {
+func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitProvider) (spec *models.ManagedClustersSpec, v4 *v4Assignments, fileNonEmpty bool, err error) {
 	log := logging.LoggerFromContext(ctx)
 
 	// Step 1: read the managed-clusters file from git. Tries the configured
@@ -590,11 +597,11 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 	}
 	if readErr != nil {
 		// ErrFileNotFound is not exceptional — a freshly-bootstrapped repo
-		// has zero clusters in managed-clusters.yaml (or managed-clusters.yaml)
-		// until the first register-cluster PR merges. Treat it as "empty
-		// desired state" rather than an error — the caller diffs against
-		// argocd correctly either way (no creates, only the deletes that
-		// would have happened anyway).
+		// has zero clusters in its managed-clusters file (whichever of the
+		// two paths it uses) until the first register-cluster PR merges.
+		// Treat it as "empty desired state" rather than an error — the
+		// caller diffs against argocd correctly either way (no creates,
+		// only the deletes that would have happened anyway).
 		if errors.Is(readErr, gitprovider.ErrFileNotFound) {
 			return nil, nil, false, nil
 		}
@@ -617,14 +624,14 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 	// it can never use, and so the v3 desired-label computation stays
 	// byte-identical.
 	if readPath == V4ManagedClustersPath {
-		v4Labels = readV4AddonLabels(ctx, gp, r.branch)
+		v4 = readV4AddonLabels(ctx, gp, r.branch)
 	}
 
 	// fileNonEmpty feeds the orphan-sweep sanity guard (V2-cleanup-60.2):
 	// a file that EXISTS with content but parses to zero clusters is the
 	// signature of a version/format mismatch, not of an intentionally
 	// emptied fleet — see orphanSweepHeld.
-	return &parsedSpec, v4Labels, len(bytes.TrimSpace(body)) > 0, nil
+	return &parsedSpec, v4, len(bytes.TrimSpace(body)) > 0, nil
 }
 
 // orphanSweepHeld is the orphan-sweep sanity guard (H2 forward guard,
@@ -663,12 +670,13 @@ func orphanSweepHeld(desiredCount int, fileNonEmpty bool, observedManaged int) b
 // non-whitespace content — one of the three inputs to the orphan-sweep
 // sanity guard (orphanSweepHeld, V2-cleanup-60.2).
 //
-// v4Labels is the per-cluster addon-enablement label set derived from
-// clusters/*.yaml on a v4 repo (readV4AddonLabels). It is nil on a v3 repo,
-// and every use of it below is a no-op when nil — the v3 path computes its
-// desired labels exactly as it always did, from the connection record's own
-// labels block.
-func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClustersSpec, fileNonEmpty bool, v4Labels map[string]map[string]string, stats *reconcileStats) {
+// v4 is the per-cluster addon-enablement label set derived from
+// clusters/*.yaml on a v4 repo (readV4AddonLabels), plus which clusters
+// this tick could not read. It is nil on a v3 repo, and every use of it
+// below is a no-op when nil — the v3 path computes its desired labels
+// exactly as it always did, from the connection record's own labels block,
+// and keeps every one of its old write rules.
+func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClustersSpec, fileNonEmpty bool, v4 *v4Assignments, stats *reconcileStats) {
 	// Build the desired set (in-git names).
 	desired := make(map[string]models.ManagedClusterEntry)
 	if spec != nil {
@@ -744,7 +752,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 		// OutOfSync state + the diff to the UI.
 		msg := "cluster Secret present"
 		var drift *LabelDrift
-		desiredLabels := desiredAddonLabels(desired[name], v4Labels[name])
+		desiredLabels := desiredAddonLabels(desired[name], v4.labelsFor(name))
 		if secret := existing[name]; secret != nil {
 			// v4 adds one extra question to "are we in sync?". labelsMatch
 			// is a SUBSET check, which is the right question for v3 (off is
@@ -755,7 +763,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 			// when v4 labels were actually derived, so v3's in-sync
 			// decision is unchanged.
 			inSync := labelsMatch(desiredLabels, secret.Labels)
-			if inSync && v4Labels != nil && hasStaleV4AddonLabels(desiredLabels, secret.Labels) {
+			if inSync && v4 != nil && hasStaleV4AddonLabels(desiredLabels, secret.Labels) {
 				inSync = false
 			}
 			if inSync {
@@ -766,6 +774,39 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 				drift = computeLabelDrift(desiredLabels, secret.Labels, annotationsOf(secret))
 				// msg stays "cluster Secret present" — not claiming "verified"
 				// when they don't match (honest reporting, same as before G1)
+
+				// v4: stamping the addons.sharko.dev/ labels derived from
+				// clusters/<name>.yaml is NORMAL CONVERGENCE, not self-heal.
+				// Git is the source of truth and this reconciler is the only
+				// thing that turns an assignment file into the label the
+				// engine's ApplicationSet generator selects on — so if it
+				// waits for an opt-in setting (default OFF), enabling an
+				// addon writes a file, merges a PR, and deploys absolutely
+				// nothing. Same in reverse for disable. So on a v4 repo, a
+				// disagreement in the addons.sharko.dev/ keys is applied on
+				// this tick, every tick, no setting consulted.
+				//
+				// Everything else about drift is untouched: a v3 repo has no
+				// v4 assignments at all (v4 == nil), and even on v4 a drift
+				// that does not involve an addons.sharko.dev/ key falls
+				// through to the opt-in setting below exactly as before.
+				if v4 != nil && driftTouchesV4AddonKeys(drift) {
+					if v4.desiredKnown(name) {
+						r.applyV4AddonLabels(ctx, name, desiredLabels, drift, stats)
+						// applyV4AddonLabels records the outcome itself.
+						continue
+					}
+					// Sharko could not read this cluster's assignment file
+					// this tick, so it does not know which addons should be
+					// on. Converging now would undeploy everything over a
+					// git hiccup or a YAML typo. Report the drift, write
+					// nothing.
+					logging.LoggerFromContext(ctx).Warn(
+						"[clusterreconciler] leaving this cluster's addon labels alone — Sharko could not read its addon assignment file this tick, so it does not know which addons should be running",
+						"cluster", name, "namespace", r.namespace,
+						"path", v4ClusterFilePath(name), "branch", r.branch,
+					)
+				}
 
 				// V3 G3: opt-in self-heal for managed clusters. When the
 				// managed_cluster_self_heal setting is ON, re-apply git-desired
@@ -853,7 +894,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 	// SOLE writer of managed-cluster addon labels; register-time bootstrap
 	// (orchestrator Ensure) is a separate, unaffected path.
 	for _, entry := range toCreate {
-		r.createOne(ctx, entry, v4Labels[entry.Name], stats)
+		r.createOne(ctx, entry, v4.labelsFor(entry.Name), stats)
 	}
 
 	// Orphan-sweep sanity guard (H2 forward guard, V2-cleanup-60.2): when
@@ -899,8 +940,25 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 	// Label-only sync for self-managed connections (V2-cleanup-57.2). Runs
 	// every tick so addon toggles converge onto the user's Secret with the
 	// same latency Sharko-managed clusters get.
+	//
+	// The one thing that holds it back is the same one that holds back the
+	// managed path above: on a v4 repo whose assignment file for this
+	// cluster could not be read this tick, Sharko does not know which addons
+	// should be on, and this write prunes stale addons.sharko.dev/ keys — so
+	// running it would undeploy the cluster's addons over an unreadable
+	// file. v3 repos have no v4 assignments (v4 == nil) and are unaffected.
 	for _, entry := range selfManaged {
-		r.syncSelfManaged(ctx, entry, v4Labels[entry.Name], stats)
+		if v4 != nil && !v4.desiredKnown(entry.Name) {
+			logging.LoggerFromContext(ctx).Warn(
+				"[clusterreconciler] leaving this self-managed cluster's addon labels alone — Sharko could not read its addon assignment file this tick",
+				"cluster", entry.Name, "namespace", r.namespace,
+				"path", v4ClusterFilePath(entry.Name), "branch", r.branch,
+			)
+			r.recordReconcile(entry.Name, OutcomeSkipped,
+				"Sharko couldn't read this cluster's addon assignment file in git this tick, so it left the addon labels on your ArgoCD cluster secret exactly as they are.", nil)
+			continue
+		}
+		r.syncSelfManaged(ctx, entry, v4.labelsFor(entry.Name), stats)
 	}
 
 	// Convert pending → managed: any Secret that is now in BOTH git and
@@ -1199,11 +1257,22 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 }
 
 // selfHealManagedCluster converges the git-desired addon labels onto a
-// drifted Sharko-MANAGED cluster Secret (V3 GF1 — opt-in self-heal, default
-// OFF). Called from the drift-detection section when
-// managed_cluster_self_heal is ON, and ONLY for Sharko-owned Secrets
-// (self-managed / user-owned connections take the syncSelfManaged branch;
-// see reconcileDiff's UserManagedConnection partition).
+// drifted Sharko-MANAGED cluster Secret. It is the single write path for
+// those labels, and three callers use it — all of them ONLY for
+// Sharko-owned Secrets (self-managed / user-owned connections take the
+// syncSelfManaged branch; see reconcileDiff's UserManagedConnection
+// partition):
+//
+//   - applyV4AddonLabels, on every tick, whenever a v4 repo's
+//     addons.sharko.dev/ labels disagree with clusters/<name>.yaml. No
+//     setting gates that — it is how enable and disable take effect.
+//   - the drift-detection section, for any OTHER label drift, and only
+//     when managed_cluster_self_heal is ON (V3 GF1 — opt-in, default OFF).
+//     This is the only rule a v3 repo ever meets.
+//   - ResyncClusterLabels, the one-time on-demand "Re-sync now".
+//
+// The write rules below are identical for all three; only the decision to
+// call it differs.
 //
 // It uses argosecrets.SyncManagedClusterLabels — NOT SyncLabelsOnly. That
 // distinction is the whole fix: SyncLabelsOnly is the guest primitive for
@@ -1321,10 +1390,44 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 	r.recordReconcile(name, OutcomeSucceeded, "drift corrected — git-desired addon labels converged", nil)
 }
 
+// applyV4AddonLabels stamps the addon labels derived from
+// clusters/<cluster>.yaml onto a Sharko-owned ArgoCD cluster Secret. On a v4
+// repo this is what "enable an addon" and "disable an addon" actually mean:
+// the PR changed the assignment file, and this is the moment the change
+// reaches the label the engine's ApplicationSet generator selects on. It
+// runs on the normal tick with no setting to switch it on.
+//
+// It writes through selfHealManagedCluster on purpose rather than issuing
+// its own Secret Update: that is the one converge path for Sharko-owned
+// cluster Secrets, and it carries every protection this write needs —
+// takeover-preserved label keys are never touched, non-addon ("/"-qualified
+// and not addons.sharko.dev/) keys are never touched, Data / StringData /
+// annotations are never touched, the ownership label is preserved and
+// re-applied for a managed Secret, an adopted Secret is treated as a guest,
+// and the result is verified by re-reading the Secret before anything is
+// reported as converged. Only the caller decides WHEN; the write rules are
+// the same no matter who calls.
+//
+// The Info line is deliberate: this is the step where a merged PR turns into
+// a running addon, so it belongs in the log at a level an operator reads.
+func (r *Reconciler) applyV4AddonLabels(ctx context.Context, name string, desiredLabels map[string]string, drift *LabelDrift, stats *reconcileStats) {
+	var added, removed, changed []string
+	if drift != nil {
+		added, removed, changed = drift.Added, drift.Removed, drift.Changed
+	}
+	logging.LoggerFromContext(ctx).Info(
+		"[clusterreconciler] applying addon labels from the cluster's assignment file — this is the step that makes enable and disable take effect",
+		"cluster", name, "namespace", r.namespace,
+		"path", v4ClusterFilePath(name), "branch", r.branch,
+		"adding", added, "removing", removed, "changing", changed,
+	)
+	r.selfHealManagedCluster(ctx, name, desiredLabels, stats)
+}
+
 // ErrClusterNotManaged is returned by ResyncClusterLabels when the named
-// cluster has no entry in the git-managed cluster list (managed-clusters.yaml
-// / managed-clusters.yaml) — e.g. a discovered-but-not-adopted ArgoCD
-// cluster. There is no git-desired label set to resync against.
+// cluster has no entry in the git-managed cluster list (whichever of the two
+// managed-clusters paths this repo uses) — e.g. a discovered-but-not-adopted
+// ArgoCD cluster. There is no git-desired label set to resync against.
 var ErrClusterNotManaged = errors.New("cluster has no entry in the git-managed cluster list — nothing to resync")
 
 // ResyncResult is the outcome of a one-time, single-cluster label resync
@@ -1374,7 +1477,7 @@ func (r *Reconciler) ResyncClusterLabels(ctx context.Context, name string) (Resy
 		return ResyncResult{}, errors.New("no ArgoClient (k8s clientset) configured on this reconciler")
 	}
 
-	spec, v4Labels, _, err := r.readDesiredState(ctx, gp)
+	spec, v4, _, err := r.readDesiredState(ctx, gp)
 	if err != nil {
 		return ResyncResult{}, fmt.Errorf("reading desired cluster state from git: %w", err)
 	}
@@ -1393,7 +1496,14 @@ func (r *Reconciler) ResyncClusterLabels(ctx context.Context, name string) (Resy
 		return ResyncResult{}, ErrClusterNotManaged
 	}
 
-	desired := desiredAddonLabels(entry, v4Labels[name])
+	// A v4 repo whose assignment file for this cluster could not be read
+	// this call is refused outright rather than "resynced" to a set Sharko
+	// does not actually know — the same rule the periodic tick follows.
+	if v4 != nil && !v4.desiredKnown(name) {
+		return ResyncResult{}, fmt.Errorf("couldn't read this cluster's addon assignment file (%s) in git, so Sharko doesn't know which addons should be on — fix or restore that file and try again", v4ClusterFilePath(name))
+	}
+
+	desired := desiredAddonLabels(entry, v4.labelsFor(name))
 
 	// Snapshot the live Secret's labels BEFORE the write, purely to report
 	// an honest "what this resync applied" diff — the write itself is done
@@ -1410,7 +1520,7 @@ func (r *Reconciler) ResyncClusterLabels(ctx context.Context, name string) (Resy
 
 	stats := reconcileStats{}
 	if entry.UserManagedConnection() {
-		r.syncSelfManaged(ctx, entry, v4Labels[name], &stats)
+		r.syncSelfManaged(ctx, entry, v4.labelsFor(name), &stats)
 	} else {
 		r.selfHealManagedCluster(ctx, name, desired, &stats)
 	}

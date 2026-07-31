@@ -105,10 +105,12 @@ func TestPollOnce_V4Repo_DerivesAddonLabelsPerCluster(t *testing.T) {
 // reconcile again. The stale label must be gone, otherwise the addon keeps
 // deploying forever after somebody disabled it.
 //
-// Self-heal is ON here because that is the setting that lets the reconciler
-// re-write labels on an ALREADY-EXISTING managed Secret (V3 G3); with it
-// off the reconciler only reports drift, which is the documented default
-// and is not what this test is about.
+// Self-heal is ON here only because this test was written when that setting
+// was the sole way to re-write labels on an ALREADY-EXISTING managed Secret.
+// It no longer is: a v4 addon label converges on the normal tick with the
+// setting OFF (see v4_enable_converges_test.go, which is the default-install
+// version of this walk). Leaving it ON here still proves the lifecycle and
+// proves the setting did not break it.
 func TestPollOnce_V4Repo_DisableRemovesLabelOnNextReconcile(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

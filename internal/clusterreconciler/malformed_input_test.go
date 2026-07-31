@@ -64,17 +64,26 @@ addons:
 				"clusters/broken-cluster.yaml": badBody,
 			}}
 
-			var labels map[string]map[string]string
+			var got *v4Assignments
 			malformed.AssertNoPanic(t, name, func() {
-				labels = readV4AddonLabels(context.Background(), gp, "main")
+				got = readV4AddonLabels(context.Background(), gp, "main")
 			})
 
-			if _, ok := labels["broken-cluster"]; ok {
-				t.Errorf("readV4AddonLabels(%s): expected broken-cluster to be skipped (no entry), got %v", name, labels["broken-cluster"])
+			if _, ok := got.labels["broken-cluster"]; ok {
+				t.Errorf("readV4AddonLabels(%s): expected broken-cluster to be skipped (no entry), got %v", name, got.labels["broken-cluster"])
 			}
-			goodLabels, ok := labels["prod-eu"]
+			// ...and skipped is not the same as "runs no addons": the broken
+			// cluster's desired set is UNKNOWN this tick, so the write paths
+			// must leave its live labels alone instead of pruning them.
+			if got.desiredKnown("broken-cluster") {
+				t.Errorf("readV4AddonLabels(%s): broken-cluster's unreadable file was reported as a known desired state — its live addon labels would be wiped", name)
+			}
+			if !got.desiredKnown("prod-eu") {
+				t.Errorf("readV4AddonLabels(%s): prod-eu read fine but was held back by its broken sibling", name)
+			}
+			goodLabels, ok := got.labels["prod-eu"]
 			if !ok {
-				t.Fatalf("readV4AddonLabels(%s): expected prod-eu to still converge despite the sibling malformed file, got no entry at all (labels=%v)", name, labels)
+				t.Fatalf("readV4AddonLabels(%s): expected prod-eu to still converge despite the sibling malformed file, got no entry at all (labels=%v)", name, got.labels)
 			}
 			const wantKey = "addons.sharko.dev/cert-manager"
 			if goodLabels[wantKey] != "enabled" {
@@ -95,11 +104,16 @@ func TestMalformedInput_ReadV4AddonLabels_AllFilesMalformed(t *testing.T) {
 		"clusters/c.yaml": []byte("not: enveloped\n"),
 	}}
 
-	var labels map[string]map[string]string
+	var got *v4Assignments
 	malformed.AssertNoPanic(t, "all_malformed", func() {
-		labels = readV4AddonLabels(context.Background(), gp, "main")
+		got = readV4AddonLabels(context.Background(), gp, "main")
 	})
-	if len(labels) != 0 {
-		t.Errorf("readV4AddonLabels(all malformed): expected an empty map, got %v", labels)
+	if len(got.labels) != 0 {
+		t.Errorf("readV4AddonLabels(all malformed): expected an empty map, got %v", got.labels)
+	}
+	for _, cluster := range []string{"a", "b", "c"} {
+		if got.desiredKnown(cluster) {
+			t.Errorf("readV4AddonLabels(all malformed): %q was reported as a known desired state — its live addon labels would be wiped", cluster)
+		}
 	}
 }

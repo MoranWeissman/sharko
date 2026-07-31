@@ -106,7 +106,7 @@ func TestMigration_AddonLabelsIdenticalEitherSide(t *testing.T) {
 	for _, change := range append(append([]orchestrator.MigrationFileChange{}, plan.Add...), plan.Convert...) {
 		migrated.files[change.Path] = []byte(change.Content)
 	}
-	after := readV4AddonLabels(ctx, migrated, "main")
+	after := readV4AddonLabels(ctx, migrated, "main").labels
 
 	// What v3 deployed: the ArgoCD ApplicationSet selector matched a bare
 	// `<addon>: enabled` label, and one ApplicationSet existed per CATALOG

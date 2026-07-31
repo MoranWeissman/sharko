@@ -22,6 +22,62 @@ import (
 // already lives with.
 const v4ClustersDir = "clusters"
 
+// v4ClusterFilePath is the in-repo path of one cluster's assignment file.
+// The name is the format's convention (design doc §2.1) and the engine
+// chart depends on it, so deriving it from the cluster name is safe.
+func v4ClusterFilePath(cluster string) string {
+	return path.Join(v4ClustersDir, cluster+".yaml")
+}
+
+// v4Assignments is everything one reconcile tick managed to learn from a v4
+// repo's clusters/ folder. It is deliberately more than a plain map: the
+// reconciler now WRITES these labels on a normal tick (no opt-in setting
+// gates it any more), so "I read zero addons for this cluster" and "I could
+// not read this cluster's file at all" must not look the same. The first
+// means the cluster runs nothing and its stale labels should go; the second
+// means Sharko does not know, and touching the live labels would silently
+// undeploy the cluster's addons over a git hiccup or a YAML typo.
+//
+// A nil *v4Assignments means "not a v4 repo" — every method is nil-safe and
+// the v3 path never allocates one.
+type v4Assignments struct {
+	// labels maps cluster name -> the addon labels derived from that
+	// cluster's clusters/<name>.yaml. Only enabled addons get a key.
+	labels map[string]map[string]string
+
+	// unknown holds the clusters whose assignment file was listed but could
+	// not be read, parsed, or did not name a cluster. Their desired addon
+	// set is UNKNOWN this tick, which is not the same as empty.
+	unknown map[string]struct{}
+
+	// listFailed is true when the clusters/ listing itself failed for a
+	// reason other than "the folder does not exist" — no cluster's desired
+	// addon set is known this tick.
+	listFailed bool
+}
+
+// labelsFor returns the addon labels derived for one cluster, or nil when
+// the cluster has no assignment file (which means "runs no addons"). Safe on
+// a nil receiver — that is the v3 path, where there is nothing to derive.
+func (a *v4Assignments) labelsFor(cluster string) map[string]string {
+	if a == nil {
+		return nil
+	}
+	return a.labels[cluster]
+}
+
+// desiredKnown reports whether this tick actually knows which addons the
+// named cluster should be running. False means Sharko must leave the live
+// addon labels alone rather than converge them to a set it could not read.
+// A nil receiver (v3 repo) is false — there is no v4 desired set at all.
+func (a *v4Assignments) desiredKnown(cluster string) bool {
+	if a == nil || a.listFailed {
+		return false
+	}
+	_, bad := a.unknown[cluster]
+	return !bad
+}
+
 // readV4AddonLabels builds the desired addon-enablement labels for every
 // cluster on a v4 repo, straight from clusters/*.yaml.
 //
@@ -44,19 +100,24 @@ const v4ClustersDir = "clusters"
 //
 // Failure stance matches the rest of pollOnce's read step: a missing
 // clusters/ directory (a v4 repo with no clusters registered yet) is not an
-// error, it is an empty map. A single unreadable or unparseable assignment
+// error, it is an empty set. A single unreadable or unparseable assignment
 // file is logged and skipped rather than aborting the whole tick — the
-// other clusters still converge, and the affected cluster keeps whatever
-// labels it already has rather than having them all wiped by a
-// "successfully read zero addons" lie.
-func readV4AddonLabels(ctx context.Context, gp gitprovider.GitProvider, branch string) map[string]map[string]string {
+// other clusters still converge. The affected cluster is recorded in
+// `unknown` so the write paths leave its live labels alone instead of
+// wiping them on a "successfully read zero addons" lie; the same goes,
+// fleet-wide, for a clusters/ listing that failed outright.
+func readV4AddonLabels(ctx context.Context, gp gitprovider.GitProvider, branch string) *v4Assignments {
 	log := logging.LoggerFromContext(ctx)
-	out := make(map[string]map[string]string)
+	out := &v4Assignments{
+		labels:  make(map[string]map[string]string),
+		unknown: make(map[string]struct{}),
+	}
 
 	entries, err := gp.ListDirectory(ctx, v4ClustersDir, branch)
 	if err != nil {
 		if !errors.Is(err, gitprovider.ErrFileNotFound) {
-			log.Warn("[clusterreconciler] could not list the v4 clusters/ folder — no addon labels derived this tick",
+			out.listFailed = true
+			log.Warn("[clusterreconciler] could not list the v4 clusters/ folder — no addon labels derived this tick, and none will be changed",
 				"dir", v4ClustersDir, "branch", branch, "error", err)
 		}
 		return out
@@ -67,23 +128,30 @@ func readV4AddonLabels(ctx context.Context, gp gitprovider.GitProvider, branch s
 			continue // .gitkeep and any non-YAML entry
 		}
 		filePath := path.Join(v4ClustersDir, name)
+		// The file name is the cluster name by the format's convention, so
+		// a file we could not open still tells us WHICH cluster to leave
+		// alone this tick.
+		stem := strings.TrimSuffix(name, ".yaml")
 		body, readErr := gp.GetFileContent(ctx, filePath, branch)
 		if readErr != nil {
-			log.Warn("[clusterreconciler] could not read a v4 cluster assignment file — skipping it, other clusters still converge",
+			out.unknown[stem] = struct{}{}
+			log.Warn("[clusterreconciler] could not read a v4 cluster assignment file — leaving that cluster's addon labels alone, other clusters still converge",
 				"path", filePath, "branch", branch, "error", readErr)
 			continue
 		}
 		spec, parseErr := models.LoadClusterAddons(body)
 		if parseErr != nil {
-			log.Warn("[clusterreconciler] a v4 cluster assignment file was rejected — skipping it, other clusters still converge",
+			out.unknown[stem] = struct{}{}
+			log.Warn("[clusterreconciler] a v4 cluster assignment file was rejected — leaving that cluster's addon labels alone, other clusters still converge",
 				"path", filePath, "error", parseErr)
 			continue
 		}
 		if spec.Cluster == "" {
-			log.Warn("[clusterreconciler] a v4 cluster assignment file names no cluster — skipping it", "path", filePath)
+			out.unknown[stem] = struct{}{}
+			log.Warn("[clusterreconciler] a v4 cluster assignment file names no cluster — leaving that cluster's addon labels alone", "path", filePath)
 			continue
 		}
-		out[spec.Cluster] = v4LabelsFor(spec)
+		out.labels[spec.Cluster] = v4LabelsFor(spec)
 	}
 	return out
 }
@@ -153,6 +221,30 @@ func hasStaleV4AddonLabels(desired, have map[string]string) bool {
 		}
 		if _, want := desired[k]; !want {
 			return true
+		}
+	}
+	return false
+}
+
+// driftTouchesV4AddonKeys reports whether a detected label drift involves at
+// least one addons.sharko.dev/ key — added, removed, or with a changed
+// value. That is the exact question "does this cluster's ArgoCD Secret
+// disagree with clusters/<name>.yaml about which addons run here?", and it
+// is what tells the reconciler to converge the labels on this tick instead
+// of only reporting the drift.
+//
+// Everything else (a v3-style bare key, a stray key somebody added by hand)
+// stays under the opt-in managed-cluster self-heal setting, exactly as
+// before — this predicate is the whole boundary between the two.
+func driftTouchesV4AddonKeys(drift *LabelDrift) bool {
+	if drift == nil {
+		return false
+	}
+	for _, keys := range [][]string{drift.Added, drift.Removed, drift.Changed} {
+		for _, k := range keys {
+			if models.IsV4AddonLabelKey(k) {
+				return true
+			}
 		}
 	}
 	return false
