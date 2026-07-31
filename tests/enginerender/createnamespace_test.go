@@ -27,13 +27,12 @@ func TestEngineChartCreateNamespaceRebuildStripsFleetWideLiteral(t *testing.T) {
 	// CreateNamespace=true" shape that used to defeat a per-cluster
 	// createNamespace: false override.
 	extra := `
-spec:
-  addons:
-    cert-manager:
-      settings:
-        syncOptions:
-          - CreateNamespace=true
-          - ServerSideApply=true
+addons:
+  cert-manager:
+    settings:
+      syncOptions:
+        - CreateNamespace=true
+        - ServerSideApply=true
 `
 	rendered := renderEngineChartWithExtra(t, extra)
 	doc := extractApplicationSetDoc(t, rendered, "sharko-cert-manager")

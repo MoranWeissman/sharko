@@ -1,23 +1,27 @@
 # -----------------------------------------------------------------------------
 # sharko-engine — chart values
 #
-# See docs/design/2026-07-30-v4-data-file-format.md for the full contract.
-# This file only carries what the chart needs to render: where the user's
-# GitOps repo is, the shared AppProject name, and the shipped catalog
-# defaults. Everything else — which addons are on, per-cluster pins, and
-# settings — comes from the user's own repo, read at render time.
+# See docs/design/2026-07-30-v4-data-file-format.md for the render mechanics
+# and .bmad/output/architecture/2026-07-31-catalog-approved-model.md decision
+# 6 ("catalog = the approved list") for why this file carries no shipped
+# addon data of its own: the engine reads catalog.yaml + clusters/ + values/
+# from the user's own repo, nothing else. This file only carries what the
+# chart needs to render: where the user's GitOps repo is and the shared
+# AppProject name. Everything else — which addons even exist, which clusters
+# run them, and their settings — comes from the user's own repo, read at
+# render time.
 # -----------------------------------------------------------------------------
 
 # repo points the engine at the user's own GitOps repo: the repo that holds
-# clusters/, catalog/addons.yaml and values/. In production this is set via
-# `helm.parameters` on the engine pin (engine/application.yaml) — see design
+# clusters/, catalog.yaml and values/. In production this is set via
+# `helm.parameters` on the engine pin (engine.yaml) — see design
 # doc section 2.5 — never hand-edited here. The values below are placeholders
 # so `helm lint` / `helm template` work standalone, against this chart alone.
 repo:
   # url is the git remote both generator arms read from: the git-files arm
   # (clusters/<cluster>.yaml) and the `ref: values` source (values/**).
   url: https://github.com/example-org/fleet-gitops.git
-  # revision is the branch/tag clusters/, catalog/, and values/ are read
+  # revision is the branch/tag clusters/, catalog.yaml, and values/ are read
   # from. Almost always "main".
   revision: main
 
@@ -39,213 +43,24 @@ hostCluster:
 project:
   name: sharko-addons
 
-# curated.addons is the shipped catalog: the addons Sharko knows about out of
-# the box, keyed by addon name, in the same shape as a catalog/addons.yaml
-# entry (design doc section 2.3) minus the envelope. Per decision D7, no
-# entry here carries a `version` — a version baked into a signed chart goes
-# stale, so Sharko writes the running version into the USER's own
-# catalog/addons.yaml the first time an addon is switched on, never in here.
+# addons is where the org's catalog.yaml lands when the engine pin passes it
+# as the chart's one enveloped Helm values file (design doc section 2.5 /
+# decision D6 — exactly one enveloped file, because every enveloped file's
+# payload lives at the top level under the kustomize-school header, and two
+# would collide). catalog.yaml entries are FULL entries (repoURL, chart,
+# version, namespace, settings, ...) — the org's approved list, never a delta
+# against a shipped default (2026-07-31-catalog-approved-model.md decision
+# 1). This chart carries no baked/curated addon data any more (decision 6):
+# the shipped set that used to live here now lives only on the Sharko
+# server, feeding the Marketplace — it never reaches this chart. Empty by
+# default: a repo with an empty (or missing) catalog.yaml renders zero
+# ApplicationSets, which is correct — nothing runs in the org until an addon
+# is approved into the catalog (the day-zero promise, decision 3), and
+# Sharko itself, not this chart, is the thing a user deletes to kill Sharko
+# (design doc section 2.5).
 #
-# GENERATED — do not hand-edit the addons: block below. It is regenerated
-# from the monorepo's own catalog/addons.yaml (the single source of truth,
-# design doc section 4.7) by `go run ./cmd/gen-engine-curated` (or `make
-# generate-engine-curated`). CI's "Engine Curated Up To Date" job re-runs the
-# generator and fails the build on any diff — the same shape as
-# schemas-up-to-date / engine-version-up-to-date. `helm package
-# charts/sharko-engine` bakes in this file verbatim, which is why the
-# generated data lives here rather than in a sibling values file that
-# packaging would never pick up.
-curated:
-  # gen-engine-curated:begin
-  addons:
-    argo-rollouts:
-      repoURL: "https://argoproj.github.io/argo-helm"
-      chart: argo-rollouts
-      namespace: argo-rollouts
-    argo-workflows:
-      repoURL: "https://argoproj.github.io/argo-helm"
-      chart: argo-workflows
-      namespace: argo
-    argocd:
-      repoURL: "https://argoproj.github.io/argo-helm"
-      chart: argo-cd
-      namespace: argocd
-    backstage:
-      repoURL: "https://backstage.github.io/charts"
-      chart: backstage
-      namespace: backstage
-    cert-manager:
-      repoURL: "https://charts.jetstack.io"
-      chart: cert-manager
-      namespace: cert-manager
-    chaos-mesh:
-      repoURL: "https://charts.chaos-mesh.org"
-      chart: chaos-mesh
-      namespace: chaos-mesh
-    cilium:
-      repoURL: "https://helm.cilium.io/"
-      chart: cilium
-      namespace: kube-system
-    cloudnative-pg:
-      repoURL: "https://cloudnative-pg.github.io/charts"
-      chart: cloudnative-pg
-      namespace: cnpg-system
-    cluster-autoscaler:
-      repoURL: "https://kubernetes.github.io/autoscaler"
-      chart: cluster-autoscaler
-      namespace: kube-system
-    descheduler:
-      repoURL: "https://kubernetes-sigs.github.io/descheduler/"
-      chart: descheduler
-      namespace: kube-system
-    external-dns:
-      repoURL: "https://kubernetes-sigs.github.io/external-dns/"
-      chart: external-dns
-      namespace: external-dns
-    external-secrets:
-      repoURL: "https://charts.external-secrets.io"
-      chart: external-secrets
-      namespace: external-secrets
-    falco:
-      repoURL: "https://falcosecurity.github.io/charts"
-      chart: falco
-      namespace: falco
-    fluent-bit:
-      repoURL: "https://fluent.github.io/helm-charts"
-      chart: fluent-bit
-      namespace: logging
-    flux:
-      repoURL: "https://fluxcd-community.github.io/helm-charts"
-      chart: flux2
-      namespace: flux-system
-    gatekeeper:
-      repoURL: "https://open-policy-agent.github.io/gatekeeper/charts"
-      chart: gatekeeper
-      namespace: gatekeeper-system
-    grafana:
-      repoURL: "https://grafana.github.io/helm-charts"
-      chart: grafana
-      namespace: monitoring
-    haproxy-ingress:
-      repoURL: "https://haproxy-ingress.github.io/charts"
-      chart: haproxy-ingress
-      namespace: ingress-controller
-    ingress-nginx:
-      repoURL: "https://kubernetes.github.io/ingress-nginx"
-      chart: ingress-nginx
-      namespace: ingress-nginx
-    istio:
-      repoURL: "https://istio-release.storage.googleapis.com/charts"
-      chart: istiod
-      namespace: istio-system
-    jaeger:
-      repoURL: "https://jaegertracing.github.io/helm-charts"
-      chart: jaeger
-      namespace: observability
-    karpenter:
-      repoURL: "oci://public.ecr.aws/karpenter"
-      chart: karpenter
-      namespace: karpenter
-    keda:
-      repoURL: "https://kedacore.github.io/charts"
-      chart: keda
-      namespace: keda
-    keptn:
-      repoURL: "https://charts.lifecycle.keptn.sh"
-      chart: keptn
-      namespace: keptn-system
-    kube-prometheus-stack:
-      repoURL: "https://prometheus-community.github.io/helm-charts"
-      chart: kube-prometheus-stack
-      namespace: monitoring
-    kube-state-metrics:
-      repoURL: "https://prometheus-community.github.io/helm-charts"
-      chart: kube-state-metrics
-      namespace: monitoring
-    kyverno:
-      repoURL: "https://kyverno.github.io/kyverno/"
-      chart: kyverno
-      namespace: kyverno
-    linkerd:
-      repoURL: "https://helm.linkerd.io/stable"
-      chart: linkerd-control-plane
-      namespace: linkerd
-    litmus:
-      repoURL: "https://litmuschaos.github.io/litmus-helm/"
-      chart: litmus
-      namespace: litmus
-    loki:
-      repoURL: "https://grafana.github.io/helm-charts"
-      chart: loki
-      namespace: monitoring
-    longhorn:
-      repoURL: "https://charts.longhorn.io"
-      chart: longhorn
-      namespace: longhorn-system
-    metallb:
-      repoURL: "https://metallb.github.io/metallb"
-      chart: metallb
-      namespace: metallb-system
-    metrics-server:
-      repoURL: "https://kubernetes-sigs.github.io/metrics-server/"
-      chart: metrics-server
-      namespace: kube-system
-    openebs:
-      repoURL: "https://openebs.github.io/openebs"
-      chart: openebs
-      namespace: openebs
-    opentelemetry-operator:
-      repoURL: "https://open-telemetry.github.io/opentelemetry-helm-charts"
-      chart: opentelemetry-operator
-      namespace: opentelemetry-operator-system
-    rook-ceph:
-      repoURL: "https://charts.rook.io/release"
-      chart: rook-ceph
-      namespace: rook-ceph
-    sealed-secrets:
-      repoURL: "https://bitnami-labs.github.io/sealed-secrets"
-      chart: sealed-secrets
-      namespace: kube-system
-    strimzi-kafka-operator:
-      repoURL: "https://strimzi.io/charts/"
-      chart: strimzi-kafka-operator
-      namespace: kafka
-    tekton-pipelines:
-      repoURL: "https://cdfoundation.github.io/tekton-helm-chart/"
-      chart: tekton-pipeline
-      namespace: tekton-pipelines
-    tempo:
-      repoURL: "https://grafana.github.io/helm-charts"
-      chart: tempo
-      namespace: monitoring
-    traefik:
-      repoURL: "https://traefik.github.io/charts"
-      chart: traefik
-      namespace: traefik
-    trivy-operator:
-      repoURL: "https://aquasecurity.github.io/helm-charts/"
-      chart: trivy-operator
-      namespace: trivy-system
-    vault:
-      repoURL: "https://helm.releases.hashicorp.com"
-      chart: vault
-      namespace: vault
-    velero:
-      repoURL: "https://vmware-tanzu.github.io/helm-charts"
-      chart: velero
-      namespace: velero
-    vertical-pod-autoscaler:
-      repoURL: "https://cowboysysop.github.io/charts/"
-      chart: vertical-pod-autoscaler
-      namespace: vpa-system
-  # gen-engine-curated:end
-
-# spec.addons is where the user's catalog/addons.yaml delta lands when the
-# engine pin passes it as the chart's one enveloped Helm values file (design
-# doc section 2.5 / D6 — exactly one enveloped file, because every enveloped
-# file's payload lives under `spec`, and two would collide). Empty by
-# default: a repo with zero addons switched on renders zero
-# ApplicationSets, which is correct — Sharko itself, not this chart, is the
-# thing a user deletes to kill Sharko (design doc section 2.5).
-spec:
-  addons: {}
+# catalog.yaml's own header fields (apiVersion, kind — decision 9's
+# kustomize-school format) ride along as stray top-level Values keys when
+# this file is passed as a Helm --values file. Harmless: the chart never
+# reads them.
+addons: {}

@@ -1,0 +1,22 @@
+# Fixture proving the FIX-3 review fix (v4 Wave 1 R2), updated for the flat
+# clusters/<name>.yaml shape (decision 9 of the 2026-07-31
+# catalog-approved-model design doc — no more `spec:` wrapper to be
+# missing): a clusters/<cluster>.yaml file with NO fields at all. The
+# git-files matrix arm then contributes nothing to the merged round-two
+# parameters for this combination, which — belt-and-braces — the chart
+# guards against with `(. | default dict)` on every `dig` call, so an
+# empty/malformed file degrades to the fleet-wide defaults instead of
+# crashing round two. See TestEngineChartTemplatePatchNilSafety in
+# nilsafety_test.go.
+#
+# Like testdata/clusters/prod-eu.yaml, this file is not read by
+# `helm template` — it is a git-files generator input the real ArgoCD
+# ApplicationSet controller reads at round two (design doc section 4.1).
+#
+# Deliberately NOT carrying the sharko.dev envelope and NOT carrying a
+# `cluster:`/`addons:` body: this fixture models a broken hand-written file
+# (`sharko validate-config` correctly rejects a ClusterAddons missing its
+# required fields — including in CI, which validates every committed
+# enveloped YAML). The chart's nil-safety is what's under test here, and
+# the round-two simulation feeds this file's own (nil) parsed content
+# straight in as `.`, so no body is needed to reproduce the crash scenario.

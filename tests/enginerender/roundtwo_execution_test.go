@@ -28,9 +28,11 @@ import (
 
 // TestEngineChartMatrixGeneratorClusterArmFirst proves the clusters
 // generator is index 0 and the git generator is index 1 in the matrix's
-// generators list — a swap silently breaks every round-two `.name`/`.spec`
-// lookup (the git arm's file path depends on the cluster arm having
-// already resolved `.name`), so the ORDER is load-bearing, not incidental.
+// generators list — a swap silently breaks every round-two `.name`/`.`
+// (the whole merged data, per-cluster settings included) lookup, since the
+// git arm's file path (clusters/{{ .name }}.yaml) depends on the cluster
+// arm having already resolved `.name`, so the ORDER is load-bearing, not
+// incidental.
 func TestEngineChartMatrixGeneratorClusterArmFirst(t *testing.T) {
 	rendered := renderEngineChart(t)
 	doc := extractApplicationSetDoc(t, rendered, "sharko-cert-manager")
@@ -144,35 +146,37 @@ func TestEngineChartTemplatePatchExecution_SettingsBearingFixture(t *testing.T) 
 	doc := extractApplicationSetDoc(t, rendered, "sharko-cert-manager")
 	patchSrc := extractTemplatePatchBody(t, doc)
 
+	// Flat shape (decision 9 of the 2026-07-31-catalog-approved-model design
+	// doc): no `metadata:`/`spec:` wrapper — cluster/addons sit at the top
+	// level, and round-two `.` is exactly this file's own parsed content
+	// merged with the clusters arm's name/server (design doc section 4.1).
 	const clusterFixture = `
 apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: settings-full-us
-spec:
-  cluster: settings-full-us
-  addons:
-    cert-manager:
-      enabled: true
-      settings:
-        createNamespace: false
-        syncOptions: ["Validate=false"]
-        prune: false
-        selfHeal: false
-        ignoreDifferences:
-          - group: apps
-            kind: Deployment
-            jsonPointers: ["/spec/replicas"]
+cluster: settings-full-us
+addons:
+  cert-manager:
+    enabled: true
+    settings:
+      createNamespace: false
+      syncOptions: ["Validate=false"]
+      prune: false
+      selfHeal: false
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          jsonPointers: ["/spec/replicas"]
 `
 	var fixtureDoc map[string]interface{}
 	if err := yaml.Unmarshal([]byte(clusterFixture), &fixtureDoc); err != nil {
 		t.Fatalf("parsing fixture: %v", err)
 	}
-	data := map[string]interface{}{
-		"name":   "settings-full-us",
-		"server": "https://example.invalid",
-		"spec":   fixtureDoc["spec"],
+	data := map[string]interface{}{}
+	for k, v := range fixtureDoc {
+		data[k] = v
 	}
+	data["name"] = "settings-full-us"
+	data["server"] = "https://example.invalid"
 
 	out, err := execRoundTwo(t, patchSrc, data)
 	if err != nil {

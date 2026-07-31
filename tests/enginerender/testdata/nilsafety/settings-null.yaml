@@ -10,13 +10,11 @@
 # Like testdata/clusters/prod-eu.yaml, this file is not read by
 # `helm template` — it is a git-files generator input the real ArgoCD
 # ApplicationSet controller reads at round two (design doc section 4.1).
+# Flat shape (decision 9): no `metadata:`/`spec:` wrapper.
 apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: nullsettings-us
-spec:
-  cluster: nullsettings-us
-  addons:
-    cert-manager:
-      enabled: true
-      settings: null
+cluster: nullsettings-us
+addons:
+  cert-manager:
+    enabled: true
+    settings: null
