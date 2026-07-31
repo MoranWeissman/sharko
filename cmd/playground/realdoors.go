@@ -17,7 +17,18 @@ package main
 //     reconciler (internal/clusterreconciler) picks up the merged
 //     managed-clusters.yaml entry on its own tick and creates the ArgoCD
 //     cluster Secret.
-//  3. Addon enable: POST /api/v1/v4/clusters/{name}/addons/{addon} opens a
+//  3. Add to catalog: POST /api/v1/catalog/addons opens a real PR that adds
+//     the addon to catalog.yaml — the org's approval step (design doc
+//     .bmad/output/architecture/2026-07-31-catalog-approved-model.md §4).
+//     The playground merges it the same way as every other PR here. This
+//     step exists because the enable gate is now real: an addon that was
+//     never added to the catalog cannot be enabled on any cluster, so step
+//     4 fails outright without it. Sharko also supports adding-and-enabling
+//     in one combined pull request (AddToCatalogRequest.EnableOnCluster —
+//     one PR touching both catalog.yaml and clusters/<name>.yaml) — the
+//     playground deliberately keeps them as two separate steps here so the
+//     walkthrough sees the approval gate before it sees the shortcut.
+//  4. Addon enable: POST /api/v1/v4/clusters/{name}/addons/{addon} opens a
 //     real PR. The playground merges it, then the engine (ApplicationSet)
 //     picks it up.
 //
@@ -40,13 +51,22 @@ import (
 	"time"
 )
 
-// enableAddonName is the single addon the playground enables on the first
-// spoke through the real v4 enable door, so the walkthrough has something
-// concrete to watch the engine pick up. metrics-server is in Sharko's
-// embedded curated catalog (catalog/addons.yaml) so it's enable-able
-// immediately after the seed-bootstrap PR merges — no catalog-import step
-// needed.
+// enableAddonName is the single addon the playground adds to the catalog
+// and then enables on the first spoke through the real v4 doors, so the
+// walkthrough has something concrete to watch the engine pick up.
+// metrics-server is in Sharko's embedded curated (Marketplace) list, so
+// the add-to-catalog step can copy its chart location and default
+// namespace via from_marketplace — only the version has to be given
+// explicitly (the curated list deliberately ships no version, design doc
+// §5).
 const enableAddonName = "metrics-server"
+
+// enableAddonVersion is the chart version the playground pins
+// enableAddonName to when adding it to the catalog. Matches the metrics-server
+// version already used elsewhere in the codebase's fixtures (e.g.
+// internal/demo/seed.go, tests/enginerender) — a real, published chart
+// release, not a placeholder.
+const enableAddonVersion = "3.12.1"
 
 const giteaLocalAPIBase = "http://localhost:13000/api/v1"
 
@@ -91,6 +111,9 @@ func runGiteaRealDoorsFlow(client *apiClient, kubeconfigPath string, numSpokes i
 	}
 
 	if len(spokeNames) > 0 {
+		if err := addAddonToCatalogRealDoor(client, giteaToken, enableAddonName, enableAddonVersion); err != nil {
+			return fmt.Errorf("add %s to catalog: %w", enableAddonName, err)
+		}
 		if err := enableAddonRealDoor(client, giteaToken, spokeNames[0], enableAddonName); err != nil {
 			return fmt.Errorf("enable addon %s on %s: %w", enableAddonName, spokeNames[0], err)
 		}
@@ -216,6 +239,36 @@ func waitForClusterVisible(client *apiClient, name string, timeout time.Duration
 		}
 		time.Sleep(5 * time.Second)
 	}
+}
+
+// addAddonToCatalogRealDoor adds one addon to the org's catalog via POST
+// /api/v1/catalog/addons and merges the resulting PR through Gitea if it
+// wasn't already auto-merged. This is the approval step the enable gate
+// (design doc §4) now requires: an addon that has never been added to
+// catalog.yaml cannot be enabled on any cluster — enableAddonRealDoor would
+// fail with a 422 without this step running first. Kept as its own PR
+// (rather than the one-PR add-and-enable combo AddToCatalogRequest also
+// supports) so the walkthrough sees the catalog gate as a distinct,
+// reviewable step before it sees enable.
+func addAddonToCatalogRealDoor(client *apiClient, giteaToken, addonName, version string) error {
+	fmt.Printf("==> Adding %q to the catalog (POST /api/v1/catalog/addons)\n", addonName)
+	res, err := client.addToCatalog(addonName, version, false /* auto_merge */)
+	if err != nil {
+		return err
+	}
+
+	if !res.Merged {
+		if res.PRID == 0 {
+			return fmt.Errorf("no PR id returned and add-to-catalog was not merged")
+		}
+		fmt.Printf("    PR #%d opened for catalog.yaml — merging via Gitea...\n", res.PRID)
+		if err := giteaMergePR(giteaToken, GiteaAdminUser, GiteaRepoName, res.PRID); err != nil {
+			return fmt.Errorf("merge add-to-catalog PR #%d: %w", res.PRID, err)
+		}
+	}
+
+	fmt.Println("    Catalog PR merged — the addon is now approved for this org and can be enabled")
+	return nil
 }
 
 // enableAddonRealDoor enables one addon on one cluster via the v4 endpoint

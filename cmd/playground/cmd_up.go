@@ -245,7 +245,7 @@ spec:
         - name: SEED_BRANCH
           value: %s
         - name: SEED_FILE
-          value: configuration/managed-clusters.yaml
+          value: managed-clusters.yaml
         - name: SEED_CONTENT
           value: |
 %s
@@ -804,16 +804,25 @@ func giteaCreateRepo(token, repoName string) error {
 // Sharko-format files directly — see realdoors.go for why: GitFake has no
 // PR/merge REST API for the playground to drive the real seed-bootstrap /
 // register / addon-enable doors the way it does against Gitea.
+//
+// The shape mirrors internal/models.SaveManagedClusters exactly (schema
+// header line, then apiVersion/kind, then the clusters list at the SAME
+// top level — no metadata block, no spec: wrapper, design doc
+// 2026-07-31-catalog-approved-model.md §9). This matters beyond style: the
+// bare path "configuration/managed-clusters.yaml" is one of
+// orchestrator.V3SecondaryMarkerPath's two v3-repo signals
+// (internal/orchestrator/v3_markers.go), so seeding this content at that
+// path would make Sharko believe a fresh v4 playground repo is an
+// already-bootstrapped v3 one. Writing it at the flat v4 path
+// ("managed-clusters.yaml", set as SEED_FILE in deployGitFake) avoids
+// that trap.
 func generateManagedClustersSeed(spokeNames []string) string {
 	// Placeholder: assign metrics-server to spoke0, external-secrets to spoke1.
 	// For N>2, assign no addons.
 	yaml := "# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json\n"
 	yaml += "apiVersion: sharko.dev/v1\n"
 	yaml += "kind: ManagedClusters\n"
-	yaml += "metadata:\n"
-	yaml += "  name: managed-clusters\n"
-	yaml += "spec:\n"
-	yaml += "  clusters:\n"
+	yaml += "clusters:\n"
 	for i, name := range spokeNames {
 		yaml += fmt.Sprintf("  - name: %s\n", name)
 		if i == 0 {
