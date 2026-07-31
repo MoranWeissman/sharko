@@ -46,18 +46,16 @@ func effectiveNamespace(namespace, addonName string) string {
 func deltaEntryForV3(v3 models.AddonCatalogEntry, curated catalog.CatalogEntry, isCurated bool) (config.AddonCatalogEntry, bool) {
 	out := config.AddonCatalogEntry{}
 
-	// Deployment coordinates. For an addon with no shipped entry these are
-	// mandatory (catalog.MergeDelta rejects an internal addon missing any
-	// of repoURL/chart/version), so they are always carried through.
-	if !isCurated || curated.Repo != v3.RepoURL {
-		out.RepoURL = v3.RepoURL
-	}
-	if !isCurated || curated.Chart != v3.Chart {
-		out.Chart = v3.Chart
-	}
-	if effectiveNamespace(curated.DefaultNamespace, v3.Name) != effectiveNamespace(v3.Namespace, v3.Name) || !isCurated {
-		out.Namespace = v3.Namespace
-	}
+	// Deployment coordinates go straight across, always. A catalog entry is
+	// self-contained now — there is no shipped list underneath it to fill
+	// a blank in — so dropping a field because the curated list happens to
+	// say the same thing would produce a file the engine cannot render.
+	// Namespace keeps the effective-value rule: an entry that never set one
+	// still installs into a namespace named after the addon, so writing the
+	// blank through is honest rather than lossy.
+	out.RepoURL = v3.RepoURL
+	out.Chart = v3.Chart
+	out.Namespace = v3.Namespace
 
 	// Version is ALWAYS carried. The shipped catalog deliberately holds no
 	// version (design doc D7 — a version baked into a signed artefact goes

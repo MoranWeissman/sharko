@@ -328,22 +328,21 @@ addons:
 	return cat
 }
 
-// TestGetStats_V4Repo_TotalAvailableUsesCuratedCatalog is the Fix 2
-// (Wave 2 review) regression test: on a fresh v4 repo with no
-// catalog/addons.yaml delta at all — the ordinary state before an operator
-// has customized anything — TotalAvailable must count the wired-in curated
-// catalog (via SetCuratedCatalog), not len(delta.Addons) alone (which would
-// report 0 here, the exact "Total Available: 0" symptom the review found).
-func TestGetStats_V4Repo_TotalAvailableUsesCuratedCatalog(t *testing.T) {
+// TestGetStats_V4Repo_TotalAvailableCountsApprovedOnly: the dashboard tile
+// says how many addons the ORG approved. A fresh v4 repo with no
+// catalog.yaml has approved nothing, so the honest number is 0 — a tile
+// claiming 45 available addons on day zero is exactly the lie the
+// approved-list rebuild removes.
+func TestGetStats_V4Repo_TotalAvailableCountsApprovedOnly(t *testing.T) {
 	connSvc := NewConnectionService(&inMemoryConnStore{})
 	svc := NewDashboardService(connSvc, "")
 	svc.SetCuratedCatalog(dashboardCuratedFixture(t))
 
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
-			orchestrator.EnginePinPath:     []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			orchestrator.EnginePinPath:         []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
 			orchestrator.V4ManagedClustersPath: []byte("clusters:\n  - name: prod-eu\n"),
-			// No catalog/addons.yaml at all — "missing means empty" delta.
+			// No catalog.yaml at all — nothing approved yet.
 		},
 	}
 
@@ -351,7 +350,42 @@ func TestGetStats_V4Repo_TotalAvailableUsesCuratedCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetStats returned error: %v", err)
 	}
-	if resp.Addons.TotalAvailable != 3 {
-		t.Errorf("Addons.TotalAvailable = %d, want 3 (the curated catalog count — no delta to override it)", resp.Addons.TotalAvailable)
+	if resp.Addons.TotalAvailable != 0 {
+		t.Errorf("Addons.TotalAvailable = %d, want 0 — a fresh repo approves nothing", resp.Addons.TotalAvailable)
+	}
+}
+
+// TestGetStats_V4Repo_TotalAvailableCountsTheCatalogFile: once the org
+// approves two addons, the tile says two — even though the list Sharko
+// ships carries three.
+func TestGetStats_V4Repo_TotalAvailableCountsTheCatalogFile(t *testing.T) {
+	connSvc := NewConnectionService(&inMemoryConnStore{})
+	svc := NewDashboardService(connSvc, "")
+	svc.SetCuratedCatalog(dashboardCuratedFixture(t))
+
+	approved, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
+			"cert-manager": {RepoURL: "https://charts.jetstack.io", Chart: "cert-manager", Version: "1.14.5"},
+			"external-dns": {RepoURL: "https://example.test/charts", Chart: "external-dns", Version: "1.14.4"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveAddonCatalog: %v", err)
+	}
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:         []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			orchestrator.V4ManagedClustersPath: []byte("clusters:\n  - name: prod-eu\n"),
+			config.AddonCatalogPath:            approved,
+		},
+	}
+
+	resp, err := svc.GetStats(context.Background(), gp, argocdEmptyStub(t))
+	if err != nil {
+		t.Fatalf("GetStats returned error: %v", err)
+	}
+	if resp.Addons.TotalAvailable != 2 {
+		t.Errorf("Addons.TotalAvailable = %d, want 2 — the size of catalog.yaml, not the shipped list", resp.Addons.TotalAvailable)
 	}
 }

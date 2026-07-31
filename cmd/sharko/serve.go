@@ -363,6 +363,12 @@ var serveCmd = &cobra.Command{
 				},
 				freshnessInterval,
 			)
+			// Watch the org's own approved addons too, not just the list
+			// Sharko ships — otherwise a chart somebody added themselves
+			// never gets a "a newer version is out" signal. Same
+			// resolve-the-connection-on-every-call shape as the engine pin
+			// closure above.
+			freshnessSched.WithApprovedAddons(srv.ApprovedAddonsForFreshness)
 			srv.SetFreshness(freshnessSched)
 			freshnessSched.Start()
 			defer freshnessSched.Stop()

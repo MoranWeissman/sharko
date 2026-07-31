@@ -123,7 +123,7 @@ var ActionRequirements = map[string]Role{
 	"addon.upgrade-clusters":     RoleOperator,
 	"default-addons.update":      RoleOperator,
 	"engine.pin-upgrade":         RoleOperator,
-	"catalog.add-internal-addon": RoleOperator,
+	"catalog.add":                RoleOperator,
 	"reconciler.trigger":         RoleOperator,
 	"catalog.freshness.refresh":  RoleOperator,
 	"token.create":               RoleOperator,

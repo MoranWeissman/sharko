@@ -93,12 +93,12 @@ const (
 	// catalog. Establishes the parser cost baseline.
 	PhaseCatalogLoad = "catalog_load"
 
-	// PhaseListAddons brackets GET /api/v1/catalog/addons. The full
+	// PhaseListAddons brackets GET /api/v1/marketplace/addons. The full
 	// list-all-curated-entries response — the dominant catalog-read
 	// surface from the marketplace UI.
 	PhaseListAddons = "list_addons"
 
-	// PhaseSourcesRefresh brackets POST /api/v1/catalog/sources/refresh.
+	// PhaseSourcesRefresh brackets POST /api/v1/marketplace/sources/refresh.
 	// With no third-party fetcher wired the refresh is a no-op but
 	// still exercises the same audit + authz path.
 	PhaseSourcesRefresh = "sources_refresh"

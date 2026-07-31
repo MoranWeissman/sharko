@@ -988,59 +988,65 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// user has picked a role).
 	mux.HandleFunc("GET /api/v1/system/capabilities", srv.handleGetSystemCapabilities)
 
-	// Curated catalog (v1.21) — embedded marketplace metadata, read-only.
-	// Scope: the Sharko-native curated addon list (catalog/addons.yaml)
-	// distinct from /api/v1/addons/catalog which surfaces the USER's deployed
-	// addons for their connected GitOps repo.
-	mux.HandleFunc("GET /api/v1/catalog/addons", srv.handleListCatalogAddons)
-	// List configured catalog sources (embedded + third-party URLs from
-	// SHARKO_CATALOG_URLS) with per-source fetch status. Read-only.
-	mux.HandleFunc("GET /api/v1/catalog/sources", srv.handleListCatalogSources)
-	// Force-refresh every configured third-party catalog source
-	// synchronously. Tier 2 (admin). Audit-logged.
-	mux.HandleFunc("POST /api/v1/catalog/sources/refresh", srv.handleRefreshCatalogSources)
-	// v4 wave 1 Story 3.4 — catalog-wide version-freshness summary + an
-	// out-of-cycle refresh trigger for the background scheduler
-	// (internal/catalog.FreshnessScheduler). Distinct from
-	// /catalog/sources/refresh above: that one re-pulls third-party
-	// catalog FEEDS; this one re-checks chart VERSIONS + the engine pin.
-	mux.HandleFunc("GET /api/v1/catalog/freshness", srv.handleGetCatalogFreshness)
-	mux.HandleFunc("POST /api/v1/catalog/freshness/refresh", srv.handleRefreshCatalogFreshness)
-	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/versions", srv.handleListCatalogVersions)
+	// MARKETPLACE — what you could run. The curated list Sharko ships (plus
+	// any third-party feeds an operator configured), read-only, discovery
+	// only. Nothing here is running anywhere and nothing here is approved:
+	// approving is the pull request POST /api/v1/catalog/addons opens.
+	mux.HandleFunc("GET /api/v1/marketplace/addons", srv.handleListCatalogAddons)
+	// The feeds behind the Marketplace list (embedded + third-party URLs
+	// from SHARKO_CATALOG_URLS) with per-source fetch status. Read-only.
+	mux.HandleFunc("GET /api/v1/marketplace/sources", srv.handleListCatalogSources)
+	// Force-refresh every configured third-party feed synchronously.
+	// Tier 2 (admin). Audit-logged.
+	mux.HandleFunc("POST /api/v1/marketplace/sources/refresh", srv.handleRefreshCatalogSources)
+	mux.HandleFunc("GET /api/v1/marketplace/addons/{name}/versions", srv.handleListCatalogVersions)
 	// README proxy for the in-page Marketplace detail view. Resolves
 	// curated addon → ArtifactHub package, then returns the README
 	// markdown.
-	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/readme", srv.handleGetCatalogReadme)
+	mux.HandleFunc("GET /api/v1/marketplace/addons/{name}/readme", srv.handleGetCatalogReadme)
 	// Tool README (distinct from Helm chart README). Resolved server-side
 	// so the browser doesn't need GitHub API access.
-	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/project-readme", srv.handleGetCuratedProjectReadme)
-	mux.HandleFunc("GET /api/v1/catalog/remote/{repo}/{name}/project-readme", srv.handleGetRemoteProjectReadme)
-	mux.HandleFunc("GET /api/v1/catalog/addons/{name}", srv.handleGetCatalogAddon)
+	mux.HandleFunc("GET /api/v1/marketplace/addons/{name}/project-readme", srv.handleGetCuratedProjectReadme)
+	mux.HandleFunc("GET /api/v1/marketplace/addons/{name}", srv.handleGetCatalogAddon)
 
-	// v4 catalog delta model (v4 wave 1 Stories 3.2 + 3.3) — the merged
-	// view of the shipped curated catalog overlaid with the caller's own
-	// git catalog/addons.yaml (kind AddonCatalog), and the write path
-	// for adding a first-class in-house addon to that delta. Distinct from
-	// the /catalog/addons routes above (pure curated) and from
-	// /addons/catalog below (the v3 deployed-catalog view).
-	mux.HandleFunc("GET /api/v1/catalog/delta/addons", srv.handleListMergedCatalogDelta)
-	mux.HandleFunc("POST /api/v1/catalog/delta/addons", srv.handleAddInternalAddon)
-	mux.HandleFunc("GET /api/v1/catalog/delta/addons/{name}", srv.handleGetMergedCatalogDeltaAddon)
+	// CATALOG — what your org allows. Read straight from catalog.yaml in
+	// the connected git repo; the shipped curated list is NOT mixed in.
+	// POST is the approval: it writes full, self-contained entries and
+	// opens a pull request, optionally enabling them on a cluster in the
+	// same one.
+	mux.HandleFunc("GET /api/v1/catalog/addons", srv.handleListOrgCatalog)
+	mux.HandleFunc("POST /api/v1/catalog/addons", srv.handleAddToCatalog)
+	mux.HandleFunc("GET /api/v1/catalog/addons/{name}", srv.handleGetOrgCatalogAddon)
 
+	// Version-freshness summary + an out-of-cycle refresh trigger for the
+	// background scheduler (internal/catalog.FreshnessScheduler). It watches
+	// BOTH lists: the Marketplace's curated entries and your own approved
+	// ones. Distinct from /marketplace/sources/refresh above: that one
+	// re-pulls third-party FEEDS; this one re-checks chart VERSIONS + the
+	// engine pin.
+	mux.HandleFunc("GET /api/v1/catalog/freshness", srv.handleGetCatalogFreshness)
+	mux.HandleFunc("POST /api/v1/catalog/freshness/refresh", srv.handleRefreshCatalogFreshness)
+
+	// ArtifactHub proxy + reprobe — more of the discovery window, so they
+	// sit under /marketplace with the rest of it. Server-side proxy so the
+	// browser doesn't call ArtifactHub directly (CORS + shared cache +
+	// rate-limit).
+	mux.HandleFunc("GET /api/v1/marketplace/search", srv.handleSearchCatalog)
+	mux.HandleFunc("GET /api/v1/marketplace/remote/{repo}/{name}/project-readme", srv.handleGetRemoteProjectReadme)
+	mux.HandleFunc("GET /api/v1/marketplace/remote/{repo}/{name}", srv.handleGetRemotePackage)
+	mux.HandleFunc("POST /api/v1/marketplace/reprobe", srv.handleReprobeArtifactHub)
+
+	// Chart-lookup helpers behind the "add your own chart" form. These
+	// belong to the Catalog side: they exist so somebody can describe a
+	// chart the Marketplace has never heard of and add it anyway.
+	//
 	// Paste Helm URL validator — confirms an arbitrary repo+chart is
 	// reachable and parseable, returns versions for the Configure modal.
 	mux.HandleFunc("GET /api/v1/catalog/validate", srv.handleValidateCatalogChart)
-
 	// Lists chart names available in an arbitrary Helm repository so the
-	// manual "Add Addon" form can show a chart-name dropdown after the
-	// operator validates the repo URL.
+	// form can show a chart-name dropdown after the operator validates the
+	// repo URL.
 	mux.HandleFunc("GET /api/v1/catalog/repo-charts", srv.handleListRepoCharts)
-
-	// ArtifactHub proxy + reprobe — server-side proxy so the browser
-	// doesn't call ArtifactHub directly (CORS + shared cache + rate-limit).
-	mux.HandleFunc("GET /api/v1/catalog/search", srv.handleSearchCatalog)
-	mux.HandleFunc("GET /api/v1/catalog/remote/{repo}/{name}", srv.handleGetRemotePackage)
-	mux.HandleFunc("POST /api/v1/catalog/reprobe", srv.handleReprobeArtifactHub)
 
 	// Addons (read)
 	mux.HandleFunc("GET /api/v1/addons/list", srv.handleListAddons)

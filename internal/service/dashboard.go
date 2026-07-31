@@ -169,12 +169,11 @@ func (s *DashboardService) gitStatsV4(ctx context.Context, gp gitprovider.GitPro
 		}
 	}
 
-	// TotalAvailable is the curated+delta merged addon count — the same
-	// merge AddonService/UpgradeService use — NOT len(delta.Addons) alone.
-	// A repo that hasn't customized the shipped catalog yet (no
-	// catalog.yaml, or one that only overrides a subset) still has
-	// every curated addon "available"; counting only the delta reported 0
-	// on every fresh v4 repo (Wave 2 review finding).
+	// TotalAvailable is how many addons the org APPROVED — the number of
+	// entries in catalog.yaml. It is not the size of the list Sharko
+	// ships. A fresh repo shows 0 on purpose: nothing is available to your
+	// clusters until somebody adds it, and a tile claiming 45 available
+	// addons on day zero is exactly the lie this rebuild removes.
 	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
 	var delta config.AddonCatalogSpec
 	if err != nil {
@@ -187,11 +186,7 @@ func (s *DashboardService) gitStatsV4(ctx context.Context, gp gitprovider.GitPro
 			return gitDerivedDashboardStats{}, fmt.Errorf("parsing %s: %w", config.AddonCatalogPath, err)
 		}
 	}
-	merged, err := catalog.MergeDelta(s.curated, delta)
-	if err != nil {
-		return gitDerivedDashboardStats{}, fmt.Errorf("merging catalog delta: %w", err)
-	}
-	out.totalAvailable = len(merged)
+	out.totalAvailable = len(catalog.BuildCatalogView(s.curated, delta))
 
 	// listClusterAddonsSpecs (addon.go, same package) lists clusters/*.yaml
 	// and is already "missing dir means empty" tolerant.

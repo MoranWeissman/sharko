@@ -33,14 +33,18 @@ func (s *Server) Freshness() *catalog.FreshnessScheduler {
 	return s.freshness
 }
 
-// catalogFreshnessResponse is the catalog-wide summary envelope.
+// catalogFreshnessResponse is the fleet-wide summary envelope.
 type catalogFreshnessResponse struct {
-	Enabled       bool                    `json:"enabled"`
-	IntervalSecs  int                     `json:"interval_seconds,omitempty"`
-	LastRun       string                  `json:"last_run,omitempty"`
-	NextRun       string                  `json:"next_run,omitempty"`
-	AddonsChecked int                     `json:"addons_checked"`
-	EnginePin     *enginePinFreshnessInfo `json:"engine_pin,omitempty"`
+	Enabled      bool   `json:"enabled"`
+	IntervalSecs int    `json:"interval_seconds,omitempty"`
+	LastRun      string `json:"last_run,omitempty"`
+	NextRun      string `json:"next_run,omitempty"`
+	// AddonsChecked is how many entries the Marketplace's own list has.
+	AddonsChecked int `json:"addons_checked"`
+	// CatalogAddonsChecked is how many of the org's approved addons the
+	// last pass walked. Zero on a fresh repo — nothing is approved yet.
+	CatalogAddonsChecked int                     `json:"catalog_addons_checked"`
+	EnginePin            *enginePinFreshnessInfo `json:"engine_pin,omitempty"`
 }
 
 type enginePinFreshnessInfo struct {
@@ -54,7 +58,7 @@ type enginePinFreshnessInfo struct {
 // handleGetCatalogFreshness godoc
 //
 // @Summary Catalog version-freshness summary
-// @Description Returns when Sharko's background freshness scheduler last checked chart versions across the curated catalog and last checked the v4 engine pin, plus the configured refresh interval. Read-only. Per-addon detail lives on GET /catalog/addons/{name}/versions, which also carries a real last-checked timestamp.
+// @Description Returns when Sharko last checked chart versions and the v4 engine pin, plus the configured refresh interval. The background scheduler watches BOTH lists: the Marketplace entries Sharko ships (addons_checked) and the addons your org approved in catalog.yaml (catalog_addons_checked), so a chart you added yourself gets a newer-version signal too. Where a chart repo has no version index Sharko can read, the per-addon detail says so in plain words rather than showing a blank. Read-only. Per-addon detail lives on GET /marketplace/addons/{name}/versions.
 // @Tags catalog
 // @Produce json
 // @Security BearerAuth
@@ -84,6 +88,7 @@ func (s *Server) handleGetCatalogFreshness(w http.ResponseWriter, r *http.Reques
 	if s.catalog != nil {
 		resp.AddonsChecked = s.catalog.Len()
 	}
+	resp.CatalogAddonsChecked = s.freshness.CatalogAddonsChecked()
 	if snap, ok := s.freshness.EnginePinSnapshot(); ok {
 		info := &enginePinFreshnessInfo{
 			LastChecked:      snap.CheckedAt.UTC().Format(time.RFC3339),
@@ -101,7 +106,7 @@ func (s *Server) handleGetCatalogFreshness(w http.ResponseWriter, r *http.Reques
 // handleRefreshCatalogFreshness godoc
 //
 // @Summary Trigger an out-of-cycle catalog freshness refresh
-// @Description Requests an immediate freshness pass (chart versions across the curated catalog, plus the engine pin check) instead of waiting for the next scheduled tick. Non-blocking — the refresh runs in the background; poll GET /catalog/freshness or GET /catalog/addons/{name}/versions afterward to see updated timestamps. A request while a refresh is already pending is coalesced into that pending run.
+// @Description Requests an immediate freshness pass (chart versions across the Marketplace list AND your org catalog, plus the engine pin check) instead of waiting for the next scheduled tick. Non-blocking — the refresh runs in the background; poll GET /catalog/freshness or GET /catalog/addons/{name}/versions afterward to see updated timestamps. A request while a refresh is already pending is coalesced into that pending run.
 // @Tags catalog
 // @Produce json
 // @Security BearerAuth

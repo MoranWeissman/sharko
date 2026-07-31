@@ -110,10 +110,10 @@ var HandlerTier = map[string]audit.Tier{
 	// behaviour (which engine chart version renders the ApplicationSets),
 	// same tier as the addon catalog writes above.
 	"handleUpgradeEnginePin": audit.Tier2,
-	// v4 catalog delta (v4 wave 1 Story 3.3): adding an in-house addon to
+	// Adding an addon to
 	// catalog.yaml is a configuration change, same tier as the v3
 	// catalog writes above.
-	"handleAddInternalAddon": audit.Tier2,
+	"handleAddToCatalog": audit.Tier2,
 
 	// v3 -> v4 migration (v4 Wave 2 Story 5.2) — rewrites every
 	// configuration file in the repo in one PR. Tier 2, the same bucket

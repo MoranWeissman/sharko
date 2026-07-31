@@ -67,7 +67,7 @@ type catalogReadmeResponse struct {
 // @Failure 404 {object} map[string]interface{} "Addon not in curated catalog or no ArtifactHub match"
 // @Failure 502 {object} map[string]interface{} "ArtifactHub unreachable and no cached value available"
 // @Failure 503 {object} map[string]interface{} "Catalog not loaded"
-// @Router /catalog/addons/{name}/readme [get]
+// @Router /marketplace/addons/{name}/readme [get]
 func (s *Server) handleGetCatalogReadme(w http.ResponseWriter, r *http.Request) {
 	if s.catalog == nil {
 		writeError(w, http.StatusServiceUnavailable, "catalog not loaded")

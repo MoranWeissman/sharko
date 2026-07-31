@@ -45,7 +45,7 @@ type catalogRemotePackageResponse struct {
 // @Failure 400 {object} map[string]interface{} "Missing repo or name"
 // @Failure 404 {object} map[string]interface{} "Package not found on ArtifactHub"
 // @Failure 502 {object} map[string]interface{} "ArtifactHub unreachable and no cached value available"
-// @Router /catalog/remote/{repo}/{name} [get]
+// @Router /marketplace/remote/{repo}/{name} [get]
 func (s *Server) handleGetRemotePackage(w http.ResponseWriter, r *http.Request) {
 	repo := strings.TrimSpace(r.PathValue("repo"))
 	name := strings.TrimSpace(r.PathValue("name"))

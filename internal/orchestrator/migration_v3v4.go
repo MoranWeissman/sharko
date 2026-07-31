@@ -427,12 +427,12 @@ func (o *Orchestrator) buildMigration(ctx context.Context) (*migrationBuild, err
 	b.files[config.AddonCatalogPath] = deltaBody
 	b.convertedFrom[config.AddonCatalogPath] = paths.catalog
 
-	// Semantic gate: the delta must merge cleanly against the shipped
-	// catalog. A user-added addon missing repoURL/chart/version fails HERE,
-	// in plain English, rather than after the PR merges and the engine
-	// cannot render it.
-	if _, mergeErr := catalog.MergeDelta(o.curated, deltaSpec); mergeErr != nil {
-		return nil, fmt.Errorf("the new catalog file would not be usable: %w", mergeErr)
+	// Semantic gate: every converted entry must be complete on its own.
+	// There is no shipped list to fall back on any more, so an entry
+	// missing repoURL/chart/version fails HERE, in plain English, rather
+	// than after the PR merges and the engine cannot render it.
+	if err := catalog.ValidateCatalogSpec(deltaSpec); err != nil {
+		return nil, fmt.Errorf("the new catalog file would not be usable: %w", err)
 	}
 
 	// 4 — managed-clusters.yaml + one clusters/<name>.yaml per cluster.

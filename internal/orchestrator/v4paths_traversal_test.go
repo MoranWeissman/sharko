@@ -113,19 +113,21 @@ func TestDisableAddonV4_TraversalName_WritesNothing(t *testing.T) {
 	}
 }
 
-func TestAddInternalAddon_TraversalName_WritesNothing(t *testing.T) {
+func TestAddToCatalog_TraversalName_WritesNothing(t *testing.T) {
 	git := newMockGitProvider()
 	orch := newV4TestOrchestrator(t, git)
 	before := len(git.files)
 
-	_, err := orch.AddInternalAddon(context.Background(), AddInternalAddonRequest{
-		Name:    "../../engine/application",
-		RepoURL: "https://charts.example.com",
-		Chart:   "evil",
-		Version: "1.0.0",
+	_, err := orch.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{{
+			Name:    "../../engine/application",
+			RepoURL: "https://charts.example.com",
+			Chart:   "evil",
+			Version: "1.0.0",
+		}},
 	})
 	if err == nil {
-		t.Fatal("expected AddInternalAddon to refuse a traversal addon name")
+		t.Fatal("expected AddToCatalog to refuse a traversal addon name")
 	}
 	if len(git.files) != before || len(git.branches) != 0 || len(git.prs) != 0 {
 		t.Errorf("side effects on refusal: files=%d branches=%v prs=%d", len(git.files)-before, git.branches, len(git.prs))

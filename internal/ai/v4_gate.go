@@ -2,6 +2,8 @@ package ai
 
 import (
 	"context"
+
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 )
 
 // V4EnginePinPath is the engine pin's fixed location in a v4 repo. Its
@@ -44,4 +46,38 @@ func (e *ToolExecutor) isV4Repo(ctx context.Context) bool {
 	}
 	body, err := e.gp.GetFileContent(ctx, V4EnginePinPath, "main")
 	return err == nil && len(body) > 0
+}
+
+// v4WriteUnsupportedMessage is what the addon write tools answer with on a
+// v4 repo.
+//
+// Those tools write the v3 shape: an on/off label in managed-clusters.yaml,
+// a version bump in configuration/addons-catalog.yaml. A v4 repo has
+// neither, so the pull request they open cannot work. And enabling an addon
+// there is two things the assistant does not write — the addon has to be in
+// the org's catalog.yaml first (that is the approval, and it goes through a
+// pull request somebody reviews), then switching it on writes
+// clusters/<name>.yaml. Skipping the catalog half would walk straight past
+// the approval step, which is the one rule the whole model rests on.
+//
+// Returned as an ordinary tool RESULT, not an error, so the model reads it
+// and relays it instead of retrying or inventing an answer.
+const v4WriteUnsupportedMessage = "I can't make this change on this repo. Adding an addon to your catalog is an approval step — it opens a pull request somebody reviews — and switching one on writes the cluster's own file. Do it from the Addons screen, or POST /api/v1/catalog/addons. I can still read and explain anything that's already there."
+
+// refuseV4Write returns the plain-words refusal (and true) when the repo
+// reachable via gp uses the v4 layout. Any read failure answers false — a
+// transient git hiccup must never turn an ordinary v3 write into a
+// confusing refusal.
+func refuseV4Write(ctx context.Context, gp gitprovider.GitProvider, branch string) (string, bool) {
+	if gp == nil {
+		return "", false
+	}
+	if branch == "" {
+		branch = "main"
+	}
+	body, err := gp.GetFileContent(ctx, V4EnginePinPath, branch)
+	if err != nil || len(body) == 0 {
+		return "", false
+	}
+	return v4WriteUnsupportedMessage, true
 }

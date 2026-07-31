@@ -40,7 +40,7 @@ const refreshCtxTimeout = 60 * time.Second
 // @Success 200 {array} catalogSourceRecord "Refreshed catalog sources with per-source fetch status"
 // @Failure 403 {object} map[string]interface{} "Caller role lacks the catalog.sources.refresh action"
 // @Failure 503 {object} map[string]interface{} "Catalog not loaded"
-// @Router /catalog/sources/refresh [post]
+// @Router /marketplace/sources/refresh [post]
 func (s *Server) handleRefreshCatalogSources(w http.ResponseWriter, r *http.Request) {
 	// Catalog source refresh is Tier-2 (admin-only, audit-logged). Gate
 	// first, before the catalog-loaded check, so callers without the

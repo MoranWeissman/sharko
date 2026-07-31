@@ -5,24 +5,24 @@
 // Boots an in-process sharko, wires the embedded curated catalog onto the
 // API server (the harness's StartSharko leaves it nil so the boot stays
 // minimal), and walks every read endpoint plus the admin-only
-// /catalog/sources/refresh path. Network-touching subtests (versions,
+// /marketplace/sources/refresh path. Network-touching subtests (versions,
 // validate-success, project-readme, remote/*) gate on E2E_OFFLINE so the
 // suite stays hermetic in CI without sacrificing local fidelity.
 //
 // What this story exercises (12 endpoints):
 //
-//	GET    /api/v1/catalog/addons
-//	GET    /api/v1/catalog/addons/{name}
-//	GET    /api/v1/catalog/addons/{name}/readme
-//	GET    /api/v1/catalog/addons/{name}/project-readme
-//	GET    /api/v1/catalog/addons/{name}/versions
-//	GET    /api/v1/catalog/remote/{repo}/{name}
-//	GET    /api/v1/catalog/remote/{repo}/{name}/project-readme
+//	GET    /api/v1/marketplace/addons
+//	GET    /api/v1/marketplace/addons/{name}
+//	GET    /api/v1/marketplace/addons/{name}/readme
+//	GET    /api/v1/marketplace/addons/{name}/project-readme
+//	GET    /api/v1/marketplace/addons/{name}/versions
+//	GET    /api/v1/marketplace/remote/{repo}/{name}
+//	GET    /api/v1/marketplace/remote/{repo}/{name}/project-readme
 //	GET    /api/v1/catalog/repo-charts
-//	GET    /api/v1/catalog/search
-//	GET    /api/v1/catalog/sources
-//	POST   /api/v1/catalog/sources/refresh
-//	POST   /api/v1/catalog/reprobe
+//	GET    /api/v1/marketplace/search
+//	GET    /api/v1/marketplace/sources
+//	POST   /api/v1/marketplace/sources/refresh
+//	POST   /api/v1/marketplace/reprobe
 //	GET    /api/v1/catalog/validate
 //
 // The "marketplace add flow" is captured as a second top-level test that
@@ -150,7 +150,7 @@ func TestCatalogReads(t *testing.T) {
 		// Drive the 404 path explicitly — cheap and confirms the handler
 		// distinguishes missing-entry from missing-catalog.
 		var raw map[string]any
-		admin.GetJSON(t, "/api/v1/catalog/addons/this-addon-does-not-exist-"+harness.RandSuffix(),
+		admin.GetJSON(t, "/api/v1/marketplace/addons/this-addon-does-not-exist-"+harness.RandSuffix(),
 			&raw, harness.WithExpectStatus(http.StatusNotFound))
 	})
 
@@ -236,7 +236,7 @@ func TestCatalogReads(t *testing.T) {
 		// Admin-only Tier-2 endpoint. With no fetcher wired the refresh is
 		// a no-op but still returns the embedded record as the post-refresh
 		// view (matches the documented contract: "same shape as
-		// GET /catalog/sources after the refresh completes").
+		// GET /marketplace/sources after the refresh completes").
 		recs := admin.RefreshCatalogSources(t)
 		if len(recs) == 0 || recs[0].URL != "embedded" {
 			t.Fatalf("RefreshCatalogSources: missing embedded record in response: %+v", recs)

@@ -73,7 +73,7 @@ type catalogListResponse struct {
 // @Param include_deprecated query boolean false "Include deprecated entries (default false)"
 // @Success 200 {object} catalogListResponse "Filtered curated catalog"
 // @Failure 503 {object} map[string]interface{} "Catalog not loaded"
-// @Router /catalog/addons [get]
+// @Router /marketplace/addons [get]
 func (s *Server) handleListCatalogAddons(w http.ResponseWriter, r *http.Request) {
 	if s.catalog == nil {
 		writeError(w, http.StatusServiceUnavailable, "catalog not loaded")
@@ -134,7 +134,7 @@ func (s *Server) handleListCatalogAddons(w http.ResponseWriter, r *http.Request)
 // @Success 200 {object} catalog.CatalogEntry "Curated catalog entry"
 // @Failure 404 {object} map[string]interface{} "Addon not found in curated catalog"
 // @Failure 503 {object} map[string]interface{} "Catalog not loaded"
-// @Router /catalog/addons/{name} [get]
+// @Router /marketplace/addons/{name} [get]
 func (s *Server) handleGetCatalogAddon(w http.ResponseWriter, r *http.Request) {
 	if s.catalog == nil {
 		writeError(w, http.StatusServiceUnavailable, "catalog not loaded")
