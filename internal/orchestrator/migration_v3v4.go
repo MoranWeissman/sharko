@@ -45,6 +45,18 @@ import (
 // migrate — the first-run bootstrap is what that repo needs.
 const RepoFormatEmpty = "empty"
 
+// RepoFormatMixed is the fourth answer: the repo carries the new engine pin
+// AND the old v3 files at the same time. Half-converted, half-reverted, or
+// hand-edited into that state — either way it is a repo nobody should write
+// to until one of the two layouts is gone, because the two halves are read
+// by different parts of Sharko and they will disagree.
+const RepoFormatMixed = "mixed"
+
+// MixedLayoutMessage is the plain-words explanation for RepoFormatMixed,
+// shared by the status surfaces and by the refusal every v4 write gives on
+// such a repo, so a person hears one story.
+const MixedLayoutMessage = "this repo has both the old and the new layout in it — engine.yaml is there, and so are the old v3 files. Finish the conversion or revert it: while both are present the engine reads one set of files and the cluster reconciler prefers the other, so they disagree about which clusters and addons are real. Sharko will not change your catalog or your clusters' addons until one of the two is gone."
+
 // Migration file actions, as reported in a plan.
 const (
 	MigrationActionAdd     = "add"
@@ -61,7 +73,8 @@ const v3ClusterGlobalValuesKey = "clusterGlobalValues"
 
 // MigrationStatusResult is what GET /api/v1/migration/status answers.
 type MigrationStatusResult struct {
-	// Format is "v3", "v4", or "empty".
+	// Format is "v3", "v4", "empty", or "mixed" (both layouts present at
+	// once — see RepoFormatMixed).
 	Format string `json:"format"`
 	// MigrationAvailable is true only for "v3" — the one state where
 	// there is something to convert.
@@ -210,6 +223,23 @@ func (o *Orchestrator) MigrationStatus(ctx context.Context) (*MigrationStatusRes
 		return nil, err
 	}
 	if v4 {
+		// Both layouts in one repo (review finding F4). This is not a
+		// finished migration and it is not a v3 repo either: the engine
+		// reads the new files while the cluster reconciler still prefers
+		// the old registry, so the fleet runs off one half and the Catalog
+		// page shows the other. Saying "already the current format" here
+		// sends somebody away from the only thing that would fix it.
+		//
+		// Best-effort: a probe failure must not turn a plain status read
+		// into an error, and "we could not check" is not a reason to
+		// invent an ambiguity.
+		if mixed, mixedErr := o.hasV3MarkersChecked(ctx); mixedErr == nil && mixed {
+			return &MigrationStatusResult{
+				Format:             RepoFormatMixed,
+				MigrationAvailable: false,
+				Message:            MixedLayoutMessage,
+			}, nil
+		}
 		result := &MigrationStatusResult{
 			Format:             RepoFormatV4,
 			MigrationAvailable: false,

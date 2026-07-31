@@ -40,7 +40,22 @@ type V4SemanticValidationError struct {
 	Cluster  string
 	Addon    string
 	Problems []string
+
+	// Code tells the two flavours apart for the API layer, which puts it
+	// in the error body so the UI branches on a word instead of on
+	// English text (review finding B-2). "incomplete_entry" means the
+	// catalog entry itself is half-written — fix catalog.yaml.
+	// "validation_failed" (the default when this is empty) means the entry
+	// is fine but this cluster is missing a required value or a secret
+	// definition. Values match internal/api's Code* constants.
+	Code string
 }
+
+// CodeIncompleteEntry is the Code value for a half-written catalog entry.
+// Declared here (rather than only in internal/api) because the orchestrator
+// is what sets it; internal/api's constant of the same name is the
+// HTTP-side copy and the two are pinned against each other by test.
+const CodeIncompleteEntry = "incomplete_entry"
 
 func (e *V4SemanticValidationError) Error() string {
 	return fmt.Sprintf("cannot enable %s on %s: %s", e.Addon, e.Cluster, strings.Join(e.Problems, "; "))
@@ -271,6 +286,12 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 		return nil, fmt.Errorf("addon name is required")
 	}
 
+	// A repo carrying both layouts writes into the half nothing reads —
+	// refuse before anything happens (review finding F4).
+	if err := o.refuseOnMixedLayout(ctx); err != nil {
+		return nil, err
+	}
+
 	// Resolve every commit path BEFORE the catalog read (and long before
 	// any branch exists) so a name that could escape the v4 data folders
 	// fails with a plain-English error and zero side effects.
@@ -310,6 +331,7 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 			Cluster:  req.Cluster,
 			Addon:    req.Addon,
 			Problems: incompleteEntryProblems(req.Addon, merged.MissingFields),
+			Code:     CodeIncompleteEntry,
 		}
 	}
 
@@ -441,6 +463,11 @@ func (o *Orchestrator) DisableAddonV4(ctx context.Context, req DisableAddonV4Req
 	}
 	if req.Addon == "" {
 		return nil, fmt.Errorf("addon name is required")
+	}
+
+	// Same half-converted-repo refusal as EnableAddonV4.
+	if err := o.refuseOnMixedLayout(ctx); err != nil {
+		return nil, err
 	}
 
 	// Same edge guard as EnableAddonV4 — the addon name is not part of a

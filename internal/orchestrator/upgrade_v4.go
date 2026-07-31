@@ -74,6 +74,11 @@ func (o *Orchestrator) UpgradeAddonClustersV4(ctx context.Context, req UpgradeAd
 		return nil, fmt.Errorf("at least one cluster is required")
 	}
 
+	// Same half-converted-repo refusal as EnableAddonV4 (review F4).
+	if err := o.refuseOnMixedLayout(ctx); err != nil {
+		return nil, err
+	}
+
 	writes := make([]clusterAddonsWrite, 0, len(clusters))
 	for _, cluster := range clusters {
 		clusterPath, err := v4ClusterAddonsPath(cluster)

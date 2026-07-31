@@ -29,6 +29,13 @@ const (
 	OpValuesEdit     = "values-edit"
 	OpAIAnnotate     = "ai-annotate"
 
+	// OpCatalogAdd is the approval pull request that writes catalog.yaml —
+	// the one door into the org's approved list.
+	OpCatalogAdd = "catalog-add"
+	// OpCatalogAddEnable is the combined form: the same approval pull
+	// request also switches the addon on for a cluster.
+	OpCatalogAddEnable = "catalog-add-enable"
+
 	// AI assistant write-tool bucket
 	OpAIToolEnable = "ai-tool-enable"
 	OpAIToolDisable = "ai-tool-disable"

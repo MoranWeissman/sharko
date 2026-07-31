@@ -46,7 +46,7 @@ func (s *Server) isV3Repo(ctx context.Context, gp gitprovider.GitProvider) bool 
 	if body, err := gp.GetFileContent(ctx, orchestrator.BootstrapRootAppPath, baseBranch); err == nil && len(body) > 0 {
 		return false // already v4
 	}
-	return orchestrator.HasV3Markers(ctx, gp, baseBranch)
+	return orchestrator.HasV3Markers(ctx, gp, baseBranch, s.repoPaths.ManagedClusters)
 }
 
 // refuseV3WriteOnV3Repo writes a 409 and reports true when the connected

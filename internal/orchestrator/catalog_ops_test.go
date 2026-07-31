@@ -124,6 +124,7 @@ func TestAddToCatalog_ComboWritesBothFilesInOnePR(t *testing.T) {
 			Chart: "cert-manager", Version: "1.14.5",
 		}},
 		EnableOnCluster: "prod-eu",
+		Yes:             true,
 	})
 	if err != nil {
 		t.Fatalf("AddToCatalog: %v", err)
@@ -163,6 +164,7 @@ func TestAddToCatalog_ComboRefusesUnknownCluster(t *testing.T) {
 			Chart: "cert-manager", Version: "1.14.5",
 		}},
 		EnableOnCluster: "nope",
+		Yes:             true,
 	})
 	if !errors.Is(err, ErrV4ClusterNotFound) {
 		t.Fatalf("expected ErrV4ClusterNotFound, got %v", err)

@@ -163,7 +163,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Adds a new addon to the catalog by creating its ApplicationSet in the GitOps repo",
+                "description": "Adds a new addon to the v3 catalog file by creating its ApplicationSet in the GitOps repo. This is the OLD door and it only works on a v3-layout repo. On a repo in the v4 layout it returns 409 with code ` + "`" + `repo_layout` + "`" + `, because the file it writes (configuration/addons-catalog.yaml) is not a file that repo has — writing it there would leave a second catalog nothing reads. The door that works there is POST /api/v1/catalog/addons (\"Add to catalog\"), which opens the approval pull request against catalog.yaml.",
                 "consumes": [
                     "application/json"
                 ],
@@ -173,7 +173,7 @@ const docTemplate = `{
                 "tags": [
                     "addons"
                 ],
-                "summary": "Add addon",
+                "summary": "Add addon (v3 layout only)",
                 "parameters": [
                     {
                         "description": "Add addon request",
@@ -208,7 +208,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Addon already exists in catalog",
+                        "description": "Addon already exists in catalog (code addon_already_exists), or the repo uses the v4 layout (code repo_layout)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -516,14 +516,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Removes an addon from the catalog. Without ?confirm=true returns a dry-run impact report.",
+                "description": "Removes an addon from the v3 catalog file. Without ?confirm=true returns a dry-run impact report. On a repo in the v4 layout this returns 409 with code ` + "`" + `repo_layout` + "`" + ` — the approved list lives in catalog.yaml there, and it is edited through a pull request (POST /api/v1/catalog/addons, or by hand in git).",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "addons"
                 ],
-                "summary": "Remove addon",
+                "summary": "Remove addon (v3 layout only)",
                 "parameters": [
                     {
                         "type": "string",
@@ -568,6 +568,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "The repo uses the v4 layout (code repo_layout)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Gateway error",
                         "schema": {
@@ -583,7 +590,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates an addon's catalog configuration. Only provided fields are modified (merge semantics).",
+                "description": "Updates an addon's entry in the v3 catalog file. Only provided fields are modified (merge semantics). On a repo in the v4 layout this returns 409 with code ` + "`" + `repo_layout` + "`" + ` — a catalog entry there is changed the same way it was added, through a reviewed pull request against catalog.yaml.",
                 "consumes": [
                     "application/json"
                 ],
@@ -593,7 +600,7 @@ const docTemplate = `{
                 "tags": [
                     "addons"
                 ],
-                "summary": "Configure addon",
+                "summary": "Configure addon (v3 layout only)",
                 "parameters": [
                     {
                         "type": "string",
@@ -636,6 +643,13 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Addon not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "The repo uses the v4 layout (code repo_layout)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2053,7 +2067,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Writes one or more full addon entries into catalog.yaml and opens a pull request — the approval step, and the only way anything enters the org. Three shapes, one endpoint: ONE addon (a single-element ` + "`" + `addons` + "`" + ` list); MANY addons (several elements — still exactly ONE pull request, which is what the first-run wizard needs); and add-AND-enable (` + "`" + `enable_on_cluster` + "`" + ` set — one pull request touching catalog.yaml and clusters/\u003cname\u003e.yaml together, so the reviewer sees both halves in one diff and one merge makes both true). Set ` + "`" + `from_marketplace: true` + "`" + ` on an entry to copy the chart location, default namespace and needed-secrets list out of the curated list; you still choose the version, because the curated list deliberately ships none. Nothing is written unless everything checks out: an unknown cluster, an entry with no chart location, or an addon whose required values are not set all fail before a branch exists.",
+                "description": "Writes one or more full addon entries into catalog.yaml and opens a pull request — the approval step, and the only way anything enters the org. Three shapes, one endpoint: ONE addon (a single-element ` + "`" + `addons` + "`" + ` list); MANY addons (several elements — still exactly ONE pull request, which is what the first-run wizard needs); and add-AND-enable (` + "`" + `enable_on_cluster` + "`" + ` set — one pull request touching catalog.yaml and clusters/\u003cname\u003e.yaml together, so the reviewer sees both halves in one diff and one merge makes both true). The add-and-enable shape REQUIRES ` + "`" + `yes: true` + "`" + `, the same confirmation the v4 enable endpoint asks for, because that half changes what runs on a real cluster; a catalog-only add needs no confirmation. Set ` + "`" + `from_marketplace: true` + "`" + ` on an entry to copy the chart location, default namespace and needed-secrets list out of the curated list; leave ` + "`" + `version` + "`" + ` empty there and the server fills in the newest version it knows for the chart (the same freshness data the version picker shows), so the resolved pin is visible in the pull-request diff — if Sharko has no version data for that chart you get a 422 with code ` + "`" + `version_required` + "`" + ` asking you to pick one. Nothing is written unless everything checks out: an unknown cluster, an entry with no chart location, or an addon whose required values are not set all fail before a branch exists.\nEvery 4xx body carries a machine-readable ` + "`" + `code` + "`" + ` next to the plain-English ` + "`" + `error` + "`" + `, so a client branches on the code and never on the message text. Codes: ` + "`" + `invalid_request` + "`" + ` (400); ` + "`" + `cluster_not_found` + "`" + ` (404); ` + "`" + `repo_layout` + "`" + ` (409 — the repo is still v3, or carries both layouts at once); and on 422 one of ` + "`" + `confirmation_required` + "`" + `, ` + "`" + `empty_catalog_file` + "`" + `, ` + "`" + `not_in_marketplace` + "`" + `, ` + "`" + `version_required` + "`" + `, ` + "`" + `incomplete_entry` + "`" + ` (with a ` + "`" + `problems` + "`" + ` array naming each missing piece), ` + "`" + `not_in_catalog` + "`" + `, or ` + "`" + `validation_failed` + "`" + ` (also with ` + "`" + `problems` + "`" + `). A 502 means a genuine upstream/git failure and carries no code.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2097,14 +2111,21 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Cluster not registered",
+                        "description": "Cluster not registered (code cluster_not_found)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "The repo is in a layout this endpoint does not write (code repo_layout)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "422": {
-                        "description": "The addons cannot be enabled as asked",
+                        "description": "The addons cannot be added or enabled as asked — see the code field",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3220,6 +3241,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "The repo uses the v4 layout (code repo_layout) — use POST /v4/clusters/{name}/addons/{addon}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "422": {
                         "description": "Addon not in catalog, or addon needs secrets but Sharko has no credentials for the cluster",
                         "schema": {
@@ -3307,6 +3335,13 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "The repo uses the v4 layout (code repo_layout) — use DELETE /v4/clusters/{name}/addons/{addon}",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -8482,14 +8517,21 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Cluster is not registered",
+                        "description": "Cluster is not registered (code cluster_not_found)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "The repo carries both the old and the new layout (code repo_layout)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "422": {
-                        "description": "Semantic validation failed (missing required values or undeclared secrets, listed by name) or the addon is not in the catalog",
+                        "description": "Semantic validation failed (missing required values or undeclared secrets, listed by name) or the addon is not in the catalog. The body carries a machine-readable ` + "`" + `code` + "`" + ` next to ` + "`" + `error` + "`" + `: ` + "`" + `not_in_catalog` + "`" + ` when the org has not approved this addon (add it first — POST /catalog/addons); ` + "`" + `incomplete_entry` + "`" + ` when its catalog entry is half-written, with ` + "`" + `problems` + "`" + ` naming each missing piece; ` + "`" + `validation_failed` + "`" + ` when the entry is fine but this cluster is missing a required value or a secret definition, also with ` + "`" + `problems` + "`" + `; ` + "`" + `empty_catalog_file` + "`" + ` when catalog.yaml exists but is blank. Branch on the code, never on the message text.",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -8568,7 +8610,14 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Cluster is not registered, or has nothing to disable",
+                        "description": "Cluster is not registered, or has nothing to disable (code cluster_not_found)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "The repo carries both the old and the new layout (code repo_layout)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -9829,6 +9878,10 @@ const docTemplate = `{
                 "enable_on_cluster": {
                     "description": "EnableOnCluster, when set, also switches every addon in this request\non for that cluster — one pull request touching catalog.yaml and\nclusters/\u003cname\u003e.yaml together. Empty means catalog only.",
                     "type": "string"
+                },
+                "yes": {
+                    "description": "Yes is the caller's confirmation, and it is REQUIRED whenever\nEnableOnCluster is set — the same word EnableAddonV4 asks for, for\nthe same reason: that half of the request changes what runs on a\nreal cluster. A catalog-only add needs no confirmation; it only\nopens a pull request against a list.",
+                    "type": "boolean"
                 }
             }
         },
@@ -10475,7 +10528,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "format": {
-                    "description": "Format is \"v3\", \"v4\", or \"empty\".",
+                    "description": "Format is \"v3\", \"v4\", \"empty\", or \"mixed\" (both layouts present at\nonce — see RepoFormatMixed).",
                     "type": "string"
                 },
                 "handoff": {

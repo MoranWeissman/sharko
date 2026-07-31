@@ -18,7 +18,7 @@ import (
 // literal (charts/sharko-engine/templates/appset.yaml), so a configurable
 // override here would let a repo silently stop matching what the engine
 // reads. Kept in lockstep with orchestrator.V4ClustersDir — clusterreconciler
-// cannot import orchestrator, the same dependency boundary v4ManagedClustersPath
+// cannot import orchestrator, the same dependency boundary V4ManagedClustersPath
 // already lives with.
 const v4ClustersDir = "clusters"
 

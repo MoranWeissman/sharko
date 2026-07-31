@@ -108,8 +108,9 @@ func probeRepoState(
 	gp gitprovider.GitProvider,
 	ac orchestrator.ArgocdClient,
 	baseBranch string,
+	extraMarkers ...string,
 ) (state, detail, format string) {
-	state, detail, format, _ = probeRepoStateWithBootstrapStatus(ctx, gp, ac, baseBranch)
+	state, detail, format, _ = probeRepoStateWithBootstrapStatus(ctx, gp, ac, baseBranch, extraMarkers...)
 	return state, detail, format
 }
 
@@ -128,9 +129,10 @@ func probeRepoStateWithBootstrapStatus(
 	gp gitprovider.GitProvider,
 	ac orchestrator.ArgocdClient,
 	baseBranch string,
+	extraMarkers ...string,
 ) (state, detail, format, bootstrapStatus string) {
 	if _, err := gp.GetFileContent(ctx, orchestrator.BootstrapRootAppPath, baseBranch); err != nil {
-		if orchestrator.HasV3Markers(ctx, gp, baseBranch) {
+		if orchestrator.HasV3Markers(ctx, gp, baseBranch, extraMarkers...) {
 			s, d, bs := classifyBootstrapApp(ctx, ac)
 			return s, d, orchestrator.RepoFormatV3, bs
 		}
@@ -206,7 +208,7 @@ func (s *Server) handleInitStatus(w http.ResponseWriter, r *http.Request) {
 		baseBranch = "main"
 	}
 
-	state, detail, format, bootstrapStatus := probeRepoStateWithBootstrapStatus(r.Context(), gp, ac, baseBranch)
+	state, detail, format, bootstrapStatus := probeRepoStateWithBootstrapStatus(r.Context(), gp, ac, baseBranch, s.repoPaths.ManagedClusters)
 	repairable := state == RepoStatePartial && bootstrapStatus == bootstrapAbsent
 	writeJSON(w, http.StatusOK, InitStatusResponse{
 		State: state, Detail: detail, Format: format, Repairable: repairable,

@@ -195,6 +195,60 @@ func (s *Server) handleListCatalogVersions(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, filterVersions(resp, includePrereleases))
 }
 
+// resolveLatestChartVersion answers "what is the newest version Sharko
+// knows for this chart?" — the lookup a Marketplace add uses when it
+// arrives without a version (review finding B-1).
+//
+// It reads the same three places the version picker reads, in the same
+// order: the freshness scheduler's durable daily snapshot, then the
+// 15-minute request cache, then the chart repo's index. The newest
+// NON-prerelease version wins; a chart that only ever publishes
+// prereleases falls back to the newest of those, because refusing to
+// approve such a chart at all would be worse than pinning what it has.
+//
+// false means Sharko genuinely has no version data — an oci:// registry it
+// cannot read an index from, or a repo that was unreachable. The caller
+// turns that into plain words asking the person to pick one; it never
+// guesses and never errors.
+func (s *Server) resolveLatestChartVersion(ctx context.Context, addonName, repoURL, chart string) (string, bool) {
+	if repoURL == "" || chart == "" {
+		return "", false
+	}
+
+	pick := func(resp catalogVersionsResponse) (string, bool) {
+		if resp.LatestStable != "" {
+			return resp.LatestStable, true
+		}
+		if len(resp.Versions) > 0 && resp.Versions[0].Version != "" {
+			return resp.Versions[0].Version, true
+		}
+		return "", false
+	}
+
+	if s.freshness != nil && addonName != "" {
+		if snap, ok := s.freshness.VersionSnapshot(addonName); ok && !snap.Unknown {
+			if v, ok := pick(buildVersionsResponse(addonName, chart, repoURL, snap.Versions)); ok {
+				return v, true
+			}
+		}
+	}
+
+	cacheKey := repoURL + "|" + chart
+	if cached, ok := lookupCachedVersions(cacheKey); ok {
+		return pick(cached)
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	versions, err := catalogVersionsFetcher.ListVersions(fetchCtx, repoURL, chart)
+	if err != nil || len(versions) == 0 {
+		return "", false
+	}
+	resp := buildVersionsResponse(addonName, chart, repoURL, versions)
+	storeCachedVersions(cacheKey, resp)
+	return pick(resp)
+}
+
 // buildVersionsResponse converts helm.ChartVersion entries into the API shape
 // and computes `latest_stable`. Sort is descending by SemVer (best-effort —
 // invalid versions sink to the end).

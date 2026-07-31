@@ -17,8 +17,8 @@ import (
 
 // handleAddAddon godoc
 //
-// @Summary Add addon
-// @Description Adds a new addon to the catalog by creating its ApplicationSet in the GitOps repo
+// @Summary Add addon (v3 layout only)
+// @Description Adds a new addon to the v3 catalog file by creating its ApplicationSet in the GitOps repo. This is the OLD door and it only works on a v3-layout repo. On a repo in the v4 layout it returns 409 with code `repo_layout`, because the file it writes (configuration/addons-catalog.yaml) is not a file that repo has — writing it there would leave a second catalog nothing reads. The door that works there is POST /api/v1/catalog/addons ("Add to catalog"), which opens the approval pull request against catalog.yaml.
 // @Tags addons
 // @Accept json
 // @Produce json
@@ -27,7 +27,7 @@ import (
 // @Success 201 {object} map[string]interface{} "Addon created"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 409 {object} map[string]interface{} "Addon already exists in catalog"
+// @Failure 409 {object} map[string]interface{} "Addon already exists in catalog (code addon_already_exists), or the repo uses the v4 layout (code repo_layout)"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /addons [post]
 // handleAddAddon handles POST /api/v1/addons — add a new addon to the catalog.
@@ -145,6 +145,12 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		// the Marketplace Configure modal can render a friendly inline
 		// error and link to the existing addon (duplicate-handling stays
 		// inside this handler; no separate pre-flight endpoint).
+		// A v4 repo does not have the file this writes; the door that
+		// works is POST /api/v1/catalog/addons (review finding B-3).
+		if orchestrator.IsV4RepoUnsupported(err) {
+			writeCodedError(w, http.StatusConflict, CodeRepoLayout, err.Error(), nil)
+			return
+		}
 		if strings.Contains(err.Error(), "already exists in catalog") {
 			source := req.Source
 			if source == "" {
@@ -231,8 +237,8 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 
 // handleRemoveAddon godoc
 //
-// @Summary Remove addon
-// @Description Removes an addon from the catalog. Without ?confirm=true returns a dry-run impact report.
+// @Summary Remove addon (v3 layout only)
+// @Description Removes an addon from the v3 catalog file. Without ?confirm=true returns a dry-run impact report. On a repo in the v4 layout this returns 409 with code `repo_layout` — the approved list lives in catalog.yaml there, and it is edited through a pull request (POST /api/v1/catalog/addons, or by hand in git).
 // @Tags addons
 // @Produce json
 // @Security BearerAuth
@@ -242,6 +248,7 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]interface{} "Confirmation required or bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "Addon not found"
+// @Failure 409 {object} map[string]interface{} "The repo uses the v4 layout (code repo_layout)"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /addons/{name} [delete]
 // handleRemoveAddon handles DELETE /api/v1/addons/{name} — remove an addon.
@@ -331,6 +338,10 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 		DryRun:    reqBody.DryRun,
 	})
 	if err != nil {
+		if orchestrator.IsV4RepoUnsupported(err) {
+			writeCodedError(w, http.StatusConflict, CodeRepoLayout, err.Error(), nil)
+			return
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -350,8 +361,8 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 
 // handleConfigureAddon godoc
 //
-// @Summary Configure addon
-// @Description Updates an addon's catalog configuration. Only provided fields are modified (merge semantics).
+// @Summary Configure addon (v3 layout only)
+// @Description Updates an addon's entry in the v3 catalog file. Only provided fields are modified (merge semantics). On a repo in the v4 layout this returns 409 with code `repo_layout` — a catalog entry there is changed the same way it was added, through a reviewed pull request against catalog.yaml.
 // @Tags addons
 // @Accept json
 // @Produce json
@@ -362,6 +373,7 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "Addon not found"
+// @Failure 409 {object} map[string]interface{} "The repo uses the v4 layout (code repo_layout)"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /addons/{name} [patch]
 func (s *Server) handleConfigureAddon(w http.ResponseWriter, r *http.Request) {
@@ -402,6 +414,10 @@ func (s *Server) handleConfigureAddon(w http.ResponseWriter, r *http.Request) {
 	s.attachPRTracker(orch)
 	result, err := orch.ConfigureAddon(ctx, req)
 	if err != nil {
+		if orchestrator.IsV4RepoUnsupported(err) {
+			writeCodedError(w, http.StatusConflict, CodeRepoLayout, err.Error(), nil)
+			return
+		}
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, http.StatusNotFound, err.Error())
 			return

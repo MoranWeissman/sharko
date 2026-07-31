@@ -41,9 +41,9 @@ func buildChangelogText(addonName string, entries []changelogVersionEntry) strin
 // engine-pin probe AddonService.GetVersionMatrix's v4 branch uses (the
 // engine pin resolving to non-empty content on the configured GitOps base
 // branch) to decide whether to read the v3 configuration/addons-catalog.yaml
-// or the v4 catalog (the org's own
-// catalog.yaml, via s.loadCatalogDelta + catalog.MergeDelta — the
-// same helpers catalog_delta.go's handlers use). A v4 repo has no
+// or the v4 catalog (the org's own approved list,
+// catalog.yaml, via s.loadOrgCatalog + catalog.BuildCatalogView — the
+// same helpers the Catalog handlers use). A v4 repo has no
 // addons-catalog.yaml at all (the v3→v4 migration deletes it and a fresh
 // v4 repo never had one) — reading it unconditionally is what turned every
 // v4-repo changelog request into a 500.
@@ -58,11 +58,11 @@ func (s *Server) resolveAddonChangelogEntry(ctx context.Context, gp gitprovider.
 		if s.catalog == nil {
 			return "", "", "", fmt.Errorf("catalog not loaded")
 		}
-		delta, derr := s.loadOrgCatalog(ctx, gp)
+		approved, derr := s.loadOrgCatalog(ctx, gp)
 		if derr != nil {
 			return "", "", "", fmt.Errorf("loading the catalog: %w", derr)
 		}
-		entry, ok := catalog.BuildCatalogView(s.catalog, delta)[name]
+		entry, ok := catalog.BuildCatalogView(s.catalog, approved)[name]
 		if !ok {
 			return "", "", "", nil
 		}

@@ -391,7 +391,16 @@ func TestMigrationStatus_V4Repo_NothingToMigrate(t *testing.T) {
 // moment right after the migration PR merges, when the repo briefly has
 // both an engine pin and (until the next read) whatever a caller cached.
 // The pin is the newer, more specific answer and must win.
-func TestMigrationStatus_EnginePinWins(t *testing.T) {
+// TestMigrationStatus_BothLayoutsIsItsOwnAnswer is review finding F4.
+//
+// This used to assert "the engine pin wins", i.e. a repo with the pin AND
+// the old v3 files reported as v4 with "nothing to migrate". That reading
+// is wrong and it is quietly harmful: the engine renders from the new
+// files while the cluster reconciler still prefers the old registry, so
+// the fleet runs off one half and the Catalog page shows the other, and
+// the person is told everything is fine. "Both" is its own answer now, and
+// it says what to do.
+func TestMigrationStatus_BothLayoutsIsItsOwnAnswer(t *testing.T) {
 	files := newV3FixtureRepo()
 	files[EnginePinPath] = []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n")
 	orch := newMigrationOrchestrator(t, newMigrationFakeGit(files))
@@ -400,8 +409,31 @@ func TestMigrationStatus_EnginePinWins(t *testing.T) {
 	if statusErr != nil {
 		t.Fatalf("MigrationStatus: %v", statusErr)
 	}
+	if got.Format != RepoFormatMixed {
+		t.Errorf("Format = %q, want %q — both layouts are present", got.Format, RepoFormatMixed)
+	}
+	if got.MigrationAvailable {
+		t.Error("a half-converted repo has no clean migration to offer")
+	}
+}
+
+// TestMigrationStatus_CleanV4RepoIsV4 keeps the other half of the old
+// assertion honest: with the pin present and NO v3 files left, the answer
+// is still a plain v4 repo with nothing to migrate.
+func TestMigrationStatus_CleanV4RepoIsV4(t *testing.T) {
+	orch := newMigrationOrchestrator(t, newMigrationFakeGit(map[string][]byte{
+		EnginePinPath: []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+	}))
+
+	got, statusErr := orch.MigrationStatus(context.Background())
+	if statusErr != nil {
+		t.Fatalf("MigrationStatus: %v", statusErr)
+	}
 	if got.Format != RepoFormatV4 {
-		t.Errorf("Format = %q, want %q — the engine pin is the more specific answer", got.Format, RepoFormatV4)
+		t.Errorf("Format = %q, want %q", got.Format, RepoFormatV4)
+	}
+	if got.MigrationAvailable {
+		t.Error("MigrationAvailable = true on a v4 repo; want false")
 	}
 }
 

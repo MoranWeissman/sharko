@@ -161,20 +161,20 @@ func (s *AddonService) ListAddons(ctx context.Context, gp gitprovider.GitProvide
 // Name/Chart/RepoURL/Version/Namespace off these entries, all of which a
 // catalog.CatalogAddon carries directly.
 func (s *AddonService) listAddonsV4(ctx context.Context, gp gitprovider.GitProvider) ([]models.AddonCatalogEntry, error) {
-	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
-	var delta config.AddonCatalogSpec
+	approvedData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
+	var approved config.AddonCatalogSpec
 	if err != nil {
 		if !isGitFileNotFound(err) {
 			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 		}
 	} else {
-		delta, err = config.LoadAddonCatalog(deltaData)
+		approved, err = config.LoadAddonCatalog(approvedData)
 		if err != nil {
 			return nil, fmt.Errorf("parsing %s: %w", config.AddonCatalogPath, err)
 		}
 	}
 
-	merged := catalog.BuildCatalogView(s.curated, delta)
+	merged := catalog.BuildCatalogView(s.curated, approved)
 
 	names := make([]string, 0, len(merged))
 	for name := range merged {
@@ -377,8 +377,8 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 // models.AddonCatalogResponse shape as the v3 branch (Marketplace/browse
 // surface — GET /addons/catalog), but sources per-cluster enablement from
 // clusters/*.yaml (kind ClusterAddons) instead of managed-clusters.yaml
-// labels, and the addon set from the org's catalog
-// (catalog.MergeDelta(curated, catalog.yaml)) instead of
+// labels, and the addon set from the org's approved list
+// (catalog.BuildCatalogView over catalog.yaml) instead of
 // addons-catalog.yaml — mirroring getVersionMatrixV4 exactly, including the
 // "<addon>-<cluster>" ArgoCD Application naming convention. GetAddonDetail
 // needs no v4 branch of its own: it delegates to GetCatalog and scans the
@@ -391,22 +391,22 @@ func (s *AddonService) getCatalogV4(ctx context.Context, gp gitprovider.GitProvi
 		return nil, fmt.Errorf("reading clusters/*.yaml: %w", err)
 	}
 
-	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
-	var delta config.AddonCatalogSpec
+	approvedData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
+	var approved config.AddonCatalogSpec
 	if err != nil {
 		if !isGitFileNotFound(err) {
 			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 		}
-		// Missing catalog.yaml means empty delta (design doc D16,
+		// Missing catalog.yaml means nothing approved (design doc D16,
 		// "missing means empty") — matches getVersionMatrixV4.
 	} else {
-		delta, err = config.LoadAddonCatalog(deltaData)
+		approved, err = config.LoadAddonCatalog(approvedData)
 		if err != nil {
 			return nil, fmt.Errorf("parsing %s: %w", config.AddonCatalogPath, err)
 		}
 	}
 
-	merged := catalog.BuildCatalogView(s.curated, delta)
+	merged := catalog.BuildCatalogView(s.curated, approved)
 
 	allApps, err := ac.ListApplications(ctx)
 	if err != nil {
@@ -573,11 +573,11 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 // uses the identical probe for the same reason: "no pin found" is the
 // ordinary, non-error "not a v4 repo yet" case, never a hard failure. When
 // the pin is present, the matrix is built from clusters/*.yaml (kind
-// ClusterAddons) and the org's catalog (catalog.yaml
-// overlaid on s.curated, wired via SetCuratedCatalog) instead of
-// managed-clusters.yaml labels and addons-catalog.yaml. s.curated may be
-// nil (no embedded catalog loaded); every addon then merges as
-// catalog.OriginInternal, matching catalog.MergeDelta's own contract.
+// ClusterAddons) and the org's approved list (catalog.yaml, with s.curated
+// supplying display fields for the entries the Marketplace recognises)
+// instead of managed-clusters.yaml labels and addons-catalog.yaml.
+// s.curated may be nil (no embedded catalog loaded); every approved addon
+// then reads as catalog.OriginInternal.
 //
 // v3 path: when managed-clusters.yaml or addons-catalog.yaml is missing
 // (e.g. fresh-install gitops repo with no clusters yet) the matrix
@@ -724,23 +724,23 @@ func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.Gi
 		return nil, fmt.Errorf("reading clusters/*.yaml: %w", err)
 	}
 
-	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
-	var delta config.AddonCatalogSpec
+	approvedData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
+	var approved config.AddonCatalogSpec
 	if err != nil {
 		if !isGitFileNotFound(err) {
 			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 		}
-		// Missing catalog.yaml means empty delta (design doc D16,
+		// Missing catalog.yaml means nothing approved (design doc D16,
 		// "missing means empty") — not an error, mirrors
-		// internal/api/catalog_delta.go's loadCatalogDelta.
+		// the Catalog handlers' own loadOrgCatalog.
 	} else {
-		delta, err = config.LoadAddonCatalog(deltaData)
+		approved, err = config.LoadAddonCatalog(approvedData)
 		if err != nil {
 			return nil, fmt.Errorf("parsing %s: %w", config.AddonCatalogPath, err)
 		}
 	}
 
-	merged := catalog.BuildCatalogView(s.curated, delta)
+	merged := catalog.BuildCatalogView(s.curated, approved)
 
 	allApps, err := ac.ListApplications(ctx)
 	if err != nil {

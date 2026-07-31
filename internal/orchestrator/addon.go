@@ -21,6 +21,13 @@ func (o *Orchestrator) AddAddon(ctx context.Context, req AddAddonRequest) (*GitR
 		return nil, fmt.Errorf("addon repo_url is required")
 	}
 
+	// This writes the v3 full-copy catalog file, which a v4 repo does not
+	// have — see refuseV3ShapedWriteOnV4Repo. Refuse before any read or
+	// branch so nothing happens.
+	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "adding an addon through this endpoint", V4CatalogWriteDoor); err != nil {
+		return nil, err
+	}
+
 	// Read the existing addons-catalog.yaml.
 	catalogPath := o.paths.Catalog
 	catalogData, err := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
@@ -123,6 +130,11 @@ func (o *Orchestrator) AddAddon(ctx context.Context, req AddAddonRequest) (*GitR
 func (o *Orchestrator) RemoveAddon(ctx context.Context, req RemoveAddonRequest) (*GitResult, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("addon name is required")
+	}
+
+	// Same v3-catalog-file write as AddAddon, same refusal on a v4 repo.
+	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "removing an addon through this endpoint", V4CatalogWriteDoor); err != nil {
+		return nil, err
 	}
 
 	// Read the existing addons-catalog.yaml.

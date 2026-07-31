@@ -2,15 +2,17 @@
 ============================================================================
 sharko-engine — the generic addon ApplicationSet template
 ============================================================================
-One ApplicationSet per addon in the merged catalog (shipped defaults +
-the user's own catalog/addons.yaml delta, design doc section 4.7). This
+One ApplicationSet per addon in the org's approved list — catalog.yaml at
+the root of the repo, design doc section 4.7. Nothing else gets one: an
+addon the org has not approved has no ApplicationSet, and an empty
+catalog.yaml renders zero of them, which is what a fresh repo does. This
 file has no addon-specific logic anywhere in it — no `if addon == "x"`,
 no hardcoded chart names, no hardcoded namespaces. Swap any addon name for
 any other and the shape produced is identical (design doc section 4.6).
 
 Two rounds of `{{ }}` are in play here (design doc section 4.1):
 
-  Round one — Helm, when this chart renders. Loops over the merged
+  Round one — Helm, when this chart renders. Loops over the approved
   catalog and writes one ApplicationSet per addon; addon name, chart,
   repo URL, and the fleet-wide merged settings are all known now, so
   they are written into the output as plain text or as *baked* Go
@@ -48,22 +50,21 @@ from metadata.
 
 {{- range $name, $addon := $merged }}
 {{/*
-  A user's own catalog/addons.yaml can set an addon entry to a bare key
+  A hand-edited catalog.yaml can set an addon entry to a bare key
   with no value (a bare "<addon-name>:" line, which YAML parses as null) — e.g. a
   hand-edit mistake, or a "commented out by blanking" habit carried over
   from other YAML tools. Sprig's mergeOverwrite does NOT drop that key the
   way Helm's own --values-file layering drops a null override (proven
-  empirically: see tests/enginerender's null-delta-addon cross-check) — it
+  empirically: see tests/enginerender's null-entry cross-check) — it
   keeps the key with a literal nil value, so `$merged[$name]` can genuinely
   be nil here. Without this guard, `$addon.settings` on the next line
   panics the whole render ("nil pointer evaluating interface {}.settings")
   for every addon in the catalog, not just the null one — one bad line in
-  a user's delta file must not be able to take down the entire fleet's
-  render. Defaulting to an empty dict makes a null delta entry behave
-  exactly like an ABSENT one: falls back to the curated definition (or, for
-  an addon with no curated entry either, empty settings/no version — the
-  same MergeDelta requiredness check that already validates the Go-side
-  merge covers that case) — never a crash (Wave 2 ride-along w2-q6 item 6).
+  somebody's catalog.yaml must not be able to take down the entire fleet's
+  render. Defaulting to an empty dict makes a null entry behave
+  exactly like an ABSENT one: the addon renders with empty settings and no
+  version, and the requiredness checks further down name the missing field
+  instead of crashing (Wave 2 ride-along w2-q6 item 6).
 */}}
 {{- $addon = $addon | default dict }}
 {{- $settings := $addon.settings | default dict }}
