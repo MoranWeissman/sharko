@@ -1553,44 +1553,42 @@ export const api = {
     }
     const qs = params.toString()
     return fetchJSON<import('./models').CatalogListResponse>(
-      `/catalog/addons${qs ? `?${qs}` : ''}`,
+      `/marketplace/addons${qs ? `?${qs}` : ''}`,
     )
   },
 
   getCuratedCatalogEntry: (name: string) =>
     fetchJSON<import('./models').CatalogEntry>(
+      `/marketplace/addons/${encodeURIComponent(name)}`,
+    ),
+
+  // ─── The org's approved catalog (v4 wave 2.5 — "catalog = the approved
+  // list") ───────────────────────────────────────────────────────────────
+  // Reads/writes catalog.yaml ONLY — no curated auto-seeding. A fresh repo
+  // returns zero entries. Replaces the old v4-wave-1 "delta" model
+  // (listMergedCatalog/getMergedCatalogAddon/addInternalAddon, which used
+  // to seed from the curated list — that's exactly the bug that made a
+  // fresh org's catalog show 45 addons nobody approved).
+
+  /** List every approved addon: catalog.yaml, nothing else. */
+  listCatalogApproved: () =>
+    fetchJSON<import('./models').CatalogAddonListResponse>('/catalog/addons'),
+
+  /** Single approved-addon lookup. 404 means "not approved" — even for a
+   *  name the Marketplace knows well. */
+  getCatalogApprovedAddon: (name: string) =>
+    fetchJSON<import('./models').CatalogAddon>(
       `/catalog/addons/${encodeURIComponent(name)}`,
     ),
 
-  // ─── v4 catalog delta model (v4 wave 1 Stories 3.2 + 3.3) ────────────────
-  // The merged view — shipped curated catalog overlaid with the caller's own
-  // git catalog/addons.yaml — plus the write path for adding a first-class
-  // in-house addon. Distinct from listCuratedCatalog above (pure curated).
-
-  /** List the merged v4 catalog: curated + your delta, one entry per addon. */
-  listMergedCatalog: () =>
-    fetchJSON<import('./models').MergedCatalogListResponse>(
-      '/catalog/delta/addons',
-    ),
-
-  /** Single-addon form of listMergedCatalog. */
-  getMergedCatalogAddon: (name: string) =>
-    fetchJSON<import('./models').MergedCatalogAddon>(
-      `/catalog/delta/addons/${encodeURIComponent(name)}`,
-    ),
-
   /**
-   * Add (or update) one in-house addon in your v4 catalog delta, committed
-   * via a pull request. repo_url, chart, and version are all required.
+   * Add one or more addons to the approved catalog, committed via a pull
+   * request — one element = a single add, N elements = ONE batch PR,
+   * never N. Passing `enable_on_cluster` makes it the combo: one PR that
+   * touches both catalog.yaml and clusters/<name>.yaml.
    */
-  addInternalAddon: (req: {
-    name: string
-    repo_url: string
-    chart: string
-    version: string
-    namespace?: string
-    auto_merge?: boolean
-  }) => postJSON<unknown>('/catalog/delta/addons', req),
+  addToCatalog: (req: import('./models').AddToCatalogRequest) =>
+    postJSON<import('./models').AddToCatalogResult>('/catalog/addons', req),
 
   /**
    * List configured catalog sources (embedded + third-party). Powers the
@@ -1598,7 +1596,7 @@ export const api = {
    * "Source" section on the addon detail page.
    */
   listCatalogSources: () =>
-    fetchJSON<import('./models').CatalogSourceRecord[]>('/catalog/sources'),
+    fetchJSON<import('./models').CatalogSourceRecord[]>('/marketplace/sources'),
 
   /**
    * Force-refresh all configured catalog sources. Tier-2 (admin); backend
@@ -1606,7 +1604,7 @@ export const api = {
    * "Refresh now" button in Settings → Catalog Sources.
    */
   refreshCatalogSources: () =>
-    postJSON<import('./models').CatalogSourceRecord[]>('/catalog/sources/refresh', {}),
+    postJSON<import('./models').CatalogSourceRecord[]>('/marketplace/sources/refresh', {}),
 
   /**
    * v4 wave 1 Story 3.4 — catalog-wide version-freshness summary (when
@@ -1636,7 +1634,7 @@ export const api = {
     }
     const qs = params.toString()
     return fetchJSON<import('./models').CatalogVersionsResponse>(
-      `/catalog/addons/${encodeURIComponent(name)}/versions${qs ? `?${qs}` : ''}`,
+      `/marketplace/addons/${encodeURIComponent(name)}/versions${qs ? `?${qs}` : ''}`,
     )
   },
 
@@ -1679,7 +1677,7 @@ export const api = {
   searchCatalog: (q: string, limit = 20) => {
     const params = new URLSearchParams({ q, limit: String(limit) })
     return fetchJSON<import('./models').CatalogSearchResponse>(
-      `/catalog/search?${params.toString()}`,
+      `/marketplace/search?${params.toString()}`,
     )
   },
 
@@ -1690,7 +1688,7 @@ export const api = {
    */
   getRemoteCatalogPackage: (repo: string, name: string) =>
     fetchJSON<import('./models').CatalogRemotePackageResponse>(
-      `/catalog/remote/${encodeURIComponent(repo)}/${encodeURIComponent(name)}`,
+      `/marketplace/remote/${encodeURIComponent(repo)}/${encodeURIComponent(name)}`,
     ),
 
   /**
@@ -1702,7 +1700,7 @@ export const api = {
    */
   getCuratedCatalogReadme: (name: string) =>
     fetchJSON<import('./models').CatalogReadmeResponse>(
-      `/catalog/addons/${encodeURIComponent(name)}/readme`,
+      `/marketplace/addons/${encodeURIComponent(name)}/readme`,
     ),
 
   /**
@@ -1712,7 +1710,7 @@ export const api = {
    * button on the unreachable banner.
    */
   reprobeArtifactHub: () =>
-    postJSON<import('./models').CatalogReprobeResponse>(`/catalog/reprobe`),
+    postJSON<import('./models').CatalogReprobeResponse>(`/marketplace/reprobe`),
 
   // ─── Server-wide settings (V2-cleanup-85.4) ────────────────────────────
 

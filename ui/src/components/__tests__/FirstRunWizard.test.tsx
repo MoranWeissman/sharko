@@ -79,6 +79,12 @@ vi.mock('@/services/api', () => {
       // migration status on mount. "empty" keeps it a no-op for every
       // existing wizard test (no active connection to migrate yet).
       getMigrationStatus: vi.fn().mockResolvedValue({ format: 'empty', migration_available: false, message: '' }),
+      // v4 wave 2.5 — step 5 (Catalog). Default to an empty Marketplace so
+      // existing tests that never reach step 5 are unaffected; the
+      // dedicated step-5 tests below override per-test.
+      listCuratedCatalog: vi.fn().mockResolvedValue({ addons: [], total: 0 }),
+      addToCatalog: vi.fn().mockResolvedValue({ added: [], enabled: [] }),
+      listRepoCharts: vi.fn().mockResolvedValue({ valid: false, repo: '' }),
     },
     // V2-cleanup-9: Step 4 probes repo state on mount. Default to "empty" so
     // existing resume-mode / init tests still see the Initialize offer; the
@@ -183,16 +189,16 @@ describe('detectGitProvider', () => {
 })
 
 describe('FirstRunWizard step header', () => {
-  it('shows "Step 1 of 4 — Welcome" when started fresh from step 1', () => {
+  it('shows "Step 1 of 5 — Welcome" when started fresh from step 1', () => {
     renderWizard(1)
     const label = screen.getByTestId('wizard-step-label')
-    expect(label.textContent).toBe('Step 1 of 4 — Welcome')
+    expect(label.textContent).toBe('Step 1 of 5 — Welcome')
   })
 
-  it('shows "Step 1 of 4 — Welcome" with no initialStep prop (default = 1)', () => {
+  it('shows "Step 1 of 5 — Welcome" with no initialStep prop (default = 1)', () => {
     renderWizard()
     const label = screen.getByTestId('wizard-step-label')
-    expect(label.textContent).toBe('Step 1 of 4 — Welcome')
+    expect(label.textContent).toBe('Step 1 of 5 — Welcome')
   })
 
   it('drops the "Step N of M" counter when resumed at step 4', () => {
@@ -205,6 +211,79 @@ describe('FirstRunWizard step header', () => {
     expect(label.textContent).toBe('Resuming setup — Initialize')
     // Defensive: explicitly assert the counter substring is absent.
     expect(label.textContent).not.toContain('Step 4 of 4')
+    expect(label.textContent).not.toContain('Step 4 of 5')
+  })
+})
+
+// v4 wave 2.5 — the new Catalog step (5): two doors in (Marketplace picks +
+// add-your-own-chart), skippable, never pre-ticked, N picks = one POST.
+describe('FirstRunWizard step 5 — Catalog (v4 wave 2.5)', () => {
+  it('reaching step 5 shows the Catalog picker with nothing pre-ticked, and picking N addons sends ONE POST', async () => {
+    const listCuratedCatalogMock = apiModule.api.listCuratedCatalog as ReturnType<typeof vi.fn>
+    const addToCatalogMock = apiModule.api.addToCatalog as ReturnType<typeof vi.fn>
+    listCuratedCatalogMock.mockResolvedValue({
+      addons: [
+        { name: 'cert-manager', description: 'TLS certs', chart: 'cert-manager', repo: 'https://charts.jetstack.io', default_namespace: 'cert-manager', maintainers: [], license: 'Apache-2.0', category: 'security', curated_by: [] },
+        { name: 'ingress-nginx', description: 'Ingress controller', chart: 'ingress-nginx', repo: 'https://kubernetes.github.io/ingress-nginx', default_namespace: 'ingress-nginx', maintainers: [], license: 'Apache-2.0', category: 'networking', curated_by: [] },
+        { name: 'some-other-addon', description: 'Something else', chart: 'some-other-addon', repo: 'https://example.com', default_namespace: 'some-other-addon', maintainers: [], license: 'MIT', category: 'developer-tools', curated_by: [] },
+      ],
+      total: 3,
+    })
+    addToCatalogMock.mockResolvedValue({
+      added: ['cert-manager', 'ingress-nginx'],
+      enabled: [],
+      pr_url: 'https://github.com/demo/sharko-addons/pull/7',
+      branch: 'sharko/catalog-batch',
+    })
+
+    renderWizard(5)
+
+    // Common picks are highlighted...
+    const commonBadges = await screen.findAllByTestId('wizard-catalog-common-badge')
+    expect(commonBadges.length).toBeGreaterThan(0)
+
+    // ...but NOTHING starts checked, including the common picks.
+    const certCheckbox = (await screen.findByTestId(
+      'wizard-catalog-pick-cert-manager',
+    )) as HTMLInputElement
+    const ingressCheckbox = screen.getByTestId(
+      'wizard-catalog-pick-ingress-nginx',
+    ) as HTMLInputElement
+    const otherCheckbox = screen.getByTestId(
+      'wizard-catalog-pick-some-other-addon',
+    ) as HTMLInputElement
+    expect(certCheckbox.checked).toBe(false)
+    expect(ingressCheckbox.checked).toBe(false)
+    expect(otherCheckbox.checked).toBe(false)
+
+    fireEvent.click(certCheckbox)
+    fireEvent.click(ingressCheckbox)
+    expect(certCheckbox.checked).toBe(true)
+    expect(ingressCheckbox.checked).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: /add 2 addons to catalog/i }))
+
+    await waitFor(() => {
+      expect(addToCatalogMock).toHaveBeenCalledTimes(1)
+    })
+    expect(addToCatalogMock).toHaveBeenCalledWith({
+      addons: [
+        { name: 'cert-manager', from_marketplace: true },
+        { name: 'ingress-nginx', from_marketplace: true },
+      ],
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/2 addons added to your catalog/i)).toBeInTheDocument()
+    })
+  })
+
+  it('the Catalog step is skippable — day zero with an empty catalog is a valid choice', async () => {
+    const listCuratedCatalogMock = apiModule.api.listCuratedCatalog as ReturnType<typeof vi.fn>
+    listCuratedCatalogMock.mockResolvedValue({ addons: [], total: 0 })
+
+    renderWizard(5)
+    const skip = await screen.findByRole('button', { name: /skip for now/i })
+    expect(skip).toBeInTheDocument()
   })
 })
 

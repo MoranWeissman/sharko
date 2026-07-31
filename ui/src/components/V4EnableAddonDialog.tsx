@@ -17,7 +17,7 @@
  */
 import { useState } from 'react'
 import { parse as parseYaml } from 'yaml'
-import { AlertTriangle, Loader2, Sparkles, Trash2 } from 'lucide-react'
+import { AlertTriangle, Loader2, Sparkles, Store, Trash2 } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -28,11 +28,23 @@ import {
 import { DryRunPreview } from '@/components/AddAddonFlow'
 import { PRResultBanner } from '@/components/PRFeedback'
 import {
+  api,
   enableAddonV4,
   disableAddonV4,
   V4AddonValidationError,
 } from '@/services/api'
-import type { V4GitResult } from '@/services/models'
+import type { AddToCatalogResult, V4GitResult } from '@/services/models'
+
+/**
+ * v4 wave 2.5 (design decision 4) — enabling now REQUIRES the addon to be
+ * in catalog.yaml first. The 422 `problems` list is plain English with no
+ * error code, so this is a best-effort heuristic: any problem sentence
+ * that mentions "catalog" is treated as the catalog gate, and the dialog
+ * offers the one-PR combo instead of leaving the operator at a dead end.
+ */
+function isCatalogGateProblem(problems: string[]): boolean {
+  return problems.some((p) => /catalog/i.test(p))
+}
 
 /** Plain-words error shown for any values input that doesn't parse to a
  * mapping — e.g. a quoted string like `"installCRDs: true"`, a bare number,
@@ -107,6 +119,12 @@ export function V4EnableAddonDialog({
   const [result, setResult] = useState<V4GitResult | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
+  // The catalog-gate combo — "Add to catalog and enable on <cluster>" in
+  // one PR (v4 wave 2.5, design decision 4).
+  const [comboSubmitting, setComboSubmitting] = useState(false)
+  const [comboResult, setComboResult] = useState<AddToCatalogResult | null>(null)
+  const [comboError, setComboError] = useState<string | null>(null)
+
   const reset = () => {
     setPhase('form')
     setValuesText('')
@@ -115,6 +133,9 @@ export function V4EnableAddonDialog({
     setProblems([])
     setResult(null)
     setErrorMessage(null)
+    setComboSubmitting(false)
+    setComboResult(null)
+    setComboError(null)
   }
 
   const handleClose = () => {
@@ -214,7 +235,34 @@ export function V4EnableAddonDialog({
     }
   }
 
+  // v4 wave 2.5 (design decision 4) — the one-PR combo: add the addon to
+  // catalog.yaml AND enable it on this cluster in a single pull request.
+  // `from_marketplace: true` lets the server resolve chart/repo/version
+  // from the curated Marketplace entry, so this needs no data beyond the
+  // addon and cluster names already in scope.
+  const handleAddToCatalogAndEnable = async () => {
+    setComboSubmitting(true)
+    setComboError(null)
+    try {
+      const res = await api.addToCatalog({
+        addons: [{ name: addon, from_marketplace: true }],
+        enable_on_cluster: cluster,
+      })
+      setComboResult(res)
+      if (res.pr_url) {
+        onApplied?.({ pr_url: res.pr_url, branch: res.branch })
+      }
+    } catch (e: unknown) {
+      setComboError(
+        e instanceof Error ? e.message : 'Failed to add to catalog and enable',
+      )
+    } finally {
+      setComboSubmitting(false)
+    }
+  }
+
   const title = mode === 'enable' ? `Enable ${addon} on ${cluster}` : `Disable ${addon} on ${cluster}`
+  const catalogGateHit = mode === 'enable' && phase === 'problems' && isCatalogGateProblem(problems)
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose() }}>
@@ -278,6 +326,45 @@ export function V4EnableAddonDialog({
           </div>
         )}
 
+        {/* v4 wave 2.5 (design decision 4) — instead of a dead end, offer
+            the one-PR combo when the block is specifically "not in the
+            catalog yet". */}
+        {catalogGateHit && !comboResult && (
+          <div
+            data-testid="v4-catalog-gate-combo"
+            className="rounded-md border border-teal-300 bg-teal-50 p-3 dark:border-teal-700 dark:bg-teal-950/30"
+          >
+            <p className="text-sm text-teal-800 dark:text-teal-300">
+              {addon} isn&apos;t in your catalog yet. Sharko can add it and
+              enable it on {cluster} in one pull request.
+            </p>
+            {comboError && (
+              <p className="mt-2 text-sm text-red-600 dark:text-red-400">{comboError}</p>
+            )}
+            <button
+              type="button"
+              onClick={() => void handleAddToCatalogAndEnable()}
+              disabled={comboSubmitting}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-teal-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+            >
+              {comboSubmitting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Store className="h-3.5 w-3.5" />
+              )}
+              Add to catalog and enable on {cluster}
+            </button>
+          </div>
+        )}
+
+        {comboResult && (
+          <PRResultBanner
+            result={comboResult}
+            mergedMessage={`PR merged — ${addon} is in your catalog and enabled on ${cluster}`}
+            openMessage={`PR opened — ${addon} is added to your catalog and enabled on ${cluster} once it merges`}
+          />
+        )}
+
         {phase === 'preview' && preview?.dry_run && (
           <DryRunPreview result={preview.dry_run} />
         )}
@@ -324,7 +411,7 @@ export function V4EnableAddonDialog({
               Confirm — open PR
             </button>
           )}
-          {phase === 'problems' && (
+          {phase === 'problems' && !comboResult && (
             <button
               type="button"
               onClick={() => setPhase('form')}
@@ -338,7 +425,7 @@ export function V4EnableAddonDialog({
             onClick={handleClose}
             className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
           >
-            {phase === 'result' ? 'Done' : 'Cancel'}
+            {phase === 'result' || comboResult ? 'Done' : 'Cancel'}
           </button>
         </DialogFooter>
       </DialogContent>

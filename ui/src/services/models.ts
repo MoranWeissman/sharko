@@ -863,6 +863,17 @@ export interface CatalogVersionsResponse {
    * case. Render an "unknown" pill, never an error, when this is true.
    */
   version_check_unknown?: boolean
+  /**
+   * v4 wave 2.5 — a full plain-English sentence explaining why no version
+   * list could be produced for this source (e.g. an org-added chart repo
+   * the freshness scanner can't read). Empty/absent whenever a version
+   * list exists. Render this sentence verbatim — never a made-up
+   * "up to date" claim — wherever freshness/versions would otherwise show.
+   */
+  no_data_reason?: string
+  /** What this snapshot covers — e.g. "curated" vs "catalog". Optional;
+   *  only present on the wave-2.5 freshness-extended responses. */
+  scope?: string
 }
 
 /**
@@ -877,6 +888,14 @@ export interface CatalogFreshnessResponse {
   last_run?: string
   next_run?: string
   addons_checked: number
+  /**
+   * v4 wave 2.5 — how many of the org's OWN catalog.yaml entries the
+   * freshness scanner covered in the last pass (distinct from
+   * addons_checked, which counts the curated/Marketplace list). Extends
+   * freshness to org-added charts per the catalog-approved-model design
+   * (landmine 4) — absent on older backends.
+   */
+  catalog_addons_checked?: number
   engine_pin?: {
     last_checked?: string
     v4_repo: boolean
@@ -887,50 +906,99 @@ export interface CatalogFreshnessResponse {
 }
 
 /**
- * v4 wave 1 Story 3.2/3.3 — one addon's merged view: the shipped curated
- * catalog overlaid with the caller's own git catalog/addons.yaml delta.
- * Mirrors `internal/catalog.MergedAddon`.
+ * v4 wave 2.5 — "catalog = the approved list". `origin` distinguishes an
+ * entry the Marketplace also knows about ("curated") from one the org
+ * typed in by hand ("internal") — both are equally real, approved
+ * entries; origin only affects whether the knowledge fields below are
+ * filled in.
  */
 export type CatalogOrigin = 'curated' | 'internal'
 
-export interface MergedCatalogAddon {
+/**
+ * One entry in the org's approved catalog (GET/POST /api/v1/catalog/addons
+ * — reads/writes catalog.yaml ONLY; a fresh repo returns zero of these).
+ * Distinct from `CatalogEntry` (the read-only Marketplace/curated
+ * knowledge) — this is what your org actually allows. The deployment
+ * fields (chart/repo_url/version/namespace/settings) are the full entry
+ * copied at approval time — the repo alone tells the whole story.
+ * Knowledge fields (description, docs_url, homepage, security_score,
+ * required_values, quirks) are filled in only when the Marketplace
+ * recognizes the name; leave them unrendered rather than inventing a
+ * placeholder when they're absent.
+ */
+export interface CatalogAddon {
   name: string
   origin: CatalogOrigin
-  customized: boolean
-
-  repo_url?: string
   chart?: string
+  repo_url?: string
   version?: string
-  version_source?: 'delta' | ''
   namespace?: string
-
-  additional_sources?: unknown[]
-  extra_helm_values?: Record<string, string>
-
+  settings?: Record<string, unknown>
+  /** False when this entry can't actually be deployed yet — see
+   *  `missing_fields` for what's needed (e.g. an internal entry someone
+   *  hand-edited into catalog.yaml without a version). */
+  deployable: boolean
+  missing_fields?: string[]
+  secrets?: CatalogSecretRequirement[]
+  // Knowledge fields — Marketplace-sourced, present only when known.
   description?: string
   docs_url?: string
   homepage?: string
-  source_url?: string
-  maintainers?: string[]
-  license?: string
-  category?: string
-  curated_by?: string[]
   security_score?: CatalogScore
-  security_tier?: CatalogSecurityTier
-  github_stars?: number
-  min_kubernetes_version?: string
-  deprecated?: boolean
-  superseded_by?: string
   required_values?: CatalogRequiredValue[]
-  secrets?: CatalogSecretRequirement[]
   quirks?: string[]
-  verified?: boolean
-  signature_identity?: string
 }
 
-export interface MergedCatalogListResponse {
-  addons: MergedCatalogAddon[]
+export interface CatalogAddonListResponse {
+  addons: CatalogAddon[]
   total: number
+}
+
+/**
+ * One addon to add in a POST /api/v1/catalog/addons request. `from_marketplace:
+ * true` tells the server to resolve chart/repo_url/version/namespace from
+ * the curated Marketplace entry — the caller only needs to supply `name`
+ * (and optionally `version` to pin something other than latest). When
+ * `from_marketplace` is false, chart/repo_url/version are required (the
+ * "add your own chart" door).
+ */
+export interface AddToCatalogAddonInput {
+  name: string
+  from_marketplace: boolean
+  version?: string
+  repo_url?: string
+  chart?: string
+  namespace?: string
+  settings?: Record<string, unknown>
+  secrets?: unknown[]
+}
+
+/**
+ * Request body for POST /api/v1/catalog/addons. One element in `addons` =
+ * a single add; N elements = ONE batch pull request, never N. Adding
+ * `enable_on_cluster` makes it the combo: one PR touching both
+ * catalog.yaml and clusters/<name>.yaml.
+ */
+export interface AddToCatalogRequest {
+  addons: AddToCatalogAddonInput[]
+  enable_on_cluster?: string
+  dry_run?: boolean
+  auto_merge?: boolean | null
+}
+
+/**
+ * 201 response from POST /api/v1/catalog/addons. When `dry_run` was set on
+ * the request, the server returns a preview under `dry_run` instead of
+ * opening anything (added/enabled/pr_url are then empty).
+ */
+export interface AddToCatalogResult {
+  added: string[]
+  enabled: string[]
+  cluster?: string
+  pr_url?: string
+  branch?: string
+  warnings?: string[]
+  dry_run?: DryRunResult
 }
 
 // Paste Helm URL validator. The handler returns 200 in both the happy and

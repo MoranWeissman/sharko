@@ -83,7 +83,7 @@ describe('Layout', () => {
   it('renders all navigation links', () => {
     renderLayout()
     expect(screen.getByText('Dashboard')).toBeInTheDocument()
-    expect(screen.getByText('Clusters')).toBeInTheDocument()
+    expect(screen.getByText('Managed Clusters')).toBeInTheDocument()
     expect(screen.getByText('Addons')).toBeInTheDocument()
     expect(screen.getByText('Settings')).toBeInTheDocument()
   })

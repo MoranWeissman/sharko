@@ -55,7 +55,7 @@ const navSections: NavSection[] = [
     label: 'Overview',
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-      { to: '/clusters', label: 'Clusters', icon: Server },
+      { to: '/clusters', label: 'Managed Clusters', icon: Server },
       { to: '/addons', label: 'Addons', icon: Package },
     ],
   },
@@ -87,7 +87,7 @@ const navSections: NavSection[] = [
 
 const routeLabels: Record<string, string> = {
   dashboard: 'Dashboard',
-  clusters: 'Clusters',
+  clusters: 'Managed Clusters',
   addons: 'Addons',
   system: 'System',
   observability: 'Observability',
@@ -133,7 +133,7 @@ function Breadcrumbs() {
 function getAIPageContext(pathname: string): string | undefined {
   const routes: Record<string, string> = {
     '/dashboard': 'the Dashboard (overview stats)',
-    '/clusters': 'the Clusters page',
+    '/clusters': 'the Managed Clusters page',
     '/addons': 'the Addons page (Catalog + Marketplace)',
     '/system': 'the System page (Sharko/ArgoCD → repo/clusters chain)',
     '/observability': 'the Observability page',

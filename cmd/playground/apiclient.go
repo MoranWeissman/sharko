@@ -349,6 +349,50 @@ func (c *apiClient) registerClusterV4(name, kubeconfig string, autoMerge bool) (
 	return resp.Git, nil
 }
 
+// catalogAddResult mirrors the fields the playground needs from
+// orchestrator.AddToCatalogResult — POST /api/v1/catalog/addons embeds
+// *orchestrator.GitResult anonymously, so its JSON fields (pr_url, pr_id,
+// branch, merged) sit at the top level right alongside "added"; gitResult
+// already carries the matching json tags, so embedding it here decodes the
+// same flattened shape.
+type catalogAddResult struct {
+	gitResult
+	Added []string `json:"added"`
+}
+
+// addToCatalog adds one addon to the org's catalog via POST
+// /api/v1/catalog/addons with an explicit auto_merge decision, returning
+// the PR info so the caller can merge it itself. from_marketplace copies
+// the chart location and default namespace out of Sharko's curated
+// (Marketplace) list for this name; version is always given explicitly —
+// the curated list deliberately ships no version (design doc
+// 2026-07-31-catalog-approved-model.md §5), so a version baked into a
+// signed artefact never goes stale.
+func (c *apiClient) addToCatalog(addonName, version string, autoMerge bool) (*catalogAddResult, error) {
+	reqBody := map[string]interface{}{
+		"addons": []map[string]interface{}{
+			{
+				"name":             addonName,
+				"from_marketplace": true,
+				"version":          version,
+			},
+		},
+		"auto_merge": autoMerge,
+	}
+	statusCode, body, err := c.doJSON("POST", "/api/v1/catalog/addons", reqBody, nil)
+	if err != nil {
+		return nil, err
+	}
+	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
+		return nil, fmt.Errorf("POST /api/v1/catalog/addons: status %d: %s", statusCode, string(body))
+	}
+	var res catalogAddResult
+	if err := json.Unmarshal(body, &res); err != nil {
+		return nil, fmt.Errorf("decode add-to-catalog response: %w", err)
+	}
+	return &res, nil
+}
+
 // enableAddonV4 enables an addon via POST /api/v1/v4/clusters/{cluster}/addons/{addon}
 // with an explicit auto_merge decision, returning the PR info.
 func (c *apiClient) enableAddonV4(cluster, addon string, autoMerge bool) (*gitResult, error) {

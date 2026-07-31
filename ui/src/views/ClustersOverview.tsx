@@ -1038,6 +1038,11 @@ export function ClustersOverview() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
+          {/* Page title stays "Clusters" — the page already has a "Managed
+              Clusters" vs "Discovered" section split below; the nav/
+              breadcrumb/page-jump wording is what decision 10 renames
+              ("Managed Clusters"), so this in-page title is left distinct
+              to avoid two identical headings on the same page. */}
           <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Clusters</h2>
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             All Kubernetes clusters managed by ArgoCD. Click a cluster to see deployed addons, health status, and configuration.

@@ -104,6 +104,50 @@ For an ArgoCD Application to "deploy" that Secret, it needs the credential **val
 
 So Sharko runs its own process that writes the cluster Secret directly, using credentials it holds encrypted in its own config store. This is a design choice (self-contained, no hard dependency on ESO) that costs one trade-off: Sharko's desired state is not a kubectl-visible object today. For more on that transparency gap and the roadmap to close it, see the section below.
 
+## Why do Sharko's files look like Kubernetes resources — and why isn't Sharko an operator?
+
+Open `catalog.yaml` or `clusters/prod-eu.yaml` in your repo and the first
+two lines look like a Kubernetes object: `apiVersion: sharko.dev/v1` and
+`kind: AddonCatalog`. There is no `AddonCatalog` custom resource, and
+`kubectl get addoncatalog` will never work. So why the Kubernetes-looking
+header?
+
+**The true story: Sharko tried being an operator, and shelved it.** An
+earlier build (a `ClusterAddons` CRD, a controller, RBAC, a values-driven
+Helm chart) went through several build phases and actually worked. It was
+removed from the product before v4 shipped — the code still exists, kept
+on a branch (`operator-shelf`), but it does not run. The reason: an
+operator's desired state lives in a `CustomResource` that Kubernetes
+stores — but Sharko's real desired state (which addons, at which
+versions, on which clusters) is something a person reviews and approves
+in a pull request, and Kubernetes objects are not the natural place to
+put something you want reviewed before it takes effect. Git already is
+that place. So the plain sentence for what Sharko actually is: **Sharko
+is an operator whose desired state lives in git, not in a CustomResource.**
+The reconcile loop is real (the cluster reconciler, the ApplicationSet
+generators) — only the "state lives in a CRD" part was tried and dropped.
+
+**So why keep the Kubernetes-looking header at all, if there's no CRD
+behind it?** Because the header answers a real question even without a
+CRD: *what kind of file is this, and which version of its shape am I
+reading?* `apiVersion` gives you the format version. `kind` gives you the
+file's purpose without opening it. Several tools you already know do
+exactly this for files nobody applies with `kubectl` — `kustomization.yaml`
+(kustomize), `kind`'s own cluster-config file, `kubeadm`'s config file, and
+Skaffold's `skaffold.yaml` all carry `apiVersion` + `kind` at the top,
+with the rest of the fields sitting directly underneath — no `metadata:`,
+no `spec:` wrapper. Sharko follows that same convention, on purpose,
+because `metadata:` and `spec:` are the signal of a real applied resource,
+and none of Sharko's data files are one.
+
+**The one exception is `engine.yaml`.** That file *is* a real, applied
+Kubernetes object — an ArgoCD `Application` — so it keeps the full
+`apiVersion` / `kind` / `metadata` / `spec` shape a real manifest needs.
+Every other Sharko-read file (`catalog.yaml`, `managed-clusters.yaml`,
+`clusters/<name>.yaml`) is header-plus-top-level-fields, exactly like
+`kustomization.yaml`. One rule, one exception, and the exception is the
+one file ArgoCD actually applies.
+
 ## What Sharko is not
 
 - **Not a general-purpose GitOps rival to ArgoCD.** Sharko is a purpose-built controller for one narrow layer: cluster registration and addon-assignment labels. It never touches Applications or workloads.
@@ -116,12 +160,22 @@ Sharko's GitOps is **not 100% kubectl-transparent today.** When you run ArgoCD o
 
 This is a real trade-off. A skeptical platform engineer can't debug Sharko's desired state the way they debug ArgoCD or ESO. Status is visible via Sharko's UI, API, and Kubernetes events today — but not via a `kubectl get` command.
 
-**The roadmap to close this gap:**
+**On the CRD idea specifically:** Sharko already tried this once — a
+`ClusterAddons` CRD and controller were built and then shelved before v4
+shipped, for the reasons in the FAQ above. The code still exists on a
+branch, but it does not run in the product today, and there is no current
+plan to bring it back. Git is Sharko's answer to "where does desired state
+live," not a future custom resource.
 
-- **Near-term:** ESO integration (optional) — for teams that already run ESO, Sharko can emit `ExternalSecret` manifests instead of pushing secrets directly. This makes the secret-value path kubectl-visible.
-- **Longer-term:** CRD + operator mode — Sharko's desired state becomes a real Kubernetes object (`kubectl get sharkoclusteraddons` shows desired state + status + errors). This is the full kubectl-native transparency model, analogous to how ArgoCD's `Application` resource works.
+**A near-term option that stays git-based:** ESO integration (optional) —
+for teams that already run External Secrets Operator, Sharko could emit
+`ExternalSecret` manifests instead of pushing secrets directly, which
+would make the secret-*value* path kubectl-visible without touching how
+the rest of desired state is stored. This is not built; it is tracked in
+[Roadmap](../community/roadmap.md).
 
-Neither gates v3.0.0. Today's transparency model (UI + API + events) is honest about what it is, and the roadmap items above are tracked in [Roadmap](../community/roadmap.md).
+Today's transparency model (UI + API + events, plus a git history you can
+read yourself) is honest about what it is.
 
 ## Who is Sharko for?
 

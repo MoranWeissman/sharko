@@ -943,6 +943,13 @@ export function AddonCatalog() {
             ? 'All addons defined in your Git catalog. See deployment coverage, health, and version per addon.'
             : 'Discover approved addons for your deployable catalog.'}
         </p>
+        {/* The two-surface sentence (v4 wave 2.5, decision 8) — said once,
+            plainly, wherever Catalog and Marketplace meet. */}
+        <p className="mt-2 text-sm text-[#3a6a8a] dark:text-gray-500">
+          The Marketplace is what you could run. The Catalog is what your
+          org allows. Your clusters run only what&rsquo;s enabled from the
+          Catalog.
+        </p>
       </div>
       <AddonsTabBar tab={tab} onChange={switchTab} />
     </div>
@@ -1584,22 +1591,42 @@ export function AddonCatalog() {
 
       {/* Addon grid / list */}
       {paginatedAddons.length === 0 ? (
-        <div className="rounded-lg border border-teal-200 bg-teal-50 p-6 text-center text-sm text-teal-700 dark:border-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
-          {search ? (
-            `No addons found matching "${search}"`
+        <div
+          data-testid="catalog-empty-state"
+          className="rounded-lg border border-teal-200 bg-teal-50 p-6 text-center text-sm text-teal-700 dark:border-teal-700 dark:bg-teal-900/30 dark:text-teal-400"
+        >
+          {search || filterType !== 'all' ? (
+            search
+              ? `No addons found matching "${search}"`
+              : 'No addons match the current filter.'
           ) : (
-            // V2-cleanup-61.3 (B2): the catalog empty state used to be a
-            // dead end that never mentioned the Marketplace. Point to it.
+            // v4 wave 2.5 (decision 3): day zero is a valid, empty catalog —
+            // not a dead end. Plain sentence + both doors in.
             <div className="space-y-3">
-              <p>Your catalog is empty — nothing has been added yet.</p>
-              <button
-                type="button"
-                onClick={() => switchTab('marketplace')}
-                className="inline-flex items-center gap-2 rounded-lg bg-[#0a2a4a] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
-              >
-                <Store className="h-4 w-4" />
-                Browse the Marketplace
-              </button>
+              <p>
+                Your catalog is empty. Nothing runs in your org that you
+                didn&rsquo;t put here.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => switchTab('marketplace')}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[#0a2a4a] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
+                >
+                  <Store className="h-4 w-4" />
+                  Browse the Marketplace
+                </button>
+                <RoleGuard adminOnly>
+                  <button
+                    type="button"
+                    onClick={openAddAddon}
+                    className="inline-flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add your own chart
+                  </button>
+                </RoleGuard>
+              </div>
             </div>
           )}
         </div>

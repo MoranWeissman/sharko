@@ -16,7 +16,7 @@ An overview of what the wizard will set up. Read through it and click **Get Star
 
 ## Step 2: Git Connection
 
-Sharko needs a Git repo to store your fleet configuration (ApplicationSet, base values, per-cluster overrides). All write operations (adding clusters, upgrading addons) create PRs in this repo.
+Sharko needs a Git repo to store your fleet configuration (the engine pin, your approved-addon catalog, per-cluster assignments, and addon values). All write operations (adding clusters, upgrading addons) create PRs in this repo.
 
 | Field | What to enter |
 |-------|--------------|
@@ -53,17 +53,34 @@ You can skip this and configure the secrets provider later in **Settings → Sec
 
 ## Step 4: Initialize Repository
 
-This step creates the initial structure in your Git repo:
+This step creates the starting layout in your Git repo — nothing more:
 
-- An **ApplicationSet** that manages all cluster addons via ArgoCD
-- A **base values directory** with per-addon default configuration
-- A **clusters directory** where per-cluster overrides live
+- **`engine.yaml`** — the pointer to Sharko's engine chart, the one moving part Sharko ships
+- **`clusters/`** and **`values/`** — empty folders, ready for the first cluster and the first addon
+- **`managed-clusters.yaml`** and **`catalog.yaml`** are not created yet — a file that isn't there means "empty," and Sharko creates each one the first time you have something to put in it
 
 Sharko shows you a step-by-step progress log as it creates each file and opens the PR.
 
 **Auto-merge:** Toggle this on if you want Sharko to merge the PR immediately after creating it. Toggle it off if you want to review the PR yourself in GitHub or Azure DevOps first.
 
-Click **Initialize** and watch the progress. When the step completes, click **Go to Dashboard**.
+Click **Initialize** and watch the progress. When the step completes, you move to the Catalog step.
+
+## Step 5: Catalog
+
+Your Catalog starts **empty**. This is not a dead end — the step gives
+you two doors into it, both producing a pull request to `catalog.yaml`:
+
+- **Pick from the Marketplace** — a list of the built-in curated addons.
+  Common picks (like cert-manager) are highlighted at the top, but nothing
+  is ever pre-selected — you choose every addon that goes in.
+- **Add your own chart** — for an in-house or otherwise uncurated chart,
+  fill in its repo location, version, and namespace yourself.
+
+Pick as many addons as you want from either door; Sharko opens **one**
+pull request for everything you picked, not one per addon. You can also
+skip this step entirely and click through to the dashboard — an empty
+Catalog is a normal working state, and you can add to it later from the
+Marketplace or Catalog tab.
 
 ## Dashboard
 

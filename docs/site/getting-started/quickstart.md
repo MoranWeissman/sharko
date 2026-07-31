@@ -41,7 +41,9 @@ The wizard appears automatically on first access.
 
 **Step 3 — ArgoCD connection:** Sharko auto-discovers the ArgoCD service in-cluster. Confirm the server URL and enter an ArgoCD account token. Optionally configure a secrets provider (AWS Secrets Manager or Kubernetes Secrets) for cluster credentials.
 
-**Step 4 — Initialize repository:** Sharko creates the ApplicationSet, base values directory, and clusters directory in your repo. Choose **auto-merge** to merge the PR immediately, or review it yourself in GitHub/Azure DevOps first.
+**Step 4 — Initialize repository:** Sharko opens a pull request with the starting layout — `managed-clusters.yaml`, `catalog.yaml`, `engine.yaml`, and the empty `clusters/` and `values/` folders, nothing else. Choose **auto-merge** to merge the PR immediately, or review it yourself in GitHub/Azure DevOps first.
+
+**Step 5 — Catalog:** Your Catalog starts **empty** — nothing runs in your org that nobody chose. This step offers two doors into it: pick addons from the Marketplace (common picks like cert-manager are highlighted, but nothing is pre-selected — you choose), or add your own in-house chart by filling in its location, version, and namespace. Pick as many as you like; Sharko opens **one** pull request for all of them, not one per addon. You can skip this step and add addons later — an empty Catalog is a normal, working state, not an error.
 
 After the wizard completes, the dashboard loads with clusters discovered from ArgoCD.
 
