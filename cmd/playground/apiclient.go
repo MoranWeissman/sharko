@@ -221,6 +221,36 @@ type gitResult struct {
 	Merged bool   `json:"merged"`
 }
 
+// decodePossiblyWrapped decodes body into out (a pointer to a struct that
+// embeds gitResult), then checks gr — the pointer to that embedded field —
+// for any PR info. If the flat decode found none (PRID==0, Merged==false,
+// PRUrl==""), it retries assuming the response is the attribution-fallback
+// wrapper shape internal/api/tiered_git.go's withAttributionWarning produces:
+// {"result": <out-shaped payload>, "attribution_warning": "..."}. Handlers
+// on the withAttributionWarning list (addon_ops_v4 is NOT one of them, but
+// catalog_org and others are) emit that wrapper whenever the caller's git
+// token resolved to the fallback service token instead of a personal one —
+// which is every request the playground's admin login makes. Without this,
+// a wrapped response silently decodes PRID/Merged/PRUrl as zero values and
+// callers wrongly conclude there is no PR.
+//
+// The second decode is best-effort: if it fails or still finds no PR info,
+// out is left with whatever the flat decode produced, and the caller's own
+// "no PR info" check reports the failure.
+func decodePossiblyWrapped(body []byte, out interface{}, gr *gitResult) error {
+	if err := json.Unmarshal(body, out); err != nil {
+		return err
+	}
+	if gr.PRID != 0 || gr.Merged || gr.PRUrl != "" {
+		return nil
+	}
+	wrapper := struct {
+		Result interface{} `json:"result"`
+	}{Result: out}
+	_ = json.Unmarshal(body, &wrapper)
+	return nil
+}
+
 // doJSON performs an authenticated JSON request against the Sharko API.
 // If out is non-nil and the response has a body, the body is decoded into it.
 // Always returns the raw status code and body so callers can report server
@@ -387,7 +417,7 @@ func (c *apiClient) addToCatalog(addonName, version string, autoMerge bool) (*ca
 		return nil, fmt.Errorf("POST /api/v1/catalog/addons: status %d: %s", statusCode, string(body))
 	}
 	var res catalogAddResult
-	if err := json.Unmarshal(body, &res); err != nil {
+	if err := decodePossiblyWrapped(body, &res, &res.gitResult); err != nil {
 		return nil, fmt.Errorf("decode add-to-catalog response: %w", err)
 	}
 	return &res, nil
