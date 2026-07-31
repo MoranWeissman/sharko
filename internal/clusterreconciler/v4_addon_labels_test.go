@@ -19,23 +19,20 @@ import (
 func clusterAddonsYAML(cluster string, addons map[string]bool) []byte {
 	body := "apiVersion: sharko.dev/v1\n" +
 		"kind: ClusterAddons\n" +
-		"metadata:\n" +
-		"  name: " + cluster + "\n" +
-		"spec:\n" +
-		"  cluster: " + cluster + "\n"
+		"cluster: " + cluster + "\n"
 	if len(addons) == 0 {
-		return []byte(body + "  addons: {}\n")
+		return []byte(body + "addons: {}\n")
 	}
-	body += "  addons:\n"
+	body += "addons:\n"
 	for addon, enabled := range addons {
-		body += fmt.Sprintf("    %s:\n      enabled: %t\n", addon, enabled)
+		body += fmt.Sprintf("  %s:\n    enabled: %t\n", addon, enabled)
 	}
 	return []byte(body)
 }
 
 func v4RepoFiles(assignments map[string]map[string]bool, clusters ...string) map[string][]byte {
 	files := map[string][]byte{
-		v4ConnectionsPath: envelopedManagedClusters(clusters...),
+		v4ManagedClustersPath: envelopedManagedClusters(clusters...),
 	}
 	for cluster, addons := range assignments {
 		files["clusters/"+cluster+".yaml"] = clusterAddonsYAML(cluster, addons)

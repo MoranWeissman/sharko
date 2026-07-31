@@ -8,15 +8,15 @@ import (
 
 // traversalNames is the shared attack list: every shape a cluster or addon
 // name could take that would let path.Join's own cleaning walk the write
-// out of the v4 data folders. "../../engine/application.yaml" is the
-// confirmed exploit — path.Join("clusters", "../../engine/application.yaml"
+// out of the v4 data folders. "../../engine.yaml" is the
+// confirmed exploit — path.Join("clusters", "../../engine.yaml"
 // + ".yaml") cleans to a path outside clusters/ entirely, so an
 // enable-addon call could have rewritten the engine pin.
 var traversalNames = []string{
 	"..",
 	"../evil",
 	"../../engine/application",
-	"../../engine/application.yaml",
+	"../../engine.yaml",
 	"a/../../b",
 	"nested/name",
 	`back\slash`,

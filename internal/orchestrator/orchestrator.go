@@ -184,7 +184,7 @@ type Orchestrator struct {
 	// curated is the shipped curated addon catalog, wired via
 	// SetCuratedCatalog (v4 Wave 1 Story 4.3). Used by the v4 addon
 	// enable/disable pipeline (addon_ops_v4.go) to merge a caller's
-	// catalog/addons.yaml delta against the shipped set before running
+	// catalog.yaml delta against the shipped set before running
 	// semantic validation (required values, declared secrets) — the same
 	// catalog.MergeDelta the read-side /catalog/delta/addons handler
 	// already uses. nil is safe: every addon then merges as

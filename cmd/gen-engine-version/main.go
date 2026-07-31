@@ -5,7 +5,7 @@
 //
 // Why this exists (v4 Wave 1 Story 2.5): the engine pin-bump check compares
 // "what engine chart is pinned in the user's repo" (read from
-// engine/application.yaml via the Git provider) against "what engine chart
+// engine.yaml via the Git provider) against "what engine chart
 // ships with THIS Sharko binary". The second number has to come from
 // somewhere that cannot drift from charts/sharko-engine/Chart.yaml — the
 // actual chart this binary's release pipeline packages, pushes, and signs
@@ -117,7 +117,7 @@ package engineversion
 
 // BundledChartName is the sharko-engine chart's name, as declared in its
 // own Chart.yaml. Used to locate the engine chart's source block inside a
-// user's engine/application.yaml (the source with a matching 'chart:'
+// user's engine.yaml (the source with a matching 'chart:'
 // field is the engine pin; the second source in that file, the git values
 // ref, has no 'chart:' field at all — see
 // docs/design/2026-07-30-v4-data-file-format.md section 2.5).
@@ -127,7 +127,7 @@ const BundledChartName = %q
 // build of the Sharko server — i.e. the version Story 2.4's release
 // pipeline packages, pushes to the OCI registry, and cosign-signs
 // alongside this binary. The engine pin-bump check compares a repo's
-// pinned engine/application.yaml targetRevision against this constant.
+// pinned engine.yaml targetRevision against this constant.
 const BundledVersion = %q
 `, chartYAMLPath, meta.Name, meta.Version)
 }

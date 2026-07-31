@@ -3,8 +3,8 @@
 //
 // A v3 repo's configuration/addons-catalog.yaml is a FULL COPY of every
 // addon the fleet runs: Sharko's own curated entries and the user's own,
-// side by side, indistinguishable. The v4 file (catalog/addons.yaml, kind
-// AddonCatalogDelta) holds ONLY the user's changes — the curated set ships
+// side by side, indistinguishable. The v4 file (catalog.yaml, kind
+// AddonCatalog) holds ONLY the user's changes — the curated set ships
 // inside the engine chart (design doc §2.3).
 //
 // So the conversion is a subtraction: for every field the shipped catalog
@@ -43,8 +43,8 @@ func effectiveNamespace(namespace, addonName string) string {
 // the shipped (curated) entry for the same addon if there is one. The
 // second return is true when the entry carries nothing the shipped catalog
 // does not already say — i.e. it can be dropped from the delta entirely.
-func deltaEntryForV3(v3 models.AddonCatalogEntry, curated catalog.CatalogEntry, isCurated bool) (config.AddonCatalogDeltaEntry, bool) {
-	out := config.AddonCatalogDeltaEntry{}
+func deltaEntryForV3(v3 models.AddonCatalogEntry, curated catalog.CatalogEntry, isCurated bool) (config.AddonCatalogEntry, bool) {
+	out := config.AddonCatalogEntry{}
 
 	// Deployment coordinates. For an addon with no shipped entry these are
 	// mandatory (catalog.MergeDelta rejects an internal addon missing any
@@ -78,7 +78,7 @@ func deltaEntryForV3(v3 models.AddonCatalogEntry, curated catalog.CatalogEntry, 
 		out.ExtraHelmValues = v3.ExtraHelmValues
 	}
 
-	return out, isCurated && reflect.DeepEqual(out, config.AddonCatalogDeltaEntry{})
+	return out, isCurated && reflect.DeepEqual(out, config.AddonCatalogEntry{})
 }
 
 // deltaSettingsForV3 maps the three v3 deployment-behaviour fields onto the
@@ -108,8 +108,8 @@ func deltaSettingsForV3(v3 models.AddonCatalogEntry) *config.AddonSettings {
 // The returned notes are plain-English sentences for the preview and the PR
 // body: they name what could NOT be carried across, so nobody discovers it
 // from a broken cluster instead.
-func buildCatalogDelta(v3Entries []models.AddonCatalogEntry, curated *catalog.Catalog) (config.AddonCatalogDeltaSpec, []string) {
-	spec := config.AddonCatalogDeltaSpec{Addons: map[string]config.AddonCatalogDeltaEntry{}}
+func buildCatalogDelta(v3Entries []models.AddonCatalogEntry, curated *catalog.Catalog) (config.AddonCatalogSpec, []string) {
+	spec := config.AddonCatalogSpec{Addons: map[string]config.AddonCatalogEntry{}}
 	var notes []string
 
 	// Sorted so the notes (and any error) come out in the same order every

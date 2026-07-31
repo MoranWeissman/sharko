@@ -2,7 +2,7 @@ package main
 
 // catalog_delta.go — CLI door for the v4 catalog delta model (v4 wave 1
 // Story 3.3 "internal addons"). Adds a first-class in-house addon to the
-// caller's catalog/addons.yaml (kind AddonCatalogDelta), same shape as
+// caller's catalog.yaml (kind AddonCatalog), same shape as
 // `sharko add-addon` for the v3 catalog. Mirrors POST
 // /api/v1/catalog/delta/addons (internal/api/catalog_delta.go).
 
@@ -26,9 +26,9 @@ func init() {
 
 var addInternalAddonCmd = &cobra.Command{
 	Use:   "add-internal-addon <name>",
-	Short: "Add an in-house addon to your v4 catalog delta (catalog/addons.yaml)",
+	Short: "Add an in-house addon to your v4 catalog delta (catalog.yaml)",
 	Long: `Adds (or updates) one first-class in-house addon in your v4
-catalog/addons.yaml (kind AddonCatalogDelta), committed via a pull request
+catalog.yaml (kind AddonCatalog), committed via a pull request
 like every other Sharko write. repo_url, chart, and version are all
 required — nothing else can supply them for an addon with no shipped
 catalog entry. Once the PR merges, the addon is assignable to clusters and
@@ -83,7 +83,7 @@ or any other chart Sharko doesn't ship in its curated catalog.`,
 		_ = json.Unmarshal(respBody, &flat)
 		_ = json.Unmarshal(respBody, &wrapped)
 
-		fmt.Printf("Addon %s added to catalog/addons.yaml.\n", name)
+		fmt.Printf("Addon %s added to catalog.yaml.\n", name)
 		switch {
 		case flat.PRUrl != "":
 			fmt.Printf("  Git: PR %s\n", flat.PRUrl)

@@ -86,7 +86,7 @@ func (s *Server) handleResyncCluster(w http.ResponseWriter, r *http.Request) {
 	result, err := s.clusterRecon.ResyncClusterLabels(r.Context(), name)
 	if err != nil {
 		if errors.Is(err, clusterreconciler.ErrClusterNotManaged) {
-			writeError(w, http.StatusBadRequest, "this cluster has no entry in the git-managed cluster list (managed-clusters.yaml / fleet/connections.yaml) — nothing to resync")
+			writeError(w, http.StatusBadRequest, "this cluster has no entry in the git-managed cluster list (managed-clusters.yaml / managed-clusters.yaml) — nothing to resync")
 			return
 		}
 		writeUpstreamError(w, "resync_cluster", err)

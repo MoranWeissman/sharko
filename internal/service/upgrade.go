@@ -66,7 +66,7 @@ type UpgradeService struct {
 
 	// curated is the shipped curated catalog, wired via SetCuratedCatalog.
 	// Used ONLY by the v4 branch of resolveAddon (v4 Wave 2 Epic 7 Story
-	// 7.3) to merge a caller's catalog/addons.yaml delta against the
+	// 7.3) to merge a caller's catalog.yaml delta against the
 	// shipped set, mirroring AddonService.curated (internal/service/addon.go)
 	// for the version matrix. nil is safe: every addon then merges as
 	// catalog.OriginInternal.
@@ -80,7 +80,7 @@ type UpgradeService struct {
 }
 
 // SetCuratedCatalog wires in the shipped curated catalog so resolveAddon's
-// v4 branch can merge a caller's catalog/addons.yaml delta against it, the
+// v4 branch can merge a caller's catalog.yaml delta against it, the
 // same way AddonService.SetCuratedCatalog does for the version matrix. Pass
 // nil (or skip the call) to leave every v4-repo addon merging as
 // catalog.OriginInternal.
@@ -214,7 +214,7 @@ func (s *UpgradeService) resolveAddon(ctx context.Context, addonName string, gp 
 	return resolvedAddon{}, fmt.Errorf("addon %q not found in catalog", addonName)
 }
 
-// mergedAddonV4 reads the caller's catalog/addons.yaml delta and merges it
+// mergedAddonV4 reads the caller's catalog.yaml delta and merges it
 // against the wired-in curated catalog (s.curated — nil-safe), returning
 // the single merged entry for addonName. Mirrors
 // AddonService.mergedAddonForV4 (internal/orchestrator/addon_ops_v4.go)
@@ -222,16 +222,16 @@ func (s *UpgradeService) resolveAddon(ctx context.Context, addonName string, gp 
 // a v4 repo with no curated catalog wired merges every addon as
 // catalog.OriginInternal (catalog.MergeDelta's own contract).
 func (s *UpgradeService) mergedAddonV4(ctx context.Context, addonName string, gp gitprovider.GitProvider) (catalog.MergedAddon, error) {
-	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, s.branch())
-	var delta config.AddonCatalogDeltaSpec
+	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
+	var delta config.AddonCatalogSpec
 	if err != nil {
 		if !isGitFileNotFound(err) {
-			return catalog.MergedAddon{}, fmt.Errorf("reading %s: %w", config.AddonCatalogDeltaPath, err)
+			return catalog.MergedAddon{}, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 		}
 	} else {
-		delta, err = config.LoadAddonCatalogDelta(deltaData)
+		delta, err = config.LoadAddonCatalog(deltaData)
 		if err != nil {
-			return catalog.MergedAddon{}, fmt.Errorf("parsing %s: %w", config.AddonCatalogDeltaPath, err)
+			return catalog.MergedAddon{}, fmt.Errorf("parsing %s: %w", config.AddonCatalogPath, err)
 		}
 	}
 

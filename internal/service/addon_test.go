@@ -589,8 +589,8 @@ func TestGetVersionMatrix_V4Repo(t *testing.T) {
 	// required"). This test exercises GetVersionMatrix's v4 wiring, not
 	// MergeDelta's curated-vs-delta precedence — that is covered by
 	// internal/catalog's own delta_merge_test.go.
-	delta, err := config.SaveAddonCatalogDelta(config.AddonCatalogDeltaSpec{
-		Addons: map[string]config.AddonCatalogDeltaEntry{
+	delta, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
 			"cert-manager": {
 				RepoURL: "https://charts.jetstack.io",
 				Chart:   "cert-manager",
@@ -641,7 +641,7 @@ func TestGetVersionMatrix_V4Repo(t *testing.T) {
 			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
 			"clusters/prod-eu.yaml":      prodEU,
 			"clusters/staging-us.yaml":   stagingUS,
-			config.AddonCatalogDeltaPath: delta,
+			config.AddonCatalogPath: delta,
 			// v3 files are ALSO present, to prove they are ignored once the
 			// engine pin routes this to the v4 branch.
 			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-only-cluster\n    labels: {}\n"),
@@ -768,8 +768,8 @@ func TestGetVersionMatrix_V4Repo_HonorsBaseBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("building prod-eu assignment: %v", err)
 	}
-	delta, err := config.SaveAddonCatalogDelta(config.AddonCatalogDeltaSpec{
-		Addons: map[string]config.AddonCatalogDeltaEntry{
+	delta, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
 			"cert-manager": {
 				RepoURL: "https://charts.jetstack.io",
 				Chart:   "cert-manager",
@@ -790,7 +790,7 @@ func TestGetVersionMatrix_V4Repo_HonorsBaseBranch(t *testing.T) {
 	gp := newRefRecordingGitProvider(map[string][]byte{
 		orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
 		"clusters/prod-eu.yaml":      prodEU,
-		config.AddonCatalogDeltaPath: delta,
+		config.AddonCatalogPath: delta,
 	})
 	ac := argocd.NewClient(ts.URL, "fake-token", false)
 	svc := NewAddonService("")
@@ -850,8 +850,8 @@ func TestGetCatalog_V4Repo(t *testing.T) {
 		t.Fatalf("building staging-us assignment: %v", err)
 	}
 
-	delta, err := config.SaveAddonCatalogDelta(config.AddonCatalogDeltaSpec{
-		Addons: map[string]config.AddonCatalogDeltaEntry{
+	delta, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
 			"cert-manager": {
 				RepoURL: "https://charts.jetstack.io",
 				Chart:   "cert-manager",
@@ -897,7 +897,7 @@ func TestGetCatalog_V4Repo(t *testing.T) {
 			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
 			"clusters/prod-eu.yaml":      prodEU,
 			"clusters/staging-us.yaml":   stagingUS,
-			config.AddonCatalogDeltaPath: delta,
+			config.AddonCatalogPath: delta,
 			// v3 files are ALSO present, to prove they are ignored once the
 			// engine pin routes this to the v4 branch.
 			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-only-cluster\n    labels: {}\n"),
@@ -1005,8 +1005,8 @@ func TestGetCatalog_MissingFileReturnsEmpty(t *testing.T) {
 // v3 parser path returns — the shape notifications.ServiceProvider and
 // handleListAddons both depend on (Name/Chart/RepoURL/Version).
 func TestListAddons_V4Repo(t *testing.T) {
-	delta, err := config.SaveAddonCatalogDelta(config.AddonCatalogDeltaSpec{
-		Addons: map[string]config.AddonCatalogDeltaEntry{
+	delta, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
 			"cert-manager": {
 				RepoURL: "https://charts.jetstack.io",
 				Chart:   "cert-manager",
@@ -1021,7 +1021,7 @@ func TestListAddons_V4Repo(t *testing.T) {
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
 			orchestrator.EnginePinPath:          []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-			config.AddonCatalogDeltaPath:        delta,
+			config.AddonCatalogPath:        delta,
 			"configuration/addons-catalog.yaml": []byte("applicationsets:\n  - name: v3-only-addon\n"),
 		},
 	}

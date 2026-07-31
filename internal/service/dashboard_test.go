@@ -182,7 +182,7 @@ func TestGetStats_EmptyResponseHasNoLeakedError(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Wave 2 ride-along w2-q6 item 4: dashboard git-side stats must be v4-aware
-// (fleet/connections.yaml + clusters/*.yaml + catalog/addons.yaml delta)
+// (managed-clusters.yaml + clusters/*.yaml + catalog/addons.yaml delta)
 // instead of only ever reading the v3 files. fakeGitProvider (defined in
 // addon_test.go, same package) is reused here because — unlike fakeGP — its
 // ListDirectory derives real entries from the files map, which the v4
@@ -191,7 +191,7 @@ func TestGetStats_EmptyResponseHasNoLeakedError(t *testing.T) {
 
 // TestGetStats_V4Repo_UsesV4Sources proves GetStats detects a v4 repo (the
 // same engine-pin probe AddonService.GetVersionMatrix uses) and counts
-// clusters/addons from fleet/connections.yaml + clusters/*.yaml +
+// clusters/addons from managed-clusters.yaml + clusters/*.yaml +
 // catalog/addons.yaml instead of the v3 files — even when v3 files are
 // ALSO present (a repo mid-migration), the v4 branch must win once the
 // engine pin exists.
@@ -218,8 +218,8 @@ func TestGetStats_V4Repo_UsesV4Sources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("building staging-us assignment: %v", err)
 	}
-	delta, err := config.SaveAddonCatalogDelta(config.AddonCatalogDeltaSpec{
-		Addons: map[string]config.AddonCatalogDeltaEntry{
+	delta, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
 			"cert-manager": {RepoURL: "https://charts.jetstack.io", Chart: "cert-manager", Version: "1.14.5"},
 			"external-dns": {RepoURL: "https://kubernetes-sigs.github.io/external-dns", Chart: "external-dns", Version: "1.14.0"},
 		},
@@ -231,10 +231,10 @@ func TestGetStats_V4Repo_UsesV4Sources(t *testing.T) {
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
 			orchestrator.EnginePinPath:     []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-			orchestrator.V4ConnectionsPath: []byte("clusters:\n  - name: prod-eu\n  - name: staging-us\n"),
+			orchestrator.V4ManagedClustersPath: []byte("clusters:\n  - name: prod-eu\n  - name: staging-us\n"),
 			"clusters/prod-eu.yaml":        prodEU,
 			"clusters/staging-us.yaml":     stagingUS,
-			config.AddonCatalogDeltaPath:   delta,
+			config.AddonCatalogPath:   delta,
 			// v3 files ALSO present, to prove they are ignored once the
 			// engine pin routes this to the v4 branch.
 			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-only-cluster\n    labels: {}\n"),
@@ -247,7 +247,7 @@ func TestGetStats_V4Repo_UsesV4Sources(t *testing.T) {
 		t.Fatalf("GetStats returned error: %v", err)
 	}
 	if resp.Clusters.Total != 2 {
-		t.Errorf("Clusters.Total = %d, want 2 (v4 fleet/connections.yaml) — v3 managed-clusters.yaml must be ignored", resp.Clusters.Total)
+		t.Errorf("Clusters.Total = %d, want 2 (v4 managed-clusters.yaml) — v3 managed-clusters.yaml must be ignored", resp.Clusters.Total)
 	}
 	if resp.Addons.TotalAvailable != 2 {
 		t.Errorf("Addons.TotalAvailable = %d, want 2 (v4 catalog/addons.yaml delta entries)", resp.Addons.TotalAvailable)
@@ -342,7 +342,7 @@ func TestGetStats_V4Repo_TotalAvailableUsesCuratedCatalog(t *testing.T) {
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
 			orchestrator.EnginePinPath:     []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-			orchestrator.V4ConnectionsPath: []byte("clusters:\n  - name: prod-eu\n"),
+			orchestrator.V4ManagedClustersPath: []byte("clusters:\n  - name: prod-eu\n"),
 			// No catalog/addons.yaml at all — "missing means empty" delta.
 		},
 	}

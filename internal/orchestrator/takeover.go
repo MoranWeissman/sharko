@@ -7,7 +7,7 @@
 // anything". Both end with the same two v4 files in the repo, written
 // through a real pull request:
 //
-//   - fleet/connections.yaml — the cluster's entry in Sharko's fleet
+//   - managed-clusters.yaml — the cluster's entry in Sharko's fleet
 //   - clusters/<name>.yaml   — the cluster's addon assignment file
 //
 // The addon file is created EMPTY. A takeover deliberately turns nothing
@@ -59,11 +59,11 @@ type TakeoverGitResult struct {
 // it, and quietly writing the v3 registry instead would leave the operator
 // with a cluster that neither format fully describes.
 var ErrTakeoverNeedsV4Repo = fmt.Errorf(
-	"taking over a cluster writes the v4 files (fleet/connections.yaml and clusters/<name>.yaml), and this repo is still in the older format — migrate the repo first, then take the cluster over")
+	"taking over a cluster writes the v4 files (managed-clusters.yaml and clusters/<name>.yaml), and this repo is still in the older format — migrate the repo first, then take the cluster over")
 
 // TakeoverClusterGit writes the two v4 files that make a cluster part of
 // Sharko's fleet, via a pull request. It is idempotent: a cluster already
-// in fleet/connections.yaml is left as it is (AddClusterEntry skips
+// in managed-clusters.yaml is left as it is (AddClusterEntry skips
 // duplicates silently), so a retry after a half-finished takeover is safe.
 //
 // Nothing here deletes anything, in any branch. A takeover that is
@@ -98,7 +98,7 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 	// replacing every registered cluster with this one — and the orphan sweep
 	// would delete the rest of the fleet's connections once it merged. Only a
 	// genuinely absent file starts from an empty document.
-	connectionsData, connectionsExists, readErr := o.readFileForRewrite(ctx, V4ConnectionsPath)
+	connectionsData, connectionsExists, readErr := o.readFileForRewrite(ctx, V4ManagedClustersPath)
 	if readErr != nil {
 		return nil, readErr
 	}
@@ -125,7 +125,7 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 		Region: req.Region,
 	})
 	if addErr != nil {
-		return nil, fmt.Errorf("adding %q to %s: %w", req.Name, V4ConnectionsPath, addErr)
+		return nil, fmt.Errorf("adding %q to %s: %w", req.Name, V4ManagedClustersPath, addErr)
 	}
 
 	existingClusterAddons, clusterAddonsExists, addonsReadErr := o.readFileForRewrite(ctx, clusterPath)
@@ -153,9 +153,9 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 			connAction = "create"
 		}
 		previews = append(previews, FilePreview{
-			Path:   V4ConnectionsPath,
+			Path:   V4ManagedClustersPath,
 			Action: connAction,
-			Diff:   o.buildFileDiff(V4ConnectionsPath, connectionsData, updatedConnections, connAction),
+			Diff:   o.buildFileDiff(V4ManagedClustersPath, connectionsData, updatedConnections, connAction),
 		})
 		clusterAction := fileActionFromExists(existingClusterAddons)
 		previews = append(previews, FilePreview{
@@ -177,10 +177,10 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 	}
 
 	files := map[string][]byte{
-		V4ConnectionsPath: updatedConnections,
+		V4ManagedClustersPath: updatedConnections,
 		clusterPath:       updatedClusterAddons,
 	}
-	result.FilesWritten = []string{V4ConnectionsPath, clusterPath}
+	result.FilesWritten = []string{V4ManagedClustersPath, clusterPath}
 
 	// Tracked under the adopt operation code: takeover is the operation
 	// adopt grew into, and reusing the code keeps the pull request in the

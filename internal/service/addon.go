@@ -70,7 +70,7 @@ type AddonService struct {
 	// curated is the shipped curated addon catalog (internal/catalog,
 	// loaded from the embedded YAML at server startup), wired in via
 	// SetCuratedCatalog. Used ONLY by the v4 branch of GetVersionMatrix
-	// (v4 Wave 1 Story 4.2) to merge a caller's catalog/addons.yaml delta
+	// (v4 Wave 1 Story 4.2) to merge a caller's catalog.yaml delta
 	// against the shipped set — catalog.MergeDelta's own contract. nil is
 	// safe: every addon then merges as catalog.OriginInternal.
 	curated *catalog.Catalog
@@ -87,7 +87,7 @@ type AddonService struct {
 }
 
 // SetCuratedCatalog wires in the shipped curated catalog so
-// GetVersionMatrix's v4 branch can merge a caller's catalog/addons.yaml
+// GetVersionMatrix's v4 branch can merge a caller's catalog.yaml
 // delta against it. Pass nil (or skip the call) to leave every v4-repo
 // addon merging as catalog.OriginInternal — matches how
 // internal/api/catalog_delta.go's handlers already treat a nil
@@ -154,23 +154,23 @@ func (s *AddonService) ListAddons(ctx context.Context, gp gitprovider.GitProvide
 }
 
 // listAddonsV4 is ListAddons' v4-repo branch. It merges the caller's
-// catalog/addons.yaml delta against the wired-in curated catalog
+// catalog.yaml delta against the wired-in curated catalog
 // (s.curated, nil-safe) and flattens the result into the same
 // []models.AddonCatalogEntry shape ListAddons' v3 branch returns — callers
 // (handleListAddons, notifications.ServiceProvider) only ever read
 // Name/Chart/RepoURL/Version/Namespace off these entries, all of which a
 // catalog.MergedAddon carries directly.
 func (s *AddonService) listAddonsV4(ctx context.Context, gp gitprovider.GitProvider) ([]models.AddonCatalogEntry, error) {
-	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, s.branch())
-	var delta config.AddonCatalogDeltaSpec
+	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
+	var delta config.AddonCatalogSpec
 	if err != nil {
 		if !isGitFileNotFound(err) {
-			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogDeltaPath, err)
+			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 		}
 	} else {
-		delta, err = config.LoadAddonCatalogDelta(deltaData)
+		delta, err = config.LoadAddonCatalog(deltaData)
 		if err != nil {
-			return nil, fmt.Errorf("parsing %s: %w", config.AddonCatalogDeltaPath, err)
+			return nil, fmt.Errorf("parsing %s: %w", config.AddonCatalogPath, err)
 		}
 	}
 
@@ -381,7 +381,7 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 // surface — GET /addons/catalog), but sources per-cluster enablement from
 // clusters/*.yaml (kind ClusterAddons) instead of managed-clusters.yaml
 // labels, and the addon set from the delta-merged catalog
-// (catalog.MergeDelta(curated, catalog/addons.yaml)) instead of
+// (catalog.MergeDelta(curated, catalog.yaml)) instead of
 // addons-catalog.yaml — mirroring getVersionMatrixV4 exactly, including the
 // "<addon>-<cluster>" ArgoCD Application naming convention. GetAddonDetail
 // needs no v4 branch of its own: it delegates to GetCatalog and scans the
@@ -394,18 +394,18 @@ func (s *AddonService) getCatalogV4(ctx context.Context, gp gitprovider.GitProvi
 		return nil, fmt.Errorf("reading clusters/*.yaml: %w", err)
 	}
 
-	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, s.branch())
-	var delta config.AddonCatalogDeltaSpec
+	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
+	var delta config.AddonCatalogSpec
 	if err != nil {
 		if !isGitFileNotFound(err) {
-			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogDeltaPath, err)
+			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 		}
-		// Missing catalog/addons.yaml means empty delta (design doc D16,
+		// Missing catalog.yaml means empty delta (design doc D16,
 		// "missing means empty") — matches getVersionMatrixV4.
 	} else {
-		delta, err = config.LoadAddonCatalogDelta(deltaData)
+		delta, err = config.LoadAddonCatalog(deltaData)
 		if err != nil {
-			return nil, fmt.Errorf("parsing %s: %w", config.AddonCatalogDeltaPath, err)
+			return nil, fmt.Errorf("parsing %s: %w", config.AddonCatalogPath, err)
 		}
 	}
 
@@ -573,13 +573,13 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 // health across all clusters.
 //
 // v4-repo detection (v4 Wave 1 Story 4.2): the presence of the engine pin
-// (orchestrator.EnginePinPath, "engine/application.yaml") on the base
+// (orchestrator.EnginePinPath, "engine.yaml") on the base
 // branch is the single signal Sharko already uses to distinguish a v4
 // repo from a v3 one — CheckEnginePin (internal/orchestrator/enginepin.go)
 // uses the identical probe for the same reason: "no pin found" is the
 // ordinary, non-error "not a v4 repo yet" case, never a hard failure. When
 // the pin is present, the matrix is built from clusters/*.yaml (kind
-// ClusterAddons) and the delta-merged catalog (catalog/addons.yaml
+// ClusterAddons) and the delta-merged catalog (catalog.yaml
 // overlaid on s.curated, wired via SetCuratedCatalog) instead of
 // managed-clusters.yaml labels and addons-catalog.yaml. s.curated may be
 // nil (no embedded catalog loaded); every addon then merges as
@@ -717,7 +717,7 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 // getVersionMatrixV4 is GetVersionMatrix's v4-repo branch (v4 Wave 1 Story
 // 4.2). It reads clusters/*.yaml (kind ClusterAddons, one file per
 // cluster — design doc §2.1) instead of managed-clusters.yaml labels, and
-// the delta-merged catalog (catalog.MergeDelta(curated, catalog/addons.yaml))
+// the delta-merged catalog (catalog.MergeDelta(curated, catalog.yaml))
 // instead of addons-catalog.yaml. ArgoCD Application health is looked up by
 // the SAME "<addon>-<cluster>" naming convention the v3 path uses — the
 // engine chart's generated Applications are named identically
@@ -730,19 +730,19 @@ func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.Gi
 		return nil, fmt.Errorf("reading clusters/*.yaml: %w", err)
 	}
 
-	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, s.branch())
-	var delta config.AddonCatalogDeltaSpec
+	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
+	var delta config.AddonCatalogSpec
 	if err != nil {
 		if !isGitFileNotFound(err) {
-			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogDeltaPath, err)
+			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 		}
-		// Missing catalog/addons.yaml means empty delta (design doc D16,
+		// Missing catalog.yaml means empty delta (design doc D16,
 		// "missing means empty") — not an error, mirrors
 		// internal/api/catalog_delta.go's loadCatalogDelta.
 	} else {
-		delta, err = config.LoadAddonCatalogDelta(deltaData)
+		delta, err = config.LoadAddonCatalog(deltaData)
 		if err != nil {
-			return nil, fmt.Errorf("parsing %s: %w", config.AddonCatalogDeltaPath, err)
+			return nil, fmt.Errorf("parsing %s: %w", config.AddonCatalogPath, err)
 		}
 	}
 

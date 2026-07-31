@@ -9,7 +9,7 @@
 //
 // This file builds that layout using the SAME Go helpers a real Sharko
 // server uses to write it (models.SaveClusterAddons,
-// config.SaveAddonCatalogDelta, models.SaveManagedClusters) rather than
+// config.SaveAddonCatalog, models.SaveManagedClusters) rather than
 // hand-typed YAML strings, so the fixture can never drift from what the
 // real read/write path actually accepts.
 //
@@ -62,14 +62,14 @@ type v4ClusterAddonPin struct {
 func buildV4DemoFiles() (map[string][]byte, error) {
 	files := make(map[string][]byte)
 
-	// ---- catalog/addons.yaml (AddonCatalogDelta) ----------------------
+	// ---- catalog/addons.yaml (AddonCatalog) ----------------------
 	//
 	// Fleet-wide "this is the version we run" entries for every curated
 	// addon the demo clusters use, plus datadog as a full in-house
 	// entry (repoURL/chart/version/namespace all required — none of
 	// them come from a shipped catalog entry, because there isn't one).
-	deltaSpec := config.AddonCatalogDeltaSpec{
-		Addons: map[string]config.AddonCatalogDeltaEntry{
+	deltaSpec := config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
 			"cert-manager":          {Version: "1.14.5"},
 			"metrics-server":        {Version: "3.12.1"},
 			"kube-prometheus-stack": {Version: "58.2.1"},
@@ -83,11 +83,11 @@ func buildV4DemoFiles() (map[string][]byte, error) {
 			},
 		},
 	}
-	deltaBytes, err := config.SaveAddonCatalogDelta(deltaSpec)
+	deltaBytes, err := config.SaveAddonCatalog(deltaSpec)
 	if err != nil {
-		return nil, fmt.Errorf("rendering demo %s: %w", config.AddonCatalogDeltaPath, err)
+		return nil, fmt.Errorf("rendering demo %s: %w", config.AddonCatalogPath, err)
 	}
-	files[config.AddonCatalogDeltaPath] = deltaBytes
+	files[config.AddonCatalogPath] = deltaBytes
 
 	// ---- clusters/<name>.yaml (one ClusterAddons per cluster) ----
 	//
@@ -160,7 +160,7 @@ func buildV4DemoFiles() (map[string][]byte, error) {
 		files[orchestrator.V4ClustersDir+"/"+clusterName+".yaml"] = body
 	}
 
-	// ---- fleet/connections.yaml (ManagedClusters, v4 path) ------------
+	// ---- managed-clusters.yaml (ManagedClusters, v4 path) ------------
 	//
 	// Same five clusters as the v3 configuration/managed-clusters.yaml,
 	// minus the addon on/off labels — v4 no longer authors those here
@@ -176,9 +176,9 @@ func buildV4DemoFiles() (map[string][]byte, error) {
 	}
 	connBytes, err := models.SaveManagedClusters(connSpec)
 	if err != nil {
-		return nil, fmt.Errorf("rendering demo %s: %w", orchestrator.V4ConnectionsPath, err)
+		return nil, fmt.Errorf("rendering demo %s: %w", orchestrator.V4ManagedClustersPath, err)
 	}
-	files[orchestrator.V4ConnectionsPath] = connBytes
+	files[orchestrator.V4ManagedClustersPath] = connBytes
 
 	// ---- values/ (plain Helm values, no envelope — design doc §2.2) --
 	files[orchestrator.V4GlobalValuesDir+"/cert-manager.yaml"] = []byte(`installCRDs: true

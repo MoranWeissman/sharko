@@ -1,6 +1,6 @@
 // v4 wave 1 Story 3.2 ("delta model") + Story 3.3 ("internal addons") API
 // surface: the merged view of the shipped curated catalog overlaid with the
-// caller's own git catalog/addons.yaml (kind AddonCatalogDelta), and the
+// caller's own git catalog.yaml (kind AddonCatalog), and the
 // write path that lets a caller add a first-class in-house addon to that
 // delta file. Distinct from GET /api/v1/catalog/addons (the pure curated
 // Marketplace browse list, Story 3.1's home) and from GET
@@ -26,20 +26,20 @@ import (
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
-// loadCatalogDelta reads the caller's v4 catalog/addons.yaml from the given
+// loadCatalogDelta reads the caller's v4 catalog.yaml from the given
 // Git provider and returns its parsed spec. A file that does not exist is
 // NOT an error — design doc D16 "missing means empty" — it returns a
 // zero-value spec instead, the same isGitFileNotFound convention already
 // used by the v3 read handlers (e.g. AddonService.GetVersionMatrix).
-func (s *Server) loadCatalogDelta(ctx context.Context, gp gitprovider.GitProvider) (config.AddonCatalogDeltaSpec, error) {
-	data, err := gp.GetFileContent(ctx, config.AddonCatalogDeltaPath, s.gitopsConfig().BaseBranch)
+func (s *Server) loadCatalogDelta(ctx context.Context, gp gitprovider.GitProvider) (config.AddonCatalogSpec, error) {
+	data, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.gitopsConfig().BaseBranch)
 	if err != nil {
 		if errors.Is(err, gitprovider.ErrFileNotFound) {
-			return config.AddonCatalogDeltaSpec{}, nil
+			return config.AddonCatalogSpec{}, nil
 		}
-		return config.AddonCatalogDeltaSpec{}, err
+		return config.AddonCatalogSpec{}, err
 	}
-	return config.LoadAddonCatalogDelta(data)
+	return config.LoadAddonCatalog(data)
 }
 
 // mergedCatalogListResponse is the envelope the UI consumes for the merged
@@ -66,7 +66,7 @@ func sortedMergedAddons(merged map[string]catalog.MergedAddon) []catalog.MergedA
 // handleListMergedCatalogDelta godoc
 //
 // @Summary List the merged v4 catalog (curated + your delta)
-// @Description Overlays the caller's own git catalog/addons.yaml (kind AddonCatalogDelta) onto the shipped curated catalog and returns the merged, per-addon view: chart location, version (and where it came from), settings, and — for curated addons — the extended knowledge fields (description, required values, secrets, quirks, docs link). Every addon carries an `origin` of "curated" or "internal" (v4 wave 1 Story 3.3's in-house-addon marker). A repo with no catalog/addons.yaml yet returns the curated set untouched (design doc D16, "missing means empty").
+// @Description Overlays the caller's own git catalog.yaml (kind AddonCatalog) onto the shipped curated catalog and returns the merged, per-addon view: chart location, version (and where it came from), settings, and — for curated addons — the extended knowledge fields (description, required values, secrets, quirks, docs link). Every addon carries an `origin` of "curated" or "internal" (v4 wave 1 Story 3.3's in-house-addon marker). A repo with no catalog.yaml yet returns the curated set untouched (design doc D16, "missing means empty").
 // @Tags catalog
 // @Produce json
 // @Security BearerAuth
@@ -102,7 +102,7 @@ func (s *Server) handleListMergedCatalogDelta(w http.ResponseWriter, r *http.Req
 // handleGetMergedCatalogDeltaAddon godoc
 //
 // @Summary Get one addon's merged v4 catalog view
-// @Description Single-addon form of GET /catalog/delta/addons — the curated entry (if any) overlaid with the caller's own catalog/addons.yaml override or, for an in-house addon, defined entirely by it.
+// @Description Single-addon form of GET /catalog/delta/addons — the curated entry (if any) overlaid with the caller's own catalog.yaml override or, for an in-house addon, defined entirely by it.
 // @Tags catalog
 // @Produce json
 // @Security BearerAuth
@@ -149,7 +149,7 @@ func (s *Server) handleGetMergedCatalogDeltaAddon(w http.ResponseWriter, r *http
 // handleAddInternalAddon godoc
 //
 // @Summary Add an in-house addon to your v4 catalog delta
-// @Description Adds (or updates) one first-class in-house addon entry in your catalog/addons.yaml (kind AddonCatalogDelta), committed via a pull request like every other Sharko write. repo_url, chart, and version are all required — nothing else can supply them for an addon with no shipped catalog entry (design doc §2.3). The addon becomes assignable to clusters and appears in the merged catalog view (origin=internal) once the PR merges.
+// @Description Adds (or updates) one first-class in-house addon entry in your catalog.yaml (kind AddonCatalog), committed via a pull request like every other Sharko write. repo_url, chart, and version are all required — nothing else can supply them for an addon with no shipped catalog entry (design doc §2.3). The addon becomes assignable to clusters and appears in the merged catalog view (origin=internal) once the PR merges.
 // @Tags catalog
 // @Accept json
 // @Produce json

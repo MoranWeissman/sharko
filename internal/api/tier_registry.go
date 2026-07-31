@@ -111,7 +111,7 @@ var HandlerTier = map[string]audit.Tier{
 	// same tier as the addon catalog writes above.
 	"handleUpgradeEnginePin": audit.Tier2,
 	// v4 catalog delta (v4 wave 1 Story 3.3): adding an in-house addon to
-	// catalog/addons.yaml is a configuration change, same tier as the v3
+	// catalog.yaml is a configuration change, same tier as the v3
 	// catalog writes above.
 	"handleAddInternalAddon": audit.Tier2,
 

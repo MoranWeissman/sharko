@@ -105,6 +105,9 @@ func TestCollectBootstrapFiles_RootAppPath_MatchesConstant(t *testing.T) {
 // folders, the engine pin, and the README — nothing else. No AppProject
 // file, no Chart.yaml, no addons-catalog.yaml seed, no per-addon values
 // stubs (the whole templates/bootstrap/ tree the v3 path used to walk).
+// The v4 layout is flat for single-file kinds — managed-clusters.yaml and
+// catalog.yaml live at the repo root, so there's no "fleet" or "catalog"
+// folder to seed with a .gitkeep anymore.
 func TestCollectBootstrapFiles_ExactlyTheSeed(t *testing.T) {
 	orch := New(nil, nil, nil, nil,
 		GitOpsConfig{BaseBranch: "main", RepoURL: "https://github.com/example/addons"},
@@ -119,11 +122,9 @@ func TestCollectBootstrapFiles_ExactlyTheSeed(t *testing.T) {
 
 	want := map[string]bool{
 		"clusters/.gitkeep":        true,
-		"fleet/.gitkeep":           true,
 		"values/global/.gitkeep":   true,
 		"values/clusters/.gitkeep": true,
-		"catalog/.gitkeep":         true,
-		"engine/application.yaml":  true,
+		"engine.yaml":              true,
 		"README.md":                true,
 	}
 

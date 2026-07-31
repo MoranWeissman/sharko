@@ -95,7 +95,7 @@ func NewClusterService(managedClustersPath string) *ClusterService {
 
 // readManagedClustersData reads the cluster registry file, trying the
 // configured (v3) path first and falling back to the fixed v4 path
-// (orchestrator.V4ConnectionsPath, "fleet/connections.yaml" — design doc
+// (orchestrator.V4ManagedClustersPath, "managed-clusters.yaml" — design doc
 // §2.4: same kind/shape as the v3 file, only the location changed) when
 // the v3 path is genuinely absent. A connected repo is one format or the
 // other, never both, so this costs one extra read only on the (cheap,
@@ -113,7 +113,7 @@ func (s *ClusterService) readManagedClustersData(ctx context.Context, gp gitprov
 	if !isGitFileNotFound(err) {
 		return nil, err
 	}
-	v4Data, v4Err := gp.GetFileContent(ctx, orchestrator.V4ConnectionsPath, s.branch())
+	v4Data, v4Err := gp.GetFileContent(ctx, orchestrator.V4ManagedClustersPath, s.branch())
 	if v4Err == nil {
 		return v4Data, nil
 	}
@@ -127,7 +127,7 @@ func (s *ClusterService) readManagedClustersData(ctx context.Context, gp gitprov
 func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClustersResponse, error) {
 	log := logging.LoggerFromContext(ctx)
 	// Fetch Git config — v3 managed-clusters.yaml, or its v4 equivalent
-	// fleet/connections.yaml (v4 Wave 1 Story 4.4).
+	// managed-clusters.yaml (v4 Wave 1 Story 4.4).
 	clusterData, err := s.readManagedClustersData(ctx, gp)
 	if err != nil {
 		return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)

@@ -299,7 +299,7 @@ var serveCmd = &cobra.Command{
 		srv.SetCatalog(cat)
 		// v4 Wave 1 Story 4.2: AddonService.GetVersionMatrix's v4 branch
 		// needs the shipped curated catalog to merge a caller's
-		// catalog/addons.yaml delta the same way handleListMergedCatalogDelta
+		// catalog.yaml delta the same way handleListMergedCatalogDelta
 		// does (internal/api/catalog_delta.go).
 		addonSvc.SetCuratedCatalog(cat)
 		// v4 Wave 2 Epic 7 Story 7.3: UpgradeService.ListVersions/

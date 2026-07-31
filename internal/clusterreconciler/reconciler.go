@@ -94,17 +94,19 @@ const (
 	// managed clusters file. Overridable via Deps.ManagedClustersPath.
 	DefaultManagedClustersPath = "configuration/managed-clusters.yaml"
 
-	// v4ConnectionsPath is the v4 data-file format's equivalent of
-	// DefaultManagedClustersPath — design doc
-	// docs/design/2026-07-30-v4-data-file-format.md §2.4:
-	// "fleet/connections.yaml ... is the same shape the code already reads
-	// through models.LoadManagedClusters ... v4 changes nothing about it
-	// except where it sits." (v4 Wave 1 Story 4.4.) Unlike
+	// v4ManagedClustersPath is the v4 data-file format's equivalent of
+	// DefaultManagedClustersPath: the same shape the code already reads
+	// through models.LoadManagedClusters, just at a different place — a
+	// root file called managed-clusters.yaml. Unlike
 	// DefaultManagedClustersPath this is not server-configurable — the v4
 	// format fixes the path, the same way EnginePinPath / V4ClustersDir
 	// are fixed in internal/orchestrator. Tried as a fallback ONLY when
 	// the configured (v3) path is genuinely absent — see pollOnce.
-	v4ConnectionsPath = "fleet/connections.yaml"
+	//
+	// Keep the literal identical to orchestrator.V4ManagedClustersPath;
+	// declared here rather than imported to keep this package's dependency
+	// set narrow.
+	v4ManagedClustersPath = "managed-clusters.yaml"
 
 	// DefaultArgoCDNamespace is the namespace the reconciler writes cluster
 	// Secrets into. Overridable via Deps.Namespace.
@@ -514,8 +516,8 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 	// clusters desired", same as before this was extracted. fileNonEmpty
 	// (V2-cleanup-60.2 orphan-sweep sanity guard) is false in that case too.
 	if spec == nil {
-		log.Info("[clusterreconciler] neither managed-clusters.yaml nor fleet/connections.yaml found in git — treating as empty desired state",
-			"v3_path", r.managedClustersPath, "v4_path", v4ConnectionsPath, "branch", r.branch,
+		log.Info("[clusterreconciler] neither managed-clusters.yaml nor managed-clusters.yaml found in git — treating as empty desired state",
+			"v3_path", r.managedClustersPath, "v4_path", v4ManagedClustersPath, "branch", r.branch,
 		)
 	}
 
@@ -562,7 +564,7 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 
 	// Step 1: read the managed-clusters file from git. Tries the configured
 	// (v3) path first; when that is genuinely absent, falls back to the
-	// fixed v4 path (fleet/connections.yaml, design doc §2.4 — "same shape,
+	// fixed v4 path (managed-clusters.yaml, design doc §2.4 — "same shape,
 	// different location") before treating the desired state as empty. A
 	// connected repo is one format or the other, never both, so this is a
 	// single extra read only on the (common, cheap) not-found path — v3
@@ -570,15 +572,15 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 	readPath := r.managedClustersPath
 	body, readErr := gp.GetFileContent(ctx, readPath, r.branch)
 	if readErr != nil && errors.Is(readErr, gitprovider.ErrFileNotFound) {
-		if v4Body, v4Err := gp.GetFileContent(ctx, v4ConnectionsPath, r.branch); v4Err == nil {
-			body, readErr, readPath = v4Body, nil, v4ConnectionsPath
-			log.Debug("[clusterreconciler] configured managed-clusters path absent — found the v4 fleet/connections.yaml instead",
-				"v3_path", r.managedClustersPath, "v4_path", v4ConnectionsPath)
+		if v4Body, v4Err := gp.GetFileContent(ctx, v4ManagedClustersPath, r.branch); v4Err == nil {
+			body, readErr, readPath = v4Body, nil, v4ManagedClustersPath
+			log.Debug("[clusterreconciler] configured managed-clusters path absent — found the v4 managed-clusters.yaml instead",
+				"v3_path", r.managedClustersPath, "v4_path", v4ManagedClustersPath)
 		}
 	}
 	if readErr != nil {
 		// ErrFileNotFound is not exceptional — a freshly-bootstrapped repo
-		// has zero clusters in managed-clusters.yaml (or fleet/connections.yaml)
+		// has zero clusters in managed-clusters.yaml (or managed-clusters.yaml)
 		// until the first register-cluster PR merges. Treat it as "empty
 		// desired state" rather than an error — the caller diffs against
 		// argocd correctly either way (no creates, only the deletes that
@@ -604,7 +606,7 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 	// Gated on readPath so a v3 repo does not pay for a directory listing
 	// it can never use, and so the v3 desired-label computation stays
 	// byte-identical.
-	if readPath == v4ConnectionsPath {
+	if readPath == v4ManagedClustersPath {
 		v4Labels = readV4AddonLabels(ctx, gp, r.branch)
 	}
 
@@ -1311,7 +1313,7 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 
 // ErrClusterNotManaged is returned by ResyncClusterLabels when the named
 // cluster has no entry in the git-managed cluster list (managed-clusters.yaml
-// / fleet/connections.yaml) — e.g. a discovered-but-not-adopted ArgoCD
+// / managed-clusters.yaml) — e.g. a discovered-but-not-adopted ArgoCD
 // cluster. There is no git-desired label set to resync against.
 var ErrClusterNotManaged = errors.New("cluster has no entry in the git-managed cluster list — nothing to resync")
 

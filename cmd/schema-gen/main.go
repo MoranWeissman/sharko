@@ -6,9 +6,9 @@
 //	go run ./cmd/schema-gen      # from repo root
 //	make generate-schemas         # via the Makefile target
 //
-// Output (six schemas, each mirrored to two locations, overwritten if
+// Output (seven schemas, each mirrored to two locations, overwritten if
 // they exist): managed-clusters, addons-catalog, default-addons,
-// marketplace-sources, cluster-addons, addon-catalog-delta — the
+// marketplace-sources, cluster-addons, catalog — the
 // last two are the v4 Wave 1 Story 2.6 kinds. Every schema lands at
 // both:
 //
@@ -77,30 +77,58 @@ const (
 	embedOutputDir = "internal/schema"
 )
 
-// managedClustersDoc mirrors schema.Envelope[models.ManagedClustersSpec]
-// structurally so invopop/jsonschema reflects a clean root schema without
-// leaking the generic instantiation name (Envelope[...]) into the output.
+// The wrapper structs below are what invopop/jsonschema reflects. They
+// exist so the generated root schema does not leak a Go generic
+// instantiation name (Envelope[github.com/...]) into a public document.
 //
-// PARITY INVARIANT: this struct's field set + json tags MUST exactly match
-// schema.Envelope[T]'s field set + json tags. If you change Envelope[T] in
-// internal/schema/envelope.go, change this struct and addonCatalogDoc
-// below identically. The TestGenerator_EnvelopeParity test in
-// internal/schema/generator_test.go pins this — if the schemas drift from
-// what a real Envelope[T] yaml-marshals to, that test fails.
+// There are two families, matching the two on-disk shapes described in
+// internal/schema's package comment:
+//
+//   - FLAT wrappers embed the payload type anonymously, so the payload's
+//     own fields are promoted and land beside apiVersion and kind at the
+//     top level — exactly what schema.EncodeFlat writes. Used for every
+//     file a v4 repo contains.
+//   - WRAPPED wrappers keep a named Spec field, mirroring
+//     schema.Envelope[T]. Used only for the v3-era files that still carry
+//     the spec: wrapper on disk.
+//
+// PARITY INVARIANT (wrapped family): a wrapped wrapper's field set + json
+// tags MUST exactly match schema.Envelope[T]'s. Change Envelope[T] in
+// internal/schema/envelope.go and you change these identically. The
+// TestGenerator_EnvelopeParity test in internal/schema/generator_test.go
+// pins it — if the schemas drift from what a real Envelope[T]
+// yaml-marshals to, that test fails.
+//
+// PARITY INVARIANT (flat family): the embedded payload type must be THE
+// SAME type the loader unmarshals into, so the schema and the reader can
+// never disagree about the field set. Embedding rather than re-declaring
+// the fields is what makes that structural rather than a matter of
+// discipline.
+
+// managedClustersDoc is the flat shape of managed-clusters.yaml.
 type managedClustersDoc struct {
+	APIVersion                 string `json:"apiVersion"`
+	Kind                       string `json:"kind"`
+	models.ManagedClustersSpec `json:",inline"`
+}
+
+// managedClustersV3Doc is the WRAPPED shape of a pre-v4
+// configuration/managed-clusters.yaml. Same payload as
+// managedClustersDoc's, one level down under spec:.
+type managedClustersV3Doc struct {
 	APIVersion string                     `json:"apiVersion"`
 	Kind       string                     `json:"kind"`
 	Metadata   schema.Metadata            `json:"metadata"`
 	Spec       models.ManagedClustersSpec `json:"spec"`
 }
 
-// addonCatalogDoc mirrors schema.Envelope[config.AddonCatalogSpec] for the
+// addonCatalogDoc mirrors schema.Envelope[config.AddonCatalogV3Spec] for the
 // same reason as managedClustersDoc. Same parity invariant applies.
 type addonCatalogDoc struct {
-	APIVersion string                  `json:"apiVersion"`
-	Kind       string                  `json:"kind"`
-	Metadata   schema.Metadata         `json:"metadata"`
-	Spec       config.AddonCatalogSpec `json:"spec"`
+	APIVersion string                    `json:"apiVersion"`
+	Kind       string                    `json:"kind"`
+	Metadata   schema.Metadata           `json:"metadata"`
+	Spec       config.AddonCatalogV3Spec `json:"spec"`
 }
 
 // defaultAddonsDoc mirrors schema.Envelope[config.DefaultAddonsSpec] for the
@@ -121,24 +149,21 @@ type marketplaceSourcesDoc struct {
 	Spec       config.MarketplaceSourcesSpec `json:"spec"`
 }
 
-// clusterAddonsDoc mirrors schema.Envelope[models.ClusterAddonsSpec]
-// for the same reason as managedClustersDoc. Same parity invariant
-// applies. v4 Wave 1 Story 2.6.
+// clusterAddonsDoc is the flat shape of clusters/<cluster-name>.yaml.
 type clusterAddonsDoc struct {
-	APIVersion string                       `json:"apiVersion"`
-	Kind       string                       `json:"kind"`
-	Metadata   schema.Metadata              `json:"metadata"`
-	Spec       models.ClusterAddonsSpec `json:"spec"`
+	APIVersion               string `json:"apiVersion"`
+	Kind                     string `json:"kind"`
+	models.ClusterAddonsSpec `json:",inline"`
 }
 
-// addonCatalogDeltaDoc mirrors schema.Envelope[config.AddonCatalogDeltaSpec]
-// for the same reason as managedClustersDoc. Same parity invariant
-// applies. v4 Wave 1 Story 2.6.
-type addonCatalogDeltaDoc struct {
-	APIVersion string                       `json:"apiVersion"`
-	Kind       string                       `json:"kind"`
-	Metadata   schema.Metadata              `json:"metadata"`
-	Spec       config.AddonCatalogDeltaSpec `json:"spec"`
+// addonCatalogV4Doc is the flat shape of catalog.yaml — the org's approved
+// addon list. Its kind (AddonCatalog) is shared with the v3
+// addons-catalog.yaml that addonCatalogDoc above describes; the two are
+// told apart by shape, never by kind. See schema.KindAddonCatalog.
+type addonCatalogV4Doc struct {
+	APIVersion              string `json:"apiVersion"`
+	Kind                    string `json:"kind"`
+	config.AddonCatalogSpec `json:",inline"`
 }
 
 func main() {
@@ -180,6 +205,22 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("generating managed-clusters schema: %w", err)
 	}
 	mcDocsPath, mcEmbedPath, err := writeSchemaToBoth("managed-clusters.v1.json", mcBytes)
+	if err != nil {
+		return err
+	}
+
+	// managed-clusters-v3.v1.json — the wrapped shape a pre-v4 repo has.
+	mc3Bytes, err := schema.GenerateSchema(
+		&managedClustersV3Doc{},
+		schema.ManagedClustersV3SchemaID,
+		"Sharko ManagedClusters (pre-v4 shape)",
+		"configuration/managed-clusters.yaml — the same cluster registry as managed-clusters.v1.json, in the older spec:-wrapped shape a repository bootstrapped before v4 still has on disk. Sharko reads this shape but no longer writes it.",
+		schema.KindManagedClusters,
+	)
+	if err != nil {
+		return fmt.Errorf("generating managed-clusters-v3 schema: %w", err)
+	}
+	mc3DocsPath, mc3EmbedPath, err := writeSchemaToBoth("managed-clusters-v3.v1.json", mc3Bytes)
 	if err != nil {
 		return err
 	}
@@ -248,23 +289,25 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	// addon-catalog-delta.v1.json (v4 Wave 1 Story 2.6)
+	// catalog.v1.json
 	acdBytes, err := schema.GenerateSchema(
-		&addonCatalogDeltaDoc{},
-		schema.AddonCatalogDeltaSchemaID,
-		"Sharko AddonCatalogDelta",
-		"catalog/addons.yaml — the user's delta against the shipped addon catalog: in-house charts plus overrides of shipped addons (v4).",
-		schema.KindAddonCatalogDelta,
+		&addonCatalogV4Doc{},
+		schema.AddonCatalogV4SchemaID,
+		"Sharko AddonCatalog",
+		"catalog.yaml — the addons this org has approved for its clusters. Each entry is complete on its own: chart, repo, version, namespace, settings and the secrets it needs.",
+		schema.KindAddonCatalog,
 	)
 	if err != nil {
-		return fmt.Errorf("generating addon-catalog-delta schema: %w", err)
+		return fmt.Errorf("generating catalog schema: %w", err)
 	}
-	acdDocsPath, acdEmbedPath, err := writeSchemaToBoth("addon-catalog-delta.v1.json", acdBytes)
+	acdDocsPath, acdEmbedPath, err := writeSchemaToBoth("catalog.v1.json", acdBytes)
 	if err != nil {
 		return err
 	}
 
-	logger.Info("generated 6 schemas (mirrored to 2 locations each)",
+	logger.Info("generated 7 schemas (mirrored to 2 locations each)",
+		"managed_clusters_v3_docs", mc3DocsPath,
+		"managed_clusters_v3_embed", mc3EmbedPath,
 		"managed_clusters_docs", mcDocsPath,
 		"managed_clusters_embed", mcEmbedPath,
 		"addons_catalog_docs", acDocsPath,
@@ -275,10 +318,10 @@ func run(logger *slog.Logger) error {
 		"marketplace_sources_embed", msEmbedPath,
 		"cluster_addons_docs", caDocsPath,
 		"cluster_addons_embed", caEmbedPath,
-		"addon_catalog_delta_docs", acdDocsPath,
-		"addon_catalog_delta_embed", acdEmbedPath,
+		"catalog_docs", acdDocsPath,
+		"catalog_embed", acdEmbedPath,
 	)
-	fmt.Printf("generated 6 schemas to %s + %s: managed-clusters.v1.json, addons-catalog.v1.json, default-addons.v1.json, marketplace-sources.v1.json, cluster-addons.v1.json, addon-catalog-delta.v1.json\n",
+	fmt.Printf("generated 7 schemas to %s + %s: managed-clusters.v1.json, managed-clusters-v3.v1.json, addons-catalog.v1.json, default-addons.v1.json, marketplace-sources.v1.json, cluster-addons.v1.json, catalog.v1.json\n",
 		docsOutputDir, embedOutputDir)
 	return nil
 }

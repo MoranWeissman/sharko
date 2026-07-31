@@ -98,7 +98,7 @@ func (s *Server) attachPRTracker(orch *orchestrator.Orchestrator) *orchestrator.
 	// the orchestrator keeps its New() default.
 	orch.SetCredsRouter(s.credsRouter())
 	// v4 Wave 1 Story 4.3: the sharpened enable/disable pipeline needs the
-	// shipped curated catalog to merge against a caller's catalog/addons.yaml
+	// shipped curated catalog to merge against a caller's catalog.yaml
 	// delta (catalog.MergeDelta) — the same merge
 	// handleListMergedCatalogDelta already does. s.catalog is optional
 	// (router.go); a nil catalog makes every addon merge as

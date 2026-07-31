@@ -26,7 +26,7 @@
 // deletions cascade straight into the live workloads.
 //
 // Separately: nothing on the migration path ever applied the new
-// engine/application.yaml to ArgoCD. Only the first-run init flow does
+// engine.yaml to ArgoCD. Only the first-run init flow does
 // (init.go's BootstrapArgoCD). So even a fleet that somehow survived the
 // first problem would simply freeze, with no ApplicationSets left to
 // manage it.
@@ -50,7 +50,7 @@
 // COMPLETE — after the pull request merges:
 //
 //  3. Delete the old ApplicationSets.
-//  4. THEN apply engine/application.yaml to ArgoCD, which brings up the
+//  4. THEN apply engine.yaml to ArgoCD, which brings up the
 //     engine's own ApplicationSets and regenerates the Applications.
 //
 // Step 3 must come before step 4, and the reason is a name collision. The
@@ -148,7 +148,7 @@ type RuntimeHandoffReport struct {
 	// delete-everything marker was removed, so their workloads outlive the
 	// transition.
 	ReleasedApplications []string `json:"released_applications,omitempty"`
-	// EngineApplied reports whether engine/application.yaml has been
+	// EngineApplied reports whether engine.yaml has been
 	// handed to ArgoCD.
 	EngineApplied bool `json:"engine_applied"`
 }
@@ -251,7 +251,7 @@ func (o *Orchestrator) prepareRuntimeHandoff(ctx context.Context, mode string, c
 // endpoint a person can press when the callback never arrived.
 //
 // Two steps, in this order and for the reason in the package comment:
-// retire the old ApplicationSets, then hand engine/application.yaml to
+// retire the old ApplicationSets, then hand engine.yaml to
 // ArgoCD.
 func (o *Orchestrator) CompleteRuntimeHandoff(ctx context.Context) (*RuntimeHandoffReport, error) {
 	v4, err := o.isV4Repo(ctx)
@@ -306,11 +306,11 @@ func (o *Orchestrator) CompleteRuntimeHandoff(ctx context.Context) (*RuntimeHand
 	// Step 2 — hand the engine pin to ArgoCD. This is the step that was
 	// missing entirely (review finding H-2): only the first-run init flow
 	// ever called it, so a migrated repo had a perfectly good
-	// engine/application.yaml that nothing had applied.
+	// engine.yaml that nothing had applied.
 	if o.argocd == nil {
 		report.State = HandoffStatePending
 		report.Message = "The old ApplicationSets are retired, but Sharko has no ArgoCD connection to start the new engine with. " +
-			"Connect ArgoCD and run this again — or apply engine/application.yaml by hand."
+			"Connect ArgoCD and run this again — or apply engine.yaml by hand."
 		return report, nil
 	}
 	pin, err := o.ReadRootAppTemplate(ctx)
@@ -327,7 +327,7 @@ func (o *Orchestrator) CompleteRuntimeHandoff(ctx context.Context) (*RuntimeHand
 }
 
 // mergedAddonNames returns every addon name the v4 repo knows about:
-// the shipped curated catalog plus the repo's own catalog/addons.yaml
+// the shipped curated catalog plus the repo's own catalog.yaml
 // delta. These are the label keys the OLD ApplicationSets selected on.
 func (o *Orchestrator) mergedAddonNames(ctx context.Context) ([]string, error) {
 	names := map[string]bool{}
@@ -338,10 +338,10 @@ func (o *Orchestrator) mergedAddonNames(ctx context.Context) ([]string, error) {
 			}
 		}
 	}
-	if body, ok := o.readFileIfExists(ctx, config.AddonCatalogDeltaPath); ok && len(strings.TrimSpace(string(body))) > 0 {
-		delta, err := config.LoadAddonCatalogDelta(body)
+	if body, ok := o.readFileIfExists(ctx, config.AddonCatalogPath); ok && len(strings.TrimSpace(string(body))) > 0 {
+		delta, err := config.LoadAddonCatalog(body)
 		if err != nil {
-			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogDeltaPath, err)
+			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 		}
 		for name := range delta.Addons {
 			if name != "" {

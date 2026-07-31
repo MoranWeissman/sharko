@@ -24,7 +24,7 @@ type fakeDeltaGitProvider struct {
 }
 
 func (f *fakeDeltaGitProvider) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
-	if path == config.AddonCatalogDeltaPath && f.deltaBody != nil {
+	if path == config.AddonCatalogPath && f.deltaBody != nil {
 		return f.deltaBody, nil
 	}
 	return nil, gitprovider.ErrFileNotFound
@@ -94,17 +94,14 @@ func TestHandleListMergedCatalogDelta_NoDeltaFileReturnsCuratedUntouched(t *test
 func TestHandleListMergedCatalogDelta_DeltaOverridesVersionAndAddsInternalAddon(t *testing.T) {
 	delta := `
 apiVersion: sharko.dev/v1
-kind: AddonCatalogDelta
-metadata:
-  name: addon-catalog-delta
-spec:
-  addons:
-    cert-manager:
-      version: "1.14.5"
-    billing-api:
-      repoURL: oci://registry.example.com/charts
-      chart: billing-api
-      version: "2.4.0"
+kind: AddonCatalog
+addons:
+  cert-manager:
+    version: "1.14.5"
+  billing-api:
+    repoURL: oci://registry.example.com/charts
+    chart: billing-api
+    version: "2.4.0"
 `
 	srv := serverWithCatalogAndDelta(t, testCatalog(t), &fakeDeltaGitProvider{deltaBody: []byte(delta)})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/delta/addons", nil)
@@ -169,14 +166,11 @@ func TestHandleGetMergedCatalogDeltaAddon_CatalogNotLoaded(t *testing.T) {
 func TestHandleListMergedCatalogDelta_MissingRequiredFieldSurfacesAs422(t *testing.T) {
 	delta := `
 apiVersion: sharko.dev/v1
-kind: AddonCatalogDelta
-metadata:
-  name: addon-catalog-delta
-spec:
-  addons:
-    billing-api:
-      chart: billing-api
-      version: "2.4.0"
+kind: AddonCatalog
+addons:
+  billing-api:
+    chart: billing-api
+    version: "2.4.0"
 `
 	srv := serverWithCatalogAndDelta(t, testCatalog(t), &fakeDeltaGitProvider{deltaBody: []byte(delta)})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/delta/addons", nil)

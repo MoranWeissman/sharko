@@ -84,7 +84,7 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 		}
 
 		// Step 5 & 6 — Apply the engine pin (design doc §2.5). v4 has no
-		// separate AppProject to create here: engine/application.yaml's
+		// separate AppProject to create here: engine.yaml's
 		// spec.project is "default", and the engine chart's own render
 		// creates the shared "sharko-addons" AppProject
 		// (charts/sharko-engine/templates/project.yaml) the first time
@@ -291,7 +291,7 @@ func (o *Orchestrator) CreateInitPR(ctx context.Context, branch string) (*GitRes
 	}, nil
 }
 
-// ReadRootAppTemplate reads the engine pin (engine/application.yaml, at
+// ReadRootAppTemplate reads the engine pin (engine.yaml, at
 // BootstrapRootAppPath) back from the base branch — called after the
 // bootstrap PR has merged, so this reads exactly what is now in git rather
 // than re-deriving it. Unlike the v3 template path there is no

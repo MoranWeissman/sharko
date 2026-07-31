@@ -27,22 +27,25 @@ import (
 // workflow's signing step comment).
 const DefaultEngineChartRepoURL = "ghcr.io/moranweissman/sharko"
 
-// v4SeedFolders are the empty data folders the bootstrap PR creates (design
-// doc §1's file tree, minus engine/ which carries the pin itself, not a
-// .gitkeep). Git cannot track an empty directory, so each one gets a
-// .gitkeep placeholder — that is a git limitation, not Sharko data (design
-// doc §1, "What the bootstrap PR actually contains").
+// v4SeedFolders are the empty data folders the bootstrap PR creates. Git
+// cannot track an empty directory, so each one gets a .gitkeep placeholder
+// — that is a git limitation, not Sharko data.
+//
+// Only the folders that genuinely hold MANY files are here. The three
+// single files — managed-clusters.yaml, catalog.yaml and engine.yaml — sit
+// at the repo root with no folder around them (design doc
+// 2026-07-31-catalog-approved-model.md §2), so there is nothing to .gitkeep
+// for them. A folder gets born the day a per-file split is really needed,
+// not before.
 var v4SeedFolders = []string{
 	"clusters",
-	"fleet",
 	"values/global",
 	"values/clusters",
-	"catalog",
 }
 
 // BuildV4SeedFiles returns the exact, complete set of files the v4
 // bootstrap PR commits: one .gitkeep per empty data folder, the engine pin
-// (engine/application.yaml, at BootstrapRootAppPath), and README.md.
+// (engine.yaml, at BootstrapRootAppPath), and README.md.
 // Nothing else — no AppProject, no Chart.yaml, no catalog seed, no addon
 // values stubs. This is the ONLY writer of the bootstrap PR's file set;
 // CollectBootstrapFiles and the synchronous InitRepo both call this rather
@@ -61,7 +64,7 @@ func BuildV4SeedFiles(gitops GitOpsConfig, paths RepoPathsConfig) map[string][]b
 	return files
 }
 
-// buildEnginePin renders engine/application.yaml — the whole of Sharko's
+// buildEnginePin renders engine.yaml — the whole of Sharko's
 // deployment logic, reduced to one pointer (design doc §2.5). Every value
 // is resolved from server-side config at write time; there are no
 // placeholder tokens left for a later substitution pass (contrast the v3
@@ -97,7 +100,7 @@ func buildEnginePin(gitops GitOpsConfig, paths RepoPathsConfig) []byte {
 	b.WriteString("      helm:\n")
 	b.WriteString("        ignoreMissingValueFiles: true\n")
 	b.WriteString("        valueFiles:\n")
-	b.WriteString("          - $values/catalog/addons.yaml\n")
+	b.WriteString("          - $values/catalog.yaml\n")
 	b.WriteString("        parameters:\n")
 	b.WriteString("          - name: repo.url\n")
 	fmt.Fprintf(&b, "            value: %s\n", repoURL)
@@ -136,32 +139,38 @@ render to understand what is running.
 ## Layout
 
 ` + "```" + `text
-clusters/     which addons run on each cluster, at which version, tuned how
-              (one file per cluster: clusters/<cluster-name>.yaml)
-fleet/        how Sharko reaches each cluster (fleet/connections.yaml)
-catalog/      your own addons, and your changes to the shipped ones
-              (catalog/addons.yaml — only your changes, never a full copy)
-values/       Helm values for each addon
-              values/global/<addon>.yaml       — everywhere
-              values/clusters/<cluster>/<addon>.yaml — one cluster only
-engine/       the engine pin (engine/application.yaml) — the ONLY moving
-              part Sharko ships. Upgrading the engine is a pull request
-              that changes one line.
+managed-clusters.yaml   the clusters Sharko manages, and how it reaches them
+catalog.yaml            the addons your org has approved for those clusters
+engine.yaml             which version of Sharko's engine chart to run — the
+                        ONLY moving part Sharko ships. Upgrading it is a
+                        pull request that changes one line.
+clusters/               which addons run on each cluster, at which version,
+                        tuned how (one file per cluster:
+                        clusters/<cluster-name>.yaml)
+values/                 Helm values for each addon
+                        values/global/<addon>.yaml              — everywhere
+                        values/clusters/<cluster>/<addon>.yaml  — one cluster
 ` + "```" + `
 
 A folder with only a ` + "`.gitkeep`" + ` file in it is empty on purpose — a file that
 is not there means "empty", never an error. Sharko creates each real file
 the first time it has something to put in it (for example, the first
-cluster you register creates ` + "`fleet/connections.yaml`" + `).
+cluster you register creates ` + "`managed-clusters.yaml`" + `).
+
+` + "`catalog.yaml`" + ` starts out empty, on purpose: nothing runs in your org that
+somebody did not put there. Adding an addon to it copies the whole entry in
+— chart, repo, version, namespace — so the pull request reviewer sees
+exactly what is entering the org, and this repository on its own tells the
+whole story.
 
 ## How it works
 
 Sharko manages this repository through pull requests — every change is
-reviewable before it merges. The engine pin (` + "`engine/application.yaml`" + `)
+reviewable before it merges. The engine pin (` + "`engine.yaml`" + `)
 tells ArgoCD which version of Sharko's engine chart to run; that chart
-reads ` + "`clusters/`" + `, ` + "`catalog/addons.yaml`" + `, and ` + "`values/`" + ` and turns them into
-one ArgoCD ApplicationSet per addon. There are no other templates or
-generated files in this repository — see
+reads ` + "`catalog.yaml`" + `, ` + "`clusters/`" + `, and ` + "`values/`" + ` and turns them into
+one ArgoCD ApplicationSet per approved addon. There are no other templates
+or generated files in this repository — see
 https://github.com/MoranWeissman/sharko/blob/main/docs/design/2026-07-30-v4-data-file-format.md
 for the full contract.
 `)

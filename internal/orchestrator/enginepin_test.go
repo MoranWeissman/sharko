@@ -8,7 +8,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/engineversion"
 )
 
-// enginePinTestFixture is a minimal-but-real engine/application.yaml, same
+// enginePinTestFixture is a minimal-but-real engine.yaml, same
 // two-source shape as docs/design/2026-07-30-v4-data-file-format.md
 // section 2.5, pinned to a version older than engineversion.BundledVersion
 // so the "upgrade available" path is exercised by default across these
@@ -47,7 +47,7 @@ func TestCheckEnginePin_NoFile_NotAV4Repo(t *testing.T) {
 		t.Fatalf("expected no error for a missing engine pin (v3 repo case), got: %v", err)
 	}
 	if result.V4Repo {
-		t.Error("expected V4Repo=false when engine/application.yaml is absent")
+		t.Error("expected V4Repo=false when engine.yaml is absent")
 	}
 	if result.UpgradeAvailable {
 		t.Error("expected UpgradeAvailable=false when there is no pin")
@@ -67,7 +67,7 @@ func TestCheckEnginePin_UpgradeAvailable(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !result.V4Repo {
-		t.Fatal("expected V4Repo=true when engine/application.yaml exists")
+		t.Fatal("expected V4Repo=true when engine.yaml exists")
 	}
 	if result.PinnedVersion != "0.0.1" {
 		t.Errorf("PinnedVersion = %q, want %q", result.PinnedVersion, "0.0.1")

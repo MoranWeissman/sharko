@@ -86,7 +86,7 @@ func TestMigrationStatus_MissingFiles_IsStillAnEmptyRepo(t *testing.T) {
 // the flag raised by the takeover lane. A write gate that cannot tell
 // which layout the repo uses must REFUSE, not assume v3 — assuming v3 on
 // a repo that is really v4 recreates configuration/managed-clusters.yaml
-// beside fleet/connections.yaml, and the reconciler prefers the v3 file,
+// beside managed-clusters.yaml, and the reconciler prefers the v3 file,
 // so every v4-registered cluster loses its ArgoCD connection Secret.
 func TestRefuseOnV4Repo_FailsClosedOnAProbeFailure(t *testing.T) {
 	git := newFlakyGit(nil, EnginePinPath)
@@ -222,7 +222,7 @@ func TestMigrate_DanglingVersionPin_BecomesASwitchedOffEntry(t *testing.T) {
 	}
 
 	// The connection record must not keep the v3-shaped key either.
-	conn, ok := git.branchWrites[V4ConnectionsPath]
+	conn, ok := git.branchWrites[V4ManagedClustersPath]
 	if !ok {
 		t.Fatal("no connections file written")
 	}

@@ -14,11 +14,11 @@ func TestIsUserManagedConnection(t *testing.T) {
 		value string
 		want  bool
 	}{
-		{"", false},        // absent == sharko-managed default
-		{"sharko", false},  // explicit default
-		{"user", true},     // self-managed
-		{"User", true},     // case-insensitive read tolerance (legacy bare path)
-		{"owner", false},   // unknown → fail-safe default
+		{"", false},       // absent == sharko-managed default
+		{"sharko", false}, // explicit default
+		{"user", true},    // self-managed
+		{"User", true},    // case-insensitive read tolerance (legacy bare path)
+		{"owner", false},  // unknown → fail-safe default
 		{"userland", false},
 	}
 	for _, c := range cases {
@@ -93,14 +93,13 @@ func TestManagedClusters_SchemaRejectsUnknownMode(t *testing.T) {
 	// The generated JSON Schema pins the enum: a typo'd mode on an
 	// ENVELOPED file must fail loudly at read time instead of silently
 	// defaulting to Sharko-managed ownership of the user's connection.
+	// Body must be FLAT (no spec: wrapper): a wrapped body is read as
+	// the legacy v3 shape, which deliberately skips schema validation.
 	body := []byte(`apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters:
-    - name: typo-cluster
-      connectionManagedBy: owner
+clusters:
+  - name: typo-cluster
+    connectionManagedBy: owner
 `)
 	if _, err := LoadManagedClusters(body); err == nil {
 		t.Fatal("enveloped file with connectionManagedBy: owner must fail schema validation")

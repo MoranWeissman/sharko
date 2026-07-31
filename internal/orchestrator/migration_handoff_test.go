@@ -487,19 +487,16 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// v4CatalogDeltaFixture is the catalog/addons.yaml a migrated repo holds.
+// v4CatalogDeltaFixture is the catalog.yaml a migrated repo holds.
 // The handoff reads it (plus the curated catalog) to work out which bare
 // label keys the OLD ApplicationSets selected on.
-const v4CatalogDeltaFixturePath = "catalog/addons.yaml"
+const v4CatalogDeltaFixturePath = "catalog.yaml"
 
 const v4CatalogDeltaFixture = `apiVersion: sharko.dev/v1
-kind: AddonCatalogDelta
-metadata:
-  name: addon-catalog-delta
-spec:
-  addons:
-    inhouse-api:
-      repoURL: oci://registry.example.com/charts
-      chart: inhouse-api
-      version: 2.1.0
+kind: AddonCatalog
+addons:
+  inhouse-api:
+    repoURL: oci://registry.example.com/charts
+    chart: inhouse-api
+    version: 2.1.0
 `

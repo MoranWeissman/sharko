@@ -2304,7 +2304,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Overlays the caller's own git catalog/addons.yaml (kind AddonCatalogDelta) onto the shipped curated catalog and returns the merged, per-addon view: chart location, version (and where it came from), settings, and — for curated addons — the extended knowledge fields (description, required values, secrets, quirks, docs link). Every addon carries an ` + "`" + `origin` + "`" + ` of \"curated\" or \"internal\" (v4 wave 1 Story 3.3's in-house-addon marker). A repo with no catalog/addons.yaml yet returns the curated set untouched (design doc D16, \"missing means empty\").",
+                "description": "Overlays the caller's own git catalog.yaml (kind AddonCatalog) onto the shipped curated catalog and returns the merged, per-addon view: chart location, version (and where it came from), settings, and — for curated addons — the extended knowledge fields (description, required values, secrets, quirks, docs link). Every addon carries an ` + "`" + `origin` + "`" + ` of \"curated\" or \"internal\" (v4 wave 1 Story 3.3's in-house-addon marker). A repo with no catalog.yaml yet returns the curated set untouched (design doc D16, \"missing means empty\").",
                 "produces": [
                     "application/json"
                 ],
@@ -2348,7 +2348,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Adds (or updates) one first-class in-house addon entry in your catalog/addons.yaml (kind AddonCatalogDelta), committed via a pull request like every other Sharko write. repo_url, chart, and version are all required — nothing else can supply them for an addon with no shipped catalog entry (design doc §2.3). The addon becomes assignable to clusters and appears in the merged catalog view (origin=internal) once the PR merges.",
+                "description": "Adds (or updates) one first-class in-house addon entry in your catalog.yaml (kind AddonCatalog), committed via a pull request like every other Sharko write. repo_url, chart, and version are all required — nothing else can supply them for an addon with no shipped catalog entry (design doc §2.3). The addon becomes assignable to clusters and appears in the merged catalog view (origin=internal) once the PR merges.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2409,7 +2409,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Single-addon form of GET /catalog/delta/addons — the curated entry (if any) overlaid with the caller's own catalog/addons.yaml override or, for an in-house addon, defined entirely by it.",
+                "description": "Single-addon form of GET /catalog/delta/addons — the curated entry (if any) overlaid with the caller's own catalog.yaml override or, for an in-house addon, defined entirely by it.",
                 "produces": [
                     "application/json"
                 ],
@@ -5943,7 +5943,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Compares the engine chart version pinned in the connected repo's engine/application.yaml against the version bundled with this Sharko build. Responds cleanly (v4_repo=false) for v3 repos or repos not yet bootstrapped — never errors on a missing pin.",
+                "description": "Compares the engine chart version pinned in the connected repo's engine.yaml against the version bundled with this Sharko build. Responds cleanly (v4_repo=false) for v3 repos or repos not yet bootstrapped — never errors on a missing pin.",
                 "produces": [
                     "application/json"
                 ],
@@ -7070,7 +7070,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Checks whether the GitOps repository has been bootstrapped (the engine pin at engine/application.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present.",
+                "description": "Checks whether the GitOps repository has been bootstrapped (the engine pin at engine.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present.",
                 "produces": [
                     "application/json"
                 ],
@@ -10148,7 +10148,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "pinned_version": {
-                    "description": "PinnedVersion is the version currently pinned in the repo's\nengine/application.yaml. Empty when V4Repo is false.",
+                    "description": "PinnedVersion is the version currently pinned in the repo's\nengine.yaml. Empty when V4Repo is false.",
                     "type": "string"
                 },
                 "upgrade_available": {
@@ -10156,7 +10156,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "v4_repo": {
-                    "description": "V4Repo is false when engine/application.yaml does not exist in the\nconnected repo — a v3 repo, or a v4 repo that has not been\nbootstrapped yet. Every other field is the zero value in that case.\nThis is NOT an error condition (story brief: \"v3 repos: the check\nmust respond cleanly ... never error\").",
+                    "description": "V4Repo is false when engine.yaml does not exist in the\nconnected repo — a v3 repo, or a v4 repo that has not been\nbootstrapped yet. Every other field is the zero value in that case.\nThis is NOT an error condition (story brief: \"v3 repos: the check\nmust respond cleanly ... never error\").",
                     "type": "boolean"
                 }
             }
@@ -10470,7 +10470,7 @@ const docTemplate = `{
                     }
                 },
                 "engine_applied": {
-                    "description": "EngineApplied reports whether engine/application.yaml has been\nhanded to ArgoCD.",
+                    "description": "EngineApplied reports whether engine.yaml has been\nhanded to ArgoCD.",
                     "type": "boolean"
                 },
                 "message": {

@@ -17,9 +17,9 @@ import (
 //   - internal/api's request-edge validation (validClusterNameRe),
 //   - internal/orchestrator's path builders (belt-and-braces, v4paths.go),
 //   - the generated JSON Schema's propertyNames constraint on the
-//     AddonCatalogDelta addons map (internal/config/addon_catalog_delta.go's
+//     AddonCatalog addons map (internal/config/addon_catalog_delta.go's
 //     JSONSchemaExtend), which is what protects a hand-authored
-//     catalog/addons.yaml.
+//     catalog.yaml.
 //
 // Alphanumeric with hyphens, starting with an alphanumeric. Deliberately
 // narrower than a DNS label so "." and "_" — both legal in a K8s label-key

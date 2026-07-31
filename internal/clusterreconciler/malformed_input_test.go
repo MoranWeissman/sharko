@@ -31,13 +31,10 @@ func TestMalformedInput_ReadV4AddonLabels_SkipsBadFilesKeepsGoodOnes(t *testing.
 
 	goodClusterYAML := []byte(`apiVersion: sharko.dev/v1
 kind: ClusterAddons
-metadata:
-  name: prod-eu
-spec:
-  cluster: prod-eu
-  addons:
-    cert-manager:
-      enabled: true
+cluster: prod-eu
+addons:
+  cert-manager:
+    enabled: true
 `)
 
 	cases := map[string][]byte{
@@ -51,11 +48,11 @@ spec:
 		"deep_nesting_200":           malformed.DeepNesting(200),
 		"tab_indentation":            malformed.TabIndentation(),
 		"not_enveloped":              []byte("cluster: broken-cluster\naddons: {}\n"),
-		"wrong_kind":                 []byte("apiVersion: sharko.dev/v1\nkind: ManagedClusters\nspec:\n  clusters: []\n"),
-		"unknown_sharko_api_version": []byte("apiVersion: sharko.dev/v99\nkind: ClusterAddons\nspec:\n  cluster: broken-cluster\n  addons: {}\n"),
-		"addons_wrong_type":          []byte("apiVersion: sharko.dev/v1\nkind: ClusterAddons\nspec:\n  cluster: broken-cluster\n  addons:\n    - cert-manager\n"),
-		"missing_cluster_field":      []byte("apiVersion: sharko.dev/v1\nkind: ClusterAddons\nspec:\n  addons: {}\n"),
-		"empty_cluster_field":        []byte("apiVersion: sharko.dev/v1\nkind: ClusterAddons\nspec:\n  cluster: \"\"\n  addons: {}\n"),
+		"wrong_kind":                 []byte("apiVersion: sharko.dev/v1\nkind: ManagedClusters\nclusters: []\n"),
+		"unknown_sharko_api_version": []byte("apiVersion: sharko.dev/v99\nkind: ClusterAddons\ncluster: broken-cluster\naddons: {}\n"),
+		"addons_wrong_type":          []byte("apiVersion: sharko.dev/v1\nkind: ClusterAddons\ncluster: broken-cluster\naddons:\n  - cert-manager\n"),
+		"missing_cluster_field":      []byte("apiVersion: sharko.dev/v1\nkind: ClusterAddons\naddons: {}\n"),
+		"empty_cluster_field":        []byte("apiVersion: sharko.dev/v1\nkind: ClusterAddons\ncluster: \"\"\naddons: {}\n"),
 	}
 
 	for name, badBody := range cases {

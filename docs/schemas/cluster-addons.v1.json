@@ -11,84 +11,56 @@
     "kind": {
       "const": "ClusterAddons"
     },
-    "metadata": {
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "annotations": {
-          "additionalProperties": {
+    "cluster": {
+      "type": "string"
+    },
+    "addons": {
+      "additionalProperties": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "version": {
             "type": "string"
           },
-          "type": "object"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "name"
-      ]
-    },
-    "spec": {
-      "properties": {
-        "cluster": {
-          "type": "string"
-        },
-        "addons": {
-          "additionalProperties": {
+          "settings": {
             "properties": {
-              "enabled": {
-                "type": "boolean"
-              },
-              "version": {
+              "namespace": {
                 "type": "string"
               },
-              "settings": {
-                "properties": {
-                  "namespace": {
-                    "type": "string"
-                  },
-                  "createNamespace": {
-                    "type": "boolean"
-                  },
-                  "syncOptions": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "ignoreDifferences": {
-                    "items": {
-                      "type": "object"
-                    },
-                    "type": "array"
-                  },
-                  "prune": {
-                    "type": "boolean"
-                  },
-                  "selfHeal": {
-                    "type": "boolean"
-                  }
+              "createNamespace": {
+                "type": "boolean"
+              },
+              "syncOptions": {
+                "items": {
+                  "type": "string"
                 },
-                "additionalProperties": false,
-                "type": "object"
+                "type": "array"
+              },
+              "ignoreDifferences": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "prune": {
+                "type": "boolean"
+              },
+              "selfHeal": {
+                "type": "boolean"
               }
             },
             "additionalProperties": false,
-            "type": "object",
-            "required": [
-              "enabled"
-            ]
-          },
-          "type": "object"
-        }
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "enabled"
+        ]
       },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "cluster",
-        "addons"
-      ]
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -96,8 +68,8 @@
   "required": [
     "apiVersion",
     "kind",
-    "metadata",
-    "spec"
+    "cluster",
+    "addons"
   ],
   "title": "Sharko ClusterAddons",
   "description": "clusters/\u003ccluster-name\u003e.yaml — which addons run on this cluster, at which version, tuned how (v4)."

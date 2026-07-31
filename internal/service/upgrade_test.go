@@ -607,8 +607,8 @@ func TestGetRecommendations_BuildCardsRejectsDowngradeLatest(t *testing.T) {
 // TestGetVersionMatrix_V4Repo's approach in addon_test.go).
 func v4DeltaYAML(t *testing.T, addon, repoURL, chart, version string) []byte {
 	t.Helper()
-	body, err := config.SaveAddonCatalogDelta(config.AddonCatalogDeltaSpec{
-		Addons: map[string]config.AddonCatalogDeltaEntry{
+	body, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
 			addon: {RepoURL: repoURL, Chart: chart, Version: version},
 		},
 	})
@@ -690,7 +690,7 @@ func TestListVersions_V4Repo(t *testing.T) {
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
 			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-			config.AddonCatalogDeltaPath: v4DeltaYAML(t, addon, helmSrv.URL, chart, "1.14.5"),
+			config.AddonCatalogPath: v4DeltaYAML(t, addon, helmSrv.URL, chart, "1.14.5"),
 			// A v3 catalog is ALSO present, with a DIFFERENT repo URL, to
 			// prove it is ignored once the engine pin routes this to the
 			// v4 branch — same proof shape as TestGetVersionMatrix_V4Repo.
@@ -722,7 +722,7 @@ func TestGetRecommendations_V4Repo(t *testing.T) {
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
 			orchestrator.EnginePinPath:          []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-			config.AddonCatalogDeltaPath:        v4DeltaYAML(t, addon, helmSrv.URL, chart, "1.20.1"),
+			config.AddonCatalogPath:        v4DeltaYAML(t, addon, helmSrv.URL, chart, "1.20.1"),
 			"configuration/addons-catalog.yaml": catalogYAML(addon, chart, "https://v3-should-be-ignored.example.com", "0.0.1"),
 		},
 	}
@@ -768,7 +768,7 @@ func TestCheckUpgrade_V4Repo_ConflictsUseV4Paths(t *testing.T) {
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
 			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-			config.AddonCatalogDeltaPath: v4DeltaYAML(t, addon, helmSrv.URL, chart, "1.12.0"),
+			config.AddonCatalogPath: v4DeltaYAML(t, addon, helmSrv.URL, chart, "1.12.0"),
 			"clusters/prod-eu.yaml":      prodEU,
 			fmt.Sprintf("%s/%s/%s.yaml", orchestrator.V4ClusterValuesDir, "prod-eu", addon): []byte("replicaCount: 3\n"),
 			// v3 paths ALSO present, with a configured value that would
@@ -830,7 +830,7 @@ func TestGetAISummary_ChainedFromV4CheckUpgrade(t *testing.T) {
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
 			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-			config.AddonCatalogDeltaPath: v4DeltaYAML(t, addon, helmSrv.URL, chart, "1.12.0"),
+			config.AddonCatalogPath: v4DeltaYAML(t, addon, helmSrv.URL, chart, "1.12.0"),
 		},
 	}
 

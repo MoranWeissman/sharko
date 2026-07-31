@@ -80,10 +80,10 @@ func TestMalformedInput_Validate_WrongKindData_NeverPanics(t *testing.T) {
 	// bodies — the validator must reject cleanly no matter which schema
 	// is asked to validate against garbage, including another kind's
 	// perfectly well-formed body (a ManagedClusters doc handed to the
-	// AddonCatalogDelta schema, etc.).
+	// AddonCatalog schema, etc.).
 	kinds := []string{
 		KindManagedClusters, KindAddonCatalog, KindDefaultAddons,
-		KindMarketplaceSources, KindClusterAddons, KindAddonCatalogDelta,
+		KindMarketplaceSources, KindClusterAddons, KindAddonCatalog,
 	}
 	bodies := map[string][]byte{
 		"binary_junk":      malformed.BinaryJunk(),

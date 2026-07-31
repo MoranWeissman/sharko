@@ -1,8 +1,8 @@
 // v4 Wave 1 Story 2.6 — generator coverage for the two new kinds
-// (ClusterAddons, AddonCatalogDelta). Kept in a separate file from
+// (ClusterAddons, AddonCatalog). Kept in a separate file from
 // generator_test.go (rather than growing that file's tables) so the
 // v3-kind and v4-kind test suites can evolve independently; the helpers
-// here deliberately mirror genManagedClusters/genAddonCatalog's shape.
+// here deliberately mirror genManagedClusters/genAddonCatalogV4's shape.
 package schema_test
 
 import (
@@ -29,7 +29,7 @@ type addonCatalogDeltaDoc struct {
 	APIVersion string                       `json:"apiVersion"`
 	Kind       string                       `json:"kind"`
 	Metadata   sharkoschema.Metadata        `json:"metadata"`
-	Spec       config.AddonCatalogDeltaSpec `json:"spec"`
+	Spec       config.AddonCatalogSpec `json:"spec"`
 }
 
 func genClusterAddons(t *testing.T) []byte {
@@ -47,14 +47,14 @@ func genClusterAddons(t *testing.T) []byte {
 	return out
 }
 
-func genAddonCatalogDelta(t *testing.T) []byte {
+func genAddonCatalogV4(t *testing.T) []byte {
 	t.Helper()
 	out, err := sharkoschema.GenerateSchema(
 		&addonCatalogDeltaDoc{},
-		sharkoschema.AddonCatalogDeltaSchemaID,
-		"Sharko AddonCatalogDelta",
+		sharkoschema.AddonCatalogV4SchemaID,
+		"Sharko AddonCatalog",
 		"catalog/addons.yaml — the user's delta against the shipped addon catalog (v4).",
-		sharkoschema.KindAddonCatalogDelta,
+		sharkoschema.KindAddonCatalog,
 	)
 	if err != nil {
 		t.Fatalf("GenerateSchema(addon-catalog-delta): %v", err)
@@ -79,8 +79,8 @@ func TestGenerateSchemas_V4Kinds_Idempotent(t *testing.T) {
 
 	t.Run("addon-catalog-delta", func(t *testing.T) {
 		t.Parallel()
-		a := genAddonCatalogDelta(t)
-		b := genAddonCatalogDelta(t)
+		a := genAddonCatalogV4(t)
+		b := genAddonCatalogV4(t)
 		if !bytes.Equal(a, b) {
 			t.Fatalf("schema generation not idempotent:\nfirst:  %s\nsecond: %s", a, b)
 		}
@@ -169,15 +169,15 @@ spec:
 	}
 }
 
-// TestGenerateAddonCatalogDelta_AcceptsDesignDocExample validates the
+// TestGenerateAddonCatalogV4_AcceptsDesignDocExample validates the
 // generator's output against the design doc's §2.3 worked example.
-func TestGenerateAddonCatalogDelta_AcceptsDesignDocExample(t *testing.T) {
+func TestGenerateAddonCatalogV4_AcceptsDesignDocExample(t *testing.T) {
 	t.Parallel()
-	schemaBytes := genAddonCatalogDelta(t)
-	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogDeltaSchemaID)
+	schemaBytes := genAddonCatalogV4(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogV4SchemaID)
 
 	example := `apiVersion: sharko.dev/v1
-kind: AddonCatalogDelta
+kind: AddonCatalog
 metadata:
   name: addon-catalog-delta
 spec:
@@ -197,16 +197,16 @@ spec:
 	}
 }
 
-// TestGenerateAddonCatalogDelta_AllowsPreserveResourcesOnDeletion — the
-// AddonCatalogDelta settings block DOES allow this field (it's the only
+// TestGenerateAddonCatalogV4_AllowsPreserveResourcesOnDeletion — the
+// AddonCatalog settings block DOES allow this field (it's the only
 // legal place for it — design doc §3.2).
-func TestGenerateAddonCatalogDelta_AllowsPreserveResourcesOnDeletion(t *testing.T) {
+func TestGenerateAddonCatalogV4_AllowsPreserveResourcesOnDeletion(t *testing.T) {
 	t.Parallel()
-	schemaBytes := genAddonCatalogDelta(t)
-	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogDeltaSchemaID)
+	schemaBytes := genAddonCatalogV4(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogV4SchemaID)
 
 	body := `apiVersion: sharko.dev/v1
-kind: AddonCatalogDelta
+kind: AddonCatalog
 metadata:
   name: addon-catalog-delta
 spec:
@@ -217,17 +217,17 @@ spec:
         preserveResourcesOnDeletion: false
 `
 	if err := sch.Validate(yamlToInterface(t, body)); err != nil {
-		t.Fatalf("expected preserveResourcesOnDeletion to be legal on AddonCatalogDelta settings, got: %v", err)
+		t.Fatalf("expected preserveResourcesOnDeletion to be legal on AddonCatalog settings, got: %v", err)
 	}
 }
 
-// TestGenerateAddonCatalogDelta_RejectsWrongKind — a v3 AddonCatalog
-// body must fail against the v4 AddonCatalogDelta schema (design doc
+// TestGenerateAddonCatalogV4_RejectsWrongKind — a v3 AddonCatalog
+// body must fail against the v4 AddonCatalog schema (design doc
 // decision D5: distinct kinds, never silently cross-validated).
-func TestGenerateAddonCatalogDelta_RejectsWrongKind(t *testing.T) {
+func TestGenerateAddonCatalogV4_RejectsWrongKind(t *testing.T) {
 	t.Parallel()
-	schemaBytes := genAddonCatalogDelta(t)
-	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogDeltaSchemaID)
+	schemaBytes := genAddonCatalogV4(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogV4SchemaID)
 
 	wrongKind := `apiVersion: sharko.dev/v1
 kind: AddonCatalog
@@ -237,19 +237,19 @@ spec:
   applicationsets: []
 `
 	if err := sch.Validate(yamlToInterface(t, wrongKind)); err == nil {
-		t.Fatal("expected validation error for kind: AddonCatalog against the AddonCatalogDelta schema, got nil")
+		t.Fatal("expected validation error for kind: AddonCatalog against the AddonCatalog schema, got nil")
 	}
 }
 
-// TestGenerateAddonCatalogDelta_EmptyAddonsMap_Accept — spec.addons may
+// TestGenerateAddonCatalogV4_EmptyAddonsMap_Accept — spec.addons may
 // be an empty map (design doc decision D16).
-func TestGenerateAddonCatalogDelta_EmptyAddonsMap_Accept(t *testing.T) {
+func TestGenerateAddonCatalogV4_EmptyAddonsMap_Accept(t *testing.T) {
 	t.Parallel()
-	schemaBytes := genAddonCatalogDelta(t)
-	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogDeltaSchemaID)
+	schemaBytes := genAddonCatalogV4(t)
+	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogV4SchemaID)
 
 	body := `apiVersion: sharko.dev/v1
-kind: AddonCatalogDelta
+kind: AddonCatalog
 metadata:
   name: addon-catalog-delta
 spec:

@@ -163,7 +163,7 @@ type migrationBuild struct {
 	files   map[string][]byte
 	deletes []string
 	// convertedFrom maps a NEW path to the OLD path it came from, so the
-	// preview can say "configuration/addons-catalog.yaml → catalog/addons.yaml"
+	// preview can say "configuration/addons-catalog.yaml → catalog.yaml"
 	// instead of showing an unexplained new file.
 	convertedFrom map[string]string
 	notes         []string
@@ -417,15 +417,15 @@ func (o *Orchestrator) buildMigration(ctx context.Context) (*migrationBuild, err
 	b.clusterCount = len(clusters)
 	b.addonNames = sortedBoolKeys(catalogNames)
 
-	// 3 — catalog/addons.yaml (the delta).
+	// 3 — catalog.yaml (the delta).
 	deltaSpec, catalogNotes := buildCatalogDelta(v3Catalog, o.curated)
 	b.notes = append(b.notes, catalogNotes...)
-	deltaBody, err := config.SaveAddonCatalogDelta(deltaSpec)
+	deltaBody, err := config.SaveAddonCatalog(deltaSpec)
 	if err != nil {
-		return nil, fmt.Errorf("building %s: %w", config.AddonCatalogDeltaPath, err)
+		return nil, fmt.Errorf("building %s: %w", config.AddonCatalogPath, err)
 	}
-	b.files[config.AddonCatalogDeltaPath] = deltaBody
-	b.convertedFrom[config.AddonCatalogDeltaPath] = paths.catalog
+	b.files[config.AddonCatalogPath] = deltaBody
+	b.convertedFrom[config.AddonCatalogPath] = paths.catalog
 
 	// Semantic gate: the delta must merge cleanly against the shipped
 	// catalog. A user-added addon missing repoURL/chart/version fails HERE,
@@ -435,7 +435,7 @@ func (o *Orchestrator) buildMigration(ctx context.Context) (*migrationBuild, err
 		return nil, fmt.Errorf("the new catalog file would not be usable: %w", mergeErr)
 	}
 
-	// 4 — fleet/connections.yaml + one clusters/<name>.yaml per cluster.
+	// 4 — managed-clusters.yaml + one clusters/<name>.yaml per cluster.
 	if err := o.buildV4ClusterFiles(b, clusters, catalogNames); err != nil {
 		return nil, err
 	}
@@ -531,7 +531,7 @@ func rejectDuplicateCatalogNames(entries []models.AddonCatalogEntry) error {
 	return nil
 }
 
-// buildV4ClusterFiles writes fleet/connections.yaml and one
+// buildV4ClusterFiles writes managed-clusters.yaml and one
 // clusters/<name>.yaml per cluster.
 //
 // The split is the heart of the format change (design doc §2.4): the
@@ -629,10 +629,10 @@ func (o *Orchestrator) buildV4ClusterFiles(b *migrationBuild, clusters []models.
 
 	connectionsBody, err := models.SaveManagedClusters(models.ManagedClustersSpec{Clusters: converted})
 	if err != nil {
-		return fmt.Errorf("building %s: %w", V4ConnectionsPath, err)
+		return fmt.Errorf("building %s: %w", V4ManagedClustersPath, err)
 	}
-	b.files[V4ConnectionsPath] = connectionsBody
-	b.convertedFrom[V4ConnectionsPath] = o.v3RegistryPath()
+	b.files[V4ManagedClustersPath] = connectionsBody
+	b.convertedFrom[V4ManagedClustersPath] = o.v3RegistryPath()
 	return nil
 }
 
@@ -987,10 +987,10 @@ func validateMigrationFiles(files map[string][]byte) error {
 		body := files[p]
 		var err error
 		switch {
-		case p == V4ConnectionsPath:
+		case p == V4ManagedClustersPath:
 			_, err = models.LoadManagedClusters(body)
-		case p == config.AddonCatalogDeltaPath:
-			_, err = config.LoadAddonCatalogDelta(body)
+		case p == config.AddonCatalogPath:
+			_, err = config.LoadAddonCatalog(body)
 		case underDir(p, V4ClustersDir) && strings.HasSuffix(p, ".yaml"):
 			var spec models.ClusterAddonsSpec
 			spec, err = models.LoadClusterAddons(body)
@@ -1071,11 +1071,11 @@ func migrationPRBody(b *migrationBuild) string {
 	sb.WriteString("This pull request moves the whole repository to Sharko's current file format.\n\n")
 	sb.WriteString("What changes:\n\n")
 	sb.WriteString("- The generated template files Sharko used to keep here are removed. The deploy logic they held now lives in Sharko's engine chart, which this repository points at with one file.\n")
-	sb.WriteString("- `engine/application.yaml` is added: that pointer, and the only moving part left.\n")
+	sb.WriteString("- `engine.yaml` is added: that pointer, and the only moving part left.\n")
 	sb.WriteString("- Which addons run on which cluster moves into one file per cluster, under `clusters/`.\n")
-	sb.WriteString("- How Sharko reaches each cluster moves to `fleet/connections.yaml`.\n")
+	sb.WriteString("- How Sharko reaches each cluster moves to `managed-clusters.yaml`.\n")
 	sb.WriteString("- Helm values move under `values/` — one file per addon, per cluster where it differs.\n")
-	sb.WriteString("- The addon list becomes `catalog/addons.yaml`, holding only YOUR additions and changes. The addons Sharko ships now come with the engine, so they no longer need copying into your repository.\n\n")
+	sb.WriteString("- The addon list becomes `catalog.yaml`, holding only YOUR additions and changes. The addons Sharko ships now come with the engine, so they no longer need copying into your repository.\n\n")
 	sb.WriteString("Nothing about what is running changes. Every addon stays on the same cluster, at the same version, with the same values.\n\n")
 
 	// The runtime half. A person about to merge this deserves to see, on

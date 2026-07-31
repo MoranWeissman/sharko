@@ -910,7 +910,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("PATCH /api/v1/addons/{name}", srv.handleConfigureAddon)
 
 	// Engine pin (v4 Wave 1 Story 2.5) — check + upgrade-PR for
-	// engine/application.yaml. Read-only check is Viewer+; opening the
+	// engine.yaml. Read-only check is Viewer+; opening the
 	// upgrade PR is Operator+, same tier as the addon-write endpoints above.
 	mux.HandleFunc("GET /api/v1/engine/pin", srv.handleCheckEnginePin)
 	mux.HandleFunc("POST /api/v1/engine/pin/upgrade", srv.handleUpgradeEnginePin)
@@ -1019,7 +1019,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 
 	// v4 catalog delta model (v4 wave 1 Stories 3.2 + 3.3) — the merged
 	// view of the shipped curated catalog overlaid with the caller's own
-	// git catalog/addons.yaml (kind AddonCatalogDelta), and the write path
+	// git catalog/addons.yaml (kind AddonCatalog), and the write path
 	// for adding a first-class in-house addon to that delta. Distinct from
 	// the /catalog/addons routes above (pure curated) and from
 	// /addons/catalog below (the v3 deployed-catalog view).

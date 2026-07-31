@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/catalog.v1.json",
+  "properties": {
+    "apiVersion": {
+      "enum": [
+        "sharko.dev/v1",
+        "sharko.io/v1"
+      ]
+    },
+    "kind": {
+      "const": "AddonCatalog"
+    },
+    "addons": {
+      "additionalProperties": {
+        "properties": {
+          "repoURL": {
+            "type": "string"
+          },
+          "chart": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "settings": {
+            "properties": {
+              "namespace": {
+                "type": "string"
+              },
+              "createNamespace": {
+                "type": "boolean"
+              },
+              "syncOptions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "ignoreDifferences": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "prune": {
+                "type": "boolean"
+              },
+              "selfHeal": {
+                "type": "boolean"
+              },
+              "preserveResourcesOnDeletion": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "secrets": {
+            "items": {
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "required_for": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "name",
+                "description"
+              ]
+            },
+            "type": "array"
+          },
+          "additionalSources": {
+            "items": {
+              "properties": {
+                "repoURL": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "chart": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                },
+                "parameters": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "valueFiles": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "extraHelmValues": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "propertyNames": {
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9-]*$"
+      },
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "addons"
+  ],
+  "title": "Sharko AddonCatalog",
+  "description": "catalog.yaml — the addons this org has approved for its clusters. Each entry is complete on its own: chart, repo, version, namespace, settings and the secrets it needs."
+}

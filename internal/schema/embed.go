@@ -61,9 +61,16 @@ var embeddedMarketplaceSourcesSchema []byte
 //go:embed cluster-addons.v1.json
 var embeddedClusterAddonsSchema []byte
 
-// embeddedAddonCatalogDeltaSchema is the JSON Schema bytes for
-// catalog/addons.yaml (v4 Wave 1 Story 2.6). Same lifecycle as the other
-// embedded schemas.
+// embeddedManagedClustersV3Schema is the JSON Schema bytes for the
+// WRAPPED managed-clusters shape a pre-v4 repo still has on disk. Same
+// lifecycle as the other embedded schemas.
 //
-//go:embed addon-catalog-delta.v1.json
-var embeddedAddonCatalogDeltaSchema []byte
+//go:embed managed-clusters-v3.v1.json
+var embeddedManagedClustersV3Schema []byte
+
+// embeddedAddonCatalogV4Schema is the JSON Schema bytes for catalog.yaml,
+// the org's approved addon list. Same lifecycle as the other embedded
+// schemas.
+//
+//go:embed catalog.v1.json
+var embeddedAddonCatalogV4Schema []byte

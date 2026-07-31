@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // MockGitProvider implements gitprovider.GitProvider entirely in memory.
@@ -80,14 +81,20 @@ alertmanager:
   collectEvents: true
 `)
 
-	// Engine pin (marks repo as initialised). Path matches
-	// orchestrator.BootstrapRootAppPath — the demo simulates a repo that
-	// has already been through v4 init (v4 Wave 1 Story 4.2). The rest
-	// of the v4 layout this pin implies (clusters/, catalog/addons.yaml,
-	// values/, fleet/connections.yaml) is built by buildV4DemoFiles
-	// (v4_fixtures.go, Story 4.5) and merged into p.files by
-	// NewMockGitProvider, right after this method returns.
-	p.files["engine/application.yaml"] = []byte(`apiVersion: argoproj.io/v1alpha1
+	// Engine pin (marks repo as initialised). The demo simulates a repo
+	// that has already been through v4 init. The rest of the v4 layout
+	// this pin implies (clusters/, catalog.yaml, values/,
+	// managed-clusters.yaml) is built by buildV4DemoFiles (v4_fixtures.go)
+	// and merged into p.files by NewMockGitProvider, right after this
+	// method returns.
+	//
+	// The path comes from the constant rather than a copied literal on
+	// purpose. Every v4-aware read path decides "is this a v4 repo?" by
+	// asking whether a file exists HERE, and answers no when it cannot
+	// find one. So a copy that fell behind would not fail — the whole demo
+	// would quietly present itself as a v3 repo, and every v4 screen would
+	// show the wrong thing with nothing in the logs to say why.
+	p.files[orchestrator.BootstrapRootAppPath] = []byte(`apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: sharko-engine
