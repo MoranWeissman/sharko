@@ -13,13 +13,9 @@ import {
   Star,
   Tag,
 } from 'lucide-react'
-import {
-  api,
-  addAddon,
-  isAddonAlreadyExistsError,
-  type AddAddonResponse,
-} from '@/services/api'
+import { api } from '@/services/api'
 import type {
+  AddToCatalogResult,
   CatalogEntry,
   CatalogReadmeResponse,
   CatalogSourceRecord,
@@ -44,8 +40,10 @@ import {
 
 /**
  * In-page Marketplace detail view. Embedded form (NOT a modal) — clicking
- * "Add to catalog" creates an ArgoCD ApplicationSet and adds an entry to
- * the user's `addons-catalog.yaml`.
+ * "Add to catalog" opens a pull request adding an entry to the user's
+ * `catalog.yaml` (POST /api/v1/catalog/addons, from_marketplace: true).
+ * The merge is the approval; nothing deploys until the addon is enabled on
+ * a cluster.
  *
  * Layout (top → bottom):
  *   1. Back link + title row + "✓ In your catalog" badge
@@ -85,11 +83,6 @@ export interface MarketplaceAddonDetailProps {
   onBack: () => void
 }
 
-interface DuplicateInfo {
-  addon: string
-  existingUrl: string
-}
-
 export function MarketplaceAddonDetail({
   addonName,
   source,
@@ -127,16 +120,16 @@ export function MarketplaceAddonDetail({
   )
 
   const [submitting, setSubmitting] = useState(false)
-  const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
-  const [submitResult, setSubmitResult] = useState<AddAddonResponse | null>(null)
+  const [submitResult, setSubmitResult] = useState<AddToCatalogResult | null>(null)
 
   const navigate = useNavigate()
 
   // ─── Preview (dry-run) state ─────────────────────────────────────────────
-  // Calling addAddon with dry_run:true returns the files it WOULD write with
-  // no PR/commit. We render the same DryRunResult shape the register flow
-  // uses so the operator sees the change before committing.
+  // Calling addToCatalog with dry_run:true returns the files it WOULD write
+  // with no PR/commit. We render the same DryRunResult shape the
+  // "add your own chart" flow uses so the operator sees the change before
+  // committing.
   const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null)
   const [previewing, setPreviewing] = useState(false)
 
@@ -455,20 +448,29 @@ export function MarketplaceAddonDetail({
   const prURL = submitResult?.pr_url || submitResult?.result?.pr_url
 
   // Shared request payload for both the preview and the real submit so the
-  // dry-run previews exactly what the real call will write.
+  // dry-run previews exactly what the real call will write. Posts to
+  // POST /api/v1/catalog/addons (v4 wave 2.5 review B-3 — the old legacy
+  // POST /addons 409s on a v4 repo). `from_marketplace: true` only when the
+  // display name still matches the curated entry's own name — that's the
+  // name the server looks the curated entry up by, so a renamed curated
+  // pick (or an ArtifactHub pick, never curated) falls back to sending the
+  // chart location explicitly instead of a lookup that would 422.
   const buildAddRequest = (dryRun: boolean) => {
     if (!entry) return null
+    const fromMarketplace = source === 'curated' && trimmedName === entry.name
     return {
-      name: trimmedName,
-      chart: entry.chart,
-      repo_url: entry.repo,
-      version: version.trim(),
-      namespace: namespace.trim(),
+      addons: [
+        {
+          name: trimmedName,
+          from_marketplace: fromMarketplace,
+          chart: entry.chart,
+          repo_url: entry.repo,
+          version: version.trim() || undefined,
+          namespace: namespace.trim() || undefined,
+        },
+      ],
       // Advanced options (sync options, ignore differences, additional
       // sources) are set on the addon page after creation.
-      source: (source === 'curated' ? 'marketplace' : 'artifacthub') as
-        | 'marketplace'
-        | 'artifacthub',
       // auto_merge omitted — falls back to the global GitOps setting.
       dry_run: dryRun,
     }
@@ -481,21 +483,16 @@ export function MarketplaceAddonDetail({
     if (!req || !formValid) return
     setPreviewing(true)
     setSubmitError(null)
-    setDuplicateInfo(null)
     setDryRunResult(null)
     try {
-      const res = await addAddon(req)
+      const res = await api.addToCatalog(req)
       if (res.dry_run) {
         setDryRunResult(res.dry_run)
       }
     } catch (e) {
-      if (isAddonAlreadyExistsError(e)) {
-        setDuplicateInfo({ addon: e.addon, existingUrl: e.existingUrl })
-      } else {
-        const msg = e instanceof Error ? e.message : 'Failed to preview'
-        setSubmitError(msg)
-        showToast(`Failed to preview — ${msg}`, 'info')
-      }
+      const msg = e instanceof Error ? e.message : 'Failed to preview'
+      setSubmitError(msg)
+      showToast(`Failed to preview — ${msg}`, 'info')
     } finally {
       setPreviewing(false)
     }
@@ -507,9 +504,8 @@ export function MarketplaceAddonDetail({
     setSubmitting(true)
     setSubmitPhase('submitting')
     setSubmitError(null)
-    setDuplicateInfo(null)
     try {
-      const res = await addAddon(req)
+      const res = await api.addToCatalog(req)
       setSubmitResult(res)
       const resPrID = res.pr_id ?? res.result?.pr_id
       const label = resPrID ? `PR #${resPrID}` : 'PR'
@@ -537,13 +533,9 @@ export function MarketplaceAddonDetail({
       }
     } catch (e) {
       setSubmitPhase('idle')
-      if (isAddonAlreadyExistsError(e)) {
-        setDuplicateInfo({ addon: e.addon, existingUrl: e.existingUrl })
-      } else {
-        const msg = e instanceof Error ? e.message : 'Failed to open PR'
-        setSubmitError(msg)
-        showToast(`Failed to add addon — ${msg}`, 'info')
-      }
+      const msg = e instanceof Error ? e.message : 'Failed to open PR'
+      setSubmitError(msg)
+      showToast(`Failed to add addon — ${msg}`, 'info')
     } finally {
       setSubmitting(false)
     }
@@ -719,16 +711,17 @@ export function MarketplaceAddonDetail({
             Add {entry.name} to your catalog
           </h2>
           <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
-            This creates the <strong>deployment template</strong> ArgoCD uses to roll{' '}
+            This opens a pull request adding{' '}
             <code className="rounded bg-[#e8f3fb] px-1 py-0.5 font-mono text-xs text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300">
               {entry.name}
             </code>{' '}
-            out to your clusters, and adds an entry to your{' '}
+            to your{' '}
             <code className="rounded bg-[#e8f3fb] px-1 py-0.5 font-mono text-xs text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300">
               catalog.yaml
             </code>
-            . This only approves the addon — nothing deploys until you
-            enable it on a cluster (per-cluster, from the Catalog tab).
+            . Merging the pull request is the approval. Nothing deploys
+            until you enable it on a cluster (per-cluster, from the Catalog
+            tab).
           </p>
         </header>
 
@@ -810,28 +803,23 @@ export function MarketplaceAddonDetail({
             {/* PR lifecycle — init-style step list from submitting to terminal. */}
             <SubmitPhaseBanner phase={submitPhase} result={submitResult} />
 
-            {(inCatalog || duplicateInfo) && !submitResult && (
+            {inCatalog && !submitResult && (
               <div
                 role="alert"
                 className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
               >
                 <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                 <p>
-                  <span className="font-semibold">
-                    {duplicateInfo?.addon ?? trimmedName}
-                  </span>{' '}
-                  is already in the catalog.{' '}
+                  <span className="font-semibold">{trimmedName}</span> is
+                  already in the catalog.{' '}
                   <Link
-                    to={
-                      duplicateInfo?.existingUrl ??
-                      `/addons/${encodeURIComponent(trimmedName)}`
-                    }
+                    to={`/addons/${encodeURIComponent(trimmedName)}`}
                     className="font-medium underline hover:no-underline"
                   >
                     Open its page
                   </Link>{' '}
-                  to edit it, or change the Display name to register a
-                  different copy.
+                  to edit it, or change the Display name to add a different
+                  copy.
                 </p>
               </div>
             )}

@@ -11,7 +11,7 @@ import {
  * AddAddonFlow — shared, presentational building blocks for the
  * "add an addon to the catalog" flow. Extracted (V2-cleanup-15) from
  * MarketplaceAddonDetail so the Marketplace detail page and the Addons
- * Catalog "Register addon" dialog share ONE implementation and can't drift
+ * Catalog "Add your own chart" dialog share ONE implementation and can't drift
  * apart again (the twin-path gap that #397/#396 kept reopening).
  *
  * Each piece is a small, prop-driven component with no internal fetching —
@@ -32,10 +32,13 @@ import {
  * Marketplace + Catalog screens keep their exact imports while every OTHER
  * write flow shares the same components.
  *
- * Backend contract (unchanged, from #397): addAddon accepts auto_merge +
- * dry_run; the response carries dry_run (DryRunResult), pr_url/pr_id, and
- * merged. SubmitResultBanner branches strictly on `merged` so an open PR is
- * never presented as already-cataloged.
+ * Backend contract (v4 wave 2.5 review B-3: both callers now post to
+ * POST /api/v1/catalog/addons — addToCatalog — not the legacy /addons):
+ * the request carries dry_run + auto_merge at the top level; the response
+ * carries dry_run (DryRunResult), pr_url/pr_id, and merged. SubmitResultBanner
+ * branches strictly on `merged` so an open PR is never presented as
+ * already-cataloged. AddAddonResponse (the prop type below) still fits —
+ * AddToCatalogResult is a structurally compatible superset.
  */
 
 /** The coarse submit phase shared by both add-addon callers. */

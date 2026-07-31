@@ -110,13 +110,20 @@ describe('V4EnableAddonDialog', () => {
   // v4 wave 2.5 (design decision 4) — enabling now requires catalog
   // membership. Instead of leaving the operator at a dead 422, the dialog
   // offers the one-PR combo: add to catalog AND enable, together.
-  it('a "not in catalog" 422 offers the add-to-catalog-and-enable combo instead of a dead end', async () => {
+  //
+  // v4 wave 2.5 review fix round, B-2: the REAL not_in_catalog 422 is a
+  // plain body — no `problems` array at all — carrying a machine-readable
+  // `code` instead. The mock below matches that real shape (the old mock
+  // that carried a `problems` sentence containing the word "catalog" is
+  // exactly the lying test the review flagged: it passed against a server
+  // response the real endpoint never sends).
+  it('a "not in catalog" 422 (code not_in_catalog, no problems) offers the add-to-catalog-and-enable combo instead of a dead end', async () => {
     mockEnableAddonV4.mockRejectedValue(
       new V4AddonValidationError({
-        error: 'cannot enable cert-manager on prod-eu: cert-manager is not in your catalog',
+        error: 'cert-manager is not in your catalog — add it first',
+        code: 'not_in_catalog',
         cluster: 'prod-eu',
         addon: 'cert-manager',
-        problems: ['cert-manager is not in your catalog yet — add it before enabling it here'],
       }),
     );
     mockAddToCatalog.mockResolvedValue({
@@ -124,7 +131,9 @@ describe('V4EnableAddonDialog', () => {
       enabled: ['cert-manager'],
       cluster: 'prod-eu',
       pr_url: 'https://github.com/demo/sharko-addons/pull/101',
+      pr_id: 101,
       branch: 'sharko/catalog-cert-manager',
+      merged: false,
     });
 
     renderDialog();
@@ -132,16 +141,22 @@ describe('V4EnableAddonDialog', () => {
     await waitFor(() => {
       expect(screen.getByTestId('v4-catalog-gate-combo')).toBeInTheDocument();
     });
+    // The not_in_catalog body has no problems to list — the plain
+    // problems box must not render alongside the combo.
+    expect(screen.queryByTestId('v4-problems')).not.toBeInTheDocument();
 
     const combo = screen.getByRole('button', {
       name: /add to catalog and enable on prod-eu/i,
     });
     fireEvent.click(combo);
 
+    // The combo REQUIRES yes: true (server contract, v4 wave 2.5 review B-1)
+    // — enable_on_cluster set without it 422s with confirmation_required.
     await waitFor(() => {
       expect(mockAddToCatalog).toHaveBeenCalledWith({
         addons: [{ name: 'cert-manager', from_marketplace: true }],
         enable_on_cluster: 'prod-eu',
+        yes: true,
       });
     });
     await waitFor(() => {
@@ -151,6 +166,36 @@ describe('V4EnableAddonDialog', () => {
       'href',
       'https://github.com/demo/sharko-addons/pull/101',
     );
+    // M-7: the stale "nothing was written" problems box must not render
+    // above the success banner.
+    expect(screen.queryByTestId('v4-problems')).not.toBeInTheDocument();
+  });
+
+  // v4 wave 2.5 review, B-2 — `incomplete_entry` means the addon IS in the
+  // catalog (its entry is just half-written), so the combo must NOT offer
+  // re-adding it. This closes the false-positive half of the old
+  // text-heuristic bug (any problem sentence mentioning "catalog" used to
+  // fire the combo, including this one).
+  it('an "incomplete_entry" 422 shows the problems list and does NOT offer the catalog-gate combo', async () => {
+    mockEnableAddonV4.mockRejectedValue(
+      new V4AddonValidationError({
+        error: 'cert-manager’s catalog entry is missing a chart repository URL',
+        code: 'incomplete_entry',
+        cluster: 'prod-eu',
+        addon: 'cert-manager',
+        problems: ['addon "cert-manager" needs a chart repository URL (https:// or oci://)'],
+      }),
+    );
+
+    renderDialog();
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('v4-problems')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/needs a chart repository URL/)).toBeInTheDocument();
+    expect(screen.getByText(/is in your catalog, but its entry is missing pieces/)).toBeInTheDocument();
+    expect(screen.queryByTestId('v4-catalog-gate-combo')).not.toBeInTheDocument();
   });
 
   it('success shows the PR reference', async () => {

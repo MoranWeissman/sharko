@@ -83,6 +83,8 @@ const CATEGORY_BUCKETS: CategoryBucket[] = [
       'addon-upgrade',
       'values-edit',
       'ai-annotate',
+      'catalog-add',
+      'catalog-add-enable',
     ],
   },
   { key: 'init', label: 'Init', operations: ['init-repo'] },
@@ -128,6 +130,10 @@ function operationBadge(op: string): OperationBadgeMeta {
       return { label: 'Values', classes: 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400' }
     case 'ai-annotate':
       return { label: 'AI annotate', classes: 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400' }
+    case 'catalog-add':
+      return { label: 'Catalog: add addon(s)', classes: 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400' }
+    case 'catalog-add-enable':
+      return { label: 'Catalog: add + enable', classes: 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400' }
     case 'init-repo':
       return { label: 'Init repo', classes: 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' }
     case 'ai-tool-enable':

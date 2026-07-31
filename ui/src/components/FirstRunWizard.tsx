@@ -33,6 +33,7 @@ import type { OperationStep, InitStatus } from '@/services/api'
 import type { AddToCatalogResult, CatalogEntry, CatalogRepoChartsResponse } from '@/services/models'
 import { useConnections } from '@/hooks/useConnections'
 import { MigrationBanner } from '@/components/MigrationBanner'
+import { extractPR, PRLink } from '@/components/PRFeedback'
 
 /* ------------------------------------------------------------------ */
 /*  Shared styles                                                       */
@@ -1180,9 +1181,12 @@ function StepCatalog({ onDone }: { onDone: () => void }) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
-  const [result, setResult] = useState<AddToCatalogResult | null>(null)
+  // Accumulates across BOTH doors and every batch (v4 wave 2.5 review M-6:
+  // the success box used to overwrite on each submit, losing earlier
+  // counts and PR links, and only ever showed one link even when both the
+  // Marketplace picks and the own-chart form each opened their own PR).
+  const [submissions, setSubmissions] = useState<AddToCatalogResult[]>([])
   const [ownChartOpen, setOwnChartOpen] = useState(false)
-  const [ownResult, setOwnResult] = useState<AddToCatalogResult | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -1210,6 +1214,15 @@ function StepCatalog({ onDone }: { onDone: () => void }) {
     return [...common, ...rest]
   }, [entries])
 
+  const totalAddedCount = useMemo(
+    () => submissions.reduce((sum, s) => sum + (s.added?.length ?? 0), 0),
+    [submissions],
+  )
+  const allSubmissionsMerged = useMemo(
+    () => submissions.length > 0 && submissions.every((s) => extractPR(s).merged),
+    [submissions],
+  )
+
   const toggle = (name: string) => {
     setSelected((prev) => {
       const next = new Set(prev)
@@ -1231,7 +1244,7 @@ function StepCatalog({ onDone }: { onDone: () => void }) {
           from_marketplace: true,
         })),
       })
-      setResult(res)
+      setSubmissions((prev) => [...prev, res])
       setSelected(new Set())
     } catch (e: unknown) {
       setSubmitError(e instanceof Error ? e.message : 'Failed to add addons to catalog')
@@ -1254,25 +1267,30 @@ function StepCatalog({ onDone }: { onDone: () => void }) {
         later from the Addons page.
       </p>
 
-      {(result || ownResult) && (
+      {submissions.length > 0 && (
         <div
           role="status"
-          className="rounded-lg border border-green-300 bg-green-50 p-3 text-sm text-green-900 dark:border-green-700 dark:bg-green-950/40 dark:text-green-200"
+          className="space-y-2 rounded-lg border border-green-300 bg-green-50 p-3 text-sm text-green-900 dark:border-green-700 dark:bg-green-950/40 dark:text-green-200"
         >
           <p className="font-medium">
-            {(result?.added.length ?? 0) + (ownResult ? 1 : 0)} addon
-            {(result?.added.length ?? 0) + (ownResult ? 1 : 0) === 1 ? '' : 's'} added to your catalog.
+            {totalAddedCount} addon{totalAddedCount === 1 ? '' : 's'}{' '}
+            {allSubmissionsMerged ? 'added to your catalog.' : 'submitted — merge the pull request below to add them.'}
           </p>
-          {(result?.pr_url || ownResult?.pr_url) && (
-            <a
-              href={result?.pr_url || ownResult?.pr_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1 inline-block text-xs underline hover:no-underline"
-            >
-              View the pull request
-            </a>
-          )}
+          {/* One link per batch — the Marketplace picks and the own-chart
+              form each open their own pull request, so both must show up
+              here rather than the second silently overwriting the first. */}
+          <ul className="space-y-1">
+            {submissions.map((s, i) => {
+              const { prUrl, prId, merged } = extractPR(s)
+              if (!prUrl) return null
+              return (
+                <li key={i} className="flex items-center gap-1.5">
+                  <span>{merged ? 'PR merged —' : 'PR opened —'}</span>
+                  <PRLink url={prUrl} id={prId} />
+                </li>
+              )
+            })}
+          </ul>
         </div>
       )}
 
@@ -1361,7 +1379,7 @@ function StepCatalog({ onDone }: { onDone: () => void }) {
         </button>
         {ownChartOpen && (
           <div className="mt-3">
-            <OwnChartForm onSubmitted={(res) => { setOwnResult(res); setOwnChartOpen(false) }} />
+            <OwnChartForm onSubmitted={(res) => { setSubmissions((prev) => [...prev, res]); setOwnChartOpen(false) }} />
           </div>
         )}
       </div>

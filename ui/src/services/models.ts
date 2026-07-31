@@ -977,11 +977,14 @@ export interface AddToCatalogAddonInput {
  * Request body for POST /api/v1/catalog/addons. One element in `addons` =
  * a single add; N elements = ONE batch pull request, never N. Adding
  * `enable_on_cluster` makes it the combo: one PR touching both
- * catalog.yaml and clusters/<name>.yaml.
+ * catalog.yaml and clusters/<name>.yaml — and REQUIRES `yes: true` (the
+ * same confirmation EnableAddonV4 asks for, because that half changes what
+ * runs on a real cluster). A catalog-only add needs no confirmation.
  */
 export interface AddToCatalogRequest {
   addons: AddToCatalogAddonInput[]
   enable_on_cluster?: string
+  yes?: boolean
   dry_run?: boolean
   auto_merge?: boolean | null
 }
@@ -989,14 +992,26 @@ export interface AddToCatalogRequest {
 /**
  * 201 response from POST /api/v1/catalog/addons. When `dry_run` was set on
  * the request, the server returns a preview under `dry_run` instead of
- * opening anything (added/enabled/pr_url are then empty).
+ * opening anything (added/enabled/pr_url are then empty). PR fields mirror
+ * every other write endpoint (orchestrator.GitResult, embedded) — top-level
+ * when no attribution warning fired, wrapped under `result` when one did.
  */
 export interface AddToCatalogResult {
   added: string[]
   enabled: string[]
   cluster?: string
   pr_url?: string
+  pr_id?: number
   branch?: string
+  merged?: boolean
+  commit_sha?: string
+  attribution_warning?: 'no_per_user_pat'
+  result?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+  }
   warnings?: string[]
   dry_run?: DryRunResult
 }
@@ -1565,19 +1580,26 @@ export interface V4GitResult {
 
 /**
  * V4AddonValidationErrorBody — the JSON body of a 422 from
- * POST /api/v1/v4/clusters/{name}/addons/{addon} (orchestrator's
- * "sharpened pipeline" semantic validation, v4 Wave 1 Story 4.3):
- * every required value the merged catalog entry declares, and every
- * declared secret, must resolve — checked BEFORE any branch or PR
- * exists, so a failed dry-run preview never promises a PR the real call
- * would then reject. `problems` is always non-empty, plain English, one
- * sentence per missing thing — rendered verbatim, no further formatting.
+ * POST/DELETE /api/v1/v4/clusters/{name}/addons/{addon}. Two shapes share
+ * this type (v4 wave 2.5 review fix round, B-2):
+ *
+ *   - `*orchestrator.V4SemanticValidationError` (code `incomplete_entry` or
+ *     `validation_failed`) — `problems` is non-empty, plain English, one
+ *     sentence per missing thing, plus `cluster`/`addon`.
+ *   - a plain coded body (code `not_in_catalog` or `empty_catalog_file`) —
+ *     `error` + `code` only, no `problems`/`cluster`/`addon`.
+ *
+ * `code` is the machine-readable field callers branch on; the message text
+ * changes and must never be pattern-matched (that was review finding B-2 —
+ * the catalog-gate combo used to fire on the word "catalog" anywhere in the
+ * message, which caught the wrong 422s and missed the real one).
  */
 export interface V4AddonValidationErrorBody {
   error: string
-  cluster: string
-  addon: string
-  problems: string[]
+  code?: string
+  cluster?: string
+  addon?: string
+  problems?: string[]
 }
 
 // ─── v3 → v4 repo migration (v4 Wave 2, Epic 5 backend / migration-ui) ─────

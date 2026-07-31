@@ -2725,7 +2725,7 @@ export function AddonDetail() {
                   ApplicationSet settings for <span className="font-mono">{addon.addon_name}</span> —
                   sync options, ignore differences, and additional sources. These map to the
                   addon&rsquo;s ArgoCD Application settings and control how it deploys. Editing opens a PR against{' '}
-                  <span className="font-mono">addons-catalog.yaml</span>. Looking for Helm values?{' '}
+                  <span className="font-mono">catalog.yaml</span>. Looking for Helm values?{' '}
                   <button
                     type="button"
                     onClick={() => setActiveSection('values')}
