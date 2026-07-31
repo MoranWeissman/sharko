@@ -1,9 +1,83 @@
 # Sharko v4 — the data-file format and the settings schema
 
-**Status:** design, agreed contract for v4 Wave 1
+**Status:** design, agreed contract for v4 Wave 1. **Superseded in part —
+see the amendment below.**
 **Date:** 2026-07-30
 **Story:** v4 Epic 2, Story 2.1
 **Replaces:** the v3 scaffold in `templates/bootstrap/`
+
+---
+
+## Amendment — 2026-07-31: the approved-list model replaces the delta model
+
+Everything below this notice describes the design as it was agreed on
+2026-07-30. One day later, a real walkthrough surfaced a problem with it:
+the catalog file only held *changes* against a shipped list, so a fresh
+install already showed 45 addons the user never chose. That is the bug
+`.bmad/output/architecture/2026-07-31-catalog-approved-model.md` fixes.
+Read that document for the full reasoning. This amendment records only
+what it changes in the file format this document defines, so a reader of
+the text below knows which parts are still true.
+
+**What changed:**
+
+- **The catalog kind is `AddonCatalog`, not `AddonCatalogDelta`.** The file
+  stopped being a delta against a shipped list and became the org's whole
+  approved list, so keeping the name "Delta" would have been a lie. Every
+  entry is now a FULL entry — chart, repo, version, namespace, settings —
+  copied in whole when an addon is approved. There is no shipped list
+  underneath it to leave blanks for any more (this document's section 2.3
+  and section 4.7, "how the shipped catalog and your delta are merged",
+  describe the mechanism that no longer exists).
+- **Every Sharko-read file drops the `spec:` wrapper.** Section 2.0's
+  four-line envelope (`apiVersion` + `kind` + `metadata.name` + `spec:`)
+  is now `apiVersion` + `kind` + the payload fields directly at the top
+  level — the same shape `kustomization.yaml`, `kind`'s own config, and
+  Skaffold use for files nobody applies with `kubectl`. `engine.yaml`
+  (renamed from `engine/application.yaml`, see below) is the one
+  exception: it is a real ArgoCD `Application` object that actually gets
+  applied, so it keeps its full `apiVersion`/`kind`/`metadata`/`spec`
+  shape — untouched by this change. See the FAQ
+  ["Why do Sharko's files look like Kubernetes resources — and why isn't
+  Sharko an operator?"](../site/user-guide/why-sharko.md) for the full
+  reasoning, and decision 9 of the design doc above for the ecosystem
+  survey behind it.
+- **The three single files moved to the repo root, with new names:**
+  `fleet/connections.yaml` is now `managed-clusters.yaml` (kind stays
+  `ManagedClusters` — "fleet" is retired everywhere, reserved for nothing;
+  the UI page is "Managed Clusters"), `catalog/addons.yaml` is now
+  `catalog.yaml`, and `engine/application.yaml` is now `engine.yaml`. Each
+  is one file, not a folder — a folder is for when there are genuinely
+  many files, and each of these is exactly one.
+- **A fresh repo's catalog starts empty**, not seeded with any built-in
+  addons. Nothing runs in an org that nobody in that org chose, from the
+  very first bootstrap.
+- **Enabling an addon on a cluster now requires it to already be in the
+  catalog.** This document's `clusters/<cluster>.yaml` shape (section 2.1)
+  is unchanged — the gate is new behavior at the point an addon gets
+  enabled, not a format change.
+- **The v3-to-v4 migration converts every entry straight across**, with no
+  delta-vs-shipped comparison (there is nothing left to compare against),
+  and the v3 `secrets:` block moves into the addon's needed-secrets list on
+  the same entry.
+
+**What did not change:** everything else in this document — the per-cluster
+assignment file shape (section 2.1, minus its envelope wrapper), the values
+files (section 2.2, never enveloped, untouched), the settings schema and
+precedence rules (section 3), the two-round templating model and the matrix
+generator (section 4.1–4.6, still exactly how the engine renders), and the
+one-rule versioning policy (section 5). Read the sections below with the
+five bullets above in mind, and they are still an accurate description of
+how the pieces fit together.
+
+**On the v3/v4 shape rule.** Because the format was unreleased, this was a
+clean rename with no compatibility shim — except the catalog kind, which
+keeps the *string* `AddonCatalog` from v3 (the old list-shaped deployment
+catalog kind) purely by coincidence of naming, not by design. The two are
+told apart by shape, never by the kind string: a v3 file always has a
+`spec:` key, a v4 file never does. This is a narrow, deliberate exception —
+see `internal/schema/envelope.go`'s `KindAddonCatalog` doc comment. No third
+shape may ever share a kind this way; that tiebreak only stretches to two.
 
 ---
 

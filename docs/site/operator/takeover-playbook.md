@@ -150,7 +150,7 @@ whether anything notices the handover.
 
 Confirm, and Sharko:
 
-1. Opens a pull request adding the cluster to `fleet/connections.yaml`
+1. Opens a pull request adding the cluster to `managed-clusters.yaml`
    and creating an empty `clusters/<name>.yaml`.
 2. Edits the existing cluster secret **in place**: adds its own
    ownership marker, keeps every label that was already there, and does

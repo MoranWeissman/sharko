@@ -2,11 +2,17 @@
 
 The addon catalog is the source of truth for which Helm charts Sharko manages across your fleet. Adding an addon to the catalog makes it available to assign to clusters. Removing it from the catalog removes it from all clusters.
 
-Adding to the catalog and enabling on a cluster are two separate operations that only meet at the ApplicationSet:
+Adding to the catalog and enabling on a cluster are two separate operations, but enabling now requires catalog membership first — you cannot enable an addon on a cluster until it is already in the catalog. From the Marketplace, both steps can be done as one combined pull request if you want; nothing forces you to split them.
 
 ![Two parallel operations — add to catalog (PR adds the addon entry) and enable on a cluster (PR sets the addon label on that cluster's values file) — both feed the ApplicationSet's cluster x values-file matrix generator, which creates the ArgoCD Application that deploys the addon.](../assets/diagrams/04-two-operation-model.drawio.svg)
 
-> **Three-layer model:** This page covers the **Catalog** layer (deployable list in `addons-catalog.yaml`) and the **Enablement** layer (per-cluster labels). The **Marketplace** layer (browse/discover surface) is covered in [Marketplace](marketplace.md). See [Marketplace Architecture](../operator/marketplace-architecture.md) for how the three layers fit together.
+> **Two words, everywhere:** this page covers the **Catalog** — your org's
+> approved list, kept in `catalog.yaml` — and enabling an addon on a
+> cluster, which requires the addon to already be in the Catalog. The
+> **Marketplace** (the read-only browse/discover surface) is covered in
+> [Marketplace](marketplace.md). See
+> [Marketplace Architecture](../operator/marketplace-architecture.md) for
+> how the two fit together.
 
 ## Default Addons
 
@@ -30,7 +36,7 @@ spec:
     - metrics-server
 ```
 
-The addon names listed in `spec.addons` must refer to addons already present in your `addons-catalog.yaml` — they are references, not definitions. When you register a cluster without explicit addon selections, Sharko enables every addon in this list automatically.
+The addon names listed in `spec.addons` must refer to addons already present in your `catalog.yaml` — they are references, not definitions. When you register a cluster without explicit addon selections, Sharko enables every addon in this list automatically.
 
 ### Editing Default Addons via the UI
 
@@ -133,23 +139,28 @@ Some addons need API keys or credentials at runtime (e.g., Datadog, New Relic). 
 
 ### Declaring Secrets in the Catalog
 
-Secrets are declared in `addons-catalog.yaml` under the `secrets:` field of the addon:
+Secrets are declared in `catalog.yaml`, under the `secrets` field of the addon's own entry:
 
 ```yaml
+apiVersion: sharko.dev/v1
+kind: AddonCatalog
 addons:
-  - name: datadog
+  datadog:
+    repoURL: https://helm.datadoghq.com
     chart: datadog
-    repo: https://helm.datadoghq.com
-    version: 3.74.0
+    namespace: datadog
+    version: "3.74.0"
     secrets:
-      - secretName: datadog-keys
-        namespace: datadog
-        keys:
-          api-key: secrets/datadog/api-key
-          app-key: secrets/datadog/app-key
+      - name: Datadog API and app keys
+        description: Needed for the agent to authenticate to Datadog.
+        required_for: install
 ```
 
-The `keys` map is `<k8s-key>: <provider-path>`. Sharko resolves each provider path, creates a `datadog-keys` Secret in the `datadog` namespace on every cluster that has the Datadog addon enabled.
+This declares *what* the addon needs, in plain English, and whether it's
+needed at install time or only later at runtime — Sharko blocks enabling
+an addon at install time until a matching secret has been registered.
+Registering the actual value — which provider path fills which key, in
+which namespace — is a separate step, covered next.
 
 ### How Reconciliation Works
 

@@ -35,10 +35,10 @@ exist. If your addon isn't listed anywhere else yet, get it listed
 there first, or open an issue to discuss the exception.
 
 **Doesn't belong:** your team's internal chart. Sharko has a separate,
-first-class path for that — add it to your own `catalog/addons.yaml`
-delta after Sharko is running (that file lives in *your* GitOps repo,
-not this one, and it's exactly as first-class as any curated addon:
-same version field, same upgrade flow, same everything).
+first-class path for that — add it to your own `catalog.yaml` after
+Sharko is running (that file lives in *your* GitOps repo, not this one,
+and it's exactly as first-class as any curated addon: same version
+field, same upgrade flow, same everything).
 
 ## The fields, in plain English
 
@@ -127,8 +127,9 @@ a complete real example, then a walk through what each part means:
 - **`version`** is not a field on a curated entry, and never will be —
   a version baked into the shipped catalog goes stale the moment a new
   chart release ships. Sharko writes the version a user is actually
-  running into *their own* `catalog/addons.yaml` delta, not into this
-  file.
+  running into *their own* `catalog.yaml`, not into this file — approving
+  an addon from the Marketplace copies the whole entry, version included,
+  into the org's approved list.
 - **`security_score`**, **`github_stars`**, and
   **`security_score_updated`** are refreshed automatically by a
   scheduled job (OpenSSF Scorecard + GitHub stars). Leave
