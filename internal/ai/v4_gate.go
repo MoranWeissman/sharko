@@ -40,11 +40,18 @@ const v4ValuesUnsupportedMessage = "this editor doesn't support the v4 layout ye
 // isV4Repo reports whether the connected repo uses the v4 data-file layout.
 // A read failure of any kind answers false — the v3 behaviour — so a
 // transient git hiccup never turns an ordinary answer into a refusal.
+//
+// It reads the CONFIGURED base branch (e.branch()), the same one every
+// write gate and every other probe uses. It used to read "main" flat out,
+// which on a repo whose default branch is anything else — master, develop,
+// a per-team trunk — made every v4 repo look like a v3 one to the
+// assistant, so it answered v3 questions about a v4 repo and never said
+// why (review finding F5).
 func (e *ToolExecutor) isV4Repo(ctx context.Context) bool {
 	if e.gp == nil {
 		return false
 	}
-	body, err := e.gp.GetFileContent(ctx, V4EnginePinPath, "main")
+	body, err := e.gp.GetFileContent(ctx, V4EnginePinPath, e.branch())
 	return err == nil && len(body) > 0
 }
 

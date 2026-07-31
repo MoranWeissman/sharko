@@ -19,6 +19,7 @@ package orchestrator
 // one merge makes both true.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -70,6 +71,13 @@ type AddToCatalogRequest struct {
 	// clusters/<name>.yaml together. Empty means catalog only.
 	EnableOnCluster string `json:"enable_on_cluster,omitempty"`
 
+	// Yes is the caller's confirmation, and it is REQUIRED whenever
+	// EnableOnCluster is set — the same word EnableAddonV4 asks for, for
+	// the same reason: that half of the request changes what runs on a
+	// real cluster. A catalog-only add needs no confirmation; it only
+	// opens a pull request against a list.
+	Yes bool `json:"yes,omitempty"`
+
 	DryRun bool `json:"dry_run,omitempty"`
 	// AutoMerge is the per-request auto-merge decision. nil falls back to
 	// the connection-level default.
@@ -87,9 +95,60 @@ type AddToCatalogResult struct {
 	Cluster string   `json:"cluster,omitempty"`
 }
 
-// ErrAddonNotInMarketplace marks a from_marketplace add naming an addon the
-// curated list does not carry.
-var ErrAddonNotInMarketplace = errors.New("addon not in the Marketplace")
+// The error sentinels below are the machine-readable half of the
+// add-to-catalog contract. Every one of them means "the caller asked for
+// something that cannot work", never "an upstream failed" — the API layer
+// maps them to 400/422 with a `code` field the UI branches on, and keeps
+// 502 for a git host that actually broke (review finding B-1: these used
+// to fall through to 502 and the wizard dead-ended on them).
+var (
+	// ErrAddonNotInMarketplace marks a from_marketplace add naming an addon
+	// the curated list does not carry. Code: not_in_marketplace.
+	ErrAddonNotInMarketplace = errors.New("addon not in the Marketplace")
+
+	// ErrCatalogVersionUnknown marks a Marketplace add with no version
+	// where Sharko also has no version data for the chart, so it cannot
+	// fill one in. Code: version_required.
+	ErrCatalogVersionUnknown = errors.New("no version data for this addon")
+
+	// ErrCatalogEntryIncomplete marks a request entry that does not carry
+	// enough to write a self-contained catalog entry — no chart location,
+	// no chart name, no version on the type-it-yourself door.
+	// Code: incomplete_entry.
+	ErrCatalogEntryIncomplete = errors.New("catalog entry is incomplete")
+
+	// ErrCatalogRequestInvalid marks a malformed request — no addons, an
+	// addon with no name, the same addon twice, a name that could escape
+	// the data folders. Code: invalid_request, rendered as 400.
+	ErrCatalogRequestInvalid = errors.New("request cannot be read")
+
+	// ErrCatalogConfirmationRequired marks an add-and-enable request that
+	// did not set yes: true. Code: confirmation_required.
+	ErrCatalogConfirmationRequired = errors.New("confirmation required")
+
+	// ErrCatalogFileEmpty marks a catalog.yaml that exists in the repo but
+	// holds nothing — a file somebody created (or emptied) by hand. It is
+	// NOT the same as a missing file, which is the ordinary day-zero state
+	// and never an error. Code: empty_catalog_file.
+	ErrCatalogFileEmpty = errors.New("catalog.yaml is empty")
+)
+
+// The two operation codes the catalog pull requests are tracked under.
+// They mirror prtracker.OpCatalogAdd / OpCatalogAddEnable, which is where
+// the canonical list lives; the orchestrator cannot import prtracker (see
+// pr_tracker_adapter.go), so these are hand copies — pinned against the
+// originals by internal/api's op-code lockstep test, the same way
+// OpAddonEnable's literal is handled in addon_ops_v4.go. A drift here would
+// drop every catalog pull request into the dashboard's gray "other" bucket.
+const (
+	OpCodeCatalogAdd       = "catalog-add"
+	OpCodeCatalogAddEnable = "catalog-add-enable"
+)
+
+// CatalogFileEmptyMessage is the whole sentence a present-but-empty
+// catalog.yaml gets, on the list, the get, and the add. Shared so the three
+// surfaces cannot drift (review finding L: this used to be a 502).
+const CatalogFileEmptyMessage = "catalog.yaml is in your repo but has nothing in it — it needs the two header lines first: apiVersion: sharko.dev/v1 and kind: AddonCatalog. Delete the file if you meant to start from scratch; Sharko treats a missing catalog.yaml as an empty catalog."
 
 // AddToCatalog writes the given addons into catalog.yaml — and, when
 // EnableOnCluster is set, into clusters/<name>.yaml too — and commits the
@@ -106,7 +165,22 @@ var ErrAddonNotInMarketplace = errors.New("addon not in the Marketplace")
 // exists.
 func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest) (*AddToCatalogResult, error) {
 	if len(req.Addons) == 0 {
-		return nil, fmt.Errorf("name at least one addon to add to the catalog")
+		return nil, fmt.Errorf("%w: name at least one addon to add to the catalog", ErrCatalogRequestInvalid)
+	}
+	// Switching an addon on changes what runs on a real cluster, so the
+	// combined form asks for the same confirmation EnableAddonV4 asks for.
+	// A catalog-only add does not: it opens a pull request against a list,
+	// and the merge is the decision.
+	if req.EnableOnCluster != "" && !req.Yes && !req.DryRun {
+		return nil, fmt.Errorf(
+			"%w: this also switches the addon on for %s, so send yes: true to confirm (or dry_run: true to see the change first)",
+			ErrCatalogConfirmationRequired, req.EnableOnCluster)
+	}
+
+	// A repo carrying both layouts writes into the half nothing reads —
+	// refuse before anything happens (review finding F4).
+	if err := o.refuseOnMixedLayout(ctx); err != nil {
+		return nil, err
 	}
 
 	// Resolve every entry first — no git reads, no writes, so a bad
@@ -115,19 +189,19 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 	names := make([]string, 0, len(req.Addons))
 	for _, in := range req.Addons {
 		if in.Name == "" {
-			return nil, fmt.Errorf("every addon in the request needs a name")
+			return nil, fmt.Errorf("%w: every addon in the request needs a name", ErrCatalogRequestInvalid)
 		}
 		// The addon name becomes a values/global/<addon>.yaml path segment
 		// and a Kubernetes label key the moment it is enabled anywhere, so
 		// it is checked at the point it enters the repo — the only place
 		// that covers both.
 		if err := checkV4PathSegment("addon", in.Name); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %s", ErrCatalogRequestInvalid, err.Error())
 		}
 		if _, dup := entries[in.Name]; dup {
-			return nil, fmt.Errorf("addon %q is listed twice in the same request", in.Name)
+			return nil, fmt.Errorf("%w: addon %q is listed twice in the same request", ErrCatalogRequestInvalid, in.Name)
 		}
-		entry, err := o.buildCatalogEntry(in)
+		entry, err := o.buildCatalogEntry(ctx, in)
 		if err != nil {
 			return nil, err
 		}
@@ -149,8 +223,17 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 		}
 	}
 
-	spec, err := o.readCatalog(ctx)
+	existingCatalog, catalogExists, err := o.readFileForRewrite(ctx, config.AddonCatalogPath)
 	if err != nil {
+		return nil, err
+	}
+	if catalogExists && len(bytes.TrimSpace(existingCatalog)) == 0 {
+		return nil, fmt.Errorf("%w: %s", ErrCatalogFileEmpty, CatalogFileEmptyMessage)
+	}
+	spec, err := parseCatalogBody(existingCatalog)
+	if err != nil {
+		// A file that will not parse at all IS a hard stop — Sharko cannot
+		// rewrite what it cannot read without losing somebody's entries.
 		return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 	}
 	if spec.Addons == nil {
@@ -160,19 +243,29 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 		spec.Addons[name] = entry
 	}
 
-	if err := catalog.ValidateCatalogSpec(spec); err != nil {
-		return nil, err
+	// Check ONLY what this request is adding (review finding M2). The old
+	// whole-file check meant one half-finished hand-edited entry — the kind
+	// the read path happily shows as deployable: false — refused every
+	// unrelated add, and named an addon the caller never mentioned. The
+	// file's own structure is still checked, by the parse above and by
+	// SaveAddonCatalog's schema validation below.
+	for _, name := range names {
+		if err := catalog.ValidateCatalogEntry(name, spec.Addons[name]); err != nil {
+			return nil, err
+		}
 	}
 
-	catalogBody, err := config.SaveAddonCatalog(spec)
+	catalogBody, reformatted, err := writeCatalogFile(existingCatalog, spec, entries, names)
 	if err != nil {
 		return nil, fmt.Errorf("rendering %s: %w", config.AddonCatalogPath, err)
 	}
 
 	files := map[string][]byte{config.AddonCatalogPath: catalogBody}
-	existingCatalog, _ := o.readFileIfExists(ctx, config.AddonCatalogPath)
 
 	var warnings []string
+	if reformatted {
+		warnings = append(warnings, CatalogRewriteNote)
+	}
 	var existingClusterAddons, updatedClusterAddons []byte
 	if req.EnableOnCluster != "" {
 		// The assignment file is rewritten whole, so a swallowed read
@@ -239,9 +332,9 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 	if len(names) == 1 {
 		trackedAddon = names[0]
 	}
-	opCode := "catalog-add"
+	opCode := OpCodeCatalogAdd
 	if req.EnableOnCluster != "" {
-		opCode = "catalog-add-enable"
+		opCode = OpCodeCatalogAddEnable
 	}
 
 	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, strings.ToLower(title),
@@ -287,7 +380,7 @@ func addToCatalogTitle(names []string, cluster string) string {
 
 // buildCatalogEntry turns one request item into the entry written to
 // catalog.yaml, filling from the Marketplace's curated list when asked.
-func (o *Orchestrator) buildCatalogEntry(in CatalogAddonInput) (config.AddonCatalogEntry, error) {
+func (o *Orchestrator) buildCatalogEntry(ctx context.Context, in CatalogAddonInput) (config.AddonCatalogEntry, error) {
 	entry := config.AddonCatalogEntry{
 		RepoURL:           in.RepoURL,
 		Chart:             in.Chart,
@@ -320,20 +413,41 @@ func (o *Orchestrator) buildCatalogEntry(in CatalogAddonInput) (config.AddonCata
 		}
 	}
 
-	// The Marketplace deliberately ships no version — a version baked into
-	// a signed artefact goes stale — so this one always comes from the
-	// caller, whichever door they came through.
-	if entry.Version == "" {
-		return config.AddonCatalogEntry{}, fmt.Errorf(
-			"addon %q needs a version — pick one from the chart's available versions", in.Name)
-	}
 	if entry.RepoURL == "" {
 		return config.AddonCatalogEntry{}, fmt.Errorf(
-			"addon %q needs a chart repository URL (https:// or oci://)", in.Name)
+			"%w: addon %q needs a chart repository URL (https:// or oci://)", ErrCatalogEntryIncomplete, in.Name)
 	}
 	if entry.Chart == "" {
 		return config.AddonCatalogEntry{}, fmt.Errorf(
-			"addon %q needs a chart name", in.Name)
+			"%w: addon %q needs a chart name", ErrCatalogEntryIncomplete, in.Name)
+	}
+
+	// The Marketplace deliberately ships no version — a version baked into
+	// a signed artefact goes stale — so the curated entry cannot supply one.
+	// The version still has to LAND in catalog.yaml, because an approved
+	// entry is complete and the reviewer of the pull request has to see
+	// exactly what enters the org (design doc §1).
+	//
+	// So when the Marketplace door sends no version, Sharko fills in the
+	// newest version it knows for the chart — the same freshness data the
+	// version picker shows — and that resolved pin is what goes in the diff.
+	// Before this, the wizard's Marketplace pick and the add-and-enable
+	// combo both sent no version and dead-ended on a 502 (review B-1).
+	if entry.Version == "" && in.FromMarketplace && o.latestVersionFn != nil {
+		if v, ok := o.latestVersionFn(ctx, in.Name, entry.RepoURL, entry.Chart); ok {
+			entry.Version = strings.TrimSpace(v)
+		}
+	}
+	if entry.Version == "" {
+		if in.FromMarketplace {
+			// Sharko genuinely has nothing to fill in — an oci:// registry
+			// it cannot read an index from, or a chart repo that was down
+			// the last time it looked. Say so, and ask.
+			return config.AddonCatalogEntry{}, fmt.Errorf(
+				"%w: pick a version — Sharko has no version data for %s", ErrCatalogVersionUnknown, in.Name)
+		}
+		return config.AddonCatalogEntry{}, fmt.Errorf(
+			"%w: addon %q needs a version — pick one from the chart's available versions", ErrCatalogEntryIncomplete, in.Name)
 	}
 
 	return entry, nil
@@ -361,6 +475,7 @@ func (o *Orchestrator) checkEnableReady(ctx context.Context, clusterName, addonN
 			Cluster:  clusterName,
 			Addon:    addonName,
 			Problems: incompleteEntryProblems(addonName, entry.MissingFields),
+			Code:     CodeIncompleteEntry,
 		}
 	}
 
@@ -398,6 +513,11 @@ func (o *Orchestrator) checkEnableReady(ctx context.Context, clusterName, addonN
 // readCatalog reads and parses the org's catalog.yaml. A file that does not
 // exist yet is NOT an error — a fresh repo has approved nothing, and the
 // first add creates the file.
+//
+// A file that DOES exist but holds nothing is a different story: somebody
+// made it (or emptied it) and it is missing the two header lines. That gets
+// ErrCatalogFileEmpty and plain words about what to put in it, instead of
+// the loader's "missing apiVersion" wrapped up as a gateway error.
 func (o *Orchestrator) readCatalog(ctx context.Context) (config.AddonCatalogSpec, error) {
 	data, err := o.git.GetFileContent(ctx, config.AddonCatalogPath, o.gitops.BaseBranch)
 	if err != nil {
@@ -405,6 +525,9 @@ func (o *Orchestrator) readCatalog(ctx context.Context) (config.AddonCatalogSpec
 			return config.AddonCatalogSpec{}, nil
 		}
 		return config.AddonCatalogSpec{}, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return config.AddonCatalogSpec{}, fmt.Errorf("%w: %s", ErrCatalogFileEmpty, CatalogFileEmptyMessage)
 	}
 	return config.LoadAddonCatalog(data)
 }

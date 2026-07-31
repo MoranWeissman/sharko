@@ -203,7 +203,7 @@ func (s *Server) runInitOperation(
 	//     stays a refusal — just with a clearer message.
 	// RepoStateUnreachable (Sync=Unknown, a connection problem) also stays a
 	// refusal — re-init cannot repair a repo ArgoCD can't reach.
-	switch state, detail, _, bootstrapStatus := probeRepoStateWithBootstrapStatus(ctx, gp, ac, gitopsCfg.BaseBranch); state {
+	switch state, detail, _, bootstrapStatus := probeRepoStateWithBootstrapStatus(ctx, gp, ac, gitopsCfg.BaseBranch, s.repoPaths.ManagedClusters); state {
 	case RepoStateInitialized:
 		// Advance every step as already-completed so the wizard's
 		// step-list UI shows a clean checkmarked sequence. We know the

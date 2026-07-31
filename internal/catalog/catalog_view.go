@@ -296,9 +296,28 @@ func ValidateCatalogSpec(spec config.AddonCatalogSpec) error {
 	sort.Strings(names)
 
 	for _, name := range names {
-		if missing := missingDeploymentFields(spec.Addons[name]); len(missing) > 0 {
-			return &MissingRequiredFieldError{Addon: name, Field: missing[0]}
+		if err := ValidateCatalogEntry(name, spec.Addons[name]); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// ValidateCatalogEntry is the single-entry form of ValidateCatalogSpec, for
+// a writer that is only responsible for the entries it is putting in.
+//
+// It exists because checking the WHOLE file on every add was wrong (review
+// finding M2): the read path deliberately tolerates a half-finished
+// hand-edited entry — it comes back as deployable: false with
+// missing_fields naming what to fill in — so a person can save a draft.
+// Validating the whole file on write meant that draft refused every
+// unrelated add, and the refusal named an addon the caller had never
+// mentioned. The file's own structure is still checked (it has to parse,
+// and the rendered result is schema-validated before the commit); only the
+// per-entry completeness check is narrowed to what the request touched.
+func ValidateCatalogEntry(name string, entry config.AddonCatalogEntry) error {
+	if missing := missingDeploymentFields(entry); len(missing) > 0 {
+		return &MissingRequiredFieldError{Addon: name, Field: missing[0]}
 	}
 	return nil
 }

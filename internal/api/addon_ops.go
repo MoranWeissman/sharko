@@ -38,6 +38,7 @@ import (
 // @Failure 400 {object} map[string]interface{} "Bad request or missing confirmation"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Failure 409 {object} map[string]interface{} "The repo uses the v4 layout (code repo_layout) — use POST /v4/clusters/{name}/addons/{addon}"
 // @Failure 422 {object} map[string]interface{} "Addon not in catalog, or addon needs secrets but Sharko has no credentials for the cluster"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /clusters/{name}/addons/{addon} [post]
@@ -113,6 +114,13 @@ func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
 
 	result, orchErr := orch.EnableAddon(r.Context(), req)
 	if orchErr != nil {
+		// The v3 shape writes addon labels into the v3 cluster registry,
+		// which a v4 repo does not have — and creating one there costs the
+		// fleet its ArgoCD Secrets (review finding F6).
+		if orchestrator.IsV4RepoUnsupported(orchErr) {
+			writeCodedError(w, http.StatusConflict, CodeRepoLayout, orchErr.Error(), nil)
+			return
+		}
 		if orchErr.Error() == "confirmation required: set yes: true in request body" {
 			writeError(w, http.StatusBadRequest, orchErr.Error())
 			return
@@ -178,6 +186,7 @@ func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]interface{} "Bad request or missing confirmation"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Failure 409 {object} map[string]interface{} "The repo uses the v4 layout (code repo_layout) — use DELETE /v4/clusters/{name}/addons/{addon}"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /clusters/{name}/addons/{addon} [delete]
 func (s *Server) handleDisableAddon(w http.ResponseWriter, r *http.Request) {
@@ -250,6 +259,11 @@ func (s *Server) handleDisableAddon(w http.ResponseWriter, r *http.Request) {
 
 	result, orchErr := orch.DisableAddon(r.Context(), req)
 	if orchErr != nil {
+		// Same v4-repo refusal as handleEnableAddon (review finding F6).
+		if orchestrator.IsV4RepoUnsupported(orchErr) {
+			writeCodedError(w, http.StatusConflict, CodeRepoLayout, orchErr.Error(), nil)
+			return
+		}
 		if orchErr.Error() == "confirmation required: set yes: true in request body" {
 			writeError(w, http.StatusBadRequest, orchErr.Error())
 			return

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/config"
 )
 
@@ -55,5 +56,27 @@ func TestLockstep_ManagedClustersPath(t *testing.T) {
 			"config.V4ManagedClustersPath = %q, want %q (orchestrator.V4ManagedClustersPath) — "+
 				"a mismatch silently loses every v4-registered cluster's stored secretPath, credsSource and roleARN",
 			config.V4ManagedClustersPath, V4ManagedClustersPath)
+	}
+}
+
+// TestLockstep_ReconcilerManagedClustersPath pins internal/clusterreconciler's
+// copy — the most dangerous one of the lot (review finding H1).
+//
+// The reconciler falls back to this path when the configured v3 registry is
+// absent, which on a v4 repo is every single tick. If its copy fell behind,
+// the read would find nothing, the desired state would parse as zero
+// clusters, and the orphan sweep would delete the ArgoCD connection Secret
+// of every cluster Sharko manages. No error, no failing request — just a
+// fleet that quietly loses its connections. That is exactly the class of
+// silent drift this file exists to catch, and it was the one copy the guard
+// was missing.
+func TestLockstep_ReconcilerManagedClustersPath(t *testing.T) {
+	t.Parallel()
+	if clusterreconciler.V4ManagedClustersPath != V4ManagedClustersPath {
+		t.Errorf(
+			"clusterreconciler.V4ManagedClustersPath = %q, want %q (orchestrator.V4ManagedClustersPath) — "+
+				"a mismatch makes the reconciler read nothing on every v4 repo, call the desired state empty, "+
+				"and orphan-sweep every managed cluster's ArgoCD Secret, silently",
+			clusterreconciler.V4ManagedClustersPath, V4ManagedClustersPath)
 	}
 }

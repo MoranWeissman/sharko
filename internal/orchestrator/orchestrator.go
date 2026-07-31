@@ -197,6 +197,27 @@ type Orchestrator struct {
 	// rather than merge a pull request that would uninstall the fleet.
 	// Nothing else in the orchestrator touches it.
 	appSets appsets.Manager
+
+	// latestVersionFn answers "what is the newest version Sharko knows for
+	// this chart?" for a Marketplace add that arrived without one. Wired
+	// via SetLatestVersionResolver from the API layer, which already owns
+	// the freshness snapshots and the Helm index reader. nil means "no
+	// version data at all", and the add then asks the caller to pick a
+	// version rather than guessing.
+	latestVersionFn LatestVersionFn
+}
+
+// LatestVersionFn resolves the newest version Sharko knows for a chart.
+// addonName lets an implementation use its per-addon freshness snapshot;
+// repoURL and chart are the fallback lookup key. The bool is false when
+// Sharko has no version data — never an error, because "we don't know" is
+// an ordinary answer here and the caller turns it into plain words.
+type LatestVersionFn func(ctx context.Context, addonName, repoURL, chart string) (string, bool)
+
+// SetLatestVersionResolver wires in the version lookup used when a
+// Marketplace add carries no version. Optional — see the field comment.
+func (o *Orchestrator) SetLatestVersionResolver(fn LatestVersionFn) {
+	o.latestVersionFn = fn
 }
 
 // SetCuratedCatalog wires in the shipped curated catalog (v4 Wave 1 Story

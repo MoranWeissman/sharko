@@ -326,9 +326,11 @@ func (o *Orchestrator) CompleteRuntimeHandoff(ctx context.Context) (*RuntimeHand
 	return report, nil
 }
 
-// mergedAddonNames returns every addon name the v4 repo knows about:
-// the shipped curated catalog plus the repo's own catalog.yaml
-// delta. These are the label keys the OLD ApplicationSets selected on.
+// mergedAddonNames returns every addon name the v4 repo knows about: the
+// Marketplace's curated list plus everything in the repo's own approved
+// list, catalog.yaml. These are the label keys the OLD ApplicationSets
+// selected on, and the old ones could select on any curated name, so both
+// halves have to be in the set even though only catalog.yaml is approved.
 func (o *Orchestrator) mergedAddonNames(ctx context.Context) ([]string, error) {
 	names := map[string]bool{}
 	if o.curated != nil {
@@ -339,11 +341,11 @@ func (o *Orchestrator) mergedAddonNames(ctx context.Context) ([]string, error) {
 		}
 	}
 	if body, ok := o.readFileIfExists(ctx, config.AddonCatalogPath); ok && len(strings.TrimSpace(string(body))) > 0 {
-		delta, err := config.LoadAddonCatalog(body)
+		approved, err := config.LoadAddonCatalog(body)
 		if err != nil {
 			return nil, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 		}
-		for name := range delta.Addons {
+		for name := range approved.Addons {
 			if name != "" {
 				names[name] = true
 			}

@@ -107,7 +107,7 @@ func (s *Server) handleRepoStatus(w http.ResponseWriter, r *http.Request) {
 			// no engine pin either. Check the v3 markers before telling the
 			// wizard to offer Initialize, which on a live v3 repo would seed
 			// the v4 folder tree on top of it.
-			if orchestrator.HasV3Markers(r.Context(), gp, baseBranch) {
+			if orchestrator.HasV3Markers(r.Context(), gp, baseBranch, s.repoPaths.ManagedClusters) {
 				synced, v3Reason := s.probeBootstrapSynced(r.Context())
 				writeJSON(w, http.StatusOK, RepoStatusResponse{
 					Initialized:     true,

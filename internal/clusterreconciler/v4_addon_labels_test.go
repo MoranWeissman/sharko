@@ -32,7 +32,7 @@ func clusterAddonsYAML(cluster string, addons map[string]bool) []byte {
 
 func v4RepoFiles(assignments map[string]map[string]bool, clusters ...string) map[string][]byte {
 	files := map[string][]byte{
-		v4ManagedClustersPath: envelopedManagedClusters(clusters...),
+		V4ManagedClustersPath: envelopedManagedClusters(clusters...),
 	}
 	for cluster, addons := range assignments {
 		files["clusters/"+cluster+".yaml"] = clusterAddonsYAML(cluster, addons)

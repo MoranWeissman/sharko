@@ -94,7 +94,7 @@ const (
 	// managed clusters file. Overridable via Deps.ManagedClustersPath.
 	DefaultManagedClustersPath = "configuration/managed-clusters.yaml"
 
-	// v4ManagedClustersPath is the v4 data-file format's equivalent of
+	// V4ManagedClustersPath is the v4 data-file format's equivalent of
 	// DefaultManagedClustersPath: the same shape the code already reads
 	// through models.LoadManagedClusters, just at a different place — a
 	// root file called managed-clusters.yaml. Unlike
@@ -106,7 +106,17 @@ const (
 	// Keep the literal identical to orchestrator.V4ManagedClustersPath;
 	// declared here rather than imported to keep this package's dependency
 	// set narrow.
-	v4ManagedClustersPath = "managed-clusters.yaml"
+	//
+	// EXPORTED so the copy cannot drift unnoticed (review finding H1). This
+	// is the most dangerous of the hand-copied v4 paths: if it fell behind,
+	// the reconciler would read nothing at all on a v4 repo, conclude the
+	// desired state is empty, and orphan-sweep every managed cluster's
+	// ArgoCD Secret. Nothing would error and nothing would log a problem —
+	// so orchestrator's lockstep_paths_test.go asserts this equals
+	// orchestrator.V4ManagedClustersPath and fails the build the moment the
+	// two disagree. Do not un-export it without moving that assertion
+	// somewhere it can still run.
+	V4ManagedClustersPath = "managed-clusters.yaml"
 
 	// DefaultArgoCDNamespace is the namespace the reconciler writes cluster
 	// Secrets into. Overridable via Deps.Namespace.
@@ -517,7 +527,7 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 	// (V2-cleanup-60.2 orphan-sweep sanity guard) is false in that case too.
 	if spec == nil {
 		log.Info("[clusterreconciler] neither managed-clusters.yaml nor managed-clusters.yaml found in git — treating as empty desired state",
-			"v3_path", r.managedClustersPath, "v4_path", v4ManagedClustersPath, "branch", r.branch,
+			"v3_path", r.managedClustersPath, "v4_path", V4ManagedClustersPath, "branch", r.branch,
 		)
 	}
 
@@ -572,10 +582,10 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 	readPath := r.managedClustersPath
 	body, readErr := gp.GetFileContent(ctx, readPath, r.branch)
 	if readErr != nil && errors.Is(readErr, gitprovider.ErrFileNotFound) {
-		if v4Body, v4Err := gp.GetFileContent(ctx, v4ManagedClustersPath, r.branch); v4Err == nil {
-			body, readErr, readPath = v4Body, nil, v4ManagedClustersPath
+		if v4Body, v4Err := gp.GetFileContent(ctx, V4ManagedClustersPath, r.branch); v4Err == nil {
+			body, readErr, readPath = v4Body, nil, V4ManagedClustersPath
 			log.Debug("[clusterreconciler] configured managed-clusters path absent — found the v4 managed-clusters.yaml instead",
-				"v3_path", r.managedClustersPath, "v4_path", v4ManagedClustersPath)
+				"v3_path", r.managedClustersPath, "v4_path", V4ManagedClustersPath)
 		}
 	}
 	if readErr != nil {
@@ -606,7 +616,7 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 	// Gated on readPath so a v3 repo does not pay for a directory listing
 	// it can never use, and so the v3 desired-label computation stays
 	// byte-identical.
-	if readPath == v4ManagedClustersPath {
+	if readPath == V4ManagedClustersPath {
 		v4Labels = readV4AddonLabels(ctx, gp, r.branch)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 )
@@ -28,7 +29,7 @@ type RepoFileReader interface {
 // repo. So: no engine pin AND a v3 marker means "initialized, v3 format",
 // not "empty".
 //
-// Two markers, checked in order:
+// Markers, checked in order:
 //
 //   - V3BootstrapMarkerPath (bootstrap/Chart.yaml) — what every v3
 //     bootstrap PR wrote, and the exact file this probe checked before v4
@@ -37,20 +38,28 @@ type RepoFileReader interface {
 //     repo Sharko adopted rather than bootstrapped, or one whose bootstrap
 //     chart was reorganised by hand. Present the moment one cluster is
 //     registered.
+//   - The CONFIGURED cluster registry path, when the operator pointed
+//     RepoPathsConfig.ManagedClusters somewhere other than the default
+//     (review finding F3). Without it, a live v3 repo that keeps its
+//     registry at, say, gitops/clusters.yaml matches neither fixed literal
+//     and comes back "empty" — which is the answer that tells the wizard to
+//     offer Initialize, and following that advice seeds the whole v4 folder
+//     tree on top of a running fleet. The extra path is only probed when it
+//     differs from the two literals, so the ordinary repo costs nothing.
 //
 // A read error of any kind (missing file, transport failure) counts as
 // "marker absent". This is deliberately the SAFE direction for the two
 // read-only status handlers, which have their own connection_error
 // classification for transport trouble; and for InitRepo the worst case of
 // a false "absent" is the pre-existing behaviour, not a new failure.
-func HasV3Markers(ctx context.Context, git RepoFileReader, branch string) bool {
+func HasV3Markers(ctx context.Context, git RepoFileReader, branch string, extraMarkers ...string) bool {
 	if git == nil {
 		return false
 	}
 	if branch == "" {
 		branch = "main"
 	}
-	for _, marker := range []string{V3BootstrapMarkerPath, V3SecondaryMarkerPath} {
+	for _, marker := range v3MarkerPaths(extraMarkers...) {
 		if body, err := git.GetFileContent(ctx, marker, branch); err == nil && len(body) > 0 {
 			return true
 		}
@@ -58,14 +67,44 @@ func HasV3Markers(ctx context.Context, git RepoFileReader, branch string) bool {
 	return false
 }
 
+// v3MarkerPaths returns the two fixed markers plus any configured registry
+// path that is not already one of them, in probe order, with duplicates and
+// blanks dropped.
+//
+// The v4 root file (managed-clusters.yaml) is never added, no matter what
+// SHARKO_REPO_PATH_MANAGED_CLUSTERS is set to. An operator who points that
+// setting at the v4 path would otherwise make every healthy v4 repo look
+// like it still has v3 files in it, and every write would then be refused
+// as half-converted — a config typo turning into a wedged server.
+func v3MarkerPaths(extra ...string) []string {
+	out := []string{V3BootstrapMarkerPath, V3SecondaryMarkerPath}
+	for _, p := range extra {
+		p = strings.TrimSpace(p)
+		if p == "" || p == V4ManagedClustersPath {
+			continue
+		}
+		seen := false
+		for _, known := range out {
+			if known == p {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // hasV3Markers is the orchestrator-internal form, using the orchestrator's
-// own git provider and base branch.
+// own git provider, base branch and configured cluster registry path.
 func (o *Orchestrator) hasV3Markers(ctx context.Context) bool {
 	if o.git == nil {
 		return false
 	}
 	var reader RepoFileReader = o.git
-	return HasV3Markers(ctx, reader, o.gitops.BaseBranch)
+	return HasV3Markers(ctx, reader, o.gitops.BaseBranch, o.paths.ManagedClusters)
 }
 
 // hasV3MarkersChecked is the honest form: it tells a genuinely ABSENT
@@ -88,7 +127,7 @@ func (o *Orchestrator) hasV3MarkersChecked(ctx context.Context) (bool, error) {
 		branch = "main"
 	}
 	var firstErr error
-	for _, marker := range []string{V3BootstrapMarkerPath, V3SecondaryMarkerPath} {
+	for _, marker := range v3MarkerPaths(o.paths.ManagedClusters) {
 		body, err := o.git.GetFileContent(ctx, marker, branch)
 		if err == nil {
 			if len(body) > 0 {

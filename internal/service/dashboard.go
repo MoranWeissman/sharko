@@ -17,7 +17,7 @@ import (
 // names, valid "<addon>-<cluster>" ArgoCD Application names, and addon
 // counts — computed by EITHER the v3 branch (managed-clusters.yaml +
 // addons-catalog.yaml labels) or the v4 branch (managed-clusters.yaml +
-// clusters/*.yaml + catalog.yaml delta), so the downstream
+// clusters/*.yaml + the approved list in catalog.yaml), so the downstream
 // ArgoCD-side stats code (cluster connectivity, application sync/health,
 // bootstrap app) runs identically regardless of repo format (Wave 2
 // ride-along w2-q6 item 4).
@@ -34,15 +34,14 @@ type DashboardService struct {
 	connSvc             *ConnectionService
 	managedClustersPath string // path in Git repo to managed-clusters.yaml
 
-	// curated is the shipped curated addon catalog, wired via
-	// SetCuratedCatalog. Used ONLY by gitStatsV4 to compute TotalAvailable
-	// as len(catalog.MergeDelta(curated, delta)) — the same curated+delta
-	// merge AddonService/UpgradeService use — instead of len(delta.Addons)
-	// alone, which undercounts (or on a repo with no delta file at all,
-	// zeroes) the addon count on every v4 repo that hasn't customized the
-	// shipped catalog (Wave 2 review finding: "Total Available: 0" on
-	// fresh v4 repos). nil is safe: every addon then merges as
-	// catalog.OriginInternal, matching catalog.MergeDelta's own contract.
+	// curated is the Marketplace's curated addon list, wired via
+	// SetCuratedCatalog. gitStatsV4 hands it to catalog.BuildCatalogView so
+	// an approved addon the Marketplace happens to know by name picks up a
+	// description and a docs link. It NEVER adds anything to the count:
+	// TotalAvailable is the size of the org's approved list, and a fresh v4
+	// repo with an empty catalog.yaml correctly shows zero — that is the
+	// whole point of the approved-list model. nil is safe: every approved
+	// addon then reads as catalog.OriginInternal.
 	curated *catalog.Catalog
 
 	// baseBranchFn is the per-instance test seam for the configured GitOps
@@ -52,11 +51,11 @@ type DashboardService struct {
 	baseBranchFn func() string
 }
 
-// SetCuratedCatalog wires in the shipped curated catalog so gitStatsV4 can
-// merge a caller's catalog.yaml delta against it, the same way
-// AddonService.SetCuratedCatalog does for the version matrix and catalog
-// views. Pass nil (or skip the call) to leave every v4-repo addon merging
-// as catalog.OriginInternal.
+// SetCuratedCatalog wires in the Marketplace's curated list so gitStatsV4
+// can fill in the display fields for an approved addon it recognises, the
+// same way AddonService.SetCuratedCatalog does for the version matrix and
+// the catalog views. Pass nil (or skip the call) to leave every approved
+// addon reading as catalog.OriginInternal.
 func (s *DashboardService) SetCuratedCatalog(c *catalog.Catalog) {
 	s.curated = c
 }
@@ -145,11 +144,11 @@ func (s *DashboardService) gitStatsV3(ctx context.Context, gp gitprovider.GitPro
 
 // gitStatsV4 computes gitDerivedDashboardStats from the v4 file shape
 // (managed-clusters.yaml for the cluster registry, clusters/*.yaml for
-// per-cluster addon enablement, catalog.yaml for the delta's addon
-// count) — the v4-aware counterpart the review flagged as missing (Wave 2
-// ride-along w2-q6 item 4: "dashboard git-side stats v3-only"). Mirrors
+// per-cluster addon enablement, catalog.yaml for how many addons the org
+// approved) — the v4-aware counterpart the review flagged as missing (Wave
+// 2 ride-along w2-q6 item 4: "dashboard git-side stats v3-only"). Mirrors
 // AddonService.getVersionMatrixV4's "missing means empty" tolerance for
-// every file: a fresh v4 repo with no clusters or delta entries yet
+// every file: a fresh v4 repo with no clusters and nothing approved yet
 // degrades to zeroed stats rather than a 500.
 func (s *DashboardService) gitStatsV4(ctx context.Context, gp gitprovider.GitProvider) (gitDerivedDashboardStats, error) {
 	out := gitDerivedDashboardStats{validAddonApps: make(map[string]bool)}
@@ -174,19 +173,19 @@ func (s *DashboardService) gitStatsV4(ctx context.Context, gp gitprovider.GitPro
 	// ships. A fresh repo shows 0 on purpose: nothing is available to your
 	// clusters until somebody adds it, and a tile claiming 45 available
 	// addons on day zero is exactly the lie this rebuild removes.
-	deltaData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
-	var delta config.AddonCatalogSpec
+	approvedData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
+	var approved config.AddonCatalogSpec
 	if err != nil {
 		if !isGitFileNotFound(err) {
 			return gitDerivedDashboardStats{}, fmt.Errorf("reading %s: %w", config.AddonCatalogPath, err)
 		}
-	} else if len(deltaData) > 0 {
-		delta, err = config.LoadAddonCatalog(deltaData)
+	} else if len(approvedData) > 0 {
+		approved, err = config.LoadAddonCatalog(approvedData)
 		if err != nil {
 			return gitDerivedDashboardStats{}, fmt.Errorf("parsing %s: %w", config.AddonCatalogPath, err)
 		}
 	}
-	out.totalAvailable = len(catalog.BuildCatalogView(s.curated, delta))
+	out.totalAvailable = len(catalog.BuildCatalogView(s.curated, approved))
 
 	// listClusterAddonsSpecs (addon.go, same package) lists clusters/*.yaml
 	// and is already "missing dir means empty" tolerant.

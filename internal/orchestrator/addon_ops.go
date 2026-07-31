@@ -33,6 +33,15 @@ func (o *Orchestrator) DisableAddon(ctx context.Context, req DisableAddonRequest
 		return nil, fmt.Errorf("addon name is required")
 	}
 
+	// This writes the addon on/off labels in the v3 cluster registry, which
+	// on a v4 repo means CREATING a second registry the reconciler then
+	// prefers — see refuseV3ShapedWriteOnV4Repo. Until now it failed on a
+	// v4 repo only because the file it reads happens to be missing; that is
+	// an accident, so here is the explicit gate. Refuse before any read.
+	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "switching an addon off through this endpoint", V4EnableDoor); err != nil {
+		return nil, err
+	}
+
 	// Normalize cleanup scope.
 	cleanup := req.Cleanup
 	if cleanup == "" {
@@ -217,6 +226,12 @@ func (o *Orchestrator) EnableAddon(ctx context.Context, req EnableAddonRequest) 
 	}
 	if req.Addon == "" {
 		return nil, fmt.Errorf("addon name is required")
+	}
+
+	// Same second-registry hazard as DisableAddon — see the note there.
+	// Explicit gate before any read, rather than relying on a missing file.
+	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "switching an addon on through this endpoint", V4EnableDoor); err != nil {
+		return nil, err
 	}
 
 	// Referential integrity (V2-cleanup-22, Part 2 / decision #3): the addon

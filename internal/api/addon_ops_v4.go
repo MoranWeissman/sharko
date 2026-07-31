@@ -75,20 +75,36 @@ func friendlyBodyDecodeError(err error) string {
 //
 //   - confirmation-required            -> 400 (already-well-formed request, missing yes:true)
 //   - *orchestrator.V4SemanticValidationError -> 422, structured (handled by the caller BEFORE this helper)
-//   - orchestrator.ErrV4AddonNotInCatalog     -> 422, plain "not in the catalog" wording
+//   - orchestrator.ErrV4AddonNotInCatalog     -> 422, code not_in_catalog
+//   - orchestrator.ErrCatalogFileEmpty        -> 422, code empty_catalog_file
+//   - orchestrator.ErrMixedRepoLayout         -> 409, code repo_layout
 //   - orchestrator.ErrV4ClusterNotFound       -> 404
 //   - anything else                           -> 502 (a real upstream/git failure)
+//
+// The 422s carry a `code` as well as the message. The add-to-catalog-then-
+// enable flow has to tell "this addon is not approved yet" apart from
+// "this entry is half-written" apart from "this cluster is missing a
+// value", and it was doing that by matching English in the message — which
+// fired on the wrong ones and missed the right one (review finding B-2).
 func writeV4OrchestratorError(w http.ResponseWriter, err error) {
 	if err.Error() == "confirmation required: set yes: true in request body" {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if errors.Is(err, orchestrator.ErrV4ClusterNotFound) {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeCodedError(w, http.StatusNotFound, CodeClusterNotFound, err.Error(), nil)
+		return
+	}
+	if orchestrator.IsV4RepoUnsupported(err) || errors.Is(err, orchestrator.ErrMixedRepoLayout) {
+		writeCodedError(w, http.StatusConflict, CodeRepoLayout, err.Error(), nil)
 		return
 	}
 	if errors.Is(err, orchestrator.ErrV4AddonNotInCatalog) {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeCodedError(w, http.StatusUnprocessableEntity, CodeNotInCatalog, err.Error(), nil)
+		return
+	}
+	if errors.Is(err, orchestrator.ErrCatalogFileEmpty) {
+		writeCodedError(w, http.StatusUnprocessableEntity, CodeEmptyCatalogFile, err.Error(), nil)
 		return
 	}
 	writeError(w, http.StatusBadGateway, err.Error())
@@ -108,8 +124,9 @@ func writeV4OrchestratorError(w http.ResponseWriter, err error) {
 // @Success 200 {object} orchestrator.GitResult "Addon enabled (or dry-run preview)"
 // @Failure 400 {object} map[string]interface{} "Bad request, invalid JSON body, or missing confirmation"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 404 {object} map[string]interface{} "Cluster is not registered"
-// @Failure 422 {object} map[string]interface{} "Semantic validation failed (missing required values or undeclared secrets, listed by name) or the addon is not in the catalog"
+// @Failure 404 {object} map[string]interface{} "Cluster is not registered (code cluster_not_found)"
+// @Failure 409 {object} map[string]interface{} "The repo carries both the old and the new layout (code repo_layout)"
+// @Failure 422 {object} map[string]interface{} "Semantic validation failed (missing required values or undeclared secrets, listed by name) or the addon is not in the catalog. The body carries a machine-readable `code` next to `error`: `not_in_catalog` when the org has not approved this addon (add it first — POST /catalog/addons); `incomplete_entry` when its catalog entry is half-written, with `problems` naming each missing piece; `validation_failed` when the entry is fine but this cluster is missing a required value or a secret definition, also with `problems`; `empty_catalog_file` when catalog.yaml exists but is blank. Branch on the code, never on the message text."
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /v4/clusters/{name}/addons/{addon} [post]
 func (s *Server) handleEnableAddonV4(w http.ResponseWriter, r *http.Request) {
@@ -154,6 +171,7 @@ func (s *Server) handleEnableAddonV4(w http.ResponseWriter, r *http.Request) {
 		if errors.As(orchErr, &verr) {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]interface{}{
 				"error":    verr.Error(),
+				"code":     semanticErrorCode(verr),
 				"cluster":  verr.Cluster,
 				"addon":    verr.Addon,
 				"problems": verr.Problems,
@@ -194,7 +212,8 @@ func (s *Server) handleEnableAddonV4(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} orchestrator.GitResult "Addon disabled (or dry-run preview)"
 // @Failure 400 {object} map[string]interface{} "Bad request, invalid JSON body, or missing confirmation"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 404 {object} map[string]interface{} "Cluster is not registered, or has nothing to disable"
+// @Failure 404 {object} map[string]interface{} "Cluster is not registered, or has nothing to disable (code cluster_not_found)"
+// @Failure 409 {object} map[string]interface{} "The repo carries both the old and the new layout (code repo_layout)"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /v4/clusters/{name}/addons/{addon} [delete]
 func (s *Server) handleDisableAddonV4(w http.ResponseWriter, r *http.Request) {
