@@ -344,7 +344,7 @@ jobs:
           helm lint charts/sharko-engine/
           RENDERED=$(helm template testengine charts/sharko-engine/ \
             --values tests/enginerender/testdata/engine-values.yaml \
-            --values tests/enginerender/testdata/catalog/addons.yaml)
+            --values tests/enginerender/testdata/catalog.yaml)
           echo "$RENDERED" | grep -q "kind: ApplicationSet" \
             || { echo "::error::sharko-engine chart rendered NO ApplicationSet from the fixture repo — addons would not deploy"; exit 1; }
           echo "$RENDERED" | grep -q "kind: AppProject" \
