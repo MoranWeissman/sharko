@@ -1,66 +1,111 @@
-# Marketplace Architecture — Three-Layer Model
+# Marketplace and Catalog — the two words, and what each one means
 
-Sharko's addon system has three distinct layers. Understanding them prevents confusion when managing addons across your fleet.
+Sharko uses exactly two words for addons, everywhere — in the UI, in the
+API, and in these docs. There is no third word. This page explains what
+each one means, why the split exists, and who is responsible for what.
 
-## The Three Layers
+> The Marketplace is what you could run. The Catalog is what your org
+> allows. Your clusters run only what's enabled from the Catalog.
 
-| Layer | What It Is | Where It Lives | Purpose |
-|-------|------------|----------------|---------|
-| **Marketplace** | Browse/discover surface with metadata | Embedded `catalog/addons.yaml` + optional third-party sources | Shows what addons exist to discover — metadata only (name, description, docs, license, maintainers, OpenSSF score, curation tags). Deploys nothing. |
-| **Catalog** | Deployable list | `configuration/addons-catalog.yaml` in your GitOps repo | The list of addons your team can deploy. Each entry has a Helm chart, repo, version, and namespace. This is what ArgoCD reads. |
-| **Enablement** | Per-cluster labels | `configuration/managed-clusters.yaml` + cluster-specific values files | What is actually running on each cluster. You enable an addon on a cluster by adding a label; ArgoCD sees the label and creates the Application. |
+## Marketplace — what you could run
 
-### In Plain English
+The Marketplace is a read-only browse screen. It shows every addon Sharko
+knows about — name, description, chart location, license, maintainers,
+known quirks — so you can look before you decide. Nothing in the
+Marketplace is deployed, and nothing in the Marketplace is running
+anywhere. It's the menu, not the order.
 
-- **Marketplace = what's available to browse.** It's the menu. You can open the Marketplace tab, filter by category or OpenSSF tier, and read about addons. Clicking an addon shows its README, version picker, and license. Nothing gets deployed until you click "Add to catalog."
-- **Catalog = what your team can deploy.** Once you add an addon from the Marketplace (or manually), it lands in `addons-catalog.yaml` in your GitOps repo. This is the approved, deployable list. ArgoCD's ApplicationSet reads this file to know which addons exist.
-- **Enablement = what's running where.** After an addon is in the catalog, you enable it per-cluster by toggling it on in the UI (which opens a PR to add a label to that cluster's entry in `managed-clusters.yaml`). Once the label is present, ArgoCD deploys the addon to that cluster.
+The built-in Marketplace list is a curated set of a few dozen common
+addons (cert-manager, ingress-nginx, Prometheus, and others), shipped with
+Sharko and kept in one file in this project's own repository:
+[`catalog/addons.yaml`](https://github.com/MoranWeissman/sharko/blob/main/catalog/addons.yaml).
+Anyone can propose an addition or a fix to that file — see
+[Contributing a Catalog Entry](../community/contributing-catalog-entries.md).
 
-## Flow: Discovery → Deployment
+The Marketplace is read through `GET /api/v1/marketplace/addons` and the
+related `/api/v1/marketplace/*` routes. None of those routes write
+anything to your GitOps repository.
 
-```
-User browses Marketplace
-    ↓
-Clicks "Add to catalog" on cert-manager
-    ↓
-Sharko opens a PR adding:
-  - Entry in addons-catalog.yaml (chart, repo, version, namespace)
-  - Generated addons-global-values/cert-manager.yaml (Helm values)
-    ↓
-PR merges
-    ↓
-cert-manager is now in the Catalog (deployable but not yet running)
-    ↓
-User opens cluster detail page, toggles cert-manager ON
-    ↓
-Sharko opens a PR adding label to that cluster's entry
-    ↓
-PR merges
-    ↓
-ArgoCD ApplicationSet sees:
-  cluster has label → addon exists in catalog → create Application
-    ↓
-cert-manager is now Enabled on that cluster (running)
-```
+## Catalog — what your org allows
 
-## Why Three Layers?
+The Catalog is your org's own approved list, kept as one file in your own
+GitOps repository: `catalog.yaml`. An addon only exists in your Catalog
+because someone on your team put it there — by clicking "Add to catalog"
+on a Marketplace entry, by filling in a form for your own in-house chart,
+or by hand-editing `catalog.yaml` directly. All three paths produce the
+same thing: a pull request adding a full entry — chart, repo, version,
+namespace, and settings — to `catalog.yaml`. Whoever reviews that pull
+request sees exactly what is entering the org, because the whole entry is
+right there in the diff.
 
-The separation is intentional:
+A brand new Sharko install has an **empty** Catalog. Nothing runs in your
+org that nobody in your org chose — that holds from the very first
+bootstrap, not just after you've cleaned things up.
 
-- **Marketplace sources can be untrusted third-party URLs.** You configure `SHARKO_CATALOG_URLS` or `configuration/marketplace-sources.yaml` to pull additional addon metadata from partner catalogs, vendor-hosted lists, or internal curation servers. These sources only populate the Marketplace browse surface — they do NOT write to your GitOps repo. A malicious third-party source can show you fake entries in the Marketplace, but it cannot deploy anything without you clicking "Add to catalog" and reviewing the PR.
-- **Catalog is your team's approved menu.** Every addon in `addons-catalog.yaml` went through a pull request that someone reviewed. This is the trust boundary. ArgoCD only deploys what's in this file.
-- **Enablement is per-cluster control.** A cluster can have cert-manager enabled while another cluster does not. This is GitOps-native cluster labeling — the same pattern ArgoCD uses for everything else.
+## Enabling — what's actually running
 
-## Marketplace Source Refreshes vs Catalog Updates
+Being in the Catalog does not mean an addon is running anywhere. A cluster
+only runs an addon once someone enables it there, which writes an entry to
+that cluster's own `clusters/<name>.yaml` file. **Enabling now requires
+catalog membership** — you cannot turn an addon on for a cluster unless
+it is already in `catalog.yaml`. From the Marketplace, "add to catalog and
+enable on this cluster" is offered as a single pull request that touches
+both files at once, so the reviewer sees both changes together and one
+merge makes both true. Nothing forces you to combine them — do it as two
+separate reviewed changes if that's how your org prefers to work.
 
-- **Marketplace sources refresh automatically** (default: every 1 hour, configurable via `SHARKO_CATALOG_REFRESH_INTERVAL`). Sharko fetches the latest metadata from configured URLs and updates the in-memory view of the Marketplace browse tab. This is read-only — no Git writes.
-- **Catalog updates are manual.** You must click "Add to catalog" in the Marketplace or use the "Add Addon" button on the Catalog tab. Every catalog change opens a PR.
-- **The discovery bot (see below) automates proposals.** It runs daily, scans upstream sources, and opens a PR proposing new addons or version updates. You review and merge (or close) the PR — the bot never auto-merges.
+## Curated means correct, not audited
 
-## Related Pages
+The built-in Marketplace list going through Sharko's own review process
+means one specific thing: the Sharko project checked that the chart
+address is right, the defaults are sane, and the entry matches what the
+chart actually does. It does **not** mean Sharko has audited the addon's
+source code, tested it for security issues, or vouches for it being safe
+to run in your environment. Every entry's page shows its provenance — the
+chart repository, the project's own homepage — so you can go look for
+yourself.
 
-- [Third-party Catalog Sources](catalog-sources.md) — how to configure `SHARKO_CATALOG_URLS` and the git-native `marketplace-sources.yaml`
-- [Marketplace Sources Configuration](marketplace-sources-config.md) — reference for the `configuration/marketplace-sources.yaml` file schema
-- [Catalog Scan Runbook](../developer-guide/catalog-scan-runbook.md) — how the discovery bot works and how to review its PRs
-- [Managing Addons](../user-guide/addons.md) — add/remove/upgrade addons in the Catalog
-- [Marketplace](../user-guide/marketplace.md) — browse and discover addons in the UI
+The safety decision belongs to your org, made at the moment someone
+reviews and merges the pull request that adds the entry to `catalog.yaml`.
+That is the whole point of the two-word split: the Marketplace can show
+you things without vouching for them, because nothing in it can run until
+your own reviewer says yes.
+
+## Approval is the only door in — for every source, forever
+
+There is no automatic path from "exists in the Marketplace" to "running
+in your fleet." Not for the built-in list, not for any future source.
+Every addon, from anywhere, enters your org the same way: a pull request
+to `catalog.yaml` that a person on your team reviews and merges. There is
+no trusted-source bypass and no auto-sync option, and that will not
+change as more sources are added — it's the property that makes the
+Marketplace safe to browse in the first place.
+
+## Roadmap — documented, not built
+
+Two things are planned but do not exist yet in this release:
+
+- **Pointing the Marketplace at your own chart index.** Today the
+  Marketplace only shows the built-in curated list. Letting an org add
+  its own internal chart index as a second Marketplace source is planned,
+  not built.
+- **An automated discovery bot for your org's Catalog.** A bot that scans
+  upstream sources on your behalf and opens pull requests proposing
+  additions to *your* `catalog.yaml` is planned, not built. (This is
+  different from the internal tool that helps maintain Sharko's own
+  built-in list — see the
+  [Catalog Scan Runbook](../developer-guide/catalog-scan-runbook.md) — which
+  already exists but only touches this project's own curated file, never
+  your org's repository.)
+
+Whenever either ships, the approval-is-the-only-door rule above still
+applies without exception.
+
+## Related pages
+
+- [Contributing a Catalog Entry](../community/contributing-catalog-entries.md) — how to propose an addition to the built-in Marketplace list
+- [Third-party Catalog Sources](catalog-sources.md) — configuring extra Marketplace sources today
+- [Marketplace Sources Configuration](marketplace-sources-config.md) — the `configuration/marketplace-sources.yaml` file schema
+- [Catalog Scan Runbook](../developer-guide/catalog-scan-runbook.md) — the bot that helps maintain Sharko's own built-in list
+- [Managing Addons](../user-guide/addons.md) — day-to-day add / enable / upgrade workflow
+- [Marketplace](../user-guide/marketplace.md) — browsing and discovering addons in the UI

@@ -100,5 +100,5 @@ If you are upgrading from a version without this feature:
 ## Related Pages
 
 - [Third-party Catalog Sources](catalog-sources.md) — env var reference, SSRF guard, refresh cadence
-- [Marketplace Architecture](marketplace-architecture.md) — three-layer model (Marketplace / Catalog / Enablement)
+- [Marketplace Architecture](marketplace-architecture.md) — the Marketplace / Catalog split and what each word means
 - [Catalog Scan Runbook](../developer-guide/catalog-scan-runbook.md) — discovery bot that proposes new addons

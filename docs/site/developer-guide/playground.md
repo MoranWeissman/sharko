@@ -1,10 +1,12 @@
 # Local Playground
 
-> **Verified:** This page was rewritten by reading the current source
-> (`cmd/playground/*.go`, `Makefile`, `scripts/playground-*.sh`) after the
-> playground was reworked to go through Sharko's real API doors instead of
-> writing Sharko-format files straight into git (v4 Wave 2, story w2-q7). It
-> has NOT been re-walked end-to-end live in this pass — kind/docker/helm are
+> **Verified:** This page was updated by reading the current source
+> (`cmd/playground/realdoors.go`, `Makefile`, `scripts/playground-*.sh`)
+> after the playground gained a fourth real-API step — adding the addon to
+> the catalog before enabling it — to match the "catalog = the approved
+> list" rebuild (v4 Wave 2.5, design doc
+> `.bmad/output/architecture/2026-07-31-catalog-approved-model.md`). It has
+> NOT been re-walked end-to-end live in this pass — kind/docker/helm are
 > not available in the authoring sandbox. Treat the commands below as
 > accurate against the code as of this commit; a live re-walk (and a real
 > measured timing) is still owed before the next substantive edit.
@@ -56,21 +58,31 @@ splits cleanly into an infrastructure phase and a real-API-doors phase:
 
 6. Creates a `gitea`-typed Sharko connection via the REST API and sets it
    active.
-7. Calls `POST /api/v1/init` (seed-bootstrap). Sharko opens a real PR with
-   the v4 seed files; the playground merges that PR through Gitea's own REST
+7. **Seed-bootstrap.** Calls `POST /api/v1/init`. Sharko opens a real PR
+   with the v4 seed files (an empty `catalog.yaml` is not part of the seed
+   — the file does not exist yet, because a fresh repo starts with zero
+   approved addons); the playground merges that PR through Gitea's own REST
    API — the same action a human takes clicking "Merge" in the Gitea UI —
    then polls until Sharko has bootstrapped the ArgoCD root Application and
    confirmed it's synced.
-8. Registers each spoke via `POST /api/v1/clusters`. Sharko opens a real PR
-   per spoke; the playground merges it, then gives the cluster reconciler
+8. **Cluster registration.** Registers each spoke via
+   `POST /api/v1/clusters`. Sharko opens a real PR per spoke; the playground
+   merges it, then gives the cluster reconciler
    (`internal/clusterreconciler`) a window to pick up the merged
-   `fleet/connections.yaml` entry and create the ArgoCD cluster Secret
+   `managed-clusters.yaml` entry and create the ArgoCD cluster Secret
    (`app.kubernetes.io/managed-by: sharko`).
-9. Enables one addon (`metrics-server`) on the first spoke via
-   `POST /api/v1/v4/clusters/{name}/addons/{addon}`. Sharko opens a real PR;
-   the playground merges it and the ApplicationSet picks it up on its own
-   sync loop.
-10. Prints access instructions and runs a status snapshot.
+9. **Add to catalog.** Adds one addon (`metrics-server`) to the org's
+   approved list via `POST /api/v1/catalog/addons`. Sharko opens a real PR
+   that adds a full entry to `catalog.yaml`; the playground merges it. This
+   step exists because the enable gate is real: an addon that was never
+   added to the catalog cannot be enabled on any cluster, so the playground
+   proves that gate the same way a real org would clear it — approve first,
+   enable second.
+10. **Addon enable.** Enables the addon on the first spoke via
+    `POST /api/v1/v4/clusters/{name}/addons/{addon}`. Sharko opens a real
+    PR; the playground merges it and the ApplicationSet picks it up on its
+    own sync loop.
+11. Prints access instructions and runs a status snapshot.
 
 **GitFake backend note:** `PLAYGROUND_GIT_BACKEND=gitfake` keeps the older
 direct-seed path (a `managed-clusters.yaml` baked into the GitFake Pod at
@@ -150,7 +162,7 @@ kubectl -n argocd get applications -w
 
 The cluster reconciler (`internal/clusterreconciler`) is the single writer
 of addon labels on ArgoCD cluster Secrets. On this playground's v4 repo it
-converges cluster identity from `fleet/connections.yaml` and addon on/off
+converges cluster identity from `managed-clusters.yaml` and addon on/off
 state from `clusters/<name>.yaml` (both written via the real-doors flow
 above, never by the playground directly), emitting labels of the form
 `addons.sharko.dev/<addon>: enabled`. ArgoCD's ApplicationSet reads those
