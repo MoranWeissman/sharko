@@ -89,7 +89,9 @@ func kubectlConfigView(kubeconfig, context, jsonpath string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// kubectlCreateToken creates a short-lived (1h) bearer token for a ServiceAccount.
+// kubectlCreateToken creates a bearer token for a ServiceAccount, valid for
+// the given duration. Callers in this package pass SpokeTokenDuration
+// (constants.go) — 30 days, because the playground is a throwaway local env.
 func kubectlCreateToken(kubeconfig, kubectlContext, saName, duration string) (string, error) {
 	out, stderr, err := runCmd(15*time.Second, "kubectl", "--kubeconfig", kubeconfig,
 		"--context", kubectlContext,
