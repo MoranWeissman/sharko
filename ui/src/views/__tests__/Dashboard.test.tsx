@@ -522,6 +522,33 @@ describe('Applications card — segmented blocks at small N (Package 2 #4)', () 
     expect(screen.getByTitle('cert-manager on prod: Healthy')).toBeInTheDocument();
     expect(screen.getByTitle('external-dns on prod: Degraded')).toBeInTheDocument();
   });
+
+  // Walk finding (dashboard UX review 2026-08-01, H1 follow-through): with
+  // exactly 1 app, `flex-1` stretched the single block to a full-width red
+  // bar — the same panic slab this card was rebuilt to kill. Blocks are now
+  // a fixed width so one broken app reads as one small block.
+  it('renders a fixed-width block, not a stretched flex-1 bar, for a single app', async () => {
+    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
+      addons: [{ addon_name: 'metrics-server', cells: { prod: { health: 'Degraded' } } }],
+    });
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      applications: {
+        total: 1,
+        by_sync_status: { synced: 0, out_of_sync: 1, unknown: 0 },
+        by_health_status: { healthy: 0, progressing: 0, degraded: 1, unknown: 0 },
+      },
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('0/1 healthy')).toBeInTheDocument();
+    });
+
+    const block = screen.getByTitle('metrics-server on prod: Degraded');
+    expect(block.className).not.toContain('flex-1');
+    expect(block.className).toContain('w-8');
+  });
 });
 
 // Unreachable-banner honesty fix (Package 1): the ONLY signal is the

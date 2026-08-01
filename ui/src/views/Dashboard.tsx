@@ -109,7 +109,7 @@ function ApplicationsHealthCard({ healthy, total, entries, buckets, onClick }: A
           {entries.map((e) => (
             <div
               key={e.key}
-              className="h-2 flex-1 rounded-sm"
+              className="h-2 w-8 rounded-sm"
               style={{ backgroundColor: healthBlockColor(e.health) }}
               title={`${e.label}: ${e.health}`}
             />
