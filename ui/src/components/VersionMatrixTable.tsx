@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { RefreshCw, ArrowUpCircle } from 'lucide-react'
+import { RefreshCw, ArrowUpCircle, X } from 'lucide-react'
 import { api } from '@/services/api'
 import type { VersionMatrixResponse } from '@/services/models'
 import { LoadingState } from '@/components/LoadingState'
@@ -15,7 +15,19 @@ import { isNewerVersion } from '@/lib/utils'
 // GET /addons/version-matrix already re-points to the v4 data model
 // (cluster-addons/*.yaml + catalog/addons.yaml) for a v4 repo, same endpoint,
 // same response shape, no separate v3/v4 UI branch needed here.
-export function VersionMatrixTable() {
+//
+// outdatedOnly (WQ-2) — the Fleet Status Strip's Upgrades segment is now a
+// bare clickable number that deep-links here with
+// ?view=matrix&filter=outdated (AddonCatalog reads the param and passes
+// this down). When true, only rows with at least one cell behind the row's
+// newest_available are shown — the same isNewerVersion check that already
+// sorts outdated rows first. A dismissible chip above the table clears it.
+interface VersionMatrixTableProps {
+  outdatedOnly?: boolean
+  onClearOutdatedFilter?: () => void
+}
+
+export function VersionMatrixTable({ outdatedOnly = false, onClearOutdatedFilter }: VersionMatrixTableProps) {
   const [data, setData] = useState<VersionMatrixResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -57,6 +69,14 @@ export function VersionMatrixTable() {
       .map((entry) => entry)
   }, [data])
 
+  // outdatedOnly (WQ-2) — narrow to rows that already carry the
+  // "newer version available" marker. Sort order (outdated-first) is
+  // untouched either way.
+  const displayedAddons = useMemo(
+    () => (outdatedOnly ? sortedAddons.filter((entry) => entry.hasUpgrade) : sortedAddons),
+    [sortedAddons, outdatedOnly],
+  )
+
   if (loading) return <LoadingState message="Loading version matrix..." />
   if (error) return <ErrorState message={error} onRetry={load} />
   if (!data || data.addons.length === 0) {
@@ -69,9 +89,28 @@ export function VersionMatrixTable() {
 
   return (
     <div className="space-y-3">
+      {outdatedOnly && (
+        <div className="flex items-center gap-2">
+          <span
+            data-testid="matrix-outdated-chip"
+            className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:ring-amber-800"
+          >
+            outdated only
+            <button
+              type="button"
+              onClick={onClearOutdatedFilter}
+              aria-label="Clear the outdated filter"
+              className="rounded-full hover:text-amber-900 dark:hover:text-amber-200"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
-          {data.addons.length} addon{data.addons.length === 1 ? '' : 's'} across {data.clusters.length} cluster
+          {displayedAddons.length} addon{displayedAddons.length === 1 ? '' : 's'} across {data.clusters.length} cluster
           {data.clusters.length === 1 ? '' : 's'}
         </p>
         <button
@@ -84,6 +123,12 @@ export function VersionMatrixTable() {
         </button>
       </div>
 
+      {displayedAddons.length === 0 ? (
+        <div className="rounded-lg border border-teal-200 bg-teal-50 p-6 text-center text-sm text-teal-700 dark:border-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
+          Nothing outdated — every addon is on its newest known version.
+        </div>
+      ) : (
+      <>
       <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] dark:ring-gray-700">
         <table className="min-w-full divide-y divide-[#c0ddf0] dark:divide-gray-700 text-sm">
           <thead className="bg-[#e0f0ff] dark:bg-gray-900">
@@ -108,7 +153,7 @@ export function VersionMatrixTable() {
             </tr>
           </thead>
           <tbody className="divide-y divide-[#d6eeff] dark:divide-gray-800">
-            {sortedAddons.map(({ row, hasUpgrade }) => (
+            {displayedAddons.map(({ row, hasUpgrade }) => (
               <tr key={row.addon_name} className="bg-[#f0f7ff] dark:bg-gray-800">
                 <td className="sticky left-0 z-10 bg-[#f0f7ff] px-3 py-2 font-medium text-[#0a2a4a] dark:bg-gray-800 dark:text-gray-100">
                   <div className="flex items-center gap-1.5">
@@ -166,6 +211,8 @@ export function VersionMatrixTable() {
         </table>
       </div>
       <p className="text-xs text-[#5a8aaa] dark:text-gray-500">* differs from the catalog default version</p>
+      </>
+      )}
     </div>
   )
 }
