@@ -192,6 +192,11 @@ func TestGetAddonSecretProviderConfig(t *testing.T) {
 	if err := store.SetActiveConnection("test"); err != nil {
 		t.Fatalf("SetActiveConnection: %v", err)
 	}
+	// This test writes to the store directly (bypassing svc.Create /
+	// svc.SetActive) to set up fixtures, so it must also drop svc's perf S1
+	// active-connection cache itself — a real caller always goes through
+	// svc.Create/Delete/SetActive, which invalidate on every mutation.
+	svc.InvalidateActiveCache()
 
 	got = svc.GetAddonSecretProviderConfig()
 	if got == nil {
@@ -206,6 +211,7 @@ func TestGetAddonSecretProviderConfig(t *testing.T) {
 	if err := store.SaveConnection(conn); err != nil {
 		t.Fatalf("SaveConnection: %v", err)
 	}
+	svc.InvalidateActiveCache() // same reason as above — direct store write
 	got = svc.GetAddonSecretProviderConfig()
 	if got != nil {
 		t.Errorf("expected nil when AddonSecretProvider not set, got %+v", got)
