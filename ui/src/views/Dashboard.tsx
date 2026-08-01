@@ -5,7 +5,7 @@ import {
   ArrowUpCircle, Clock, ChevronRight, ShieldAlert, RefreshCw,
   Hourglass, Store, PlusCircle
 } from 'lucide-react';
-import { api } from '@/services/api';
+import { api, extractArgocdVersionString } from '@/services/api';
 import type { DashboardStats, SyncActivityEntry, ClustersResponse, VersionMatrixResponse } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { WaveDecoration } from '@/components/WaveDecoration';
@@ -404,7 +404,14 @@ export function Dashboard() {
       setHomeCluster(homeClusterData);
       setSharkoVersion(healthData?.version);
       setArgocdConnected(!!configData?.argocd?.connected);
-      setArgocdVersion(configData?.argocd?.version);
+      // Defensive: api.getConfig() already normalizes argocd.version to a
+      // plain string (the server sends ArgoCD's full version-info object,
+      // not a string — see extractArgocdVersionString in services/api.ts).
+      // Re-normalizing here too means a non-string ever reaching this line
+      // (e.g. a mocked/older api client) still can't crash the render — it
+      // becomes "—" via HomeClusterCard's own fallback instead of a raw
+      // object hitting JSX.
+      setArgocdVersion(extractArgocdVersionString(configData?.argocd?.version));
       setUptime(fleetData?.uptime);
       setUpgrades(summarizeUpgrades(matrixData));
       // Trigger an extra refresh of the unified state so Dashboard reflects

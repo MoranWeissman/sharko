@@ -5,6 +5,8 @@ import {
   deregisterCluster,
   unadoptCluster,
   adoptClusters,
+  api,
+  extractArgocdVersionString,
 } from '../api'
 
 /**
@@ -138,5 +140,98 @@ describe('BUG-039: confirm dialogs send yes:true in request body', () => {
     expect(body.yes).toBeUndefined()
     expect(body.clusters).toEqual(['prod-eu'])
     expect(body.auto_merge).toBe(true)
+  })
+})
+
+describe('dashboard-crash: /config argocd.version arrives as ArgoCD\'s full version object, not a string', () => {
+  beforeEach(() => {
+    sessionStorage.setItem(TOKEN_KEY, 'test-token')
+    vi.restoreAllMocks()
+  })
+
+  afterEach(() => {
+    sessionStorage.removeItem(TOKEN_KEY)
+  })
+
+  // This is the real wire shape: internal/api/system.go's handleGetConfig
+  // stores the map returned by internal/argocd/client.go's GetVersion
+  // (ArgoCD's /api/version response) verbatim into argocd.version. It is
+  // never a plain string. A UI that types this field as `string` and hands
+  // it straight to JSX white-screens (React error #31: object as child).
+  const realArgocdVersionPayload = {
+    BuildDate: '2026-06-01T00:00:00Z',
+    Compiler: 'gc',
+    GitCommit: 'abc123',
+    GitTag: 'v2.11.0',
+    GitTreeState: 'clean',
+    GoVersion: 'go1.22.0',
+    HelmVersion: 'v3.14.0',
+    JsonnetVersion: 'v0.20.0',
+    KubectlVersion: 'v1.29.0',
+    KustomizeVersion: 'v5.3.0',
+    Platform: 'linux/amd64',
+    Version: 'v2.11.0',
+  }
+
+  it('getConfig() extracts a plain version string from the real object payload', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      mockResponse(200, {
+        repo_paths: { cluster_values: '', global_values: '', charts: '', bootstrap: '' },
+        gitops: { pr_auto_merge: false, branch_prefix: '', commit_prefix: '', base_branch: '' },
+        argocd: { connected: true, version: realArgocdVersionPayload },
+      }),
+    )
+
+    const config = await api.getConfig()
+
+    expect(config.argocd.connected).toBe(true)
+    expect(config.argocd.version).toBe('v2.11.0')
+    expect(typeof config.argocd.version).toBe('string')
+  })
+
+  it('getConfig() still accepts a plain string for back-compat', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      mockResponse(200, {
+        repo_paths: { cluster_values: '', global_values: '', charts: '', bootstrap: '' },
+        gitops: { pr_auto_merge: false, branch_prefix: '', commit_prefix: '', base_branch: '' },
+        argocd: { connected: true, version: '2.11.0' },
+      }),
+    )
+
+    const config = await api.getConfig()
+    expect(config.argocd.version).toBe('2.11.0')
+  })
+
+  it('getConfig() returns undefined version when disconnected (no version key at all)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      mockResponse(200, {
+        repo_paths: { cluster_values: '', global_values: '', charts: '', bootstrap: '' },
+        gitops: { pr_auto_merge: false, branch_prefix: '', commit_prefix: '', base_branch: '' },
+        argocd: { connected: false },
+      }),
+    )
+
+    const config = await api.getConfig()
+    expect(config.argocd.connected).toBe(false)
+    expect(config.argocd.version).toBeUndefined()
+  })
+
+  describe('extractArgocdVersionString', () => {
+    it('pulls Version out of the real object shape', () => {
+      expect(extractArgocdVersionString(realArgocdVersionPayload)).toBe('v2.11.0')
+    })
+
+    it('passes a plain string through unchanged', () => {
+      expect(extractArgocdVersionString('2.11.0')).toBe('2.11.0')
+    })
+
+    it('returns undefined for an object with no Version key', () => {
+      expect(extractArgocdVersionString({ BuildDate: '2026-06-01T00:00:00Z' })).toBeUndefined()
+    })
+
+    it('returns undefined for null/undefined', () => {
+      expect(extractArgocdVersionString(undefined)).toBeUndefined()
+      expect(extractArgocdVersionString(null)).toBeUndefined()
+    })
   })
 })

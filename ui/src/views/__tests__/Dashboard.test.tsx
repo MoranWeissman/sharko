@@ -40,6 +40,19 @@ vi.mock('@/services/api', () => ({
   fetchMergedPRs: vi.fn().mockResolvedValue({ prs: [], limit: 20 }),
   refreshPR: vi.fn().mockResolvedValue({ status: 'ok' }),
   fetchAuditLog: vi.fn().mockResolvedValue({ entries: [] }),
+  // Dashboard.tsx defensively re-normalizes argocd.version through this
+  // helper (belt-and-suspenders on top of api.getConfig()'s own
+  // normalization — see services/api.ts). Since this whole module is
+  // mocked, the mock has to provide the real implementation too, not a
+  // stub, or Dashboard's defensive coercion silently no-ops in tests.
+  extractArgocdVersionString: (raw: unknown): string | undefined => {
+    if (typeof raw === 'string') return raw;
+    if (raw && typeof raw === 'object') {
+      const version = (raw as { Version?: unknown }).Version;
+      if (typeof version === 'string') return version;
+    }
+    return undefined;
+  },
   api: {
     getObservability: vi.fn().mockResolvedValue(null),
     getVersionMatrix: vi.fn().mockResolvedValue(null),
@@ -801,5 +814,70 @@ describe('Home-cluster identity card wiring (Package 3)', () => {
     });
     expect(screen.getAllByText('—').length).toBeGreaterThan(0);
     expect(screen.getByText('only available when running in-cluster')).toBeInTheDocument();
+  });
+
+  // Regression: live dashboard white-screened with React error #31 (object
+  // as child). Root cause was api.getConfig() advertising argocd.version as
+  // a `string` when the server (internal/api/system.go handleGetConfig)
+  // actually sends ArgoCD's full /api/version object verbatim. api.ts now
+  // normalizes that in getConfig() itself, but this test mocks api.getConfig
+  // directly (like the rest of this file), so it exercises Dashboard's own
+  // defensive extractArgocdVersionString() call instead — proving the render
+  // survives even if a caller of getConfig ever regresses to the raw shape.
+  it('never crashes when argocd.version arrives as the real ArgoCD version object, and shows "—" when it lacks a Version key', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getHomeCluster as ReturnType<typeof vi.fn>).mockResolvedValue({
+      available: true,
+      kubernetes_version: 'v1.29.0',
+      node_count: 3,
+      nodes_ready: 3,
+    });
+    (api.health as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'healthy', version: '4.2.0' });
+    (api.getConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      argocd: {
+        connected: true,
+        // The real wire shape: no Version key present (e.g. an older ArgoCD
+        // build that doesn't report one). Must degrade to "—", not throw.
+        version: { BuildDate: '2026-06-01T00:00:00Z', GitCommit: 'abc123' },
+      },
+    });
+    (api.getFleetStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ server_version: '4.2.0', uptime: '3h12m' });
+
+    expect(() => renderDashboard()).not.toThrow();
+
+    await waitFor(() => {
+      expect(screen.getByText("Sharko's home cluster")).toBeInTheDocument();
+    });
+    // ArgoCD version cell falls back to "—" since the mocked object has no
+    // Version key — and critically, the object itself never reached JSX.
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
+
+  it('renders the extracted Version string when argocd.version arrives as the real ArgoCD version object', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getHomeCluster as ReturnType<typeof vi.fn>).mockResolvedValue({
+      available: true,
+      kubernetes_version: 'v1.29.0',
+      node_count: 3,
+      nodes_ready: 3,
+    });
+    (api.health as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'healthy', version: '4.2.0' });
+    (api.getConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      argocd: {
+        connected: true,
+        version: {
+          BuildDate: '2026-06-01T00:00:00Z',
+          GitCommit: 'abc123',
+          Version: 'v2.11.0',
+        },
+      },
+    });
+    (api.getFleetStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ server_version: '4.2.0', uptime: '3h12m' });
+
+    expect(() => renderDashboard()).not.toThrow();
+
+    expect(await screen.findByText('v2.11.0')).toBeInTheDocument();
   });
 });
