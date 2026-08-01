@@ -187,7 +187,13 @@ describe('ClustersOverview', () => {
     expect(screen.getByText('All Clusters')).toBeInTheDocument();
     expect(screen.getAllByText('Connected').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Disconnected').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Connecting')).toBeInTheDocument();
+    // v4 walk-findings W2, item 2: this lane's canonical vocabulary label
+    // (clusterStatus.ts) is "Not connected" — "Connecting" implied a
+    // transient wait that this state (ArgoCD has no connection at all) is
+    // not. "Not connected" also appears in the on-demand legend strip, so
+    // (like Connected/Disconnected above) this asserts at-least-one, not
+    // exactly-one.
+    expect(screen.getAllByText('Not connected').length).toBeGreaterThanOrEqual(1);
     // "Available to manage" appears in both the stat card and the legend.
     expect(screen.getAllByText('Available to manage').length).toBeGreaterThanOrEqual(1);
     // The old competing names are gone (including pre-LW-11 "Not managed").

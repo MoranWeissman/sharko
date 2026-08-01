@@ -26,14 +26,24 @@ vi.mock('react-router-dom', async () => {
 
 const mockAddToCatalog = vi.fn()
 const mockShowToast = vi.fn()
+// v4 walk-findings W2, item 5: the pending-add-PR check uses the standalone
+// fetchTrackedPRs export, not the `api` object. Defaults to "no open PRs"
+// so the existing happy-path tests are unaffected; per-test overrides use
+// vi.mocked(...) where needed.
+const mockFetchTrackedPRs = vi.fn().mockResolvedValue({ prs: [] })
 
 vi.mock('@/components/ToastNotification', () => ({
   showToast: (...args: unknown[]) => mockShowToast(...args),
 }))
 
 vi.mock('@/services/api', () => ({
+  fetchTrackedPRs: (...args: unknown[]) => mockFetchTrackedPRs(...args),
   api: {
     addToCatalog: (...args: unknown[]) => mockAddToCatalog(...args),
+    // v4 walk-findings W2, item 4: the optional "also enable on a cluster"
+    // selector fetches managed clusters on mount (defensive — component
+    // guards with typeof-check, but wiring it keeps the fixture honest).
+    getClusters: vi.fn().mockResolvedValue({ clusters: [] }),
     getCuratedCatalogEntry: vi.fn().mockResolvedValue({
       name: 'prometheus',
       description: 'Monitoring',
@@ -278,5 +288,182 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
     await waitForActionPanel()
 
     expect(screen.queryByText('What you need to know')).not.toBeInTheDocument()
+  })
+})
+
+// v4 walk-findings W2, item 3: Preview/Add used to go quietly disabled
+// forever whenever the versions fetch failed — formValid requires a
+// version, and nothing near the buttons said why it was empty.
+describe('MarketplaceAddonDetail — disabled-reason banner (v4 walk-findings W2, item 3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    sessionStorage.clear()
+  })
+
+  it('names the reason and offers a Retry when the version list fails to load', async () => {
+    vi.mocked(api.listCuratedCatalogVersions).mockRejectedValueOnce(
+      new Error('network error'),
+    )
+    renderDetail()
+
+    // The buttons stay disabled (no version resolved), and the reason
+    // renders right next to them instead of a silent dead end.
+    await waitFor(() => {
+      expect(
+        screen.getByText(/pick a version first — the version list failed to load/i),
+      ).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /add to catalog/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /^preview$/i })).toBeDisabled()
+
+    // Retry re-fires the exact same fetch — recovers once it succeeds.
+    vi.mocked(api.listCuratedCatalogVersions).mockResolvedValueOnce({
+      addon: 'prometheus',
+      chart: 'kube-prometheus-stack',
+      repo: 'https://prometheus-community.github.io/helm-charts',
+      versions: [{ version: '45.0.0', prerelease: false }],
+      latest_stable: '45.0.0',
+      cached_at: new Date().toISOString(),
+    })
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /add to catalog/i })).toBeEnabled()
+    })
+    expect(
+      screen.queryByText(/pick a version first/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('shows a plain "pick a version" reason (no Retry) when there simply is no version yet', async () => {
+    // Fetch succeeds, but the chart has no versions to auto-select — the
+    // honest, non-error case the banner also has to cover.
+    vi.mocked(api.listCuratedCatalogVersions).mockResolvedValueOnce({
+      addon: 'prometheus',
+      chart: 'kube-prometheus-stack',
+      repo: 'https://prometheus-community.github.io/helm-charts',
+      versions: [],
+      cached_at: new Date().toISOString(),
+    })
+    renderDetail()
+
+    await waitFor(() => {
+      expect(screen.getByText(/^pick a version first\.$/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/failed to load/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument()
+  })
+})
+
+// v4 walk-findings W2, item 4 — the OPTIONAL add+enable combo on the
+// Marketplace add door, mirroring the cluster-side V4EnableAddonDialog.
+describe('MarketplaceAddonDetail — add+enable combo (v4 walk-findings W2, item 4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    sessionStorage.clear()
+    mockFetchTrackedPRs.mockResolvedValue({ prs: [] })
+  })
+
+  it('offers no cluster by default and does not send enable_on_cluster', async () => {
+    vi.mocked(api.getClusters).mockResolvedValue({
+      clusters: [{ name: 'prod-eu', labels: {}, connection_status: 'connected' }],
+    })
+    mockAddToCatalog.mockResolvedValue({ added: ['prometheus'], enabled: [], pr_id: 8, pr_url: 'https://gh/pr/8', merged: false })
+    renderDetail()
+    await waitForActionPanel()
+
+    const select = await screen.findByLabelText(/also enable on a cluster/i)
+    expect(select).toHaveValue('')
+
+    fireEvent.click(screen.getByRole('button', { name: /add to catalog/i }))
+    await waitFor(() => expect(mockAddToCatalog).toHaveBeenCalled())
+    const arg = mockAddToCatalog.mock.calls[0][0]
+    expect(arg.enable_on_cluster).toBeUndefined()
+    expect(arg.yes).toBeUndefined()
+  })
+
+  it('picking a cluster sends the combo payload and names both PRs happening in one', async () => {
+    vi.mocked(api.getClusters).mockResolvedValue({
+      clusters: [{ name: 'prod-eu', labels: {}, connection_status: 'connected' }],
+    })
+    mockAddToCatalog.mockResolvedValue({
+      added: ['prometheus'],
+      enabled: ['prometheus'],
+      cluster: 'prod-eu',
+      pr_id: 9,
+      pr_url: 'https://gh/pr/9',
+      merged: false,
+    })
+    renderDetail()
+    await waitForActionPanel()
+
+    const select = await screen.findByLabelText(/also enable on a cluster/i)
+    fireEvent.change(select, { target: { value: 'prod-eu' } })
+
+    expect(screen.getByText(/one pull request will add/i)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /add to catalog/i }))
+    await waitFor(() => expect(mockAddToCatalog).toHaveBeenCalled())
+    const arg = mockAddToCatalog.mock.calls[0][0]
+    expect(arg.enable_on_cluster).toBe('prod-eu')
+    expect(arg.yes).toBe(true)
+  })
+
+  it('does not render the selector when there are no managed clusters', async () => {
+    vi.mocked(api.getClusters).mockResolvedValue({ clusters: [] })
+    renderDetail()
+    await waitForActionPanel()
+
+    expect(screen.queryByLabelText(/also enable on a cluster/i)).not.toBeInTheDocument()
+  })
+})
+
+// v4 walk-findings W2, item 5 — an addon with an open catalog-add PR is
+// invisible on GET /catalog/addons (merged-branch-only read), so the
+// Marketplace detail page must check the tracked-PR list instead of just
+// the catalog list, and must not offer a second, competing add.
+describe('MarketplaceAddonDetail — pending add-PR (v4 walk-findings W2, item 5)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    sessionStorage.clear()
+    vi.mocked(api.getClusters).mockResolvedValue({ clusters: [] })
+  })
+
+  it('shows the pending state and PR link instead of the add form, and does not call addToCatalog', async () => {
+    mockFetchTrackedPRs.mockResolvedValue({
+      prs: [
+        {
+          pr_id: 42,
+          pr_url: 'https://gh/pr/42',
+          pr_branch: 'sharko/catalog-add-prometheus',
+          pr_title: 'sharko: add prometheus to catalog',
+          addon: 'prometheus',
+          operation: 'catalog-add',
+          user: 'tester',
+          source: 'ui',
+          created_at: new Date().toISOString(),
+          last_status: 'open',
+          last_polled_at: new Date().toISOString(),
+        },
+      ],
+    })
+    renderDetail()
+
+    expect(await screen.findByText(/already has an add-PR open/i)).toBeInTheDocument()
+    const link = screen.getByRole('link', { name: /view pr #42/i })
+    expect(link).toHaveAttribute('href', 'https://gh/pr/42')
+
+    // The form itself must not render — no duplicate-add door while pending.
+    expect(screen.queryByLabelText(/display name/i)).not.toBeInTheDocument()
+    expect(mockAddToCatalog).not.toHaveBeenCalled()
+  })
+
+  it('a non-pending addon renders the ordinary add form', async () => {
+    mockFetchTrackedPRs.mockResolvedValue({ prs: [] })
+    renderDetail()
+    await waitForActionPanel()
+
+    expect(screen.queryByText(/already has an add-PR open/i)).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/display name/i)).toBeInTheDocument()
   })
 })

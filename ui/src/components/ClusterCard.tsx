@@ -33,7 +33,10 @@ export function ClusterCard({
   totalCount,
 }: ClusterCardProps) {
   const navigate = useNavigate()
-  const pill = getClusterConnectionState(connectionStatus)
+  // totalCount is this cluster's addon count — pass it through so a
+  // zero-addon cluster gets the honest "No addons yet" pill instead of a
+  // "Connecting…" that will never resolve (v4 walk-findings W2, item 2).
+  const pill = getClusterConnectionState(connectionStatus, { enabledAddonCount: totalCount })
   const kind = classifyClusterConnection(connectionStatus)
 
   // LW-3: derive a plain-English reason for why this cluster needs attention

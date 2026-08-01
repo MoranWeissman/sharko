@@ -60,6 +60,13 @@ export interface ClusterStatusSummaryProps {
   testErrorCode?: string;
   /** 'user' when the ArgoCD cluster secret is self-managed. */
   connectionManagedBy?: string;
+  /**
+   * Enabled-addon count for this cluster, when known. Pass exactly 0 so a
+   * cluster with nothing enabled yet gets the honest "No addons yet"
+   * ArgoCD-connection part instead of a "Connecting…" that will never
+   * resolve (v4 walk-findings W2, item 2). Omit when unknown.
+   */
+  enabledAddonCount?: number;
 }
 
 // Severity → pill + dot styling. ONE color per severity (finding D3):
@@ -111,7 +118,9 @@ export function clusterStatusParts(props: ClusterStatusSummaryProps): ClusterSta
   const parts: ClusterStatusPart[] = [];
 
   // 1. ArgoCD's own connection — always present.
-  const conn = getClusterConnectionState(props.connectionStatus);
+  const conn = getClusterConnectionState(props.connectionStatus, {
+    enabledAddonCount: props.enabledAddonCount,
+  });
   parts.push({
     who: ARGOCD_CONN_LABEL,
     whoTooltip: ARGOCD_CONN_TOOLTIP,

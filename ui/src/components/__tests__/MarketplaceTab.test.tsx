@@ -61,6 +61,11 @@ const getReadmeMock = vi.fn().mockResolvedValue({ readme: '', source: 'artifacth
 const addAddonMock = vi.fn()
 
 vi.mock('@/services/api', () => ({
+  // v4 walk-findings W2, item 5: the pending-add-PR check (AddonCatalog,
+  // MarketplaceBrowseTab, MarketplaceAddonDetail) uses this standalone
+  // export. Defaults to "no open PRs" so it's a no-op for tests that don't
+  // care about the pending lane.
+  fetchTrackedPRs: vi.fn().mockResolvedValue({ prs: [] }),
   api: {
     listCuratedCatalog: () => listMock(),
     listCuratedCatalogVersions: (...args: unknown[]) => listVersionsMock(...args),
@@ -68,6 +73,9 @@ vi.mock('@/services/api', () => ({
     getCuratedCatalogReadme: (...args: unknown[]) => getReadmeMock(...args),
     getAddonCatalog: () => getCatalogMock(),
     getMe: () => getMeMock(),
+    // v4 walk-findings W2, item 4: the optional "also enable on a cluster"
+    // selector fetches managed clusters on mount.
+    getClusters: vi.fn().mockResolvedValue({ clusters: [] }),
   },
   addAddon: (...args: unknown[]) => addAddonMock(...args),
   isAddonAlreadyExistsError: (e: unknown) =>

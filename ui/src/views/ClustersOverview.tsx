@@ -1019,8 +1019,12 @@ export function ClustersOverview() {
       icon: <XCircle className="h-5 w-5" />,
     },
     {
+      // v4 walk-findings W2, item 2: this lane counts clusters in the
+      // canonical 'missing' state (clusterStatus.ts), whose one true label
+      // is "Not connected" (amber, needs attention) — "Connecting" implied
+      // a transient wait that this state is not.
       key: 'missing_from_argocd',
-      title: 'Connecting',
+      title: 'Not connected',
       value: healthStats?.missing_from_argocd ?? 0,
       color: 'default',
       icon: <HelpCircle className="h-5 w-5" />,
@@ -2019,6 +2023,11 @@ export function ClustersOverview() {
                 {managedClusters.map((cluster) => {
                   const isInCluster = cluster.name === 'in-cluster';
                   const testResult = testResults[cluster.name];
+                  // v4 walk-findings W2, item 2: same enabled-addon-count
+                  // signal already used for the "Addons" column, reused so
+                  // the connection pill can tell a zero-addon cluster apart
+                  // from a genuinely mid-registration one.
+                  const rowAddonCount = Object.values(cluster.labels).filter((v) => v === 'enabled').length;
                   return (
                     <tr
                       key={cluster.name}
@@ -2050,13 +2059,14 @@ export function ClustersOverview() {
                           testFailing={cluster.test_failing}
                           testErrorCode={cluster.test_error_code}
                           connectionManagedBy={cluster.connection_managed_by}
+                          enabledAddonCount={rowAddonCount}
                         />
                       </td>
                       <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
                         {cluster.server_version ?? '--'}
                       </td>
                       <td className="px-6 py-3 text-[#2a5a7a] dark:text-gray-400">
-                        {Object.values(cluster.labels).filter((v) => v === 'enabled').length}
+                        {rowAddonCount}
                       </td>
                       <td className="px-6 py-3" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-2">
@@ -2169,6 +2179,7 @@ export function ClustersOverview() {
                       testFailing={cluster.test_failing}
                       testErrorCode={cluster.test_error_code}
                       connectionManagedBy={cluster.connection_managed_by}
+                      enabledAddonCount={addonCount}
                     />
                   </div>
                   <p className="mb-2 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">

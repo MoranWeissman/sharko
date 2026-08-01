@@ -43,6 +43,12 @@ export interface MarketplaceCardProps {
    *  catalog.yaml. The card flips to a "View in catalog" affordance
    *  with a green check badge and tinted styling. */
   inCatalog?: boolean
+  /** When true (and not already inCatalog), an add-PR is already open for
+   *  this addon — v4 walk-findings W2, item 5. Shows a "Pending" badge
+   *  instead of the default affordance; the card still opens the detail
+   *  view (not the addon page — that 404s until the PR merges), where the
+   *  panel explains the pending PR instead of offering a duplicate add. */
+  pending?: boolean
   /** Optional `CatalogSourceRecord` matching `entry.source`. Powers the
    *  SourceBadge tooltip's last-fetched + status lines. Cards without a
    *  parent-provided record still render a badge — the tooltip just lacks
@@ -77,6 +83,7 @@ export function MarketplaceCard({
   entry,
   onOpen,
   inCatalog = false,
+  pending = false,
   sourceRecord,
 }: MarketplaceCardProps) {
   const navigate = useNavigate()
@@ -94,7 +101,7 @@ export function MarketplaceCard({
     `license ${entry.license}`,
     entry.curated_by.length > 0 ? `curated by ${entry.curated_by.join(', ')}` : '',
     entry.deprecated ? 'deprecated' : '',
-    inCatalog ? 'already in your catalog' : '',
+    inCatalog ? 'already in your catalog' : pending ? 'add-PR pending' : '',
   ]
     .filter(Boolean)
     .join('. ')
@@ -169,6 +176,14 @@ export function MarketplaceCard({
             >
               <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
               In your catalog
+            </span>
+          )}
+          {!inCatalog && pending && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-[#1a4a6a] dark:bg-gray-700 dark:text-gray-300"
+              title="An add-PR is already open for this addon"
+            >
+              Pending
             </span>
           )}
           {entry.deprecated && (
@@ -248,12 +263,17 @@ export function MarketplaceCard({
       </div>
 
       {/* Footer hint — flips between "Open" (addable; opens in-page detail
-          view) and "View in your catalog" (already installed). Always
-          visible when in-catalog so the affordance is obvious without
+          view), "View in your catalog" (already installed), and "Pending —
+          view details" (add-PR open, v4 walk-findings W2 item 5). Always
+          visible for the first two so the affordance is obvious without
           needing hover. */}
       {inCatalog ? (
         <span className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-green-700 dark:text-green-400">
           View in your catalog <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </span>
+      ) : pending ? (
+        <span className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#1a4a6a] dark:text-gray-300">
+          Pending — view details <ExternalLink className="h-3 w-3" aria-hidden="true" />
         </span>
       ) : (
         <span className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-teal-700 opacity-0 transition-opacity group-hover:opacity-100 group-focus:opacity-100 dark:text-teal-400">

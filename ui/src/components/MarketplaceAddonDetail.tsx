@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -13,7 +13,7 @@ import {
   Star,
   Tag,
 } from 'lucide-react'
-import { api } from '@/services/api'
+import { api, fetchTrackedPRs } from '@/services/api'
 import type {
   AddToCatalogResult,
   CatalogEntry,
@@ -21,6 +21,7 @@ import type {
   CatalogSourceRecord,
   CatalogVersionsResponse,
   DryRunResult,
+  TrackedPR,
 } from '@/services/models'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
@@ -32,6 +33,7 @@ import { VersionPicker } from '@/components/VersionPicker'
 import { showToast } from '@/components/ToastNotification'
 import {
   DryRunPreview,
+  EnableOnClusterField,
   SubmitErrorBanner,
   SubmitPhaseBanner,
   SubmitResultBanner,
@@ -122,6 +124,27 @@ export function MarketplaceAddonDetail({
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitResult, setSubmitResult] = useState<AddToCatalogResult | null>(null)
+
+  // v4 walk-findings W2, item 4 — the OPTIONAL "also enable on a cluster"
+  // combo, mirrored from the same add door in AddonCatalog.tsx. Default is
+  // always "Don't enable yet" — never pre-selected.
+  const [enableOnCluster, setEnableOnCluster] = useState('')
+  const [managedClusterNames, setManagedClusterNames] = useState<string[]>([])
+
+  // v4 walk-findings W2, item 5 — open catalog-add PRs. Both catalog reads
+  // only see the merged base branch, so an addon mid-PR is otherwise
+  // invisible here and the "Add to catalog" panel would offer a duplicate
+  // add.
+  const [pendingAddonPRs, setPendingAddonPRs] = useState<TrackedPR[]>([])
+  const pendingAddonNames = useMemo(
+    () =>
+      new Set(
+        pendingAddonPRs
+          .map((pr) => pr.addon?.trim().toLowerCase())
+          .filter((n): n is string => !!n),
+      ),
+    [pendingAddonPRs],
+  )
 
   const navigate = useNavigate()
 
@@ -309,50 +332,56 @@ export function MarketplaceAddonDetail({
   }, [addonName, source])
 
   // ─── Load chart versions for the picker ──────────────────────────────────
-  useEffect(() => {
-    if (!entry) return
-    let cancelled = false
-    setVersionsLoading(true)
-    setVersionsError(null)
-    setVersion('')
-    setVersionTouched(false)
+  // Extracted to a stable function (not just inline in the effect) so a
+  // "Retry" button can re-run the exact same fetch after a failure — see
+  // the disabled-reason banner near the action buttons below (v4
+  // walk-findings W2, item 3: the Preview/Add buttons used to go quietly
+  // disabled forever when this fetch failed, with no visible reason).
+  // versionLoadSeqRef guards against a stale response (from the entry-load
+  // effect or a slow retry) landing after a newer call has already started.
+  const versionLoadSeqRef = useRef(0)
 
-    if (source === 'curated') {
-      // Curated entries → use the cached /catalog/addons/{name}/versions endpoint.
-      api
-        .listCuratedCatalogVersions(entry.name)
-        .then((resp) => {
-          if (cancelled) return
+  const loadVersions = useCallback(
+    async (e: CatalogEntry) => {
+      const seq = ++versionLoadSeqRef.current
+      const stillCurrent = () => versionLoadSeqRef.current === seq
+      setVersionsLoading(true)
+      setVersionsError(null)
+      setVersion('')
+      setVersionTouched(false)
+
+      if (source === 'curated') {
+        // Curated entries → use the cached /catalog/addons/{name}/versions endpoint.
+        try {
+          const resp = await api.listCuratedCatalogVersions(e.name)
+          if (!stillCurrent()) return
           setVersionsResp(resp)
           if (resp.latest_stable) setVersion(resp.latest_stable)
           else if (resp.versions[0]) setVersion(resp.versions[0].version)
-        })
-        .catch((e: unknown) => {
-          if (cancelled) return
+        } catch (err: unknown) {
+          if (!stillCurrent()) return
           setVersionsError(
-            e instanceof Error ? e.message : 'Failed to load chart versions',
+            err instanceof Error ? err.message : 'Failed to load chart versions',
           )
-        })
-        .finally(() => {
-          if (!cancelled) setVersionsLoading(false)
-        })
-    } else {
-      // AH entries → use /catalog/validate so we get the chart's versions
-      // without needing a curated-catalog entry. The validate response uses a
-      // flat versions[] shape; we re-wrap it into CatalogVersionsResponse so
-      // the shared VersionPicker doesn't need to know about either origin.
-      api
-        .validateCatalogChart(entry.repo, entry.chart)
-        .then((resp) => {
-          if (cancelled) return
+        } finally {
+          if (stillCurrent()) setVersionsLoading(false)
+        }
+      } else {
+        // AH entries → use /catalog/validate so we get the chart's versions
+        // without needing a curated-catalog entry. The validate response uses a
+        // flat versions[] shape; we re-wrap it into CatalogVersionsResponse so
+        // the shared VersionPicker doesn't need to know about either origin.
+        try {
+          const resp = await api.validateCatalogChart(e.repo, e.chart)
+          if (!stillCurrent()) return
           if (!resp.valid || !resp.versions) {
             setVersionsError(resp.message || 'Repo or chart not reachable')
             return
           }
           const wrapped: CatalogVersionsResponse = {
-            addon: entry.name,
-            chart: entry.chart,
-            repo: entry.repo,
+            addon: e.name,
+            chart: e.chart,
+            repo: e.repo,
             versions: resp.versions,
             latest_stable: resp.latest_stable,
             cached_at: resp.cached_at ?? new Date().toISOString(),
@@ -363,21 +392,31 @@ export function MarketplaceAddonDetail({
           } else if (wrapped.versions[0]) {
             setVersion(wrapped.versions[0].version)
           }
-        })
-        .catch((e: unknown) => {
-          if (cancelled) return
+        } catch (err: unknown) {
+          if (!stillCurrent()) return
           setVersionsError(
-            e instanceof Error ? e.message : 'Failed to load chart versions',
+            err instanceof Error ? err.message : 'Failed to load chart versions',
           )
-        })
-        .finally(() => {
-          if (!cancelled) setVersionsLoading(false)
-        })
-    }
-    return () => {
-      cancelled = true
-    }
+        } finally {
+          if (stillCurrent()) setVersionsLoading(false)
+        }
+      }
+    },
+    [source],
+  )
+
+  useEffect(() => {
+    if (!entry) return
+    void loadVersions(entry)
+    // loadVersions is intentionally left out of the deps — it is stable
+    // across renders except when `source` changes, and `entry` changing is
+    // already the trigger this effect cares about.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entry, source])
+
+  const retryLoadVersions = useCallback(() => {
+    if (entry) void loadVersions(entry)
+  }, [entry, loadVersions])
 
   // ─── Pre-flight duplicate check + PAT lookup ─────────────────────────────
   useEffect(() => {
@@ -407,6 +446,47 @@ export function MarketplaceAddonDetail({
     }
   }, [])
 
+  // v4 walk-findings W2, item 4 — managed cluster names for the optional
+  // "also enable on a cluster" selector. Defensive existence check (like
+  // listCatalogSources above) so older test fixtures without getClusters
+  // mocked don't throw.
+  useEffect(() => {
+    if (typeof api.getClusters !== 'function') return
+    let cancelled = false
+    api
+      .getClusters()
+      .then((resp) => {
+        if (cancelled) return
+        const names = (resp.clusters ?? [])
+          .filter((c) => c.managed !== false && c.connection_status !== 'not_in_git')
+          .map((c) => c.name)
+        setManagedClusterNames(names)
+      })
+      .catch(() => {
+        if (!cancelled) setManagedClusterNames([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // v4 walk-findings W2, item 5 — open catalog-add PRs, so the "in your
+  // catalog" check can distinguish "pending" from "not there yet" and skip
+  // offering a duplicate add.
+  useEffect(() => {
+    let cancelled = false
+    fetchTrackedPRs({ status: 'open', operation: 'catalog-add,catalog-add-enable' })
+      .then((resp) => {
+        if (!cancelled) setPendingAddonPRs(resp.prs ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setPendingAddonPRs([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   // ─── Seed form name/namespace once entry loads ───────────────────────────
   useEffect(() => {
     if (!entry) return
@@ -429,6 +509,24 @@ export function MarketplaceAddonDetail({
     return existingNames.has(entry.name.trim().toLowerCase())
   }, [existingNames, entry])
 
+  // v4 walk-findings W2, item 5 — an open catalog-add PR for this addon.
+  // Checked against the entry's OWN name (stable signal, like
+  // entryInCatalog above) so renaming the display name doesn't hide it.
+  const entryPending = useMemo(() => {
+    if (!entry) return false
+    return pendingAddonNames.has(entry.name.trim().toLowerCase())
+  }, [pendingAddonNames, entry])
+
+  const pending = useMemo(
+    () => pendingAddonNames.has(trimmedName.toLowerCase()),
+    [pendingAddonNames, trimmedName],
+  )
+
+  const pendingPR = useMemo(
+    () => pendingAddonPRs.find((pr) => pr.addon?.trim().toLowerCase() === trimmedName.toLowerCase()),
+    [pendingAddonPRs, trimmedName],
+  )
+
   const versionInList = useMemo(
     () => versionsResp?.versions.some((v) => v.version === version) ?? false,
     [versionsResp, version],
@@ -442,6 +540,7 @@ export function MarketplaceAddonDetail({
     version.trim().length > 0 &&
     !versionInvalid &&
     !inCatalog &&
+    !pending &&
     !submitting &&
     submitResult === null
 
@@ -455,6 +554,12 @@ export function MarketplaceAddonDetail({
   // name the server looks the curated entry up by, so a renamed curated
   // pick (or an ArtifactHub pick, never curated) falls back to sending the
   // chart location explicitly instead of a lookup that would 422.
+  //
+  // v4 walk-findings W2, item 4 — when a cluster is picked in the optional
+  // "Also enable on a cluster" selector, this sends the SAME combo payload
+  // the cluster-side V4EnableAddonDialog sends: `enable_on_cluster` + one
+  // pull request touching both catalog.yaml and clusters/<name>.yaml.
+  // `yes: true` is only required (and only sent) on the real submit.
   const buildAddRequest = (dryRun: boolean) => {
     if (!entry) return null
     const fromMarketplace = source === 'curated' && trimmedName === entry.name
@@ -469,6 +574,8 @@ export function MarketplaceAddonDetail({
           namespace: namespace.trim() || undefined,
         },
       ],
+      enable_on_cluster: enableOnCluster || undefined,
+      yes: !dryRun && enableOnCluster ? true : undefined,
       // Advanced options (sync options, ignore differences, additional
       // sources) are set on the addon page after creation.
       // auto_merge omitted — falls back to the global GitOps setting.
@@ -589,6 +696,16 @@ export function MarketplaceAddonDetail({
               <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
               In your catalog
             </Link>
+          )}
+          {/* v4 walk-findings W2, item 5 — not merged yet, so no addon page
+              exists to link to; the badge is plain text, not a link. */}
+          {!entryInCatalog && entryPending && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-[#1a4a6a] dark:bg-gray-700 dark:text-gray-300"
+              title="An add-PR is already open for this addon"
+            >
+              Pending
+            </span>
           )}
           {entry.deprecated && (
             <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
@@ -743,6 +860,33 @@ export function MarketplaceAddonDetail({
               to edit values or enable it on a cluster.
             </p>
           </div>
+        ) : entryPending ? (
+          // v4 walk-findings W2, item 5 — an add-PR is already open for
+          // this addon. No addon page exists to link to yet (it 404s
+          // until the PR merges) and offering the form again would open a
+          // second, competing PR — so this replaces the form entirely.
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded-md border border-[#c0ddf0] bg-[#eaf4fc] p-3 text-sm text-[#0a3a5a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+          >
+            <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <p>
+              <span className="font-semibold">{entry.name}</span> already
+              has an add-PR open.{' '}
+              {pendingPR?.pr_url ? (
+                <a
+                  href={pendingPR.pr_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium underline hover:no-underline"
+                >
+                  {pendingPR.pr_id ? `View PR #${pendingPR.pr_id}` : 'View PR'}
+                </a>
+              ) : (
+                'Merge it to apply.'
+              )}
+            </p>
+          </div>
         ) : (
           <>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -782,6 +926,17 @@ export function MarketplaceAddonDetail({
                 invalid={versionInvalid}
               />
             </Field>
+
+            {/* v4 walk-findings W2, item 4 — optional add+enable combo.
+                Default is always "Don't enable yet"; never pre-selected. */}
+            {!submitResult && (
+              <EnableOnClusterField
+                clusterNames={managedClusterNames}
+                value={enableOnCluster}
+                onChange={setEnableOnCluster}
+                addonName={trimmedName}
+              />
+            )}
 
             {/* Auto-merge is now a global setting — no per-flow checkbox. */}
             {!submitResult && (
@@ -824,6 +979,23 @@ export function MarketplaceAddonDetail({
               </div>
             )}
 
+            {/* v4 walk-findings W2, item 5 — the rename-collision twin of
+                the inCatalog banner above: the typed Display name matches
+                a DIFFERENT addon that already has an add-PR open. */}
+            {!inCatalog && pending && !submitResult && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+              >
+                <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <p>
+                  <span className="font-semibold">{trimmedName}</span>{' '}
+                  already has an add-PR open. Wait for it to merge, or
+                  change the Display name to add a different copy.
+                </p>
+              </div>
+            )}
+
             {hasPersonalToken === false && !submitResult && (
               <AttributionNudge inline />
             )}
@@ -839,6 +1011,33 @@ export function MarketplaceAddonDetail({
 
             {submitError && !submitResult && (
               <SubmitErrorBanner message={submitError} />
+            )}
+
+            {/* v4 walk-findings W2, item 3: Preview/Add go quietly disabled
+              * forever when the version field is empty — which happens
+              * whenever the versions fetch failed, with nothing near the
+              * buttons to say why. Name the reason right here, and offer a
+              * retry when the fetch itself is what failed. */}
+            {!version.trim() && !inCatalog && !submitResult && !versionsLoading && (
+              <div
+                role="alert"
+                className="flex items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+              >
+                <span>
+                  {versionsError
+                    ? 'Pick a version first — the version list failed to load.'
+                    : 'Pick a version first.'}
+                </span>
+                {versionsError && (
+                  <button
+                    type="button"
+                    onClick={retryLoadVersions}
+                    className="shrink-0 rounded-md border border-amber-400 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200 dark:border-amber-600 dark:bg-amber-900/40 dark:text-amber-200 dark:hover:bg-amber-900/60"
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
             )}
 
             <div className="mt-1 flex flex-wrap items-center justify-end gap-2">

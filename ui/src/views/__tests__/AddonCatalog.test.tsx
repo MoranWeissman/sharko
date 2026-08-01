@@ -17,7 +17,13 @@ vi.mock('react-router-dom', async () => {
 // - cert-manager  → N=3, M=5 → "Running on 3/5 clusters"
 // - addon-target-only → N=0, M=4 → "Not deployed yet"
 // - addon-nowhere     → N=0, M=0 → "Not deployed anywhere"
+// v4 walk-findings W2, item 5: /prs?status=open&operation=catalog-add,... is
+// fetched via the standalone fetchTrackedPRs export, not the `api` object —
+// mocked at module scope so per-test overrides can use vi.mocked(...).
+const mockFetchTrackedPRs = vi.fn().mockResolvedValue({ prs: [] })
+
 vi.mock('@/services/api', () => ({
+  fetchTrackedPRs: (...args: unknown[]) => mockFetchTrackedPRs(...args),
   api: {
     // V2-cleanup-15 / v4 wave 2.5 review B-3 — the "Add your own chart"
     // dialog now posts to POST /api/v1/catalog/addons (addToCatalog), not
@@ -36,6 +42,9 @@ vi.mock('@/services/api', () => ({
       latest_stable: '1.2.3',
       cached_at: new Date().toISOString(),
     }),
+    // v4 walk-findings W2, item 4: the optional "also enable on a cluster"
+    // selector fetches managed clusters on mount.
+    getClusters: vi.fn().mockResolvedValue({ clusters: [] }),
     // V2-cleanup-61.3 (A2/B2): the Marketplace tab is now reachable from
     // both the primary "Browse Marketplace" CTA and the empty-catalog
     // state, so MarketplaceTab/MarketplaceBrowseTab's data call needs a
@@ -223,23 +232,37 @@ describe('AddonCatalog', () => {
   })
 })
 
-// V2-cleanup-61.3 (A2): the Marketplace is the recommended path for adding
-// an addon — it must get the prominent, primary CTA. The manual chart-URL
-// dialog is the advanced/secondary path now, demoted but still reachable.
-describe('AddonCatalog — Marketplace front door (V2-cleanup-61.3, A2)', () => {
+// v4 walk-findings W2, item 1: the redundant "Browse Marketplace" action-bar
+// CTA was dropped — the always-visible Marketplace TAB does exactly the
+// same thing, so it's the one door in now. The action bar must NOT render a
+// second "Browse Marketplace" button, and clicking the tab still switches
+// the page header to the Marketplace copy.
+describe('AddonCatalog — Marketplace tab is the one door in (v4 walk-findings W2, item 1)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('shows "Browse Marketplace" as the primary CTA and switches to the Marketplace tab', async () => {
+  it('does not render a redundant "Browse Marketplace" action-bar button', async () => {
     renderCatalog()
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
     })
 
-    const marketplaceBtn = screen.getByRole('button', { name: /browse marketplace/i })
-    fireEvent.click(marketplaceBtn)
+    expect(
+      screen.queryByRole('button', { name: /browse marketplace/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('switches to the Marketplace tab via the tab control', async () => {
+    renderCatalog()
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
+    })
+
+    const marketplaceTab = screen.getByRole('tab', { name: /marketplace/i })
+    fireEvent.click(marketplaceTab)
 
     // Switching tabs re-renders the page header with the Marketplace copy.
     await waitFor(() => {

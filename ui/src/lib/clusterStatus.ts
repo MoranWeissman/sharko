@@ -131,9 +131,49 @@ export function classifyClusterConnection(status: string | null | undefined): Cl
   return 'failed';
 }
 
-/** Canonical state definition for a raw ArgoCD connection_status string. */
-export function getClusterConnectionState(status: string | null | undefined): ClusterConnectionStateDef {
-  return CLUSTER_CONNECTION_STATES[classifyClusterConnection(status)];
+// v4 walk-findings W2, item 2: a registered cluster with ZERO enabled
+// addons sits in the "pending" window forever — ArgoCD never gets anything
+// to probe, so the calm "Connecting…" pill was lying (it implies a result
+// is coming any second). This is a distinct, honest state — not a new
+// ClusterConnectionKind (that would ripple through every exhaustive switch
+// keyed on kind), just a different label/meaning for the SAME 'pending'
+// kind when the caller tells us the addon count is exactly 0.
+const NO_ADDONS_YET_STATE: ClusterConnectionStateDef = {
+  label: 'No addons yet — connection untested',
+  meaning:
+    'This cluster has no addons enabled, so ArgoCD has nothing to probe yet. Enable an addon to get a real connection result.',
+  severity: 'unknown',
+  dot: 'bg-[#3a6a8a] dark:bg-gray-400',
+  text: 'text-[#1a4a6a] dark:text-gray-300',
+};
+
+export interface ClusterConnectionStateOptions {
+  /**
+   * Enabled-addon count for this cluster, when the caller has it. Pass
+   * exactly 0 to distinguish a freshly-registered cluster with nothing
+   * enabled (which will never produce a real ArgoCD probe result) from one
+   * that legitimately has addons and is mid-registration. Omit when
+   * unknown — the classic 'pending' "Connecting…" state is unaffected.
+   */
+  enabledAddonCount?: number;
+}
+
+/**
+ * Canonical state definition for a raw ArgoCD connection_status string.
+ * When `opts.enabledAddonCount` is exactly 0 and the status is still the
+ * transient 'pending' window, this returns the honest "No addons yet"
+ * state instead of the calm "Connecting…" pill (V4 walk-findings W2, item
+ * 2). Every other status/kind is unaffected.
+ */
+export function getClusterConnectionState(
+  status: string | null | undefined,
+  opts?: ClusterConnectionStateOptions,
+): ClusterConnectionStateDef {
+  const kind = classifyClusterConnection(status);
+  if (kind === 'pending' && opts?.enabledAddonCount === 0) {
+    return NO_ADDONS_YET_STATE;
+  }
+  return CLUSTER_CONNECTION_STATES[kind];
 }
 
 // Convenience predicate — true only when ArgoCD has confirmed connectivity.

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyClusterConnection,
+  getClusterConnectionState,
   isClusterConnected,
   isClusterFailed,
   isClusterNeedsAttention,
@@ -133,5 +134,36 @@ describe('isClusterNeedsAttention (V2-cleanup-75.1)', () => {
   });
   it('returns false for unmanaged states — not broken, just not adopted', () => {
     expect(isClusterNeedsAttention('not_in_git')).toBe(false);
+  });
+});
+
+// v4 walk-findings W2, item 2: a managed cluster with zero enabled addons
+// never gets an ArgoCD probe result, so the calm "Connecting…" pending
+// pill used to sit there forever. getClusterConnectionState takes an
+// optional enabledAddonCount so callers can surface an honest state
+// instead.
+describe('getClusterConnectionState (v4 walk-findings W2, item 2)', () => {
+  it('returns the classic "Connecting…" pending state when addon count is not passed', () => {
+    expect(getClusterConnectionState('').label).toBe('Connecting…');
+    expect(getClusterConnectionState('Unknown').label).toBe('Connecting…');
+  });
+
+  it('returns "Connecting…" when the cluster has addons enabled', () => {
+    expect(getClusterConnectionState('', { enabledAddonCount: 3 }).label).toBe('Connecting…');
+  });
+
+  it('returns the honest "No addons yet" state when addon count is exactly 0', () => {
+    const state = getClusterConnectionState('', { enabledAddonCount: 0 });
+    expect(state.label).toBe('No addons yet — connection untested');
+    expect(state.severity).toBe('unknown');
+
+    const stateUnknownStatus = getClusterConnectionState('Unknown', { enabledAddonCount: 0 });
+    expect(stateUnknownStatus.label).toBe('No addons yet — connection untested');
+  });
+
+  it('does NOT override connected/failed/missing states — only the pending window', () => {
+    expect(getClusterConnectionState('Successful', { enabledAddonCount: 0 }).label).toBe('Connected');
+    expect(getClusterConnectionState('Failed', { enabledAddonCount: 0 }).label).toBe('Disconnected');
+    expect(getClusterConnectionState('missing', { enabledAddonCount: 0 }).label).toBe('Not connected');
   });
 });

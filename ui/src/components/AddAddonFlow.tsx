@@ -230,6 +230,67 @@ export function SubmitResultBanner({ result }: SubmitResultBannerProps) {
   )
 }
 
+export interface EnableOnClusterFieldProps {
+  /** Managed cluster names to offer. Empty renders nothing (no clusters to enable on yet). */
+  clusterNames: string[]
+  /** Currently selected cluster, or '' for "Don't enable yet" (the default — never pre-selected). */
+  value: string
+  onChange: (cluster: string) => void
+  /** The addon's display name, used in the "one PR does both" note. */
+  addonName: string
+  disabled?: boolean
+}
+
+/**
+ * EnableOnClusterField — the OPTIONAL "Also enable on a cluster" selector
+ * shared by both add-to-catalog doors (the Catalog "Add your own chart"
+ * dialog and the Marketplace detail page's "Add to catalog" panel). Wires
+ * to the same combo the cluster-side V4EnableAddonDialog already uses:
+ * POST /api/v1/catalog/addons with `enable_on_cluster` + `yes: true` opens
+ * ONE pull request touching both catalog.yaml and clusters/<name>.yaml
+ * (v4 walk-findings W2, item 4). Default is always "Don't enable yet" —
+ * never pre-selected, so a plain catalog-only add stays the default path.
+ */
+export function EnableOnClusterField({
+  clusterNames,
+  value,
+  onChange,
+  addonName,
+  disabled,
+}: EnableOnClusterFieldProps) {
+  if (clusterNames.length === 0) return null
+  return (
+    <div>
+      <label
+        htmlFor="enable-on-cluster"
+        className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
+      >
+        Also enable on a cluster (optional)
+      </label>
+      <select
+        id="enable-on-cluster"
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+      >
+        <option value="">Don&rsquo;t enable yet</option>
+        {clusterNames.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+      </select>
+      {value && (
+        <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+          One pull request will add {addonName || 'this addon'} to your
+          catalog AND enable it on <strong>{value}</strong>.
+        </p>
+      )}
+    </div>
+  )
+}
+
 export interface SubmitErrorBannerProps {
   message: string
 }
