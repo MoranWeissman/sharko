@@ -565,7 +565,24 @@ export function AddonCatalog() {
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'matrix'>('grid')
+  // The version matrix view is now linkable (walk finding #1): the
+  // Dashboard's Upgrades card deep-links here with `?view=matrix` (carried
+  // through the /version-matrix redirect by 61.1's RedirectPreservingQuery)
+  // so "click Upgrades" lands directly on the matrix instead of the plain
+  // catalog grid.
+  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'matrix'>(
+    searchParams.get('view') === 'matrix' ? 'matrix' : 'grid',
+  )
+  const switchView = useCallback(
+    (next: 'grid' | 'list' | 'matrix') => {
+      setViewMode(next)
+      const params = new URLSearchParams(searchParams.toString())
+      if (next === 'matrix') params.set('view', next)
+      else params.delete('view')
+      setSearchParams(params, { replace: true })
+    },
+    [searchParams, setSearchParams],
+  )
   const [search, setSearch] = useState('')
   // The Dashboard's "addons with drift" button deep-links here with
   // `?drift=true` (carried through the /version-matrix redirect by 61.1's
@@ -1660,7 +1677,7 @@ export function AddonCatalog() {
         <div className="ml-auto flex items-center rounded-lg border border-[#5a9dd0] dark:border-gray-600">
           <button
             type="button"
-            onClick={() => setViewMode('grid')}
+            onClick={() => switchView('grid')}
             className={`rounded-l-lg p-2 ${
               viewMode === 'grid'
                 ? 'bg-teal-600 text-white'
@@ -1673,7 +1690,7 @@ export function AddonCatalog() {
           </button>
           <button
             type="button"
-            onClick={() => setViewMode('list')}
+            onClick={() => switchView('list')}
             className={`p-2 ${
               viewMode === 'list'
                 ? 'bg-teal-600 text-white'
@@ -1686,7 +1703,7 @@ export function AddonCatalog() {
           </button>
           <button
             type="button"
-            onClick={() => setViewMode('matrix')}
+            onClick={() => switchView('matrix')}
             className={`rounded-r-lg p-2 ${
               viewMode === 'matrix'
                 ? 'bg-teal-600 text-white'

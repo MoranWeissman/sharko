@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { api, extractArgocdVersionString } from '@/services/api';
 import type { DashboardStats, SyncActivityEntry, ClustersResponse, VersionMatrixResponse } from '@/services/models';
-import { StatCard } from '@/components/StatCard';
+import { StatCard, type StatCardStatItem } from '@/components/StatCard';
 import { WaveDecoration } from '@/components/WaveDecoration';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
@@ -18,7 +18,7 @@ import { DriftAlertsPanel } from '@/components/DriftAlertsPanel';
 import { EmptyState } from '@/components/EmptyState';
 import { HomeClusterCard } from '@/components/HomeClusterCard';
 import { showToast } from '@/components/ToastNotification';
-import { prettyOperation } from '@/lib/utils';
+import { prettyOperation, isNewerVersion } from '@/lib/utils';
 import type { TrackedPR } from '@/services/models';
 import {
   useAddonStates,
@@ -45,70 +45,72 @@ function minutesAgo(ms: number): number {
   return Math.max(0, Math.floor((Date.now() - ms) / 60_000));
 }
 
-// --- Upgrades stat (Package 2 #1) ---
+// --- Upgrades stat (Package 2 #1, deep-link + names walk finding #1) ---
 //
 // "X of Y have a newer version", computed from the already-fetched version
 // matrix. The matrix doesn't carry a per-cell "has an upgrade" flag — only
 // a per-row `newest_available` (the highest chart version the freshness
 // scheduler has last seen for that addon) — so we compare each deployed
-// cell's version against its row's newest_available ourselves. Same
-// strict-semver parser AddonDetail.tsx uses for its downgrade check
-// (isDowngrade) — fails open (not-newer) on anything that doesn't parse,
-// so a malformed version string never inflates the count.
-function parseSemver(v: string): [number, number, number] | null {
-  const trimmed = v.replace(/^v/, '').split('-')[0];
-  const parts = trimmed.split('.').map(Number);
-  if (parts.length < 3 || parts.some((n) => Number.isNaN(n))) return null;
-  return [parts[0], parts[1], parts[2]];
-}
-
-function isNewerVersion(current: string, candidate: string): boolean {
-  const c = parseSemver(current);
-  const n = parseSemver(candidate);
-  if (!c || !n) return false;
-  if (n[0] !== c[0]) return n[0] > c[0];
-  if (n[1] !== c[1]) return n[1] > c[1];
-  return n[2] > c[2];
-}
-
+// cell's version against its row's newest_available ourselves.
+// isNewerVersion/parseSemver now live in lib/utils.ts, shared with
+// VersionMatrixTable's sort-first-what's-outdated ordering.
 interface UpgradesSummary {
   /** Deployments (addon@cluster cells) with a newer version available. */
   withUpgrade: number;
   /** Deployments the freshness scheduler has an opinion on (row has newest_available). */
   checked: number;
+  /** Addon names (deduped) with at least one cell behind newest_available — feeds the card subtitle. */
+  namesWithUpgrade: string[];
 }
 
 function summarizeUpgrades(matrix: VersionMatrixResponse | null): UpgradesSummary {
   let withUpgrade = 0;
   let checked = 0;
+  const namesWithUpgrade: string[] = [];
   for (const row of matrix?.addons ?? []) {
     if (!row.newest_available) continue; // no freshness data for this addon yet
+    let rowHasUpgrade = false;
     for (const cell of Object.values(row.cells || {})) {
       if (!cell?.version) continue;
       checked++;
-      if (isNewerVersion(cell.version, row.newest_available)) withUpgrade++;
+      if (isNewerVersion(cell.version, row.newest_available)) {
+        withUpgrade++;
+        rowHasUpgrade = true;
+      }
     }
+    if (rowHasUpgrade) namesWithUpgrade.push(row.addon_name);
   }
-  return { withUpgrade, checked };
+  return { withUpgrade, checked, namesWithUpgrade };
 }
 
-// --- Clusters stat subtitle (Package 2 #2) ---
+// Walk finding #1: the Upgrades card used to hand you a bare count with no
+// signal beyond "click to find out". At small N, name the addons right on
+// the card so it informs before any click; past N=3, name the first one
+// and count the rest ("metrics-server and 3 more") — a chip-sized card has
+// no room for a full addon list.
+function upgradesSubtitle(upgrades: UpgradesSummary): string {
+  if (upgrades.checked === 0) return 'No version data yet';
+  if (upgrades.withUpgrade === 0) return 'Everything on the newest known version';
+  const { namesWithUpgrade } = upgrades;
+  if (namesWithUpgrade.length <= 3) return namesWithUpgrade.join(', ');
+  return `${namesWithUpgrade[0]} and ${namesWithUpgrade.length - 1} more`;
+}
+
+// --- Clusters stat chips (Package 2 #2, redesigned as labeled indicators —
+//     dashboard UX review 2026-08-01, finding H2) ---
 //
-// The 5-state story, not one hand-picked note — every non-zero bucket in
-// the breakdown gets a clause, worst-first-ish but really just in a fixed
-// reading order (connected, waiting for first addon, connecting, not
-// connected, disconnected). Replaces both the old single-note subtitle
-// AND the separate neutralClusterNotes line (deleted below).
-function clusterStateStory(c: DashboardStats['clusters']): string | undefined {
-  const parts: string[] = [];
-  if (c.connected > 0) parts.push(`${c.connected} connected`);
-  if (c.untested > 0) {
-    parts.push(`${c.untested} waiting for ${c.untested !== 1 ? 'their' : 'its'} first addon`);
-  }
-  if (c.pending > 0) parts.push(`${c.pending} connecting`);
-  if (c.missing > 0) parts.push(`${c.missing} not connected`);
-  if (c.failed > 0) parts.push(`${c.failed} disconnected`);
-  return parts.length > 0 ? parts.join(' · ') : undefined;
+// Total, plus the 5-state story as its own labeled number per non-zero
+// bucket — not a fraction, not one hand-picked sentence. Fixed reading
+// order (connected, waiting for first addon, connecting, not connected,
+// disconnected); a bucket that's zero doesn't get a chip at all.
+function clusterStatChips(c: DashboardStats['clusters']): StatCardStatItem[] {
+  const items: StatCardStatItem[] = [{ label: 'Total', value: c.total, testId: 'stat-clusters-total' }];
+  if (c.connected > 0) items.push({ label: 'Connected', value: c.connected, testId: 'stat-clusters-connected' });
+  if (c.untested > 0) items.push({ label: 'Waiting', value: c.untested, testId: 'stat-clusters-waiting' });
+  if (c.pending > 0) items.push({ label: 'Connecting', value: c.pending, testId: 'stat-clusters-connecting' });
+  if (c.missing > 0) items.push({ label: 'Not connected', value: c.missing, testId: 'stat-clusters-not-connected' });
+  if (c.failed > 0) items.push({ label: 'Disconnected', value: c.failed, testId: 'stat-clusters-disconnected' });
+  return items;
 }
 
 // --- Applications health card (folded segmented bar, dashboard UX review
@@ -162,6 +164,10 @@ interface ApplicationsHealthCardProps {
 
 function ApplicationsHealthCard({ healthy, total, entries, buckets, onClick }: ApplicationsHealthCardProps) {
   const bucketTotal = buckets.healthy + buckets.progressing + buckets.degraded + buckets.unknown;
+  // "Not healthy" is the same math the card already implied via the old
+  // healthy/total fraction — just given its own labeled number now
+  // (walk finding: "0/1 healthy" reads worse than three plain counts).
+  const notHealthy = Math.max(0, total - healthy);
   return (
     <div
       role="button"
@@ -175,10 +181,23 @@ function ApplicationsHealthCard({ healthy, total, entries, buckets, onClick }: A
       }}
       className="relative rounded-xl bg-card p-6 shadow-sm cursor-pointer transition-shadow hover:shadow-md"
     >
-      <div className="text-4xl font-bold tabular-nums text-card-foreground">{healthy}/{total} healthy</div>
-      <div className="mt-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        <AppWindow className="h-4 w-4" />
+      <div className="flex items-center gap-1.5 text-sm font-semibold text-card-foreground">
+        <AppWindow className="h-4 w-4 text-muted-foreground" />
         <span>Applications</span>
+      </div>
+      <div className="mt-3 flex flex-wrap items-baseline gap-x-5 gap-y-1.5">
+        <div className="flex flex-col" data-testid="stat-applications-total">
+          <span className="text-xs text-muted-foreground">Total</span>
+          <span className="text-lg font-semibold tabular-nums text-card-foreground">{total}</span>
+        </div>
+        <div className="flex flex-col" data-testid="stat-applications-healthy">
+          <span className="text-xs text-muted-foreground">Healthy</span>
+          <span className="text-lg font-semibold tabular-nums text-card-foreground">{healthy}</span>
+        </div>
+        <div className="flex flex-col" data-testid="stat-applications-not-healthy">
+          <span className="text-xs text-muted-foreground">Not healthy</span>
+          <span className="text-lg font-semibold tabular-nums text-card-foreground">{notHealthy}</span>
+        </div>
       </div>
       {entries.length > 0 && entries.length <= 10 ? (
         <div className="mt-3 flex gap-0.5" title="One block per application">
@@ -377,7 +396,7 @@ export function Dashboard() {
   const [argocdConnected, setArgocdConnected] = useState(false);
   const [uptime, setUptime] = useState<string | undefined>(undefined);
   // Upgrades stat (Package 2 #1) — derived from the version matrix.
-  const [upgrades, setUpgrades] = useState<UpgradesSummary>({ withUpgrade: 0, checked: 0 });
+  const [upgrades, setUpgrades] = useState<UpgradesSummary>({ withUpgrade: 0, checked: 0, namesWithUpgrade: [] });
   // Wall-clock time of the last successful (or attempted) fetch — powers
   // the calm all-fine line's "last checked" timestamp.
   const [lastChecked, setLastChecked] = useState<number | null>(null);
@@ -602,10 +621,15 @@ export function Dashboard() {
   const driftCount = driftRows.length;
   const hasIssues = clusterProblemCount > 0 || redAppCount > 0 || settlingCount > 0 || unknownCount > 0 || driftCount > 0;
 
-  // Total Clusters stat card subtitle — the full 5-state story (Package 2
-  // #2), not one hand-picked note. Also replaces the old standalone
-  // neutralClusterNotes line entirely (it duplicated this subtitle).
-  const clusterSubtitle = clusterStateStory(stats.clusters);
+  // Total Clusters stat card — the full 5-state story as labeled indicator
+  // chips (Package 2 #2, redesigned per finding H2), not one hand-picked
+  // sentence. Also replaces the old standalone neutralClusterNotes line
+  // entirely (it duplicated this subtitle).
+  const clusterStats = clusterStatChips(stats.clusters);
+
+  // Upgrades stat card subtitle — names the outdated addons at small N so
+  // the card informs before any click (walk finding #1).
+  const upgradesSubtitleText = upgradesSubtitle(upgrades);
 
   // Applications health-bucket fallback (used above 10 apps, see
   // ApplicationsHealthCard).
@@ -879,41 +903,48 @@ export function Dashboard() {
 
       {/* Stats Cards — permanently neutral (inventory + navigation only;
           color is reserved for the Needs Attention surface above).
-          Tier 1 hero cards (Package 1): bg-card, rounded-xl, shadow-sm, no
-          ring, text-4xl tabular-nums value. */}
+          Tier 1 hero cards, redesigned per the dashboard UX review
+          2026-08-01 (finding H2 + Package 2 #5): a labeled row of small
+          stats, title first — no more one giant numeral or a healthy/total
+          fraction. */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard
           title="Total Clusters"
           value={stats.clusters.total}
           icon={<Server className="h-4 w-4" />}
           size="large"
-          subtitle={clusterSubtitle}
+          stats={clusterStats}
           onClick={() => navigate(clusterProblemCount > 0 ? '/clusters?status=disconnected' : '/clusters')}
         />
+        {/* Applications card click (walk finding #2): "which apps are
+            unhealthy" is answered by Observability's Addon Health Groups
+            section, which already sorts by issue count first and lists
+            per-app-per-cluster health — the catalog's own filter only
+            speaks per-addon, not per-instance. Deep-links straight to that
+            section. */}
         <ApplicationsHealthCard
           healthy={healthyCount}
           total={appTotal}
           entries={appHealthEntries}
           buckets={healthBuckets}
-          onClick={() => navigate('/addons')}
+          onClick={() => navigate('/observability#addon-health')}
         />
-        {/* Upgrades (Package 2 #1) — replaces "Active Deployments", which
-            was a plain count with no signal beyond "as configured in Git".
-            "X of Y have a newer version", derived from the version matrix's
-            per-row newest_available vs. each deployed cell's version. */}
+        {/* Upgrades (Package 2 #1, walk finding #1) — replaces "Active
+            Deployments", which was a plain count with no signal beyond
+            "as configured in Git". "Outdated N", derived from the version
+            matrix's per-row newest_available vs. each deployed cell's
+            version, names the outdated addons in the subtitle so the card
+            informs before any click. Deep-links straight to the version
+            matrix (not the plain catalog) via the `view=matrix` param the
+            catalog now reads on load. */}
         <StatCard
           title="Upgrades"
           value={upgrades.withUpgrade}
           icon={<ArrowUpCircle className="h-4 w-4" />}
           size="large"
-          subtitle={
-            upgrades.checked === 0
-              ? 'No version data yet'
-              : upgrades.withUpgrade === 0
-                ? 'Everything on the newest known version'
-                : `of ${upgrades.checked} have a newer version`
-          }
-          onClick={() => navigate('/version-matrix')}
+          stats={[{ label: 'Outdated', value: upgrades.withUpgrade, testId: 'stat-upgrades-outdated' }]}
+          subtitle={upgradesSubtitleText}
+          onClick={() => navigate('/version-matrix?view=matrix')}
         />
       </div>
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Dashboard, isBootstrapBlocking, BOOTSTRAP_BLOCKING_HEALTH } from '@/views/Dashboard';
 import { api } from '@/services/api';
@@ -125,9 +125,12 @@ describe('Dashboard', () => {
       expect(screen.getByText('Sharko')).toBeInTheDocument();
     });
 
-    // Stat cards
-    expect(screen.getByText('10')).toBeInTheDocument();
-    expect(screen.getByText('45/50 healthy')).toBeInTheDocument();
+    // Stat cards — labeled indicators, not a fraction or one poster number
+    // (dashboard UX review 2026-08-01, finding H2 + Package 2 #5).
+    expect(within(screen.getByTestId('stat-clusters-total')).getByText('10')).toBeInTheDocument();
+    expect(within(screen.getByTestId('stat-applications-total')).getByText('50')).toBeInTheDocument();
+    expect(within(screen.getByTestId('stat-applications-healthy')).getByText('45')).toBeInTheDocument();
+    expect(within(screen.getByTestId('stat-applications-not-healthy')).getByText('5')).toBeInTheDocument();
     // Applications card (folded segmented health visualization, Package 2 #4)
     expect(screen.getByText('Applications')).toBeInTheDocument();
     // Upgrades card (Package 2 #1) replaces the old "Active Deployments"
@@ -406,9 +409,10 @@ describe('Dashboard cluster attention rows (rebuilt LW-1)', () => {
 
     expect(screen.queryByRole('button', { name: /disconnected cluster/i })).not.toBeInTheDocument();
     // Neutral note instead — "connecting", not red. Now lives in the
-    // Total Clusters stat card subtitle (Package 2 #2 — the 5-state
-    // story), not a standalone floating line.
-    expect(screen.getByText(/1 connecting/i)).toBeInTheDocument();
+    // Total Clusters stat card as its own labeled chip (Package 2 #2,
+    // redesigned as indicators per finding H2), not a floating sentence.
+    expect(within(screen.getByTestId('stat-clusters-connecting')).getByText('Connecting')).toBeInTheDocument();
+    expect(within(screen.getByTestId('stat-clusters-connecting')).getByText('1')).toBeInTheDocument();
   });
 
   it('Unknown cluster with zero addons → neutral "waiting for its first addon" note', async () => {
@@ -426,7 +430,8 @@ describe('Dashboard cluster attention rows (rebuilt LW-1)', () => {
     });
 
     expect(screen.queryByRole('button', { name: /disconnected cluster/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/1 waiting for its first addon/i)).toBeInTheDocument();
+    expect(within(screen.getByTestId('stat-clusters-waiting')).getByText('Waiting')).toBeInTheDocument();
+    expect(within(screen.getByTestId('stat-clusters-waiting')).getByText('1')).toBeInTheDocument();
   });
 
   it('missing cluster → shown as a cluster attention row', async () => {
@@ -462,7 +467,7 @@ describe('Dashboard stat cards are permanently neutral (Package 2 #3)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText(/1 disconnected/)).toBeInTheDocument();
+      expect(screen.getByTestId('stat-clusters-disconnected')).toBeInTheDocument();
     });
 
     const card = screen.getByText('Total Clusters').closest('[role="button"]') as HTMLElement;
@@ -477,7 +482,7 @@ describe('Dashboard stat cards are permanently neutral (Package 2 #3)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText(/1 disconnected/)).toBeInTheDocument();
+      expect(screen.getByTestId('stat-clusters-disconnected')).toBeInTheDocument();
     });
 
     const statCard = screen.getByText('Total Clusters').closest('[role="button"]');
@@ -540,8 +545,10 @@ describe('Applications card — segmented blocks at small N (Package 2 #4)', () 
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('1/2 healthy')).toBeInTheDocument();
+      expect(within(screen.getByTestId('stat-applications-healthy')).getByText('1')).toBeInTheDocument();
     });
+    expect(within(screen.getByTestId('stat-applications-total')).getByText('2')).toBeInTheDocument();
+    expect(within(screen.getByTestId('stat-applications-not-healthy')).getByText('1')).toBeInTheDocument();
 
     expect(screen.getByTitle('cert-manager on prod: Healthy')).toBeInTheDocument();
     expect(screen.getByTitle('external-dns on prod: Degraded')).toBeInTheDocument();
@@ -566,12 +573,33 @@ describe('Applications card — segmented blocks at small N (Package 2 #4)', () 
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('0/1 healthy')).toBeInTheDocument();
+      expect(within(screen.getByTestId('stat-applications-not-healthy')).getByText('1')).toBeInTheDocument();
     });
+    expect(within(screen.getByTestId('stat-applications-healthy')).getByText('0')).toBeInTheDocument();
 
     const block = screen.getByTitle('metrics-server on prod: Degraded');
     expect(block.className).not.toContain('flex-1');
     expect(block.className).toContain('w-8');
+  });
+});
+
+// Walk finding #2: "which apps are unhealthy" is answered by
+// Observability's Addon Health Groups section (sorted by issue count
+// first, lists per-app-per-cluster health) — not the plain catalog, which
+// only speaks per-addon. Deep-links to the section's anchor.
+describe('Applications card destination (walk finding #2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('clicking the Applications card navigates to Observability\'s Addon Health section', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    renderDashboard();
+
+    const card = await screen.findByTestId('stat-applications-total');
+    fireEvent.click(card.closest('[role="button"]')!);
+    expect(mockNavigate).toHaveBeenCalledWith('/observability#addon-health');
   });
 });
 
@@ -605,16 +633,18 @@ describe('ArgoCD unreachable banner (Package 1 rewire)', () => {
   });
 });
 
-// Upgrades stat (Package 2 #1) — "X of Y have a newer version", derived
+// Upgrades stat (Package 2 #1, walk finding #1) — "Outdated N", derived
 // from the version matrix's per-row newest_available vs. each cell's
-// deployed version. No explicit per-cell flag exists on the wire, so the
+// deployed version, names the outdated addons in the subtitle instead of
+// a plain "of Y have a newer version" sentence, so the card informs before
+// any click. No explicit per-cell flag exists on the wire, so the
 // Dashboard compares itself (see summarizeUpgrades/isNewerVersion).
-describe('Upgrades stat card (Package 2 #1)', () => {
+describe('Upgrades stat card (Package 2 #1, walk finding #1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('counts deployments whose version is behind the row\'s newest_available', async () => {
+  it('counts deployments whose version is behind the row\'s newest_available, and names the addon at small N', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
     // Isolate from any rejected/overridden mock left behind by earlier
     // tests in this file (mockResolvedValue/mockRejectedValue persist
@@ -645,8 +675,32 @@ describe('Upgrades stat card (Package 2 #1)', () => {
       expect(screen.getByText('Upgrades')).toBeInTheDocument();
     });
     // 1 of 2 checked deployments (cert-manager on prod-eu) is behind.
-    expect(screen.getByText('1')).toBeInTheDocument();
-    expect(screen.getByText('of 2 have a newer version')).toBeInTheDocument();
+    expect(within(screen.getByTestId('stat-upgrades-outdated')).getByText('1')).toBeInTheDocument();
+    // Names the addon instead of a bare "of 2 have a newer version" line.
+    expect(screen.getByText('cert-manager')).toBeInTheDocument();
+  });
+
+  it('names up to 3 outdated addons, and switches to "first and N more" past that', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    const rowWithUpgrade = (name: string) => ({
+      addon_name: name,
+      newest_available: '2.0.0',
+      cells: { 'prod-eu': { version: '1.0.0', health: 'Healthy' } },
+    });
+    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
+      addons: [
+        rowWithUpgrade('metrics-server'),
+        rowWithUpgrade('cert-manager'),
+        rowWithUpgrade('external-dns'),
+        rowWithUpgrade('ingress-nginx'),
+      ],
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('metrics-server and 3 more')).toBeInTheDocument();
+    });
   });
 
   it('shows a muted "everything up to date" message, not a celebratory one, at zero', async () => {
@@ -671,7 +725,7 @@ describe('Upgrades stat card (Package 2 #1)', () => {
     });
   });
 
-  it('clicking the Upgrades card navigates to the version matrix', async () => {
+  it('clicking the Upgrades card deep-links to the version matrix view (walk finding #1: matrix, not the plain catalog)', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
     // Isolate from any rejected/overridden mock left behind by earlier
     // tests in this file (mockResolvedValue/mockRejectedValue persist
@@ -682,7 +736,7 @@ describe('Upgrades stat card (Package 2 #1)', () => {
 
     const card = await screen.findByText('Upgrades');
     fireEvent.click(card.closest('[role="button"]')!);
-    expect(mockNavigate).toHaveBeenCalledWith('/version-matrix');
+    expect(mockNavigate).toHaveBeenCalledWith('/version-matrix?view=matrix');
   });
 });
 
