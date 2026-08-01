@@ -101,8 +101,8 @@ function statusBadge(alert: DriftAlert) {
     )
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-700 dark:text-gray-400">
-      <span className="inline-block h-2 w-2 rounded-full bg-[#3a6a8a]" />
+    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+      <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground" />
       Resolved
     </span>
   )
@@ -158,9 +158,9 @@ export function DriftAlertsPanel() {
       <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50/50 p-5 shadow-sm dark:ring-amber-700 dark:bg-amber-900/10">
         <div className="flex items-center gap-2 mb-3">
           <ShieldAlert className="h-4 w-4 text-amber-500" />
-          <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">GitOps corrections</h3>
+          <h3 className="text-base font-semibold text-card-foreground">GitOps corrections</h3>
         </div>
-        <div className="flex items-center justify-center py-6 text-[#3a6a8a] dark:text-gray-400">
+        <div className="flex items-center justify-center py-6 text-muted-foreground">
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           <span className="text-xs">Loading drift alerts...</span>
         </div>
@@ -173,7 +173,7 @@ export function DriftAlertsPanel() {
       <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50/50 p-5 shadow-sm dark:ring-amber-700 dark:bg-amber-900/10">
         <div className="flex items-center gap-2 mb-3">
           <ShieldAlert className="h-4 w-4 text-amber-500" />
-          <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">GitOps corrections</h3>
+          <h3 className="text-base font-semibold text-card-foreground">GitOps corrections</h3>
         </div>
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       </div>
@@ -187,7 +187,7 @@ export function DriftAlertsPanel() {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <ShieldAlert className="h-4 w-4 text-amber-500" />
-          <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">GitOps corrections</h3>
+          <h3 className="text-base font-semibold text-card-foreground">GitOps corrections</h3>
           {pendingCount > 0 && (
             <span className="inline-flex items-center justify-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
               {pendingCount} pending
@@ -197,13 +197,13 @@ export function DriftAlertsPanel() {
         <div className="flex items-center gap-1">
           <button
             onClick={() => navigate('/audit?source=reconciler')}
-            className="rounded-lg px-2 py-1 text-xs text-teal-600 transition-colors hover:bg-[#d6eeff] hover:text-teal-700 dark:text-teal-400 dark:hover:bg-gray-700"
+            className="rounded-lg px-2 py-1 text-xs text-teal-600 transition-colors hover:bg-muted hover:text-teal-700 dark:text-teal-400"
           >
             View audit log
           </button>
           <button
             onClick={() => void fetchAlerts(false)}
-            className="rounded-lg p-1.5 text-[#3a6a8a] transition-colors hover:bg-[#d6eeff] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+            className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-card-foreground"
             aria-label="Refresh drift alerts"
             title="Refresh drift alerts"
           >
@@ -219,7 +219,7 @@ export function DriftAlertsPanel() {
             className={`flex items-start gap-3 rounded-lg px-3 py-2 text-xs ${
               alert.status === 'pending'
                 ? 'bg-amber-100/60 dark:bg-amber-900/20'
-                : 'bg-[#f0f7ff] dark:bg-gray-800'
+                : 'bg-card'
             }`}
           >
             <div
@@ -229,30 +229,30 @@ export function DriftAlertsPanel() {
             />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-medium text-[#0a2a4a] dark:text-gray-100">
+                <span className="font-medium text-card-foreground">
                   {eventLabel(alert.event)}
                 </span>
                 {statusBadge(alert)}
               </div>
-              <p className="mt-0.5 text-[#2a5a7a] dark:text-gray-400 truncate" title={alert.resource}>
+              <p className="mt-0.5 text-muted-foreground truncate" title={alert.resource}>
                 {alert.resource}
               </p>
             </div>
             <div className="flex items-center gap-1 shrink-0">
-              <span className="flex items-center gap-1 text-[#3a6a8a] dark:text-gray-400 whitespace-nowrap">
+              <span className="flex items-center gap-1 text-muted-foreground whitespace-nowrap">
                 <Clock className="h-3 w-3" />
                 {timeAgo(alert.timestamp)}
               </span>
               <button
                 onClick={() => navigate(`/audit?source=reconciler&event=${alert.event}`)}
-                className="rounded p-1 text-[#3a6a8a] transition-colors hover:bg-[#d6eeff] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+                className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-card-foreground"
                 title="View in audit log"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
               </button>
               <button
                 onClick={() => handleDismiss(alert.id)}
-                className="rounded p-1 text-[#3a6a8a] transition-colors hover:bg-[#d6eeff] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+                className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-card-foreground"
                 title="Dismiss alert"
                 aria-label="Dismiss alert"
               >

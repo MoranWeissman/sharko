@@ -9,7 +9,7 @@ export function WaveDecoration() {
       >
         <path
           d="M0,30 C200,50 400,10 600,30 C800,50 1000,10 1200,30 L1200,60 L0,60 Z"
-          className="fill-[#F0F7FF] dark:fill-gray-950"
+          className="fill-background"
         />
       </svg>
     </div>

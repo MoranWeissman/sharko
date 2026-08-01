@@ -27,11 +27,20 @@ describe('StatCard', () => {
     expect(card.className).toContain('ring-teal-500');
   });
 
-  it('large variant renders with larger text and padding', () => {
+  it('large variant renders with the hero type scale (text-4xl, tabular-nums)', () => {
     render(<StatCard title="Total Clusters" value={127} size="large" />);
     const valueElement = screen.getByText('127');
-    expect(valueElement.className).toContain('text-5xl');
+    expect(valueElement.className).toContain('text-4xl');
     expect(valueElement.className).toContain('font-bold');
+    expect(valueElement.className).toContain('tabular-nums');
+  });
+
+  it('large variant has no ring — Tier 1 hero cards use bg-card + shadow only', () => {
+    const { container } = render(<StatCard title="Total Clusters" value={127} size="large" />);
+    const card = container.firstChild as HTMLElement;
+    expect(card.className).not.toMatch(/\bring-2\b/);
+    expect(card.className).toContain('bg-card');
+    expect(card.className).toContain('shadow-sm');
   });
 
   it('default size unchanged when size not specified', () => {

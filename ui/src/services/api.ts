@@ -1125,11 +1125,13 @@ export async function fetchMergedPRs(filters?: { cluster?: string; addon?: strin
 // HealthResponse mirrors the shape returned by GET /api/v1/health.
 // `cluster_test_available` is the capability flag the UI uses to gate the
 // per-cluster Test button when no secrets backend is wired up on the
-// active connection.
+// active connection. The server (internal/api/health.go) sends exactly
+// status/version/mode/cluster_test_available — no host_cluster_name or
+// cluster_name field ever ships here (an earlier GitOpsSection.tsx read of
+// those was dead code and has been removed).
 //
-// The index signature is intentional — existing callers (e.g.
-// settings/GitOpsSection.tsx) read ad-hoc fields like host_cluster_name
-// that aren't yet pinned into this contract.
+// The index signature is kept for forward-compatibility with fields the
+// server may add later that aren't yet pinned into this contract.
 export interface HealthResponse {
   status: string
   version?: string
@@ -1453,6 +1455,38 @@ export const api = {
     nodes_ready?: number;
     nodes_not_ready?: number
   }>('/cluster/home'),
+
+  // Server config — repo paths, GitOps settings, and ArgoCD connection
+  // status/version (internal/api/system.go handleGetConfig). The home-
+  // cluster identity card (dashboard facelift, Package 3) reads
+  // `argocd.version` here; `argocd.connected` is false (and `version`
+  // absent) whenever Sharko can't reach the active ArgoCD.
+  getConfig: () => fetchJSON<{
+    repo_paths: { cluster_values: string; global_values: string; charts: string; bootstrap: string };
+    gitops: { pr_auto_merge: boolean; branch_prefix: string; commit_prefix: string; base_branch: string };
+    provider?: { type: string; region: string };
+    argocd: { connected: boolean; version?: string };
+  }>('/config'),
+
+  // Fleet status overview (internal/api/fleet.go handleGetFleetStatus) —
+  // the home-cluster identity card reads `uptime` (a server-formatted
+  // human string, e.g. "3h12m") for its footer.
+  getFleetStatus: () => fetchJSON<{
+    server_version: string;
+    uptime: string;
+    git_unavailable?: boolean;
+    argo_unavailable?: boolean;
+    total_clusters: number;
+    healthy_clusters: number;
+    degraded_clusters: number;
+    disconnected_clusters: number;
+    total_addons: number;
+    total_deployments: number;
+    healthy_deployments: number;
+    degraded_deployments: number;
+    out_of_sync_deployments: number;
+    addon_data_unavailable?: boolean;
+  }>('/fleet/status'),
 
   // Dashboard
   getAttentionItems: () => fetchJSON<{ app_name: string; addon_name: string; cluster: string; health: string; sync: string; error?: string; error_type?: string }[]>('/dashboard/attention'),

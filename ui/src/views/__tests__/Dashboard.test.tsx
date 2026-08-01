@@ -46,6 +46,11 @@ vi.mock('@/services/api', () => ({
     getAttentionItems: vi.fn().mockResolvedValue([]),
     getClusters: vi.fn().mockResolvedValue({ clusters: [] }),
     getHomeCluster: vi.fn().mockResolvedValue({ available: false, message: 'only available when running in-cluster' }),
+    // Home-cluster identity card (dashboard facelift, Package 3) — three
+    // more thin reads the Dashboard fetches alongside everything else.
+    health: vi.fn().mockResolvedValue({ status: 'healthy', version: '4.2.0' }),
+    getConfig: vi.fn().mockResolvedValue({ argocd: { connected: true, version: '2.11.0' } }),
+    getFleetStatus: vi.fn().mockResolvedValue({ server_version: '4.2.0', uptime: '3h12m' }),
     getDashboardStats: vi.fn().mockResolvedValue({
       connections: { total: 1, active: 'dev' },
       clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
@@ -110,13 +115,13 @@ describe('Dashboard', () => {
     // Stat cards
     expect(screen.getByText('10')).toBeInTheDocument();
     expect(screen.getByText('45/50 healthy')).toBeInTheDocument();
-    expect(screen.getByText('15')).toBeInTheDocument();
-    // Active Deployments is a plain count now — no more fake "N/N" ratio
-    // (dashboard UX review 2026-08-01, finding H5).
-    expect(screen.getByText('85')).toBeInTheDocument();
-    expect(screen.getByText('as configured in Git')).toBeInTheDocument();
     // Applications card (folded segmented health visualization, Package 2 #4)
     expect(screen.getByText('Applications')).toBeInTheDocument();
+    // Upgrades card (Package 2 #1) replaces the old "Active Deployments"
+    // plain count — no version-matrix data in this test's default mocks,
+    // so it degrades to the "no data yet" state rather than a fake 0.
+    expect(screen.getByText('Upgrades')).toBeInTheDocument();
+    expect(screen.getByText('No version data yet')).toBeInTheDocument();
   });
 
   // BUG-040 (rebuilt for the dashboard UX review 2026-08-01 contract):
@@ -212,6 +217,10 @@ describe('Dashboard — empty install (B1, no false-green)', () => {
     // normal 10-cluster stats explicitly rather than relying on the module
     // mock's original default.
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    // Isolate from any rejected/overridden mock left behind by earlier
+    // tests in this file (mockResolvedValue/mockRejectedValue persist
+    // across vi.clearAllMocks() — it only clears call history).
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
     renderDashboard();
 
     await waitFor(() => {
@@ -383,8 +392,10 @@ describe('Dashboard cluster attention rows (rebuilt LW-1)', () => {
     });
 
     expect(screen.queryByRole('button', { name: /disconnected cluster/i })).not.toBeInTheDocument();
-    // Neutral note instead — "connecting", not red.
-    expect(screen.getByText(/1 cluster connecting/i)).toBeInTheDocument();
+    // Neutral note instead — "connecting", not red. Now lives in the
+    // Total Clusters stat card subtitle (Package 2 #2 — the 5-state
+    // story), not a standalone floating line.
+    expect(screen.getByText(/1 connecting/i)).toBeInTheDocument();
   });
 
   it('Unknown cluster with zero addons → neutral "waiting for its first addon" note', async () => {
@@ -402,7 +413,7 @@ describe('Dashboard cluster attention rows (rebuilt LW-1)', () => {
     });
 
     expect(screen.queryByRole('button', { name: /disconnected cluster/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/1 cluster waiting for its first addon/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 waiting for its first addon/i)).toBeInTheDocument();
   });
 
   it('missing cluster → shown as a cluster attention row', async () => {
@@ -438,7 +449,7 @@ describe('Dashboard stat cards are permanently neutral (Package 2 #3)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('2 disconnected')).toBeInTheDocument();
+      expect(screen.getByText(/1 disconnected/)).toBeInTheDocument();
     });
 
     const card = screen.getByText('Total Clusters').closest('[role="button"]') as HTMLElement;
@@ -453,7 +464,7 @@ describe('Dashboard stat cards are permanently neutral (Package 2 #3)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('2 disconnected')).toBeInTheDocument();
+      expect(screen.getByText(/1 disconnected/)).toBeInTheDocument();
     });
 
     const statCard = screen.getByText('Total Clusters').closest('[role="button"]');
@@ -578,5 +589,217 @@ describe('ArgoCD unreachable banner (Package 1 rewire)', () => {
     await waitFor(() => {
       expect(screen.getByText(/ArgoCD temporarily unreachable/i)).toBeInTheDocument();
     });
+  });
+});
+
+// Upgrades stat (Package 2 #1) — "X of Y have a newer version", derived
+// from the version matrix's per-row newest_available vs. each cell's
+// deployed version. No explicit per-cell flag exists on the wire, so the
+// Dashboard compares itself (see summarizeUpgrades/isNewerVersion).
+describe('Upgrades stat card (Package 2 #1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('counts deployments whose version is behind the row\'s newest_available', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    // Isolate from any rejected/overridden mock left behind by earlier
+    // tests in this file (mockResolvedValue/mockRejectedValue persist
+    // across vi.clearAllMocks() — it only clears call history).
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
+      addons: [
+        {
+          addon_name: 'cert-manager',
+          newest_available: '1.14.0',
+          cells: {
+            'prod-eu': { version: '1.12.0', health: 'Healthy' },
+            'staging-us': { version: '1.14.0', health: 'Healthy' },
+          },
+        },
+        {
+          // No freshness data yet for this addon — excluded from both the
+          // numerator and the denominator (we don't know, so we don't
+          // guess "up to date").
+          addon_name: 'external-dns',
+          cells: { 'prod-eu': { version: '6.20.0', health: 'Healthy' } },
+        },
+      ],
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Upgrades')).toBeInTheDocument();
+    });
+    // 1 of 2 checked deployments (cert-manager on prod-eu) is behind.
+    expect(screen.getByText('1')).toBeInTheDocument();
+    expect(screen.getByText('of 2 have a newer version')).toBeInTheDocument();
+  });
+
+  it('shows a muted "everything up to date" message, not a celebratory one, at zero', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    // Isolate from any rejected/overridden mock left behind by earlier
+    // tests in this file (mockResolvedValue/mockRejectedValue persist
+    // across vi.clearAllMocks() — it only clears call history).
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
+      addons: [
+        {
+          addon_name: 'cert-manager',
+          newest_available: '1.14.0',
+          cells: { 'prod-eu': { version: '1.14.0', health: 'Healthy' } },
+        },
+      ],
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Everything on the newest known version')).toBeInTheDocument();
+    });
+  });
+
+  it('clicking the Upgrades card navigates to the version matrix', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    // Isolate from any rejected/overridden mock left behind by earlier
+    // tests in this file (mockResolvedValue/mockRejectedValue persist
+    // across vi.clearAllMocks() — it only clears call history).
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    renderDashboard();
+
+    const card = await screen.findByText('Upgrades');
+    fireEvent.click(card.closest('[role="button"]')!);
+    expect(mockNavigate).toHaveBeenCalledWith('/version-matrix');
+  });
+});
+
+// Page reorganization (Package 2): Quick Actions and Available Addons are
+// gone entirely (maintainer's call); Recent Activity moved up and was
+// rebuilt (panel-lens finding).
+describe('Dashboard page order (Package 2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('no longer renders Quick Actions or Available Addons', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    // Isolate from any rejected/overridden mock left behind by earlier
+    // tests in this file (mockResolvedValue/mockRejectedValue persist
+    // across vi.clearAllMocks() — it only clears call history).
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Quick Actions')).not.toBeInTheDocument();
+    expect(screen.queryByText('Available Addons')).not.toBeInTheDocument();
+    expect(screen.queryByText('Check Upgrade Impact')).not.toBeInTheDocument();
+  });
+
+  it('Recent Activity row reads "deployed <addon> on <cluster> · rev <sha> · <time>", no status dot', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    // Isolate from any rejected/overridden mock left behind by earlier
+    // tests in this file (mockResolvedValue/mockRejectedValue persist
+    // across vi.clearAllMocks() — it only clears call history).
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getObservability as ReturnType<typeof vi.fn>).mockResolvedValue({
+      recent_syncs: [
+        {
+          timestamp: new Date().toISOString(),
+          duration: '2s',
+          duration_secs: 2,
+          app_name: 'cert-manager-prod-eu',
+          addon_name: 'cert-manager',
+          cluster_name: 'prod-eu',
+          revision: 'abcdef1234567890',
+          status: 'Succeeded',
+        },
+      ],
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Recent Activity')).toBeInTheDocument();
+    });
+    expect(screen.getByText('cert-manager')).toBeInTheDocument();
+    expect(screen.getByText(/on prod-eu/)).toBeInTheDocument();
+    // Revision is short (7 chars), not the full SHA.
+    expect(screen.getByText(/rev abcdef1/)).toBeInTheDocument();
+    expect(screen.queryByText(/abcdef1234567890/)).not.toBeInTheDocument();
+  });
+
+  it('Recent Activity empty state uses the compact recipe (no mascot image)', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    // Isolate from any rejected/overridden mock left behind by earlier
+    // tests in this file (mockResolvedValue/mockRejectedValue persist
+    // across vi.clearAllMocks() — it only clears call history). The
+    // previous test in this file sets a non-empty recent_syncs list.
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getObservability as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('No recent sync activity')).toBeInTheDocument();
+    });
+    expect(screen.queryByAltText('')).not.toBeInTheDocument();
+  });
+});
+
+// Home-cluster identity card (Package 3) — data wiring from the three new
+// reads (health, config, fleet status) plus the existing home-cluster
+// probe. Full rendering detail is covered by HomeClusterCard's own tests;
+// this just checks the Dashboard wires the fetched values through.
+describe('Home-cluster identity card wiring (Package 3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders Sharko/ArgoCD versions and uptime from the new reads', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    // Isolate from any rejected/overridden mock left behind by earlier
+    // tests in this file (mockResolvedValue/mockRejectedValue persist
+    // across vi.clearAllMocks() — it only clears call history).
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getHomeCluster as ReturnType<typeof vi.fn>).mockResolvedValue({
+      available: true,
+      kubernetes_version: 'v1.29.0',
+      node_count: 3,
+      nodes_ready: 3,
+    });
+    (api.health as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'healthy', version: '4.2.0' });
+    (api.getConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ argocd: { connected: true, version: '2.11.0' } });
+    (api.getFleetStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ server_version: '4.2.0', uptime: '3h12m' });
+
+    renderDashboard();
+
+    expect(await screen.findByText('4.2.0')).toBeInTheDocument();
+    expect(screen.getByText('2.11.0')).toBeInTheDocument();
+    expect(screen.getByText('v1.29.0')).toBeInTheDocument();
+    expect(screen.getByText('all nodes ready')).toBeInTheDocument();
+    expect(screen.getByText(/up 3h12m/)).toBeInTheDocument();
+  });
+
+  it('degrades gracefully — missing fields render "—", the card never errors', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    // Isolate from any rejected/overridden mock left behind by earlier
+    // tests in this file (mockResolvedValue/mockRejectedValue persist
+    // across vi.clearAllMocks() — it only clears call history).
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getHomeCluster as ReturnType<typeof vi.fn>).mockResolvedValue({
+      available: false,
+      message: 'only available when running in-cluster',
+    });
+    (api.health as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (api.getConfig as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (api.getFleetStatus as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText("Sharko's home cluster")).toBeInTheDocument();
+    });
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+    expect(screen.getByText('only available when running in-cluster')).toBeInTheDocument();
   });
 });

@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  Server, AppWindow, Package, Rocket, AlertTriangle,
-  ArrowUpCircle, Activity, Clock, ChevronRight, ShieldAlert, RefreshCw,
+  Server, AppWindow, AlertTriangle,
+  ArrowUpCircle, Clock, ChevronRight, ShieldAlert, RefreshCw,
   Hourglass, Store, PlusCircle
 } from 'lucide-react';
 import { api } from '@/services/api';
-import type { DashboardStats, SyncActivityEntry, ClustersResponse } from '@/services/models';
+import type { DashboardStats, SyncActivityEntry, ClustersResponse, VersionMatrixResponse } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { WaveDecoration } from '@/components/WaveDecoration';
 import { LoadingState } from '@/components/LoadingState';
@@ -15,6 +15,8 @@ import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
 import { MigrationBanner } from '@/components/MigrationBanner';
 import { PullRequestsPanel } from '@/components/PullRequestsPanel';
 import { DriftAlertsPanel } from '@/components/DriftAlertsPanel';
+import { EmptyState } from '@/components/EmptyState';
+import { HomeClusterCard } from '@/components/HomeClusterCard';
 import { showToast } from '@/components/ToastNotification';
 import { prettyOperation } from '@/lib/utils';
 import type { TrackedPR } from '@/services/models';
@@ -43,6 +45,72 @@ function minutesAgo(ms: number): number {
   return Math.max(0, Math.floor((Date.now() - ms) / 60_000));
 }
 
+// --- Upgrades stat (Package 2 #1) ---
+//
+// "X of Y have a newer version", computed from the already-fetched version
+// matrix. The matrix doesn't carry a per-cell "has an upgrade" flag — only
+// a per-row `newest_available` (the highest chart version the freshness
+// scheduler has last seen for that addon) — so we compare each deployed
+// cell's version against its row's newest_available ourselves. Same
+// strict-semver parser AddonDetail.tsx uses for its downgrade check
+// (isDowngrade) — fails open (not-newer) on anything that doesn't parse,
+// so a malformed version string never inflates the count.
+function parseSemver(v: string): [number, number, number] | null {
+  const trimmed = v.replace(/^v/, '').split('-')[0];
+  const parts = trimmed.split('.').map(Number);
+  if (parts.length < 3 || parts.some((n) => Number.isNaN(n))) return null;
+  return [parts[0], parts[1], parts[2]];
+}
+
+function isNewerVersion(current: string, candidate: string): boolean {
+  const c = parseSemver(current);
+  const n = parseSemver(candidate);
+  if (!c || !n) return false;
+  if (n[0] !== c[0]) return n[0] > c[0];
+  if (n[1] !== c[1]) return n[1] > c[1];
+  return n[2] > c[2];
+}
+
+interface UpgradesSummary {
+  /** Deployments (addon@cluster cells) with a newer version available. */
+  withUpgrade: number;
+  /** Deployments the freshness scheduler has an opinion on (row has newest_available). */
+  checked: number;
+}
+
+function summarizeUpgrades(matrix: VersionMatrixResponse | null): UpgradesSummary {
+  let withUpgrade = 0;
+  let checked = 0;
+  for (const row of matrix?.addons ?? []) {
+    if (!row.newest_available) continue; // no freshness data for this addon yet
+    for (const cell of Object.values(row.cells || {})) {
+      if (!cell?.version) continue;
+      checked++;
+      if (isNewerVersion(cell.version, row.newest_available)) withUpgrade++;
+    }
+  }
+  return { withUpgrade, checked };
+}
+
+// --- Clusters stat subtitle (Package 2 #2) ---
+//
+// The 5-state story, not one hand-picked note — every non-zero bucket in
+// the breakdown gets a clause, worst-first-ish but really just in a fixed
+// reading order (connected, waiting for first addon, connecting, not
+// connected, disconnected). Replaces both the old single-note subtitle
+// AND the separate neutralClusterNotes line (deleted below).
+function clusterStateStory(c: DashboardStats['clusters']): string | undefined {
+  const parts: string[] = [];
+  if (c.connected > 0) parts.push(`${c.connected} connected`);
+  if (c.untested > 0) {
+    parts.push(`${c.untested} waiting for ${c.untested !== 1 ? 'their' : 'its'} first addon`);
+  }
+  if (c.pending > 0) parts.push(`${c.pending} connecting`);
+  if (c.missing > 0) parts.push(`${c.missing} not connected`);
+  if (c.failed > 0) parts.push(`${c.failed} disconnected`);
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
 // --- Applications health card (folded segmented bar, dashboard UX review
 //     2026-08-01, finding H1 + Package 2 #4) ---
 //
@@ -55,12 +123,20 @@ function minutesAgo(ms: number): number {
 // being legible at scale). Folded into the Applications stat tile rather
 // than kept as a separate full-width card — one less surface repeating
 // the same two numbers.
+// Design tokens, not inline hex (dashboard UX review — Package 1): this is
+// a supplementary data-viz strip on a "permanently neutral" stat card, not
+// the alarm surface, so it draws from the --chart-* categorical palette
+// rather than literal stoplight red/green/blue. CSS custom properties
+// (not Tailwind utility classes) because the proportional fallback bar
+// below needs an inline `width` anyway, so both renderers share one
+// lookup. "Unknown" still reads as neutral grey via --muted-foreground —
+// there's no chart slot for "no data".
 function healthBlockColor(health: string): string {
   const h = (health || '').toLowerCase();
-  if (h === 'healthy') return '#22c55e';
-  if (h === 'progressing') return '#3b82f6';
-  if (h === 'degraded' || h === 'suspended' || h === 'error' || h === 'missing') return '#ef4444';
-  return '#9ca3af'; // Unknown, and anything else — grey, never red.
+  if (h === 'healthy') return 'var(--chart-2)';
+  if (h === 'progressing') return 'var(--chart-1)';
+  if (h === 'degraded' || h === 'suspended' || h === 'error' || h === 'missing') return 'var(--chart-5)';
+  return 'var(--muted-foreground)'; // Unknown, and anything else — grey, never red.
 }
 
 interface AppHealthEntry {
@@ -97,15 +173,15 @@ function ApplicationsHealthCard({ healthy, total, entries, buckets, onClick }: A
           onClick();
         }
       }}
-      className="relative rounded-lg ring-2 ring-[#6aade0] border-l-4 border-l-gray-300 dark:border-l-gray-600 bg-[#f0f7ff] p-4 shadow-sm dark:ring-gray-700 dark:bg-gray-800 cursor-pointer transition-shadow hover:shadow-md"
+      className="relative rounded-xl bg-card p-6 shadow-sm cursor-pointer transition-shadow hover:shadow-md"
     >
-      <div className="absolute right-4 top-4 text-[#3a6a8a] dark:text-gray-500">
-        <AppWindow className="h-6 w-6" />
+      <div className="text-4xl font-bold tabular-nums text-card-foreground">{healthy}/{total} healthy</div>
+      <div className="mt-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <AppWindow className="h-4 w-4" />
+        <span>Applications</span>
       </div>
-      <div className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{healthy}/{total} healthy</div>
-      <div className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">Applications</div>
       {entries.length > 0 && entries.length <= 10 ? (
-        <div className="mt-2 flex gap-0.5" title="One block per application">
+        <div className="mt-3 flex gap-0.5" title="One block per application">
           {entries.map((e) => (
             <div
               key={e.key}
@@ -116,12 +192,12 @@ function ApplicationsHealthCard({ healthy, total, entries, buckets, onClick }: A
           ))}
         </div>
       ) : bucketTotal > 0 ? (
-        <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-[#d6eeff] dark:bg-gray-700">
+        <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-muted">
           {[
-            { value: buckets.healthy, color: '#22c55e', label: 'Healthy' },
-            { value: buckets.progressing, color: '#3b82f6', label: 'Progressing' },
-            { value: buckets.degraded, color: '#ef4444', label: 'Degraded' },
-            { value: buckets.unknown, color: '#9ca3af', label: 'Unknown' },
+            { value: buckets.healthy, color: healthBlockColor('healthy'), label: 'Healthy' },
+            { value: buckets.progressing, color: healthBlockColor('progressing'), label: 'Progressing' },
+            { value: buckets.degraded, color: healthBlockColor('degraded'), label: 'Degraded' },
+            { value: buckets.unknown, color: healthBlockColor('unknown'), label: 'Unknown' },
           ]
             .filter((s) => s.value > 0)
             .map((s) => (
@@ -161,13 +237,13 @@ function AttentionRowView({ row }: { row: AttentionRow }) {
       ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
       : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
   return (
-    <div className="flex items-start gap-3 rounded-lg bg-[#f0f7ff] px-3 py-2 text-xs dark:bg-gray-800">
+    <div className="flex items-start gap-3 rounded-lg bg-card px-3 py-2 text-xs">
       <div className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${dot}`} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <Link
             to={row.link}
-            className="font-medium text-[#0a2a4a] hover:text-teal-600 hover:underline dark:text-gray-100 dark:hover:text-teal-400"
+            className="font-medium text-card-foreground hover:text-teal-600 hover:underline dark:hover:text-teal-400"
           >
             {row.title}
           </Link>
@@ -175,7 +251,7 @@ function AttentionRowView({ row }: { row: AttentionRow }) {
             <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${badgeClass}`}>{row.badge}</span>
           )}
         </div>
-        <p className="mt-1 text-[#2a5a7a] dark:text-gray-400" title={row.reason}>
+        <p className="mt-1 text-muted-foreground" title={row.reason}>
           {row.reason.length > 140 ? row.reason.slice(0, 140) + '...' : row.reason}
         </p>
       </div>
@@ -293,6 +369,15 @@ export function Dashboard() {
   const [clusters, setClusters] = useState<{ name: string; connectionStatus: string }[]>([]);
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
   const [homeCluster, setHomeCluster] = useState<{ available: boolean; message?: string; kubernetes_version?: string; node_count?: number; nodes_ready?: number; nodes_not_ready?: number } | null>(null);
+  // Home-cluster identity card (Package 3) — three more thin reads, each
+  // degrading independently to undefined ("—" in the card) rather than
+  // failing the whole dashboard fetch.
+  const [sharkoVersion, setSharkoVersion] = useState<string | undefined>(undefined);
+  const [argocdVersion, setArgocdVersion] = useState<string | undefined>(undefined);
+  const [argocdConnected, setArgocdConnected] = useState(false);
+  const [uptime, setUptime] = useState<string | undefined>(undefined);
+  // Upgrades stat (Package 2 #1) — derived from the version matrix.
+  const [upgrades, setUpgrades] = useState<UpgradesSummary>({ withUpgrade: 0, checked: 0 });
   // Wall-clock time of the last successful (or attempted) fetch — powers
   // the calm all-fine line's "last checked" timestamp.
   const [lastChecked, setLastChecked] = useState<number | null>(null);
@@ -305,15 +390,23 @@ export function Dashboard() {
         setLoading(true);
       }
       setError(null);
-      const [statsData, obsData, matrixData, clustersData, homeClusterData] = await Promise.all([
+      const [statsData, obsData, matrixData, clustersData, homeClusterData, healthData, configData, fleetData] = await Promise.all([
         api.getDashboardStats(),
         api.getObservability().catch(() => null),
         api.getVersionMatrix().catch(() => null),
         api.getClusters().catch(() => null),
         api.getHomeCluster().catch(() => null),
+        api.health().catch(() => null),
+        api.getConfig().catch(() => null),
+        api.getFleetStatus().catch(() => null),
       ]);
       setStats(statsData);
       setHomeCluster(homeClusterData);
+      setSharkoVersion(healthData?.version);
+      setArgocdConnected(!!configData?.argocd?.connected);
+      setArgocdVersion(configData?.argocd?.version);
+      setUptime(fleetData?.uptime);
+      setUpgrades(summarizeUpgrades(matrixData));
       // Trigger an extra refresh of the unified state so Dashboard reflects
       // any attention items that arrived between the provider's polls.
       refreshAddonStates();
@@ -502,30 +595,10 @@ export function Dashboard() {
   const driftCount = driftRows.length;
   const hasIssues = clusterProblemCount > 0 || redAppCount > 0 || settlingCount > 0 || unknownCount > 0 || driftCount > 0;
 
-  // Neutral (non-alarm) cluster notes — untested/pending are facts worth
-  // knowing, not problems. Shown either way (alarm or all-fine).
-  const neutralClusterNotes: string[] = [];
-  if (stats.clusters.untested > 0) {
-    neutralClusterNotes.push(
-      `${stats.clusters.untested} cluster${stats.clusters.untested !== 1 ? 's' : ''} waiting for ${stats.clusters.untested !== 1 ? 'their' : 'its'} first addon`,
-    );
-  }
-  if (stats.clusters.pending > 0) {
-    neutralClusterNotes.push(
-      `${stats.clusters.pending} cluster${stats.clusters.pending !== 1 ? 's' : ''} connecting`,
-    );
-  }
-
-  // Total Clusters stat card subtitle — same classification, informational
-  // text only (Package 2: stat cards are permanently neutral, no color).
-  let clusterSubtitle: string | undefined;
-  if (clusterProblemCount > 0) {
-    clusterSubtitle = `${clusterProblemCount} disconnected`;
-  } else if (stats.clusters.untested > 0) {
-    clusterSubtitle = `${stats.clusters.untested} waiting for first addon`;
-  } else if (stats.clusters.pending > 0) {
-    clusterSubtitle = `${stats.clusters.pending} connecting`;
-  }
+  // Total Clusters stat card subtitle — the full 5-state story (Package 2
+  // #2), not one hand-picked note. Also replaces the old standalone
+  // neutralClusterNotes line entirely (it duplicated this subtitle).
+  const clusterSubtitle = clusterStateStory(stats.clusters);
 
   // Applications health-bucket fallback (used above 10 apps, see
   // ApplicationsHealthCard).
@@ -577,13 +650,13 @@ export function Dashboard() {
     return (
       <div className="mx-auto max-w-screen-xl space-y-6">
         {heroSection}
-        <div className="flex flex-col items-center gap-4 rounded-2xl ring-2 ring-[#6aade0] bg-[#f0f7ff] px-6 py-14 text-center shadow-sm dark:ring-gray-700 dark:bg-gray-800">
-          <Server className="h-10 w-10 text-[#5a8aaa] dark:text-gray-500" />
+        <div className="flex flex-col items-center gap-4 rounded-2xl border border-border bg-card px-6 py-14 text-center shadow-sm">
+          <Server className="h-10 w-10 text-muted-foreground" />
           <div>
-            <h2 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
+            <h2 className="text-lg font-semibold text-card-foreground">
               Nothing connected yet
             </h2>
-            <p className="mx-auto mt-1 max-w-md text-sm text-[#2a5a7a] dark:text-gray-400">
+            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
               Register a cluster to start deploying addons, or browse the Marketplace to see
               what&rsquo;s available first.
             </p>
@@ -598,7 +671,7 @@ export function Dashboard() {
             </button>
             <button
               onClick={() => navigate('/addons?tab=marketplace')}
-              className="inline-flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] px-5 py-2.5 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted px-5 py-2.5 text-sm font-medium text-card-foreground hover:bg-muted/70"
             >
               <Store className="h-4 w-4" />
               Browse the Marketplace
@@ -747,9 +820,6 @@ export function Dashboard() {
           </span>
         </div>
       )}
-      {neutralClusterNotes.length > 0 && (
-        <p className="px-1 text-xs text-[#5a8aaa] dark:text-gray-500">{neutralClusterNotes.join(' · ')}</p>
-      )}
 
       {/* Progressing widget — apps can still be healthy while progressing;
           subtle blue styling so it doesn't read as a hard error. Click an
@@ -783,11 +853,11 @@ export function Dashboard() {
                     <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-blue-500" />
                     <Link
                       to={item.cluster ? deepLinkToAddonOnCluster(item.addonName, item.cluster) : `/addons/${encodeURIComponent(item.addonName)}`}
-                      className="flex-1 truncate font-medium text-[#0a2a4a] hover:text-teal-600 hover:underline dark:text-gray-100 dark:hover:text-teal-400"
+                      className="flex-1 truncate font-medium text-card-foreground hover:text-teal-600 hover:underline dark:hover:text-teal-400"
                       title="Investigate on cluster page"
                     >
                       {item.appName || item.addonName}
-                      {item.cluster && <span className="ml-1 text-[#3a6a8a] font-normal">on {item.cluster}</span>}
+                      {item.cluster && <span className="ml-1 text-muted-foreground font-normal">on {item.cluster}</span>}
                     </Link>
                     <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
                       Progressing
@@ -801,13 +871,15 @@ export function Dashboard() {
       )}
 
       {/* Stats Cards — permanently neutral (inventory + navigation only;
-          color is reserved for the Needs Attention surface above). */}
+          color is reserved for the Needs Attention surface above).
+          Tier 1 hero cards (Package 1): bg-card, rounded-xl, shadow-sm, no
+          ring, text-4xl tabular-nums value. */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard
           title="Total Clusters"
           value={stats.clusters.total}
-          icon={<Server className="h-6 w-6" />}
-          color="default"
+          icon={<Server className="h-4 w-4" />}
+          size="large"
           subtitle={clusterSubtitle}
           onClick={() => navigate(clusterProblemCount > 0 ? '/clusters?status=disconnected' : '/clusters')}
         />
@@ -818,146 +890,87 @@ export function Dashboard() {
           buckets={healthBuckets}
           onClick={() => navigate('/addons')}
         />
+        {/* Upgrades (Package 2 #1) — replaces "Active Deployments", which
+            was a plain count with no signal beyond "as configured in Git".
+            "X of Y have a newer version", derived from the version matrix's
+            per-row newest_available vs. each deployed cell's version. */}
         <StatCard
-          title="Active Deployments"
-          value={stats.addons.enabled_deployments}
-          icon={<Rocket className="h-6 w-6" />}
-          color="default"
-          subtitle="as configured in Git"
+          title="Upgrades"
+          value={upgrades.withUpgrade}
+          icon={<ArrowUpCircle className="h-4 w-4" />}
+          size="large"
+          subtitle={
+            upgrades.checked === 0
+              ? 'No version data yet'
+              : upgrades.withUpgrade === 0
+                ? 'Everything on the newest known version'
+                : `of ${upgrades.checked} have a newer version`
+          }
           onClick={() => navigate('/version-matrix')}
         />
       </div>
 
-      {/* Sharko's Home Cluster Card */}
-      {homeCluster && (
-        <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
-          <div className="flex items-start justify-between">
-            <div>
-              <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
-                Sharko's home cluster
-              </h3>
-              <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">
-                where Sharko & ArgoCD run
-              </p>
-            </div>
-            <Server className="h-5 w-5 text-[#3a6a8a] dark:text-gray-500" />
-          </div>
-          {homeCluster.available ? (
-            <div className="mt-3 grid grid-cols-3 gap-3">
-              <div>
-                <div className="text-xs text-[#5a8aaa] dark:text-gray-500">Kubernetes version</div>
-                <div className="mt-1 text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
-                  {homeCluster.kubernetes_version || 'unknown'}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-[#5a8aaa] dark:text-gray-500">Nodes</div>
-                <div className="mt-1 text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
-                  {homeCluster.node_count || 0}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-[#5a8aaa] dark:text-gray-500">Health</div>
-                <div className="mt-1 text-sm font-medium">
-                  {homeCluster.nodes_ready === homeCluster.node_count ? (
-                    <span className="text-green-600 dark:text-green-400">All ready</span>
-                  ) : (
-                    <span className="text-[#0a2a4a] dark:text-gray-100">
-                      {homeCluster.nodes_ready}/{homeCluster.node_count} ready
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="mt-3 text-xs text-[#3a6a8a] dark:text-gray-400">
-              {homeCluster.message || 'Not available'}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Pull Requests — Pending/Merged toggle. */}
       <PullRequestsPanel onMergeDetected={handlePRMerged} />
+
+      {/* Recent Activity — moved up from the old bottom row (Package 2:
+          new page order). Rows read "deployed <addon> on <cluster> · rev
+          <sha> · <time>" (panel-lens finding) — no status dot, since the
+          server always reports Succeeded here and a permanently-green dot
+          says nothing. */}
+      <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-base font-semibold text-card-foreground">Recent Activity</h3>
+          </div>
+          <button onClick={() => navigate('/observability')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
+            View all
+          </button>
+        </div>
+        {recentSyncs.length === 0 ? (
+          <EmptyState compact title="No recent sync activity" />
+        ) : (
+          <div className="space-y-2">
+            {recentSyncs.map((sync, i) => (
+              <div key={i} className="flex items-center gap-3 text-xs">
+                <div className="min-w-0 flex-1 truncate">
+                  <span className="text-muted-foreground">deployed </span>
+                  <span className="font-medium text-card-foreground">{sync.addon_name}</span>
+                  <span className="text-muted-foreground"> on {sync.cluster_name}</span>
+                  {sync.revision && (
+                    <span className="text-muted-foreground"> · rev {sync.revision.slice(0, 7)}</span>
+                  )}
+                </div>
+                <span className="shrink-0 text-muted-foreground flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  {timeAgo(sync.timestamp)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* GitOps corrections (audit-derived orphan/drift cleanup — distinct
           from the addon version-drift rows in Needs Attention above). */}
       <DriftAlertsPanel />
 
-      {/* Bottom row: Quick Actions + Recent Activity + Available Addons */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Quick Actions */}
-        <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
-          <h3 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Quick Actions</h3>
-          <div className="space-y-2">
-            {/* V2-cleanup-61.4 (F2): the standalone Upgrade Checker page is
-                gone — upgrade analysis lives on each addon's own Upgrade
-                tab, so this points straight at the catalog to pick one. */}
-            <button onClick={() => navigate('/addons')}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-[#0a3a5a] transition-colors hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700">
-              <ArrowUpCircle className="h-4 w-4 text-teal-500" />
-              <span>Check Upgrade Impact</span>
-              <ChevronRight className="ml-auto h-4 w-4 text-[#3a6a8a]" />
-            </button>
-            <button onClick={() => navigate('/observability')}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-[#0a3a5a] transition-colors hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700">
-              <Activity className="h-4 w-4 text-green-500" />
-              <span>View Observability</span>
-              <ChevronRight className="ml-auto h-4 w-4 text-[#3a6a8a]" />
-            </button>
-          </div>
-        </div>
-
-        {/* Recent Sync Activity */}
-        <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Recent Activity</h3>
-            <button onClick={() => navigate('/observability')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
-              View all
-            </button>
-          </div>
-          {recentSyncs.length === 0 ? (
-            <p className="py-4 text-center text-xs text-[#2a5a7a]">No recent sync activity</p>
-          ) : (
-            <div className="space-y-2">
-              {recentSyncs.map((sync, i) => (
-                <div key={i} className="flex items-center gap-3 text-xs">
-                  <div className={`h-2 w-2 shrink-0 rounded-full ${sync.status === 'Synced' || sync.status === 'Succeeded' ? 'bg-green-500' : 'bg-amber-500'}`} />
-                  <div className="min-w-0 flex-1">
-                    <span className="font-medium text-[#0a3a5a] dark:text-gray-300">{sync.addon_name}</span>
-                    <span className="text-[#3a6a8a]"> on </span>
-                    <span className="text-[#2a5a7a] dark:text-gray-400">{sync.cluster_name}</span>
-                  </div>
-                  <span className="shrink-0 text-[#3a6a8a] flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
-                    {timeAgo(sync.timestamp)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Available Addons — catalog inventory, demoted out of the front
-            stat row (dashboard UX review 2026-08-01: it's a count of what
-            the org approved, not a live health signal, so it doesn't
-            belong next to Clusters/Applications/Deployments). */}
-        <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Available Addons</h3>
-            <button onClick={() => navigate('/addons')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
-              Browse
-            </button>
-          </div>
-          <div className="flex items-center gap-3">
-            <Package className="h-8 w-8 shrink-0 text-[#3a6a8a] dark:text-gray-500" />
-            <div>
-              <div className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{stats.addons.total_available}</div>
-              <div className="text-xs text-[#5a8aaa] dark:text-gray-500">approved in the catalog</div>
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Bottom row: home-cluster identity card only (Quick Actions and
+          Available Addons are gone — maintainer's call). A 3-column grid
+          with two empty cells reads like a layout bug, so this renders as
+          a standalone, width-capped block instead of a grid — Tier 3
+          ("compact, quieter") stays compact rather than stretching to
+          fill a row it doesn't need. */}
+      {homeCluster && (
+        <HomeClusterCard
+          homeCluster={homeCluster}
+          sharkoVersion={sharkoVersion}
+          argocdVersion={argocdVersion}
+          argocdConnected={argocdConnected}
+          uptime={uptime}
+        />
+      )}
     </div>
   );
 }

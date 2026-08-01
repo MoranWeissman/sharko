@@ -168,64 +168,103 @@ function timeAgo(timestamp?: string): string {
 }
 
 // Build a GitHub-flavoured "pulls?q=is:pr+is:open" URL from the active
-// connection's git_repo_identifier (e.g. "MoranWeissman/sharko"). When
-// the identifier is missing we fall back to a no-op `#` link — the
-// caller hides the escape hatch in that case anyway.
-function gitHubAllPRsURL(repoIdentifier: string | undefined, state: 'open' | 'closed'): string {
-  if (!repoIdentifier) return '#'
+// connection's git_repo_identifier (e.g. "MoranWeissman/sharko"). Only
+// ever call this for a GitHub connection — see EscapeHatchLink below.
+function gitHubAllPRsURL(repoIdentifier: string, state: 'open' | 'closed'): string {
   const q = state === 'open' ? 'is%3Apr+is%3Aopen' : 'is%3Apr+is%3Aclosed'
-  // Best-effort GitHub URL. Other providers (GitLab, Azure DevOps) get
-  // the same /pulls path which won't 404, but the query string is
-  // ignored — acceptable.
   return `https://github.com/${repoIdentifier}/pulls?q=${q}`
+}
+
+// The "view the rest" escape hatch used to always build a github.com URL,
+// even for Gitea/GitLab/self-hosted connections — a link that 404s for
+// every non-GitHub provider. We only know how to build a working URL for
+// GitHub (the identifier is an "org/repo" pair we can point at
+// github.com); for anything else, say so in plain words instead of
+// guessing a URL.
+function EscapeHatchLink({
+  repoIdentifier,
+  gitProvider,
+  state,
+}: {
+  repoIdentifier: string | undefined
+  gitProvider: string | undefined
+  state: 'open' | 'closed'
+}) {
+  if (!repoIdentifier) return null
+  if (gitProvider === 'github') {
+    return (
+      <a
+        href={gitHubAllPRsURL(repoIdentifier, state)}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1 text-teal-600 hover:underline dark:text-teal-400"
+      >
+        View all on GitHub <ExternalLink className="h-3 w-3" />
+      </a>
+    )
+  }
+  return <span className="text-muted-foreground">View the rest on your Git host</span>
 }
 
 // FilterControls renders the chip row + search input shared between the
 // Pending and Merged tab bodies. Keeping it in one place ensures the
 // chips stay visually identical across tabs (a small but real source
 // of UX friction otherwise).
+//
+// Two panel-lens findings shape when/what this renders:
+//   - The whole control row is clutter on a short list — it only renders
+//     once the tab's (unfiltered) row count is above 10. Callers gate
+//     this with `showFilterControls` in <PullRequestsPanel>.
+//   - Merged-tab category chips filter by guessing at the PR title (the
+//     merge endpoint doesn't carry the original operation), which
+//     silently drops PRs that don't match the guess. `showCategoryChips`
+//     lets the Merged tab keep the search box while dropping the chips.
 function FilterControls({
   category,
   onCategoryChange,
   search,
   onSearchChange,
+  showCategoryChips = true,
 }: {
   category: CategoryKey
   onCategoryChange: (next: CategoryKey) => void
   search: string
   onSearchChange: (next: string) => void
+  showCategoryChips?: boolean
 }) {
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">
-      <div role="group" aria-label="Filter by category" className="inline-flex flex-wrap gap-1">
-        {CATEGORY_BUCKETS.map((b) => {
-          const active = category === b.key
-          return (
-            <button
-              key={b.key}
-              type="button"
-              onClick={() => onCategoryChange(b.key)}
-              aria-pressed={active}
-              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
-                active
-                  ? 'bg-teal-600 text-white shadow-sm'
-                  : 'bg-[#e8f4ff] text-[#0a3a5a] hover:bg-[#d6eeff] dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-              }`}
-            >
-              {b.label}
-            </button>
-          )
-        })}
-      </div>
-      <div className="ml-auto flex items-center gap-1 rounded-md ring-1 ring-[#6aade0] bg-white px-2 py-0.5 text-xs dark:ring-gray-700 dark:bg-gray-900">
-        <Search className="h-3 w-3 text-[#5a8aaa] dark:text-gray-400" />
+      {showCategoryChips && (
+        <div role="group" aria-label="Filter by category" className="inline-flex flex-wrap gap-1">
+          {CATEGORY_BUCKETS.map((b) => {
+            const active = category === b.key
+            return (
+              <button
+                key={b.key}
+                type="button"
+                onClick={() => onCategoryChange(b.key)}
+                aria-pressed={active}
+                className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                  active
+                    ? 'bg-teal-600 text-white shadow-sm'
+                    : 'bg-muted text-card-foreground hover:bg-muted/70'
+                }`}
+              >
+                {b.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
+      <div className="ml-auto flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-xs">
+        <Search className="h-3 w-3 text-muted-foreground" />
         <input
           type="search"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Search title, cluster, addon…"
           aria-label="Search PRs"
-          className="w-44 bg-transparent py-0.5 text-[#0a2a4a] placeholder:text-[#5a8aaa] focus:outline-none dark:text-gray-200 dark:placeholder:text-gray-500"
+          className="w-44 bg-transparent py-0.5 text-card-foreground placeholder:text-muted-foreground focus:outline-none"
         />
       </div>
     </div>
@@ -237,15 +276,26 @@ function PendingTabBody({
   category,
   search,
   repoIdentifier,
+  gitProvider,
   onMergeDetected,
   onPendingCountChange,
+  onBaselineCountChange,
 }: {
   cluster?: string
   category: CategoryKey
   search: string
   repoIdentifier: string | undefined
+  gitProvider: string | undefined
   onMergeDetected?: (pr: TrackedPR) => void
   onPendingCountChange?: (count: number) => void
+  /**
+   * Fires only when `category === 'all'`, i.e. the true unfiltered row
+   * count for this tab. Used to decide whether the filter controls are
+   * worth showing at all — gating on the currently-filtered count would
+   * let a narrow category selection hide the very controls needed to
+   * get back to "all" (findings, panel lens).
+   */
+  onBaselineCountChange?: (count: number) => void
 }) {
   const [prs, setPrs] = useState<TrackedPR[]>([])
   const [serverLimit, setServerLimit] = useState<number>(0)
@@ -287,13 +337,14 @@ function PendingTabBody({
 
         setPrs(newPrs)
         onPendingCountChange?.(newPrs.length)
+        if (category === 'all') onBaselineCountChange?.(newPrs.length)
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Failed to load tracked PRs')
       } finally {
         setLoading(false)
       }
     },
-    [cluster, onMergeDetected, onPendingCountChange, operationCSV],
+    [cluster, onMergeDetected, onPendingCountChange, onBaselineCountChange, operationCSV, category],
   )
 
   useEffect(() => {
@@ -328,7 +379,7 @@ function PendingTabBody({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-6 text-[#3a6a8a] dark:text-gray-400">
+      <div className="flex items-center justify-center py-6 text-muted-foreground">
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
         <span className="text-xs">Loading PRs…</span>
       </div>
@@ -340,6 +391,7 @@ function PendingTabBody({
   if (prs.length === 0) {
     return (
       <EmptyState
+        compact
         title="No tracked PRs"
         description={
           cluster
@@ -359,60 +411,52 @@ function PendingTabBody({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-baseline justify-between text-xs text-[#3a6a8a] dark:text-gray-400">
+      <div className="flex items-baseline justify-between text-xs text-muted-foreground">
         <span>
           Showing {visiblePrs.length} of {prs.length} open PR{prs.length === 1 ? '' : 's'}
           {atCap ? ` (server cap)` : ''}
         </span>
-        {atCap && repoIdentifier && (
-          <a
-            href={gitHubAllPRsURL(repoIdentifier, 'open')}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-teal-600 hover:underline dark:text-teal-400"
-          >
-            View all on GitHub <ExternalLink className="h-3 w-3" />
-          </a>
+        {atCap && (
+          <EscapeHatchLink repoIdentifier={repoIdentifier} gitProvider={gitProvider} state="open" />
         )}
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs">
           <thead>
-            <tr className="border-b border-[#6aade0] dark:border-gray-700">
-              <th className="pb-2 pr-3 font-semibold text-[#0a2a4a] dark:text-gray-100">Title</th>
-              <th className="pb-2 pr-3 font-semibold text-[#0a2a4a] dark:text-gray-100">Category</th>
-              {!cluster && <th className="pb-2 pr-3 font-semibold text-[#0a2a4a] dark:text-gray-100">Cluster</th>}
-              <th className="pb-2 pr-3 font-semibold text-[#0a2a4a] dark:text-gray-100">User</th>
-              <th className="pb-2 pr-3 font-semibold text-[#0a2a4a] dark:text-gray-100">Status</th>
-              <th className="pb-2 pr-3 font-semibold text-[#0a2a4a] dark:text-gray-100">Created</th>
-              <th className="pb-2 font-semibold text-[#0a2a4a] dark:text-gray-100 text-right">Actions</th>
+            <tr className="border-b border-border">
+              <th className="pb-2 pr-3 font-semibold text-card-foreground">Title</th>
+              <th className="pb-2 pr-3 font-semibold text-card-foreground">Category</th>
+              {!cluster && <th className="pb-2 pr-3 font-semibold text-card-foreground">Cluster</th>}
+              <th className="pb-2 pr-3 font-semibold text-card-foreground">User</th>
+              <th className="pb-2 pr-3 font-semibold text-card-foreground">Created</th>
+              <th className="pb-2 font-semibold text-card-foreground text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {visiblePrs.map((pr) => (
               <tr
                 key={pr.pr_id}
-                className="border-b border-[#d6eeff] last:border-0 dark:border-gray-700/50"
+                className="border-b border-border/60 last:border-0"
               >
                 <td className="py-2 pr-3">
-                  <span className="font-medium text-[#0a3a5a] dark:text-gray-300" title={pr.pr_title}>
+                  <a
+                    href={pr.pr_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-card-foreground hover:text-teal-600 hover:underline"
+                    title={pr.pr_title}
+                  >
                     {pr.pr_title.length > 50 ? pr.pr_title.slice(0, 50) + '…' : pr.pr_title}
-                  </span>
+                  </a>
                 </td>
                 <td className="py-2 pr-3">
                   <CategoryBadge operation={pr.operation} />
                 </td>
                 {!cluster && (
-                  <td className="py-2 pr-3 text-[#2a5a7a] dark:text-gray-400">{pr.cluster || '—'}</td>
+                  <td className="py-2 pr-3 text-muted-foreground">{pr.cluster || '—'}</td>
                 )}
-                <td className="py-2 pr-3 text-[#2a5a7a] dark:text-gray-400">{pr.user}</td>
-                <td className="py-2 pr-3">
-                  <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                    <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
-                    Open
-                  </span>
-                </td>
-                <td className="py-2 pr-3 text-[#3a6a8a] dark:text-gray-400 whitespace-nowrap">
+                <td className="py-2 pr-3 text-muted-foreground">{pr.user}</td>
+                <td className="py-2 pr-3 text-muted-foreground whitespace-nowrap">
                   <span className="flex items-center gap-1">
                     <Clock className="h-3 w-3" />
                     {timeAgo(pr.created_at)}
@@ -424,16 +468,16 @@ function PendingTabBody({
                       href={pr.pr_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="rounded p-1 text-[#3a6a8a] transition-colors hover:bg-[#d6eeff] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-card-foreground"
                       title="Open PR in browser"
-                      aria-label={`Open PR #${pr.pr_id} on GitHub`}
+                      aria-label={`Open PR #${pr.pr_id} in browser`}
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
                     </a>
                     <button
                       onClick={() => void handleRefreshPR(pr.pr_id)}
                       disabled={refreshingId === pr.pr_id}
-                      className="rounded p-1 text-[#3a6a8a] transition-colors hover:bg-[#d6eeff] hover:text-[#0a2a4a] disabled:opacity-50 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-card-foreground disabled:opacity-50"
                       title="Refresh PR status"
                       aria-label={`Refresh status of PR #${pr.pr_id}`}
                     >
@@ -456,14 +500,16 @@ function PendingTabBody({
 
 function MergedTabBody({
   cluster,
-  category,
   search,
   repoIdentifier,
+  gitProvider,
+  onCountChange,
 }: {
   cluster?: string
-  category: CategoryKey
   search: string
   repoIdentifier: string | undefined
+  gitProvider: string | undefined
+  onCountChange?: (count: number) => void
 }) {
   const [prs, setPrs] = useState<MergedPRItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -477,14 +523,16 @@ function MergedTabBody({
         const filters: { cluster?: string; limit?: number } = { limit: 100 }
         if (cluster) filters.cluster = cluster
         const res = await fetchMergedPRs(filters)
-        setPrs(res.prs || [])
+        const newPrs = res.prs || []
+        setPrs(newPrs)
+        onCountChange?.(newPrs.length)
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Failed to load merged PRs')
       } finally {
         setLoading(false)
       }
     },
-    [cluster],
+    [cluster, onCountChange],
   )
 
   useEffect(() => {
@@ -495,37 +543,26 @@ function MergedTabBody({
     return () => clearInterval(id)
   }, [fetchMerged])
 
-  // Merged PRs don't have a stored Operation field (the prtracker
-  // dropped them on merge — see /api/v1/prs/merged). The handler does
-  // a best-effort `inferOperation()` from the title, but that won't
-  // line up with the canonical Op codes. So for the Merged tab the
-  // category filter is applied as a best-effort title-substring match
-  // — perfect for register-cluster (titles always start with "Register
-  // cluster"), looser for upgrade-addon. Unknowns pass through.
-  const filteredByCategory = useMemo(() => {
-    const bucket = CATEGORY_BUCKETS.find((b) => b.key === category)
-    if (!bucket || bucket.operations.length === 0) return prs
-    const tokens = bucket.operations
-      .map((op) => op.replace(/-/g, ' '))
-      .map((t) => t.toLowerCase())
-    return prs.filter((pr) => {
-      const hay = `${pr.pr_title ?? ''} ${pr.operation ?? ''} ${pr.pr_branch ?? ''}`.toLowerCase()
-      return tokens.some((t) => hay.includes(t))
-    })
-  }, [prs, category])
-
+  // Merged PRs don't have a stored Operation field (the prtracker dropped
+  // it on merge — see /api/v1/prs/merged), so there is no reliable way to
+  // group them by category here. An earlier version of this tab guessed
+  // the category from a title/branch substring match, but that silently
+  // dropped merged PRs whose title didn't happen to contain the guessed
+  // words. The Merged tab no longer offers a category filter at all
+  // (panel-lens finding) — only the free-text search below, which never
+  // drops a row it can't classify.
   const visiblePrs = useMemo(() => {
-    if (!search.trim()) return filteredByCategory
+    if (!search.trim()) return prs
     const needle = search.trim().toLowerCase()
-    return filteredByCategory.filter((pr) => {
+    return prs.filter((pr) => {
       const haystack = `${pr.pr_title ?? ''} ${pr.cluster ?? ''} ${pr.addon ?? ''} ${pr.pr_branch ?? ''}`.toLowerCase()
       return haystack.includes(needle)
     })
-  }, [filteredByCategory, search])
+  }, [prs, search])
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-6 text-[#3a6a8a] dark:text-gray-400">
+      <div className="flex items-center justify-center py-6 text-muted-foreground">
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
         <span className="text-xs">Loading merged PRs…</span>
       </div>
@@ -537,6 +574,7 @@ function MergedTabBody({
   if (prs.length === 0) {
     return (
       <EmptyState
+        compact
         title="No merged PRs yet"
         description="Sharko-authored PRs that have been merged in your git repo will appear here."
       />
@@ -545,54 +583,45 @@ function MergedTabBody({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-baseline justify-between text-xs text-[#3a6a8a] dark:text-gray-400">
+      <div className="flex items-baseline justify-between text-xs text-muted-foreground">
         <span>
           Showing {visiblePrs.length} of {prs.length} merged PR{prs.length === 1 ? '' : 's'}
         </span>
-        {repoIdentifier && (
-          <a
-            href={gitHubAllPRsURL(repoIdentifier, 'closed')}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-teal-600 hover:underline dark:text-teal-400"
-          >
-            View all on GitHub <ExternalLink className="h-3 w-3" />
-          </a>
-        )}
+        <EscapeHatchLink repoIdentifier={repoIdentifier} gitProvider={gitProvider} state="closed" />
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs">
           <thead>
-            <tr className="border-b border-[#6aade0] dark:border-gray-700">
-              <th className="pb-2 pr-3 font-semibold text-[#0a2a4a] dark:text-gray-100">Title</th>
-              {!cluster && <th className="pb-2 pr-3 font-semibold text-[#0a2a4a] dark:text-gray-100">Cluster</th>}
-              <th className="pb-2 pr-3 font-semibold text-[#0a2a4a] dark:text-gray-100">Author</th>
-              <th className="pb-2 pr-3 font-semibold text-[#0a2a4a] dark:text-gray-100">Merged</th>
-              <th className="pb-2 font-semibold text-[#0a2a4a] dark:text-gray-100 text-right">Link</th>
+            <tr className="border-b border-border">
+              <th className="pb-2 pr-3 font-semibold text-card-foreground">Title</th>
+              {!cluster && <th className="pb-2 pr-3 font-semibold text-card-foreground">Cluster</th>}
+              <th className="pb-2 pr-3 font-semibold text-card-foreground">Author</th>
+              <th className="pb-2 pr-3 font-semibold text-card-foreground">Merged</th>
+              <th className="pb-2 font-semibold text-card-foreground text-right">Link</th>
             </tr>
           </thead>
           <tbody>
             {visiblePrs.map((pr) => (
               <tr
                 key={pr.pr_id}
-                className="border-b border-[#d6eeff] last:border-0 dark:border-gray-700/50"
+                className="border-b border-border/60 last:border-0"
               >
                 <td className="py-2 pr-3">
                   <a
                     href={pr.pr_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="font-medium text-[#0a3a5a] hover:text-teal-600 hover:underline dark:text-gray-300 dark:hover:text-teal-400"
+                    className="font-medium text-card-foreground hover:text-teal-600 hover:underline"
                     title={pr.description ? `${pr.pr_title}\n\n${pr.description}` : pr.pr_title}
                   >
                     #{pr.pr_id} {pr.pr_title.length > 60 ? pr.pr_title.slice(0, 60) + '…' : pr.pr_title}
                   </a>
                 </td>
                 {!cluster && (
-                  <td className="py-2 pr-3 text-[#2a5a7a] dark:text-gray-400">{pr.cluster || '—'}</td>
+                  <td className="py-2 pr-3 text-muted-foreground">{pr.cluster || '—'}</td>
                 )}
-                <td className="py-2 pr-3 text-[#2a5a7a] dark:text-gray-400">{pr.author || '—'}</td>
-                <td className="py-2 pr-3 text-[#3a6a8a] dark:text-gray-400 whitespace-nowrap">
+                <td className="py-2 pr-3 text-muted-foreground">{pr.author || '—'}</td>
+                <td className="py-2 pr-3 text-muted-foreground whitespace-nowrap">
                   <span className="flex items-center gap-1">
                     <GitMerge className="h-3 w-3" />
                     {timeAgo(pr.merged_at)}
@@ -603,9 +632,9 @@ function MergedTabBody({
                     href={pr.pr_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 rounded p-1 text-[#3a6a8a] transition-colors hover:bg-[#d6eeff] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
-                    aria-label={`Open merged PR #${pr.pr_id} on GitHub`}
-                    title="Open on GitHub"
+                    className="inline-flex items-center gap-1 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-card-foreground"
+                    aria-label={`Open merged PR #${pr.pr_id} in browser`}
+                    title="Open in browser"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                   </a>
@@ -636,18 +665,28 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
   const [search, setSearch] = useState('')
   // Track whether we've applied the auto-default logic (to avoid loops)
   const [autoDefaultApplied, setAutoDefaultApplied] = useState(false)
+  // Unfiltered row counts per tab — used only to decide whether the
+  // filter controls (chips + search) are worth showing at all (panel-lens
+  // finding: a 3-row list doesn't need a filter bar). null = not loaded
+  // yet, so the controls stay hidden until we actually know the count.
+  const [pendingBaseline, setPendingBaseline] = useState<number | null>(null)
+  const [mergedCount, setMergedCount] = useState<number | null>(null)
   // Optional context — the panel renders fine without a connection
   // provider (e.g. in unit tests that mount it under MemoryRouter only).
   const connCtx = useConnectionsOptional()
 
-  // Pick the active connection's git_repo_identifier for the "View all
-  // on GitHub →" escape hatch. When no active connection (test mode /
+  // Pick the active connection's git_repo_identifier + provider for the
+  // "view the rest" escape hatch. When no active connection (test mode /
   // first-run), the link is hidden.
-  const repoIdentifier = useMemo(() => {
+  const activeConn = useMemo(() => {
     if (!connCtx) return undefined
-    const conn = connCtx.connections.find((c) => c.name === connCtx.activeConnection)
-    return conn?.git_repo_identifier
+    return connCtx.connections.find((c) => c.name === connCtx.activeConnection)
   }, [connCtx])
+  const repoIdentifier = activeConn?.git_repo_identifier
+  const gitProvider = activeConn?.git_provider
+
+  const showPendingFilters = (pendingBaseline ?? 0) > 10
+  const showMergedFilters = (mergedCount ?? 0) > 10
 
   // Auto-default to Merged when pending=0 and no explicit selection
   const handlePendingCountChange = useCallback(
@@ -694,11 +733,11 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
   }
 
   return (
-    <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
+    <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <GitPullRequest className="h-4 w-4 text-teal-500" />
-          <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+          <h3 className="text-base font-semibold text-card-foreground">
             {cluster ? 'Cluster PRs' : 'Pull Requests'}
           </h3>
         </div>
@@ -706,7 +745,7 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
           role="tablist"
           aria-label="PR state filter"
           onKeyDown={onKeyDown}
-          className="inline-flex rounded-lg border border-[#6aade0] bg-white p-0.5 text-xs dark:border-gray-700 dark:bg-gray-900"
+          className="inline-flex rounded-lg border border-border bg-background p-0.5 text-xs"
         >
           <button
             role="tab"
@@ -716,7 +755,7 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
             className={`rounded px-3 py-1 font-medium transition-colors ${
               tab === 'pending'
                 ? 'bg-teal-600 text-white shadow-sm'
-                : 'text-[#0a2a4a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700'
+                : 'text-card-foreground hover:bg-muted'
             }`}
           >
             Pending
@@ -729,7 +768,7 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
             className={`rounded px-3 py-1 font-medium transition-colors ${
               tab === 'merged'
                 ? 'bg-teal-600 text-white shadow-sm'
-                : 'text-[#0a2a4a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700'
+                : 'text-card-foreground hover:bg-muted'
             }`}
           >
             Merged
@@ -737,25 +776,44 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
         </div>
       </div>
 
-      <FilterControls
-        category={category}
-        onCategoryChange={setCategory}
-        search={search}
-        onSearchChange={setSearch}
-      />
+      {tab === 'pending' && showPendingFilters && (
+        <FilterControls
+          category={category}
+          onCategoryChange={setCategory}
+          search={search}
+          onSearchChange={setSearch}
+        />
+      )}
+      {tab === 'merged' && showMergedFilters && (
+        <FilterControls
+          category={category}
+          onCategoryChange={setCategory}
+          search={search}
+          onSearchChange={setSearch}
+          showCategoryChips={false}
+        />
+      )}
 
       <div role="tabpanel" aria-label={tab === 'pending' ? 'Pending PRs' : 'Merged PRs'}>
         {tab === 'pending' ? (
           <PendingTabBody
             cluster={cluster}
             category={category}
-            search={search}
+            search={showPendingFilters ? search : ''}
             repoIdentifier={repoIdentifier}
+            gitProvider={gitProvider}
             onMergeDetected={onMergeDetected}
             onPendingCountChange={handlePendingCountChange}
+            onBaselineCountChange={setPendingBaseline}
           />
         ) : (
-          <MergedTabBody cluster={cluster} category={category} search={search} repoIdentifier={repoIdentifier} />
+          <MergedTabBody
+            cluster={cluster}
+            search={showMergedFilters ? search : ''}
+            repoIdentifier={repoIdentifier}
+            gitProvider={gitProvider}
+            onCountChange={setMergedCount}
+          />
         )}
       </div>
     </div>

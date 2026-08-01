@@ -262,7 +262,7 @@ export function Layout() {
   }, [openAiPanel, aiConfigured])
 
   return (
-    <div className="flex h-screen bg-[#bee0ff] dark:bg-gray-950">
+    <div className="flex h-screen bg-background">
       {/* Mobile overlay */}
       {mobileOpen && (
         <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setMobileOpen(false)} />
