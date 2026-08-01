@@ -42,10 +42,11 @@ const baseClusters = {
 };
 
 function renderView() {
-  // Add Cluster button is admin-gated via RoleGuard.
-  sessionStorage.setItem('sharko-auth-token', 'test-token');
-  sessionStorage.setItem('sharko-auth-user', 'tester');
-  sessionStorage.setItem('sharko-auth-role', 'admin');
+  // Add Cluster button is admin-gated via RoleGuard. Auth session lives in
+  // localStorage — see ui/src/lib/authStorage.ts.
+  localStorage.setItem('sharko-auth-token', 'test-token');
+  localStorage.setItem('sharko-auth-user', 'tester');
+  localStorage.setItem('sharko-auth-role', 'admin');
   return render(
     <MemoryRouter>
       <AuthProvider>
@@ -70,6 +71,7 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
+    localStorage.clear();
     mockGetClusters.mockResolvedValue(baseClusters);
     mockGetAddonCatalog.mockResolvedValue({ addons: [] });
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true } as Response)));

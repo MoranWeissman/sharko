@@ -13,6 +13,11 @@ import {
  * Integration-level tests for the V124 BUG-sweep fixes that live in the API
  * client layer. We mock `fetch` rather than the API helpers themselves so the
  * exact request body shape (which is what the backend depends on) is asserted.
+ *
+ * The auth token is seeded into localStorage (not sessionStorage) — the API
+ * client reads it via `authStorage.getToken()`, which is backed by
+ * localStorage so a session survives "open in new tab" (see
+ * ui/src/lib/authStorage.ts).
  */
 
 const TOKEN_KEY = 'sharko-auth-token'
@@ -28,12 +33,12 @@ function mockResponse(status: number, body: unknown): Response {
 
 describe('BUG-035: testClusterConnection structured 503 handling', () => {
   beforeEach(() => {
-    sessionStorage.setItem(TOKEN_KEY, 'test-token')
+    localStorage.setItem(TOKEN_KEY, 'test-token')
     vi.restoreAllMocks()
   })
 
   afterEach(() => {
-    sessionStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(TOKEN_KEY)
   })
 
   it('returns a typed "unavailable" result when backend returns 503 + error_code=no_secrets_backend', async () => {
@@ -78,12 +83,12 @@ describe('BUG-035: testClusterConnection structured 503 handling', () => {
 
 describe('BUG-039: confirm dialogs send yes:true in request body', () => {
   beforeEach(() => {
-    sessionStorage.setItem(TOKEN_KEY, 'test-token')
+    localStorage.setItem(TOKEN_KEY, 'test-token')
     vi.restoreAllMocks()
   })
 
   afterEach(() => {
-    sessionStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(TOKEN_KEY)
   })
 
   it('deregisterCluster sends DELETE with body {"yes": true}', async () => {
@@ -145,12 +150,12 @@ describe('BUG-039: confirm dialogs send yes:true in request body', () => {
 
 describe('dashboard-crash: /config argocd.version arrives as ArgoCD\'s full version object, not a string', () => {
   beforeEach(() => {
-    sessionStorage.setItem(TOKEN_KEY, 'test-token')
+    localStorage.setItem(TOKEN_KEY, 'test-token')
     vi.restoreAllMocks()
   })
 
   afterEach(() => {
-    sessionStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(TOKEN_KEY)
   })
 
   // This is the real wire shape: internal/api/system.go's handleGetConfig
@@ -233,5 +238,48 @@ describe('dashboard-crash: /config argocd.version arrives as ArgoCD\'s full vers
       expect(extractArgocdVersionString(undefined)).toBeUndefined()
       expect(extractArgocdVersionString(null)).toBeUndefined()
     })
+  })
+})
+
+// Login-survives-new-tabs fix (walk finding): every write call through the
+// API client goes through `authHeaders()`, which now reads the token via
+// `authStorage.getToken()` (localStorage) instead of sessionStorage
+// directly. FirstRunWizard's init/poll flow calls straight through this
+// path (initRepo, getOperation, operationHeartbeat), so this pins the
+// contract those calls depend on.
+describe('login-survives-new-tabs: API client attaches Bearer token from localStorage', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    vi.restoreAllMocks()
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('attaches Authorization: Bearer <token> from localStorage on a write call', async () => {
+    localStorage.setItem(TOKEN_KEY, 'new-tab-token')
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      mockResponse(200, { status: 'success' }),
+    )
+
+    await deregisterCluster('prod-eu')
+
+    expect(fetchSpy).toHaveBeenCalledOnce()
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer new-tab-token')
+  })
+
+  it('sends no Authorization header when neither storage has a token', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      mockResponse(200, { status: 'success' }),
+    )
+
+    await deregisterCluster('prod-eu')
+
+    expect(fetchSpy).toHaveBeenCalledOnce()
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
   })
 })

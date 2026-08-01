@@ -93,7 +93,11 @@ describe('UnregisterConsequencesPanel', () => {
     render(<UnregisterConsequencesPanel clusterName="prod-eu" open onReadyChange={onReadyChange} />);
 
     await waitFor(() => expect(screen.getByTestId('unregister-consequences-error')).toBeInTheDocument());
-    expect(onReadyChange).toHaveBeenCalledWith(true);
+    // The error box renders from one effect; onReadyChange(true) fires from
+    // a separate effect one render later. Wait for that propagation instead
+    // of asserting sync — on a slow CI runner the two renders don't land in
+    // the same tick (same flake class fixed in #647).
+    await waitFor(() => expect(onReadyChange).toHaveBeenCalledWith(true));
   });
 
   it('onReadyChange reports false while the confirmation is closed', () => {

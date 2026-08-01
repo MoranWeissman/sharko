@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
+import { getSession, setSession, clearSession, subscribeToLogout, type AuthSession } from '@/lib/authStorage'
 
 interface AuthContextType {
   token: string | null
@@ -14,9 +15,7 @@ interface AuthContextType {
 
 export const AuthContext = createContext<AuthContextType | null>(null)
 
-const TOKEN_KEY = 'sharko-auth-token'
-const USER_KEY = 'sharko-auth-user'
-const ROLE_KEY = 'sharko-auth-role'
+const EMPTY_SESSION: AuthSession = { token: null, username: null, role: null }
 
 // The wizard's X button writes `sharko:dismiss-wizard=1` into sessionStorage
 // so the wizard gate doesn't re-trap the user mid-session. sessionStorage in
@@ -25,15 +24,28 @@ const ROLE_KEY = 'sharko-auth-role'
 // and logged back in (same tab) would still have the flag set — re-login
 // would NOT bring the wizard back even when the system was in a genuinely
 // broken state. Clearing on both login and logout treats re-login as the
-// fresh-session intent it implies.
+// fresh-session intent it implies. This flag is deliberately per-tab (a
+// fresh tab should see the wizard again), so it stays in sessionStorage —
+// unlike the auth session itself, which lives in localStorage (authStorage).
 const DISMISS_WIZARD_KEY = 'sharko:dismiss-wizard'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => sessionStorage.getItem(TOKEN_KEY))
-  const [username, setUsername] = useState<string | null>(() => sessionStorage.getItem(USER_KEY))
-  const [role, setRole] = useState<string | null>(() => sessionStorage.getItem(ROLE_KEY))
+  const [session, setSessionState] = useState<AuthSession>(() => getSession())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const { token, username, role } = session
+
+  // Cross-tab logout: another tab clearing the token in localStorage fires a
+  // `storage` event here. React to it by dropping this tab's auth state too
+  // — the user sees the login screen on their next interaction/render.
+  // Login in another tab does not need the same live push; this tab picks
+  // it up naturally the next time it reads storage.
+  useEffect(() => {
+    return subscribeToLogout(() => {
+      setSessionState(EMPTY_SESSION)
+    })
+  }, [])
 
   // Verify existing token on mount
   useEffect(() => {
@@ -46,12 +58,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
       .then((r) => {
         if (!r.ok) {
-          setToken(null)
-          setUsername(null)
-          setRole(null)
-          sessionStorage.removeItem(TOKEN_KEY)
-          sessionStorage.removeItem(USER_KEY)
-          sessionStorage.removeItem(ROLE_KEY)
+          clearSession()
+          setSessionState(EMPTY_SESSION)
         }
       })
       .catch(() => {})
@@ -71,24 +79,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(data.error || 'Login failed')
     }
     const data = await res.json()
-    setToken(data.token)
-    setUsername(data.username || user)
-    setRole(data.role || 'viewer')
-    sessionStorage.setItem(TOKEN_KEY, data.token)
-    sessionStorage.setItem(USER_KEY, data.username || user)
-    sessionStorage.setItem(ROLE_KEY, data.role || 'viewer')
+    const nextUsername = data.username || user
+    const nextRole = data.role || 'viewer'
+    setSession(data.token, nextUsername, nextRole)
+    setSessionState({ token: data.token, username: nextUsername, role: nextRole })
     // See DISMISS_WIZARD_KEY comment — symmetric clearance on login +
     // logout so fresh auth implies a fresh wizard gate.
     sessionStorage.removeItem(DISMISS_WIZARD_KEY)
   }, [])
 
   const logout = useCallback(() => {
-    setToken(null)
-    setUsername(null)
-    setRole(null)
-    sessionStorage.removeItem(TOKEN_KEY)
-    sessionStorage.removeItem(USER_KEY)
-    sessionStorage.removeItem(ROLE_KEY)
+    clearSession()
+    setSessionState(EMPTY_SESSION)
     // Clear the wizard-dismiss flag so the next login starts with a clean
     // wizard gate (see DISMISS_WIZARD_KEY comment).
     sessionStorage.removeItem(DISMISS_WIZARD_KEY)

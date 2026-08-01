@@ -32,6 +32,7 @@ import {
 import type { OperationStep, InitStatus } from '@/services/api'
 import type { AddToCatalogResult, CatalogEntry, CatalogRepoChartsResponse } from '@/services/models'
 import { useConnections } from '@/hooks/useConnections'
+import { clearSession } from '@/lib/authStorage'
 import { MigrationBanner } from '@/components/MigrationBanner'
 import { extractPR, PRLink } from '@/components/PRFeedback'
 
@@ -935,7 +936,7 @@ function StepInit({
               <button
                 type="button"
                 onClick={() => {
-                  sessionStorage.removeItem('sharko-auth-token')
+                  clearSession()
                   window.location.assign('/login')
                 }}
                 className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#14466e]"
