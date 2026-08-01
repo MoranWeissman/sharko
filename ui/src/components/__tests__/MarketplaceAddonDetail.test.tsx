@@ -173,15 +173,21 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
   // V2-cleanup-66.1 — a merged PR used to navigate away the instant the POST
   // resolved, so the PR lifecycle window never got any screen time. Now the
   // page STAYS PUT showing the terminal "Merged" state, and the user leaves
-  // via an explicit "View addon" button.
-  it('keeps the page open on merge, toasts, and only navigates when "View addon" is clicked', async () => {
+  // via an explicit button.
+  //
+  // Post-add CTA (walk finding): the primary button is "View in catalog"
+  // (→ /addons, the catalog tab — no ?tab param, since Catalog is already
+  // the default), with "Track on Dashboard" kept as a quieter secondary.
+  it('keeps the page open on merge, toasts, and only navigates when "View in catalog" is clicked', async () => {
     mockAddToCatalog.mockResolvedValue({ added: ['prometheus'], enabled: [], pr_id: 9, pr_url: 'https://gh/pr/9', merged: true })
     renderDetail()
     await waitForActionPanel()
 
     fireEvent.click(screen.getByRole('button', { name: /add to catalog/i }))
 
-    const viewAddonBtn = await screen.findByRole('button', { name: /view addon/i })
+    const viewCatalogBtn = await screen.findByRole('button', { name: /view in catalog/i })
+    // Secondary action stays available alongside the primary CTA.
+    expect(screen.getByRole('button', { name: /track on dashboard/i })).toBeInTheDocument()
     expect(mockShowToast).toHaveBeenCalledWith(
       expect.stringContaining('added to your catalog'),
       'success',
@@ -189,8 +195,8 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
     // No automatic navigation happened yet.
     expect(mockNavigate).not.toHaveBeenCalled()
 
-    fireEvent.click(viewAddonBtn)
-    expect(mockNavigate).toHaveBeenCalledWith('/addons/prometheus')
+    fireEvent.click(viewCatalogBtn)
+    expect(mockNavigate).toHaveBeenCalledWith('/addons')
   })
 
   // Auto-merge OFF: the PR is open for review, so the addon isn't really in
@@ -483,6 +489,24 @@ describe('MarketplaceAddonDetail — pending add-PR (v4 walk-findings W2, item 5
     await waitForActionPanel()
 
     expect(screen.queryByText(/already has an add-PR open/i)).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/display name/i)).toBeInTheDocument()
+  })
+
+  // No silent swallows (walk finding): a 401 (or any failure) on the
+  // pending-PR check used to disappear into `.catch(() => setPendingAddonPRs([]))`
+  // with no visible trace — a real live debugging cost. It must now show
+  // a muted note and keep the ordinary add form usable (never crash).
+  it('a failed pending-PR check shows a muted note and still renders the ordinary add form', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockFetchTrackedPRs.mockRejectedValue(new Error('401 unauthorized'))
+    renderDetail()
+    await waitForActionPanel()
+
+    expect(
+      await screen.findByText(/couldn.t check for pending addons/i),
+    ).toBeInTheDocument()
+    expect(warnSpy).toHaveBeenCalled()
+    // The form must still be usable — a failed check must not block adds.
     expect(screen.getByLabelText(/display name/i)).toBeInTheDocument()
   })
 })

@@ -96,6 +96,52 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+/**
+ * Envelope shape internal/api/tiered_git.go's `withAttributionWarning`
+ * wraps a Tier-2 write response in when the caller had no personal Git
+ * token on file and the service token was used as a fallback:
+ * `{result: <the normal payload>, attribution_warning: "no_per_user_pat"}`.
+ * The no-fallback case is the payload unchanged — this envelope only ever
+ * shows up on the fallback path.
+ *
+ * Checking the exact sentinel string (not just "has a `result` field")
+ * keeps this from misfiring on a payload that legitimately carries its
+ * own `result` key.
+ */
+function isAttributionEnvelope(
+  json: unknown,
+): json is { result: Record<string, unknown>; attribution_warning: string } {
+  if (!json || typeof json !== 'object') return false
+  const obj = json as { result?: unknown; attribution_warning?: unknown }
+  return typeof obj.attribution_warning === 'string' && !!obj.result && typeof obj.result === 'object'
+}
+
+/**
+ * Flattens the attribution envelope so every caller sees one consistent
+ * shape regardless of whether the fallback fired:
+ * `{...result, attribution_warning}` when wrapped, the payload unchanged
+ * otherwise.
+ *
+ * Applied centrally in the shared fetch helpers below (plus the handful
+ * of raw-fetch callers — addToCatalog, migrateRepoRequest,
+ * annotateAddonValues — that build their own request for typed-error
+ * handling and so bypass the helpers) so no individual endpoint wrapper
+ * has to know the envelope exists.
+ *
+ * This closes the dead-Preview bug: MarketplaceAddonDetail's
+ * handlePreview read only `res.dry_run`, never `res.result?.dry_run`, so
+ * a user with no personal PAT got a silent no-op on Preview. The same
+ * class of bug had been patched once, at one call site (handleSubmit's
+ * `res.pr_id ?? res.result?.pr_id`) — this is the one-time fix for the
+ * whole class instead of another one-off patch.
+ */
+function unwrapAttribution<T>(json: unknown): T {
+  if (isAttributionEnvelope(json)) {
+    return { ...json.result, attribution_warning: json.attribution_warning } as T
+  }
+  return json as T
+}
+
 async function fetchJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: authHeaders(),
@@ -109,7 +155,7 @@ async function fetchJSON<T>(path: string): Promise<T> {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error || res.statusText)
   }
-  return res.json()
+  return unwrapAttribution<T>(await res.json())
 }
 
 async function postJSON<T>(path: string, body?: unknown): Promise<T> {
@@ -127,7 +173,7 @@ async function postJSON<T>(path: string, body?: unknown): Promise<T> {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error || res.statusText)
   }
-  return res.json()
+  return unwrapAttribution<T>(await res.json())
 }
 
 async function putJSON<T>(path: string, body?: unknown): Promise<T> {
@@ -145,7 +191,7 @@ async function putJSON<T>(path: string, body?: unknown): Promise<T> {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error || res.statusText)
   }
-  return res.json()
+  return unwrapAttribution<T>(await res.json())
 }
 
 async function patchJSON<T>(path: string, body?: unknown): Promise<T> {
@@ -163,7 +209,7 @@ async function patchJSON<T>(path: string, body?: unknown): Promise<T> {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error || res.statusText)
   }
-  return res.json()
+  return unwrapAttribution<T>(await res.json())
 }
 
 async function deleteJSON<T>(path: string): Promise<T> {
@@ -180,7 +226,7 @@ async function deleteJSON<T>(path: string): Promise<T> {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error || res.statusText)
   }
-  return res.json()
+  return unwrapAttribution<T>(await res.json())
 }
 
 async function fetchJSONMethod<T>(path: string, method: string, body?: unknown): Promise<T> {
@@ -198,7 +244,7 @@ async function fetchJSONMethod<T>(path: string, method: string, body?: unknown):
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error || res.statusText)
   }
-  return res.json()
+  return unwrapAttribution<T>(await res.json())
 }
 
 // --- Write operations (Phase 7) ---
@@ -619,7 +665,7 @@ export async function addToCatalog(
     const errBody = await res.json().catch(() => ({ error: res.statusText }))
     throw new CatalogAddError(errBody)
   }
-  return res.json()
+  return unwrapAttribution<import('./models').AddToCatalogResult>(await res.json())
 }
 
 /**
@@ -1166,7 +1212,7 @@ async function migrateRepoRequest(req: MigrationMigrateRequest): Promise<Migrate
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error || res.statusText)
   }
-  return res.json()
+  return unwrapAttribution<MigrateResult>(await res.json())
 }
 
 // ArgoCD's /api/version returns a full info map (internal/argocd/client.go
@@ -1374,7 +1420,7 @@ export const api = {
       err.status = res.status
       throw err
     }
-    return body as import('./models').AnnotateAddonValuesResponse
+    return unwrapAttribution<import('./models').AnnotateAddonValuesResponse>(body)
   },
   // Per-addon AI opt-out toggle. Idempotent — flipping to the current
   // state returns 200 with `status: "noop"`.

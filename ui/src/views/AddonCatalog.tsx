@@ -83,6 +83,26 @@ type SortBy = 'name' | 'applications'
 type PageSize = 15 | 30 | 60
 
 /**
+ * AddonGridItem — the catalog grid/list renders two kinds of tile side by
+ * side (walk finding, pending-addons-as-ghost-cards): a real addon from
+ * the merged catalog, or a "ghost" for an addon whose add-PR is still
+ * open (invisible to the catalog reads until it merges — both only see
+ * the merged base branch). Kept as a single discriminated union so
+ * sorting/filtering/pagination treat both as one list instead of two
+ * separately-paginated lanes.
+ */
+type AddonGridItem =
+  | { kind: 'real'; addon: AddonCatalogItem }
+  | { kind: 'pending'; pr: TrackedPR }
+
+/** Best-effort display name for a pending add-PR — the tracked-PR record
+ *  doesn't always have `addon` populated (older PRs, or the field failing
+ *  to parse), so fall back to the PR title rather than showing nothing. */
+function pendingDisplayName(pr: TrackedPR): string {
+  return (pr.addon || pr.pr_title || 'Pending addon').trim()
+}
+
+/**
  * Top-of-page tab control switching between the user's "Catalog" and the
  * curated "Marketplace" tab. Implemented as a real WAI-ARIA tablist so
  * keyboard users get arrow-key navigation for free via the browser's
@@ -355,42 +375,65 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
 }
 
 /**
- * PendingAddonRow — v4 walk-findings W2, item 5. Both catalog reads (this
- * page's list and GET /addons/{name}) only see the merged base branch, so
- * an addon whose add-PR is still open is nowhere on the Catalog tab, and
- * "view addon" 404s during that window. This is the honest stand-in:
- * grayed out (it isn't real yet), names the PR, links straight to it, and
- * does NOT link to the addon detail page — that page doesn't exist until
- * the PR merges.
+ * PendingAddonCard — the maintainer's exact design (walk finding): a
+ * pending catalog-add PR renders in the SAME grid as real addon cards,
+ * using the same layout/header/badge-slot as AddonCard above — but
+ * transparent (opacity) with a very subtle amber tint, and the badge slot
+ * that would say "Not deployed yet" instead reads "Pending". The whole
+ * card links straight to the PR (new tab), never to the addon detail
+ * route — that page 404s until the PR merges, so linking there would be
+ * dishonest.
  */
-function PendingAddonRow({ pr }: { pr: TrackedPR }) {
-  return (
-    <div
-      data-testid="pending-addon-row"
-      className="flex items-center justify-between gap-3 rounded-lg ring-2 ring-[#c0ddf0] bg-[#f7fbff] px-4 py-3 opacity-80 dark:ring-gray-700 dark:bg-gray-900"
-    >
-      <div className="min-w-0">
-        <p className="truncate text-sm font-semibold text-[#3a6a8a] dark:text-gray-400">
-          {pr.addon || pr.pr_title}
-        </p>
-        <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-500">
-          {pr.pr_id ? `PR #${pr.pr_id} open — merge to approve` : 'PR open — merge to approve'}
-        </p>
+function PendingAddonCard({ pr }: { pr: TrackedPR }) {
+  const name = pendingDisplayName(pr)
+  const subtitle = pr.pr_id
+    ? `PR #${pr.pr_id} open — merge to approve`
+    : 'Pull request open — merge to approve'
+
+  const cardClass =
+    'group flex flex-col rounded-lg ring-2 ring-[#6aade0] bg-amber-50/60 opacity-60 shadow-sm transition-opacity duration-150 hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:ring-gray-700 dark:bg-amber-950/10'
+
+  const body = (
+    <div className="flex flex-1 flex-col p-4">
+      <div className="mb-2 flex items-start justify-between">
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-lg font-bold text-teal-700 dark:text-teal-400">
+            {name}
+          </h3>
+          <p className="truncate text-xs text-[#2a5a7a] dark:text-gray-400">{subtitle}</p>
+          <span
+            data-testid="addon-deployment-badge"
+            className="mt-1 inline-flex w-fit items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-700"
+          >
+            Pending
+          </span>
+        </div>
       </div>
-      {pr.pr_url ? (
-        <a
-          href={pr.pr_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex shrink-0 items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-        >
-          <GitPullRequest className="h-3 w-3" />
-          View PR
-        </a>
-      ) : (
-        <span className="shrink-0 text-xs text-[#5a8aaa] dark:text-gray-500">PR link unavailable</span>
-      )}
+      <div className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-md border border-[#5a9dd0] px-3 py-1.5 text-sm font-medium text-[#0a3a5a] dark:border-gray-600 dark:text-gray-300">
+        <GitPullRequest className="h-3.5 w-3.5" />
+        View pull request
+      </div>
     </div>
+  )
+
+  if (!pr.pr_url) {
+    return (
+      <div data-testid="pending-addon-card" className={cardClass}>
+        {body}
+      </div>
+    )
+  }
+
+  return (
+    <a
+      data-testid="pending-addon-card"
+      href={pr.pr_url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cardClass}
+    >
+      {body}
+    </a>
   )
 }
 
@@ -460,7 +503,7 @@ function PaginationControls({
   )
 }
 
-function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
+function AddonListTable({ items }: { items: AddonGridItem[] }) {
   const navigate = useNavigate()
   return (
     <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
@@ -479,54 +522,80 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
-          {addons.map((addon) => (
-            <tr
-              key={addon.addon_name}
-              onClick={() => navigate(`/addons/${addon.addon_name}`)}
-              className="cursor-pointer hover:bg-[#d6eeff] dark:hover:bg-gray-700"
-            >
-              <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
-                {addon.addon_name}
-              </td>
-              <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
-                {addon.version}
-              </td>
-              <td className="px-6 py-3 text-[#0a3a5a] dark:text-gray-300">
-                {addon.enabled_clusters === 0 ? (
-                  // Benign state (V2-cleanup-61.2, D1): in the catalog,
-                  // not enabled on any cluster yet. Neutral tone.
-                  <span className="inline-flex items-center rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-700 dark:text-gray-300">
-                    Not deployed yet
+          {items.map((item) =>
+            item.kind === 'pending' ? (
+              <tr
+                key={`pending-${item.pr.pr_id}`}
+                data-testid="pending-addon-row"
+                onClick={() => {
+                  if (item.pr.pr_url) {
+                    window.open(item.pr.pr_url, '_blank', 'noopener,noreferrer')
+                  }
+                }}
+                className="cursor-pointer bg-amber-50/50 opacity-60 hover:bg-amber-50/80 hover:opacity-90 dark:bg-amber-950/10 dark:hover:bg-amber-950/20"
+              >
+                <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
+                  {pendingDisplayName(item.pr)}
+                </td>
+                <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">—</td>
+                <td className="px-6 py-3">
+                  <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-700">
+                    Pending
                   </span>
-                ) : (
-                  <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                    Installed on {addon.deployed_cluster_count ?? 0}/{addon.total_target_cluster_count ?? 0} {(addon.total_target_cluster_count ?? 0) === 1 ? 'cluster' : 'clusters'}
-                  </span>
-                )}
-              </td>
-              <td className="px-6 py-3">
-                {addon.healthy_applications > 0 && (
-                  <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                    {addon.healthy_applications}
-                  </span>
-                )}
-              </td>
-              <td className="px-6 py-3">
-                {addon.degraded_applications > 0 && (
-                  <span className="inline-flex items-center rounded-full bg-yellow-50 px-2 py-0.5 text-xs font-medium text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
-                    {addon.degraded_applications}
-                  </span>
-                )}
-              </td>
-              <td className="px-6 py-3">
-                {addon.missing_applications > 0 && (
-                  <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
-                    {addon.missing_applications}
-                  </span>
-                )}
-              </td>
-            </tr>
-          ))}
+                </td>
+                <td className="px-6 py-3" />
+                <td className="px-6 py-3" />
+                <td className="px-6 py-3" />
+              </tr>
+            ) : (
+              <tr
+                key={item.addon.addon_name}
+                onClick={() => navigate(`/addons/${item.addon.addon_name}`)}
+                className="cursor-pointer hover:bg-[#d6eeff] dark:hover:bg-gray-700"
+              >
+                <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
+                  {item.addon.addon_name}
+                </td>
+                <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                  {item.addon.version}
+                </td>
+                <td className="px-6 py-3 text-[#0a3a5a] dark:text-gray-300">
+                  {item.addon.enabled_clusters === 0 ? (
+                    // Benign state (V2-cleanup-61.2, D1): in the catalog,
+                    // not enabled on any cluster yet. Neutral tone.
+                    <span className="inline-flex items-center rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-700 dark:text-gray-300">
+                      Not deployed yet
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                      Installed on {item.addon.deployed_cluster_count ?? 0}/{item.addon.total_target_cluster_count ?? 0} {(item.addon.total_target_cluster_count ?? 0) === 1 ? 'cluster' : 'clusters'}
+                    </span>
+                  )}
+                </td>
+                <td className="px-6 py-3">
+                  {item.addon.healthy_applications > 0 && (
+                    <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                      {item.addon.healthy_applications}
+                    </span>
+                  )}
+                </td>
+                <td className="px-6 py-3">
+                  {item.addon.degraded_applications > 0 && (
+                    <span className="inline-flex items-center rounded-full bg-yellow-50 px-2 py-0.5 text-xs font-medium text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
+                      {item.addon.degraded_applications}
+                    </span>
+                  )}
+                </td>
+                <td className="px-6 py-3">
+                  {item.addon.missing_applications > 0 && (
+                    <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                      {item.addon.missing_applications}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ),
+          )}
         </tbody>
       </table>
     </div>
@@ -677,11 +746,21 @@ export function AddonCatalog() {
   // the merged base branch). Fetch the open PRs alongside the catalog so a
   // "pending" lane can render them instead of them vanishing until merge.
   const [pendingAddonPRs, setPendingAddonPRs] = useState<TrackedPR[]>([])
+  // Surfaced when the pending-PR fetch itself fails (e.g. a 401 on a
+  // half-dead session) — this used to be swallowed silently, which showed
+  // an empty pending lane with no visible reason (real live debugging
+  // cost, walk finding).
+  const [pendingAddonPRsError, setPendingAddonPRsError] = useState(false)
 
   const fetchPendingAddonPRs = useCallback(() => {
+    setPendingAddonPRsError(false)
     return fetchTrackedPRs({ status: 'open', operation: 'catalog-add,catalog-add-enable' })
       .then((resp) => setPendingAddonPRs(resp.prs ?? []))
-      .catch(() => setPendingAddonPRs([]))
+      .catch((e: unknown) => {
+        console.warn('Failed to check for pending addon PRs', e)
+        setPendingAddonPRs([])
+        setPendingAddonPRsError(true)
+      })
   }, [])
 
   useEffect(() => {
@@ -960,9 +1039,11 @@ export function AddonCatalog() {
     try {
       const result = await api.addToCatalog(buildAddRequest(false))
       setAddAddonResult(result)
-      const prUrl = result.pr_url || result.result?.pr_url
-      const prId = result.pr_id ?? result.result?.pr_id
-      const wasMerged = result.merged ?? result.result?.merged ?? false
+      // api.addToCatalog unwraps the attribution envelope centrally — no
+      // need to also check result.result?.x here.
+      const prUrl = result.pr_url
+      const prId = result.pr_id
+      const wasMerged = result.merged ?? false
       const label = prId ? `PR #${prId}` : 'PR'
 
       // Branch STRICTLY on `merged` so an open PR is never presented as
@@ -1010,25 +1091,54 @@ export function AddonCatalog() {
     setPage(1)
   }, [search, filterType, sortBy, pageSize])
 
-  const filteredAddons = useMemo(() => {
+  // Pending ghost entries — an addon with an open add-PR that isn't ALSO
+  // already a real catalog entry (dedupe: the real card wins once the PR
+  // merges, no leftover ghost duplicate).
+  const pendingGhosts = useMemo(() => {
     if (!catalogData) return []
+    const existingNames = new Set(
+      catalogData.addons.map((a) => a.addon_name.trim().toLowerCase()),
+    )
+    return pendingAddonPRs.filter(
+      (pr) => !existingNames.has(pendingDisplayName(pr).toLowerCase()),
+    )
+  }, [catalogData, pendingAddonPRs])
 
-    let result = catalogData.addons
+  const filteredItems = useMemo(() => {
+    if (!catalogData) return [] as AddonGridItem[]
 
-    // Search
+    let realItems: AddonGridItem[] = catalogData.addons.map((addon) => ({
+      kind: 'real',
+      addon,
+    }))
+    // Pending ghosts have no health/deployment data, so the health-shaped
+    // filters (healthy/unhealthy/git-only/drifted) don't apply to them —
+    // they only show up in the unfiltered "All Addons" view.
+    let ghostItems: AddonGridItem[] =
+      filterType === 'all'
+        ? pendingGhosts.map((pr) => ({ kind: 'pending', pr }))
+        : []
+
+    // Search — applies to both real and pending entries.
     if (search) {
       const q = search.toLowerCase()
-      result = result.filter(
-        (a) =>
-          a.addon_name.toLowerCase().includes(q) ||
-          a.chart.toLowerCase().includes(q) ||
-          a.namespace?.toLowerCase().includes(q),
+      realItems = realItems.filter(
+        (item) =>
+          item.kind === 'real' &&
+          (item.addon.addon_name.toLowerCase().includes(q) ||
+            item.addon.chart.toLowerCase().includes(q) ||
+            item.addon.namespace?.toLowerCase().includes(q)),
+      )
+      ghostItems = ghostItems.filter(
+        (item) => item.kind === 'pending' && pendingDisplayName(item.pr).toLowerCase().includes(q),
       )
     }
 
-    // Filter
+    // Filter (real addons only — see ghostItems above)
     if (filterType !== 'all') {
-      result = result.filter((a) => {
+      realItems = realItems.filter((item) => {
+        if (item.kind !== 'real') return false
+        const a = item.addon
         switch (filterType) {
           case 'healthy':
             return (
@@ -1048,20 +1158,28 @@ export function AddonCatalog() {
       })
     }
 
-    // Sort
-    result = [...result].sort((a, b) => {
-      if (sortBy === 'applications') return b.enabled_clusters - a.enabled_clusters
-      return a.addon_name.localeCompare(b.addon_name)
+    // Sort — pending ghosts sort in naturally alongside real addons
+    // (alphabetical, or wherever they'd land by application count).
+    const merged = [...realItems, ...ghostItems]
+    merged.sort((x, y) => {
+      const nameX = x.kind === 'real' ? x.addon.addon_name : pendingDisplayName(x.pr)
+      const nameY = y.kind === 'real' ? y.addon.addon_name : pendingDisplayName(y.pr)
+      if (sortBy === 'applications') {
+        const appsX = x.kind === 'real' ? x.addon.enabled_clusters : 0
+        const appsY = y.kind === 'real' ? y.addon.enabled_clusters : 0
+        if (appsX !== appsY) return appsY - appsX
+      }
+      return nameX.localeCompare(nameY)
     })
 
-    return result
-  }, [catalogData, search, filterType, sortBy])
+    return merged
+  }, [catalogData, pendingGhosts, search, filterType, sortBy])
 
-  const totalPages = Math.ceil(filteredAddons.length / pageSize)
-  const paginatedAddons = useMemo(() => {
+  const totalPages = Math.ceil(filteredItems.length / pageSize)
+  const paginatedItems = useMemo(() => {
     const start = (page - 1) * pageSize
-    return filteredAddons.slice(start, start + pageSize)
-  }, [filteredAddons, page, pageSize])
+    return filteredItems.slice(start, start + pageSize)
+  }, [filteredItems, page, pageSize])
 
   const healthyCount = catalogData
     ? catalogData.addons.filter(
@@ -1585,30 +1703,6 @@ export function AddonCatalog() {
         </DialogContent>
       </Dialog>
 
-      {/* v4 walk-findings W2, item 5 — addons with an open catalog-add PR
-          are invisible on the merged-branch-only catalog read below; this
-          lane keeps them visible until the PR merges. Precedent: pending
-          cluster registrations render as their own lane on ClustersOverview. */}
-      {pendingAddonPRs.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
-            <GitPullRequest className="h-4 w-4 text-[#3a6a8a]" />
-            Pending Addons
-            <span className="rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-700 dark:text-gray-300">
-              {pendingAddonPRs.length}
-            </span>
-            <span className="text-xs font-normal text-[#3a6a8a] dark:text-gray-500">
-              — add-PR open, will appear in the catalog once merged
-            </span>
-          </h3>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {pendingAddonPRs.map((pr) => (
-              <PendingAddonRow key={pr.pr_id} pr={pr} />
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Summary stat cards — click to filter */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
@@ -1747,15 +1841,15 @@ export function AddonCatalog() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
           {search
-            ? `Showing ${filteredAddons.length} of ${catalogData.total_addons} addons`
-            : `Showing ${filteredAddons.length} addons`}
+            ? `Showing ${filteredItems.length} of ${catalogData.total_addons} addons`
+            : `Showing ${filteredItems.length} addons`}
           {totalPages > 1 && (
             <span>
               {' '}
               &middot; Page {page} of {totalPages} (
               {(page - 1) * pageSize + 1}-
-              {Math.min(page * pageSize, filteredAddons.length)} of{' '}
-              {filteredAddons.length})
+              {Math.min(page * pageSize, filteredItems.length)} of{' '}
+              {filteredItems.length})
             </span>
           )}
         </p>
@@ -1766,8 +1860,15 @@ export function AddonCatalog() {
         />
       </div>
 
+      {pendingAddonPRsError && (
+        <p className="text-xs italic text-[#5a8aaa] dark:text-gray-500">
+          Couldn&rsquo;t check for pending addons — a pending add-PR may be
+          missing from this grid.
+        </p>
+      )}
+
       {/* Addon grid / list */}
-      {paginatedAddons.length === 0 ? (
+      {paginatedItems.length === 0 ? (
         <div
           data-testid="catalog-empty-state"
           className="rounded-lg border border-teal-200 bg-teal-50 p-6 text-center text-sm text-teal-700 dark:border-teal-700 dark:bg-teal-900/30 dark:text-teal-400"
@@ -1809,12 +1910,16 @@ export function AddonCatalog() {
         </div>
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {paginatedAddons.map((addon) => (
-            <AddonCard key={addon.addon_name} addon={addon} />
-          ))}
+          {paginatedItems.map((item) =>
+            item.kind === 'real' ? (
+              <AddonCard key={item.addon.addon_name} addon={item.addon} />
+            ) : (
+              <PendingAddonCard key={`pending-${item.pr.pr_id}`} pr={item.pr} />
+            ),
+          )}
         </div>
       ) : (
-        <AddonListTable addons={paginatedAddons} />
+        <AddonListTable items={paginatedItems} />
       )}
 
       {/* Bottom pagination */}

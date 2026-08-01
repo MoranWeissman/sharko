@@ -59,13 +59,14 @@ const getMeMock = vi.fn().mockResolvedValue({ username: 'tester', role: 'admin',
 const getEntryMock = vi.fn()
 const getReadmeMock = vi.fn().mockResolvedValue({ readme: '', source: 'artifacthub' })
 const addAddonMock = vi.fn()
+// v4 walk-findings W2, item 5: the pending-add-PR check (AddonCatalog,
+// MarketplaceBrowseTab, MarketplaceAddonDetail) uses this standalone
+// export. Named (not inline) so per-test overrides can drive the
+// Marketplace tab's "pending — add-PR open" chip test below.
+const mockFetchTrackedPRs = vi.fn().mockResolvedValue({ prs: [] })
 
 vi.mock('@/services/api', () => ({
-  // v4 walk-findings W2, item 5: the pending-add-PR check (AddonCatalog,
-  // MarketplaceBrowseTab, MarketplaceAddonDetail) uses this standalone
-  // export. Defaults to "no open PRs" so it's a no-op for tests that don't
-  // care about the pending lane.
-  fetchTrackedPRs: vi.fn().mockResolvedValue({ prs: [] }),
+  fetchTrackedPRs: (...args: unknown[]) => mockFetchTrackedPRs(...args),
   api: {
     listCuratedCatalog: () => listMock(),
     listCuratedCatalogVersions: (...args: unknown[]) => listVersionsMock(...args),
@@ -99,6 +100,7 @@ describe('MarketplaceTab', () => {
     getEntryMock.mockReset()
     getReadmeMock.mockClear()
     addAddonMock.mockReset()
+    mockFetchTrackedPRs.mockReset().mockResolvedValue({ prs: [] })
   })
 
   it('renders all curated entries on first load', async () => {
@@ -236,5 +238,38 @@ describe('MarketplaceTab', () => {
     expect(screen.getByLabelText(/Namespace/i)).toHaveValue('cert-manager')
     // Curated entry endpoint was hit.
     await waitFor(() => expect(getEntryMock).toHaveBeenCalledWith('cert-manager'))
+  })
+
+  // Walk finding: after adding an addon from the Marketplace, the user is
+  // standing right there on the Browse grid — the matching card should
+  // mark itself "pending" using the same tracked-PRs data the Catalog tab's
+  // ghost cards use, not a big separate section. (MarketplaceBrowseTab
+  // already wires this — this test is the missing coverage for it.)
+  it('marks the matching Browse card as pending when an add-PR is open for it', async () => {
+    mockFetchTrackedPRs.mockResolvedValue({
+      prs: [
+        {
+          pr_id: 21,
+          pr_url: 'https://gh/pr/21',
+          pr_branch: 'sharko/catalog-add-grafana',
+          pr_title: 'sharko: add grafana to catalog',
+          addon: 'grafana',
+          operation: 'catalog-add',
+          user: 'tester',
+          source: 'ui',
+          created_at: new Date().toISOString(),
+          last_status: 'open',
+          last_polled_at: new Date().toISOString(),
+        },
+      ],
+    })
+    renderTab()
+
+    const grafanaCard = await screen.findByRole('button', { name: /Open grafana/i })
+    expect(within(grafanaCard).getByText('Pending')).toBeInTheDocument()
+
+    // Other cards with no open add-PR stay unaffected.
+    const certManagerCard = screen.getByRole('button', { name: /Open cert-manager/i })
+    expect(within(certManagerCard).queryByText('Pending')).not.toBeInTheDocument()
   })
 })
