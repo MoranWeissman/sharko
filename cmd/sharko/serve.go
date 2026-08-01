@@ -384,8 +384,17 @@ var serveCmd = &cobra.Command{
 		// reinit below picks up the merged values. Field-level merge preserves
 		// the encrypted git Token/PAT and ArgoCD Token — secret material is
 		// never sourced from these env vars. No-op when no connection is active.
-		if _, err := config.ReconcileConnectionFromEnv(store); err != nil {
+		//
+		// This mutates `store` directly rather than through connSvc, so it
+		// bypasses connSvc's perf S1 active-connection cache — invalidate it
+		// explicitly on a change. connSvc is freshly constructed at this
+		// point (nothing has called a GetActive* method yet) so this is a
+		// no-op today, but it's cheap and keeps this call site correct if
+		// that ordering ever changes.
+		if changed, err := config.ReconcileConnectionFromEnv(store); err != nil {
 			slog.Warn("connection boot reconcile failed, continuing with stored connection", "error", err)
+		} else if changed {
+			connSvc.InvalidateActiveCache()
 		}
 
 		// Initialize provider + gitops config from active connection (if exists).
@@ -1120,9 +1129,18 @@ var serveCmd = &cobra.Command{
 								// material; when it changes the stored connection
 								// we re-run ReinitializeFromConnection so live
 								// providers/gitops config pick up the merged value.
+								//
+								// This mutates `store` directly, bypassing
+								// connSvc — so it also bypasses connSvc's perf S1
+								// active-connection cache (cached ArgoCD
+								// client/Git provider). Invalidate explicitly on
+								// a change, or every in-flight request would keep
+								// getting the pre-reclaim ArgoCD client/token
+								// until something else happened to invalidate it.
 								if changed, err := config.ReconcileConnectionFromEnv(store); err != nil {
 									slog.Warn("connection reclaim tick failed", "error", err)
 								} else if changed {
+									connSvc.InvalidateActiveCache()
 									srv.ReinitializeFromConnection()
 								}
 							case <-settingsReclaimStop:

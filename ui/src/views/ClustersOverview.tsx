@@ -45,6 +45,7 @@ import { StatCard } from '@/components/StatCard';
 import { ClusterStatusSummary } from '@/components/ClusterStatusSummary';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
+import { getCached, setCached } from '@/lib/viewCache';
 import { RoleGuard } from '@/components/RoleGuard';
 import {
   WhoseConnectionLabel,
@@ -134,6 +135,21 @@ export const CONN_OWNERSHIP_HINTS: Record<ConnOwnership, ReactNode> = {
     </>
   ),
 };
+
+// perf S2 — everything fetchData renders, snapshotted into one cache entry
+// once a load finishes. A revisit within the same browser session hydrates
+// all of this in one shot (instant paint, no spinner) before kicking a
+// background refresh — see the mount effect and fetchData's setCached call.
+interface ClustersSnapshot {
+  allClusters: Cluster[];
+  healthStats: ClusterHealthStats | null;
+  pendingRegistrations: PendingRegistration[];
+  orphanRegistrations: OrphanRegistration[];
+  argoCDUnreachable: boolean;
+}
+
+// Exported so tests can prime/inspect the same key the component uses.
+export const CLUSTERS_CACHE_KEY = 'clusters';
 
 export function ClustersOverview() {
   const [allClusters, setAllClusters] = useState<Cluster[]>([]);
@@ -341,17 +357,32 @@ export function ClustersOverview() {
       // with no error chrome.
       setError(null);
       setAllClusters(response.clusters);
-      setHealthStats(response.health_stats ?? null);
+      const healthStatsValue = response.health_stats ?? null;
+      setHealthStats(healthStatsValue);
       // Default to [] so a server that omits these fields doesn't crash
       // this view (forward-compat).
-      setPendingRegistrations(response.pending_registrations ?? []);
-      setOrphanRegistrations(response.orphan_registrations ?? []);
+      const pendingRegistrationsValue = response.pending_registrations ?? [];
+      const orphanRegistrationsValue = response.orphan_registrations ?? [];
+      setPendingRegistrations(pendingRegistrationsValue);
+      setOrphanRegistrations(orphanRegistrationsValue);
       // Detect ArgoCD unreachable: if all clusters have failed/unknown status or response is empty
       const hasArgoError = response.clusters.length === 0 ||
         (response.clusters.length > 0 && response.clusters.every(
           (c) => !c.connection_status || c.connection_status === 'Failed' || c.connection_status === 'unknown'
         ));
-      setArgoCDUnreachable(hasArgoError && response.clusters.length > 0);
+      const argoCDUnreachableValue = hasArgoError && response.clusters.length > 0;
+      setArgoCDUnreachable(argoCDUnreachableValue);
+
+      // perf S2 write-through — every mutation flow (register/adopt/unadopt/
+      // delete-orphan) ends by calling fetchData(), so this one write-through
+      // site keeps the cache honest without a separate invalidation system.
+      setCached<ClustersSnapshot>(CLUSTERS_CACHE_KEY, {
+        allClusters: response.clusters,
+        healthStats: healthStatsValue,
+        pendingRegistrations: pendingRegistrationsValue,
+        orphanRegistrations: orphanRegistrationsValue,
+        argoCDUnreachable: argoCDUnreachableValue,
+      });
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Failed to load clusters';
       if (!background) {
@@ -389,8 +420,23 @@ export function ClustersOverview() {
     allClustersRef.current = allClusters;
   }, [allClusters]);
 
+  // perf S2 — stale-while-refresh: a cache hit paints the cluster list
+  // instantly (no spinner) from this session's last successful load, then
+  // a normal background fetch quietly brings it current.
   useEffect(() => {
-    void fetchData();
+    const cached = getCached<ClustersSnapshot>(CLUSTERS_CACHE_KEY);
+    if (cached) {
+      setAllClusters(cached.data.allClusters);
+      setHealthStats(cached.data.healthStats);
+      setPendingRegistrations(cached.data.pendingRegistrations);
+      setOrphanRegistrations(cached.data.orphanRegistrations);
+      setArgoCDUnreachable(cached.data.argoCDUnreachable);
+      setLoading(false);
+      void fetchData(true);
+    } else {
+      void fetchData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchData]);
 
   // V3-D5: clear the removalPR state from the router after reading it on mount

@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
@@ -38,6 +40,59 @@ type ConnectionService struct {
 	devMode             bool // when true, falls back to env vars for missing credentials
 	gitProviderOverride gitprovider.GitProvider     // when set, returned by GetActiveGitProvider (demo mode)
 	argocdClientOverride orchestrator.ArgocdClient  // when set, returned by GetActiveOrchestratorArgocdClient (test seam)
+
+	// activeCache memoizes the resolved active connection plus the ArgoCD
+	// client / Git provider built from it (perf S1).
+	//
+	// Why this exists: every authenticated request used to pay ~300ms
+	// resolving the active connection — GetActiveConnection() +
+	// GetConnection() are each a K8s Secret GET+decrypt (two round-trips),
+	// and a handler that needs both the ArgoCD client and the Git provider
+	// paid that twice. On top of that, GetActiveArgocdClient built a brand
+	// new *http.Client (and therefore a brand new *http.Transport) on every
+	// call, so the TLS handshake never got to be amortized across requests
+	// even though a single argocd.Client's transport pools connections
+	// fine on its own.
+	//
+	// The fix: cache one *activeConnCache instance (holding the resolved
+	// Connection plus the lazily-built ArgoCD client / Git provider) behind
+	// an atomic.Pointer. First caller after a cold start or an invalidation
+	// rebuilds it; every other caller reuses the same instance until it's
+	// dropped. Rebuilding the client/provider is memoized with a sync.Once
+	// PER CACHE INSTANCE so concurrent callers racing a cold cache don't
+	// each open their own ArgoCD connection.
+	//
+	// Invalidation is the load-bearing half of this: activeCache.Store(nil)
+	// (via invalidateActiveCache/InvalidateActiveCache) is called from
+	// every place that can change which connection is active or what it
+	// contains — see the call sites in Create, Delete, and SetActive below,
+	// plus the store-level git-native reconcile path wired up in
+	// cmd/sharko/serve.go. Miss one and a handler could keep serving a
+	// deleted connection's stale token — worse than the 300ms this is
+	// fixing — so new mutation paths on ConnectionService MUST invalidate
+	// too.
+	activeCache atomic.Pointer[activeConnCache]
+}
+
+// activeConnCache is one "generation" of the resolved active connection.
+// It's built once (on cache miss) and reused by every caller until
+// ConnectionService.activeCache is reset to nil by an invalidation.
+//
+// The ArgoCD client and Git provider are built lazily (only the first
+// caller that actually needs one pays the construction cost) and memoized
+// with sync.Once so a burst of concurrent requests hitting a cold cache
+// converge on ONE client/provider instance instead of a thundering herd of
+// duplicate builds (and duplicate TLS handshakes).
+type activeConnCache struct {
+	conn *models.Connection
+
+	argocdOnce   sync.Once
+	argocdClient *argocd.Client
+	argocdErr    error
+
+	gitOnce     sync.Once
+	gitProvider gitprovider.GitProvider
+	gitErr      error
 }
 
 // NewConnectionService creates a new ConnectionService.
@@ -48,6 +103,72 @@ func NewConnectionService(store config.Store) *ConnectionService {
 		slog.Info("connection service running in DEV MODE — env var credential fallback enabled")
 	}
 	return &ConnectionService{store: store, devMode: devMode}
+}
+
+// InvalidateActiveCache drops the cached active connection (and any ArgoCD
+// client / Git provider built from it), forcing the next GetActive* call to
+// re-read the store and rebuild from scratch.
+//
+// Call this after ANY mutation that could change which connection is active
+// or what a connection contains, even when the mutation happened through a
+// config.Store directly rather than through this service — e.g. the
+// git-native reconcile path (config.ReconcileConnectionFromEnv /
+// Store.MergeConnectionFromEnvAtomic) mutates the store outside of
+// ConnectionService, so its callers (cmd/sharko/serve.go) invalidate here
+// explicitly when it reports a change.
+//
+// Safe to call when nothing is cached yet (no-op) and safe to call
+// concurrently with in-flight GetActive* calls: readers that already loaded
+// the old *activeConnCache keep using it (Go pointers, not shared mutable
+// state), the next GetActive* call after this just sees a nil pointer and
+// rebuilds.
+func (s *ConnectionService) InvalidateActiveCache() {
+	s.activeCache.Store(nil)
+}
+
+// getActiveConnCache returns the current activeConnCache, rebuilding it on
+// a cache miss. All GetActive* methods that resolve "the active connection"
+// funnel through here so there is exactly one cache and exactly one
+// invalidation path (see the activeCache field doc).
+func (s *ConnectionService) getActiveConnCache() (*activeConnCache, error) {
+	if c := s.activeCache.Load(); c != nil {
+		return c, nil
+	}
+
+	// Cache miss — resolve the active connection from the store. This is
+	// the two-GET (name, then connection) round-trip the cache exists to
+	// avoid paying on every request.
+	activeName, err := s.store.GetActiveConnection()
+	if err != nil {
+		return nil, err
+	}
+	if activeName == "" {
+		return nil, fmt.Errorf("no active connection configured")
+	}
+	conn, err := s.store.GetConnection(activeName)
+	if err != nil {
+		return nil, err
+	}
+	if conn == nil {
+		return nil, fmt.Errorf("active connection %q not found", activeName)
+	}
+
+	fresh := &activeConnCache{conn: conn}
+
+	// Best-effort singleflight: if another goroutine already populated the
+	// cache while we were reading the store, prefer THEIR instance so
+	// concurrent client-builders memoize onto the same sync.Once rather
+	// than splitting across two instances (which would just mean an extra
+	// duplicate build once, not a correctness problem).
+	if s.activeCache.CompareAndSwap(nil, fresh) {
+		return fresh, nil
+	}
+	if existing := s.activeCache.Load(); existing != nil {
+		return existing, nil
+	}
+	// Vanishingly rare: an invalidation landed between our failed CAS and
+	// this Load. Fall back to our own fresh read rather than recursing.
+	return fresh, nil
 }
 
 // List returns all connections with masked tokens.
@@ -142,7 +263,16 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 	if conn.Name == "" || conn.Name == "default" {
 		conn.Name = deriveConnectionName(conn.Git)
 	}
-	return s.store.SaveConnection(conn)
+	if err := s.store.SaveConnection(conn); err != nil {
+		return err
+	}
+	// Mutation site (perf S1 cache): a create/update may change the active
+	// connection's credentials or config, or change which connection is
+	// default/active (SaveConnection auto-activates the first-ever
+	// connection). Drop the cache so the next GetActive* rebuilds from the
+	// fresh store.
+	s.InvalidateActiveCache()
+	return nil
 }
 
 // deriveProviderFromURL returns the canonical Sharko Git provider name
@@ -334,13 +464,26 @@ func (s *ConnectionService) GetConnection(name string) (*models.Connection, erro
 
 // Delete removes a connection.
 func (s *ConnectionService) Delete(name string) error {
-	return s.store.DeleteConnection(name)
+	if err := s.store.DeleteConnection(name); err != nil {
+		return err
+	}
+	// Mutation site (perf S1 cache): deleting the active connection re-picks
+	// a new active connection inside the store (or clears it). Drop the
+	// cache unconditionally — deleting ANY connection could be the cached
+	// one even if it wasn't active.
+	s.InvalidateActiveCache()
+	return nil
 }
 
 // SetActive sets the active connection.
 func (s *ConnectionService) SetActive(name string) error {
 	slog.Info("active connection changed", "connection", name)
-	return s.store.SetActiveConnection(name)
+	if err := s.store.SetActiveConnection(name); err != nil {
+		return err
+	}
+	// Mutation site (perf S1 cache): the active connection itself changed.
+	s.InvalidateActiveCache()
+	return nil
 }
 
 // GitProviderOverride is an alias for gitprovider.GitProvider, exported so that
@@ -368,25 +511,42 @@ func (s *ConnectionService) GitProviderOverride() gitprovider.GitProvider {
 }
 
 // GetActiveGitProvider returns a GitProvider for the currently active connection.
+//
+// perf S1: the provider is built once per cache generation and memoized on
+// the activeConnCache (sync.Once) — repeated calls (and concurrent calls
+// racing a cold cache) reuse the same instance instead of re-parsing the
+// connection and re-constructing a client per call. See the
+// ConnectionService.activeCache field doc for the invalidation contract.
 func (s *ConnectionService) GetActiveGitProvider() (gitprovider.GitProvider, error) {
 	if s.gitProviderOverride != nil {
 		return s.gitProviderOverride, nil
 	}
-	conn, err := s.getActiveConn()
+	c, err := s.getActiveConnCache()
 	if err != nil {
 		return nil, err
 	}
-	return s.buildGitProvider(conn)
+	c.gitOnce.Do(func() {
+		c.gitProvider, c.gitErr = s.buildGitProvider(c.conn)
+	})
+	return c.gitProvider, c.gitErr
 }
 
 // GetActiveArgocdClient returns an ArgoCD client for the currently active connection.
 // If server_url is empty, it uses in-cluster mode with the pod's ServiceAccount token.
+//
+// perf S1: the *argocd.Client (and its underlying http.Client/Transport) is
+// built once per cache generation and reused across requests, so the TLS
+// handshake cost stops being paid on every call — only on cold start and
+// after an invalidation. See the ConnectionService.activeCache field doc.
 func (s *ConnectionService) GetActiveArgocdClient() (*argocd.Client, error) {
-	conn, err := s.getActiveConn()
+	c, err := s.getActiveConnCache()
 	if err != nil {
 		return nil, err
 	}
-	return s.buildArgocdClient(conn)
+	c.argocdOnce.Do(func() {
+		c.argocdClient, c.argocdErr = s.buildArgocdClient(c.conn)
+	})
+	return c.argocdClient, c.argocdErr
 }
 
 // SetArgocdClientOverride installs a fake orchestrator.ArgocdClient
@@ -575,24 +735,17 @@ func (s *ConnectionService) GetAddonSecretProviderConfig() *models.ProviderConfi
 	return conn.AddonSecretProvider
 }
 
+// getActiveConn resolves the active connection through the same cache
+// GetActiveArgocdClient/GetActiveGitProvider use (see activeCache field
+// doc) — one cache, one invalidation path for every internal caller
+// (GetActiveConnectionInfo, GetProviderConfig, GetAddonSecretProviderConfig,
+// TestConnection, TestCredentials).
 func (s *ConnectionService) getActiveConn() (*models.Connection, error) {
-	activeName, err := s.store.GetActiveConnection()
+	c, err := s.getActiveConnCache()
 	if err != nil {
 		return nil, err
 	}
-	if activeName == "" {
-		return nil, fmt.Errorf("no active connection configured")
-	}
-
-	conn, err := s.store.GetConnection(activeName)
-	if err != nil {
-		return nil, err
-	}
-	if conn == nil {
-		return nil, fmt.Errorf("active connection %q not found", activeName)
-	}
-
-	return conn, nil
+	return c.conn, nil
 }
 
 func (s *ConnectionService) buildGitProvider(conn *models.Connection) (gitprovider.GitProvider, error) {

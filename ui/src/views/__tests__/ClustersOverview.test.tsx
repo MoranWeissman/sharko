@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { StrictMode } from 'react';
-import { ClustersOverview } from '@/views/ClustersOverview';
+import { ClustersOverview, CLUSTERS_CACHE_KEY } from '@/views/ClustersOverview';
+import { setCached } from '@/lib/viewCache';
 
 const mockNavigate = vi.fn();
 const mockLocationState: { state?: Record<string, unknown> } = {};
@@ -596,5 +597,52 @@ describe('ClustersOverview', () => {
         expect(screen.getByText(/Cluster "prod-eu" removed/i)).toBeInTheDocument();
       });
     });
+  });
+});
+
+// perf S2 — a same-session revisit paints from the last successful load
+// instantly (no spinner), then quietly refreshes in the background.
+describe('ClustersOverview stale-while-refresh (perf S2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLocationState.state = undefined;
+    mockHealth.mockResolvedValue({
+      status: 'healthy',
+      version: 'test',
+      cluster_test_available: true,
+    });
+  });
+
+  it('renders cached clusters immediately on mount, then replaces them once the background refetch resolves', async () => {
+    setCached(CLUSTERS_CACHE_KEY, {
+      allClusters: [
+        {
+          name: 'stale-cluster',
+          labels: {},
+          server_version: '1.20',
+          connection_status: 'connected',
+        },
+      ],
+      healthStats: null,
+      pendingRegistrations: [],
+      orphanRegistrations: [],
+      argoCDUnreachable: false,
+    });
+
+    // The background refetch resolves with the fresh fixture data.
+    mockGetClusters.mockResolvedValue(clustersResponse);
+
+    renderView();
+
+    // Instant paint from cache — no loading spinner, the stale cluster's
+    // name visible without waiting on any fetch.
+    expect(screen.queryByText('Loading clusters...')).not.toBeInTheDocument();
+    expect(screen.getByText('stale-cluster')).toBeInTheDocument();
+
+    // Background refresh lands and replaces the stale list with fresh data.
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('stale-cluster')).not.toBeInTheDocument();
   });
 });

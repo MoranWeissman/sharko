@@ -34,6 +34,7 @@ import type {
   DryRunResult,
   TrackedPR,
 } from '@/services/models'
+import { getCached, setCached } from '@/lib/viewCache'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
@@ -63,6 +64,10 @@ import {
 // sources its copy from deployed_cluster_count /
 // total_target_cluster_count (see DeploymentBadge).
 type AddonsView = 'catalog' | 'marketplace'
+
+// perf S2 — exported so tests can prime/inspect the same key the component
+// uses.
+export const ADDON_CATALOG_CACHE_KEY = 'addon-catalog'
 
 type FilterType = 'all' | 'healthy' | 'unhealthy' | 'git-only' | 'drifted'
 
@@ -689,7 +694,13 @@ export function AddonCatalog() {
     }
     return api
       .getAddonCatalog()
-      .then((data) => setCatalogData(data))
+      .then((data) => {
+        setCatalogData(data)
+        // perf S2 write-through — any mutation that ends by calling
+        // fetchCatalog() (add addon, etc.) refreshes this same cache entry,
+        // so there's no separate invalidation path to keep in sync.
+        setCached(ADDON_CATALOG_CACHE_KEY, data)
+      })
       .catch((e: unknown) => {
         if (!background) {
           setError(e instanceof Error ? e.message : 'Failed to load addon catalog')
@@ -705,8 +716,19 @@ export function AddonCatalog() {
     void fetchCatalog(true)
   }, [fetchCatalog])
 
+  // perf S2 — stale-while-refresh: a cache hit paints the grid instantly
+  // (no spinner) from this session's last successful load, then a normal
+  // background fetch quietly brings it current.
   useEffect(() => {
-    void fetchCatalog()
+    const cached = getCached<AddonCatalogResponse>(ADDON_CATALOG_CACHE_KEY)
+    if (cached) {
+      setCatalogData(cached.data)
+      setLoading(false)
+      void fetchCatalog(true)
+    } else {
+      void fetchCatalog()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchCatalog])
 
   // Auto-refresh every 60s (less critical page). Also re-polls the pending

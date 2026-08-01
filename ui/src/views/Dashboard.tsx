@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { api, extractArgocdVersionString } from '@/services/api';
 import type { DashboardStats, SyncActivityEntry, ClustersResponse, VersionMatrixResponse } from '@/services/models';
+import { getCached, setCached } from '@/lib/viewCache';
 import { StatCard, type StatCardStatItem } from '@/components/StatCard';
 import { WaveDecoration } from '@/components/WaveDecoration';
 import { LoadingState } from '@/components/LoadingState';
@@ -367,6 +368,38 @@ function BootstrapHealthBanner({ health, sync }: BootstrapHealthBannerProps) {
 
 // --- Main Dashboard ---
 
+type HomeClusterInfo = {
+  available: boolean;
+  message?: string;
+  kubernetes_version?: string;
+  node_count?: number;
+  nodes_ready?: number;
+  nodes_not_ready?: number;
+} | null;
+
+// perf S2 — everything the page renders from its 8 fetches, snapshotted
+// into one cache entry once a load finishes. A revisit within the same
+// browser session hydrates all of this in one shot (instant paint, no
+// spinner) before kicking a background refresh — see the mount effect
+// below and fetchData's setCached call at the end.
+interface DashboardSnapshot {
+  stats: DashboardStats;
+  recentSyncs: SyncActivityEntry[];
+  versionDrifts: { addon: string; count: number }[];
+  appHealthEntries: AppHealthEntry[];
+  clusters: { name: string; connectionStatus: string }[];
+  argoCDUnreachable: boolean;
+  homeCluster: HomeClusterInfo;
+  sharkoVersion: string | undefined;
+  argocdVersion: string | undefined;
+  argocdConnected: boolean;
+  uptime: string | undefined;
+  upgrades: UpgradesSummary;
+}
+
+// Exported so tests can prime/inspect the same key the component uses.
+export const DASHBOARD_CACHE_KEY = 'dashboard';
+
 export function Dashboard() {
   const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -387,7 +420,7 @@ export function Dashboard() {
   // problems, not a duplicate of addon health under a cluster heading).
   const [clusters, setClusters] = useState<{ name: string; connectionStatus: string }[]>([]);
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
-  const [homeCluster, setHomeCluster] = useState<{ available: boolean; message?: string; kubernetes_version?: string; node_count?: number; nodes_ready?: number; nodes_not_ready?: number } | null>(null);
+  const [homeCluster, setHomeCluster] = useState<HomeClusterInfo>(null);
   // Home-cluster identity card (Package 3) — three more thin reads, each
   // degrading independently to undefined ("—" in the card) rather than
   // failing the whole dashboard fetch.
@@ -401,46 +434,74 @@ export function Dashboard() {
   // the calm all-fine line's "last checked" timestamp.
   const [lastChecked, setLastChecked] = useState<number | null>(null);
 
+  // S3 — progressive paint: every read still fires at once (unchanged
+  // parallelism), but the page no longer waits for Promise.all on all 8
+  // before showing anything. /dashboard/stats alone clears the spinner and
+  // paints the frame + stat cards; every other panel fills in on its own,
+  // whenever its own fetch lands, using the .catch(()=>null) degrade it
+  // already had. A never-resolving observability call, say, no longer
+  // holds up the stat cards.
   const fetchData = useCallback(async (background = false) => {
-    try {
-      if (background) {
-        setIsRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-      setError(null);
-      const [statsData, obsData, matrixData, clustersData, homeClusterData, healthData, configData, fleetData] = await Promise.all([
-        api.getDashboardStats(),
-        api.getObservability().catch(() => null),
-        api.getVersionMatrix().catch(() => null),
-        api.getClusters().catch(() => null),
-        api.getHomeCluster().catch(() => null),
-        api.health().catch(() => null),
-        api.getConfig().catch(() => null),
-        api.getFleetStatus().catch(() => null),
-      ]);
-      setStats(statsData);
-      setHomeCluster(homeClusterData);
-      setSharkoVersion(healthData?.version);
-      setArgocdConnected(!!configData?.argocd?.connected);
-      // Defensive: api.getConfig() already normalizes argocd.version to a
-      // plain string (the server sends ArgoCD's full version-info object,
-      // not a string — see extractArgocdVersionString in services/api.ts).
-      // Re-normalizing here too means a non-string ever reaching this line
-      // (e.g. a mocked/older api client) still can't crash the render — it
-      // becomes "—" via HomeClusterCard's own fallback instead of a raw
-      // object hitting JSX.
-      setArgocdVersion(extractArgocdVersionString(configData?.argocd?.version));
-      setUptime(fleetData?.uptime);
-      setUpgrades(summarizeUpgrades(matrixData));
-      // Trigger an extra refresh of the unified state so Dashboard reflects
-      // any attention items that arrived between the provider's polls.
-      refreshAddonStates();
+    if (background) {
+      setIsRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    setError(null);
 
+    const obsPromise = api.getObservability().catch(() => null);
+    const matrixPromise = api.getVersionMatrix().catch(() => null);
+    const clustersPromise = api.getClusters().catch(() => null);
+    const homeClusterPromise = api.getHomeCluster().catch(() => null);
+    const healthPromise = api.health().catch(() => null);
+    const configPromise = api.getConfig().catch(() => null);
+    const fleetPromise = api.getFleetStatus().catch(() => null);
+
+    let statsData: DashboardStats;
+    try {
+      statsData = await api.getDashboardStats();
+    } catch (e: unknown) {
+      if (!background) {
+        setError(e instanceof Error ? e.message : 'Failed to load dashboard');
+      }
+      setLoading(false);
+      setIsRefreshing(false);
+      setLastChecked(Date.now());
+      return;
+    }
+
+    setStats(statsData);
+    setLoading(false);
+    // Trigger an extra refresh of the unified state so Dashboard reflects
+    // any attention items that arrived between the provider's polls.
+    refreshAddonStates();
+
+    // Local accumulators for the perf S2 write-through cache — filled in
+    // as each read below lands, written once everything has settled so the
+    // NEXT visit this session can paint the whole page instantly.
+    let snapRecentSyncs: SyncActivityEntry[] = [];
+    let snapVersionDrifts: { addon: string; count: number }[] = [];
+    let snapAppHealthEntries: AppHealthEntry[] = [];
+    let snapClusters: { name: string; connectionStatus: string }[] = [];
+    let snapArgoCDUnreachable = false;
+    let snapHomeCluster: HomeClusterInfo = null;
+    let snapSharkoVersion: string | undefined;
+    let snapArgocdVersion: string | undefined;
+    let snapArgocdConnected = false;
+    let snapUptime: string | undefined;
+    let snapUpgrades: UpgradesSummary = { withUpgrade: 0, checked: 0, namesWithUpgrade: [] };
+
+    obsPromise.then((obsData) => {
       // Recent syncs (last 5)
       if (obsData?.recent_syncs) {
-        setRecentSyncs(obsData.recent_syncs.slice(0, 5));
+        snapRecentSyncs = obsData.recent_syncs.slice(0, 5);
+        setRecentSyncs(snapRecentSyncs);
       }
+    });
+
+    matrixPromise.then((matrixData) => {
+      snapUpgrades = summarizeUpgrades(matrixData);
+      setUpgrades(snapUpgrades);
 
       if (matrixData?.addons) {
         // Version drifts
@@ -454,6 +515,7 @@ export function Dashboard() {
             drifts.push({ addon: row.addon_name, count: driftCount });
           }
         }
+        snapVersionDrifts = drifts;
         setVersionDrifts(drifts);
 
         // Flattened per-app health, across every cluster — feeds the
@@ -470,12 +532,17 @@ export function Dashboard() {
             });
           }
         }
+        snapAppHealthEntries = entries;
         setAppHealthEntries(entries);
       } else {
+        snapVersionDrifts = [];
+        snapAppHealthEntries = [];
         setVersionDrifts([]);
         setAppHealthEntries([]);
       }
+    });
 
+    clustersPromise.then((clustersData) => {
       // ArgoCD unreachable: the ONLY honest signal is the getClusters()
       // fetch itself failing (caught to null above) — NOT a heuristic over
       // connection_status values. The old check looked for a lowercase
@@ -483,7 +550,8 @@ export function Dashboard() {
       // every cluster reading Failed actually PROVES ArgoCD is reachable
       // (it answered with a real status), not the opposite.
       const typedClusters = clustersData as ClustersResponse | null;
-      setArgoCDUnreachable(typedClusters === null);
+      snapArgoCDUnreachable = typedClusters === null;
+      setArgoCDUnreachable(snapArgoCDUnreachable);
 
       // Cluster attention rows — failed/missing only, built from the
       // per-cluster /clusters list (the aggregate /dashboard/stats has
@@ -494,23 +562,72 @@ export function Dashboard() {
         const pendingNames = new Set(
           (typedClusters.pending_registrations ?? []).map((p) => p.cluster_name),
         );
-        setClusters(
-          typedClusters.clusters
-            .filter((c) => !pendingNames.has(c.name) && isClusterNeedsAttention(c.connection_status))
-            .map((c) => ({ name: c.name, connectionStatus: c.connection_status || 'Unknown' })),
-        );
+        snapClusters = typedClusters.clusters
+          .filter((c) => !pendingNames.has(c.name) && isClusterNeedsAttention(c.connection_status))
+          .map((c) => ({ name: c.name, connectionStatus: c.connection_status || 'Unknown' }));
       } else {
-        setClusters([]);
+        snapClusters = [];
       }
-    } catch (e: unknown) {
-      if (!background) {
-        setError(e instanceof Error ? e.message : 'Failed to load dashboard');
-      }
-    } finally {
-      setLoading(false);
-      setIsRefreshing(false);
-      setLastChecked(Date.now());
-    }
+      setClusters(snapClusters);
+    });
+
+    homeClusterPromise.then((homeClusterData) => {
+      snapHomeCluster = homeClusterData;
+      setHomeCluster(homeClusterData);
+    });
+
+    healthPromise.then((healthData) => {
+      snapSharkoVersion = healthData?.version;
+      setSharkoVersion(snapSharkoVersion);
+    });
+
+    configPromise.then((configData) => {
+      snapArgocdConnected = !!configData?.argocd?.connected;
+      // Defensive: api.getConfig() already normalizes argocd.version to a
+      // plain string (the server sends ArgoCD's full version-info object,
+      // not a string — see extractArgocdVersionString in services/api.ts).
+      // Re-normalizing here too means a non-string ever reaching this line
+      // (e.g. a mocked/older api client) still can't crash the render — it
+      // becomes "—" via HomeClusterCard's own fallback instead of a raw
+      // object hitting JSX.
+      snapArgocdVersion = extractArgocdVersionString(configData?.argocd?.version);
+      setArgocdConnected(snapArgocdConnected);
+      setArgocdVersion(snapArgocdVersion);
+    });
+
+    fleetPromise.then((fleetData) => {
+      snapUptime = fleetData?.uptime;
+      setUptime(snapUptime);
+    });
+
+    await Promise.allSettled([
+      obsPromise,
+      matrixPromise,
+      clustersPromise,
+      homeClusterPromise,
+      healthPromise,
+      configPromise,
+      fleetPromise,
+    ]);
+
+    setIsRefreshing(false);
+    setLastChecked(Date.now());
+
+    // Write-through: next mount this session paints all of this instantly.
+    setCached<DashboardSnapshot>(DASHBOARD_CACHE_KEY, {
+      stats: statsData,
+      recentSyncs: snapRecentSyncs,
+      versionDrifts: snapVersionDrifts,
+      appHealthEntries: snapAppHealthEntries,
+      clusters: snapClusters,
+      argoCDUnreachable: snapArgoCDUnreachable,
+      homeCluster: snapHomeCluster,
+      sharkoVersion: snapSharkoVersion,
+      argocdVersion: snapArgocdVersion,
+      argocdConnected: snapArgocdConnected,
+      uptime: snapUptime,
+      upgrades: snapUpgrades,
+    });
   }, [refreshAddonStates]);
 
   const handleRefresh = useCallback(() => {
@@ -523,8 +640,30 @@ export function Dashboard() {
     void fetchData(true)
   }, [fetchData])
 
+  // perf S2 — stale-while-refresh: a cache hit paints every card instantly
+  // (no spinner) from this session's last successful load, then a normal
+  // background fetch quietly brings it current.
   useEffect(() => {
-    void fetchData();
+    const cached = getCached<DashboardSnapshot>(DASHBOARD_CACHE_KEY);
+    if (cached) {
+      setStats(cached.data.stats);
+      setRecentSyncs(cached.data.recentSyncs);
+      setVersionDrifts(cached.data.versionDrifts);
+      setAppHealthEntries(cached.data.appHealthEntries);
+      setClusters(cached.data.clusters);
+      setArgoCDUnreachable(cached.data.argoCDUnreachable);
+      setHomeCluster(cached.data.homeCluster);
+      setSharkoVersion(cached.data.sharkoVersion);
+      setArgocdVersion(cached.data.argocdVersion);
+      setArgocdConnected(cached.data.argocdConnected);
+      setUptime(cached.data.uptime);
+      setUpgrades(cached.data.upgrades);
+      setLoading(false);
+      void fetchData(true);
+    } else {
+      void fetchData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchData]);
 
   // Auto-refresh every 30s
