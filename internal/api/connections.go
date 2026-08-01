@@ -78,7 +78,7 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 // handleUpdateConnection godoc
 //
 // @Summary Update connection
-// @Description Updates an existing connection configuration; empty token fields retain their saved values
+// @Description Updates an existing connection configuration; empty token fields retain their saved values. A request whose git or argocd block carries none of that block's identifying fields (e.g. a GitOps-settings-only or secrets-provider-only save) is treated as not touching that section — the stored git/argocd config is kept as-is instead of being overwritten with empty values.
 // @Tags connections
 // @Accept json
 // @Produce json
@@ -107,11 +107,39 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 
 	// For edits: if token/provider fields are empty, keep existing values
 	if saved, err := s.connSvc.GetConnection(name); err == nil && saved != nil {
+		// Settings pages other than the connection editor itself (GitOps
+		// settings, secrets provider) call this same endpoint to save their
+		// own section, and must not be forced to reconstruct the git/argocd
+		// blocks from parts. GET /connections never exposes enough to
+		// round-trip them faithfully — e.g. a self-hosted Gitea repo's host
+		// isn't in the masked ConnectionResponse at all, and ArgoCD's
+		// `insecure` flag isn't either. A request that carries none of a
+		// block's identifying fields is read as "not touching this section"
+		// and falls back to the stored value wholesale, the same way
+		// req.Provider/req.AddonSecretProvider/req.GitOps already do below.
+		// Without this, the client's only options were: invent a repo_url
+		// (breaks Gitea, whose host it cannot know) or send real-looking
+		// zero values that silently overwrite the stored config (e.g. an
+		// ArgoCD connection verified over TLS quietly flipped to insecure).
+		if req.Git.RepoURL == "" && req.Git.Owner == "" && req.Git.Repo == "" &&
+			req.Git.Organization == "" && req.Git.Project == "" && req.Git.Repository == "" {
+			tok, pat := req.Git.Token, req.Git.PAT
+			req.Git = saved.Git
+			if tok != "" {
+				req.Git.Token = tok
+			}
+			if pat != "" {
+				req.Git.PAT = pat
+			}
+		}
 		if req.Git.Token == "" {
 			req.Git.Token = saved.Git.Token
 		}
 		if req.Git.PAT == "" {
 			req.Git.PAT = saved.Git.PAT
+		}
+		if req.Argocd.ServerURL == "" && req.Argocd.Token == "" {
+			req.Argocd = saved.Argocd
 		}
 		if req.Argocd.Token == "" {
 			req.Argocd.Token = saved.Argocd.Token

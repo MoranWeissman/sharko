@@ -4941,7 +4941,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates an existing connection configuration; empty token fields retain their saved values",
+                "description": "Updates an existing connection configuration; empty token fields retain their saved values. A request whose git or argocd block carries none of that block's identifying fields (e.g. a GitOps-settings-only or secrets-provider-only save) is treated as not touching that section — the stored git/argocd config is kept as-is instead of being overwritten with empty values.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5206,7 +5206,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Replaces the current default addon set with the supplied list. Opens a PR with the new default-addons.yaml (or updates an existing open PR for idempotency). Does NOT mutate the connection.",
+                "description": "Replaces the current default addon set with the supplied list. Opens a PR with the new default-addons.yaml (or updates an existing open PR for idempotency). Does NOT mutate the connection. This is a v3-layout-only writer (configuration/default-addons.yaml is not a file a v4 repo reads) — on a v4 repo it returns 409 with code ` + "`" + `repo_layout` + "`" + `, dry_run included, the same refusal shape as the other v3 catalog writers.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5245,6 +5245,13 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "The repo uses the v4 layout (code repo_layout)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
