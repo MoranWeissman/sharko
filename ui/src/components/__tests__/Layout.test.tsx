@@ -3,6 +3,10 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
+// WQ-3 — Layout now reads useNavBadges(), which calls useAddonStates();
+// has to be mounted inside the provider or the hook throws.
+import { AddonStatesProvider } from '@/hooks/useAddonStates'
+import { api } from '@/services/api'
 
 // Controls the AI-assistant opt-in gate (V2-cleanup-55.4). Default: not
 // configured → assistant entry points hidden.
@@ -16,6 +20,15 @@ vi.mock('@/services/api', () => ({
     getAIStatus: (...args: unknown[]) => mockGetAIStatus(...args),
     agentChat: vi.fn().mockResolvedValue({ response: 'hi' }),
     agentReset: vi.fn().mockResolvedValue({ status: 'ok' }),
+    // WQ-3 — nav badge reads (hooks/useNavBadges.tsx). Defaulted to a
+    // problem-free state so existing tests that don't care about badges
+    // keep passing unchanged.
+    getAttentionItems: vi.fn().mockResolvedValue([]),
+    getDashboardStats: vi.fn().mockResolvedValue({
+      clusters: { total: 0, connected: 0, pending: 0, untested: 0, missing: 0, failed: 0 },
+    }),
+    getClusters: vi.fn().mockResolvedValue({ clusters: [] }),
+    getRepoStatus: vi.fn().mockResolvedValue({ initialized: true, bootstrap_synced: true }),
   },
 }))
 
@@ -63,7 +76,9 @@ vi.mock('@/hooks/useAuth', () => ({
 function renderLayout() {
   return render(
     <MemoryRouter>
-      <Layout />
+      <AddonStatesProvider>
+        <Layout />
+      </AddonStatesProvider>
     </MemoryRouter>,
   )
 }
@@ -215,6 +230,84 @@ describe('Layout', () => {
 
       await waitFor(() => {
         expect(screen.queryByText('Log out')).not.toBeInTheDocument()
+      })
+    })
+  })
+
+  // WQ-3 — messenger-style unread badges. Same shared computation as the
+  // Dashboard's thin attention line (hooks/useNavBadges.tsx).
+  describe('nav unread badges', () => {
+    it('shows no badge on Observability or System when there is nothing broken', async () => {
+      renderLayout()
+      await waitFor(() => expect(screen.getByText('Observability')).toBeInTheDocument())
+      expect(screen.queryByTitle(/unread problem/)).not.toBeInTheDocument()
+    })
+
+    it('shows the confirmed cluster-problem count on the Observability entry', async () => {
+      (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+        clusters: { total: 2, connected: 0, pending: 0, untested: 0, missing: 1, failed: 1 },
+      })
+      renderLayout()
+
+      await waitFor(() => {
+        expect(screen.getByTitle('2 unread problems')).toBeInTheDocument()
+      })
+    })
+
+    it('caps the badge display at "9+"', async () => {
+      (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+        clusters: { total: 20, connected: 0, pending: 0, untested: 0, missing: 5, failed: 10 },
+      })
+      renderLayout()
+
+      await waitFor(() => {
+        expect(screen.getByTitle('15 unread problems')).toBeInTheDocument();
+      })
+      expect(screen.getByTitle('15 unread problems').textContent).toBe('9+')
+    })
+
+    // A degraded addon inside the 10-minute settling window must NOT bump
+    // the Observability badge — same rule the Dashboard's thin line
+    // follows (see useAddonStates.tsx SETTLING_WINDOW_MS + the shared
+    // getConfirmedProblemCount in components/AttentionSection.tsx).
+    it('a freshly-degraded (settling) addon does not flash a badge', async () => {
+      // Isolate from earlier tests' overrides — mockResolvedValue persists
+      // across vi.clearAllMocks() (it only clears call history).
+      (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+        clusters: { total: 0, connected: 0, pending: 0, untested: 0, missing: 0, failed: 0 },
+      });
+      (api.getAttentionItems as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { app_name: 'cert-manager-prod', addon_name: 'cert-manager', cluster: 'prod', health: 'Degraded', sync: 'Synced' },
+      ]);
+      renderLayout()
+
+      await waitFor(() => expect(screen.getByText('Observability')).toBeInTheDocument())
+      expect(screen.queryByTitle(/unread problem/)).not.toBeInTheDocument()
+    })
+
+    it('shows a machinery-problem badge on System when ArgoCD is unreachable', async () => {
+      (api.getRepoStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ initialized: true, bootstrap_synced: true });
+      (api.getClusters as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('network error'));
+      renderLayout()
+
+      await waitFor(() => {
+        expect(screen.getByTitle('1 unread problem')).toBeInTheDocument()
+      })
+    })
+
+    it('shows a machinery-problem badge on System when the Git connection is down', async () => {
+      // Isolate from the previous test's rejected getClusters mock —
+      // mockRejectedValue persists across vi.clearAllMocks() too.
+      (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+      (api.getRepoStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        initialized: false,
+        bootstrap_synced: false,
+        reason: 'connection_error',
+      });
+      renderLayout()
+
+      await waitFor(() => {
+        expect(screen.getByTitle('1 unread problem')).toBeInTheDocument()
       })
     })
   })

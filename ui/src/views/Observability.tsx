@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   BarChart,
   Bar,
@@ -43,6 +44,17 @@ import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { PaginationControls, PageSizeSelector, type PageSize } from '@/components/PaginationControls';
+import {
+  AttentionDetail,
+  splitAddonStates,
+  buildConfirmedAddonRows,
+  buildSettlingAddonRows,
+  buildUnknownAddonRows,
+  buildClusterAttentionRows,
+  buildDriftRows,
+} from '@/components/AttentionSection';
+import { useAddonStates } from '@/hooks/useAddonStates';
+import { isClusterNeedsAttention } from '@/lib/clusterStatus';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1289,10 +1301,15 @@ function BootstrapAppSection({
   return (
     <section className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:ring-gray-700 dark:bg-gray-900">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
-          <Heart className="h-5 w-5 text-teal-500" />
-          Bootstrap Application
-        </h2>
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
+            <Heart className="h-5 w-5 text-teal-500" />
+            Sharko Engine
+          </h2>
+          <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-500">
+            the ArgoCD application that deploys your addons from git
+          </p>
+        </div>
         {argoCDLink && (
           <a
             href={argoCDLink}
@@ -1341,7 +1358,7 @@ function BootstrapAppSection({
         <div className="mt-5 flex items-start gap-2 rounded-lg bg-amber-50 p-3 ring-1 ring-amber-300 dark:bg-amber-950/30 dark:ring-amber-700">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <p className="text-sm text-amber-800 dark:text-amber-300">
-            Bootstrap app is <strong>{health}</strong>. Check ArgoCD for sync errors or missing resources.
+            The engine app is <strong>{health}</strong>. Check ArgoCD for sync errors or missing resources.
             Addon installations and updates may not work until this is resolved.
           </p>
         </div>
@@ -1355,20 +1372,32 @@ function BootstrapAppSection({
 // ---------------------------------------------------------------------------
 
 export function Observability() {
+  const navigate = useNavigate();
   const [data, setData] = useState<ObservabilityOverviewResponse | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [argoCDUrl, setArgoCDUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Attention-detail rows (WQ-3, attention-move-badges) — moved here
+  // verbatim from the Dashboard. Cluster connectivity problems and version
+  // drift need their own reads (the aggregate /observability/overview and
+  // /dashboard/stats calls above don't carry per-cluster names or drift
+  // detail); addon problem/settling/unknown rows come from the app-wide
+  // AddonStatesProvider (useAddonStates below) — no extra fetch for those.
+  const [attentionClusters, setAttentionClusters] = useState<{ name: string; connectionStatus: string }[]>([]);
+  const [versionDrifts, setVersionDrifts] = useState<{ addon: string; count: number }[]>([]);
+  const { byApp: addonStateMap } = useAddonStates();
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const [result, dashStats, connections] = await Promise.all([
+      const [result, dashStats, connections, clustersData, matrixData] = await Promise.all([
         api.getObservability(),
         api.getDashboardStats().catch(() => null),
         api.getConnections().catch(() => null),
+        api.getClusters().catch(() => null),
+        api.getVersionMatrix().catch(() => null),
       ]);
       setData(result);
       setStats(dashStats);
@@ -1376,6 +1405,39 @@ export function Observability() {
         (c: { name: string; is_active?: boolean; argocd_server_url?: string }) => c.is_active,
       );
       setArgoCDUrl(activeConn?.argocd_server_url ?? null);
+
+      // Cluster attention rows — failed/missing only, same filtering the
+      // Dashboard used to do. A cluster with an open (not yet merged)
+      // registration PR is excluded — it's mid-lifecycle, not broken.
+      if (clustersData?.clusters) {
+        const pendingNames = new Set(
+          (clustersData.pending_registrations ?? []).map((p) => p.cluster_name),
+        );
+        setAttentionClusters(
+          clustersData.clusters
+            .filter((c) => !pendingNames.has(c.name) && isClusterNeedsAttention(c.connection_status))
+            .map((c) => ({ name: c.name, connectionStatus: c.connection_status || 'Unknown' })),
+        );
+      } else {
+        setAttentionClusters([]);
+      }
+
+      // Version drifts — same-addon-different-version across clusters.
+      if (matrixData?.addons) {
+        const drifts: { addon: string; count: number }[] = [];
+        for (const row of matrixData.addons) {
+          let driftCount = 0;
+          for (const cell of Object.values(row.cells || {})) {
+            if (cell?.drift_from_catalog) driftCount++;
+          }
+          if (driftCount > 0) {
+            drifts.push({ addon: row.addon_name, count: driftCount });
+          }
+        }
+        setVersionDrifts(drifts);
+      } else {
+        setVersionDrifts([]);
+      }
     } catch (e: unknown) {
       setError(
         e instanceof Error ? e.message : 'Failed to load observability data',
@@ -1404,6 +1466,25 @@ export function Observability() {
   if (error) return <ErrorState message={error} onRetry={fetchData} />;
   if (!data) return null;
 
+  // Attention-detail rows (WQ-3) — same severity honesty, same settling
+  // window, same per-row deep links the Dashboard used to render. Cluster
+  // problem count reads stats.clusters (the server's single classification,
+  // same source the old Dashboard banner and the nav badge both use) rather
+  // than re-deriving it from the named row list above.
+  const { confirmed, settling, unknown } = splitAddonStates(addonStateMap);
+  const clusterAttentionRows = buildClusterAttentionRows(attentionClusters);
+  const attentionSection = (
+    <AttentionDetail
+      onNavigate={navigate}
+      clusterAttentionRows={clusterAttentionRows}
+      confirmedAddonRows={buildConfirmedAddonRows(confirmed)}
+      settlingAddonRows={buildSettlingAddonRows(settling)}
+      unknownAddonRows={buildUnknownAddonRows(unknown)}
+      driftRows={buildDriftRows(versionDrifts)}
+      clusterProblemCount={(stats?.clusters?.failed ?? 0) + (stats?.clusters?.missing ?? 0)}
+    />
+  );
+
   // Check if there's any meaningful data to display
   const hasControlPlane = data.control_plane && (data.control_plane.total_apps > 0 || data.control_plane.total_clusters > 0);
   const hasAlerts = (data.resource_alerts ?? []).length > 0;
@@ -1420,6 +1501,7 @@ export function Observability() {
             ArgoCD control plane health, addon health per cluster, resource alerts, and sync activity timeline.
           </p>
         </div>
+        {attentionSection}
         <BootstrapAppSection stats={stats} argoCDUrl={argoCDUrl} />
         <EmptyState
           title="No observability data available yet"
@@ -1437,6 +1519,7 @@ export function Observability() {
           ArgoCD control plane health, addon health per cluster, resource alerts, and sync activity timeline.
         </p>
       </div>
+      {attentionSection}
       <BootstrapAppSection stats={stats} argoCDUrl={argoCDUrl} />
       <ControlPlaneSection data={data.control_plane ?? { health_summary: {}, total_applications: 0, synced: 0, out_of_sync: 0 }} />
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
