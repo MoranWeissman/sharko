@@ -126,6 +126,36 @@ func v4ClusterValuesPath(clusterName, addonName string) (string, error) {
 	return joinUnder(V4ClusterValuesDir, clusterName, addonName+".yaml")
 }
 
+// globalValuesStub and clusterValuesStub are the comment-only scaffold
+// content written for a values file that does not exist yet (v4-walkfix W1
+// items 5 and 6): AddToCatalog scaffolds values/global/<addon>.yaml for
+// every addon it adds (single, batch, and the add+enable combo), and
+// EnableAddonV4 / AddToCatalog's enable half scaffolds
+// values/clusters/<cluster>/<addon>.yaml whenever the enable request
+// carries no explicit values. Neither ever invents a default VALUE — those
+// belong to the catalog entry or the chart's own defaults — only a
+// plain-English pointer to where overrides go. Both are comment-only YAML
+// (parses as an empty document), which the engine chart's
+// ignoreMissingValueFiles: true / Helm's own empty-values handling already
+// treats as "no overrides" — see tests/enginerender's coverage for the
+// exact proof. Neither function ever OVERWRITES an existing file — every
+// call site checks existence first and skips when the file is already
+// there, hand-created or not.
+func globalValuesStub(addonName string) []byte {
+	return []byte(fmt.Sprintf(
+		"# Helm values for %s, applied to every cluster that enables it.\n"+
+			"# Cluster-specific overrides live in values/clusters/<cluster>/%s.yaml.\n"+
+			"# An empty file means the chart's own defaults.\n",
+		addonName, addonName))
+}
+
+func clusterValuesStub(addonName, clusterName string) []byte {
+	return []byte(fmt.Sprintf(
+		"# Helm values for %s on %s only. These override values/global/%s.yaml.\n"+
+			"# An empty file means no cluster-specific overrides.\n",
+		addonName, clusterName, addonName))
+}
+
 // isV4Repo reports whether the connected repo is v4-format, using the
 // same probe CheckEnginePin (enginepin.go) and
 // AddonService.GetVersionMatrix (internal/service/addon.go) already use:

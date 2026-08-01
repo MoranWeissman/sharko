@@ -91,7 +91,15 @@ func TestEngineChartEmptyCatalog_RendersZeroApplicationSets(t *testing.T) {
 	}
 	rendered := string(out)
 
-	if got := strings.Count(rendered, "kind: ApplicationSet"); got != 0 {
-		t.Errorf("expected zero ApplicationSets with an explicit empty catalog.yaml, got %d.\n--- rendered ---\n%s", got, rendered)
+	// One ApplicationSet is expected here now: the connectivity-check
+	// generator (chart 0.3.0, templates/connectivity-check.yaml), which
+	// renders on every default render regardless of catalog content. The
+	// invariant this test guards — zero ADDON ApplicationSets for an empty
+	// catalog — is checked by name below.
+	if strings.Contains(rendered, "name: 'sharko-cert-manager'") || strings.Contains(rendered, "name: 'sharko-metrics-server'") {
+		t.Errorf("expected zero addon ApplicationSets with an explicit empty catalog.yaml, got:\n--- rendered ---\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "name: sharko-connectivity-check") {
+		t.Errorf("expected the connectivity-check ApplicationSet to still render with an explicit empty catalog.yaml.\n--- rendered ---\n%s", rendered)
 	}
 }

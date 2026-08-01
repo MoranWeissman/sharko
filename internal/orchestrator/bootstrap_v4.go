@@ -108,6 +108,15 @@ func buildEnginePin(gitops GitOpsConfig, paths RepoPathsConfig) []byte {
 	fmt.Fprintf(&b, "            value: %s\n", branch)
 	b.WriteString("          - name: hostCluster.name\n")
 	fmt.Fprintf(&b, "            value: %q\n", paths.HostClusterName)
+	// engineChart.repoURL mirrors this source's own repoURL back into a
+	// Helm value (chart 0.3.0) so the connectivity-check ApplicationSet
+	// (charts/sharko-engine/templates/connectivity-check.yaml) can point a
+	// generated, per-cluster Application back at "this same chart, this
+	// same version" without writing any manifest into the user's
+	// data-only repo — the same self-referential trick, using the same
+	// registry location this Application source is already pulling from.
+	b.WriteString("          - name: engineChart.repoURL\n")
+	fmt.Fprintf(&b, "            value: %s\n", engineRepoURL)
 	fmt.Fprintf(&b, "    - repoURL: %s\n", repoURL)
 	fmt.Fprintf(&b, "      targetRevision: %s\n", branch)
 	b.WriteString("      ref: values\n")

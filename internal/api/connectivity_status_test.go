@@ -1,13 +1,37 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
+
+// fakeAppSetGetter fakes connectivityAppSetGetter for
+// TestDetectConnectivityCheckDrift — exists controls whether
+// GetApplicationSet succeeds (the legacy AppSet is really there), notFound
+// controls whether it fails with the exact "not found" phrasing
+// *argocd.Client.doGet produces for a 404, and any other case returns an
+// opaque error to exercise the "can't confirm, say nothing" branch.
+type fakeAppSetGetter struct {
+	exists   bool
+	otherErr error
+}
+
+func (f *fakeAppSetGetter) GetApplicationSet(ctx context.Context, name string) (*argocd.ApplicationSetStatus, error) {
+	if f.exists {
+		return &argocd.ApplicationSetStatus{Name: name}, nil
+	}
+	if f.otherErr != nil {
+		return nil, f.otherErr
+	}
+	return nil, errors.New("ArgoCD endpoint not found (/api/v1/applicationsets/" + name + ") — check the server URL")
+}
 
 func TestComputeConnectivityVerdict(t *testing.T) {
 	t.Parallel()
@@ -392,7 +416,9 @@ func TestComputeDerivedHealth(t *testing.T) {
 
 // TestDetectConnectivityCheckDrift covers W4a (V3 RW1.8): detecting when a
 // cluster is stuck at "check_pending" due to ApplicationSet label-selector
-// drift (sharko.io → sharko.dev rename).
+// drift (sharko.io → sharko.dev rename) — AND (v4-walkfix W1 item 2) that
+// the two real causes behind "labeled, no check app, no real addon" are
+// told apart by asking ArgoCD, not guessed.
 func TestDetectConnectivityCheckDrift(t *testing.T) {
 	t.Parallel()
 
@@ -400,10 +426,13 @@ func TestDetectConnectivityCheckDrift(t *testing.T) {
 	checkAppName := "connectivity-check-" + clusterName
 
 	tests := []struct {
-		name         string
-		secretLabels map[string]string
-		apps         []models.ArgocdApplication
-		wantDrift    bool // true = drift detected, reason returned
+		name           string
+		secretLabels   map[string]string
+		apps           []models.ArgocdApplication
+		ac             connectivityAppSetGetter // nil = not reached / no client
+		wantReasonHas  string                    // substring the reason must contain (ignored if empty)
+		wantReasonLack string                    // substring the reason must NOT contain (ignored if empty)
+		wantDrift      bool                      // true = a non-empty reason is returned
 	}{
 		{
 			name:         "no connectivity-check label → not applicable",
@@ -442,23 +471,7 @@ func TestDetectConnectivityCheckDrift(t *testing.T) {
 			wantDrift: false,
 		},
 		{
-			name: "W4a: has label, check app missing, NO real addons → DRIFT DETECTED",
-			secretLabels: map[string]string{
-				models.LabelConnectivityCheck: models.LabelEnabled,
-			},
-			apps:      []models.ArgocdApplication{},
-			wantDrift: true,
-		},
-		{
-			name: "W4a: legacy label only, check app missing, no addons → DRIFT DETECTED",
-			secretLabels: map[string]string{
-				models.LabelConnectivityCheckLegacy: models.LabelEnabled,
-			},
-			apps:      []models.ArgocdApplication{},
-			wantDrift: true,
-		},
-		{
-			name: "system apps (bootstrap, other check apps) don't count as real addons",
+			name: "system apps (bootstrap, other check apps) don't count as real addons, legacy appset exists → stale selector",
 			secretLabels: map[string]string{
 				models.LabelConnectivityCheck: models.LabelEnabled,
 			},
@@ -466,7 +479,58 @@ func TestDetectConnectivityCheckDrift(t *testing.T) {
 				{Name: "sharko-bootstrap"},
 				{Name: "connectivity-check-other-cluster"},
 			},
-			wantDrift: true, // system apps ignored → still drift
+			ac:            &fakeAppSetGetter{exists: true},
+			wantDrift:     true,
+			wantReasonHas: "selector",
+		},
+		{
+			name: "canonical label, no check app, no addons, legacy appset EXISTS → stale selector (the only real drift case)",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps:          []models.ArgocdApplication{},
+			ac:            &fakeAppSetGetter{exists: true},
+			wantDrift:     true,
+			wantReasonHas: "selector",
+		},
+		{
+			name: "legacy label, no check app, no addons, legacy appset EXISTS → stale selector",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheckLegacy: models.LabelEnabled,
+			},
+			apps:          []models.ArgocdApplication{},
+			ac:            &fakeAppSetGetter{exists: true},
+			wantDrift:     true,
+			wantReasonHas: "selector",
+		},
+		{
+			name: "canonical label, no check app, no addons, legacy appset ABSENT (404) → engine chart missing the feature, not a stale-selector claim",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps:           []models.ArgocdApplication{},
+			ac:             &fakeAppSetGetter{exists: false},
+			wantDrift:      true,
+			wantReasonHas:  "engine chart",
+			wantReasonLack: "selector",
+		},
+		{
+			name: "canonical label, no check app, no addons, ArgoCD call errors ambiguously → no claim either way",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps:      []models.ArgocdApplication{},
+			ac:        &fakeAppSetGetter{otherErr: errors.New("dial tcp: connection refused")},
+			wantDrift: false,
+		},
+		{
+			name: "canonical label, no check app, no addons, no client wired (nil) → no claim either way",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps:      []models.ArgocdApplication{},
+			ac:        nil,
+			wantDrift: false,
 		},
 	}
 
@@ -474,7 +538,7 @@ func TestDetectConnectivityCheckDrift(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			reason := detectConnectivityCheckDrift(clusterName, tc.secretLabels, tc.apps)
+			reason := detectConnectivityCheckDrift(context.Background(), tc.ac, clusterName, tc.secretLabels, tc.apps)
 			gotDrift := reason != ""
 
 			if gotDrift != tc.wantDrift {
@@ -482,12 +546,11 @@ func TestDetectConnectivityCheckDrift(t *testing.T) {
 					gotDrift, reason, tc.wantDrift)
 			}
 
-			// When drift is detected, the reason must be non-empty and mention the fix.
-			if tc.wantDrift && reason == "" {
-				t.Error("expected a non-empty drift reason when wantDrift=true")
+			if tc.wantReasonHas != "" && !strings.Contains(strings.ToLower(reason), tc.wantReasonHas) {
+				t.Errorf("expected drift reason to contain %q, got %q", tc.wantReasonHas, reason)
 			}
-			if tc.wantDrift && !strings.Contains(strings.ToLower(reason), "selector") {
-				t.Errorf("expected drift reason to mention 'selector', got %q", reason)
+			if tc.wantReasonLack != "" && strings.Contains(strings.ToLower(reason), tc.wantReasonLack) {
+				t.Errorf("expected drift reason NOT to contain %q, got %q", tc.wantReasonLack, reason)
 			}
 		})
 	}

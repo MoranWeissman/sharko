@@ -100,6 +100,44 @@ func TestSwaggerCSPAllowsInlineScript(t *testing.T) {
 	})
 }
 
+// TestCSPImgSrcAllowsHTTPSNotHTTP guards v4-walkfix W1 item 4: the sanitize
+// schema in ui/src/components/RichMarkdown.tsx deliberately allows external
+// http/https <img> src in rendered chart READMEs (badges, logos), so the
+// CSP must permit https: images or every badge in a Marketplace README
+// renders then gets silently blocked by the browser. http: stays blocked —
+// only https: is added.
+func TestCSPImgSrcAllowsHTTPSNotHTTP(t *testing.T) {
+	srv := newTestServer()
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	csp := w.Header().Get("Content-Security-Policy")
+	var imgSrc string
+	for _, d := range strings.Split(csp, ";") {
+		d = strings.TrimSpace(d)
+		if strings.HasPrefix(d, "img-src ") {
+			imgSrc = d
+			break
+		}
+	}
+	if imgSrc == "" {
+		t.Fatalf("CSP has no img-src directive; got: %s", csp)
+	}
+	if !strings.Contains(imgSrc, "https:") {
+		t.Errorf("img-src should allow https:; got: %q", imgSrc)
+	}
+	// Token-exact check (not a substring match) because "https:" contains
+	// "http:" as a prefix — a naive Contains("http:") would false-positive.
+	for _, tok := range strings.Fields(imgSrc) {
+		if tok == "http:" {
+			t.Errorf("img-src must NOT allow plain http:; got: %q", imgSrc)
+		}
+	}
+}
+
 func TestHSTSPresentOverHTTPS(t *testing.T) {
 	srv := newTestServer()
 	router := NewRouter(srv, nil)

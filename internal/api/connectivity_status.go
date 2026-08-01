@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"strings"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/observations"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
@@ -214,6 +216,26 @@ func clusterHasHealthyAddon(clusterName, serverURL string, apps []models.ArgocdA
 	return false
 }
 
+// legacyConnectivityAppSetName is the v3 bootstrap template's
+// ApplicationSet name (templates/bootstrap/templates/
+// connectivity-check-appset.yaml: metadata.name: connectivity-check) — the
+// only ApplicationSet shape that can ever carry the pre-rename
+// sharko.io/connectivity-check selector (V2-cleanup-59). The v4 engine
+// chart's own connectivity-check ApplicationSet (chart 0.3.0,
+// charts/sharko-engine/templates/connectivity-check.yaml, named
+// "sharko-connectivity-check") has never used any selector but the current
+// sharko.dev/connectivity-check key, so it can never be "stale" in this
+// sense — only a v3 repo's ApplicationSet can be.
+const legacyConnectivityAppSetName = "connectivity-check"
+
+// connectivityAppSetGetter is the narrow slice of *argocd.Client
+// detectConnectivityCheckDrift needs — just enough to ask ArgoCD "does an
+// ApplicationSet by this name exist right now." Narrowed to an interface so
+// tests can fake it without a real ArgoCD connection.
+type connectivityAppSetGetter interface {
+	GetApplicationSet(ctx context.Context, name string) (*argocd.ApplicationSetStatus, error)
+}
+
 // detectConnectivityCheckDrift checks whether a cluster stuck at "check_pending"
 // is actually stranded due to connectivity-check ApplicationSet label-selector
 // drift (W4a — V3 RW1.8). Returns a plain-English reason + next step if drift
@@ -224,18 +246,30 @@ func clusterHasHealthyAddon(clusterName, serverURL string, apps []models.ArgocdA
 //   - AND the expected connectivity-check-<cluster> Application does NOT exist
 //   - AND the cluster has NO real addon apps deployed (which would correctly
 //     suppress the check app)
-//   - THEN drift is detected → return a reason.
+//   - THEN something is wrong, but "stale selector" is only ONE of two real
+//     causes that look identical from the Application list alone: (a) an
+//     old v3 bootstrap's connectivity-check ApplicationSet is still
+//     selecting on the pre-rename sharko.io key and never converged, or (b)
+//     this repo's engine chart genuinely does not ship a connectivity check
+//     at all yet (engine pin older than chart 0.3.0, including every v4
+//     repo before this fix). Guessing wrong here used to tell v4 operators
+//     to "re-apply bootstrap templates" that do not exist anywhere in their
+//     data-only repo (v4-walkfix W1 item 2). ac (may be nil in tests) is
+//     asked which one it actually is: if the legacy-named ApplicationSet
+//     exists, it IS stale; if ArgoCD says it does not exist, the engine
+//     chart is simply missing the feature; on any other error, the
+//     ambiguity is left unresolved and the caller's baseline detail stands.
 //
 // This is a lighter version of doctorCheckConnectivityApp, focused on the
 // passive status enrichment case (no full doctor-check machinery).
-func detectConnectivityCheckDrift(clusterName string, secretLabels map[string]string, apps []models.ArgocdApplication) string {
+func detectConnectivityCheckDrift(ctx context.Context, ac connectivityAppSetGetter, clusterName string, secretLabels map[string]string, apps []models.ArgocdApplication) string {
 	// Only check if the cluster Secret has the connectivity-check label.
 	if !models.HasConnectivityCheckLabel(secretLabels) {
 		return ""
 	}
 
 	// Check if the expected connectivity-check app exists.
-	checkAppName := "connectivity-check-" + clusterName
+	checkAppName := orchestrator.ConnectivityCheckAppPrefix + clusterName
 	checkAppFound := false
 	for i := range apps {
 		if apps[i].Name == checkAppName {
@@ -264,8 +298,43 @@ func detectConnectivityCheckDrift(clusterName string, secretLabels map[string]st
 		}
 	}
 
-	// Drift detected: cluster is labeled, no check app, no real addons.
-	return "Connectivity-check ApplicationSet selector may be stale (sharko.io → sharko.dev label rename). Re-apply the current bootstrap templates to refresh the selector."
+	// Something is wrong: the cluster is labeled, no check app exists, and
+	// no real addon has taken over. Ask ArgoCD which of the two causes it
+	// actually is instead of guessing.
+	if ac == nil {
+		// No client to ask (e.g. a unit test exercising the pure logic
+		// above) — cannot tell the two causes apart, so say nothing rather
+		// than assert one confidently.
+		return ""
+	}
+	_, err := ac.GetApplicationSet(ctx, legacyConnectivityAppSetName)
+	switch {
+	case err == nil:
+		// The legacy-named ApplicationSet genuinely exists — THIS is the
+		// stale-selector case.
+		return "Connectivity-check ApplicationSet selector is stale (sharko.io → sharko.dev label rename). Re-apply the current bootstrap templates to refresh the selector."
+	case argoCDResourceNotFound(err):
+		// ArgoCD confirms no such ApplicationSet exists at all — the
+		// engine chart running this repo simply does not include the
+		// connectivity check yet.
+		return "Sharko expected a connectivity-check application for this cluster, but this repo's engine chart does not include the connectivity check yet. Pin engine.yaml to the current sharko-engine chart version to add it."
+	default:
+		// Could not confirm either way (network blip, auth issue) — leave
+		// the caller's baseline detail alone rather than guess.
+		return ""
+	}
+}
+
+// argoCDResourceNotFound reports whether err is the "not found" shape
+// *argocd.Client.doGet produces for any 404 response (internal/argocd/
+// client.go's doGet: `fmt.Errorf("ArgoCD endpoint not found (%s) — check
+// the server URL", path)`). There is no exported sentinel for this — unlike
+// ErrPermissionDenied for 403 — so this matches the fixed phrase doGet
+// always uses for status 404, which is the ONLY status code that produces
+// it; any other failure (auth, network, 5xx) is worded differently and
+// falls through to the "could not confirm" branch above.
+func argoCDResourceNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "endpoint not found")
 }
 
 // applyObsFields fills the Sharko observability fields on cluster from obs.

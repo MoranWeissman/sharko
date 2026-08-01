@@ -7979,6 +7979,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "502":
+          description: Git provider unreachable
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Force refresh a tracked PR

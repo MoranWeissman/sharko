@@ -172,12 +172,16 @@ func TestEngineChartRendersProjectAndApplicationSets(t *testing.T) {
 		t.Errorf("missing the shared AppProject named sharko-addons.\n--- rendered ---\n%s", rendered)
 	}
 
-	if got := strings.Count(rendered, "kind: ApplicationSet"); got != 2 {
-		t.Errorf("expected exactly 2 ApplicationSets (cert-manager, metrics-server), found %d.\n--- rendered ---\n%s", got, rendered)
+	// 3 ApplicationSets: one per catalog addon (cert-manager, metrics-server)
+	// plus the connectivity-check ApplicationSet, which renders on every
+	// default render regardless of catalog content (chart 0.3.0 — see
+	// TestEngineChartConnectivityCheckAppSetRendersByDefault below).
+	if got := strings.Count(rendered, "kind: ApplicationSet"); got != 3 {
+		t.Errorf("expected exactly 3 ApplicationSets (cert-manager, metrics-server, connectivity-check), found %d.\n--- rendered ---\n%s", got, rendered)
 	}
-	for _, name := range []string{"sharko-cert-manager", "sharko-metrics-server"} {
+	for _, name := range []string{"sharko-cert-manager", "sharko-metrics-server", "sharko-connectivity-check"} {
 		needle := "name: '" + name + "'"
-		if !strings.Contains(rendered, needle) {
+		if !strings.Contains(rendered, needle) && !strings.Contains(rendered, "name: "+name) {
 			t.Errorf("missing ApplicationSet %q.\n--- rendered ---\n%s", needle, rendered)
 		}
 	}
@@ -449,13 +453,21 @@ func TestEngineChartFixtureValuesLayeringFiles(t *testing.T) {
 
 // TestEngineChartRendersZeroApplicationSetsWithEmptyCatalog asserts a
 // totally fresh install — chart defaults only, no catalog.yaml passed at
-// all — renders ZERO addon ApplicationSets, plus the shared AppProject.
+// all — renders ZERO ADDON ApplicationSets, plus the shared AppProject.
 // This is the "catalog = the approved list" model's day-zero promise
 // (.bmad/output/architecture/2026-07-31-catalog-approved-model.md decisions
 // 3 and 6): nothing runs in a fresh org's fleet until an addon is approved
 // into catalog.yaml. The engine chart carries no baked curated defaults any
 // more — values.yaml's own default is addons: {}, so chart-defaults-only is
 // exactly the empty-catalog case.
+//
+// The invariant is scoped to ADDON ApplicationSets specifically (not "zero
+// ApplicationSets, period") because chart 0.3.0 added a connectivity-check
+// ApplicationSet (templates/connectivity-check.yaml) that renders on every
+// default render regardless of catalog content — that one is the generator
+// for zero-addon clusters' connectivity check, so it is SUPPOSED to be
+// there even with an empty catalog; see
+// TestEngineChartConnectivityCheckAppSetRendersByDefault.
 func TestEngineChartRendersZeroApplicationSetsWithEmptyCatalog(t *testing.T) {
 	helmBin, err := exec.LookPath("helm")
 	if err != nil {
@@ -475,11 +487,147 @@ func TestEngineChartRendersZeroApplicationSetsWithEmptyCatalog(t *testing.T) {
 	}
 	rendered := string(out)
 
-	if got := strings.Count(rendered, "kind: ApplicationSet"); got != 0 {
-		t.Errorf("expected zero ApplicationSets with an empty catalog (chart defaults only), got %d.\n--- rendered ---\n%s", got, rendered)
+	if got := strings.Count(rendered, "kind: ApplicationSet"); got != 1 {
+		t.Errorf("expected exactly 1 ApplicationSet with an empty catalog (only the connectivity-check generator, zero addon ones), got %d.\n--- rendered ---\n%s", got, rendered)
+	}
+	if !strings.Contains(rendered, "name: sharko-connectivity-check") {
+		t.Errorf("expected the connectivity-check ApplicationSet to still render with an empty catalog (it does not depend on the catalog at all).\n--- rendered ---\n%s", rendered)
+	}
+	for _, addonAppSet := range []string{"name: 'sharko-cert-manager'", "name: 'sharko-metrics-server'"} {
+		if strings.Contains(rendered, addonAppSet) {
+			t.Errorf("found addon ApplicationSet %q with an empty catalog — day-zero promise violated.\n--- rendered ---\n%s", addonAppSet, rendered)
+		}
 	}
 	if !strings.Contains(rendered, "kind: AppProject") {
 		t.Errorf("expected the shared AppProject to still render with an empty catalog.\n--- rendered ---\n%s", rendered)
+	}
+}
+
+// TestEngineChartConnectivityCheckAppSetRendersByDefault asserts (chart
+// 0.3.0, W1 walk-fix item 1) that a normal render — the fixture catalog,
+// same as every other test in this file — always emits the
+// connectivity-check ApplicationSet alongside the addon ApplicationSets, so
+// a zero-addon cluster (the case this chart cannot see from a rendered
+// fixture, since the fixture's clusters both enable addons) always has a
+// generator watching for it. Also pins the exact self-referential source
+// shape: repoURL from .Values.engineChart.repoURL, chart from .Chart.Name,
+// targetRevision from .Chart.Version, and the connectivityCheckOnly=true
+// Helm parameter that switches the generated Application into check-only
+// mode.
+func TestEngineChartConnectivityCheckAppSetRendersByDefault(t *testing.T) {
+	rendered := renderEngineChart(t)
+
+	if !strings.Contains(rendered, "kind: ApplicationSet") || !strings.Contains(rendered, "name: sharko-connectivity-check") {
+		t.Fatalf("missing the connectivity-check ApplicationSet in a default render.\n--- rendered ---\n%s", rendered)
+	}
+	for _, needle := range []string{
+		"sharko.dev/connectivity-check: enabled",
+		"repoURL: ghcr.io/example-org/sharko-engine", // chart default (values.yaml) — testdata/engine-values.yaml does not override engineChart.repoURL
+		"chart: sharko-engine",
+		"targetRevision: 0.3.0",
+		"name: connectivityCheckOnly",
+		`value: "true"`,
+		"namespace: sharko-connectivity",
+	} {
+		if !strings.Contains(rendered, needle) {
+			t.Errorf("connectivity-check ApplicationSet is missing expected fragment %q.\n--- rendered ---\n%s", needle, rendered)
+		}
+	}
+	// No separate AppProject for the check — it reuses the shared one.
+	if got := strings.Count(rendered, "kind: AppProject"); got != 1 {
+		t.Errorf("expected exactly 1 AppProject even with the connectivity-check ApplicationSet present (it reuses the shared project, no project of its own), found %d.\n--- rendered ---\n%s", got, rendered)
+	}
+}
+
+// TestEngineChartConnectivityCheckOnlyRendersOnlyConfigMap asserts (chart
+// 0.3.0, W1 walk-fix item 1) that setting connectivityCheckOnly=true — the
+// value the generated per-cluster Application's own source carries —
+// renders EXACTLY ONE resource, the harmless ConfigMap, and nothing else:
+// no AppProject, no addon ApplicationSets, no connectivity-check
+// ApplicationSet itself (the generator has no business re-running inside
+// the single-cluster check render it produced).
+func TestEngineChartConnectivityCheckOnlyRendersOnlyConfigMap(t *testing.T) {
+	helmBin, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm not installed; skipping engine render test (CI helm-validate job is the hard guard)")
+	}
+
+	root := repoRoot(t)
+	chartDir := filepath.Join(root, "charts", "sharko-engine")
+	dataDir := filepath.Join(root, "tests", "enginerender", "testdata")
+
+	// Same fixture values as every other render test PLUS the toggle — the
+	// real generated Application carries the fleet's usual engine values
+	// (it is the same chart/version) on top of the one flipped parameter.
+	cmd := exec.Command(helmBin, "template", "testengine", chartDir,
+		"--values", filepath.Join(dataDir, "engine-values.yaml"),
+		"--values", filepath.Join(dataDir, "catalog.yaml"),
+		"--set", "connectivityCheckOnly=true",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, out)
+	}
+	rendered := string(out)
+
+	// The only three kinds this chart ever emits are AppProject,
+	// ApplicationSet and ConfigMap (the check). Asserting exactly one
+	// ConfigMap and zero of the other two is a complete proof that
+	// connectivityCheckOnly=true renders "ONLY the ConfigMap" — a plain
+	// document count is not used here because `helm template`'s combined
+	// output can carry unrelated stderr warnings (e.g. a locally
+	// group/world-readable kubeconfig) ahead of the first `---` separator.
+	if got := strings.Count(rendered, "kind: ConfigMap"); got != 1 {
+		t.Errorf("expected exactly 1 ConfigMap with connectivityCheckOnly=true, got %d.\n--- rendered ---\n%s", got, rendered)
+	}
+	if strings.Contains(rendered, "kind: AppProject") {
+		t.Errorf("connectivityCheckOnly=true must not render the AppProject.\n--- rendered ---\n%s", rendered)
+	}
+	if strings.Contains(rendered, "kind: ApplicationSet") {
+		t.Errorf("connectivityCheckOnly=true must not render any ApplicationSet.\n--- rendered ---\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "namespace: sharko-connectivity") {
+		t.Errorf("expected the ConfigMap in the sharko-connectivity namespace.\n--- rendered ---\n%s", rendered)
+	}
+}
+
+// commentOnlyGlobalValuesStub and commentOnlyClusterValuesStub mirror
+// (byte-for-byte, in spirit — kept in sync by hand since this test package
+// cannot import internal/orchestrator's unexported generators) the scaffold
+// content internal/orchestrator/v4paths.go's globalValuesStub /
+// clusterValuesStub write for values/global/<addon>.yaml and
+// values/clusters/<cluster>/<addon>.yaml (v4-walkfix W1 items 5 and 6):
+// comment-only YAML, no keys at all.
+const (
+	commentOnlyGlobalValuesStub = "# Helm values for cert-manager, applied to every cluster that enables it.\n" +
+		"# Cluster-specific overrides live in values/clusters/<cluster>/cert-manager.yaml.\n" +
+		"# An empty file means the chart's own defaults.\n"
+	commentOnlyClusterValuesStub = "# Helm values for cert-manager on prod-eu only. These override values/global/cert-manager.yaml.\n" +
+		"# An empty file means no cluster-specific overrides.\n"
+)
+
+// TestEngineChartTreatsCommentOnlyValuesStubAsEmpty is the render-side half
+// of v4-walkfix W1 items 5 and 6: AddToCatalog and EnableAddonV4 now
+// scaffold values/global/<addon>.yaml and
+// values/clusters/<cluster>/<addon>.yaml with a comment-only stub instead
+// of skipping the file. The engine chart itself never reads those files'
+// CONTENT — appset.yaml only ever emits the literal STRING path
+// ($values/values/global/<addon>.yaml) for ArgoCD's own Helm invocation of
+// the addon chart to read later — so what this test actually proves is the
+// mechanical half that matters: `helm template` (the same binary, the same
+// --values file-loading code path ArgoCD's Helm invocation shares) accepts
+// a comment-only YAML document as an empty values layer without error, and
+// merging it changes nothing about the render. That is the exact property
+// the stubs rely on — an empty file means "no overrides", never a render
+// failure.
+func TestEngineChartTreatsCommentOnlyValuesStubAsEmpty(t *testing.T) {
+	baseline := renderEngineChart(t)
+
+	withStubsLayered := renderEngineChartWithExtra(t, commentOnlyGlobalValuesStub+"\n"+commentOnlyClusterValuesStub)
+
+	if baseline != withStubsLayered {
+		t.Errorf("layering a comment-only values stub on top of the fixture values changed the render — an empty/comment-only file must be a no-op.\n--- baseline ---\n%s\n--- with stub layered ---\n%s",
+			truncate(baseline, 4000), truncate(withStubsLayered, 4000))
 	}
 }
 

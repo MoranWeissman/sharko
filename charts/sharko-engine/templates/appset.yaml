@@ -40,8 +40,14 @@ file's own top-level fields (clusters/<name>.yaml has no `spec:` wrapper —
 decision 9 of the 2026-07-31 catalog-approved-model design doc, the
 kustomize school: apiVersion + kind + top-level fields, no spec), never
 from metadata.
+Gated off when .Values.connectivityCheckOnly is set (chart 0.3.0,
+templates/connectivity-check.yaml): that mode renders ONLY the
+connectivity-check ConfigMap on the generated Application that set the
+toggle — none of the fleet's real addon ApplicationSets have any business
+rendering again inside that single-cluster check render.
 */}}
 
+{{- if not .Values.connectivityCheckOnly }}
 {{- $merged := include "sharko-engine.catalogAddons" . | fromYaml -}}
 {{- $repoURL := .Values.repo.url -}}
 {{- $revision := .Values.repo.revision -}}
@@ -321,4 +327,5 @@ spec:
       ignoreDifferences:
         {{`{{- toYaml $s.ignoreDifferences | nindent 8 }}`}}
       {{`{{- end }}`}}
+{{- end }}
 {{- end }}

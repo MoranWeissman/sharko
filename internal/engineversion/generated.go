@@ -18,4 +18,4 @@ const BundledChartName = "sharko-engine"
 // pipeline packages, pushes to the OCI registry, and cosign-signs
 // alongside this binary. The engine pin-bump check compares a repo's
 // pinned engine.yaml targetRevision against this constant.
-const BundledVersion = "0.2.0"
+const BundledVersion = "0.3.0"

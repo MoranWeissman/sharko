@@ -64,3 +64,29 @@ project:
 # this file is passed as a Helm --values file. Harmless: the chart never
 # reads them.
 addons: {}
+
+# connectivityCheckOnly switches this chart from "render the whole engine"
+# to "render nothing but the connectivity-check ConfigMap" (chart 0.3.0,
+# templates/connectivity-check.yaml). It exists so the connectivity check
+# has a pullable source without writing a manifest file into the user's
+# data-only repo: the ApplicationSet below points a generated Application
+# back at THIS SAME CHART (same OCI repoURL, same .Chart.Version) with this
+# one value flipped to true. Never set by a user — only ever set by that
+# generated Application's own source.helm.parameters. Every other template
+# (project.yaml, appset.yaml, the connectivity-check ApplicationSet itself)
+# is gated off when this is true, so that render produces exactly one
+# resource: the ConfigMap.
+connectivityCheckOnly: false
+
+# engineChart.repoURL is this chart's own OCI location — the registry path
+# it was pulled from to render right now. Needed only for the
+# self-referential connectivity-check Application source (see
+# connectivityCheckOnly above); nothing else in the chart reads it. In
+# production this is set via a Helm parameter on the engine pin
+# (engine.yaml), the same way repo.url/repo.revision are — see
+# internal/orchestrator/bootstrap_v4.go's buildEnginePin, which passes the
+# exact same value used for the engine chart's own source.repoURL. The
+# value below is a placeholder so `helm lint` / `helm template` work
+# standalone, against this chart alone.
+engineChart:
+  repoURL: ghcr.io/example-org/sharko-engine

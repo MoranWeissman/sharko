@@ -346,7 +346,7 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 		return nil, readErr
 	}
 	existingGlobalValuesRaw, _ := o.readFileIfExists(ctx, globalValuesPath)
-	existingClusterValuesRaw, _, readErr := o.readFileForRewrite(ctx, clusterValuesPath)
+	existingClusterValuesRaw, clusterValuesExists, readErr := o.readFileForRewrite(ctx, clusterValuesPath)
 	if readErr != nil {
 		return nil, readErr
 	}
@@ -390,12 +390,25 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 		return nil, fmt.Errorf("updating %s: %w", clusterPath, err)
 	}
 
-	writeClusterValues := len(req.Values) > 0
+	// v4-walkfix W1 item 6: an enable request that carries explicit values
+	// writes them (unchanged — deep-merged onto whatever is already
+	// there). An enable request with NO values still scaffolds
+	// values/clusters/<cluster>/<addon>.yaml when it does not exist yet —
+	// a comment-only stub, never an invented default — so the file the
+	// engine's valueFiles layering expects (design doc §4.3) exists from
+	// the moment the addon starts running here, symmetric with item 5's
+	// global-values scaffold. An existing file (hand-created, or from a
+	// previous enable) is never overwritten either way.
+	writeClusterValues := len(req.Values) > 0 || !clusterValuesExists
 	var updatedClusterValuesRaw []byte
 	if writeClusterValues {
-		updatedClusterValuesRaw, err = marshalYAMLMap(finalClusterValues)
-		if err != nil {
-			return nil, fmt.Errorf("rendering %s: %w", clusterValuesPath, err)
+		if len(req.Values) > 0 {
+			updatedClusterValuesRaw, err = marshalYAMLMap(finalClusterValues)
+			if err != nil {
+				return nil, fmt.Errorf("rendering %s: %w", clusterValuesPath, err)
+			}
+		} else {
+			updatedClusterValuesRaw = clusterValuesStub(req.Addon, req.Cluster)
 		}
 	}
 
