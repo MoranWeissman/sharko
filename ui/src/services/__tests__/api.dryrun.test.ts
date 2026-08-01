@@ -46,12 +46,12 @@ function mockNestedDryRunEnvelope(outerFields: Record<string, unknown> = {}): un
 
 describe('V3-TX-A2: dry_run param wiring', () => {
   beforeEach(() => {
-    sessionStorage.setItem(TOKEN_KEY, 'test-token')
+    localStorage.setItem(TOKEN_KEY, 'test-token')
     vi.restoreAllMocks()
   })
 
   afterEach(() => {
-    sessionStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(TOKEN_KEY)
   })
 
   it('removeAddon sends dry_run in DELETE body when dryRun=true', async () => {

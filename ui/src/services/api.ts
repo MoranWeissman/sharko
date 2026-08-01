@@ -43,9 +43,9 @@ import type {
   VerifyResult,
   VersionMatrixResponse,
 } from './models'
+import { getToken, clearSession } from '@/lib/authStorage'
 
 const BASE_URL = '/api/v1'
-const TOKEN_KEY = 'sharko-auth-token'
 
 /**
  * PRWriteResult — the PR fields every write endpoint returns when it opens
@@ -92,7 +92,7 @@ export interface DeployAddonResult extends PRWriteResult {
 }
 
 function authHeaders(): Record<string, string> {
-  const token = sessionStorage.getItem(TOKEN_KEY)
+  const token = getToken()
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
@@ -101,7 +101,7 @@ async function fetchJSON<T>(path: string): Promise<T> {
     headers: authHeaders(),
   })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -119,7 +119,7 @@ async function postJSON<T>(path: string, body?: unknown): Promise<T> {
     body: body ? JSON.stringify(body) : undefined,
   })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -137,7 +137,7 @@ async function putJSON<T>(path: string, body?: unknown): Promise<T> {
     body: body ? JSON.stringify(body) : undefined,
   })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -155,7 +155,7 @@ async function patchJSON<T>(path: string, body?: unknown): Promise<T> {
     body: body ? JSON.stringify(body) : undefined,
   })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -172,7 +172,7 @@ async function deleteJSON<T>(path: string): Promise<T> {
     headers: authHeaders(),
   })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -190,7 +190,7 @@ async function fetchJSONMethod<T>(path: string, method: string, body?: unknown):
     body: body ? JSON.stringify(body) : undefined,
   })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -301,7 +301,7 @@ export async function testClusterConnection(
     body: JSON.stringify({}),
   })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -570,7 +570,7 @@ export async function enableAddonV4(
     },
   )
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -611,7 +611,7 @@ export async function addToCatalog(
     body: JSON.stringify(req),
   })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -644,7 +644,7 @@ export async function disableAddonV4(
     },
   )
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -679,7 +679,7 @@ export async function fetchAuditLog(filters?: {
 }
 
 export function createAuditStream(): EventSource {
-  const token = sessionStorage.getItem('sharko-auth-token')
+  const token = getToken()
   const url = `/api/v1/audit/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
   return new EventSource(url)
 }
@@ -704,7 +704,7 @@ export async function deregisterCluster(name: string, autoMerge?: boolean, dryRu
     body: JSON.stringify(body),
   })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -753,7 +753,7 @@ export async function deleteOrphanCluster(name: string): Promise<void> {
     headers: authHeaders(),
   })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -819,7 +819,7 @@ export async function removeAddon(name: string, dryRun = false): Promise<PRWrite
       body: JSON.stringify({ dry_run: true }),
     })
     if (res.status === 401) {
-      sessionStorage.removeItem(TOKEN_KEY)
+      clearSession()
       window.location.reload()
       throw new Error('Session expired')
     }
@@ -950,7 +950,7 @@ export async function initRepo(data?: { bootstrap_argocd?: boolean; auto_merge?:
     body: JSON.stringify(data || { bootstrap_argocd: true }),
   })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -1154,7 +1154,7 @@ async function migrateRepoRequest(req: MigrationMigrateRequest): Promise<Migrate
     body: JSON.stringify(req),
   })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
+    clearSession()
     window.location.reload()
     throw new Error('Session expired')
   }
@@ -1363,7 +1363,7 @@ export const api = {
       body: '{}',
     })
     if (res.status === 401) {
-      sessionStorage.removeItem(TOKEN_KEY)
+      clearSession()
       window.location.reload()
       throw new Error('Session expired')
     }

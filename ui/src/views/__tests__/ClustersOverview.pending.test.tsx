@@ -40,9 +40,10 @@ vi.mock('@/services/api', () => ({
 }));
 
 function renderView() {
-  sessionStorage.setItem('sharko-auth-token', 'test-token');
-  sessionStorage.setItem('sharko-auth-user', 'tester');
-  sessionStorage.setItem('sharko-auth-role', 'admin');
+  // Auth session lives in localStorage — see ui/src/lib/authStorage.ts.
+  localStorage.setItem('sharko-auth-token', 'test-token');
+  localStorage.setItem('sharko-auth-user', 'tester');
+  localStorage.setItem('sharko-auth-role', 'admin');
   return render(
     <MemoryRouter>
       <AuthProvider>
@@ -56,6 +57,7 @@ describe('ClustersOverview — V125-1.5 pending-PR registration surface', () => 
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
+    localStorage.clear();
     mockGetAddonCatalog.mockResolvedValue({ addons: [] });
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true } as Response)));
   });
@@ -172,6 +174,7 @@ describe('ClustersOverview — V125-1.5 manual-mode register toast (BUG-050)', (
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
+    localStorage.clear();
     mockGetClusters.mockResolvedValue({
       clusters: [],
       health_stats: { total_in_git: 0, connected: 0, failed: 0, missing_from_argocd: 0, not_in_git: 0 },

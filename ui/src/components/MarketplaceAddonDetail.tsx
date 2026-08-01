@@ -14,6 +14,7 @@ import {
   Tag,
 } from 'lucide-react'
 import { api, fetchTrackedPRs } from '@/services/api'
+import { getToken } from '@/lib/authStorage'
 import type {
   AddToCatalogResult,
   CatalogEntry,
@@ -218,10 +219,9 @@ export function MarketplaceAddonDetail({
       source === 'curated'
         ? `/api/v1/marketplace/addons/${encodeURIComponent(addonName)}/project-readme`
         : `/api/v1/marketplace/remote/${encodeURIComponent(ahRepoName ?? '')}/${encodeURIComponent(addonName)}/project-readme`
+    const authToken = getToken()
     fetch(endpoint, {
-      headers: sessionStorage.getItem('sharko-auth-token')
-        ? { Authorization: `Bearer ${sessionStorage.getItem('sharko-auth-token') ?? ''}` }
-        : undefined,
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
     })
       .then((res) => res.json())
       .then((data) => setProjectReadme(data))

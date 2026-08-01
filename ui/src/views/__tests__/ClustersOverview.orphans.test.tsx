@@ -41,9 +41,10 @@ vi.mock('@/services/api', () => ({
 }));
 
 function renderView() {
-  sessionStorage.setItem('sharko-auth-token', 'test-token');
-  sessionStorage.setItem('sharko-auth-user', 'tester');
-  sessionStorage.setItem('sharko-auth-role', 'admin');
+  // Auth session lives in localStorage — see ui/src/lib/authStorage.ts.
+  localStorage.setItem('sharko-auth-token', 'test-token');
+  localStorage.setItem('sharko-auth-user', 'tester');
+  localStorage.setItem('sharko-auth-role', 'admin');
   return render(
     <MemoryRouter>
       <AuthProvider>
@@ -57,6 +58,7 @@ describe('ClustersOverview — V125-1-7 orphan cluster surface', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
+    localStorage.clear();
     mockGetAddonCatalog.mockResolvedValue({ addons: [] });
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true } as Response)));
   });
