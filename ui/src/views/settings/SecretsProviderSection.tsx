@@ -6,6 +6,7 @@ import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { showToast } from '@/components/ToastNotification'
 import { type ProviderType as GeneratedProviderType } from '@/generated/provider-types'
+import { buildConnectionUpdatePayload } from './connectionUpdate'
 
 // The set of accepted type STRINGS is generated from the backend factory in
 // internal/providers/provider.go via cmd/gen-provider-types — see
@@ -309,7 +310,7 @@ export function SecretsProviderSection() {
     setSaveError(null)
     try {
       // Build minimal payload preserving existing connection data
-      const connPayload = buildConnectionPayload(existingConn, form, unknownRawType, unknownAddonSecretRawType)
+      const connPayload = buildSecretsProviderPayload(existingConn, form, unknownRawType, unknownAddonSecretRawType)
       await api.updateConnection(existingConn.name, connPayload)
       // Toast first: refreshConnections() flips the shared loading flag,
       // and feedback rendered inside this section would be swallowed by
@@ -632,39 +633,28 @@ export function SecretsProviderSection() {
   )
 }
 
-// Build a full connection update payload, preserving existing fields.
+// Build the connection update payload for this section, on top of the
+// shared minimal-payload helper (see connectionUpdate.ts). This page never
+// touches git or argocd identity — only the provider / addon_secret_provider
+// blocks — so those are the only extras layered onto the shared
+// { name, git: { provider } } base.
+//
 // `unknownRawType` is non-null iff the form is showing the "unknown
 // provider, keep as-is" sentinel (UNKNOWN_PROVIDER) — in that case the
 // original stored type string is written back unchanged instead of the
 // sentinel itself, so Save can never silently wipe an unrecognized
 // provider config just because the UI didn't have a row for it (L7).
-function buildConnectionPayload(
-  conn: { name: string; git_provider: string; git_repo_identifier: string; argocd_server_url: string; argocd_namespace: string },
+function buildSecretsProviderPayload(
+  conn: { name: string; git_provider: string },
   providerForm: ProviderFormData,
   unknownRawType: string | null,
   unknownAddonSecretRawType: string | null
 ) {
-  let gitUrl = ''
-  if (conn.git_provider === 'github') {
-    gitUrl = `https://github.com/${conn.git_repo_identifier}`
-  } else if (conn.git_provider === 'azuredevops') {
-    const parts = conn.git_repo_identifier.split('/')
-    if (parts.length >= 3) {
-      gitUrl = `https://dev.azure.com/${parts[0]}/${parts[1]}/_git/${parts[2]}`
-    }
-  }
   const resolvedProviderType =
     providerForm.provider_type === UNKNOWN_PROVIDER ? unknownRawType : providerForm.provider_type
   const resolvedAddonSecretProviderType =
     providerForm.addon_secret_provider_type === UNKNOWN_PROVIDER ? unknownAddonSecretRawType : providerForm.addon_secret_provider_type
-  return {
-    name: conn.name,
-    git: { repo_url: gitUrl },
-    argocd: {
-      server_url: conn.argocd_server_url || '',
-      namespace: conn.argocd_namespace || 'argocd',
-      insecure: true,
-    },
+  return buildConnectionUpdatePayload(conn, {
     provider: resolvedProviderType
       ? {
           type: resolvedProviderType,
@@ -679,5 +669,5 @@ function buildConnectionPayload(
           prefix: providerForm.addon_secret_provider_prefix || undefined,
         }
       : undefined,
-  }
+  })
 }

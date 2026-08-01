@@ -59,7 +59,7 @@ func (s *Server) handleGetDefaultAddons(w http.ResponseWriter, r *http.Request) 
 // handlePutDefaultAddons godoc
 //
 // @Summary Update default addons
-// @Description Replaces the current default addon set with the supplied list. Opens a PR with the new default-addons.yaml (or updates an existing open PR for idempotency). Does NOT mutate the connection.
+// @Description Replaces the current default addon set with the supplied list. Opens a PR with the new default-addons.yaml (or updates an existing open PR for idempotency). Does NOT mutate the connection. This is a v3-layout-only writer (configuration/default-addons.yaml is not a file a v4 repo reads) — on a v4 repo it returns 409 with code `repo_layout`, dry_run included, the same refusal shape as the other v3 catalog writers.
 // @Tags default-addons
 // @Accept json
 // @Produce json
@@ -68,6 +68,7 @@ func (s *Server) handleGetDefaultAddons(w http.ResponseWriter, r *http.Request) 
 // @Success 200 {object} map[string]interface{} "PR created/updated"
 // @Failure 400 {object} map[string]interface{} "Invalid request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 409 {object} map[string]interface{} "The repo uses the v4 layout (code repo_layout)"
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /default-addons [put]
 func (s *Server) handlePutDefaultAddons(w http.ResponseWriter, r *http.Request) {
@@ -108,15 +109,36 @@ func (s *Server) handlePutDefaultAddons(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Git is resolved before ArgoCD so the v4-layout check below can run
+	// before spending an upstream ArgoCD call on a request that was never
+	// going to be honoured (same rationale as
+	// refuseV3ValuesSurfaceOnActiveRepo).
+	git, err := s.connSvc.GetActiveGitProvider()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		return
+	}
+
+	// This writes configuration/default-addons.yaml, a v3-only file a v4
+	// repo does not have — the same class of write the #629 sweep gated on
+	// the other nine v3 writers (legacy catalog add/remove/configure,
+	// enable/disable addon). This endpoint was the one it missed (walk
+	// finding). Refuse before any read or branch, dry_run included, so a
+	// "preview" never implies a save that would never take effect. Reuses
+	// the same v4-repo probe and coded-409 shape the values-editor gate
+	// already uses (CodeRepoLayout / writeCodedError) rather than a new
+	// check.
+	if s.isV4Repo(r.Context(), git) {
+		writeCodedError(w, http.StatusConflict, CodeRepoLayout,
+			"default addons are not part of the v4 layout — addon picks happen per-cluster in the catalog",
+			nil)
+		return
+	}
+
 	// Build orchestrator (same pattern as clusters_batch.go).
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
-		return
-	}
-	git, err := s.connSvc.GetActiveGitProvider()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
 	}
 

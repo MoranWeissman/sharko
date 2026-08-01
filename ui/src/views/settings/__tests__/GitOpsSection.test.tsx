@@ -20,6 +20,7 @@ const getDefaultAddonsMock = vi.fn()
 const putDefaultAddonsMock = vi.fn()
 const updateConnectionMock = vi.fn()
 const healthMock = vi.fn()
+const getMigrationStatusMock = vi.fn()
 
 vi.mock('@/hooks/useConnections', () => ({
   useConnections: () => ({
@@ -37,6 +38,7 @@ vi.mock('@/services/api', () => ({
     putDefaultAddons: (addons: string[], dryRun?: boolean) => putDefaultAddonsMock(addons, dryRun),
     updateConnection: (name: string, payload: unknown) => updateConnectionMock(name, payload),
     health: () => healthMock(),
+    getMigrationStatus: () => getMigrationStatusMock(),
   },
 }))
 
@@ -48,6 +50,7 @@ describe('GitOpsSection — Default Addons (V3-P2.2)', () => {
     putDefaultAddonsMock.mockReset()
     updateConnectionMock.mockReset()
     healthMock.mockReset()
+    getMigrationStatusMock.mockReset()
 
     // Default mocks: one active connection, a small catalog, and two selected defaults.
     getConnectionsMock.mockReturnValue([
@@ -75,6 +78,9 @@ describe('GitOpsSection — Default Addons (V3-P2.2)', () => {
     })
     getDefaultAddonsMock.mockResolvedValue({ addons: ['cert-manager', 'ingress-nginx'] })
     healthMock.mockResolvedValue({ status: 'ok' })
+    // v3 by default — the pre-existing tests below all exercise the full
+    // Default Addons panel, which only renders on a v3-layout repo.
+    getMigrationStatusMock.mockResolvedValue({ format: 'v3', migration_available: true, message: '' })
   })
 
   it('hydrates selected defaults from GET /default-addons', async () => {
@@ -202,5 +208,78 @@ describe('GitOpsSection — Default Addons (V3-P2.2)', () => {
     expect(screen.getByText('configuration/default-addons.yaml')).toBeInTheDocument()
     // Preview is a courtesy — no PR was opened (no PR link yet).
     expect(screen.queryByText('PR #123')).not.toBeInTheDocument()
+  })
+
+  // Walk finding — gitea gitops-save bug: the payload used to rebuild
+  // git.repo_url from git_repo_identifier, which produced an empty,
+  // provider-less git block for gitea and a 400 "git.provider is
+  // required" from the server. The fix echoes the stored provider
+  // verbatim and leaves the rest of git/argocd out of the payload.
+  it('"Save GitOps Settings" echoes the connection\'s provider without rebuilding git/argocd', async () => {
+    updateConnectionMock.mockResolvedValue({})
+    const user = userEvent.setup()
+    render(<GitOpsSection />)
+
+    await waitFor(() => expect(screen.getByText('Save GitOps Settings')).toBeInTheDocument())
+    await user.click(screen.getByText('Save GitOps Settings'))
+
+    await waitFor(() => expect(updateConnectionMock).toHaveBeenCalled())
+    const payload = updateConnectionMock.mock.calls[0][1]
+    expect(payload.name).toBe('main-conn')
+    expect(payload.git).toEqual({ provider: 'github' })
+    expect(payload.argocd).toBeUndefined()
+  })
+})
+
+describe('GitOpsSection — Default Addons hidden on v4 repos (walk finding)', () => {
+  beforeEach(() => {
+    getConnectionsMock.mockReset()
+    getAddonCatalogMock.mockReset()
+    getDefaultAddonsMock.mockReset()
+    putDefaultAddonsMock.mockReset()
+    updateConnectionMock.mockReset()
+    healthMock.mockReset()
+    getMigrationStatusMock.mockReset()
+
+    getConnectionsMock.mockReturnValue([
+      {
+        name: 'main-conn',
+        is_active: true,
+        git_provider: 'gitea',
+        git_repo_identifier: 'org/repo',
+        argocd_server_url: 'https://argocd.example.com',
+        argocd_namespace: 'argocd',
+        gitops: { base_branch: 'main', pr_auto_merge: false },
+      },
+    ])
+    getAddonCatalogMock.mockResolvedValue({
+      addons: [{ addon_name: 'cert-manager', version: '1.12.0' }],
+    })
+    getDefaultAddonsMock.mockResolvedValue({ addons: [] })
+    healthMock.mockResolvedValue({ status: 'ok' })
+  })
+
+  it('hides the Default Addons panel and shows the muted v4 notice instead', async () => {
+    getMigrationStatusMock.mockResolvedValue({ format: 'v4', migration_available: false, message: '' })
+    render(<GitOpsSection />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('default-addons-v4-notice')).toBeInTheDocument()
+    )
+    expect(
+      screen.getByText('Default addons are not part of the v4 layout — picks happen in the catalog.')
+    ).toBeInTheDocument()
+    // The v3-only searchable-table UI must not render at all.
+    expect(screen.queryByPlaceholderText('Search addons...')).not.toBeInTheDocument()
+    expect(screen.queryByText('Save default addons')).not.toBeInTheDocument()
+    expect(screen.queryByText('Preview changes')).not.toBeInTheDocument()
+  })
+
+  it('shows the full Default Addons panel on a v3 repo', async () => {
+    getMigrationStatusMock.mockResolvedValue({ format: 'v3', migration_available: true, message: '' })
+    render(<GitOpsSection />)
+
+    await waitFor(() => expect(screen.getByPlaceholderText('Search addons...')).toBeInTheDocument())
+    expect(screen.queryByTestId('default-addons-v4-notice')).not.toBeInTheDocument()
   })
 })
