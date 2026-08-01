@@ -1169,6 +1169,31 @@ async function migrateRepoRequest(req: MigrationMigrateRequest): Promise<Migrate
   return res.json()
 }
 
+// ArgoCD's /api/version returns a full info map (internal/argocd/client.go
+// GetVersion), and internal/api/system.go's handleGetConfig puts that whole
+// map into `argocd.version` verbatim — it does not extract just the version
+// string. So the raw wire shape for `argocd.version` is either that object
+// or absent, never a plain string. This type is only the fields we care
+// about; the server sends more (BuildDate, Compiler, GitCommit, GitTag,
+// GitTreeState, GoVersion, HelmVersion, JsonnetVersion, KubectlVersion,
+// KustomizeVersion, Platform), which we ignore.
+interface RawArgocdVersionInfo {
+  Version?: string
+}
+
+// Pulls a plain version string out of whatever `argocd.version` turned out
+// to be. Keeping this in one place means every caller of getConfig() only
+// ever sees a string (or undefined) — never the raw object — so a stray
+// `{version}` in JSX can't white-screen the app again.
+export function extractArgocdVersionString(raw: unknown): string | undefined {
+  if (typeof raw === 'string') return raw
+  if (raw && typeof raw === 'object') {
+    const version = (raw as RawArgocdVersionInfo).Version
+    if (typeof version === 'string') return version
+  }
+  return undefined
+}
+
 export const api = {
   // Health
   health: () => fetchJSON<HealthResponse>('/health'),
@@ -1460,13 +1485,25 @@ export const api = {
   // status/version (internal/api/system.go handleGetConfig). The home-
   // cluster identity card (dashboard facelift, Package 3) reads
   // `argocd.version` here; `argocd.connected` is false (and `version`
-  // absent) whenever Sharko can't reach the active ArgoCD.
-  getConfig: () => fetchJSON<{
-    repo_paths: { cluster_values: string; global_values: string; charts: string; bootstrap: string };
-    gitops: { pr_auto_merge: boolean; branch_prefix: string; commit_prefix: string; base_branch: string };
-    provider?: { type: string; region: string };
-    argocd: { connected: boolean; version?: string };
-  }>('/config'),
+  // absent) whenever Sharko can't reach the active ArgoCD. The server
+  // actually sends `argocd.version` as ArgoCD's full version-info object,
+  // not a string — normalize it here so every caller only ever sees a
+  // plain string (see extractArgocdVersionString above).
+  getConfig: async () => {
+    const raw = await fetchJSON<{
+      repo_paths: { cluster_values: string; global_values: string; charts: string; bootstrap: string };
+      gitops: { pr_auto_merge: boolean; branch_prefix: string; commit_prefix: string; base_branch: string };
+      provider?: { type: string; region: string };
+      argocd: { connected: boolean; version?: RawArgocdVersionInfo | string };
+    }>('/config')
+    return {
+      ...raw,
+      argocd: {
+        connected: raw.argocd.connected,
+        version: extractArgocdVersionString(raw.argocd.version),
+      },
+    }
+  },
 
   // Fleet status overview (internal/api/fleet.go handleGetFleetStatus) —
   // the home-cluster identity card reads `uptime` (a server-formatted
