@@ -90,7 +90,10 @@ func v3ValuesSurfaces() []struct {
 		{"GetAddonValuesRecentPRs", http.MethodGet, "/api/v1/addons/cert-manager/values/recent-prs", ""},
 		{"GetClusterAddonValuesRecentPRs", http.MethodGet, "/api/v1/clusters/prod-eu/addons/cert-manager/values/recent-prs", ""},
 		{"PreviewMergeAddonValues", http.MethodPost, "/api/v1/addons/cert-manager/values/preview-merge", `{}`},
-		{"SetAddonAIOptOut", http.MethodPut, "/api/v1/addons/cert-manager/values/ai-opt-out", `{"opt_out":true}`},
+		// SetAddonAIOptOut and the AI annotate endpoint are DELIBERATELY not
+		// in this list any more (v4 smartvalues wave): they now work
+		// natively on a v4 repo instead of refusing with the v4 message —
+		// see ai_annotate_v4_test.go.
 	}
 }
 

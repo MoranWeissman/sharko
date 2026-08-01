@@ -328,6 +328,21 @@ type SmartValuesInput struct {
 	// into the heuristic's classification — never subtractive. Empty
 	// when AI was skipped.
 	ExtraClusterSpecificPaths []string
+
+	// UnwrappedTemplate switches the trailing per-cluster template block
+	// (perClusterTemplate) from v3's `<addonName>:`-wrapped shape to the
+	// v4 shape: plain, flat commented keys with no addon-name stanza.
+	//
+	// Why: v3's per-cluster file is one file holding EVERY addon
+	// (`configuration/addons-clusters-values/<cluster>.yaml`), so the
+	// template has to be wrapped under the addon's own key to show where
+	// it goes. v4's per-cluster file is already scoped to one addon
+	// (`values/clusters/<cluster>/<addon>.yaml`) — wrapping it there
+	// would just add a redundant level nothing reads. Default false so
+	// every existing v3 caller (GenerateGlobalValuesFile) is byte-for-
+	// byte unchanged; v4 callers go through GenerateGlobalValuesFileV4,
+	// which sets this true.
+	UnwrappedTemplate bool
 }
 
 // SmartValuesOutput is the result of SplitUpstreamValues.
@@ -521,11 +536,13 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 		b.WriteString("\n")
 	}
 
-	// Step 3: per-cluster template block at the bottom. THIS block stays
-	// wrapped under `<addonName>:` because it's intended to be copy-pasted
-	// INTO `configuration/addons-clusters-values/<cluster>.yaml`, which
-	// IS namespaced (one per-cluster file holds many addons).
-	tpl := perClusterTemplate(in.AddonName, clusterPaths)
+	// Step 3: per-cluster template block at the bottom. In the v3 shape
+	// (UnwrappedTemplate false) this stays wrapped under `<addonName>:`
+	// because it's intended to be copy-pasted INTO
+	// `configuration/addons-clusters-values/<cluster>.yaml`, which IS
+	// namespaced (one per-cluster file holds many addons). In the v4
+	// shape the wrapper is dropped — see UnwrappedTemplate's doc comment.
+	tpl := perClusterTemplate(in.AddonName, clusterPaths, in.UnwrappedTemplate)
 	b.WriteString("\n")
 	b.WriteString(tpl)
 
@@ -555,25 +572,33 @@ func framePathWith(stack []smartFrame, leaf string) string {
 }
 
 // perClusterTemplate returns the trailing commented block. Format matches
-// design §4.4.1 step 4.
+// design §4.4.1 step 4 for the v3 (wrapped) shape; the v4 (unwrapped)
+// shape is the one-file-per-addon adaptation documented on
+// SmartValuesInput.UnwrappedTemplate.
 //
 // The block intentionally renders ONLY the cluster-specific paths (one
-// leaf per line) under the addon name as a flat-keyed YAML block that the
-// user copies into a per-cluster overrides file. We do not try to nest
-// the template — flat dotted keys are easier to spot-check during PR
-// review and survive copy-paste in cases where only one or two cluster-
-// specific keys actually need a per-cluster value.
-func perClusterTemplate(addonName string, clusterPaths []string) string {
+// leaf per line) as a flat-keyed YAML block that the user copies into a
+// per-cluster overrides file. We do not try to nest the template — flat
+// dotted keys are easier to spot-check during PR review and survive
+// copy-paste in cases where only one or two cluster-specific keys
+// actually need a per-cluster value.
+func perClusterTemplate(addonName string, clusterPaths []string, unwrapped bool) string {
 	var b strings.Builder
 	b.WriteString("# --- per-cluster overrides template ---\n")
-	b.WriteString("# Copy under the addon's stanza in configuration/addons-clusters-values/<cluster>.yaml.\n")
+	if unwrapped {
+		fmt.Fprintf(&b, "# Copy these into values/clusters/<cluster>/%s.yaml for any cluster that needs an override.\n", addonName)
+	} else {
+		b.WriteString("# Copy under the addon's stanza in configuration/addons-clusters-values/<cluster>.yaml.\n")
+	}
 	if len(clusterPaths) == 0 {
 		b.WriteString("# (no cluster-specific fields detected — no overrides expected)\n")
 		return b.String()
 	}
-	b.WriteString("# ")
-	b.WriteString(addonName)
-	b.WriteString(":\n")
+	if !unwrapped {
+		b.WriteString("# ")
+		b.WriteString(addonName)
+		b.WriteString(":\n")
+	}
 	for _, p := range clusterPaths {
 		b.WriteString("#   ")
 		b.WriteString(renderTemplateLine(p))
@@ -620,6 +645,30 @@ func GenerateGlobalValuesFile(addonName, chart, version, repoURL string, upstrea
 		AIAnnotated:               aiAnnotated,
 		AIOptOut:                  aiOptOut,
 		ExtraClusterSpecificPaths: extraClusterPaths,
+	})
+	return out.File
+}
+
+// GenerateGlobalValuesFileV4 is the v4-layout counterpart to
+// GenerateGlobalValuesFile: identical heuristic classification, identical
+// header, identical cluster-specific comment-out pass. The ONE difference
+// is the trailing per-cluster template block, which is emitted UNWRAPPED
+// (see SmartValuesInput.UnwrappedTemplate) because a v4 per-cluster values
+// file already lives at values/clusters/<cluster>/<addon>.yaml — one file
+// per addon, not v3's one file holding every addon on a cluster. Used by
+// AddToCatalog (catalog_ops.go) and the AI annotate endpoints once the
+// connected repo is v4 (v4 smartvalues wave).
+func GenerateGlobalValuesFileV4(addonName, chart, version, repoURL string, upstream []byte, aiAnnotated, aiOptOut bool, extraClusterPaths ...string) []byte {
+	out := SplitUpstreamValues(SmartValuesInput{
+		AddonName:                 addonName,
+		Chart:                     chart,
+		Version:                   version,
+		RepoURL:                   repoURL,
+		UpstreamValues:            upstream,
+		AIAnnotated:               aiAnnotated,
+		AIOptOut:                  aiOptOut,
+		ExtraClusterSpecificPaths: extraClusterPaths,
+		UnwrappedTemplate:         true,
 	})
 	return out.File
 }

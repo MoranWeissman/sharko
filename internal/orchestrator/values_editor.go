@@ -89,6 +89,59 @@ func (o *Orchestrator) SetGlobalAddonValuesWithOp(ctx context.Context, addonName
 	return gitResult, nil
 }
 
+// SetGlobalAddonValuesV4WithOp is the v4-layout counterpart to
+// SetGlobalAddonValuesWithOp: writes the addon's fleet-wide values file at
+// the fixed v4 path (values/global/<addon>.yaml, v4GlobalValuesPath)
+// instead of the v3 configurable-directory path. Used by the AI annotate
+// and AI opt-out endpoints once the connected repo is v4 (v4 smartvalues
+// wave) — everything else (dry-run preview shape, commit/PR wiring,
+// opCode/title plumbing) mirrors the v3 sibling exactly.
+func (o *Orchestrator) SetGlobalAddonValuesV4WithOp(ctx context.Context, addonName, valuesYAML, opCode, titleOverride string, autoMerge *bool, dryRun bool) (*GitResult, error) {
+	if addonName == "" {
+		return nil, fmt.Errorf("addon name is required")
+	}
+	if err := validateYAML(valuesYAML); err != nil {
+		return nil, fmt.Errorf("invalid YAML: %w", err)
+	}
+
+	filePath, err := v4GlobalValuesPath(addonName)
+	if err != nil {
+		return nil, err
+	}
+
+	title := titleOverride
+	if title == "" {
+		title = fmt.Sprintf("Update global values for %s", addonName)
+	}
+
+	// Dry-run exit point: return a preview with no side effects.
+	if dryRun {
+		action := o.fileAction(ctx, filePath)
+		oldContent, _ := o.readFileIfExists(ctx, filePath)
+		newContent := []byte(valuesYAML)
+		diff := o.buildFileDiff(filePath, oldContent, newContent, action)
+		return &GitResult{
+			DryRun: &DryRunResult{
+				EffectiveAddons: []string{addonName},
+				FilesToWrite:    []FilePreview{{Path: filePath, Action: action, Diff: diff}},
+				PRTitle:         title,
+				SecretsToCreate: []string{},
+			},
+		}, nil
+	}
+
+	files := map[string][]byte{filePath: []byte(valuesYAML)}
+	op := fmt.Sprintf("update global values for %s", addonName)
+
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, op,
+		o.prMeta(autoMerge, opCode, title, "", addonName))
+	if err != nil {
+		return nil, fmt.Errorf("committing values for addon %q: %w", addonName, err)
+	}
+	gitResult.ValuesFile = filePath
+	return gitResult, nil
+}
+
 // SetClusterAddonValues replaces the per-cluster overrides for one addon on
 // one cluster. The cluster's overrides file is the canonical YAML map
 // `<addonName>: { ... }` plus an optional `clusterGlobalValues:` block; this

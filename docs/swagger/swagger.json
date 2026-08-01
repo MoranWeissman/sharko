@@ -1141,7 +1141,7 @@
                         }
                     },
                     "409": {
-                        "description": "This endpoint edits a v3-layout values file; the connected repo uses the v4 layout",
+                        "description": "The repo is still v3-format and needs its migration completed first",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1164,7 +1164,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Fetches the chart's upstream values.yaml at the catalog-pinned version, runs the AI annotate pass (one-line `# description` comments + LLM-suggested cluster-specific paths unioned with the heuristic), and opens a Tier 2 PR with the result. Hard-blocked when the secret-leak guard matches; in that case returns 422 with redacted matches and no PR. Skipped when AI is not configured or the addon is opted out.",
+                "description": "Fetches the chart's upstream values.yaml at the catalog-pinned version, runs the AI annotate pass (one-line `# description` comments + LLM-suggested cluster-specific paths unioned with the heuristic), and opens a Tier 2 PR with the result. Hard-blocked when the secret-leak guard matches; in that case returns 422 with redacted matches and no PR. Skipped when AI is not configured or the addon is opted out. Works on both repo layouts: rewrites configuration/addons-global-values/\u003caddon\u003e.yaml on a v3 repo, values/global/\u003caddon\u003e.yaml on a v4 repo.",
                 "produces": [
                     "application/json"
                 ],
@@ -1203,7 +1203,7 @@
                         }
                     },
                     "409": {
-                        "description": "Addon is opted out of AI annotation, or the connected repo uses the v4 layout this editor does not support yet",
+                        "description": "Addon is opted out of AI annotation, or the repo is still v3-format and needs its migration completed first",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

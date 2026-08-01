@@ -267,6 +267,19 @@ func (s *Server) handleAddToCatalog(w http.ResponseWriter, r *http.Request) {
 	// none on purpose — so the server fills in the newest version it knows
 	// and that resolved pin is what lands in the pull request diff.
 	orch.SetLatestVersionResolver(s.resolveLatestChartVersion)
+	// Smart-values generation (v4 smartvalues wave): AddToCatalog fetches
+	// each entry's official chart values.yaml itself, once chart+version
+	// are final (which for a from_marketplace entry only happens after
+	// the resolver above runs) — see ChartValuesFetcherFn's doc comment
+	// for why this can't be a pre-fetch at the request edge the way v3's
+	// AddAddon does it. Skip on dry-run for the same reason the v3 door
+	// skips its pre-fetch: the preview shows only paths + create/update
+	// actions, so the fetch (and the AI annotate pass below) can't change
+	// what it shows, and skipping avoids burning registry/LLM quota on a
+	// request that writes nothing.
+	if !req.DryRun {
+		orch.SetChartValuesFetcher(s.fetchChartValuesForV4Catalog)
+	}
 	result, err := orch.AddToCatalog(ctx, req)
 	if err != nil {
 		writeAddToCatalogError(w, err)

@@ -1,8 +1,10 @@
 # Smart values layer
 
-When you add an addon through the [marketplace](marketplace.md) (or any path that reaches `POST /api/v1/addons`), Sharko generates a values file for you based on the chart's upstream `values.yaml`. The generated file is annotated, split into global vs per-cluster sections, and stamped with a self-describing header so Sharko knows when to ask you to refresh it.
+When you add an addon (through the [marketplace](marketplace.md), your own chart, or a hand-edit), Sharko generates a values file for you based on the chart's upstream `values.yaml`. The generated file is annotated, split into global vs per-cluster sections, and stamped with a self-describing header so Sharko knows when to ask you to refresh it.
 
 This page explains what the smart-values layer does, what fields it considers cluster-specific, and how it interacts with the per-cluster overrides editor.
+
+**This page mostly describes the older repo layout (v3).** If your repo uses the newer layout (v4 — you'll know because addons live in a `catalog.yaml` at the root and cluster settings live in `clusters/<cluster>.yaml`), the same generation happens, with two small differences: the global file is written at `values/global/<addon>.yaml` instead of `configuration/addons-global-values/<addon>.yaml`, and the per-cluster file it seeds is one file per addon (`values/clusters/<cluster>/<addon>.yaml`) instead of one file per cluster holding every addon — so the copy-paste template at the bottom of the global file isn't wrapped under the addon's name any more, since there's only one addon in the file it's going into. AI annotate and the opt-out toggle work the same way on both layouts. Everything else on this page — the heuristic, the header, the AI pass, the secret guard — is identical.
 
 ## What the layer produces
 

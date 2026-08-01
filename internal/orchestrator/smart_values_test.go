@@ -912,6 +912,76 @@ func TestCommentHollowMapKeys_Unit(t *testing.T) {
 	}
 }
 
+// ─── v4 smart-values generation (v4 smartvalues wave) ──────────────────────
+
+// TestGenerateGlobalValuesFileV4_UnwrappedTemplate pins the one design
+// delta between the v3 and v4 writers: the trailing per-cluster template
+// block is UNWRAPPED for v4 (no `<addonName>:` stanza line) because a v4
+// per-cluster file is already scoped to one addon
+// (values/clusters/<cluster>/<addon>.yaml), unlike v3's one file holding
+// every addon. Everything else — the header, the classification, the
+// commented-out cluster-specific leaves in the body — must be identical
+// between the two writers.
+func TestGenerateGlobalValuesFileV4_UnwrappedTemplate(t *testing.T) {
+	upstream := []byte(`replicaCount: 1
+ingress:
+  enabled: false
+  host: example.com
+image:
+  repository: ghcr.io/example/app
+`)
+
+	v3Out := GenerateGlobalValuesFile("cert-manager", "cert-manager", "1.14.5", "https://charts.jetstack.io", upstream, false, false)
+	v4Out := GenerateGlobalValuesFileV4("cert-manager", "cert-manager", "1.14.5", "https://charts.jetstack.io", upstream, false, false)
+
+	// v3 stays wrapped — byte-identical to what the pre-existing writer
+	// always produced (no regression from adding the v4 sibling).
+	if !strings.Contains(string(v3Out), "# cert-manager:\n") {
+		t.Errorf("v3 output should still wrap the template block under the addon name, got:\n%s", v3Out)
+	}
+	if !strings.Contains(string(v3Out), "configuration/addons-clusters-values/<cluster>.yaml") {
+		t.Errorf("v3 output should still point at the v3 per-cluster path, got:\n%s", v3Out)
+	}
+
+	// v4 drops the wrapper line entirely.
+	if strings.Contains(string(v4Out), "# cert-manager:\n") {
+		t.Errorf("v4 output must NOT wrap the template block under the addon name, got:\n%s", v4Out)
+	}
+	if !strings.Contains(string(v4Out), "values/clusters/<cluster>/cert-manager.yaml") {
+		t.Errorf("v4 output should name the v4 per-addon cluster path, got:\n%s", v4Out)
+	}
+
+	// Both still comment out the same cluster-specific leaf in the body,
+	// and both still carry the flat template line for it.
+	for _, out := range [][]byte{v3Out, v4Out} {
+		if !strings.Contains(string(out), "# host: <cluster-specific>") {
+			t.Errorf("expected the cluster-specific leaf commented out in the body, got:\n%s", out)
+		}
+		if !strings.Contains(string(out), `"ingress.host": <set per cluster>`) {
+			t.Errorf("expected the flat template line for ingress.host, got:\n%s", out)
+		}
+	}
+
+	// Both are still valid YAML documents once every comment line is
+	// stripped conceptually — i.e. the live (uncommented) body parses.
+	assertNoNilValues(t, string(v3Out))
+	assertNoNilValues(t, string(v4Out))
+}
+
+// TestGenerateGlobalValuesFileV4_NoClusterSpecificFields — a chart with
+// nothing cluster-specific still gets the "no overrides expected" line,
+// unwrapped, same as v3's equivalent case.
+func TestGenerateGlobalValuesFileV4_NoClusterSpecificFields(t *testing.T) {
+	upstream := []byte("image:\n  repository: ghcr.io/example/app\n  tag: v1\n")
+	out := GenerateGlobalValuesFileV4("simple-addon", "simple", "1.0.0", "https://example.test/charts", upstream, false, false)
+	if !strings.Contains(string(out), "(no cluster-specific fields detected — no overrides expected)") {
+		t.Errorf("expected the no-overrides hint line, got:\n%s", out)
+	}
+	if strings.Contains(string(out), "# simple-addon:\n") {
+		t.Errorf("v4 output must never wrap even the empty template, got:\n%s", out)
+	}
+}
+
 // Use time import to keep imports stable when running this file in isolation.
 var _ = time.Now
 

@@ -205,6 +205,13 @@ type Orchestrator struct {
 	// version data at all", and the add then asks the caller to pick a
 	// version rather than guessing.
 	latestVersionFn LatestVersionFn
+
+	// chartValuesFetcherFn resolves a chart's official values.yaml for
+	// AddToCatalog's global-values scaffold (v4 smartvalues wave). Wired
+	// via SetChartValuesFetcher. nil means "no fetcher configured" — the
+	// scaffold falls back to the comment-only stub, matching every
+	// pre-existing orchestrator unit test (none of which wires one).
+	chartValuesFetcherFn ChartValuesFetcherFn
 }
 
 // LatestVersionFn resolves the newest version Sharko knows for a chart.
