@@ -30,6 +30,10 @@ vi.mock('@/services/api', () => ({
     getClusters: vi.fn(),
     getNotifications: vi.fn(),
     getObservability: vi.fn(),
+    // WQ-3 — home-cluster identity card reads (moved here from Dashboard).
+    getHomeCluster: vi.fn(),
+    health: vi.fn(),
+    getFleetStatus: vi.fn(),
   },
   getSystemCapabilities: (...args: unknown[]) => mockGetSystemCapabilities(...args),
 }))
@@ -65,6 +69,12 @@ interface MockAllOpts {
   notifications?: { id: string; type: string; title: string; description: string; timestamp: string; read: boolean }[]
   argocdVersion?: string
   capabilities?: { aws: { detected: boolean; method: string; identity_arn?: string }; hub_platform: string } | null
+  // WQ-3 — home-cluster identity card reads. Defaulted to "unavailable"
+  // (the honest degrade state) so existing tests that don't care about the
+  // card keep passing unchanged.
+  homeCluster?: { available: boolean; message?: string; kubernetes_version?: string; node_count?: number; nodes_ready?: number }
+  sharkoVersion?: string
+  uptime?: string
 }
 
 function mockAll({
@@ -73,12 +83,22 @@ function mockAll({
   notifications = [],
   argocdVersion = 'v3.2.2',
   capabilities = { aws: { detected: false, method: 'none' }, hub_platform: 'unknown' },
+  homeCluster = { available: false, message: 'only available when running in-cluster' },
+  sharkoVersion,
+  uptime,
 }: MockAllOpts = {}) {
   mockedApi.getRepoStatus.mockResolvedValue(repo)
   mockedApi.getClusters.mockResolvedValue({ clusters })
   mockedApi.getNotifications.mockResolvedValue({ notifications, unread_count: 0 })
   mockedApi.getObservability.mockResolvedValue(obsWithVersion(argocdVersion))
   mockGetSystemCapabilities.mockResolvedValue(capabilities)
+  mockedApi.getHomeCluster.mockResolvedValue(homeCluster)
+  mockedApi.health.mockResolvedValue(
+    (sharkoVersion ? { status: 'healthy', version: sharkoVersion } : null) as never,
+  )
+  mockedApi.getFleetStatus.mockResolvedValue(
+    (uptime ? { server_version: sharkoVersion ?? '', uptime } : null) as never,
+  )
 }
 
 function renderPage() {
@@ -297,7 +317,7 @@ describe('SystemView', () => {
     // Repo arrows healthy
     expect(screen.getByText('Sharko can read and write the repo.')).toBeInTheDocument()
     expect(
-      screen.getByText('ArgoCD is syncing the repo — the bootstrap application is healthy.'),
+      screen.getByText('ArgoCD is syncing the repo — the engine app is healthy.'),
     ).toBeInTheDocument()
     // Cluster arrows aggregate
     expect(screen.getAllByText('2 of 2 healthy')).toHaveLength(2)
@@ -368,6 +388,9 @@ describe('SystemView', () => {
     mockedApi.getNotifications.mockResolvedValue({ notifications: [], unread_count: 0 })
     mockedApi.getObservability.mockRejectedValue(new Error('boom'))
     mockGetSystemCapabilities.mockResolvedValue({ aws: { detected: false, method: 'none' }, hub_platform: 'unknown' })
+    mockedApi.getHomeCluster.mockResolvedValue({ available: false, message: 'only available when running in-cluster' })
+    mockedApi.health.mockResolvedValue(null as never)
+    mockedApi.getFleetStatus.mockResolvedValue(null as never)
     renderPage()
 
     await waitFor(() => expect(screen.getByText('ArgoCD version unknown')).toBeInTheDocument())
@@ -495,5 +518,63 @@ describe('SystemView — Sharko identity section (V2-cleanup-89.2)', () => {
     })
     // The rest of the page still rendered fine.
     expect(screen.getByText('Sharko can read and write the repo.')).toBeInTheDocument()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WQ-3 (attention-move-badges) — the home-cluster identity card moved here
+// from the Dashboard, placed next to the connection arrows. Full field
+// rendering is HomeClusterCard's own contract (see its dedicated test
+// file); this pins that SystemView wires the reads through and that there
+// is now exactly ONE ArgoCD version source on the page.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('SystemView — home-cluster identity card (WQ-3)', () => {
+  it('renders the card with Sharko/ArgoCD/Kubernetes versions and uptime', async () => {
+    mockAll({
+      argocdVersion: 'v3.2.2',
+      homeCluster: { available: true, kubernetes_version: 'v1.29.0', node_count: 3, nodes_ready: 3 },
+      sharkoVersion: '4.2.0',
+      uptime: '3h12m',
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
+    expect(await screen.findByText("Sharko's home cluster")).toBeInTheDocument()
+    expect(screen.getByText('4.2.0')).toBeInTheDocument()
+    // ONE ArgoCD version source (WQ-3): the same "v3.2.2" the tested-range
+    // banner above shows also appears in the card — never a contradicting
+    // second value.
+    expect(screen.getByText('ArgoCD v3.2.2 detected')).toBeInTheDocument()
+    expect(screen.getByText('v3.2.2')).toBeInTheDocument()
+    expect(screen.getByText('v1.29.0')).toBeInTheDocument()
+    expect(screen.getByText('all nodes ready')).toBeInTheDocument()
+    expect(screen.getByText(/up 3h12m/)).toBeInTheDocument()
+  })
+
+  it('degrades every field to "—" independently when the home-cluster probe is unavailable', async () => {
+    mockAll({
+      // Empty (not undefined) — the mockAll default-parameter destructuring
+      // would otherwise substitute back its own 'v3.2.2' default.
+      argocdVersion: '',
+      homeCluster: { available: false, message: 'only available when running in-cluster' },
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
+    expect(await screen.findByText("Sharko's home cluster")).toBeInTheDocument()
+    expect(screen.getByText('only available when running in-cluster')).toBeInTheDocument()
+    // Sharko version, ArgoCD version, Kubernetes version, Nodes — all "—".
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('the ArgoCD version story never contradicts itself — "unknown" up top means "—" in the card too', async () => {
+    mockAll({ argocdVersion: '', homeCluster: { available: true, kubernetes_version: 'v1.29.0', node_count: 1, nodes_ready: 1 } })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('ArgoCD version unknown')).toBeInTheDocument())
+    // The card's ArgoCD version cell degrades to "—" in lockstep — it is
+    // never fed a version the top banner doesn't also know about.
+    const label = await screen.findByText('ArgoCD version')
+    expect(label.nextSibling?.textContent).toBe('—')
   })
 })

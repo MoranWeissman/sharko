@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Observability } from '@/views/Observability';
+// WQ-3 (attention-move-badges): Observability now renders the attention
+// detail rows via useAddonStates() — has to be mounted inside the provider
+// or the hook throws.
+import { AddonStatesProvider } from '@/hooks/useAddonStates';
 
 vi.mock('recharts', () => {
   const C = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
@@ -29,8 +33,16 @@ vi.mock('@/services/api', () => ({
       connected_clusters: 0,
       bootstrap_app_health: 'Healthy',
       bootstrap_app_sync: 'Synced',
+      // WQ-3 — clusterProblemCount reads this real wire shape (same one
+      // Dashboard.test.tsx's baseStats uses), not a re-derivation from the
+      // named /clusters rows.
+      clusters: { total: 0, connected: 0, pending: 0, untested: 0, missing: 0, failed: 0 },
     }),
     getConnections: vi.fn().mockResolvedValue({ connections: [], active_connection: '' }),
+    // WQ-3 — attention-detail reads, moved here from the Dashboard.
+    getClusters: vi.fn().mockResolvedValue({ clusters: [] }),
+    getVersionMatrix: vi.fn().mockResolvedValue({ addons: [] }),
+    getAttentionItems: vi.fn().mockResolvedValue([]),
     getObservability: vi.fn().mockResolvedValue({
       control_plane: {
         argocd_version: 'v3.2.2',
@@ -121,7 +133,9 @@ vi.mock('@/services/api', () => ({
 function renderObservability() {
   return render(
     <MemoryRouter>
-      <Observability />
+      <AddonStatesProvider>
+        <Observability />
+      </AddonStatesProvider>
     </MemoryRouter>,
   );
 }
@@ -317,5 +331,132 @@ describe('Observability — #addon-health deep-link (walk finding #2)', () => {
     await waitFor(() => {
       expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
     });
+  });
+});
+
+// WQ-3 (attention-move-badges) — the detailed "Needs Attention" rows moved
+// here from the Dashboard, rendered above the #addon-health section
+// (which stays where it is — see the deep-link tests above). Same
+// severity honesty, same settling window, same per-row deep links.
+describe('Observability — attention detail (WQ-3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders a confirmed cluster problem row with its reason and a deep link', async () => {
+    const { api } = await import('@/services/api');
+    vi.mocked(api.getClusters).mockResolvedValue({
+      clusters: [{ name: 'spoke-us', connection_status: 'Failed' }],
+    } as never);
+    // clusterProblemCount reads stats.clusters (the server's single
+    // classification), not a re-derivation from the /clusters list above —
+    // keep the two in sync the way the real backend would.
+    vi.mocked(api.getDashboardStats).mockResolvedValue({
+      total_clusters: 1,
+      connected_clusters: 0,
+      bootstrap_app_health: 'Healthy',
+      bootstrap_app_sync: 'Synced',
+      clusters: { total: 1, connected: 0, pending: 0, untested: 0, missing: 0, failed: 1 },
+    } as never);
+
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Needs Attention')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /1 disconnected cluster/i }));
+
+    const row = screen.getByText('spoke-us');
+    expect(row).toBeInTheDocument();
+    expect(row.closest('a')).toHaveAttribute('href', '/clusters/spoke-us');
+    expect(screen.getByText(/argocd tried to reach this cluster and failed/i)).toBeInTheDocument();
+  });
+
+  it('renders a version-drift row and links "View matrix" to the drift filter', async () => {
+    const { api } = await import('@/services/api');
+    // Isolate from the previous test's override — mockResolvedValue
+    // persists across vi.clearAllMocks() (it only clears call history).
+    vi.mocked(api.getClusters).mockResolvedValue({ clusters: [] });
+    vi.mocked(api.getVersionMatrix).mockResolvedValue({
+      addons: [
+        {
+          addon_name: 'cert-manager',
+          cells: {
+            'prod-eu': { version: '1.12.0', drift_from_catalog: true },
+            'prod-us': { version: '1.14.0', drift_from_catalog: true },
+          },
+        },
+      ],
+    } as never);
+
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Needs Attention')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /1 addon with drift/i }));
+
+    expect(screen.getByText('cert-manager')).toBeInTheDocument();
+    expect(screen.getByText(/different versions deployed across 2 clusters/i)).toBeInTheDocument();
+  });
+
+  it('renders nothing when there are no attention items at all', async () => {
+    const { api } = await import('@/services/api');
+    // Isolate from earlier tests' overrides — mockResolvedValue persists
+    // across vi.clearAllMocks() (it only clears call history).
+    vi.mocked(api.getClusters).mockResolvedValue({ clusters: [] });
+    vi.mocked(api.getVersionMatrix).mockResolvedValue({ addons: [] } as never);
+    vi.mocked(api.getDashboardStats).mockResolvedValue({
+      total_clusters: 0,
+      connected_clusters: 0,
+      bootstrap_app_health: 'Healthy',
+      bootstrap_app_sync: 'Synced',
+      clusters: { total: 0, connected: 0, pending: 0, untested: 0, missing: 0, failed: 0 },
+    } as never);
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Observability')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Needs Attention')).not.toBeInTheDocument();
+  });
+
+  it('the #addon-health section is unaffected by the attention block above it', async () => {
+    const { api } = await import('@/services/api');
+    vi.mocked(api.getClusters).mockResolvedValue({
+      clusters: [{ name: 'spoke-us', connection_status: 'Failed' }],
+    } as never);
+    // clusterProblemCount reads stats.clusters (the server's single
+    // classification), not a re-derivation from the /clusters list above —
+    // keep the two in sync the way the real backend would.
+    vi.mocked(api.getDashboardStats).mockResolvedValue({
+      total_clusters: 1,
+      connected_clusters: 0,
+      bootstrap_app_health: 'Healthy',
+      bootstrap_app_sync: 'Synced',
+      clusters: { total: 1, connected: 0, pending: 0, untested: 0, missing: 0, failed: 1 },
+    } as never);
+
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Needs Attention')).toBeInTheDocument();
+    });
+    const section = screen.getByText('Addon Health').closest('section');
+    expect(section?.id).toBe('addon-health');
+  });
+});
+
+// Bootstrap-app surfaces renamed to Sharko Engine (v4 truth) — the tracked
+// ArgoCD app IS the engine app; wire field names (bootstrap_app_health
+// etc.) are unchanged, only the user-facing copy moved.
+describe('Observability — Sharko Engine surface rename', () => {
+  it('renders "Sharko Engine" (not "Bootstrap Application")', async () => {
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko Engine')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Bootstrap Application')).not.toBeInTheDocument();
   });
 });

@@ -42,6 +42,7 @@ import {
   SHARKO_CONN_TOOLTIP,
 } from '@/components/WhoseConnectionLabel'
 import { ClusterIdentityPanel } from '@/components/ClusterIdentityPanel'
+import { HomeClusterCard, type HomeClusterInfo } from '@/components/HomeClusterCard'
 import testedRange from '@/generated/argocd-tested-range.json'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,78 +62,15 @@ export const ARGOCD_REPO_LABEL = 'ArgoCD → Git repo'
 export const ARGOCD_REPO_TOOLTIP =
   "This is ArgoCD's own connection to the Git repo (how it syncs your clusters). It can fail even when Sharko reaches the repo fine."
 
-export type ArrowStatus = 'healthy' | 'degraded' | 'unknown'
-
-export interface RepoStatus {
-  initialized: boolean
-  bootstrap_synced?: boolean
-  reason?: string
-}
-
-export interface ArrowVerdict {
-  status: ArrowStatus
-  detail: string
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Pure derivations (exported for tests)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Arrow 1 — Sharko's own connection to the Git repo, from GET /repo/status. */
-export function deriveSharkoRepoArrow(repo: RepoStatus | null): ArrowVerdict {
-  if (!repo) {
-    return { status: 'unknown', detail: "Couldn't determine the Git connection status." }
-  }
-  if (repo.reason === 'no_connection') {
-    return {
-      status: 'degraded',
-      detail: 'No Git connection is configured. Sharko needs one for every commit and pull request.',
-    }
-  }
-  if (repo.reason === 'connection_error' || repo.reason === 'error') {
-    return {
-      status: 'degraded',
-      detail: "Sharko can't reach the Git repo right now (network, TLS, or auth problem).",
-    }
-  }
-  if (repo.initialized) {
-    return { status: 'healthy', detail: 'Sharko can read and write the repo.' }
-  }
-  if (repo.reason === 'not_bootstrapped') {
-    return {
-      status: 'healthy',
-      detail: "Sharko can reach the repo — it just hasn't been initialized yet.",
-    }
-  }
-  return { status: 'unknown', detail: "Couldn't determine the Git connection status." }
-}
-
-/** Arrow 2 — ArgoCD's own connection to the Git repo, from GET /repo/status. */
-export function deriveArgoRepoArrow(repo: RepoStatus | null): ArrowVerdict {
-  if (!repo) {
-    return { status: 'unknown', detail: "Couldn't determine ArgoCD's repo sync status." }
-  }
-  if (!repo.initialized) {
-    return {
-      status: 'unknown',
-      detail: "Can't assess until the repo is set up — ArgoCD has nothing to sync yet.",
-    }
-  }
-  if (repo.bootstrap_synced) {
-    return { status: 'healthy', detail: 'ArgoCD is syncing the repo — the bootstrap application is healthy.' }
-  }
-  if (repo.reason === 'bootstrap_unreachable') {
-    return {
-      status: 'degraded',
-      detail:
-        "ArgoCD can't reach the repo (a connection problem — often a proxy or TLS trust issue on the ArgoCD side).",
-    }
-  }
-  return {
-    status: 'degraded',
-    detail: 'ArgoCD read the repo but the bootstrap application is degraded or missing.',
-  }
-}
+// Pure repo/ArgoCD-connection derivations now live in lib/repoHealth.ts
+// (WQ-3) so the nav-badge hook can read the exact same verdicts without
+// pulling this whole view into Layout's always-mounted bundle. Re-exported
+// here so existing imports of these names from '@/views/SystemView' keep
+// working unchanged.
+export type { ArrowStatus, RepoStatus, ArrowVerdict } from '@/lib/repoHealth'
+export { deriveSharkoRepoArrow, deriveArgoRepoArrow } from '@/lib/repoHealth'
+import type { ArrowStatus, RepoStatus } from '@/lib/repoHealth'
+import { deriveSharkoRepoArrow, deriveArgoRepoArrow } from '@/lib/repoHealth'
 
 /**
  * Arrow 3 (per cluster) — Sharko's own direct connection / test state.
@@ -391,6 +329,12 @@ export function SystemView() {
   const [capabilities, setCapabilities] = useState<SystemCapabilitiesResponse | null>(null)
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(true)
   const [loading, setLoading] = useState(true)
+  // Home-cluster identity card (WQ-3 — moved here from Dashboard). Every
+  // field degrades independently to undefined/"—" rather than failing the
+  // whole page fetch — same contract HomeClusterCard has always had.
+  const [homeCluster, setHomeCluster] = useState<HomeClusterInfo | null>(null)
+  const [sharkoVersion, setSharkoVersion] = useState<string | undefined>(undefined)
+  const [uptime, setUptime] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     let cancelled = false
@@ -400,7 +344,10 @@ export function SystemView() {
       api.getNotifications(),
       api.getObservability(),
       getSystemCapabilities(),
-    ]).then(([repoRes, clustersRes, notifRes, obsRes, capsRes]) => {
+      api.getHomeCluster(),
+      api.health(),
+      api.getFleetStatus(),
+    ]).then(([repoRes, clustersRes, notifRes, obsRes, capsRes, homeRes, healthRes, fleetRes]) => {
       if (cancelled) return
       if (repoRes.status === 'fulfilled') setRepoStatus(repoRes.value)
       if (clustersRes.status === 'fulfilled') setClusters(clustersRes.value.clusters ?? [])
@@ -414,10 +361,17 @@ export function SystemView() {
         setAlertDescriptions(map)
       }
       if (obsRes.status === 'fulfilled') {
+        // ONE ArgoCD version source for the whole page (WQ-3): this same
+        // string feeds both the tested-range badge below AND the home-
+        // cluster card's ArgoCD version field, so the two can never
+        // contradict each other.
         const v = obsRes.value.control_plane?.argocd_version
         if (v) setArgocdVersion(v)
       }
       if (capsRes.status === 'fulfilled' && capsRes.value) setCapabilities(capsRes.value)
+      if (homeRes.status === 'fulfilled') setHomeCluster(homeRes.value)
+      if (healthRes.status === 'fulfilled') setSharkoVersion(healthRes.value?.version)
+      if (fleetRes.status === 'fulfilled') setUptime(fleetRes.value?.uptime)
       setCapabilitiesLoading(false)
       setLoading(false)
     })
@@ -428,6 +382,12 @@ export function SystemView() {
 
   const sharkoRepo = deriveSharkoRepoArrow(repoStatus)
   const argoRepo = deriveArgoRepoArrow(repoStatus)
+  // ArgoCD "connected" for the home-cluster card: derived from the same
+  // version string the tested-range badge reads (a non-empty version means
+  // observability's control-plane read actually reached ArgoCD) — not a
+  // separate /config read, which is exactly the second-source contradiction
+  // this unification closes.
+  const argocdConnected = argocdVersion !== undefined
   // Filter out the hub 'in-cluster' entry from health counts (V3 U3).
   const managedClusters = clusters.filter((c) => c.name !== 'in-cluster')
   const sharkoClusterAgg = aggregateStatuses(managedClusters.map(deriveSharkoClusterStatus))
@@ -567,6 +527,20 @@ export function SystemView() {
           </ArrowCard>
         </div>
       </section>
+
+      {/* Home-cluster identity card (WQ-3 — moved here from Dashboard).
+          System is the engine-room page, so "where Sharko + ArgoCD run,
+          and what version of each" belongs next to the connection arrows
+          above rather than on the work-queue Dashboard. */}
+      {homeCluster && (
+        <HomeClusterCard
+          homeCluster={homeCluster}
+          sharkoVersion={sharkoVersion}
+          argocdVersion={argocdVersion}
+          argocdConnected={argocdConnected}
+          uptime={uptime}
+        />
+      )}
 
       {/* Sharko's own identity (V2-cleanup-89.2) — moved here from the
         * Register Cluster dialog's Layer 1. It's read-only information
