@@ -11,6 +11,12 @@ import {
 import { fetchAuditLog } from '@/services/api'
 import type { AuditEntry } from '@/services/models'
 
+// UI title reads "GitOps corrections", not "Drift Alerts" (dashboard UX
+// review 2026-08-01: "drift" was doing double duty — this panel's
+// audit-derived orphan/self-heal events AND the Dashboard's addon
+// version-drift rows both called themselves "drift"). This is a display
+// name only; event names, the audit API, and component/file names are
+// unchanged.
 const DRIFT_EVENTS = ['orphan_detected', 'orphan_deleted_after_grace_period', 'drift_detected']
 const POLL_INTERVAL = 30_000
 const GRACE_PERIOD_MS = 6 * 60 * 1000 // 2 reconciler cycles ~ 6 minutes
@@ -152,7 +158,7 @@ export function DriftAlertsPanel() {
       <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50/50 p-5 shadow-sm dark:ring-amber-700 dark:bg-amber-900/10">
         <div className="flex items-center gap-2 mb-3">
           <ShieldAlert className="h-4 w-4 text-amber-500" />
-          <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Drift Alerts</h3>
+          <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">GitOps corrections</h3>
         </div>
         <div className="flex items-center justify-center py-6 text-[#3a6a8a] dark:text-gray-400">
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -167,7 +173,7 @@ export function DriftAlertsPanel() {
       <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50/50 p-5 shadow-sm dark:ring-amber-700 dark:bg-amber-900/10">
         <div className="flex items-center gap-2 mb-3">
           <ShieldAlert className="h-4 w-4 text-amber-500" />
-          <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Drift Alerts</h3>
+          <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">GitOps corrections</h3>
         </div>
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       </div>
@@ -181,7 +187,7 @@ export function DriftAlertsPanel() {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <ShieldAlert className="h-4 w-4 text-amber-500" />
-          <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Drift Alerts</h3>
+          <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">GitOps corrections</h3>
           {pendingCount > 0 && (
             <span className="inline-flex items-center justify-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
               {pendingCount} pending

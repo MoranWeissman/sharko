@@ -62,8 +62,12 @@ describe('DriftAlertsPanel', () => {
       ],
     })
     renderPanel()
+    // UI title reads "GitOps corrections" now, not "Drift Alerts" (dashboard
+    // UX review 2026-08-01 — "drift" was overloaded between this panel and
+    // the Dashboard's addon version-drift rows). Display text only; event
+    // names/API are unchanged.
     await waitFor(() => {
-      expect(screen.getByText('Drift Alerts')).toBeInTheDocument()
+      expect(screen.getByText('GitOps corrections')).toBeInTheDocument()
     })
     expect(screen.getByText('Orphan Detected')).toBeInTheDocument()
     expect(screen.getByText('Drift Detected')).toBeInTheDocument()

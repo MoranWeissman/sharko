@@ -30,6 +30,11 @@ vi.mock('recharts', () => {
   };
 });
 
+// Five-state cluster breakdown (dashboard UX review 2026-08-01, blocker
+// B1) replaces the old binary connected_to_argocd/disconnected_from_argocd
+// pair. total_deployments (the old fake "N/N" ratio) is gone too.
+const zeroClusterStats = { total: 0, connected: 0, pending: 0, untested: 0, missing: 0, failed: 0 };
+
 vi.mock('@/services/api', () => ({
   fetchTrackedPRs: vi.fn().mockResolvedValue({ prs: [] }),
   fetchMergedPRs: vi.fn().mockResolvedValue({ prs: [], limit: 20 }),
@@ -43,13 +48,13 @@ vi.mock('@/services/api', () => ({
     getHomeCluster: vi.fn().mockResolvedValue({ available: false, message: 'only available when running in-cluster' }),
     getDashboardStats: vi.fn().mockResolvedValue({
       connections: { total: 1, active: 'dev' },
-      clusters: { total: 10, connected_to_argocd: 8, disconnected_from_argocd: 2 },
+      clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
       applications: {
         total: 50,
         by_sync_status: { synced: 40, out_of_sync: 8, unknown: 2 },
         by_health_status: { healthy: 45, progressing: 2, degraded: 2, unknown: 1 },
       },
-      addons: { total_available: 15, total_deployments: 100, enabled_deployments: 85 },
+      addons: { total_available: 15, enabled_deployments: 85 },
     }),
     // migration-ui: Dashboard renders <MigrationBanner/>, which probes
     // migration status on mount. "empty" keeps it a no-op for existing
@@ -70,15 +75,17 @@ function renderDashboard() {
 
 // Base stats used by the bootstrap-banner gating tests. We override
 // bootstrap_app_health per case via the mocked api.getDashboardStats.
+// 1 failed + 1 missing == 2 "disconnected" (matches the old default mock's
+// disconnected_from_argocd: 2, so existing counts/wording keep meaning).
 const baseStats = {
   connections: { total: 1, active: 'dev' },
-  clusters: { total: 10, connected_to_argocd: 8, disconnected_from_argocd: 2 },
+  clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
   applications: {
     total: 50,
     by_sync_status: { synced: 40, out_of_sync: 8, unknown: 2 },
     by_health_status: { healthy: 45, progressing: 2, degraded: 2, unknown: 1 },
   },
-  addons: { total_available: 15, total_deployments: 100, enabled_deployments: 85 },
+  addons: { total_available: 15, enabled_deployments: 85 },
 };
 
 const BOOTSTRAP_BANNER_TEXT = 'ArgoCD Bootstrap Application Issue';
@@ -104,34 +111,42 @@ describe('Dashboard', () => {
     expect(screen.getByText('10')).toBeInTheDocument();
     expect(screen.getByText('45/50 healthy')).toBeInTheDocument();
     expect(screen.getByText('15')).toBeInTheDocument();
-    expect(screen.getByText('85/100')).toBeInTheDocument();
-
-    // Health bars
-    expect(screen.getByText('Application Health')).toBeInTheDocument();
-    // LW-7: Cluster Connectivity bar removed — connectivity is now shown in Total Clusters stat
+    // Active Deployments is a plain count now — no more fake "N/N" ratio
+    // (dashboard UX review 2026-08-01, finding H5).
+    expect(screen.getByText('85')).toBeInTheDocument();
+    expect(screen.getByText('as configured in Git')).toBeInTheDocument();
+    // Applications card (folded segmented health visualization, Package 2 #4)
+    expect(screen.getByText('Applications')).toBeInTheDocument();
   });
 
-  // BUG-040: clicking the "N disconnected cluster(s)" button under
-  // "Needs Attention" must deep-link to /clusters?status=disconnected so
-  // the Clusters page's filter resolves to the SAME set of clusters the
-  // headline count refers to (any managed cluster ArgoCD does not report
-  // as "Successful" / "Connected"). The previous implementation landed on
-  // a "failed-only" filter and showed 0 rows when the cluster was actually
-  // "missing" or "unknown" — a count vs list mismatch that read as a bug.
-  it('disconnected-clusters button deep-links to ?status=disconnected (BUG-040)', async () => {
+  // BUG-040 (rebuilt for the dashboard UX review 2026-08-01 contract):
+  // clicking the "N disconnected cluster(s)" pill EXPANDS the one
+  // attention panel (cluster rows now live there, named + reasoned +
+  // linked, instead of the old standalone "Clusters Needing Attention"
+  // section). The panel's "View in Clusters" link still deep-links to
+  // /clusters?status=disconnected — same target, reached one click deeper.
+  it('expanding "disconnected clusters" shows named rows; "View in Clusters" deep-links to ?status=disconnected', async () => {
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
+      clusters: [
+        { name: 'spoke-us', connection_status: 'Failed' },
+        { name: 'spoke-eu', connection_status: 'missing' },
+      ],
+    });
     renderDashboard();
 
     await waitFor(() => {
       expect(screen.getByText('Sharko')).toBeInTheDocument();
     });
 
-    // The mocked /dashboard/stats returns disconnected_from_argocd: 2 so
-    // the button is rendered with the plural label.
     const btn = await screen.findByRole('button', {
       name: /2 disconnected clusters/i,
     });
     fireEvent.click(btn);
 
+    expect(await screen.findByText('spoke-us')).toBeInTheDocument();
+    expect(screen.getByText('spoke-eu')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /view in clusters/i }));
     expect(mockNavigate).toHaveBeenCalledWith('/clusters?status=disconnected');
   });
 });
@@ -150,7 +165,7 @@ describe('Dashboard — empty install (B1, no false-green)', () => {
   it('renders a neutral "nothing connected yet" state instead of "All systems operational" when there are 0 clusters', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...baseStats,
-      clusters: { total: 0, connected_to_argocd: 0, disconnected_from_argocd: 0 },
+      clusters: zeroClusterStats,
       applications: {
         total: 0,
         by_sync_status: { synced: 0, out_of_sync: 0, unknown: 0 },
@@ -173,7 +188,7 @@ describe('Dashboard — empty install (B1, no false-green)', () => {
   it('gives next-step guidance: register a cluster or browse the Marketplace', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...baseStats,
-      clusters: { total: 0, connected_to_argocd: 0, disconnected_from_argocd: 0 },
+      clusters: zeroClusterStats,
     });
     renderDashboard();
 
@@ -210,7 +225,7 @@ describe('Dashboard — empty install (B1, no false-green)', () => {
   it('shows "All systems operational" (green) only when there is real, healthy data', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...baseStats,
-      clusters: { total: 5, connected_to_argocd: 5, disconnected_from_argocd: 0 },
+      clusters: { total: 5, connected: 5, pending: 0, untested: 0, missing: 0, failed: 0 },
       applications: {
         total: 20,
         by_sync_status: { synced: 20, out_of_sync: 0, unknown: 0 },
@@ -223,6 +238,8 @@ describe('Dashboard — empty install (B1, no false-green)', () => {
       expect(screen.getByText('All systems operational')).toBeInTheDocument();
     });
     expect(screen.queryByText('Nothing connected yet')).not.toBeInTheDocument();
+    // The all-fine line carries a last-checked timestamp (Package 2 #7).
+    expect(screen.getByText(/last checked/i)).toBeInTheDocument();
   });
 });
 
@@ -299,48 +316,47 @@ describe('Dashboard bootstrap banner gating (connhealth-2)', () => {
   });
 });
 
-// LW-1: Dashboard needs-attention filter — correct rule (addon health ≠ cluster health)
-describe('Dashboard needs-attention filter (LW-1)', () => {
+// Dashboard needs-attention cluster rows (rebuilt for the dashboard UX
+// review 2026-08-01 contract). Cluster rows in the attention list are now
+// ONLY for failed/missing connectivity (isClusterNeedsAttention) — the old
+// rules 2/3 that inferred "needs attention" by crossing a cluster's
+// connection status against its addons' health in the version matrix are
+// gone. That was pure duplication of the real addon-health signal filed
+// under a cluster heading (findings H2/H3): an "all addons down" cluster
+// now shows up as ADDON rows (from the addon attention feed), never as a
+// cluster row, and an Unknown/pending cluster is neutral, never red.
+describe('Dashboard cluster attention rows (rebuilt LW-1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  // The locked rule:
-  // 1. connection_status == Failed → needs attention
-  // 2. connection_status == Unknown AND total > 0 → needs attention
-  // 3. connection_status == Connected but healthy == 0 AND total > 0 → needs attention
-  // 4. Otherwise NOT needs attention (addon health ≠ cluster health)
-
-  it('Connected with 29/30 healthy → NOT in needs-attention', async () => {
-    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
-      clusters: [{ name: 'prod', connection_status: 'Successful', server_url: 'https://prod' }],
+  it('Failed cluster → shown as a cluster attention row with its reason', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 1, connected: 0, pending: 0, untested: 0, missing: 0, failed: 1 },
     });
-    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
-      addons: Array.from({ length: 30 }, (_, i) => ({
-        addon_name: `addon-${i}`,
-        cells: { prod: { health: i === 0 ? 'Degraded' : 'Healthy' } },
-      })),
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
+      clusters: [{ name: 'prod', connection_status: 'Failed' }],
     });
     renderDashboard();
 
-    await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
-    });
+    const btn = await screen.findByRole('button', { name: /1 disconnected cluster/i });
+    fireEvent.click(btn);
 
-    // The card for "prod" should NOT appear under "Clusters Needing Attention"
-    // because connection is Successful and 29/30 healthy ≠ needs attention.
-    // The "Clusters Needing Attention" section won't render at all when the list is empty.
-    // Verify the cluster card does NOT appear in the attention section by checking
-    // that the "Clusters Needing Attention" heading is not present (empty list).
-    expect(screen.queryByText('Clusters Needing Attention')).not.toBeInTheDocument();
+    expect(await screen.findByText('prod')).toBeInTheDocument();
+    expect(screen.getByText(/argocd tried to reach this cluster and failed/i)).toBeInTheDocument();
   });
 
-  it('Failed → IN needs-attention', async () => {
+  it('Connected cluster, regardless of addon health → NOT a cluster attention row', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 1, connected: 1, pending: 0, untested: 0, missing: 0, failed: 0 },
+    });
     (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
-      clusters: [{ name: 'prod', connection_status: 'Failed', server_url: 'https://prod' }],
+      clusters: [{ name: 'prod', connection_status: 'Successful' }],
     });
     (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
-      addons: [{ addon_name: 'addon-1', cells: { prod: { health: 'Healthy' } } }],
+      addons: [{ addon_name: 'addon-1', cells: { prod: { health: 'Degraded' } } }],
     });
     renderDashboard();
 
@@ -348,17 +364,17 @@ describe('Dashboard needs-attention filter (LW-1)', () => {
       expect(screen.getByText('Sharko')).toBeInTheDocument();
     });
 
-    // The cluster card should appear under "Clusters Needing Attention" because
-    // connection is Failed (regardless of addon health).
-    expect(screen.getByText('Clusters Needing Attention')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /disconnected cluster/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('prod')).not.toBeInTheDocument();
   });
 
-  it('Unknown with addons → IN needs-attention', async () => {
-    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
-      clusters: [{ name: 'prod', connection_status: 'Unknown', server_url: 'https://prod' }],
+  it('Unknown (pending) cluster with addons deployed → NOT a cluster attention row (neutral, not red)', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 1, connected: 0, pending: 1, untested: 0, missing: 0, failed: 0 },
     });
-    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
-      addons: [{ addon_name: 'addon-1', cells: { prod: { health: 'Healthy' } } }],
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
+      clusters: [{ name: 'prod', connection_status: 'Unknown' }],
     });
     renderDashboard();
 
@@ -366,15 +382,18 @@ describe('Dashboard needs-attention filter (LW-1)', () => {
       expect(screen.getByText('Sharko')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Clusters Needing Attention')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /disconnected cluster/i })).not.toBeInTheDocument();
+    // Neutral note instead — "connecting", not red.
+    expect(screen.getByText(/1 cluster connecting/i)).toBeInTheDocument();
   });
 
-  it('Unknown with zero addons → NOT in needs-attention', async () => {
-    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
-      clusters: [{ name: 'prod', connection_status: 'Unknown', server_url: 'https://prod' }],
+  it('Unknown cluster with zero addons → neutral "waiting for its first addon" note', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 1, connected: 0, pending: 0, untested: 1, missing: 0, failed: 0 },
     });
-    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
-      addons: [],
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
+      clusters: [{ name: 'prod', connection_status: 'Unknown' }],
     });
     renderDashboard();
 
@@ -382,86 +401,39 @@ describe('Dashboard needs-attention filter (LW-1)', () => {
       expect(screen.getByText('Sharko')).toBeInTheDocument();
     });
 
-    // Unknown with total == 0 → NOT needs attention (nothing to infer from)
-    expect(screen.queryByText('Clusters Needing Attention')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /disconnected cluster/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/1 cluster waiting for its first addon/i)).toBeInTheDocument();
   });
 
-  it('Connected with 0 healthy out of N → IN needs-attention', async () => {
-    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
-      clusters: [{ name: 'prod', connection_status: 'Successful', server_url: 'https://prod' }],
+  it('missing cluster → shown as a cluster attention row', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 1, connected: 0, pending: 0, untested: 0, missing: 1, failed: 0 },
     });
-    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
-      addons: [
-        { addon_name: 'addon-1', cells: { prod: { health: 'Degraded' } } },
-        { addon_name: 'addon-2', cells: { prod: { health: 'Degraded' } } },
-      ],
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
+      clusters: [{ name: 'prod', connection_status: 'missing' }],
     });
     renderDashboard();
 
-    await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
-    });
-
-    // Connected but 0/2 healthy → IN needs attention (all addons unhealthy)
-    expect(screen.getByText('Clusters Needing Attention')).toBeInTheDocument();
+    const btn = await screen.findByRole('button', { name: /1 disconnected cluster/i });
+    fireEvent.click(btn);
+    expect(await screen.findByText('prod')).toBeInTheDocument();
   });
 });
 
-// LW-7: Dashboard connectivity widget — fold disconnected count into Total Clusters stat,
-// drop redundant "Cluster Connectivity" bar
-describe('Dashboard connectivity widget (LW-7)', () => {
+// Stat cards are permanently neutral (Package 2 #3) — no red/amber border
+// color regardless of how bad the underlying numbers are. Informational
+// text may still say "N disconnected"; only the wiring that would color
+// the card is gone.
+describe('Dashboard stat cards are permanently neutral (Package 2 #3)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('when disconnected == 0, Total Clusters stat shows no subtitle and Cluster Connectivity bar does not render', async () => {
+  it('Total Clusters card has no error-color border even with disconnected clusters', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...baseStats,
-      clusters: { total: 5, connected_to_argocd: 5, disconnected_from_argocd: 0 },
-    });
-    renderDashboard();
-
-    await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
-    });
-
-    // Total Clusters stat should be visible with value 5
-    expect(screen.getByText('Total Clusters')).toBeInTheDocument();
-    expect(screen.getByText('5')).toBeInTheDocument();
-
-    // No subtitle about disconnected clusters
-    expect(screen.queryByText(/disconnected/i)).not.toBeInTheDocument();
-
-    // The full-width "Cluster Connectivity" HealthBar should not render
-    expect(screen.queryByText('Cluster Connectivity')).not.toBeInTheDocument();
-  });
-
-  it('when disconnected > 0, Total Clusters stat shows disconnected count as subtitle', async () => {
-    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...baseStats,
-      clusters: { total: 10, connected_to_argocd: 8, disconnected_from_argocd: 2 },
-    });
-    renderDashboard();
-
-    await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
-    });
-
-    // Total Clusters stat should show the count
-    expect(screen.getByText('Total Clusters')).toBeInTheDocument();
-    expect(screen.getByText('10')).toBeInTheDocument();
-
-    // The subtitle "2 disconnected" should be visible
-    expect(screen.getByText('2 disconnected')).toBeInTheDocument();
-
-    // Still no full-width "Cluster Connectivity" bar
-    expect(screen.queryByText('Cluster Connectivity')).not.toBeInTheDocument();
-  });
-
-  it('clicking Total Clusters stat when disconnected > 0 deep-links to /clusters?status=disconnected', async () => {
-    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...baseStats,
-      clusters: { total: 10, connected_to_argocd: 8, disconnected_from_argocd: 2 },
+      clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
     });
     renderDashboard();
 
@@ -469,18 +441,30 @@ describe('Dashboard connectivity widget (LW-7)', () => {
       expect(screen.getByText('2 disconnected')).toBeInTheDocument();
     });
 
-    // The StatCard with "Total Clusters" should be clickable
-    const statCard = screen.getByText('Total Clusters').closest('[role="button"]');
-    expect(statCard).toBeInTheDocument();
-    fireEvent.click(statCard!);
+    const card = screen.getByText('Total Clusters').closest('[role="button"]') as HTMLElement;
+    expect(card.className).not.toMatch(/border-l-red/);
+  });
 
+  it('clicking Total Clusters when disconnected > 0 deep-links to /clusters?status=disconnected', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('2 disconnected')).toBeInTheDocument();
+    });
+
+    const statCard = screen.getByText('Total Clusters').closest('[role="button"]');
+    fireEvent.click(statCard!);
     expect(mockNavigate).toHaveBeenCalledWith('/clusters?status=disconnected');
   });
 
-  it('clicking Total Clusters stat when disconnected == 0 navigates to /clusters (no filter)', async () => {
+  it('clicking Total Clusters when disconnected == 0 navigates to /clusters (no filter)', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...baseStats,
-      clusters: { total: 5, connected_to_argocd: 5, disconnected_from_argocd: 0 },
+      clusters: { total: 5, connected: 5, pending: 0, untested: 0, missing: 0, failed: 0 },
     });
     renderDashboard();
 
@@ -490,7 +474,82 @@ describe('Dashboard connectivity widget (LW-7)', () => {
 
     const statCard = screen.getByText('Total Clusters').closest('[role="button"]');
     fireEvent.click(statCard!);
-
     expect(mockNavigate).toHaveBeenCalledWith('/clusters');
+  });
+
+  it('when disconnected == 0, no subtitle text appears on Total Clusters', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 5, connected: 5, pending: 0, untested: 0, missing: 0, failed: 0 },
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Total Clusters')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/disconnected/i)).not.toBeInTheDocument();
+  });
+});
+
+// Segmented per-app health blocks at small N (Package 2 #4) — folded into
+// the Applications stat card rather than a separate full-width bar.
+describe('Applications card — segmented blocks at small N (Package 2 #4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders one block per app when there are <= 10 apps (from the version matrix)', async () => {
+    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
+      addons: [
+        { addon_name: 'cert-manager', cells: { prod: { health: 'Healthy' } } },
+        { addon_name: 'external-dns', cells: { prod: { health: 'Degraded' } } },
+      ],
+    });
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      applications: {
+        total: 2,
+        by_sync_status: { synced: 1, out_of_sync: 1, unknown: 0 },
+        by_health_status: { healthy: 1, progressing: 0, degraded: 1, unknown: 0 },
+      },
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('1/2 healthy')).toBeInTheDocument();
+    });
+
+    expect(screen.getByTitle('cert-manager on prod: Healthy')).toBeInTheDocument();
+    expect(screen.getByTitle('external-dns on prod: Degraded')).toBeInTheDocument();
+  });
+});
+
+// Unreachable-banner honesty fix (Package 1): the ONLY signal is the
+// getClusters() fetch itself failing, not a heuristic over connection
+// status strings.
+describe('ArgoCD unreachable banner (Package 1 rewire)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('does NOT show when clusters legitimately all read Failed (that PROVES ArgoCD answered)', async () => {
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
+      clusters: [{ name: 'prod', connection_status: 'Failed' }],
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/ArgoCD temporarily unreachable/i)).not.toBeInTheDocument();
+  });
+
+  it('shows when the clusters fetch itself fails', async () => {
+    (api.getClusters as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('network error'));
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText(/ArgoCD temporarily unreachable/i)).toBeInTheDocument();
+    });
   });
 });

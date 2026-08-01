@@ -1,14 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  Server, AppWindow, Package, Rocket, AlertTriangle, CheckCircle2,
+  Server, AppWindow, Package, Rocket, AlertTriangle,
   ArrowUpCircle, Activity, Clock, ChevronRight, ShieldAlert, RefreshCw,
   Hourglass, Store, PlusCircle
 } from 'lucide-react';
 import { api } from '@/services/api';
 import type { DashboardStats, SyncActivityEntry, ClustersResponse } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
-import { ClusterCard } from '@/components/ClusterCard';
 import { WaveDecoration } from '@/components/WaveDecoration';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
@@ -22,49 +21,11 @@ import type { TrackedPR } from '@/services/models';
 import {
   useAddonStates,
   deepLinkToAddonOnCluster,
+  isSettling,
 } from '@/hooks/useAddonStates';
-import { isClusterNeedsAttention, classifyClusterConnection } from '@/lib/clusterStatus';
+import { isClusterNeedsAttention, getClusterConnectionState } from '@/lib/clusterStatus';
 
-// --- Health Bar with totals ---
-
-interface HealthBarProps {
-  title: string;
-  subtitle: string;
-  segments: { label: string; value: number; color: string }[];
-}
-
-function HealthBar({ title, subtitle, segments }: HealthBarProps) {
-  const total = segments.reduce((sum, s) => sum + s.value, 0);
-  if (total === 0) return null;
-
-  return (
-    <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
-      <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{title}</h3>
-      <p className="mb-3 text-xs text-[#2a5a7a] dark:text-gray-400">{subtitle}</p>
-      <div className="mb-3 flex h-3 overflow-hidden rounded-full bg-[#d6eeff] dark:bg-gray-700">
-        {segments.filter(s => s.value > 0).map((seg) => (
-          <div
-            key={seg.label}
-            className="transition-all duration-500"
-            style={{ width: `${(seg.value / total) * 100}%`, backgroundColor: seg.color }}
-            title={`${seg.label}: ${seg.value}`}
-          />
-        ))}
-      </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1">
-        {segments.filter(s => s.value > 0).map((seg) => (
-          <div key={seg.label} className="flex items-center gap-1.5 text-xs">
-            <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: seg.color }} />
-            <span className="font-medium text-[#0a3a5a] dark:text-gray-300">{seg.value}/{total}</span>
-            <span className="text-[#2a5a7a] dark:text-gray-400">{seg.label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// --- Time ago helper ---
+// --- Time ago helpers ---
 
 function timeAgo(timestamp: string): string {
   const secs = Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000);
@@ -72,6 +33,154 @@ function timeAgo(timestamp: string): string {
   if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
   if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
   return `${Math.floor(secs / 86400)}d ago`;
+}
+
+function timeAgoMs(ms: number): string {
+  return timeAgo(new Date(ms).toISOString());
+}
+
+function minutesAgo(ms: number): number {
+  return Math.max(0, Math.floor((Date.now() - ms) / 60_000));
+}
+
+// --- Applications health card (folded segmented bar, dashboard UX review
+//     2026-08-01, finding H1 + Package 2 #4) ---
+//
+// A proportional bar reads identically for "1 of 1 apps down" and "50 of
+// 50 down" — a full-width red slab for one not-ready pod in a playground.
+// At small N (<=10 apps we have per-app data for) render one block PER
+// APP, colored by its own health, so "one thing is off" reads as one
+// colored block, not a solid red bar. Falls back to the old proportional
+// bucket bar once there are more apps than that (segmented blocks stop
+// being legible at scale). Folded into the Applications stat tile rather
+// than kept as a separate full-width card — one less surface repeating
+// the same two numbers.
+function healthBlockColor(health: string): string {
+  const h = (health || '').toLowerCase();
+  if (h === 'healthy') return '#22c55e';
+  if (h === 'progressing') return '#3b82f6';
+  if (h === 'degraded' || h === 'suspended' || h === 'error' || h === 'missing') return '#ef4444';
+  return '#9ca3af'; // Unknown, and anything else — grey, never red.
+}
+
+interface AppHealthEntry {
+  key: string;
+  label: string;
+  health: string;
+}
+
+interface HealthBuckets {
+  healthy: number;
+  progressing: number;
+  degraded: number;
+  unknown: number;
+}
+
+interface ApplicationsHealthCardProps {
+  healthy: number;
+  total: number;
+  entries: AppHealthEntry[];
+  buckets: HealthBuckets;
+  onClick: () => void;
+}
+
+function ApplicationsHealthCard({ healthy, total, entries, buckets, onClick }: ApplicationsHealthCardProps) {
+  const bucketTotal = buckets.healthy + buckets.progressing + buckets.degraded + buckets.unknown;
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      className="relative rounded-lg ring-2 ring-[#6aade0] border-l-4 border-l-gray-300 dark:border-l-gray-600 bg-[#f0f7ff] p-4 shadow-sm dark:ring-gray-700 dark:bg-gray-800 cursor-pointer transition-shadow hover:shadow-md"
+    >
+      <div className="absolute right-4 top-4 text-[#3a6a8a] dark:text-gray-500">
+        <AppWindow className="h-6 w-6" />
+      </div>
+      <div className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{healthy}/{total} healthy</div>
+      <div className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">Applications</div>
+      {entries.length > 0 && entries.length <= 10 ? (
+        <div className="mt-2 flex gap-0.5" title="One block per application">
+          {entries.map((e) => (
+            <div
+              key={e.key}
+              className="h-2 flex-1 rounded-sm"
+              style={{ backgroundColor: healthBlockColor(e.health) }}
+              title={`${e.label}: ${e.health}`}
+            />
+          ))}
+        </div>
+      ) : bucketTotal > 0 ? (
+        <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-[#d6eeff] dark:bg-gray-700">
+          {[
+            { value: buckets.healthy, color: '#22c55e', label: 'Healthy' },
+            { value: buckets.progressing, color: '#3b82f6', label: 'Progressing' },
+            { value: buckets.degraded, color: '#ef4444', label: 'Degraded' },
+            { value: buckets.unknown, color: '#9ca3af', label: 'Unknown' },
+          ]
+            .filter((s) => s.value > 0)
+            .map((s) => (
+              <div
+                key={s.label}
+                style={{ width: `${(s.value / bucketTotal) * 100}%`, backgroundColor: s.color }}
+                title={`${s.label}: ${s.value}`}
+              />
+            ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// --- The one attention surface ---
+//
+// dashboard UX review 2026-08-01: this list is the ONLY place on the page
+// allowed to show red or amber. Every problem — a disconnected cluster, a
+// confirmed-degraded app, an app still settling, an app ArgoCD isn't
+// reporting on, an addon with version drift — appears here exactly once,
+// with a name, a plain reason, and a link straight to where you'd go to
+// look at it.
+interface AttentionRow {
+  key: string;
+  severity: 'problem' | 'attention';
+  title: string;
+  reason: string;
+  link: string;
+  badge?: string;
+}
+
+function AttentionRowView({ row }: { row: AttentionRow }) {
+  const dot = row.severity === 'problem' ? 'bg-red-500' : 'bg-amber-500';
+  const badgeClass =
+    row.severity === 'problem'
+      ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+      : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
+  return (
+    <div className="flex items-start gap-3 rounded-lg bg-[#f0f7ff] px-3 py-2 text-xs dark:bg-gray-800">
+      <div className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${dot}`} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link
+            to={row.link}
+            className="font-medium text-[#0a2a4a] hover:text-teal-600 hover:underline dark:text-gray-100 dark:hover:text-teal-400"
+          >
+            {row.title}
+          </Link>
+          {row.badge && (
+            <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${badgeClass}`}>{row.badge}</span>
+          )}
+        </div>
+        <p className="mt-1 text-[#2a5a7a] dark:text-gray-400" title={row.reason}>
+          {row.reason.length > 140 ? row.reason.slice(0, 140) + '...' : row.reason}
+        </p>
+      </div>
+    </div>
+  );
 }
 
 // --- Bootstrap Health Banner ---
@@ -168,19 +277,25 @@ export function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recentSyncs, setRecentSyncs] = useState<SyncActivityEntry[]>([]);
   const [versionDrifts, setVersionDrifts] = useState<{ addon: string; count: number }[]>([]);
+  const [appHealthEntries, setAppHealthEntries] = useState<AppHealthEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Addon health/sync state is sourced from the unified AddonStatesProvider
-  // so the Dashboard's "Issues" and "Progressing" sections agree with
-  // AddonDetail / ClusterDetail. The provider polls /dashboard/attention
-  // once for the whole app.
+  // so the Dashboard's attention list agrees with AddonDetail / ClusterDetail.
+  // The provider polls /dashboard/attention once for the whole app.
   const { byApp: addonStateMap, refresh: refreshAddonStates } = useAddonStates();
   const [showAttention, setShowAttention] = useState(false);
   const [showProgressing, setShowProgressing] = useState(false);
-  const [clusters, setClusters] = useState<{ name: string; connectionStatus: string; addons: { name: string; health: string }[]; healthy: number; total: number }[]>([]);
+  // Cluster problem rows — failed/missing ONLY (dashboard UX review
+  // 2026-08-01: cluster rows in the attention list are for connectivity
+  // problems, not a duplicate of addon health under a cluster heading).
+  const [clusters, setClusters] = useState<{ name: string; connectionStatus: string }[]>([]);
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
   const [homeCluster, setHomeCluster] = useState<{ available: boolean; message?: string; kubernetes_version?: string; node_count?: number; nodes_ready?: number; nodes_not_ready?: number } | null>(null);
+  // Wall-clock time of the last successful (or attempted) fetch — powers
+  // the calm all-fine line's "last checked" timestamp.
+  const [lastChecked, setLastChecked] = useState<number | null>(null);
 
   const fetchData = useCallback(async (background = false) => {
     try {
@@ -208,8 +323,8 @@ export function Dashboard() {
         setRecentSyncs(obsData.recent_syncs.slice(0, 5));
       }
 
-      // Version drifts
       if (matrixData?.addons) {
+        // Version drifts
         const drifts: { addon: string; count: number }[] = [];
         for (const row of matrixData.addons) {
           let driftCount = 0;
@@ -221,67 +336,52 @@ export function Dashboard() {
           }
         }
         setVersionDrifts(drifts);
+
+        // Flattened per-app health, across every cluster — feeds the
+        // Applications card's segmented visualization. This is the only
+        // per-app (not just aggregate-count) health source this page has.
+        const entries: AppHealthEntry[] = [];
+        for (const row of matrixData.addons) {
+          for (const [clusterName, cell] of Object.entries(row.cells || {})) {
+            if (!cell) continue;
+            entries.push({
+              key: `${row.addon_name}@${clusterName}`,
+              label: `${row.addon_name} on ${clusterName}`,
+              health: cell.health || 'Unknown',
+            });
+          }
+        }
+        setAppHealthEntries(entries);
+      } else {
+        setVersionDrifts([]);
+        setAppHealthEntries([]);
       }
 
-      // Detect ArgoCD unreachable
-      const typedClustersCheck = clustersData as ClustersResponse | null
-      if (typedClustersCheck?.clusters && typedClustersCheck.clusters.length > 0) {
-        const allFailed = typedClustersCheck.clusters.every(
-          (c) => !c.connection_status || c.connection_status === 'Failed' || c.connection_status === 'unknown'
-        );
-        setArgoCDUnreachable(allFailed);
-      }
+      // ArgoCD unreachable: the ONLY honest signal is the getClusters()
+      // fetch itself failing (caught to null above) — NOT a heuristic over
+      // connection_status values. The old check looked for a lowercase
+      // 'unknown' the server never sends, AND its logic was backwards:
+      // every cluster reading Failed actually PROVES ArgoCD is reachable
+      // (it answered with a real status), not the opposite.
+      const typedClusters = clustersData as ClustersResponse | null;
+      setArgoCDUnreachable(typedClusters === null);
 
-      // Build cluster cards
-      const typedClusters = clustersData as ClustersResponse | null
-      if (typedClusters?.clusters && matrixData?.addons) {
-        // A cluster with an open (not yet merged) registration PR must NOT
-        // appear in the "Clusters Needing Attention" panel — it's mid-
-        // lifecycle, not broken. The BE strips pending names from the
-        // `not_in_git` lane; defending in depth here against transient
-        // races.
+      // Cluster attention rows — failed/missing only, built from the
+      // per-cluster /clusters list (the aggregate /dashboard/stats has
+      // counts but not names/links). A cluster with an open (not yet
+      // merged) registration PR is excluded — it's mid-lifecycle, not
+      // broken.
+      if (typedClusters?.clusters) {
         const pendingNames = new Set(
-          (typedClusters.pending_registrations ?? []).map(p => p.cluster_name)
-        )
-        const cards = typedClusters.clusters
-          .filter(c => !pendingNames.has(c.name))
-          .map(c => {
-            const addons: { name: string; health: string }[] = []
-            let healthy = 0
-            let total = 0
-            for (const row of matrixData.addons) {
-              const cell = row.cells?.[c.name]
-              if (cell) {
-                total++
-                const health = cell.health || 'Unknown'
-                if (health === 'Healthy') healthy++
-                addons.push({ name: row.addon_name, health })
-              }
-            }
-            return { name: c.name, connectionStatus: c.connection_status || 'Unknown', addons, healthy, total }
-          })
-        // A freshly-registered cluster sits in a pending connection state
-        // for ~10-60s (until ArgoCD's cluster-info refresher produces a
-        // probe result) — that's a normal part of the registration
-        // lifecycle, not an issue. Surface a cluster in "Needs Attention"
-        // per the LW-1 locked rule:
-        // 1. connection_status == Failed → needs attention
-        // 2. connection_status == Unknown AND total > 0 → needs attention
-        //    (ArgoCD manages addons but can't report status)
-        // 3. connection_status == Connected but healthy == 0 AND total > 0
-        //    → needs attention (all addons down = weak cluster-wide signal)
-        // 4. Otherwise NOT needs attention (addon health ≠ cluster health)
-        const problemClusters = cards.filter(c => {
-          const kind = classifyClusterConnection(c.connectionStatus)
-          // Failed/missing (covered by isClusterNeedsAttention)
-          if (isClusterNeedsAttention(c.connectionStatus)) return true
-          // Unknown with addons deployed
-          if (kind === 'pending' && c.total > 0) return true
-          // Connected but ALL addons unhealthy (0 of N)
-          if (kind === 'connected' && c.total > 0 && c.healthy === 0) return true
-          return false
-        })
-        setClusters(problemClusters)
+          (typedClusters.pending_registrations ?? []).map((p) => p.cluster_name),
+        );
+        setClusters(
+          typedClusters.clusters
+            .filter((c) => !pendingNames.has(c.name) && isClusterNeedsAttention(c.connection_status))
+            .map((c) => ({ name: c.name, connectionStatus: c.connection_status || 'Unknown' })),
+        );
+      } else {
+        setClusters([]);
       }
     } catch (e: unknown) {
       if (!background) {
@@ -290,8 +390,9 @@ export function Dashboard() {
     } finally {
       setLoading(false);
       setIsRefreshing(false);
+      setLastChecked(Date.now());
     }
-  }, []);
+  }, [refreshAddonStates]);
 
   const handleRefresh = useCallback(() => {
     void fetchData(true);
@@ -319,23 +420,121 @@ export function Dashboard() {
   if (error) return <ErrorState message={error} onRetry={fetchData} />;
   if (!stats) return null;
 
-  const degradedCount = stats.applications.by_health_status.degraded;
-  const disconnectedCount = stats.clusters.disconnected_from_argocd;
-  const hasIssues = degradedCount > 0 || disconnectedCount > 0;
-
-  // Top deployed addons (from stats — we can derive from total_deployments vs enabled)
+  // Top deployed addons (from stats)
   const appTotal = stats.applications.total;
   const healthyCount = stats.applications.by_health_status.healthy;
 
-  // Split attention items into "real issues" vs "progressing-advisory"
-  // using the unified state model. Pure-Progressing apps get their own
-  // subtle widget with a "usually temporary" advisory; they don't appear
-  // in the red "Apps with issues" widget.
+  // Split addon states into: confirmed problems (red), settling problems
+  // (amber, degraded/missing but inside the settling window), apps ArgoCD
+  // isn't reporting on (amber, never red — a Suspended or Unknown health
+  // status is not a failure), and Progressing (its own calm blue widget,
+  // never counted here at all).
   const allAddonStates = Array.from(addonStateMap.values());
-  const issuesItems = allAddonStates.filter(
-    (s) => s.displayState === 'degraded' || s.displayState === 'missing' || s.displayState === 'unknown',
+  const badAddonStates = allAddonStates.filter(
+    (s) => s.displayState === 'degraded' || s.displayState === 'missing',
   );
+  const confirmedAddonItems = badAddonStates.filter((s) => !isSettling(s));
+  const settlingAddonItems = badAddonStates.filter((s) => isSettling(s));
+  const unknownAddonItems = allAddonStates.filter((s) => s.displayState === 'unknown');
   const progressingItems = allAddonStates.filter((s) => s.displayState === 'progressing-advisory');
+
+  const addonLink = (item: { addonName: string; cluster: string }) =>
+    item.cluster ? deepLinkToAddonOnCluster(item.addonName, item.cluster) : `/addons/${encodeURIComponent(item.addonName)}`;
+
+  const confirmedAddonRows: AttentionRow[] = confirmedAddonItems.map((item) => ({
+    key: `addon-${item.addonName}@${item.cluster}`,
+    severity: 'problem',
+    title: item.appName || item.addonName,
+    reason: item.advisoryMessage
+      ? `${item.errorType ? item.errorType + ': ' : ''}${item.advisoryMessage}`
+      : `Health: ${item.healthStatus}${item.cluster ? ` on ${item.cluster}` : ''}`,
+    link: addonLink(item),
+    badge: item.healthStatus,
+  }));
+
+  const settlingAddonRows: AttentionRow[] = settlingAddonItems.map((item) => ({
+    key: `settling-${item.addonName}@${item.cluster}`,
+    severity: 'attention',
+    title: item.appName || item.addonName,
+    reason: `Settling — degraded for ${minutesAgo(item.badSince ?? Date.now())}m. Given a grace window before counting as a confirmed problem.`,
+    link: addonLink(item),
+    badge: item.healthStatus,
+  }));
+
+  const unknownAddonRows: AttentionRow[] = unknownAddonItems.map((item) => ({
+    key: `unknown-${item.addonName}@${item.cluster}`,
+    severity: 'attention',
+    title: item.appName || item.addonName,
+    reason: `ArgoCD is not reporting a health status for this app${item.cluster ? ` on ${item.cluster}` : ''}.`,
+    link: addonLink(item),
+    badge: item.healthStatus,
+  }));
+
+  // Cluster problem rows — failed/missing only, reason text straight from
+  // clusterStatus.ts (the single source of truth for this vocabulary).
+  const clusterAttentionRows: AttentionRow[] = clusters.map((c) => ({
+    key: `cluster-${c.name}`,
+    severity: 'problem',
+    title: c.name,
+    reason: getClusterConnectionState(c.connectionStatus).meaning,
+    link: `/clusters/${encodeURIComponent(c.name)}`,
+  }));
+
+  const driftRows: AttentionRow[] = versionDrifts.map((d) => ({
+    key: `drift-${d.addon}`,
+    severity: 'attention',
+    title: d.addon,
+    reason: `Different versions deployed across ${d.count} cluster${d.count !== 1 ? 's' : ''}.`,
+    link: `/addons/${encodeURIComponent(d.addon)}`,
+  }));
+
+  // The Dashboard's own "how many clusters are actually disconnected"
+  // number comes from the server's single classification (Package 1),
+  // not a browser-side re-derivation — every surface on this page that
+  // states the COUNT reads stats.clusters. The named clusterAttentionRows
+  // above exist only because the aggregate endpoint has no per-cluster
+  // names/links to give the expanded list; in the ordinary case both
+  // describe the same clusters.
+  const clusterProblemCount = stats.clusters.failed + stats.clusters.missing;
+  const redAppCount = confirmedAddonRows.length;
+  const settlingCount = settlingAddonRows.length;
+  const unknownCount = unknownAddonRows.length;
+  const driftCount = driftRows.length;
+  const hasIssues = clusterProblemCount > 0 || redAppCount > 0 || settlingCount > 0 || unknownCount > 0 || driftCount > 0;
+
+  // Neutral (non-alarm) cluster notes — untested/pending are facts worth
+  // knowing, not problems. Shown either way (alarm or all-fine).
+  const neutralClusterNotes: string[] = [];
+  if (stats.clusters.untested > 0) {
+    neutralClusterNotes.push(
+      `${stats.clusters.untested} cluster${stats.clusters.untested !== 1 ? 's' : ''} waiting for ${stats.clusters.untested !== 1 ? 'their' : 'its'} first addon`,
+    );
+  }
+  if (stats.clusters.pending > 0) {
+    neutralClusterNotes.push(
+      `${stats.clusters.pending} cluster${stats.clusters.pending !== 1 ? 's' : ''} connecting`,
+    );
+  }
+
+  // Total Clusters stat card subtitle — same classification, informational
+  // text only (Package 2: stat cards are permanently neutral, no color).
+  let clusterSubtitle: string | undefined;
+  if (clusterProblemCount > 0) {
+    clusterSubtitle = `${clusterProblemCount} disconnected`;
+  } else if (stats.clusters.untested > 0) {
+    clusterSubtitle = `${stats.clusters.untested} waiting for first addon`;
+  } else if (stats.clusters.pending > 0) {
+    clusterSubtitle = `${stats.clusters.pending} connecting`;
+  }
+
+  // Applications health-bucket fallback (used above 10 apps, see
+  // ApplicationsHealthCard).
+  const healthBuckets: HealthBuckets = {
+    healthy: stats.applications.by_health_status.healthy,
+    progressing: stats.applications.by_health_status.progressing,
+    degraded: stats.applications.by_health_status.degraded,
+    unknown: stats.applications.by_health_status.unknown,
+  };
 
   // V2-cleanup-61.3 (B1): a fresh install with nothing registered used to
   // show green "All systems operational" + "0/0 healthy" — a false-positive
@@ -437,8 +636,10 @@ export function Dashboard() {
         />
       )}
 
-      {/* Needs Attention */}
-      {hasIssues || issuesItems.length > 0 ? (
+      {/* Needs Attention — the ONE surface allowed red/amber on this page
+          (dashboard UX review 2026-08-01). Every problem appears once,
+          with a name, a plain reason, and a deep link. */}
+      {hasIssues ? (
         <div className="rounded-xl border-2 border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-900/20">
           <div className="flex items-center justify-between p-5 pb-3">
             <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
@@ -446,78 +647,108 @@ export function Dashboard() {
               <h3 className="text-sm font-semibold">Needs Attention</h3>
             </div>
             <div className="flex flex-wrap gap-2">
-              {issuesItems.length > 0 && (
+              {redAppCount > 0 && (
                 <button onClick={() => setShowAttention(!showAttention)}
                   aria-expanded={showAttention}
                   className="flex items-center gap-2 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400">
                   <div className="h-2 w-2 rounded-full bg-red-500" />
-                  {issuesItems.length} app{issuesItems.length !== 1 ? 's' : ''} with issues
+                  {redAppCount} app{redAppCount !== 1 ? 's' : ''} with issues
                   <ChevronRight className={`h-3 w-3 transition-transform ${showAttention ? 'rotate-90' : ''}`} />
                 </button>
               )}
-              {disconnectedCount > 0 && (
-                <button onClick={() => navigate('/clusters?status=disconnected')}
+              {clusterProblemCount > 0 && (
+                <button onClick={() => setShowAttention(!showAttention)}
+                  aria-expanded={showAttention}
                   className="flex items-center gap-2 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400">
                   <div className="h-2 w-2 rounded-full bg-red-500" />
-                  {disconnectedCount} disconnected cluster{disconnectedCount !== 1 ? 's' : ''}
+                  {clusterProblemCount} disconnected cluster{clusterProblemCount !== 1 ? 's' : ''}
+                  <ChevronRight className={`h-3 w-3 transition-transform ${showAttention ? 'rotate-90' : ''}`} />
                 </button>
               )}
-              {versionDrifts.length > 0 && (
-                <button onClick={() => navigate('/version-matrix?drift=true')}
+              {settlingCount > 0 && (
+                <button onClick={() => setShowAttention(!showAttention)}
+                  aria-expanded={showAttention}
+                  className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400">
+                  <div className="h-2 w-2 rounded-full bg-amber-500" />
+                  {settlingCount} settling
+                </button>
+              )}
+              {unknownCount > 0 && (
+                <button onClick={() => setShowAttention(!showAttention)}
+                  aria-expanded={showAttention}
+                  className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400">
+                  <div className="h-2 w-2 rounded-full bg-amber-500" />
+                  {unknownCount} app{unknownCount !== 1 ? 's' : ''} not reporting
+                </button>
+              )}
+              {driftCount > 0 && (
+                <button onClick={() => setShowAttention(!showAttention)}
+                  aria-expanded={showAttention}
                   className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400">
                   <div className="h-2 w-2 rounded-full bg-amber-500" />
-                  {versionDrifts.length} addon{versionDrifts.length !== 1 ? 's' : ''} with drift
+                  {driftCount} addon{driftCount !== 1 ? 's' : ''} with drift
                 </button>
               )}
             </div>
           </div>
-          {/* Expandable detail panel — addon names route to
-              /clusters/<cluster>?section=addons&addon=<name> for quick
-              debug + AI-assisted investigation. */}
-          {showAttention && issuesItems.length > 0 && (
-            <div className="border-t border-amber-200 p-4 dark:border-amber-700">
-              <div className="max-h-64 overflow-y-auto space-y-1.5">
-                {issuesItems.map((item, i) => (
-                  <div key={`${item.addonName}@${item.cluster}-${i}`} className="flex items-start gap-3 rounded-lg bg-[#f0f7ff] px-3 py-2 text-xs dark:bg-gray-800">
-                    <div className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${
-                      item.displayState === 'degraded' ? 'bg-red-500'
-                        : item.displayState === 'missing' ? 'bg-red-400'
-                          : 'bg-amber-500'
-                    }`} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Link
-                          to={item.cluster ? deepLinkToAddonOnCluster(item.addonName, item.cluster) : `/addons/${encodeURIComponent(item.addonName)}`}
-                          className="font-medium text-[#0a2a4a] hover:text-teal-600 hover:underline dark:text-gray-100 dark:hover:text-teal-400"
-                          title="Open addon-on-cluster page for investigation"
-                        >
-                          {item.appName || item.addonName}
-                        </Link>
-                        <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${
-                          item.displayState === 'degraded' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                            : item.displayState === 'missing' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
-                              : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                        }`}>{item.healthStatus}</span>
-                        {item.cluster && <span className="text-[#3a6a8a]">on {item.cluster}</span>}
-                      </div>
-                      {item.advisoryMessage && (
-                        <p className="mt-1 truncate text-[#2a5a7a] dark:text-gray-400" title={item.advisoryMessage}>
-                          {item.errorType && <span className="font-medium text-red-600 dark:text-red-400">{item.errorType}: </span>}
-                          {item.advisoryMessage.length > 120 ? item.advisoryMessage.slice(0, 120) + '...' : item.advisoryMessage}
-                        </p>
-                      )}
-                    </div>
+          {/* Expanded detail — cluster/addon names route to their own
+              detail pages for quick debug + AI-assisted investigation. */}
+          {showAttention && (
+            <div className="border-t border-amber-200 p-4 dark:border-amber-700 space-y-4">
+              {clusterAttentionRows.length > 0 && (
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">Clusters</h4>
+                    <button onClick={() => navigate('/clusters?status=disconnected')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
+                      View in Clusters
+                    </button>
                   </div>
-                ))}
-              </div>
+                  <div className="space-y-1.5">
+                    {clusterAttentionRows.map((row) => (
+                      <AttentionRowView key={row.key} row={row} />
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(confirmedAddonRows.length > 0 || settlingAddonRows.length > 0 || unknownAddonRows.length > 0) && (
+                <div>
+                  <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">Apps</h4>
+                  <div className="max-h-64 overflow-y-auto space-y-1.5">
+                    {[...confirmedAddonRows, ...settlingAddonRows, ...unknownAddonRows].map((row) => (
+                      <AttentionRowView key={row.key} row={row} />
+                    ))}
+                  </div>
+                </div>
+              )}
+              {driftRows.length > 0 && (
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">Version drift</h4>
+                    <button onClick={() => navigate('/version-matrix?drift=true')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
+                      View matrix
+                    </button>
+                  </div>
+                  <div className="space-y-1.5">
+                    {driftRows.map((row) => (
+                      <AttentionRowView key={row.key} row={row} />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
       ) : (
-        <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 px-5 py-4 dark:border-green-800 dark:bg-green-900/20">
-          <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
+        <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 px-5 py-3 dark:border-green-800 dark:bg-green-900/20">
+          <div className="h-2 w-2 shrink-0 rounded-full bg-green-500" />
           <span className="text-sm font-medium text-green-700 dark:text-green-400">All systems operational</span>
+          <span className="text-xs text-green-600/80 dark:text-green-400/70">
+            · last checked {lastChecked ? timeAgoMs(lastChecked) : 'just now'}
+          </span>
         </div>
+      )}
+      {neutralClusterNotes.length > 0 && (
+        <p className="px-1 text-xs text-[#5a8aaa] dark:text-gray-500">{neutralClusterNotes.join(' · ')}</p>
       )}
 
       {/* Progressing widget — apps can still be healthy while progressing;
@@ -569,24 +800,32 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {/* Stats Cards — permanently neutral (inventory + navigation only;
+          color is reserved for the Needs Attention surface above). */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard
           title="Total Clusters"
           value={stats.clusters.total}
           icon={<Server className="h-6 w-6" />}
-          color={disconnectedCount > 0 ? 'error' : 'default'}
-          subtitle={disconnectedCount > 0 ? `${disconnectedCount} disconnected` : undefined}
-          onClick={() => navigate(disconnectedCount > 0 ? '/clusters?status=disconnected' : '/clusters')}
+          color="default"
+          subtitle={clusterSubtitle}
+          onClick={() => navigate(clusterProblemCount > 0 ? '/clusters?status=disconnected' : '/clusters')}
         />
-        <StatCard title="Applications" value={`${healthyCount}/${appTotal} healthy`} icon={<AppWindow className="h-6 w-6" />}
-          color={degradedCount > 0 ? 'error' : 'success'} onClick={() => navigate('/addons')} />
-        <StatCard title="Available Addons" value={stats.addons.total_available} icon={<Package className="h-6 w-6" />}
-          color="default" onClick={() => navigate('/addons')} />
-        {/* Neutral count, not a warning — amber is reserved for states that
-            need attention (V2-cleanup-61.2, D3). */}
-        <StatCard title="Active Deployments" value={`${stats.addons.enabled_deployments}/${stats.addons.total_deployments}`}
-          icon={<Rocket className="h-6 w-6" />} color="default" onClick={() => navigate('/version-matrix')} />
+        <ApplicationsHealthCard
+          healthy={healthyCount}
+          total={appTotal}
+          entries={appHealthEntries}
+          buckets={healthBuckets}
+          onClick={() => navigate('/addons')}
+        />
+        <StatCard
+          title="Active Deployments"
+          value={stats.addons.enabled_deployments}
+          icon={<Rocket className="h-6 w-6" />}
+          color="default"
+          subtitle="as configured in Git"
+          onClick={() => navigate('/version-matrix')}
+        />
       </div>
 
       {/* Sharko's Home Cluster Card */}
@@ -638,48 +877,14 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* Cluster Cards — problem clusters only */}
-      {clusters.length > 0 && (
-        <div>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Clusters Needing Attention</h2>
-            <button
-              onClick={() => navigate('/clusters?status=issues')}
-              className="text-sm text-teal-600 hover:text-teal-700 dark:text-teal-400"
-            >
-              View all {clusters.length} cluster{clusters.length !== 1 ? 's' : ''} with issues
-            </button>
-          </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {clusters.slice(0, 5).map((cluster) => (
-              <ClusterCard
-                key={cluster.name}
-                name={cluster.name}
-                connectionStatus={cluster.connectionStatus}
-                healthyCount={cluster.healthy}
-                totalCount={cluster.total}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Health Bars */}
-      <HealthBar title="Application Health" subtitle="Operational health of deployed applications"
-        segments={[
-          { label: 'Healthy', value: stats.applications.by_health_status.healthy, color: '#22c55e' },
-          { label: 'Progressing', value: stats.applications.by_health_status.progressing, color: '#3b82f6' },
-          { label: 'Degraded', value: stats.applications.by_health_status.degraded, color: '#ef4444' },
-          { label: 'Unknown', value: stats.applications.by_health_status.unknown, color: '#9ca3af' },
-        ]} />
-
       {/* Pull Requests — Pending/Merged toggle. */}
       <PullRequestsPanel onMergeDetected={handlePRMerged} />
 
-      {/* Drift Alerts */}
+      {/* GitOps corrections (audit-derived orphan/drift cleanup — distinct
+          from the addon version-drift rows in Needs Attention above). */}
       <DriftAlertsPanel />
 
-      {/* Bottom row: Quick Actions + Recent Activity + Version Drift */}
+      {/* Bottom row: Quick Actions + Recent Activity + Available Addons */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Quick Actions */}
         <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
@@ -733,33 +938,24 @@ export function Dashboard() {
           )}
         </div>
 
-        {/* Version Drift */}
+        {/* Available Addons — catalog inventory, demoted out of the front
+            stat row (dashboard UX review 2026-08-01: it's a count of what
+            the org approved, not a live health signal, so it doesn't
+            belong next to Clusters/Applications/Deployments). */}
         <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Version Drift</h3>
-            <button onClick={() => navigate('/version-matrix')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
-              View matrix
+            <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Available Addons</h3>
+            <button onClick={() => navigate('/addons')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
+              Browse
             </button>
           </div>
-          {versionDrifts.length === 0 ? (
-            <div className="flex items-center gap-2 py-4 text-center text-sm text-green-600 dark:text-green-400">
-              <CheckCircle2 className="mx-auto h-4 w-4" />
-              <span>No version drift detected</span>
+          <div className="flex items-center gap-3">
+            <Package className="h-8 w-8 shrink-0 text-[#3a6a8a] dark:text-gray-500" />
+            <div>
+              <div className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{stats.addons.total_available}</div>
+              <div className="text-xs text-[#5a8aaa] dark:text-gray-500">approved in the catalog</div>
             </div>
-          ) : (
-            <div className="space-y-2">
-              {versionDrifts.slice(0, 5).map((d) => (
-                <div key={d.addon}
-                  onClick={() => navigate(`/addons/${d.addon}`)}
-                  className="flex cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-xs transition-colors hover:bg-[#d6eeff] dark:hover:bg-gray-700">
-                  <span className="font-medium text-[#0a3a5a] dark:text-gray-300">{d.addon}</span>
-                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                    {d.count} cluster{d.count !== 1 ? 's' : ''}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+          </div>
         </div>
       </div>
     </div>

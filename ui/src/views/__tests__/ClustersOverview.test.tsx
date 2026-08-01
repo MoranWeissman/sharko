@@ -330,16 +330,16 @@ describe('ClustersOverview', () => {
     }
   });
 
-  // BUG-040: the Dashboard's "N disconnected cluster(s)" link navigates to
-  // /clusters?status=disconnected. The Clusters page MUST resolve that
-  // deep-link to the same set of clusters the headline count covers — any
-  // managed cluster that ArgoCD is not currently reporting as "Successful"
-  // / "Connected" (failed + missing + unknown). Previously this routed to
-  // a 'failed' filter which showed 0 rows whenever the disconnected
-  // cluster's status was actually `missing` (not yet bootstrapped) or
-  // `unknown` (ArgoCD has no record yet). That mismatch read as "count
-  // says 1, list shows 0" which is the user-facing symptom of BUG-040.
-  it('?status=disconnected filter resolves to all non-connected managed clusters (BUG-040)', async () => {
+  // BUG-040 (redefined by the dashboard UX review 2026-08-01, blocker B1):
+  // the Dashboard's "N disconnected cluster(s)" link navigates to
+  // /clusters?status=disconnected. The Clusters page resolves that
+  // deep-link to failed + missing ONLY now — a cluster ArgoCD simply
+  // hasn't probed yet ("unknown"/pending) is neutral, not a problem, so it
+  // no longer counts as "disconnected" here either (that used to conflate
+  // "definitely broken" with "just registered, give it a minute" under one
+  // red bucket). Originally this test asserted `unknown-cluster` also
+  // showed up under this filter; it now explicitly must NOT.
+  it('?status=disconnected filter resolves to failed + missing managed clusters only (BUG-040)', async () => {
     const mixedDisconnected = {
       clusters: [
         {
@@ -394,18 +394,20 @@ describe('ClustersOverview', () => {
       </MemoryRouter>,
     );
 
-    // Wait for the row of any of the 3 disconnected clusters to show.
+    // Wait for the row of any of the disconnected (failed/missing) clusters
+    // to show.
     await waitFor(() => {
       expect(screen.getByText('failing-cluster')).toBeInTheDocument();
     });
 
-    // All 3 disconnected managed clusters must appear under the deep-link.
+    // failed + missing managed clusters appear under the deep-link.
     expect(screen.getByText('failing-cluster')).toBeInTheDocument();
     expect(screen.getByText('missing-cluster')).toBeInTheDocument();
-    expect(screen.getByText('unknown-cluster')).toBeInTheDocument();
 
-    // Connected and discovered/unmanaged clusters must NOT appear.
+    // Connected, pending/unknown (neutral, not a problem), and
+    // discovered/unmanaged clusters must NOT appear.
     expect(screen.queryByText('prod-eu')).not.toBeInTheDocument();
+    expect(screen.queryByText('unknown-cluster')).not.toBeInTheDocument();
     expect(screen.queryByText('discovered-cluster')).not.toBeInTheDocument();
   });
 

@@ -20,11 +20,16 @@
  *                              the addon-on-cluster page for investigation.
  *                              Treated as "operational" for dashboard
  *                              "apps with issues" counters.
- *   • 'degraded'             → Argo says Degraded / Suspended / Error.
- *                              Real failure. Red.
+ *   • 'degraded'             → Argo says Degraded / Error. Real failure. Red.
  *   • 'missing'              → Application missing in ArgoCD. Red.
- *   • 'unknown'              → ArgoCD can't determine state. Red (unsafe
- *                              default — invites the operator to look).
+ *   • 'unknown'              → ArgoCD can't determine state, OR the app is
+ *                              Suspended (an intentional pause, not a
+ *                              failure — Argo's own precedent). Amber/grey,
+ *                              NOT counted as a red problem (dashboard UX
+ *                              review 2026-08-01, finding M: Unknown used to
+ *                              read as a hard failure; Suspended used to be
+ *                              folded into 'degraded', which is harsher than
+ *                              ArgoCD treats it).
  */
 import {
   createContext,
@@ -62,6 +67,38 @@ export interface AddonState {
   errorType?: string
   /** Last time this state was observed by the cache. */
   lastSeen: number
+  /**
+   * Epoch ms when this app MOST RECENTLY entered a bad state (displayState
+   * 'degraded' or 'missing'), tracked client-side so the dashboard can give
+   * a freshly-broken app a settling window instead of screaming red the
+   * instant it tips over (dashboard UX review 2026-08-01, finding H6).
+   * undefined when the app is not currently in a bad state. Recovering
+   * (leaving degraded/missing, including disappearing from the attention
+   * feed entirely because it went Healthy) resets the clock — the NEXT
+   * time it goes bad, the window starts over.
+   *
+   * Honesty note: this clock lives only in memory in the browser tab. A
+   * page reload restarts it, so a genuinely-been-broken-for-an-hour app
+   * can briefly re-show as "settling" right after a reload. Accepted
+   * trade-off — see isSettling() below.
+   */
+  badSince?: number
+}
+
+/** How long a degraded/missing app gets the benefit of the doubt before it
+ * counts as a confirmed (red) problem instead of an amber "settling" one. */
+export const SETTLING_WINDOW_MS = 10 * 60 * 1000
+
+/**
+ * isSettling — true when `state` is currently in a bad state (degraded/
+ * missing) AND it entered that state less than SETTLING_WINDOW_MS ago.
+ * false for anything else, including apps with no badSince (never bad, or
+ * currently healthy/progressing/unknown).
+ */
+export function isSettling(state: AddonState, nowMs: number = Date.now()): boolean {
+  if (state.badSince === undefined) return false
+  if (state.displayState !== 'degraded' && state.displayState !== 'missing') return false
+  return nowMs - state.badSince < SETTLING_WINDOW_MS
 }
 
 export interface AddonStatesContextValue {
@@ -102,8 +139,11 @@ export function mapHealthToDisplayState(
   }
   if (h === 'progressing') return 'progressing-advisory'
   if (h === 'missing') return 'missing'
-  if (h === 'degraded' || h === 'suspended' || h === 'error') return 'degraded'
-  if (h === 'unknown' || h === '') return 'unknown'
+  if (h === 'degraded' || h === 'error') return 'degraded'
+  // Suspended is an intentional pause (ArgoCD's own precedent), not a
+  // failure — it used to fold into 'degraded' (red), which was harsher
+  // than ArgoCD itself treats it. Same neutral bucket as Unknown.
+  if (h === 'unknown' || h === '' || h === 'suspended') return 'unknown'
   return 'unknown'
 }
 
@@ -139,6 +179,11 @@ export function AddonStatesProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const [lastFetched, setLastFetched] = useState<number | null>(null)
   const refreshRef = useRef<number>(0)
+  // First-seen-in-bad-state clock, keyed by `<addon>@<cluster>`. A plain
+  // ref (not state) — it's read-modify-write bookkeeping, not something
+  // that should trigger its own re-render. In-memory only; see the
+  // honesty note on AddonState.badSince.
+  const badSinceRef = useRef<Map<string, number>>(new Map())
 
   const fetchAttention = useCallback(async () => {
     try {
@@ -150,9 +195,20 @@ export function AddonStatesProvider({ children }: { children: ReactNode }) {
       const now = Date.now()
       const nextByApp = new Map<string, AddonState>()
       const nextByAddon = new Map<string, AddonState>()
+      const currentBadKeys = new Set<string>()
 
       for (const item of items || []) {
         const display = mapHealthToDisplayState(item.health, item.sync)
+        const appKey = `${item.addon_name}@${item.cluster}`
+
+        let badSince: number | undefined
+        if (display === 'degraded' || display === 'missing') {
+          currentBadKeys.add(appKey)
+          const existing = badSinceRef.current.get(appKey)
+          badSince = existing ?? now
+          badSinceRef.current.set(appKey, badSince)
+        }
+
         const state: AddonState = {
           appName: item.app_name,
           addonName: item.addon_name,
@@ -163,22 +219,29 @@ export function AddonStatesProvider({ children }: { children: ReactNode }) {
           advisoryMessage: item.error || undefined,
           errorType: item.error_type || undefined,
           lastSeen: now,
+          badSince,
         }
 
-        const appKey = `${item.addon_name}@${item.cluster}`
         nextByApp.set(appKey, state)
 
         // Roll-up per addon — keep the worst state observed.
-        const existing = nextByAddon.get(item.addon_name)
-        if (!existing) {
+        const existingRollup = nextByAddon.get(item.addon_name)
+        if (!existingRollup) {
           nextByAddon.set(item.addon_name, state)
         } else {
-          const worse = worseState(existing.displayState, display)
+          const worse = worseState(existingRollup.displayState, display)
           nextByAddon.set(
             item.addon_name,
-            worse === existing.displayState ? existing : state,
+            worse === existingRollup.displayState ? existingRollup : state,
           )
         }
+      }
+
+      // Recovered apps (no longer bad — including ones that dropped off
+      // the attention feed entirely because they went Healthy) reset the
+      // clock, so the NEXT time they go bad the settling window restarts.
+      for (const key of badSinceRef.current.keys()) {
+        if (!currentBadKeys.has(key)) badSinceRef.current.delete(key)
       }
 
       setByApp(nextByApp)

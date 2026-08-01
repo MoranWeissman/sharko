@@ -26,6 +26,13 @@ type gitDerivedDashboardStats struct {
 	validAddonApps     map[string]bool
 	totalAvailable     int
 	enabledDeployments int
+	// enabledCountByCluster is the enabled-addon count per cluster name —
+	// needed to tell an "untested" cluster (Unknown/"" ArgoCD state, zero
+	// enabled addons — nothing for ArgoCD to probe, ever) apart from a
+	// "pending" one (same ArgoCD state, but addons ARE enabled, so a probe
+	// result is genuinely on the way). Dashboard UX review 2026-08-01,
+	// blocker B1.
+	enabledCountByCluster map[string]int
 }
 
 // DashboardService handles dashboard-related operations.
@@ -125,8 +132,9 @@ func (s *DashboardService) gitStatsV3(ctx context.Context, gp gitprovider.GitPro
 	}
 
 	out := gitDerivedDashboardStats{
-		validAddonApps: make(map[string]bool),
-		totalAvailable: len(repoCfg.Addons),
+		validAddonApps:        make(map[string]bool),
+		totalAvailable:        len(repoCfg.Addons),
+		enabledCountByCluster: make(map[string]int),
 	}
 	for _, c := range repoCfg.Clusters {
 		out.clusterNames = append(out.clusterNames, c.Name)
@@ -136,6 +144,7 @@ func (s *DashboardService) gitStatsV3(ctx context.Context, gp gitprovider.GitPro
 			if cluster.Labels[addon.Name] == "enabled" {
 				out.validAddonApps[addon.Name+"-"+cluster.Name] = true
 				out.enabledDeployments++
+				out.enabledCountByCluster[cluster.Name]++
 			}
 		}
 	}
@@ -151,7 +160,10 @@ func (s *DashboardService) gitStatsV3(ctx context.Context, gp gitprovider.GitPro
 // every file: a fresh v4 repo with no clusters and nothing approved yet
 // degrades to zeroed stats rather than a 500.
 func (s *DashboardService) gitStatsV4(ctx context.Context, gp gitprovider.GitProvider) (gitDerivedDashboardStats, error) {
-	out := gitDerivedDashboardStats{validAddonApps: make(map[string]bool)}
+	out := gitDerivedDashboardStats{
+		validAddonApps:        make(map[string]bool),
+		enabledCountByCluster: make(map[string]int),
+	}
 
 	connData, err := gp.GetFileContent(ctx, orchestrator.V4ManagedClustersPath, s.branch())
 	if err != nil {
@@ -198,6 +210,7 @@ func (s *DashboardService) gitStatsV4(ctx context.Context, gp gitprovider.GitPro
 			if addon.Enabled {
 				out.validAddonApps[addonName+"-"+clusterName] = true
 				out.enabledDeployments++
+				out.enabledCountByCluster[clusterName]++
 			}
 		}
 	}
@@ -232,24 +245,50 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 		return nil, err
 	}
 
-	// Cluster stats from ArgoCD
+	// Cluster stats from ArgoCD — five-state breakdown (connected/pending/
+	// untested/missing/failed), the SAME vocabulary as
+	// ui/src/lib/clusterStatus.ts's classifyClusterConnection(). This is the
+	// single place the "Successful"/"Connected" string mapping lives
+	// server-side (dashboard UX review 2026-08-01, blocker B1 + the
+	// "server vs clusterStatus.ts:127" alignment note): the server now
+	// accepts both spellings just like the UI classifier does, instead of
+	// only "Successful".
 	argocdClusters, err := ac.ListClusters(ctx)
 	clusterStats := models.DashboardClusterStats{
 		Total: len(gitStats.clusterNames),
 	}
 	if err == nil {
-		argocdMap := make(map[string]bool)
+		// ArgoCD's cluster-list API only returns an entry for a cluster
+		// that HAS a cluster secret registered — a Git-registered cluster
+		// with no ArgoCD secret at all produces no entry, mirroring
+		// ClusterService.ListClusters's "missing" bucket (internal/service/
+		// cluster.go).
+		argocdMap := make(map[string]models.ArgocdCluster, len(argocdClusters))
 		for _, c := range argocdClusters {
-			if c.ConnectionState == "Successful" {
-				argocdMap[c.Name] = true
-			}
+			argocdMap[c.Name] = c
 		}
 		for _, name := range gitStats.clusterNames {
-			if argocdMap[name] {
-				clusterStats.ConnectedToArgocd++
+			entry, ok := argocdMap[name]
+			if !ok {
+				clusterStats.Missing++
+				continue
+			}
+			switch entry.ConnectionState {
+			case "Successful", "Connected":
+				clusterStats.Connected++
+			case "", "Unknown":
+				if gitStats.enabledCountByCluster[name] == 0 {
+					// Nothing enabled on this cluster — ArgoCD has
+					// nothing to probe and never will until an addon
+					// is turned on. Neutral "untested", not "pending".
+					clusterStats.Untested++
+				} else {
+					clusterStats.Pending++
+				}
+			default:
+				clusterStats.Failed++
 			}
 		}
-		clusterStats.DisconnectedFromArgocd = clusterStats.Total - clusterStats.ConnectedToArgocd
 	} else {
 		log.Warn("could not fetch argocd clusters for dashboard", "error", err)
 	}
@@ -289,12 +328,14 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 		log.Warn("could not fetch argocd applications for dashboard", "error", err)
 	}
 
-	// Addon stats — only count enabled deployments
+	// Addon stats — EnabledDeployments is a plain count of addons enabled
+	// on some cluster, as configured in Git. No fake "N/N" ratio (dashboard
+	// UX review 2026-08-01, finding H5: the old TotalDeployments field was
+	// always set equal to EnabledDeployments, so the card always read N/N).
 	addonStats := models.DashboardAddonStats{
 		TotalAvailable:     gitStats.totalAvailable,
 		EnabledDeployments: gitStats.enabledDeployments,
 	}
-	addonStats.TotalDeployments = addonStats.EnabledDeployments
 
 	// Bootstrap app health — the root ArgoCD application that drives all addon deployments.
 	// If unreachable, report "Unknown" rather than failing the whole dashboard request.
