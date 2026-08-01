@@ -126,6 +126,89 @@ func v4ClusterValuesPath(clusterName, addonName string) (string, error) {
 	return joinUnder(V4ClusterValuesDir, clusterName, addonName+".yaml")
 }
 
+// V4GlobalValuesPath is the exported form of v4GlobalValuesPath, for
+// API-layer callers (the AI annotate endpoints) that need the v4 commit
+// path before they have an *Orchestrator in hand. Same validation, same
+// error.
+func V4GlobalValuesPath(addonName string) (string, error) {
+	return v4GlobalValuesPath(addonName)
+}
+
+// ChartValuesFetchResult is what a ChartValuesFetcherFn returns: the
+// upstream chart values.yaml bytes, plus whatever AI annotation the
+// caller's wiring already ran on them. AddToCatalog itself makes no AI
+// call — the fetcher wiring (internal/api) is where the existing
+// AnnotateValues call site lives, exactly as it does for the v3 AddAddon
+// door; see catalog_org.go's wiring of this type for the reasoning.
+type ChartValuesFetchResult struct {
+	UpstreamValues            []byte
+	AIAnnotated               bool
+	ExtraClusterSpecificPaths []string
+}
+
+// ChartValuesFetcherFn resolves a chart's official values.yaml for a
+// catalog entry the moment its final chart+version are known.
+//
+// AddToCatalog calls this itself, AFTER buildCatalogEntry resolves the
+// entry — rather than the caller pre-fetching before the request reaches
+// the orchestrator — because a from_marketplace entry with no explicit
+// version only gets its final version from latestVersionFn partway
+// through AddToCatalog. Contrast with v3's AddAddon, which takes
+// already-fetched UpstreamValues because that door always requires the
+// version up front.
+//
+// Wired via SetChartValuesFetcher; nil means "no fetcher configured" —
+// AddToCatalog then falls back to the comment-only stub for every addon,
+// which is also why every orchestrator unit test (none of which wires a
+// fetcher) keeps exercising the pre-v4-smartvalues stub path unchanged.
+type ChartValuesFetcherFn func(ctx context.Context, addonName, repoURL, chart, version string) (ChartValuesFetchResult, error)
+
+// SetChartValuesFetcher wires in the upstream chart values.yaml fetcher
+// used by AddToCatalog's global-values scaffold (v4 smartvalues wave).
+// Optional — see the field/type doc comments for the nil behaviour.
+func (o *Orchestrator) SetChartValuesFetcher(fn ChartValuesFetcherFn) {
+	o.chartValuesFetcherFn = fn
+}
+
+// v4GenerateGlobalValues is AddToCatalog's replacement for the old
+// "always write the comment-only stub" step. It fetches the chart's
+// official values.yaml (when a fetcher is wired) and runs it through the
+// v4 smart-values pipeline; on any failure — no fetcher wired, the fetch
+// itself failing, an empty response — it falls back to the comment-only
+// stub. The add NEVER fails because of this: every return path here is a
+// valid comment-only-or-generated YAML document, never an error.
+func (o *Orchestrator) v4GenerateGlobalValues(ctx context.Context, addonName, repoURL, chart, version string) []byte {
+	if o.chartValuesFetcherFn == nil {
+		return globalValuesStub(addonName)
+	}
+	res, err := o.chartValuesFetcherFn(ctx, addonName, repoURL, chart, version)
+	if err != nil || len(res.UpstreamValues) == 0 {
+		return v4GlobalValuesFetchFailedStub(addonName, chart, version)
+	}
+	return GenerateGlobalValuesFileV4(
+		addonName, chart, version, repoURL, res.UpstreamValues,
+		res.AIAnnotated, false,
+		res.ExtraClusterSpecificPaths...,
+	)
+}
+
+// v4GlobalValuesFetchFailedStub is the honest fallback when the chart's
+// values.yaml could not be fetched (unreachable registry, missing
+// values.yaml, oversize, or simply no fetcher wired for this call). It is
+// the same comment-only stub as globalValuesStub, with one extra leading
+// line naming why the file has no chart defaults yet, so the file still
+// parses as an empty YAML document (no invented values) while telling the
+// person what to do next.
+func v4GlobalValuesFetchFailedStub(addonName, chart, version string) []byte {
+	var b strings.Builder
+	fmt.Fprintf(&b,
+		"# Sharko could not fetch %s@%s's chart values right now (network or registry error) — this file starts empty.\n"+
+			"# Run AI annotate on this addon later, or Refresh from upstream, to fill it in once the chart is reachable.\n",
+		chart, version)
+	b.Write(globalValuesStub(addonName))
+	return []byte(b.String())
+}
+
 // globalValuesStub and clusterValuesStub are the comment-only scaffold
 // content written for a values file that does not exist yet (v4-walkfix W1
 // items 5 and 6): AddToCatalog scaffolds values/global/<addon>.yaml for

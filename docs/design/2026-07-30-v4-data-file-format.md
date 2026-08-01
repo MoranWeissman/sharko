@@ -81,6 +81,68 @@ shape may ever share a kind this way; that tiebreak only stretches to two.
 
 ---
 
+## Amendment — 2026-08-01: v4 gets the smart-values layer v3 had
+
+v3's global values file was never a blank slate — Sharko pulled the
+addon chart's own `values.yaml` and wrote it out with every field kept in
+place, except the fields a heuristic classifies as cluster-specific
+(hostnames, replica counts, resource sizing, and the rest of the closed
+list in `internal/orchestrator/smart_values.go`), which are commented out
+in place instead of deleted. v4 shipped without this — `values/global/
+<addon>.yaml` started life as a bare comment-only placeholder (v4-walkfix
+W1). This amendment closes that gap: v4 now gets the same generation.
+
+**What changed, on top of section 2.2 above:**
+
+- **`values/global/<addon>.yaml` is generated, not blank, the moment an
+  addon is added to the catalog.** Adding an addon (single, batch, or the
+  add-and-enable combo) fetches the chart's official `values.yaml` for the
+  entry's pinned chart+version and runs it through the same heuristic
+  classifier v3 used, in the SAME pull request as the catalog change. If
+  the chart can't be fetched right then (registry down, no `values.yaml`,
+  oversize), the add still succeeds — it falls back to the old
+  comment-only stub, with one honest line added saying the fetch failed
+  and that AI annotate (or another add) can fill it in later. An
+  addon added by hand, or a file a person already edited, is never
+  touched — the generator only ever writes a file that does not exist yet.
+- **The trailing per-cluster template block is UNWRAPPED for v4.** v3's
+  global file ends with a fully-commented block showing the
+  cluster-specific fields, wrapped under `<addonName>:` because v3's
+  per-cluster file (`configuration/addons-clusters-values/<cluster>.yaml`)
+  holds every addon on that cluster in one file. v4's per-cluster file
+  (`values/clusters/<cluster>/<addon>.yaml`) is already scoped to one
+  addon, so the wrapper would just be a redundant level nothing reads.
+  The v4 block is the same flat, commented `key: <set per cluster>` lines
+  with no addon-name stanza, and it names the real v4 path
+  (`values/clusters/<cluster>/<addon>.yaml`) instead of v3's.
+- **Enabling an addon seeds the per-cluster file from that template.**
+  When `values/clusters/<cluster>/<addon>.yaml` does not exist yet and the
+  enable request carries no explicit values, Sharko reads the global
+  file's template block and writes a commented hint for each
+  cluster-specific field into the new per-cluster file — never a LIVE
+  placeholder value (the same rule v3 learned the hard way: a literal
+  `<cluster-specific>` string under a key the chart expects to be typed
+  breaks the render). No template in the global file (or no global file at
+  all) falls back to the same plain, empty stub as before. An existing
+  per-cluster file is, as always, never overwritten.
+- **AI annotate and the per-addon opt-out toggle work on v4 repos now.**
+  Both used to hard-refuse with a 409 on a v4 repo because they only ever
+  read and wrote the v3 path. They now detect the repo's layout and
+  target `values/global/<addon>.yaml` on v4, `configuration/
+  addons-global-values/<addon>.yaml` on v3 — same secret-leak hard block,
+  same honest "AI was skipped, here's why" reporting, same opt-out
+  directive, on either layout.
+
+**What did not change:** the heuristic itself (the list of cluster-specific
+patterns, the textual line-by-line splitter that keeps comments and
+ordering, the hollow-key post-processor), the self-describing header every
+generated file carries, and the "AI is additive, never a replacement for
+the heuristic" rule. All of it is exactly as `internal/orchestrator/
+smart_values.go`'s package comment describes; v4 reuses the same engine,
+not a rewrite of it.
+
+---
+
 ## Needs maintainer decision
 
 **None.** Every choice in this document is locked with a reason in the decisions log

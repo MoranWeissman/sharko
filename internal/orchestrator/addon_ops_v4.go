@@ -390,13 +390,17 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 		return nil, fmt.Errorf("updating %s: %w", clusterPath, err)
 	}
 
-	// v4-walkfix W1 item 6: an enable request that carries explicit values
+	// v4-walkfix W1 item 6 (upgraded to real template seeding in the v4
+	// smartvalues wave): an enable request that carries explicit values
 	// writes them (unchanged — deep-merged onto whatever is already
 	// there). An enable request with NO values still scaffolds
 	// values/clusters/<cluster>/<addon>.yaml when it does not exist yet —
-	// a comment-only stub, never an invented default — so the file the
-	// engine's valueFiles layering expects (design doc §4.3) exists from
-	// the moment the addon starts running here, symmetric with item 5's
+	// seedV4ClusterValuesStub, which adds the global file's per-cluster
+	// override hints (commented, never live values) on top of the plain
+	// W1 stub when there is a template block to seed from, and falls
+	// back to the plain stub otherwise — so the file the engine's
+	// valueFiles layering expects (design doc §4.3) exists from the
+	// moment the addon starts running here, symmetric with item 5's
 	// global-values scaffold. An existing file (hand-created, or from a
 	// previous enable) is never overwritten either way.
 	writeClusterValues := len(req.Values) > 0 || !clusterValuesExists
@@ -408,7 +412,7 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 				return nil, fmt.Errorf("rendering %s: %w", clusterValuesPath, err)
 			}
 		} else {
-			updatedClusterValuesRaw = clusterValuesStub(req.Addon, req.Cluster)
+			updatedClusterValuesRaw = o.seedV4ClusterValuesStub(ctx, req.Addon, req.Cluster)
 		}
 	}
 

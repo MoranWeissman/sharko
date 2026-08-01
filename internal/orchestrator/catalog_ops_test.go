@@ -276,6 +276,181 @@ func TestAddToCatalog_RejectsDuplicateNames(t *testing.T) {
 	}
 }
 
+// ─── v4 smart-values generation on add (v4 smartvalues wave) ───────────────
+
+// fakeChartValuesFetcher returns a canned ChartValuesFetcherFn: success
+// returns body for every call, or every call fails with err when body is
+// nil.
+func fakeChartValuesFetcher(body []byte, err error) ChartValuesFetcherFn {
+	return func(_ context.Context, _, _, _, _ string) (ChartValuesFetchResult, error) {
+		if err != nil {
+			return ChartValuesFetchResult{}, err
+		}
+		return ChartValuesFetchResult{UpstreamValues: body}, nil
+	}
+}
+
+// TestAddToCatalog_GeneratesSmartValuesWhenFetcherWired: with a fetcher
+// wired, the scaffolded values/global/<addon>.yaml is a REAL smart-values
+// generation from the chart's official values.yaml — not the comment-only
+// stub — with cluster-specific fields marked and the v4 (unwrapped)
+// per-cluster template block appended.
+func TestAddToCatalog_GeneratesSmartValuesWhenFetcherWired(t *testing.T) {
+	git := newMockGitProvider()
+	o := newTestOrchestratorForCatalog(t, git)
+	upstream := []byte("installCRDs: true\ningress:\n  host: example.com\n")
+	o.SetChartValuesFetcher(fakeChartValuesFetcher(upstream, nil))
+
+	_, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{{
+			Name: "cert-manager", RepoURL: "https://charts.jetstack.io",
+			Chart: "cert-manager", Version: "1.14.5",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AddToCatalog: %v", err)
+	}
+
+	got := string(git.files["values/global/cert-manager.yaml"])
+	if !strings.Contains(got, "installCRDs: true") {
+		t.Errorf("expected a real chart field to survive into the generated file, got:\n%s", got)
+	}
+	if !strings.Contains(got, "# host: <cluster-specific>") {
+		t.Errorf("expected the cluster-specific field marked, got:\n%s", got)
+	}
+	if !strings.Contains(got, "values/clusters/<cluster>/cert-manager.yaml") {
+		t.Errorf("expected the v4 (unwrapped) template block naming the v4 per-cluster path, got:\n%s", got)
+	}
+	if strings.Contains(got, "# cert-manager:\n") {
+		t.Errorf("v4 generation must not wrap the template block under the addon name, got:\n%s", got)
+	}
+}
+
+// TestAddToCatalog_FallsBackToStubWhenFetchFails: the add never fails
+// because of the chart-values fetch. On a fetch error, the scaffold falls
+// back to a comment-only file that still parses as an empty YAML document
+// AND carries an honest one-line explanation.
+func TestAddToCatalog_FallsBackToStubWhenFetchFails(t *testing.T) {
+	git := newMockGitProvider()
+	o := newTestOrchestratorForCatalog(t, git)
+	o.SetChartValuesFetcher(fakeChartValuesFetcher(nil, errors.New("registry unreachable")))
+
+	_, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{{
+			Name: "cert-manager", RepoURL: "https://charts.jetstack.io",
+			Chart: "cert-manager", Version: "1.14.5",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AddToCatalog must not fail because the chart fetch failed: %v", err)
+	}
+
+	got := git.files["values/global/cert-manager.yaml"]
+	valuesMap, perr := parseYAMLMap(got)
+	if perr != nil {
+		t.Fatalf("fallback stub is not valid YAML: %v", perr)
+	}
+	if len(valuesMap) != 0 {
+		t.Errorf("fallback stub must carry no invented values, got %v", valuesMap)
+	}
+	if !strings.Contains(string(got), "could not fetch") {
+		t.Errorf("expected an honest explanation that the fetch failed, got:\n%s", got)
+	}
+	if !strings.Contains(string(got), "annotate") {
+		t.Errorf("expected a pointer to running annotate later, got:\n%s", got)
+	}
+}
+
+// TestAddToCatalog_NoFetcherWiredKeepsPlainStub: the pre-v4-smartvalues
+// behaviour (no fetcher wired at all — every orchestrator unit test that
+// doesn't call SetChartValuesFetcher) must be completely unchanged: the
+// plain comment-only W1 stub, nothing more.
+func TestAddToCatalog_NoFetcherWiredKeepsPlainStub(t *testing.T) {
+	git := newMockGitProvider()
+	o := newTestOrchestratorForCatalog(t, git) // no SetChartValuesFetcher call
+
+	_, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{{
+			Name: "cert-manager", RepoURL: "https://charts.jetstack.io",
+			Chart: "cert-manager", Version: "1.14.5",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AddToCatalog: %v", err)
+	}
+	got := string(git.files["values/global/cert-manager.yaml"])
+	if strings.Contains(got, "could not fetch") {
+		t.Errorf("no fetcher wired should not produce the fetch-failed message, got:\n%s", got)
+	}
+	if !strings.Contains(got, "cert-manager") {
+		t.Errorf("plain stub should still name the addon, got:\n%s", got)
+	}
+}
+
+// TestAddToCatalog_GeneratesSmartValuesForEachInBatch: a batch add
+// generates real smart values for every addon, not just the first —
+// exercising the per-entry chart/version resolution (buildCatalogEntry
+// runs once per addon before the fetch loop).
+func TestAddToCatalog_GeneratesSmartValuesForEachInBatch(t *testing.T) {
+	git := newMockGitProvider()
+	o := newTestOrchestratorForCatalog(t, git)
+	o.SetChartValuesFetcher(fakeChartValuesFetcher([]byte("installCRDs: true\n"), nil))
+
+	_, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{
+			{Name: "cert-manager", RepoURL: "https://charts.jetstack.io", Chart: "cert-manager", Version: "1.14.5"},
+			{Name: "metrics-server", RepoURL: "https://example.test/charts", Chart: "metrics-server", Version: "3.12.1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("AddToCatalog: %v", err)
+	}
+	for _, addon := range []string{"cert-manager", "metrics-server"} {
+		got := string(git.files["values/global/"+addon+".yaml"])
+		if !strings.Contains(got, "installCRDs: true") {
+			t.Errorf("%s: expected the real chart field, got:\n%s", addon, got)
+		}
+	}
+}
+
+// TestAddToCatalog_ComboSeedsClusterValuesFromGlobalTemplate: the
+// add-and-enable combo's cluster-values scaffold, when the global file has
+// a per-cluster template block, seeds a commented hint for the
+// cluster-specific field instead of the plain empty stub — proving
+// seedV4ClusterValuesStub is wired into the combo path too.
+func TestAddToCatalog_ComboSeedsClusterValuesFromGlobalTemplate(t *testing.T) {
+	git := newMockGitProvider()
+	registerV4Cluster(t, git, "prod-eu")
+	o := newTestOrchestratorForCatalog(t, git)
+	upstream := []byte("replicaCount: 1\ningress:\n  host: example.com\n")
+	o.SetChartValuesFetcher(fakeChartValuesFetcher(upstream, nil))
+
+	_, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{{
+			Name: "cert-manager", RepoURL: "https://charts.jetstack.io",
+			Chart: "cert-manager", Version: "1.14.5",
+		}},
+		EnableOnCluster: "prod-eu",
+		Yes:             true,
+	})
+	if err != nil {
+		t.Fatalf("AddToCatalog: %v", err)
+	}
+
+	clusterValues := string(git.files["values/clusters/prod-eu/cert-manager.yaml"])
+	if !strings.Contains(clusterValues, `"ingress.host": <set per cluster>`) {
+		t.Errorf("expected the cluster-values scaffold to carry the template hint, got:\n%s", clusterValues)
+	}
+	// Still comments, never live values (V2-cleanup-19 rule).
+	valuesMap, perr := parseYAMLMap(git.files["values/clusters/prod-eu/cert-manager.yaml"])
+	if perr != nil {
+		t.Fatalf("cluster values scaffold is not valid YAML: %v", perr)
+	}
+	if len(valuesMap) != 0 {
+		t.Errorf("cluster values scaffold must carry no live values, got %v", valuesMap)
+	}
+}
+
 func readWrittenCatalog(t *testing.T, git *mockGitProvider) config.AddonCatalogSpec {
 	t.Helper()
 	body, ok := git.files[config.AddonCatalogPath]

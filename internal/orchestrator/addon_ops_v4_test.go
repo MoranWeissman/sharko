@@ -418,6 +418,93 @@ func TestEnableAddonV4_NoValues_ScaffoldsClusterValuesStub(t *testing.T) {
 	}
 }
 
+// TestEnableAddonV4_NoValues_SeedsFromGlobalTemplate is the v4 smartvalues
+// wave upgrade to the W1 stub above: when the addon's global values file
+// HAS a per-cluster template block (i.e. it was smart-generated from a
+// real chart, not the plain comment-only stub), the scaffolded cluster
+// values file carries a commented hint for every cluster-specific field —
+// never a live value (mirrors v3's V2-cleanup-19 rule) — instead of the
+// bare, contentless W1 stub.
+func TestEnableAddonV4_NoValues_SeedsFromGlobalTemplate(t *testing.T) {
+	git := newMockGitProvider()
+	orch := newV4TestOrchestrator(t, git)
+
+	global := GenerateGlobalValuesFileV4(
+		"metrics-server", "metrics-server", "3.12.1",
+		"https://kubernetes-sigs.github.io/metrics-server",
+		[]byte("installCRDs: true\ningress:\n  host: example.com\n"),
+		false, false,
+	)
+	git.files[clusterOpsGlobalValuesPath(t, "metrics-server")] = global
+
+	_, err := orch.EnableAddonV4(context.Background(), EnableAddonV4Request{
+		Cluster: "prod-eu",
+		Addon:   "metrics-server",
+		Yes:     true,
+		// No Values — the seeding path is what this test is about.
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	valuesBytes, ok := git.files[clusterValsPath(t, "prod-eu", "metrics-server")]
+	if !ok {
+		t.Fatal("expected the cluster values file to be written")
+	}
+	if !strings.Contains(string(valuesBytes), `"ingress.host": <set per cluster>`) {
+		t.Errorf("expected the seeded hint for the cluster-specific field, got:\n%s", valuesBytes)
+	}
+	// Never a live value — same V2-cleanup-19 rule v3 seeding follows.
+	valuesMap, err := parseYAMLMap(valuesBytes)
+	if err != nil {
+		t.Fatalf("seeded stub is not valid YAML: %v", err)
+	}
+	if len(valuesMap) != 0 {
+		t.Errorf("seeded stub must carry no live values, got %v", valuesMap)
+	}
+}
+
+// TestEnableAddonV4_NoValues_NoTemplateInGlobalFallsBackToPlainStub proves
+// the fallback: a global values file with NO template block (a plain W1
+// comment-only stub, or a chart with zero cluster-specific fields) leaves
+// the enable path's behaviour exactly as it was before this wave.
+func TestEnableAddonV4_NoValues_NoTemplateInGlobalFallsBackToPlainStub(t *testing.T) {
+	git := newMockGitProvider()
+	orch := newV4TestOrchestrator(t, git)
+	git.files[clusterOpsGlobalValuesPath(t, "metrics-server")] = globalValuesStub("metrics-server")
+
+	_, err := orch.EnableAddonV4(context.Background(), EnableAddonV4Request{
+		Cluster: "prod-eu",
+		Addon:   "metrics-server",
+		Yes:     true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	valuesBytes := git.files[clusterValsPath(t, "prod-eu", "metrics-server")]
+	valuesMap, err := parseYAMLMap(valuesBytes)
+	if err != nil {
+		t.Fatalf("stub is not valid YAML: %v", err)
+	}
+	if len(valuesMap) != 0 {
+		t.Errorf("plain stub must carry no values, got %v", valuesMap)
+	}
+	if strings.Contains(string(valuesBytes), "set per cluster") {
+		t.Errorf("no template in the global file should mean no seeded hints, got:\n%s", valuesBytes)
+	}
+}
+
+// clusterOpsGlobalValuesPath is the error-checking test wrapper around
+// v4GlobalValuesPath, matching assignPath/clusterValsPath's style above.
+func clusterOpsGlobalValuesPath(t *testing.T, addon string) string {
+	t.Helper()
+	p, err := v4GlobalValuesPath(addon)
+	if err != nil {
+		t.Fatalf("v4GlobalValuesPath(%q): %v", addon, err)
+	}
+	return p
+}
+
 // TestEnableAddonV4_NoValues_ExistingClusterValuesFileNeverOverwritten
 // pins the never-overwrite half of item 6: a cluster values file that
 // already exists (hand-created, or left over from a previous enable) must

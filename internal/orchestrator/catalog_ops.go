@@ -267,26 +267,41 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 		warnings = append(warnings, CatalogRewriteNote)
 	}
 
-	// Global-values scaffold (v4-walkfix W1 item 5): every addon this
-	// request adds also gets values/global/<addon>.yaml scaffolded in the
-	// SAME pull request — a comment-only stub, never an invented default —
-	// so the fleet-wide override file exists from day one instead of only
-	// ever appearing the first time somebody happens to set a value. A file
-	// that already exists (hand-created, or from a previous add) is left
-	// completely untouched: readFileForRewrite (not the lenient
-	// readFileIfExists) is used for the existence check specifically so a
-	// transient read error can never be misread as "does not exist" and
-	// clobber real content with a blank stub.
+	// Global-values scaffold (v4-walkfix W1 item 5, upgraded to real
+	// smart-values generation in the v4 smartvalues wave): every addon
+	// this request adds also gets values/global/<addon>.yaml written in
+	// the SAME pull request — generated from the chart's official
+	// values.yaml when a fetcher is wired (v4GenerateGlobalValues), a
+	// comment-only stub otherwise — so the fleet-wide override file
+	// exists from day one instead of only ever appearing the first time
+	// somebody happens to set a value. A file that already exists
+	// (hand-created, or from a previous add) is left completely
+	// untouched: readFileForRewrite (not the lenient readFileIfExists) is
+	// used for the existence check specifically so a transient read error
+	// can never be misread as "does not exist" and clobber real content
+	// with a blank stub.
 	type valuesScaffold struct {
 		path    string
 		content []byte
 	}
 	var globalScaffolds []valuesScaffold
+	// gPathByName is kept around for the combo's cluster-values seeding
+	// below, so it can find each addon's global-values commit path
+	// without recomputing it — and, more importantly, so it can look at
+	// `files[gPath]` first: when this SAME request just generated the
+	// global file (the common combo case — add-and-enable in one PR),
+	// that freshly-generated content lives only in `files` until the
+	// commit at the end, not in git yet. A git read at that point would
+	// see nothing and the template block would go unseeded even though
+	// the global file with the template IS part of this same pull
+	// request.
+	gPathByName := make(map[string]string, len(names))
 	for _, name := range names {
 		gPath, err := v4GlobalValuesPath(name)
 		if err != nil {
 			return nil, err
 		}
+		gPathByName[name] = gPath
 		_, exists, err := o.readFileForRewrite(ctx, gPath)
 		if err != nil {
 			return nil, err
@@ -294,7 +309,8 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 		if exists {
 			continue
 		}
-		stub := globalValuesStub(name)
+		entry := entries[name]
+		stub := o.v4GenerateGlobalValues(ctx, name, entry.RepoURL, entry.Chart, entry.Version)
 		files[gPath] = stub
 		globalScaffolds = append(globalScaffolds, valuesScaffold{path: gPath, content: stub})
 	}
@@ -341,7 +357,15 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 				return nil, err
 			}
 			if !cExists {
-				cStub := clusterValuesStub(name, req.EnableOnCluster)
+				// Prefer the global content this same request just wrote
+				// (still only in `files`, not yet committed); fall back to
+				// a git read for the ordinary case — the global file
+				// already existed from an earlier add.
+				globalContent := files[gPathByName[name]]
+				if len(globalContent) == 0 {
+					globalContent, _ = o.readFileIfExists(ctx, gPathByName[name])
+				}
+				cStub := seedV4ClusterValuesStubFromGlobal(name, req.EnableOnCluster, globalContent)
 				files[cPath] = cStub
 				clusterValuesScaffolds = append(clusterValuesScaffolds, valuesScaffold{path: cPath, content: cStub})
 			}

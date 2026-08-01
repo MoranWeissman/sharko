@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -279,5 +280,78 @@ someaddon:
 	}
 	if podinfoSection["replicaCount"] != 2 {
 		t.Errorf("expected podinfo.replicaCount=2, got %v", podinfoSection["replicaCount"])
+	}
+}
+
+// ─── SetGlobalAddonValuesV4WithOp (v4 smartvalues wave) ────────────────────
+
+// TestSetGlobalAddonValuesV4WithOp_WritesV4Path proves the v4 writer
+// targets values/global/<addon>.yaml (v4GlobalValuesPath) instead of the
+// v3 configurable-directory path SetGlobalAddonValuesWithOp uses — the AI
+// annotate + ai-opt-out endpoints depend on this split to work on a v4
+// repo without touching the v3 path.
+func TestSetGlobalAddonValuesV4WithOp_WritesV4Path(t *testing.T) {
+	git := newMockGitProvider()
+	o := newTestOrchestratorForCatalog(t, git)
+
+	result, err := o.SetGlobalAddonValuesV4WithOp(
+		context.Background(), "cert-manager", "installCRDs: true\n",
+		"ai-annotate", "", nil, false,
+	)
+	if err != nil {
+		t.Fatalf("SetGlobalAddonValuesV4WithOp: %v", err)
+	}
+	if result == nil || result.PRUrl == "" {
+		t.Fatalf("expected a PR result, got %+v", result)
+	}
+	got, ok := git.files["values/global/cert-manager.yaml"]
+	if !ok {
+		t.Fatalf("expected values/global/cert-manager.yaml to be written, files: %v", mapKeys(git.files))
+	}
+	if string(got) != "installCRDs: true\n" {
+		t.Errorf("written content = %q, want the exact payload", got)
+	}
+	if result.ValuesFile != "values/global/cert-manager.yaml" {
+		t.Errorf("ValuesFile = %q, want the v4 path", result.ValuesFile)
+	}
+}
+
+// TestSetGlobalAddonValuesV4WithOp_DryRunNoSideEffects mirrors the v3
+// sibling's dry-run contract: a preview with the right path and no git
+// writes.
+func TestSetGlobalAddonValuesV4WithOp_DryRunNoSideEffects(t *testing.T) {
+	git := newMockGitProvider()
+	o := newTestOrchestratorForCatalog(t, git)
+
+	result, err := o.SetGlobalAddonValuesV4WithOp(
+		context.Background(), "cert-manager", "installCRDs: true\n",
+		"ai-annotate", "", nil, true,
+	)
+	if err != nil {
+		t.Fatalf("SetGlobalAddonValuesV4WithOp dry-run: %v", err)
+	}
+	if result == nil || result.DryRun == nil {
+		t.Fatalf("expected a DryRun result, got %+v", result)
+	}
+	if len(result.DryRun.FilesToWrite) != 1 || result.DryRun.FilesToWrite[0].Path != "values/global/cert-manager.yaml" {
+		t.Errorf("expected exactly one preview file at the v4 path, got %+v", result.DryRun.FilesToWrite)
+	}
+	if _, written := git.files["values/global/cert-manager.yaml"]; written {
+		t.Error("dry-run must not write anything")
+	}
+}
+
+// TestSetGlobalAddonValuesV4WithOp_InvalidYAML mirrors the v3 sibling's
+// validation contract.
+func TestSetGlobalAddonValuesV4WithOp_InvalidYAML(t *testing.T) {
+	git := newMockGitProvider()
+	o := newTestOrchestratorForCatalog(t, git)
+
+	_, err := o.SetGlobalAddonValuesV4WithOp(
+		context.Background(), "cert-manager", "foo: [bar",
+		"ai-annotate", "", nil, false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "invalid YAML") {
+		t.Errorf("expected an invalid YAML error, got %v", err)
 	}
 }

@@ -23,6 +23,7 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path"
@@ -241,6 +242,84 @@ func renderClusterOverrideHints(addonName string, leaves []string) string {
 	b.WriteString(":\n")
 	for _, leaf := range leaves {
 		b.WriteString("#   ")
+		b.WriteString(renderTemplateLine(leaf))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// ─── v4 per-addon cluster-values seeding ────────────────────────────────────
+//
+// v3's seedPerClusterTemplate/injectTemplateLeaves above merge the hint
+// block into a shared per-cluster file that holds every addon under its
+// own `<addon>:` stanza. v4's per-cluster values file
+// (values/clusters/<cluster>/<addon>.yaml) is already scoped to one
+// addon, so there is no stanza to find or inject into — the seeding is
+// just "does the global file have a template block, and if so, append
+// its hints, unwrapped, under the plain W1 stub header".
+
+// seedV4ClusterValuesStub returns the per-addon cluster values file to
+// write for a v4 enable (or add-and-enable combo) request that carries no
+// explicit values. When the addon's global values file
+// (values/global/<addon>.yaml) exists on the base branch and has a
+// per-cluster template block, the stub gets the plain-English W1 header
+// PLUS a commented hint for every cluster-specific field the smart-values
+// classifier found — so a person editing the file by hand sees exactly
+// what to fill in without having to go read the global file first. No
+// global file, a global file that is itself a fetch-failed/comment-only
+// stub, or a template block with nothing in it, all fall back to the
+// plain W1 stub unchanged (clusterValuesStub).
+//
+// Unlike v3's injectTemplateLeaves, this never writes the fields as live
+// YAML values — same reasoning as v3 (V2-cleanup-19): a literal
+// "<set per cluster>" string under a key the chart expects to be typed
+// breaks the Helm render. The v4 file needs no addon-name stanza wrapper
+// either way (it is already scoped to one addon), so the hints are the
+// flat dotted/scalar keys straight from ExtractClusterTemplateLeaves.
+func (o *Orchestrator) seedV4ClusterValuesStub(ctx context.Context, addonName, clusterName string) []byte {
+	globalPath, err := v4GlobalValuesPath(addonName)
+	if err != nil {
+		return clusterValuesStub(addonName, clusterName)
+	}
+	globalContent, _ := o.readFileIfExists(ctx, globalPath)
+	return seedV4ClusterValuesStubFromGlobal(addonName, clusterName, globalContent)
+}
+
+// seedV4ClusterValuesStubFromGlobal is the pure (no-I/O) half of
+// seedV4ClusterValuesStub: given the global values file's content already
+// in hand, it returns the per-addon cluster values file to write. Split
+// out so AddToCatalog's add-and-enable combo can pass the global content
+// it JUST generated in the same request (still only in the in-memory
+// `files` map, not yet committed to git) instead of re-reading git and
+// seeing nothing there yet.
+func seedV4ClusterValuesStubFromGlobal(addonName, clusterName string, globalContent []byte) []byte {
+	if len(globalContent) == 0 {
+		return clusterValuesStub(addonName, clusterName)
+	}
+	leaves := ExtractClusterTemplateLeaves(globalContent, addonName)
+	if len(leaves) == 0 {
+		return clusterValuesStub(addonName, clusterName)
+	}
+	var b bytes.Buffer
+	b.Write(clusterValuesStub(addonName, clusterName))
+	b.WriteString("\n")
+	b.WriteString(renderV4ClusterOverrideHints(leaves))
+	return b.Bytes()
+}
+
+// renderV4ClusterOverrideHints is the v4 counterpart of
+// renderClusterOverrideHints: the same commented-hint shape, minus the
+// addon-name stanza wrapper — a v4 per-cluster values file already IS
+// scoped to one addon, so there is nothing to nest under.
+func renderV4ClusterOverrideHints(leaves []string) string {
+	if len(leaves) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("# --- per-cluster overrides ---\n")
+	b.WriteString("# Uncomment and set a real value for any field this cluster needs to override.\n")
+	for _, leaf := range leaves {
+		b.WriteString("# ")
 		b.WriteString(renderTemplateLine(leaf))
 		b.WriteString("\n")
 	}

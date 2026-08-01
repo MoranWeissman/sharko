@@ -19,6 +19,14 @@
 // Both endpoints reuse the orchestrator.SetGlobalAddonValues commit
 // helper so the audit, attribution, and PR shape match the manual edit
 // path.
+//
+// v4 smartvalues wave: both endpoints now work on a v4 repo too — they
+// used to hard-refuse with 409 because they only ever read/wrote the v3
+// path. isV4Repo picks the right global-values path and the right
+// orchestrator writer (SetGlobalAddonValuesV4WithOp vs
+// SetGlobalAddonValuesWithOp); everything else — the secret-leak guard,
+// the AISkipReason honesty, the opt-out directive semantics — is
+// identical on both layouts.
 
 package api
 
@@ -63,7 +71,7 @@ type aiAnnotateBlockedResponse struct {
 // handleAnnotateAddonValues godoc
 //
 // @Summary Re-annotate an addon's global values via AI
-// @Description Fetches the chart's upstream values.yaml at the catalog-pinned version, runs the AI annotate pass (one-line `# description` comments + LLM-suggested cluster-specific paths unioned with the heuristic), and opens a Tier 2 PR with the result. Hard-blocked when the secret-leak guard matches; in that case returns 422 with redacted matches and no PR. Skipped when AI is not configured or the addon is opted out.
+// @Description Fetches the chart's upstream values.yaml at the catalog-pinned version, runs the AI annotate pass (one-line `# description` comments + LLM-suggested cluster-specific paths unioned with the heuristic), and opens a Tier 2 PR with the result. Hard-blocked when the secret-leak guard matches; in that case returns 422 with redacted matches and no PR. Skipped when AI is not configured or the addon is opted out. Works on both repo layouts: rewrites configuration/addons-global-values/<addon>.yaml on a v3 repo, values/global/<addon>.yaml on a v4 repo.
 // @Tags addons
 // @Produce json
 // @Security BearerAuth
@@ -74,7 +82,7 @@ type aiAnnotateBlockedResponse struct {
 // @Failure 422 {object} aiAnnotateBlockedResponse "Secret-leak guard blocked the LLM call"
 // @Failure 502 {object} map[string]interface{} "Git or upstream fetch error"
 // @Failure 503 {object} map[string]interface{} "AI not configured"
-// @Failure 409 {object} map[string]interface{} "Addon is opted out of AI annotation, or the connected repo uses the v4 layout this editor does not support yet"
+// @Failure 409 {object} map[string]interface{} "Addon is opted out of AI annotation, or the repo is still v3-format and needs its migration completed first"
 // @Router /addons/{name}/values/annotate [post]
 func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
@@ -93,13 +101,10 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Annotation reads and rewrites the v3 global values file — on a v4
-	// repo that file does not exist and the resulting PR would create one
-	// nothing ever loads.
-	if s.refuseV3ValuesSurfaceOnActiveRepo(r.Context(), w) {
-		return
-	}
-	// And on a v3 repo, migrate first (Story 5.1).
+	// A v3 repo with a migration waiting must migrate first (Story 5.1) —
+	// unchanged. A v4 repo is NOT refused here any more (v4 smartvalues
+	// wave) — see the isV4 branch below, which rewrites
+	// values/global/<addon>.yaml instead of the v3 path.
 	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
 		return
 	}
@@ -114,6 +119,7 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
 	}
+	isV4 := s.isV4Repo(ctx, git)
 
 	addon, gerr := s.addonSvc.GetAddonDetail(ctx, name, git, ac)
 	if gerr != nil {
@@ -132,14 +138,15 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	valuesFile, perr := s.globalValuesPathForRepo(name, isV4)
+	if perr != nil {
+		writeError(w, http.StatusBadRequest, perr.Error())
+		return
+	}
+
 	// Per-addon opt-out: read the existing file's header and abort if
 	// the user previously opted out. Honoring the directive prevents
 	// an accidental re-enable via this endpoint.
-	dir := strings.TrimSuffix(s.repoPaths.GlobalValues, "/")
-	if dir == "" {
-		dir = "configuration/addons-global-values"
-	}
-	valuesFile := dir + "/" + name + ".yaml"
 	if existing, eerr := git.GetFileContent(ctx, valuesFile, s.gitopsConfig().BaseBranch); eerr == nil && len(existing) > 0 {
 		if h := orchestrator.ParseSmartValuesHeader(existing); h.AIOptOut {
 			writeError(w, http.StatusConflict, "this addon is opted out of AI annotation; clear the opt-out via PUT /addons/"+name+"/values/ai-opt-out before retrying")
@@ -177,23 +184,44 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 		// SkipReason — the err here is nil in that case. Fall through.
 	}
 
-	generated := orchestrator.GenerateGlobalValuesFile(
-		name, chart, version, repoURL, annRes.AnnotatedYAML,
-		annRes.SkipReason == "", false,
-		annRes.AdditionalClusterPaths...,
-	)
+	var generated []byte
+	if isV4 {
+		generated = orchestrator.GenerateGlobalValuesFileV4(
+			name, chart, version, repoURL, annRes.AnnotatedYAML,
+			annRes.SkipReason == "", false,
+			annRes.AdditionalClusterPaths...,
+		)
+	} else {
+		generated = orchestrator.GenerateGlobalValuesFile(
+			name, chart, version, repoURL, annRes.AnnotatedYAML,
+			annRes.SkipReason == "", false,
+			annRes.AdditionalClusterPaths...,
+		)
+	}
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	// Route through the WithOp variant so the resulting PR surfaces
 	// under the "AI" / Addons category on the dashboard PR panel rather
-	// than the generic "values-edit" bucket.
-	result, err := orch.SetGlobalAddonValuesWithOp(
-		ctx, name, string(generated), "ai-annotate",
-		fmt.Sprintf("AI annotate values for %s@%s", chart, version),
-		nil,   // no per-request override — follow the connection default
-		false, // not a dry-run
-	)
+	// than the generic "values-edit" bucket. isV4 picks the writer that
+	// targets the right file — values/global/<addon>.yaml vs the v3
+	// configurable-directory path — everything else about the call is
+	// identical.
+	prTitle := fmt.Sprintf("AI annotate values for %s@%s", chart, version)
+	var result *orchestrator.GitResult
+	if isV4 {
+		result, err = orch.SetGlobalAddonValuesV4WithOp(
+			ctx, name, string(generated), "ai-annotate", prTitle,
+			nil,   // no per-request override — follow the connection default
+			false, // not a dry-run
+		)
+	} else {
+		result, err = orch.SetGlobalAddonValuesWithOp(
+			ctx, name, string(generated), "ai-annotate", prTitle,
+			nil,   // no per-request override — follow the connection default
+			false, // not a dry-run
+		)
+	}
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -240,7 +268,7 @@ type setAIOptOutRequest struct {
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "Addon not found"
 // @Failure 502 {object} map[string]interface{} "Git error"
-// @Failure 409 {object} map[string]interface{} "This endpoint edits a v3-layout values file; the connected repo uses the v4 layout"
+// @Failure 409 {object} map[string]interface{} "The repo is still v3-format and needs its migration completed first"
 // @Router /addons/{name}/values/ai-opt-out [put]
 func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
@@ -257,11 +285,8 @@ func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Same v3-file dependency as the annotate endpoint above.
-	if s.refuseV3ValuesSurfaceOnActiveRepo(r.Context(), w) {
-		return
-	}
-	// And on a v3 repo, migrate first (Story 5.1).
+	// A v3 repo with a migration waiting must migrate first (Story 5.1) —
+	// unchanged. A v4 repo is handled natively below, not refused.
 	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
 		return
 	}
@@ -276,12 +301,13 @@ func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
 	}
+	isV4 := s.isV4Repo(ctx, git)
 
-	dir := strings.TrimSuffix(s.repoPaths.GlobalValues, "/")
-	if dir == "" {
-		dir = "configuration/addons-global-values"
+	valuesFile, perr := s.globalValuesPathForRepo(name, isV4)
+	if perr != nil {
+		writeError(w, http.StatusBadRequest, perr.Error())
+		return
 	}
-	valuesFile := dir + "/" + name + ".yaml"
 
 	existing, eerr := git.GetFileContent(ctx, valuesFile, s.gitopsConfig().BaseBranch)
 	if eerr != nil || len(existing) == 0 {
@@ -308,13 +334,24 @@ func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) 
 	// The AI opt-out toggle is a header-only mutation but it's still an
 	// AI-annotate-related action — file it under the same "ai-annotate"
 	// bucket so the dashboard shows it next to its sibling AI annotate
-	// runs rather than buried in the generic values-edit list.
-	result, err := orch.SetGlobalAddonValuesWithOp(
-		ctx, name, string(updated), "ai-annotate",
-		fmt.Sprintf("Toggle AI opt-out for %s (%s)", name, optOutLabel(req.OptOut)),
-		nil,   // no per-request override — follow the connection default
-		false, // not a dry-run
-	)
+	// runs rather than buried in the generic values-edit list. isV4 picks
+	// the writer that targets the right file, same as the annotate
+	// handler above.
+	optOutTitle := fmt.Sprintf("Toggle AI opt-out for %s (%s)", name, optOutLabel(req.OptOut))
+	var result *orchestrator.GitResult
+	if isV4 {
+		result, err = orch.SetGlobalAddonValuesV4WithOp(
+			ctx, name, string(updated), "ai-annotate", optOutTitle,
+			nil,   // no per-request override — follow the connection default
+			false, // not a dry-run
+		)
+	} else {
+		result, err = orch.SetGlobalAddonValuesWithOp(
+			ctx, name, string(updated), "ai-annotate", optOutTitle,
+			nil,   // no per-request override — follow the connection default
+			false, // not a dry-run
+		)
+	}
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -352,6 +389,23 @@ func optOutLabel(b bool) string {
 // rewrite — opt-out is meaningless for files the smart-values pipeline
 // doesn't manage. The handler treats that as a no-op (handled upstream
 // by the idempotent check on header.AIOptOut).
+// globalValuesPathForRepo returns the addon's global values commit path
+// for the connected repo's layout: the fixed v4 path
+// (values/global/<addon>.yaml, orchestrator.V4GlobalValuesPath) when
+// isV4 is true, otherwise the v3 configurable-directory path
+// (s.repoPaths.GlobalValues, defaulting to
+// configuration/addons-global-values) that every v3 values surface uses.
+func (s *Server) globalValuesPathForRepo(addonName string, isV4 bool) (string, error) {
+	if isV4 {
+		return orchestrator.V4GlobalValuesPath(addonName)
+	}
+	dir := strings.TrimSuffix(s.repoPaths.GlobalValues, "/")
+	if dir == "" {
+		dir = "configuration/addons-global-values"
+	}
+	return dir + "/" + addonName + ".yaml", nil
+}
+
 func rewriteHeaderOptOut(content []byte, optOut bool) []byte {
 	h := orchestrator.ParseSmartValuesHeader(content)
 	if !h.Managed {
