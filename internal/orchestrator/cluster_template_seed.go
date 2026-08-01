@@ -27,6 +27,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -303,7 +304,7 @@ func seedV4ClusterValuesStubFromGlobal(addonName, clusterName string, globalCont
 	var b bytes.Buffer
 	b.Write(clusterValuesStub(addonName, clusterName))
 	b.WriteString("\n")
-	b.WriteString(renderV4ClusterOverrideHints(leaves))
+	b.WriteString(renderV4ClusterOverrideHints(leaves, clusterName))
 	return b.Bytes()
 }
 
@@ -311,7 +312,10 @@ func seedV4ClusterValuesStubFromGlobal(addonName, clusterName string, globalCont
 // renderClusterOverrideHints: the same commented-hint shape, minus the
 // addon-name stanza wrapper — a v4 per-cluster values file already IS
 // scoped to one addon, so there is nothing to nest under.
-func renderV4ClusterOverrideHints(leaves []string) string {
+//
+// clusterName lets a leaf that IS a known fact (Story FS-1) carry the real
+// value instead of the generic placeholder — see renderV4TemplateLine.
+func renderV4ClusterOverrideHints(leaves []string, clusterName string) string {
 	if len(leaves) == 0 {
 		return ""
 	}
@@ -320,8 +324,45 @@ func renderV4ClusterOverrideHints(leaves []string) string {
 	b.WriteString("# Uncomment and set a real value for any field this cluster needs to override.\n")
 	for _, leaf := range leaves {
 		b.WriteString("# ")
-		b.WriteString(renderTemplateLine(leaf))
+		b.WriteString(renderV4TemplateLine(leaf, clusterName))
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// clusterNameFactSuffix is the lowercased final dotted-path segment that
+// marks a leaf as carrying the ONE known fact Story FS-1 is scoped to: the
+// cluster name itself. Every other cluster-specific leaf (region,
+// environment, account, host, ...) stays an unknown — Sharko never
+// invents a value it doesn't actually have.
+const clusterNameFactSuffix = "clustername"
+
+// yamlAmbiguousScalar matches a value that YAML would parse as a bool,
+// null, or number rather than a string if left unquoted — e.g. a cluster
+// literally named "true" or "123". models.ResourceNamePattern allows both
+// shapes (letters-only "true", digits-only "123"), so the substituted
+// fact-hint value needs an explicit quote in that case to stay a string
+// once the user uncomments the line.
+var yamlAmbiguousScalar = regexp.MustCompile(`(?i)^(true|false|yes|no|on|off|null|~|[0-9]+)$`)
+
+// renderV4TemplateLine is renderTemplateLine's v4 sibling: same output
+// shape for every leaf EXCEPT one whose final dotted-path segment is the
+// known cluster-name fact, which gets the real cluster name as its value
+// instead of "<set per cluster>". Does not touch renderTemplateLine
+// itself — that function is shared with v3, which has no such fact to
+// fill in.
+func renderV4TemplateLine(dottedPath, clusterName string) string {
+	segments := strings.Split(dottedPath, ".")
+	finalSegment := segments[len(segments)-1]
+	if strings.ToLower(finalSegment) != clusterNameFactSuffix {
+		return renderTemplateLine(dottedPath)
+	}
+	value := clusterName
+	if yamlAmbiguousScalar.MatchString(clusterName) {
+		value = fmt.Sprintf("%q", clusterName)
+	}
+	if !strings.Contains(dottedPath, ".") {
+		return fmt.Sprintf("%s: %s", dottedPath, value)
+	}
+	return fmt.Sprintf("%q: %s", dottedPath, value)
 }
