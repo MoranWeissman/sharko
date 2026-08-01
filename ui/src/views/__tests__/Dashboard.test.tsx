@@ -119,26 +119,26 @@ describe('Dashboard', () => {
     expect(screen.getByText('Loading dashboard...')).toBeInTheDocument();
   });
 
-  it('renders stats after data loads', async () => {
+  it('renders fleet status strip segments after data loads (dashboard-purpose decision, WQ-1)', async () => {
     renderDashboard();
 
     await waitFor(() => {
       expect(screen.getByText('Sharko')).toBeInTheDocument();
     });
 
-    // Stat cards — labeled indicators, not a fraction or one poster number
-    // (dashboard UX review 2026-08-01, finding H2 + Package 2 #5).
-    expect(within(screen.getByTestId('stat-clusters-total')).getByText('10')).toBeInTheDocument();
-    expect(within(screen.getByTestId('stat-applications-total')).getByText('50')).toBeInTheDocument();
-    expect(within(screen.getByTestId('stat-applications-healthy')).getByText('45')).toBeInTheDocument();
-    expect(within(screen.getByTestId('stat-applications-not-healthy')).getByText('5')).toBeInTheDocument();
-    // Applications card (folded segmented health visualization, Package 2 #4)
-    expect(screen.getByText('Applications')).toBeInTheDocument();
-    // Upgrades card (Package 2 #1) replaces the old "Active Deployments"
-    // plain count — no version-matrix data in this test's default mocks,
-    // so it degrades to the "no data yet" state rather than a fake 0.
-    expect(screen.getByText('Upgrades')).toBeInTheDocument();
-    expect(screen.getByText('No version data yet')).toBeInTheDocument();
+    // Fleet Status Strip — one slim row of clickable segments, replacing
+    // the three stat cards (dashboard-purpose decision, WQ-1). Each
+    // segment states its facts as plain text, not a labeled-chip layout.
+    expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('10 clusters');
+    expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('8 connected');
+    expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('1 not connected');
+    expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('1 disconnected');
+    expect(screen.getByTestId('fleet-strip-applications').textContent).toContain('50 apps');
+    expect(screen.getByTestId('fleet-strip-applications').textContent).toContain('45 healthy');
+    expect(screen.getByTestId('fleet-strip-applications').textContent).toContain('5 not healthy');
+    // Upgrades segment — no version-matrix data in this test's default
+    // mocks, so it degrades to the "no data yet" state rather than a fake 0.
+    expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('No version data yet');
   });
 
   // BUG-040 (rebuilt for the dashboard UX review 2026-08-01 contract):
@@ -227,7 +227,7 @@ describe('Dashboard — empty install (B1, no false-green)', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/addons?tab=marketplace');
   });
 
-  it('still shows the normal dashboard (stat cards, no empty state) when at least one cluster exists', async () => {
+  it('still shows the normal dashboard (fleet strip, no empty state) when at least one cluster exists', async () => {
     // Earlier tests in this describe override getDashboardStats with
     // .mockResolvedValue (not Once), which persists past vi.clearAllMocks()
     // (that only clears call history, not the implementation) — restore the
@@ -245,7 +245,7 @@ describe('Dashboard — empty install (B1, no false-green)', () => {
     });
 
     expect(screen.queryByText('Nothing connected yet')).not.toBeInTheDocument();
-    expect(screen.getByText('Total Clusters')).toBeInTheDocument();
+    expect(screen.getByTestId('fleet-strip-clusters')).toBeInTheDocument();
   });
 
   it('shows "All systems operational" (green) only when there is real, healthy data', async () => {
@@ -410,10 +410,9 @@ describe('Dashboard cluster attention rows (rebuilt LW-1)', () => {
 
     expect(screen.queryByRole('button', { name: /disconnected cluster/i })).not.toBeInTheDocument();
     // Neutral note instead — "connecting", not red. Now lives in the
-    // Total Clusters stat card as its own labeled chip (Package 2 #2,
-    // redesigned as indicators per finding H2), not a floating sentence.
-    expect(within(screen.getByTestId('stat-clusters-connecting')).getByText('Connecting')).toBeInTheDocument();
-    expect(within(screen.getByTestId('stat-clusters-connecting')).getByText('1')).toBeInTheDocument();
+    // Clusters segment of the Fleet Status Strip (dashboard-purpose
+    // decision, WQ-1), not a floating sentence.
+    expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('1 connecting');
   });
 
   it('Unknown cluster with zero addons → neutral "waiting for its first addon" note', async () => {
@@ -431,8 +430,7 @@ describe('Dashboard cluster attention rows (rebuilt LW-1)', () => {
     });
 
     expect(screen.queryByRole('button', { name: /disconnected cluster/i })).not.toBeInTheDocument();
-    expect(within(screen.getByTestId('stat-clusters-waiting')).getByText('Waiting')).toBeInTheDocument();
-    expect(within(screen.getByTestId('stat-clusters-waiting')).getByText('1')).toBeInTheDocument();
+    expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('1 waiting');
   });
 
   it('missing cluster → shown as a cluster attention row', async () => {
@@ -451,136 +449,179 @@ describe('Dashboard cluster attention rows (rebuilt LW-1)', () => {
   });
 });
 
-// Stat cards are permanently neutral (Package 2 #3) — no red/amber border
-// color regardless of how bad the underlying numbers are. Informational
-// text may still say "N disconnected"; only the wiring that would color
-// the card is gone.
-describe('Dashboard stat cards are permanently neutral (Package 2 #3)', () => {
+// The old stat cards are gone (dashboard-purpose decision, WQ-1) — the
+// Fleet Status Strip replaces Total Clusters / Applications / Upgrades
+// with one slim clickable row.
+describe('Dashboard — old stat cards are gone (WQ-1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('Total Clusters card has no error-color border even with disconnected clusters', async () => {
-    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...baseStats,
-      clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
-    });
+  it('renders no "Total Clusters" card and none of the old stat-card testids', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByTestId('stat-clusters-disconnected')).toBeInTheDocument();
+      expect(screen.getByTestId('fleet-strip-clusters')).toBeInTheDocument();
     });
 
-    const card = screen.getByText('Total Clusters').closest('[role="button"]') as HTMLElement;
-    expect(card.className).not.toMatch(/border-l-red/);
-  });
-
-  it('clicking Total Clusters when disconnected > 0 deep-links to /clusters?status=disconnected', async () => {
-    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...baseStats,
-      clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
-    });
-    renderDashboard();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('stat-clusters-disconnected')).toBeInTheDocument();
-    });
-
-    const statCard = screen.getByText('Total Clusters').closest('[role="button"]');
-    fireEvent.click(statCard!);
-    expect(mockNavigate).toHaveBeenCalledWith('/clusters?status=disconnected');
-  });
-
-  it('clicking Total Clusters when disconnected == 0 navigates to /clusters (no filter)', async () => {
-    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...baseStats,
-      clusters: { total: 5, connected: 5, pending: 0, untested: 0, missing: 0, failed: 0 },
-    });
-    renderDashboard();
-
-    await waitFor(() => {
-      expect(screen.getByText('Total Clusters')).toBeInTheDocument();
-    });
-
-    const statCard = screen.getByText('Total Clusters').closest('[role="button"]');
-    fireEvent.click(statCard!);
-    expect(mockNavigate).toHaveBeenCalledWith('/clusters');
-  });
-
-  it('when disconnected == 0, no subtitle text appears on Total Clusters', async () => {
-    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...baseStats,
-      clusters: { total: 5, connected: 5, pending: 0, untested: 0, missing: 0, failed: 0 },
-    });
-    renderDashboard();
-
-    await waitFor(() => {
-      expect(screen.getByText('Total Clusters')).toBeInTheDocument();
-    });
-    expect(screen.queryByText(/disconnected/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Total Clusters')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('stat-clusters-total')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('stat-applications-total')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('stat-upgrades-outdated')).not.toBeInTheDocument();
   });
 });
 
-// Segmented per-app health blocks at small N (Package 2 #4) — folded into
-// the Applications stat card rather than a separate full-width bar.
-describe('Applications card — segmented blocks at small N (Package 2 #4)', () => {
+// Fleet Status Strip — clicking a segment navigates; numbers are doors
+// (dashboard-purpose decision, WQ-1).
+describe('Fleet Status Strip navigation (WQ-1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('renders one block per app when there are <= 10 apps (from the version matrix)', async () => {
-    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
-      addons: [
-        { addon_name: 'cert-manager', cells: { prod: { health: 'Healthy' } } },
-        { addon_name: 'external-dns', cells: { prod: { health: 'Degraded' } } },
-      ],
-    });
+  it('clicking the Clusters segment navigates to /clusters, regardless of disconnected count', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...baseStats,
-      applications: {
-        total: 2,
-        by_sync_status: { synced: 1, out_of_sync: 1, unknown: 0 },
-        by_health_status: { healthy: 1, progressing: 0, degraded: 1, unknown: 0 },
-      },
+      clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
     });
     renderDashboard();
 
-    await waitFor(() => {
-      expect(within(screen.getByTestId('stat-applications-healthy')).getByText('1')).toBeInTheDocument();
-    });
-    expect(within(screen.getByTestId('stat-applications-total')).getByText('2')).toBeInTheDocument();
-    expect(within(screen.getByTestId('stat-applications-not-healthy')).getByText('1')).toBeInTheDocument();
-
-    expect(screen.getByTitle('cert-manager on prod: Healthy')).toBeInTheDocument();
-    expect(screen.getByTitle('external-dns on prod: Degraded')).toBeInTheDocument();
+    const segment = await screen.findByTestId('fleet-strip-clusters');
+    fireEvent.click(segment);
+    expect(mockNavigate).toHaveBeenCalledWith('/clusters');
   });
 
-  // Walk finding (dashboard UX review 2026-08-01, H1 follow-through): with
-  // exactly 1 app, `flex-1` stretched the single block to a full-width red
-  // bar — the same panic slab this card was rebuilt to kill. Blocks are now
-  // a fixed width so one broken app reads as one small block.
-  it('renders a fixed-width block, not a stretched flex-1 bar, for a single app', async () => {
-    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
-      addons: [{ addon_name: 'metrics-server', cells: { prod: { health: 'Degraded' } } }],
-    });
+  it('clicking the Applications segment navigates to /observability#addon-health', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    renderDashboard();
+
+    const segment = await screen.findByTestId('fleet-strip-applications');
+    fireEvent.click(segment);
+    expect(mockNavigate).toHaveBeenCalledWith('/observability#addon-health');
+  });
+
+  it('clicking the Upgrades segment navigates to /version-matrix?view=matrix', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    renderDashboard();
+
+    const segment = await screen.findByTestId('fleet-strip-upgrades');
+    fireEvent.click(segment);
+    expect(mockNavigate).toHaveBeenCalledWith('/version-matrix?view=matrix');
+  });
+});
+
+// Fleet Status Strip exception text emphasis (dashboard-purpose decision,
+// WQ-1): the strip states facts in a quiet muted color; only a broken or
+// outdated count gets amber/red text. This is a much smaller vocabulary
+// than the Needs Attention severity model on purpose — no settling window,
+// no 5-state color table, that logic stays in the banner/attention layer.
+describe('Fleet Status Strip exception styling (WQ-1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('clusters segment: a healthy fleet (no missing/failed) has no red-toned text', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...baseStats,
-      applications: {
-        total: 1,
-        by_sync_status: { synced: 0, out_of_sync: 1, unknown: 0 },
-        by_health_status: { healthy: 0, progressing: 0, degraded: 1, unknown: 0 },
-      },
+      clusters: { total: 5, connected: 5, pending: 0, untested: 0, missing: 0, failed: 0 },
+    });
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    renderDashboard();
+
+    const segment = await screen.findByTestId('fleet-strip-clusters');
+    await waitFor(() => expect(segment.textContent).toContain('5 clusters'));
+    expect(segment.innerHTML).not.toMatch(/text-red-700/);
+  });
+
+  it('clusters segment: missing/failed clusters get red-toned text on that count', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
     });
     renderDashboard();
 
-    await waitFor(() => {
-      expect(within(screen.getByTestId('stat-applications-not-healthy')).getByText('1')).toBeInTheDocument();
-    });
-    expect(within(screen.getByTestId('stat-applications-healthy')).getByText('0')).toBeInTheDocument();
+    const segment = await screen.findByTestId('fleet-strip-clusters');
+    await waitFor(() => expect(segment.textContent).toContain('1 disconnected'));
+    const disconnectedText = within(segment).getByText('1 disconnected');
+    expect(disconnectedText.className).toMatch(/text-red-700/);
+  });
 
-    const block = screen.getByTitle('metrics-server on prod: Degraded');
-    expect(block.className).not.toContain('flex-1');
-    expect(block.className).toContain('w-8');
+  it('applications segment: not-healthy > 0 gets red-toned text', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    renderDashboard();
+
+    const segment = await screen.findByTestId('fleet-strip-applications');
+    await waitFor(() => expect(segment.textContent).toContain('5 not healthy'));
+    const notHealthyText = within(segment).getByText('5 not healthy');
+    expect(notHealthyText.className).toMatch(/text-red-700/);
+  });
+
+  it('applications segment: zero not-healthy has no red-toned text', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      applications: {
+        total: 20,
+        by_sync_status: { synced: 20, out_of_sync: 0, unknown: 0 },
+        by_health_status: { healthy: 20, progressing: 0, degraded: 0, unknown: 0 },
+      },
+    });
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    renderDashboard();
+
+    const segment = await screen.findByTestId('fleet-strip-applications');
+    await waitFor(() => expect(segment.textContent).toContain('0 not healthy'));
+    expect(segment.innerHTML).not.toMatch(/text-red-700/);
+  });
+
+  it('upgrades segment: outdated > 0 gets amber-toned text', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
+      addons: [
+        {
+          addon_name: 'cert-manager',
+          newest_available: '1.14.0',
+          cells: { 'prod-eu': { version: '1.12.0', health: 'Healthy' } },
+        },
+      ],
+    });
+    renderDashboard();
+
+    const segment = await screen.findByTestId('fleet-strip-upgrades');
+    await waitFor(() => expect(segment.textContent).toContain('1 outdated'));
+    const outdatedText = within(segment).getByText('1 outdated');
+    expect(outdatedText.className).toMatch(/text-amber-700/);
+  });
+});
+
+// Page order (dashboard-purpose decision, WQ-1): PullRequestsPanel is
+// promoted to the first content surface after Needs Attention — it must
+// appear BEFORE the Fleet Status Strip in DOM order.
+describe('Dashboard page order — PRs before the fleet strip (WQ-1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('PullRequestsPanel appears before FleetStatusStrip in DOM order', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    const { container } = renderDashboard();
+
+    await screen.findByTestId('fleet-strip-clusters');
+    const prPanel = screen.getByText('Pull Requests');
+    const strip = screen.getByTestId('fleet-strip-clusters');
+
+    const allNodes = Array.from(container.querySelectorAll('*'));
+    const prIndex = allNodes.indexOf(prPanel);
+    const stripIndex = allNodes.indexOf(strip);
+
+    expect(prIndex).toBeGreaterThanOrEqual(0);
+    expect(stripIndex).toBeGreaterThanOrEqual(0);
+    expect(prIndex).toBeLessThan(stripIndex);
   });
 });
 
@@ -588,21 +629,8 @@ describe('Applications card — segmented blocks at small N (Package 2 #4)', () 
 // Observability's Addon Health Groups section (sorted by issue count
 // first, lists per-app-per-cluster health) — not the plain catalog, which
 // only speaks per-addon. Deep-links to the section's anchor.
-describe('Applications card destination (walk finding #2)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('clicking the Applications card navigates to Observability\'s Addon Health section', async () => {
-    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
-    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
-    renderDashboard();
-
-    const card = await screen.findByTestId('stat-applications-total');
-    fireEvent.click(card.closest('[role="button"]')!);
-    expect(mockNavigate).toHaveBeenCalledWith('/observability#addon-health');
-  });
-});
+// Applications segment destination (walk finding #2) is covered by
+// 'Fleet Status Strip navigation (WQ-1)' above.
 
 // Unreachable-banner honesty fix (Package 1): the ONLY signal is the
 // getClusters() fetch itself failing, not a heuristic over connection
@@ -673,10 +701,10 @@ describe('Upgrades stat card (Package 2 #1, walk finding #1)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Upgrades')).toBeInTheDocument();
+      expect(screen.getByTestId('fleet-strip-upgrades')).toBeInTheDocument();
     });
     // 1 of 2 checked deployments (cert-manager on prod-eu) is behind.
-    expect(within(screen.getByTestId('stat-upgrades-outdated')).getByText('1')).toBeInTheDocument();
+    expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('1 outdated');
     // Names the addon instead of a bare "of 2 have a newer version" line.
     expect(screen.getByText('cert-manager')).toBeInTheDocument();
   });
@@ -726,19 +754,8 @@ describe('Upgrades stat card (Package 2 #1, walk finding #1)', () => {
     });
   });
 
-  it('clicking the Upgrades card deep-links to the version matrix view (walk finding #1: matrix, not the plain catalog)', async () => {
-    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
-    // Isolate from any rejected/overridden mock left behind by earlier
-    // tests in this file (mockResolvedValue/mockRejectedValue persist
-    // across vi.clearAllMocks() — it only clears call history).
-    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
-    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-    renderDashboard();
-
-    const card = await screen.findByText('Upgrades');
-    fireEvent.click(card.closest('[role="button"]')!);
-    expect(mockNavigate).toHaveBeenCalledWith('/version-matrix?view=matrix');
-  });
+  // Navigation itself is covered by 'Fleet Status Strip navigation (WQ-1)'
+  // above (walk finding #1: matrix, not the plain catalog).
 });
 
 // Page reorganization (Package 2): Quick Actions and Available Addons are
@@ -960,12 +977,12 @@ describe('Dashboard progressive paint (perf S3)', () => {
 
     renderDashboard();
 
-    // Stat cards land from /dashboard/stats alone, with observability still
-    // in flight.
+    // The fleet strip lands from /dashboard/stats alone, with observability
+    // still in flight.
     await waitFor(() => {
-      expect(within(screen.getByTestId('stat-clusters-total')).getByText('10')).toBeInTheDocument();
+      expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('10 clusters');
     });
-    expect(within(screen.getByTestId('stat-applications-total')).getByText('50')).toBeInTheDocument();
+    expect(screen.getByTestId('fleet-strip-applications').textContent).toContain('50 apps');
     // Recent Activity is still on its own empty/loading state — proof the
     // page rendered without it, not proof it never arrives.
     expect(screen.getByText('No recent sync activity')).toBeInTheDocument();
@@ -1003,7 +1020,6 @@ describe('Dashboard stale-while-refresh (perf S2)', () => {
       },
       recentSyncs: [],
       versionDrifts: [],
-      appHealthEntries: [],
       clusters: [],
       argoCDUnreachable: false,
       homeCluster: null,
@@ -1024,11 +1040,11 @@ describe('Dashboard stale-while-refresh (perf S2)', () => {
     // Instant paint from cache: no spinner, cached numbers visible without
     // waiting on any fetch.
     expect(screen.queryByText('Loading dashboard...')).not.toBeInTheDocument();
-    expect(within(screen.getByTestId('stat-clusters-total')).getByText('3')).toBeInTheDocument();
+    expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('3 clusters');
 
     // Background refresh lands and quietly replaces the stale number.
     await waitFor(() => {
-      expect(within(screen.getByTestId('stat-clusters-total')).getByText('10')).toBeInTheDocument();
+      expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('10 clusters');
     });
   });
 });
