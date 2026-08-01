@@ -131,3 +131,50 @@ func TestGetOverview_ConfiguredClustersAvailability_GF6(t *testing.T) {
 
 	t.Skip("GF6: placeholder for future full-mock test of ConfiguredClustersAvailable flag")
 }
+
+// TestBuildRecentSyncs_SkipsSharkoSystemApps is a walk finding: the
+// recent-syncs feed used to build rows from Sharko's own system apps
+// because isInfrastructureApp's prefix list doesn't know about the engine
+// pin app ("sharko-engine") or per-cluster connectivity-check probes. Those
+// names then hit extractAddonCluster's last-hyphen fallback and got shown
+// on the dashboard as addon "sharko" running on a cluster called "engine" —
+// a cluster that doesn't exist. buildRecentSyncs must skip both, while
+// still producing rows for real addon apps.
+func TestBuildRecentSyncs_SkipsSharkoSystemApps(t *testing.T) {
+	t.Parallel()
+
+	clusterNames := map[string]bool{"prod-eu": true}
+
+	apps := []models.ArgocdApplication{
+		{
+			Name: "sharko-engine",
+			History: []models.AppHistoryEntry{
+				{DeployedAt: "2026-07-01T00:00:00Z", Revision: "abc123"},
+			},
+		},
+		{
+			Name: "connectivity-check-prod-eu",
+			History: []models.AppHistoryEntry{
+				{DeployedAt: "2026-07-01T00:00:00Z", Revision: "def456"},
+			},
+		},
+		{
+			Name: "metrics-server-prod-eu",
+			History: []models.AppHistoryEntry{
+				{DeployedAt: "2026-07-01T00:00:00Z", Revision: "ghi789"},
+			},
+		},
+	}
+
+	got := buildRecentSyncs(apps, clusterNames)
+
+	if len(got) != 1 {
+		t.Fatalf("buildRecentSyncs len = %d, want 1 (got=%+v)", len(got), got)
+	}
+	if got[0].AppName != "metrics-server-prod-eu" {
+		t.Errorf("AppName = %q, want %q", got[0].AppName, "metrics-server-prod-eu")
+	}
+	if got[0].AddonName != "metrics-server" || got[0].ClusterName != "prod-eu" {
+		t.Errorf("AddonName/ClusterName = %q/%q, want %q/%q", got[0].AddonName, got[0].ClusterName, "metrics-server", "prod-eu")
+	}
+}

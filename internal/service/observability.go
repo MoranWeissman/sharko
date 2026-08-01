@@ -12,6 +12,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // ObservabilityService provides aggregated observability data from ArgoCD.
@@ -118,32 +119,7 @@ func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Clien
 	}
 
 	// 5. Build sync activity timeline from history entries (exclude infra apps)
-	var allSyncs []models.SyncActivityEntry
-	for _, app := range fullApps {
-		if isInfrastructureApp(app.Name) {
-			continue
-		}
-		addonName, clusterName := extractAddonCluster(app.Name, clusterNames)
-		for _, h := range app.History {
-			entry := models.SyncActivityEntry{
-				Timestamp:   h.DeployedAt,
-				AppName:     app.Name,
-				AddonName:   addonName,
-				ClusterName: clusterName,
-				Revision:    h.Revision,
-				Status:      "Succeeded", // history entries are completed deploys
-			}
-
-			// Calculate duration if we have both start and end times
-			if h.DeployStartedAt != "" && h.DeployedAt != "" {
-				dur := parseDuration(h.DeployStartedAt, h.DeployedAt)
-				entry.DurationSecs = dur.Seconds()
-				entry.Duration = formatDuration(dur)
-			}
-
-			allSyncs = append(allSyncs, entry)
-		}
-	}
+	allSyncs := buildRecentSyncs(fullApps, clusterNames)
 
 	// Sort by timestamp descending (most recent first)
 	sort.Slice(allSyncs, func(i, j int) bool {
@@ -453,6 +429,48 @@ func checkMissingResources(ctx context.Context, gp gitprovider.GitProvider, addo
 		return true, "No resource requests/limits configured in global values"
 	}
 	return false, ""
+}
+
+// buildRecentSyncs builds the recent-syncs feed from full app details,
+// turning each app's ArgoCD history entries into feed rows.
+//
+// Apps are skipped if isInfrastructureApp matches their name (a prefix
+// list of known non-addon infra apps), OR if orchestrator.IsSharkoSystemApp
+// says they're one of Sharko's own system apps (the engine pin app
+// "sharko-engine", or a "connectivity-check-<cluster>" probe). That second
+// check matters because isInfrastructureApp's prefix list does not know
+// about those names — without it, "sharko-engine" reaches
+// extractAddonCluster's last-hyphen fallback and gets misread as addon
+// "sharko" running on a cluster named "engine", a cluster that doesn't
+// exist (walk finding).
+func buildRecentSyncs(apps []models.ArgocdApplication, clusterNames map[string]bool) []models.SyncActivityEntry {
+	var allSyncs []models.SyncActivityEntry
+	for _, app := range apps {
+		if isInfrastructureApp(app.Name) || orchestrator.IsSharkoSystemApp(app.Name) {
+			continue
+		}
+		addonName, clusterName := extractAddonCluster(app.Name, clusterNames)
+		for _, h := range app.History {
+			entry := models.SyncActivityEntry{
+				Timestamp:   h.DeployedAt,
+				AppName:     app.Name,
+				AddonName:   addonName,
+				ClusterName: clusterName,
+				Revision:    h.Revision,
+				Status:      "Succeeded", // history entries are completed deploys
+			}
+
+			// Calculate duration if we have both start and end times
+			if h.DeployStartedAt != "" && h.DeployedAt != "" {
+				dur := parseDuration(h.DeployStartedAt, h.DeployedAt)
+				entry.DurationSecs = dur.Seconds()
+				entry.Duration = formatDuration(dur)
+			}
+
+			allSyncs = append(allSyncs, entry)
+		}
+	}
+	return allSyncs
 }
 
 // extractAddonCluster extracts addon name and cluster name from an ArgoCD app name.
