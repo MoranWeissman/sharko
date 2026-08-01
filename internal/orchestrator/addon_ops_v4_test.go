@@ -381,7 +381,13 @@ func TestEnableAddonV4_DryRun_NoSideEffectsAndShowsExactFiles(t *testing.T) {
 	}
 }
 
-func TestEnableAddonV4_NoValues_SkipsClusterValuesWrite(t *testing.T) {
+// TestEnableAddonV4_NoValues_ScaffoldsClusterValuesStub is v4-walkfix W1
+// item 6: an enable request with no explicit values used to skip
+// values/clusters/<cluster>/<addon>.yaml entirely. It now scaffolds a
+// comment-only stub instead — symmetric with item 5's global-values
+// scaffold — so the file the engine's valueFiles layering expects exists
+// from the moment the addon starts running here.
+func TestEnableAddonV4_NoValues_ScaffoldsClusterValuesStub(t *testing.T) {
 	git := newMockGitProvider()
 	orch := newV4TestOrchestrator(t, git)
 
@@ -393,11 +399,47 @@ func TestEnableAddonV4_NoValues_SkipsClusterValuesWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := git.files[clusterValsPath(t, "prod-eu", "metrics-server")]; ok {
-		t.Error("expected no values file written when req.Values is empty")
+	valuesBytes, ok := git.files[clusterValsPath(t, "prod-eu", "metrics-server")]
+	if !ok {
+		t.Fatal("expected a scaffolded values file even when req.Values is empty")
+	}
+	valuesMap, err := parseYAMLMap(valuesBytes)
+	if err != nil {
+		t.Fatalf("scaffolded stub is not valid YAML: %v", err)
+	}
+	if len(valuesMap) != 0 {
+		t.Errorf("scaffolded stub must carry no invented values, got %v", valuesMap)
+	}
+	if !strings.Contains(string(valuesBytes), "metrics-server") || !strings.Contains(string(valuesBytes), "prod-eu") {
+		t.Errorf("scaffolded stub should name the addon and the cluster in plain English, got:\n%s", valuesBytes)
 	}
 	if _, ok := git.files[assignPath(t, "prod-eu")]; !ok {
 		t.Error("expected clusters/prod-eu.yaml to be written")
+	}
+}
+
+// TestEnableAddonV4_NoValues_ExistingClusterValuesFileNeverOverwritten
+// pins the never-overwrite half of item 6: a cluster values file that
+// already exists (hand-created, or left over from a previous enable) must
+// survive an enable-with-no-values request completely untouched.
+func TestEnableAddonV4_NoValues_ExistingClusterValuesFileNeverOverwritten(t *testing.T) {
+	git := newMockGitProvider()
+	orch := newV4TestOrchestrator(t, git)
+
+	handCrafted := []byte("replicaCount: 7\n")
+	git.files[clusterValsPath(t, "prod-eu", "metrics-server")] = handCrafted
+
+	_, err := orch.EnableAddonV4(context.Background(), EnableAddonV4Request{
+		Cluster: "prod-eu",
+		Addon:   "metrics-server",
+		Yes:     true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := git.files[clusterValsPath(t, "prod-eu", "metrics-server")]
+	if string(got) != string(handCrafted) {
+		t.Errorf("existing cluster values file was overwritten: got %q, want unchanged %q", got, handCrafted)
 	}
 }
 

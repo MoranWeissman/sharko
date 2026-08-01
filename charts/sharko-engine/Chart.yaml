@@ -5,7 +5,7 @@ description: >-
   into one ArgoCD ApplicationSet per addon. This is the whole of Sharko's
   deployment logic; see docs/design/2026-07-30-v4-data-file-format.md.
 type: application
-version: 0.2.0
+version: 0.3.0
 appVersion: "4.0.0"
 keywords:
   - argocd

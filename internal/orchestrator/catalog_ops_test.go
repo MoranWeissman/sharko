@@ -305,3 +305,162 @@ func mapKeys(m map[string][]byte) []string {
 	}
 	return out
 }
+
+// TestAddToCatalog_ScaffoldsGlobalValuesFile is v4-walkfix W1 item 5: a
+// single-addon add also creates values/global/<addon>.yaml in the SAME
+// pull request — a comment-only stub, never an invented default.
+func TestAddToCatalog_ScaffoldsGlobalValuesFile(t *testing.T) {
+	git := newMockGitProvider()
+	o := newTestOrchestratorForCatalog(t, git)
+
+	_, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{{
+			Name: "cert-manager", RepoURL: "https://charts.jetstack.io",
+			Chart: "cert-manager", Version: "1.14.5",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AddToCatalog: %v", err)
+	}
+
+	valuesBytes, ok := git.files["values/global/cert-manager.yaml"]
+	if !ok {
+		t.Fatalf("expected values/global/cert-manager.yaml to be scaffolded, files: %v", mapKeys(git.files))
+	}
+	valuesMap, err := parseYAMLMap(valuesBytes)
+	if err != nil {
+		t.Fatalf("scaffolded stub is not valid YAML: %v", err)
+	}
+	if len(valuesMap) != 0 {
+		t.Errorf("scaffolded stub must carry no invented values, got %v", valuesMap)
+	}
+	if !strings.Contains(string(valuesBytes), "cert-manager") {
+		t.Errorf("scaffolded stub should name the addon in plain English, got:\n%s", valuesBytes)
+	}
+}
+
+// TestAddToCatalog_BatchScaffoldsGlobalValuesForEach: a batch add scaffolds
+// one values/global/<addon>.yaml per addon in the request, not just the
+// first.
+func TestAddToCatalog_BatchScaffoldsGlobalValuesForEach(t *testing.T) {
+	git := newMockGitProvider()
+	o := newTestOrchestratorForCatalog(t, git)
+
+	_, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{
+			{Name: "cert-manager", RepoURL: "https://charts.jetstack.io", Chart: "cert-manager", Version: "1.14.5"},
+			{Name: "metrics-server", RepoURL: "https://example.test/charts", Chart: "metrics-server", Version: "3.12.1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("AddToCatalog: %v", err)
+	}
+	for _, addon := range []string{"cert-manager", "metrics-server"} {
+		path := "values/global/" + addon + ".yaml"
+		if _, ok := git.files[path]; !ok {
+			t.Errorf("expected %s to be scaffolded, files: %v", path, mapKeys(git.files))
+		}
+	}
+}
+
+// TestAddToCatalog_SkipsExistingGlobalValuesFile: a hand-created (or
+// previously scaffolded and then edited) global values file must never be
+// overwritten by a later add-to-catalog request for the same addon.
+func TestAddToCatalog_SkipsExistingGlobalValuesFile(t *testing.T) {
+	git := newMockGitProvider()
+	o := newTestOrchestratorForCatalog(t, git)
+
+	handCrafted := []byte("installCRDs: true\n")
+	git.files["values/global/cert-manager.yaml"] = handCrafted
+
+	_, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{{
+			Name: "cert-manager", RepoURL: "https://charts.jetstack.io",
+			Chart: "cert-manager", Version: "1.15.0", // re-add / version bump
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AddToCatalog: %v", err)
+	}
+	got := git.files["values/global/cert-manager.yaml"]
+	if string(got) != string(handCrafted) {
+		t.Errorf("existing global values file was overwritten: got %q, want unchanged %q", got, handCrafted)
+	}
+}
+
+// TestAddToCatalog_ComboScaffoldsBothGlobalAndClusterValuesStubs is
+// v4-walkfix W1 item 6's combo case: the add+enable combo scaffolds BOTH
+// values/global/<addon>.yaml (item 5) AND
+// values/clusters/<cluster>/<addon>.yaml (item 6) in the same pull request
+// when the enable half carries no explicit values.
+func TestAddToCatalog_ComboScaffoldsBothGlobalAndClusterValuesStubs(t *testing.T) {
+	git := newMockGitProvider()
+	registerV4Cluster(t, git, "prod-eu")
+	o := newTestOrchestratorForCatalog(t, git)
+
+	_, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{{
+			Name: "cert-manager", RepoURL: "https://charts.jetstack.io",
+			Chart: "cert-manager", Version: "1.14.5",
+		}},
+		EnableOnCluster: "prod-eu",
+		Yes:             true,
+	})
+	if err != nil {
+		t.Fatalf("AddToCatalog: %v", err)
+	}
+
+	if _, ok := git.files["values/global/cert-manager.yaml"]; !ok {
+		t.Errorf("expected the global values stub, files: %v", mapKeys(git.files))
+	}
+	if _, ok := git.files["values/clusters/prod-eu/cert-manager.yaml"]; !ok {
+		t.Errorf("expected the per-cluster values stub, files: %v", mapKeys(git.files))
+	}
+}
+
+// TestAddToCatalog_DryRunListsValuesScaffolds proves the preview naturally
+// includes the scaffolded files (item 5's global stub and item 6's
+// per-cluster stub on the combo), each marked "create", rather than the
+// dry run silently promising a PR that differs from what a real call
+// would write.
+func TestAddToCatalog_DryRunListsValuesScaffolds(t *testing.T) {
+	git := newMockGitProvider()
+	registerV4Cluster(t, git, "prod-eu")
+	o := newTestOrchestratorForCatalog(t, git)
+	filesBefore := len(git.files) // managed-clusters.yaml only, from registerV4Cluster's seed
+
+	result, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{{
+			Name: "cert-manager", RepoURL: "https://charts.jetstack.io",
+			Chart: "cert-manager", Version: "1.14.5",
+		}},
+		EnableOnCluster: "prod-eu",
+		Yes:             true,
+		DryRun:          true,
+	})
+	if err != nil {
+		t.Fatalf("AddToCatalog: %v", err)
+	}
+	if result.DryRun == nil {
+		t.Fatal("expected a DryRun result")
+	}
+	if len(git.prs) != 0 || len(git.files) != filesBefore {
+		t.Errorf("dry run must have zero git side effects: prs=%d, files went from %d to %d (%v)",
+			len(git.prs), filesBefore, len(git.files), mapKeys(git.files))
+	}
+
+	previews := map[string]string{} // path -> action
+	for _, f := range result.DryRun.FilesToWrite {
+		previews[f.Path] = f.Action
+	}
+	for _, path := range []string{
+		"values/global/cert-manager.yaml",
+		"values/clusters/prod-eu/cert-manager.yaml",
+	} {
+		if action, ok := previews[path]; !ok {
+			t.Errorf("expected the preview to list %s, got %v", path, previews)
+		} else if action != "create" {
+			t.Errorf("expected %s to preview as create, got %q", path, action)
+		}
+	}
+}

@@ -266,7 +266,41 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 	if reformatted {
 		warnings = append(warnings, CatalogRewriteNote)
 	}
+
+	// Global-values scaffold (v4-walkfix W1 item 5): every addon this
+	// request adds also gets values/global/<addon>.yaml scaffolded in the
+	// SAME pull request — a comment-only stub, never an invented default —
+	// so the fleet-wide override file exists from day one instead of only
+	// ever appearing the first time somebody happens to set a value. A file
+	// that already exists (hand-created, or from a previous add) is left
+	// completely untouched: readFileForRewrite (not the lenient
+	// readFileIfExists) is used for the existence check specifically so a
+	// transient read error can never be misread as "does not exist" and
+	// clobber real content with a blank stub.
+	type valuesScaffold struct {
+		path    string
+		content []byte
+	}
+	var globalScaffolds []valuesScaffold
+	for _, name := range names {
+		gPath, err := v4GlobalValuesPath(name)
+		if err != nil {
+			return nil, err
+		}
+		_, exists, err := o.readFileForRewrite(ctx, gPath)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			continue
+		}
+		stub := globalValuesStub(name)
+		files[gPath] = stub
+		globalScaffolds = append(globalScaffolds, valuesScaffold{path: gPath, content: stub})
+	}
+
 	var existingClusterAddons, updatedClusterAddons []byte
+	var clusterValuesScaffolds []valuesScaffold
 	if req.EnableOnCluster != "" {
 		// The assignment file is rewritten whole, so a swallowed read
 		// error would open a pull request wiping every other addon on this
@@ -291,6 +325,26 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 			if err != nil {
 				return nil, fmt.Errorf("updating %s: %w", clusterPath, err)
 			}
+
+			// Per-cluster values scaffold (v4-walkfix W1 item 6), symmetric
+			// with the global scaffold above: the combo's enable half also
+			// creates values/clusters/<cluster>/<addon>.yaml when it does
+			// not exist yet, so both layers the engine reads exist from the
+			// moment an addon starts running on a cluster. Same
+			// never-overwrite rule via readFileForRewrite.
+			cPath, err := v4ClusterValuesPath(req.EnableOnCluster, name)
+			if err != nil {
+				return nil, err
+			}
+			_, cExists, err := o.readFileForRewrite(ctx, cPath)
+			if err != nil {
+				return nil, err
+			}
+			if !cExists {
+				cStub := clusterValuesStub(name, req.EnableOnCluster)
+				files[cPath] = cStub
+				clusterValuesScaffolds = append(clusterValuesScaffolds, valuesScaffold{path: cPath, content: cStub})
+			}
 		}
 		files[clusterPath] = updatedClusterAddons
 	}
@@ -303,12 +357,26 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 			Action: fileActionFromExists(existingCatalog),
 			Diff:   o.buildFileDiff(config.AddonCatalogPath, existingCatalog, catalogBody, fileActionFromExists(existingCatalog)),
 		}}
+		for _, s := range globalScaffolds {
+			previews = append(previews, FilePreview{
+				Path:   s.path,
+				Action: "create",
+				Diff:   o.buildFileDiff(s.path, nil, s.content, "create"),
+			})
+		}
 		if req.EnableOnCluster != "" {
 			previews = append(previews, FilePreview{
 				Path:   clusterPath,
 				Action: fileActionFromExists(existingClusterAddons),
 				Diff:   o.buildFileDiff(clusterPath, existingClusterAddons, updatedClusterAddons, fileActionFromExists(existingClusterAddons)),
 			})
+			for _, s := range clusterValuesScaffolds {
+				previews = append(previews, FilePreview{
+					Path:   s.path,
+					Action: "create",
+					Diff:   o.buildFileDiff(s.path, nil, s.content, "create"),
+				})
+			}
 		}
 		return &AddToCatalogResult{
 			GitResult: &GitResult{

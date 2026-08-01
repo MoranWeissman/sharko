@@ -2,8 +2,18 @@
 The one shared AppProject every addon Application belongs to (design decision
 D17). Unconditionally rendered — even a repo with zero addons switched on
 still gets this, since it costs nothing and means enabling the first addon
-never needs a second render pass to create its project.
+never needs a second render pass to create its project. Its wildcard
+sourceRepos/destinations/resource whitelists are also what the
+connectivity-check Application (templates/connectivity-check.yaml, chart
+0.3.0) runs under — no separate AppProject needed for it, see that file's
+header comment.
+
+Gated off when .Values.connectivityCheckOnly is set (chart 0.3.0): that mode
+renders ONLY the connectivity-check ConfigMap, on a generated Application
+that already runs under the shared AppProject created by the PARENT render
+(the one that generated it) — this render pass has nothing to do with it.
 */}}
+{{- if not .Values.connectivityCheckOnly }}
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -24,3 +34,4 @@ spec:
   namespaceResourceWhitelist:
     - group: '*'
       kind: '*'
+{{- end }}

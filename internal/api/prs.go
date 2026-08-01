@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/prtracker"
 )
 
 // PRListResponse is the response for GET /api/v1/prs.
@@ -201,6 +203,7 @@ func (s *Server) handleGetPR(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} PRItem "Updated PR details"
 // @Failure 400 {object} map[string]interface{} "Invalid PR ID"
 // @Failure 404 {object} map[string]interface{} "PR not found"
+// @Failure 502 {object} map[string]interface{} "Git provider unreachable"
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /prs/{id}/refresh [post]
 func (s *Server) handleRefreshPR(w http.ResponseWriter, r *http.Request) {
@@ -220,9 +223,36 @@ func (s *Server) handleRefreshPR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Split honestly (v4-walkfix W1 item 3): the UI polls this endpoint
+	// every 7s after a submit, so a blanket 500 on every PollSinglePR
+	// error used to paint the browser console red on one transient Gitea
+	// hiccup. errors.Is on prtracker's sentinels (not string matching)
+	// tells apart "this PR isn't tracked" (404, the caller's mistake or a
+	// PR that already got dropped), "the Git provider itself failed"
+	// (502, try again), and a genuine internal fault (500).
 	pr, err := s.prTracker.PollSinglePR(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	switch {
+	case errors.Is(err, prtracker.ErrPRNotTracked):
+		writeCodedError(w, http.StatusNotFound, "pr_not_tracked",
+			fmt.Sprintf("PR #%d is not tracked", id), nil)
+		return
+	case errors.Is(err, prtracker.ErrPRPollUpstream):
+		writeCodedError(w, http.StatusBadGateway, "pr_provider_unreachable",
+			"Sharko could not reach the Git provider to refresh this PR. Try again in a moment.", nil)
+		return
+	case err != nil:
+		// Genuine internal fault — no Git provider configured, or the
+		// tracker's own state store failed to read/write. writeServerError
+		// keeps the raw error out of the response body and logs it instead.
+		writeServerError(w, http.StatusInternalServerError, "refresh_pr", err)
+		return
+	case pr == nil:
+		// PollSinglePR found the PR is gone from the provider (a genuine
+		// 404 upstream) and already dropped it from tracking — a clean
+		// terminal state, not a failure, but still needs a coded 404
+		// response rather than a nil-pointer panic on PRItem below.
+		writeCodedError(w, http.StatusNotFound, "pr_not_tracked",
+			fmt.Sprintf("PR #%d is no longer tracked — it was removed on the Git provider", id), nil)
 		return
 	}
 

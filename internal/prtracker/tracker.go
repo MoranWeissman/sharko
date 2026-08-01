@@ -376,12 +376,34 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 	}
 }
 
+// The sentinels below let callers (internal/api/prs.go's handleRefreshPR)
+// classify a PollSinglePR failure into an honest HTTP status instead of a
+// blanket 500 — the UI polls this endpoint every 7s after a submit, so one
+// transient Gitea/GitHub hiccup used to paint the browser console red on
+// every poll (v4-walkfix W1 item 3). errors.Is is used rather than string
+// matching so the classification survives message wording changes.
+var (
+	// ErrPRNotTracked means the Git provider answered fine, but this PR ID
+	// is not (or no longer) in the tracker's own state — a 404, not a
+	// server fault.
+	ErrPRNotTracked = errors.New("pr not tracked")
+	// ErrGitProviderUnavailable means Sharko itself has no Git provider
+	// configured right now — a genuine internal/config fault, not a
+	// transient upstream blip.
+	ErrGitProviderUnavailable = errors.New("no git provider available")
+	// ErrPRPollUpstream wraps any error the Git provider itself returned
+	// from the actual status call (network blip, rate limit, auth hiccup,
+	// a Gitea 405 mid-merge race, ...) — this is the transient case that
+	// should map to 502, not 500.
+	ErrPRPollUpstream = errors.New("pr poll upstream error")
+)
+
 // PollSinglePR polls a single PR by ID and updates its status.
 func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 	log := logging.LoggerFromContext(ctx)
 	gp := t.gitProvider()
 	if gp == nil {
-		return nil, fmt.Errorf("no Git provider available")
+		return nil, fmt.Errorf("%w", ErrGitProviderUnavailable)
 	}
 
 	status, err := gp.GetPullRequestStatus(ctx, prID)
@@ -424,7 +446,7 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 			// error — this is a clean, expected terminal state, not a failure.
 			return nil, nil
 		}
-		return nil, fmt.Errorf("poll PR #%d: %w", prID, err)
+		return nil, fmt.Errorf("poll PR #%d: %w: %w", prID, ErrPRPollUpstream, err)
 	}
 
 	var result *PRInfo
@@ -433,7 +455,7 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 		key := strconv.Itoa(prID)
 		pr, ok := prs[key]
 		if !ok {
-			return fmt.Errorf("PR #%d not tracked", prID)
+			return fmt.Errorf("PR #%d not tracked: %w", prID, ErrPRNotTracked)
 		}
 
 		pr.LastStatus = status

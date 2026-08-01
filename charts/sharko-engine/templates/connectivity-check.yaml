@@ -1,0 +1,129 @@
+{{/*
+============================================================================
+sharko-engine — connectivity check (v4 regression fix, chart 0.3.0)
+============================================================================
+A freshly-registered cluster with ZERO addons enabled matches no
+ApplicationSet from appset.yaml, so ArgoCD never targets it and its
+connectionState never populates — "Connecting…" forever. v3 solved this
+with a connectivity-check ApplicationSet committed straight into the user's
+own repo (templates/bootstrap/templates/connectivity-check-appset.yaml).
+v4's repo is data-only (design doc 2026-07-30-v4-data-file-format.md), so
+that "write a manifest into the user's repo" mechanism no longer exists —
+this file is its v4 replacement, living in the engine chart instead.
+
+The cluster reconciler still stamps sharko.dev/connectivity-check: enabled
+on every Sharko-registered cluster Secret with zero enabled addons
+(internal/clusterreconciler/reconciler.go, via
+models.ApplyConnectivityCheckLabel) — that label was always being written;
+nothing consumed it after the v4 bootstrap rewrite dropped the v3 template.
+This file is what finally consumes it again.
+
+Two rendering modes, selected by one Helm value:
+
+  Normal mode — .Values.connectivityCheckOnly is unset/false. This is how
+  the engine itself always renders (same condition as appset.yaml and
+  project.yaml, which gate off in the OTHER mode below). Renders the
+  ApplicationSet below: it watches cluster Secrets for the label and, for
+  each match, creates one Application whose SOURCE IS THIS SAME CHART —
+  same OCI repoURL, same .Chart.Version, self-referential — with
+  connectivityCheckOnly flipped to true via a Helm parameter. No manifest
+  file is written to the user's data-only repo; the chart points at itself
+  instead. The generated Application runs under the shared AppProject
+  project.yaml renders in this same pass (its wildcard sourceRepos /
+  destinations / resource whitelists already cover this chart's own OCI
+  repoURL and the small sharko-connectivity namespace on any cluster — no
+  separate AppProject needed).
+
+  Check mode — .Values.connectivityCheckOnly is true. Only ever set by the
+  generated Application above, never by a user. project.yaml and
+  appset.yaml both gate themselves off in this mode (nothing about the
+  fleet's real addons or the shared AppProject has any business rendering
+  again inside a single-cluster check), and the ApplicationSet below gates
+  itself off too (it is the generator, not the generated). Only the
+  ConfigMap renders. Synced+Healthy on that one Application is ArgoCD's own
+  end-to-end proof it can reach and deploy to the cluster — a failed sync
+  surfaces a real, diagnosable reason instead of an indefinite
+  "Connecting…". When the operator enables the cluster's first addon, the
+  reconciler removes the label, the ApplicationSet stops selecting the
+  cluster, and ArgoCD cascade-deletes the check Application.
+*/}}
+
+{{- if not .Values.connectivityCheckOnly }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: sharko-connectivity-check
+  namespace: argocd
+  labels:
+    {{- include "sharko-engine.commonLabels" . | nindent 4 }}
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=zero"]
+  generators:
+    # Single clusters generator: no per-cluster values file needed — the
+    # check manifest is static and identical for every cluster (mirrors v3's
+    # connectivity-check-appset.yaml).
+    - clusters:
+        selector:
+          matchLabels:
+            argocd.argoproj.io/secret-type: cluster
+            sharko.dev/connectivity-check: enabled
+  template:
+    metadata:
+      # "connectivity-check-<cluster>" — NOT "sharko-connectivity-check-",
+      # even though this ApplicationSet's own name carries that prefix.
+      # internal/orchestrator/constants.go's ConnectivityCheckAppPrefix
+      # ("connectivity-check-") is the canonical name every reader of this
+      # Application keys off — internal/api/connectivity_status.go,
+      # internal/api/clusters_doctor.go, internal/service/cluster.go, and
+      # orchestrator.IsSharkoSystemApp (which hides it from the addon-link
+      # UI). Changing this prefix would silently break every one of them.
+      name: 'connectivity-check-{{`{{ .name }}`}}'
+      labels:
+        {{- include "sharko-engine.commonLabels" . | nindent 8 }}
+        sharko.dev/connectivity-check: '{{`{{ .name }}`}}'
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: {{ .Values.project.name | default "sharko-addons" }}
+      source:
+        # Self-referential: the exact chart/version this ApplicationSet
+        # itself is running as. engineChart.repoURL is set on the real
+        # engine pin (engine.yaml) by internal/orchestrator/bootstrap_v4.go
+        # buildEnginePin, mirroring how repo.url/repo.revision reach this
+        # chart — see values.yaml for the placeholder used standalone.
+        repoURL: {{ .Values.engineChart.repoURL }}
+        chart: {{ .Chart.Name }}
+        targetRevision: {{ .Chart.Version }}
+        helm:
+          parameters:
+            - name: connectivityCheckOnly
+              value: "true"
+      destination:
+        # Route to the in-cluster API server for the host cluster; external
+        # URL for all others (same v3 SHARKO_HOST_CLUSTER_NAME special case
+        # appset.yaml uses for addon Applications).
+        server: '{{`{{ if eq .name "`}}{{ .Values.hostCluster.name | default "" }}{{`" }}https://kubernetes.default.svc{{ else }}{{ .server }}{{ end }}`}}'
+        namespace: sharko-connectivity
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true
+        - ServerSideApply=true
+{{- end }}
+
+{{- if .Values.connectivityCheckOnly }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sharko-connectivity-check
+  namespace: sharko-connectivity
+  labels:
+    {{- include "sharko-engine.commonLabels" . | nindent 4 }}
+data:
+  purpose: "Deployed by Sharko through ArgoCD to verify this cluster can receive deployments. Removed automatically when the first addon is enabled."
+{{- end }}

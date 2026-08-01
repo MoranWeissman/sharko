@@ -136,7 +136,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 			if k8sClient, namespace, ok := s.k8sClientAndNamespace(); ok {
 				secret, err := k8sClient.CoreV1().Secrets(namespace).Get(r.Context(), c.Name, metav1.GetOptions{})
 				if err == nil && secret != nil {
-					if driftReason := detectConnectivityCheckDrift(c.Name, secret.Labels, allApps); driftReason != "" {
+					if driftReason := detectConnectivityCheckDrift(r.Context(), ac, c.Name, secret.Labels, allApps); driftReason != "" {
 						c.ConnectivityDetail = driftReason
 					}
 				}

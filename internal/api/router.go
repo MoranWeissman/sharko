@@ -1751,7 +1751,12 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 	const csp = "default-src 'self'; " +
 		"script-src 'self'; " +
 		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-		"img-src 'self' data:; " +
+		// https: (not http:) so external badge/logo images in a rendered
+		// chart README (ui/src/components/RichMarkdown.tsx's sanitize
+		// schema deliberately allows http/https <img> src) actually load
+		// instead of being emitted then silently blocked by the browser
+		// (v4-walkfix W1 item 4).
+		"img-src 'self' data: https:; " +
 		"font-src 'self' https://fonts.gstatic.com https://fonts.googleapis.com; " +
 		"connect-src 'self'; " +
 		"frame-ancestors 'none'; " +
