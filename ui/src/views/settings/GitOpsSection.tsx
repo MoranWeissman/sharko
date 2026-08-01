@@ -13,6 +13,7 @@ import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { DryRunPreview } from '@/components/AddAddonFlow'
 import type { AddonCatalogItem, DryRunResult } from '@/services/models'
+import { buildConnectionUpdatePayload } from './connectionUpdate'
 
 interface GitOpsFormData {
   gitops_base_branch: string
@@ -45,6 +46,16 @@ export function GitOpsSection() {
 
   // Search filter for the default addons table (F13 pattern)
   const [defaultAddonsFilter, setDefaultAddonsFilter] = useState('')
+
+  // Repo layout — same source MigrationBanner uses (GET /migration/status).
+  // The Default Addons panel below is a v3-only door (PUT /default-addons
+  // writes configuration/default-addons.yaml, which a v4 repo never reads
+  // — the server now refuses it with a coded 409, walk finding). Hiding it
+  // on a v4 repo means "Preview changes" never offers a file the connected
+  // repo doesn't have. Defaults to false (v3 UI shown) until the status
+  // call resolves, matching the server's own fail-open stance for this
+  // gate class.
+  const [isV4Repo, setIsV4Repo] = useState(false)
 
   // GitOps settings save (base branch, auto-merge, host cluster)
   const [saving, setSaving] = useState(false)
@@ -82,6 +93,9 @@ export function GitOpsSection() {
   useEffect(() => {
     fetchCatalog()
     fetchDefaultAddons()
+    api.getMigrationStatus()
+      .then((status) => setIsV4Repo(status.format === 'v4'))
+      .catch(() => setIsV4Repo(false))
   }, [fetchCatalog, fetchDefaultAddons])
 
   // Sync form state from saved connection data when it loads
@@ -108,7 +122,15 @@ export function GitOpsSection() {
     setSaving(true)
     setSaveError(null)
     try {
-      const connPayload = buildConnectionPayload(existingConn, form)
+      const connPayload = buildConnectionUpdatePayload(existingConn, {
+        gitops: {
+          base_branch: form.gitops_base_branch || 'main',
+          branch_prefix: 'sharko/',
+          commit_prefix: 'sharko:',
+          pr_auto_merge: form.gitops_pr_auto_merge,
+          host_cluster_name: form.gitops_host_cluster_name || undefined,
+        },
+      })
       await api.updateConnection(existingConn.name, connPayload)
       refreshConnections()
       setJustSaved(true)
@@ -220,7 +242,23 @@ export function GitOpsSection() {
         </div>
       </div>
 
-      {/* Default Addons — searchable table, Save opens a PR */}
+      {/* Default Addons — v3-only door (PUT /default-addons writes
+          configuration/default-addons.yaml, which a v4 repo does not read;
+          the server refuses it with a coded 409, dry_run included). On a
+          v4 repo, addon picks happen per-cluster in the catalog instead —
+          show a one-line pointer rather than a panel whose Preview/Save
+          buttons would only ever come back with a refusal. */}
+      {isV4Repo ? (
+        <div>
+          <div className="mb-2 flex items-center gap-2">
+            <GitMerge className="h-4 w-4 text-[#2a5a7a]" />
+            <h5 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Default Addons</h5>
+          </div>
+          <p data-testid="default-addons-v4-notice" className="text-xs text-[#3a6a8a] dark:text-gray-500">
+            Default addons are not part of the v4 layout — picks happen in the catalog.
+          </p>
+        </div>
+      ) : (
       <div>
         <div className="mb-3 flex items-center gap-2">
           <GitMerge className="h-4 w-4 text-[#2a5a7a]" />
@@ -339,6 +377,7 @@ export function GitOpsSection() {
           )
         })()}
       </div>
+      )}
 
       {saveError && (
         <p className="text-sm text-red-600 dark:text-red-400">{saveError}</p>
@@ -362,37 +401,4 @@ export function GitOpsSection() {
       </div>
     </div>
   )
-}
-
-// Build a full connection update payload, preserving existing connection data.
-// default_addons is NO LONGER part of this payload — it's saved via PUT /default-addons.
-function buildConnectionPayload(
-  conn: { name: string; git_provider: string; git_repo_identifier: string; argocd_server_url: string; argocd_namespace: string },
-  gitopsForm: GitOpsFormData
-) {
-  let gitUrl = ''
-  if (conn.git_provider === 'github') {
-    gitUrl = `https://github.com/${conn.git_repo_identifier}`
-  } else if (conn.git_provider === 'azuredevops') {
-    const parts = conn.git_repo_identifier.split('/')
-    if (parts.length >= 3) {
-      gitUrl = `https://dev.azure.com/${parts[0]}/${parts[1]}/_git/${parts[2]}`
-    }
-  }
-  return {
-    name: conn.name,
-    git: { repo_url: gitUrl },
-    argocd: {
-      server_url: conn.argocd_server_url || '',
-      namespace: conn.argocd_namespace || 'argocd',
-      insecure: true,
-    },
-    gitops: {
-      base_branch: gitopsForm.gitops_base_branch || 'main',
-      branch_prefix: 'sharko/',
-      commit_prefix: 'sharko:',
-      pr_auto_merge: gitopsForm.gitops_pr_auto_merge,
-      host_cluster_name: gitopsForm.gitops_host_cluster_name || undefined,
-    },
-  }
 }

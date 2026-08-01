@@ -663,3 +663,116 @@ func TestHandleUpdateConnection_AutoDeriveProvider_GitHub(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (PUT must auto-derive provider too)\nbody: %s", w.Code, w.Body.String())
 	}
 }
+
+// TestHandleUpdateConnection_GitOpsOnlySave — walk finding: the GitOps
+// Settings and Secrets Provider pages in the UI call this same PUT endpoint
+// to save only their own section, and never send git identity fields (they
+// cannot reconstruct a self-hosted Gitea's repo_url/host, and GET
+// /connections never exposes it). Before the fix, a request with no git
+// identity fields fell through to "git.provider is required" for a stored
+// Gitea connection (github/azuredevops accidentally survived because their
+// URLs are reconstructible from public-SaaS hosts) — and even where it did
+// not 400, sending a zero-valued argocd block silently flipped a verified
+// (insecure: false) ArgoCD connection to insecure: true.
+//
+// This table drives all three providers through: create with a full git
+// config, then PUT with ONLY a gitops block (the exact shape the GitOps
+// Settings page sends), and assert (a) 200, not 400, and (b) the saved git
+// config — including fields the client cannot know, like Gitea's repo_url —
+// comes back byte-for-byte unchanged.
+func TestHandleUpdateConnection_GitOpsOnlySave(t *testing.T) {
+	cases := []struct {
+		name string
+		git  models.GitRepoConfig
+	}{
+		{
+			name: "github",
+			git: models.GitRepoConfig{
+				Provider: models.GitProviderGitHub,
+				RepoURL:  "https://github.com/prod-org/prod-repo",
+				Token:    "gh-token",
+			},
+		},
+		{
+			name: "azuredevops",
+			git: models.GitRepoConfig{
+				Provider: models.GitProviderAzureDevOps,
+				RepoURL:  "https://dev.azure.com/prod-org/prod-project/_git/prod-repo",
+				PAT:      "ado-pat",
+			},
+		},
+		{
+			name: "gitea",
+			git: models.GitRepoConfig{
+				Provider: models.GitProviderGitea,
+				// Self-hosted, arbitrary host — the exact shape GET
+				// /connections cannot round-trip (only owner/repo is
+				// exposed, never the host).
+				RepoURL: "https://git.internal.example.org/prod-org/prod-repo",
+				Token:   "gitea-token",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newIsolatedTestServer(t)
+			router := NewRouter(srv, nil)
+
+			connName := "conn-" + tc.name
+			createBody, _ := json.Marshal(models.CreateConnectionRequest{
+				Name: connName,
+				Git:  tc.git,
+				Argocd: models.ArgocdConfig{
+					ServerURL: "https://argocd." + tc.name + ".example.org",
+					Namespace: "argocd",
+					Insecure:  false, // verified TLS — must survive the save below
+				},
+			})
+			createReq := httptest.NewRequest(http.MethodPost, "/api/v1/connections/", bytes.NewReader(createBody))
+			createReq.Header.Set("Content-Type", "application/json")
+			createW := httptest.NewRecorder()
+			router.ServeHTTP(createW, createReq)
+			if createW.Code != http.StatusCreated {
+				t.Fatalf("create status = %d, want 201 (body=%s)", createW.Code, createW.Body.String())
+			}
+
+			// The GitOps Settings page's exact payload shape: name + gitops
+			// only, no git/argocd/provider blocks at all.
+			updateBody, _ := json.Marshal(map[string]interface{}{
+				"name": connName,
+				"gitops": map[string]interface{}{
+					"base_branch": "develop",
+				},
+			})
+			updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/connections/"+connName, bytes.NewReader(updateBody))
+			updateReq.Header.Set("Content-Type", "application/json")
+			updateW := httptest.NewRecorder()
+			router.ServeHTTP(updateW, updateReq)
+
+			if updateW.Code != http.StatusOK {
+				t.Fatalf("update status = %d, want 200 (body=%s)", updateW.Code, updateW.Body.String())
+			}
+
+			saved, err := srv.connSvc.GetConnection(connName)
+			if err != nil || saved == nil {
+				t.Fatalf("GetConnection after update: %v", err)
+			}
+			if saved.Git.Provider != tc.git.Provider {
+				t.Errorf("git.provider = %q, want %q (must not be wiped by a gitops-only save)", saved.Git.Provider, tc.git.Provider)
+			}
+			if saved.Git.RepoURL != tc.git.RepoURL {
+				t.Errorf("git.repo_url = %q, want %q", saved.Git.RepoURL, tc.git.RepoURL)
+			}
+			if saved.Argocd.Insecure {
+				t.Errorf("argocd.insecure = true, want false (gitops-only save must not touch it)")
+			}
+			if saved.Argocd.ServerURL == "" {
+				t.Errorf("argocd.server_url was wiped by a gitops-only save")
+			}
+			if saved.GitOps == nil || saved.GitOps.BaseBranch != "develop" {
+				t.Errorf("gitops.base_branch = %+v, want develop (the field the save DID intend to change)", saved.GitOps)
+			}
+		})
+	}
+}

@@ -219,6 +219,34 @@ describe('SecretsProviderSection', () => {
     expect(provider.prefix).toBeUndefined()
   })
 
+  // Walk finding (gitea gitops-save bug, same defect class as
+  // GitOpsSection): the payload used to rebuild git.repo_url from
+  // git_repo_identifier, which only works for github/azuredevops. For a
+  // gitea connection it produced an empty, provider-less git block and the
+  // server rejected the save with "git.provider is required". The fix
+  // echoes the connection's real stored provider and leaves repo_url out
+  // of the payload for every provider, gitea included.
+  it('saving with a gitea connection sends git.provider verbatim, no rebuilt repo_url', async () => {
+    setupHook([{
+      ...sampleConnection,
+      git_provider: 'gitea',
+      git_repo_identifier: 'prod-org/prod-repo',
+    }])
+    const user = userEvent.setup()
+    render(<SecretsProviderSection />)
+
+    const selects = await screen.findAllByRole('combobox')
+    await user.selectOptions(selects[0], 'k8s-secrets')
+
+    await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+
+    await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+    const [name, body] = updateConnectionMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(name).toBe('default')
+    expect(body.git).toEqual({ provider: 'gitea' })
+    expect(body.argocd).toBeUndefined()
+  })
+
   it('regression: selecting aws-sm shows the Region input and saves type=aws-sm', async () => {
     setupHook()
     const user = userEvent.setup()
