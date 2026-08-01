@@ -152,8 +152,8 @@ func dashboardClassificationFixture(t *testing.T) *fakeGitProvider {
 		files: map[string][]byte{
 			orchestrator.EnginePinPath:         []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
 			orchestrator.V4ManagedClustersPath: []byte("clusters:\n  - name: with-addon\n  - name: no-addons\n"),
-			"clusters/with-addon.yaml":         withAddon,
-			"clusters/no-addons.yaml":          noAddons,
+			"cluster-addons/with-addon.yaml":   withAddon,
+			"cluster-addons/no-addons.yaml":    noAddons,
 			config.AddonCatalogPath:            approved,
 		},
 	}
@@ -426,11 +426,11 @@ func TestGetStats_V4Repo_UsesV4Sources(t *testing.T) {
 
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
-			orchestrator.EnginePinPath:     []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			orchestrator.EnginePinPath:         []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
 			orchestrator.V4ManagedClustersPath: []byte("clusters:\n  - name: prod-eu\n  - name: staging-us\n"),
-			"cluster-addons/prod-eu.yaml":        prodEU,
-			"cluster-addons/staging-us.yaml":     stagingUS,
-			config.AddonCatalogPath:   delta,
+			"cluster-addons/prod-eu.yaml":      prodEU,
+			"cluster-addons/staging-us.yaml":   stagingUS,
+			config.AddonCatalogPath:            delta,
 			// v3 files ALSO present, to prove they are ignored once the
 			// engine pin routes this to the v4 branch.
 			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-only-cluster\n    labels: {}\n"),
