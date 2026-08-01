@@ -538,7 +538,7 @@ function MergedTabBody({
     return (
       <EmptyState
         title="No merged PRs yet"
-        description="Sharko-authored PRs that have been merged on GitHub will appear here."
+        description="Sharko-authored PRs that have been merged in your git repo will appear here."
       />
     )
   }
