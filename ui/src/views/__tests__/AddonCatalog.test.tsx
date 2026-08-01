@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { AddonCatalog } from '@/views/AddonCatalog'
+import { AddonCatalog, ADDON_CATALOG_CACHE_KEY } from '@/views/AddonCatalog'
 import { AuthProvider } from '@/hooks/useAuth'
 import { api } from '@/services/api'
+import { setCached } from '@/lib/viewCache'
 
 const mockNavigate = vi.fn()
 vi.mock('react-router-dom', async () => {
@@ -1145,5 +1146,51 @@ describe('AddonCatalog — add-addon parity flow (V2-cleanup-15.1)', () => {
     expect(vi.mocked(api.addToCatalog).mock.calls[0][0].addons[0]).toEqual(
       expect.objectContaining({ name: 'my-addon', from_marketplace: false }),
     )
+  })
+})
+
+// perf S2 — a same-session revisit paints from the last successful load
+// instantly (no spinner), then quietly refreshes in the background.
+describe('AddonCatalog stale-while-refresh (perf S2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders cached addons immediately on mount, then replaces them once the background refetch resolves', async () => {
+    setCached(ADDON_CATALOG_CACHE_KEY, {
+      addons: [
+        {
+          addon_name: 'stale-addon',
+          chart: 'stale-addon',
+          repo_url: 'https://example.com/charts',
+          namespace: 'stale-addon',
+          version: '1.0.0',
+          total_clusters: 1,
+          enabled_clusters: 0,
+          healthy_applications: 0,
+          degraded_applications: 0,
+          missing_applications: 0,
+          deployed_cluster_count: 0,
+          total_target_cluster_count: 0,
+          applications: [],
+        },
+      ],
+    })
+
+    // The background refetch resolves with the fixture's fresh 4-addon
+    // response (module mock default, set up above).
+    renderCatalog()
+
+    // Instant paint from cache — no loading spinner, the stale addon's name
+    // visible without waiting on any fetch.
+    expect(screen.queryByText('Loading addon catalog...')).not.toBeInTheDocument()
+    expect(screen.getByText('stale-addon')).toBeInTheDocument()
+
+    // Background refresh lands and replaces the stale list with the fresh
+    // fixture data.
+    await waitFor(() => {
+      expect(screen.getByText('ingress-nginx')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('stale-addon')).not.toBeInTheDocument()
   })
 })

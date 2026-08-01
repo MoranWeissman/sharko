@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { Dashboard, isBootstrapBlocking, BOOTSTRAP_BLOCKING_HEALTH } from '@/views/Dashboard';
+import { Dashboard, isBootstrapBlocking, BOOTSTRAP_BLOCKING_HEALTH, DASHBOARD_CACHE_KEY } from '@/views/Dashboard';
 import { api } from '@/services/api';
 // v1.21 Bundle 3 — Dashboard now consumes addon state via the unified
 // provider. Tests have to mount it inside one or the hook throws.
 import { AddonStatesProvider } from '@/hooks/useAddonStates';
+import { setCached } from '@/lib/viewCache';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -933,5 +934,101 @@ describe('Home-cluster identity card wiring (Package 3)', () => {
     expect(() => renderDashboard()).not.toThrow();
 
     expect(await screen.findByText('v2.11.0')).toBeInTheDocument();
+  });
+});
+
+// perf S3 — the page used to block the whole frame behind Promise.all on
+// all 8 fetches, so one slow/never-resolving call (e.g. an observability
+// spike) held up even the stat cards. Now /dashboard/stats alone clears
+// the spinner; everything else fills in on its own.
+describe('Dashboard progressive paint (perf S3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('paints the frame and stat cards before a slow secondary fetch resolves, then catches up when it lands', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    // getObservability deliberately does not resolve until we say so —
+    // the stat cards must not wait on it.
+    let resolveObs: (v: unknown) => void = () => {};
+    (api.getObservability as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Promise((resolve) => {
+        resolveObs = resolve;
+      }),
+    );
+
+    renderDashboard();
+
+    // Stat cards land from /dashboard/stats alone, with observability still
+    // in flight.
+    await waitFor(() => {
+      expect(within(screen.getByTestId('stat-clusters-total')).getByText('10')).toBeInTheDocument();
+    });
+    expect(within(screen.getByTestId('stat-applications-total')).getByText('50')).toBeInTheDocument();
+    // Recent Activity is still on its own empty/loading state — proof the
+    // page rendered without it, not proof it never arrives.
+    expect(screen.getByText('No recent sync activity')).toBeInTheDocument();
+
+    // Now let observability land — the Recent Activity panel fills in on
+    // its own, without a second full-page load.
+    resolveObs({
+      recent_syncs: [
+        {
+          timestamp: new Date().toISOString(),
+          addon_name: 'cert-manager',
+          cluster_name: 'prod-eu',
+          revision: 'abcdef1234567890',
+        },
+      ],
+    });
+    await waitFor(() => {
+      expect(screen.getByText('cert-manager')).toBeInTheDocument();
+    });
+  });
+});
+
+// perf S2 — a same-session revisit paints from the last successful load
+// instantly (no spinner), then quietly refreshes in the background.
+describe('Dashboard stale-while-refresh (perf S2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders cached data immediately on mount, then replaces it once the background refetch resolves', async () => {
+    setCached(DASHBOARD_CACHE_KEY, {
+      stats: {
+        ...baseStats,
+        clusters: { total: 3, connected: 3, pending: 0, untested: 0, missing: 0, failed: 0 },
+      },
+      recentSyncs: [],
+      versionDrifts: [],
+      appHealthEntries: [],
+      clusters: [],
+      argoCDUnreachable: false,
+      homeCluster: null,
+      sharkoVersion: undefined,
+      argocdVersion: undefined,
+      argocdConnected: false,
+      uptime: undefined,
+      upgrades: { withUpgrade: 0, checked: 0, namesWithUpgrade: [] },
+    });
+
+    // The background refetch resolves with fresh (different) data — the
+    // default mock's 10-cluster baseStats.
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+
+    renderDashboard();
+
+    // Instant paint from cache: no spinner, cached numbers visible without
+    // waiting on any fetch.
+    expect(screen.queryByText('Loading dashboard...')).not.toBeInTheDocument();
+    expect(within(screen.getByTestId('stat-clusters-total')).getByText('3')).toBeInTheDocument();
+
+    // Background refresh lands and quietly replaces the stale number.
+    await waitFor(() => {
+      expect(within(screen.getByTestId('stat-clusters-total')).getByText('10')).toBeInTheDocument();
+    });
   });
 });
