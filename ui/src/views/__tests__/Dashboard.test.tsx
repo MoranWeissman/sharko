@@ -41,30 +41,11 @@ vi.mock('@/services/api', () => ({
   fetchMergedPRs: vi.fn().mockResolvedValue({ prs: [], limit: 20 }),
   refreshPR: vi.fn().mockResolvedValue({ status: 'ok' }),
   fetchAuditLog: vi.fn().mockResolvedValue({ entries: [] }),
-  // Dashboard.tsx defensively re-normalizes argocd.version through this
-  // helper (belt-and-suspenders on top of api.getConfig()'s own
-  // normalization — see services/api.ts). Since this whole module is
-  // mocked, the mock has to provide the real implementation too, not a
-  // stub, or Dashboard's defensive coercion silently no-ops in tests.
-  extractArgocdVersionString: (raw: unknown): string | undefined => {
-    if (typeof raw === 'string') return raw;
-    if (raw && typeof raw === 'object') {
-      const version = (raw as { Version?: unknown }).Version;
-      if (typeof version === 'string') return version;
-    }
-    return undefined;
-  },
   api: {
     getObservability: vi.fn().mockResolvedValue(null),
     getVersionMatrix: vi.fn().mockResolvedValue(null),
     getAttentionItems: vi.fn().mockResolvedValue([]),
     getClusters: vi.fn().mockResolvedValue({ clusters: [] }),
-    getHomeCluster: vi.fn().mockResolvedValue({ available: false, message: 'only available when running in-cluster' }),
-    // Home-cluster identity card (dashboard facelift, Package 3) — three
-    // more thin reads the Dashboard fetches alongside everything else.
-    health: vi.fn().mockResolvedValue({ status: 'healthy', version: '4.2.0' }),
-    getConfig: vi.fn().mockResolvedValue({ argocd: { connected: true, version: '2.11.0' } }),
-    getFleetStatus: vi.fn().mockResolvedValue({ server_version: '4.2.0', uptime: '3h12m' }),
     getDashboardStats: vi.fn().mockResolvedValue({
       connections: { total: 1, active: 'dev' },
       clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
@@ -107,7 +88,7 @@ const baseStats = {
   addons: { total_available: 15, enabled_deployments: 85 },
 };
 
-const BOOTSTRAP_BANNER_TEXT = 'ArgoCD Bootstrap Application Issue';
+const BOOTSTRAP_BANNER_TEXT = 'Sharko Engine Issue';
 
 describe('Dashboard', () => {
   beforeEach(() => {
@@ -149,35 +130,66 @@ describe('Dashboard', () => {
     expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('no version data');
   });
 
-  // BUG-040 (rebuilt for the dashboard UX review 2026-08-01 contract):
-  // clicking the "N disconnected cluster(s)" pill EXPANDS the one
-  // attention panel (cluster rows now live there, named + reasoned +
-  // linked, instead of the old standalone "Clusters Needing Attention"
-  // section). The panel's "View in Clusters" link still deep-links to
-  // /clusters?status=disconnected — same target, reached one click deeper.
-  it('expanding "disconnected clusters" shows named rows; "View in Clusters" deep-links to ?status=disconnected', async () => {
-    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
-      clusters: [
-        { name: 'spoke-us', connection_status: 'Failed' },
-        { name: 'spoke-eu', connection_status: 'missing' },
-      ],
+});
+
+// WQ-3 (attention-move-badges): the detailed "Needs Attention" rows moved
+// to Observability. Named cluster/addon rows + their deep links are tested
+// there now (Observability.test.tsx) — the Dashboard keeps only the thin
+// count line, tested below.
+describe('Dashboard thin attention line (WQ-3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('shows the confirmed-problem count and navigates to /observability on click', async () => {
+    // baseStats default mock already has 1 failed + 1 missing = 2 cluster
+    // problems; no addon problems in this fixture, so the line reads "2".
+    renderDashboard();
+
+    const line = await screen.findByText(/2 things need attention/i);
+    fireEvent.click(line);
+    expect(mockNavigate).toHaveBeenCalledWith('/observability');
+  });
+
+  // A freshly-observed degraded addon starts inside the 10-minute settling
+  // window (see useAddonStates.tsx SETTLING_WINDOW_MS) — it must NOT bump
+  // the thin line's count while settling. The confirmed-vs-settling split
+  // itself (badSince timing) is unit-tested directly against
+  // splitAddonStates in AttentionSection.test.tsx, where a fabricated
+  // badSince can be placed outside the window without fighting real timers.
+  it('a freshly-degraded addon (still settling) does NOT bump the count', async () => {
+    (api.getAttentionItems as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { app_name: 'cert-manager-prod', addon_name: 'cert-manager', cluster: 'prod', health: 'Degraded', sync: 'Synced' },
+    ]);
+    renderDashboard();
+
+    // Still just the 2 cluster problems from baseStats — the addon is
+    // settling, not confirmed, so it isn't counted yet.
+    expect(await screen.findByText(/2 things need attention/i)).toBeInTheDocument();
+  });
+
+  it('renders nothing when there are no confirmed problems (quiet work-queue page)', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 5, connected: 5, pending: 0, untested: 0, missing: 0, failed: 0 },
     });
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
+      expect(screen.getByTestId('fleet-strip-clusters')).toBeInTheDocument();
     });
+    expect(screen.queryByText(/things? need attention/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('All systems operational')).not.toBeInTheDocument();
+  });
 
-    const btn = await screen.findByRole('button', {
-      name: /2 disconnected clusters/i,
+  it('the old "Needs Attention" chip panel is gone', async () => {
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fleet-strip-clusters')).toBeInTheDocument();
     });
-    fireEvent.click(btn);
-
-    expect(await screen.findByText('spoke-us')).toBeInTheDocument();
-    expect(screen.getByText('spoke-eu')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /view in clusters/i }));
-    expect(mockNavigate).toHaveBeenCalledWith('/clusters?status=disconnected');
+    expect(screen.queryByText('Needs Attention')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /disconnected cluster/i })).not.toBeInTheDocument();
   });
 });
 
@@ -256,7 +268,11 @@ describe('Dashboard — empty install (B1, no false-green)', () => {
     expect(screen.getByTestId('fleet-strip-clusters')).toBeInTheDocument();
   });
 
-  it('shows "All systems operational" (green) only when there is real, healthy data', async () => {
+  // WQ-3: the green "All systems operational" banner is gone entirely —
+  // a quiet work-queue page renders nothing at all when there's real,
+  // healthy data (see 'Dashboard thin attention line (WQ-3)' below for the
+  // renders-nothing-at-zero coverage).
+  it('renders no banner text at all (quiet page) when there is real, healthy data', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...baseStats,
       clusters: { total: 5, connected: 5, pending: 0, untested: 0, missing: 0, failed: 0 },
@@ -269,11 +285,11 @@ describe('Dashboard — empty install (B1, no false-green)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('All systems operational')).toBeInTheDocument();
+      expect(screen.getByTestId('fleet-strip-clusters')).toBeInTheDocument();
     });
+    expect(screen.queryByText('All systems operational')).not.toBeInTheDocument();
     expect(screen.queryByText('Nothing connected yet')).not.toBeInTheDocument();
-    // The all-fine line carries a last-checked timestamp (Package 2 #7).
-    expect(screen.getByText(/last checked/i)).toBeInTheDocument();
+    expect(screen.queryByText(/things? need attention/i)).not.toBeInTheDocument();
   });
 });
 
@@ -359,26 +375,13 @@ describe('Dashboard bootstrap banner gating (connhealth-2)', () => {
 // under a cluster heading (findings H2/H3): an "all addons down" cluster
 // now shows up as ADDON rows (from the addon attention feed), never as a
 // cluster row, and an Unknown/pending cluster is neutral, never red.
-describe('Dashboard cluster attention rows (rebuilt LW-1)', () => {
+// FleetStatusStrip-only cluster wording checks. Named cluster attention
+// rows (with reasons + deep links) moved to Observability (WQ-3) — see
+// Observability.test.tsx for "Failed cluster shows a row with its reason"
+// and "missing cluster shows a row" coverage.
+describe('Dashboard cluster wording (FleetStatusStrip only)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  it('Failed cluster → shown as a cluster attention row with its reason', async () => {
-    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...baseStats,
-      clusters: { total: 1, connected: 0, pending: 0, untested: 0, missing: 0, failed: 1 },
-    });
-    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
-      clusters: [{ name: 'prod', connection_status: 'Failed' }],
-    });
-    renderDashboard();
-
-    const btn = await screen.findByRole('button', { name: /1 disconnected cluster/i });
-    fireEvent.click(btn);
-
-    expect(await screen.findByText('prod')).toBeInTheDocument();
-    expect(screen.getByText(/argocd tried to reach this cluster and failed/i)).toBeInTheDocument();
   });
 
   it('Connected cluster, regardless of addon health → NOT a cluster attention row', async () => {
@@ -441,21 +444,6 @@ describe('Dashboard cluster attention rows (rebuilt LW-1)', () => {
     expect(screen.getByTestId('fleet-strip-clusters').getAttribute('aria-label')).toContain(
       '1 waiting for first addon',
     );
-  });
-
-  it('missing cluster → shown as a cluster attention row', async () => {
-    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...baseStats,
-      clusters: { total: 1, connected: 0, pending: 0, untested: 0, missing: 1, failed: 0 },
-    });
-    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({
-      clusters: [{ name: 'prod', connection_status: 'missing' }],
-    });
-    renderDashboard();
-
-    const btn = await screen.findByRole('button', { name: /1 disconnected cluster/i });
-    fireEvent.click(btn);
-    expect(await screen.findByText('prod')).toBeInTheDocument();
   });
 });
 
@@ -851,126 +839,23 @@ describe('Dashboard page order (Package 2)', () => {
   });
 });
 
-// Home-cluster identity card (Package 3) — data wiring from the three new
-// reads (health, config, fleet status) plus the existing home-cluster
-// probe. Full rendering detail is covered by HomeClusterCard's own tests;
-// this just checks the Dashboard wires the fetched values through.
-describe('Home-cluster identity card wiring (Package 3)', () => {
+// WQ-3: the home-cluster identity card moved to SystemView entirely — see
+// SystemView.test.tsx ("home-cluster identity card") for its rendering and
+// degrade-per-field coverage. Confirm it's gone from the Dashboard.
+describe('Home-cluster identity card left the Dashboard (WQ-3)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('renders Sharko/ArgoCD versions and uptime from the new reads', async () => {
+  it('does not render the home-cluster card on the Dashboard', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
-    // Isolate from any rejected/overridden mock left behind by earlier
-    // tests in this file (mockResolvedValue/mockRejectedValue persist
-    // across vi.clearAllMocks() — it only clears call history).
     (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
-    (api.getHomeCluster as ReturnType<typeof vi.fn>).mockResolvedValue({
-      available: true,
-      kubernetes_version: 'v1.29.0',
-      node_count: 3,
-      nodes_ready: 3,
-    });
-    (api.health as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'healthy', version: '4.2.0' });
-    (api.getConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ argocd: { connected: true, version: '2.11.0' } });
-    (api.getFleetStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ server_version: '4.2.0', uptime: '3h12m' });
-
-    renderDashboard();
-
-    expect(await screen.findByText('4.2.0')).toBeInTheDocument();
-    expect(screen.getByText('2.11.0')).toBeInTheDocument();
-    expect(screen.getByText('v1.29.0')).toBeInTheDocument();
-    expect(screen.getByText('all nodes ready')).toBeInTheDocument();
-    expect(screen.getByText(/up 3h12m/)).toBeInTheDocument();
-  });
-
-  it('degrades gracefully — missing fields render "—", the card never errors', async () => {
-    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
-    // Isolate from any rejected/overridden mock left behind by earlier
-    // tests in this file (mockResolvedValue/mockRejectedValue persist
-    // across vi.clearAllMocks() — it only clears call history).
-    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
-    (api.getHomeCluster as ReturnType<typeof vi.fn>).mockResolvedValue({
-      available: false,
-      message: 'only available when running in-cluster',
-    });
-    (api.health as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-    (api.getConfig as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-    (api.getFleetStatus as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText("Sharko's home cluster")).toBeInTheDocument();
+      expect(screen.getByTestId('fleet-strip-clusters')).toBeInTheDocument();
     });
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
-    expect(screen.getByText('only available when running in-cluster')).toBeInTheDocument();
-  });
-
-  // Regression: live dashboard white-screened with React error #31 (object
-  // as child). Root cause was api.getConfig() advertising argocd.version as
-  // a `string` when the server (internal/api/system.go handleGetConfig)
-  // actually sends ArgoCD's full /api/version object verbatim. api.ts now
-  // normalizes that in getConfig() itself, but this test mocks api.getConfig
-  // directly (like the rest of this file), so it exercises Dashboard's own
-  // defensive extractArgocdVersionString() call instead — proving the render
-  // survives even if a caller of getConfig ever regresses to the raw shape.
-  it('never crashes when argocd.version arrives as the real ArgoCD version object, and shows "—" when it lacks a Version key', async () => {
-    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
-    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
-    (api.getHomeCluster as ReturnType<typeof vi.fn>).mockResolvedValue({
-      available: true,
-      kubernetes_version: 'v1.29.0',
-      node_count: 3,
-      nodes_ready: 3,
-    });
-    (api.health as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'healthy', version: '4.2.0' });
-    (api.getConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-      argocd: {
-        connected: true,
-        // The real wire shape: no Version key present (e.g. an older ArgoCD
-        // build that doesn't report one). Must degrade to "—", not throw.
-        version: { BuildDate: '2026-06-01T00:00:00Z', GitCommit: 'abc123' },
-      },
-    });
-    (api.getFleetStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ server_version: '4.2.0', uptime: '3h12m' });
-
-    expect(() => renderDashboard()).not.toThrow();
-
-    await waitFor(() => {
-      expect(screen.getByText("Sharko's home cluster")).toBeInTheDocument();
-    });
-    // ArgoCD version cell falls back to "—" since the mocked object has no
-    // Version key — and critically, the object itself never reached JSX.
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
-  });
-
-  it('renders the extracted Version string when argocd.version arrives as the real ArgoCD version object', async () => {
-    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
-    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
-    (api.getHomeCluster as ReturnType<typeof vi.fn>).mockResolvedValue({
-      available: true,
-      kubernetes_version: 'v1.29.0',
-      node_count: 3,
-      nodes_ready: 3,
-    });
-    (api.health as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'healthy', version: '4.2.0' });
-    (api.getConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-      argocd: {
-        connected: true,
-        version: {
-          BuildDate: '2026-06-01T00:00:00Z',
-          GitCommit: 'abc123',
-          Version: 'v2.11.0',
-        },
-      },
-    });
-    (api.getFleetStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ server_version: '4.2.0', uptime: '3h12m' });
-
-    expect(() => renderDashboard()).not.toThrow();
-
-    expect(await screen.findByText('v2.11.0')).toBeInTheDocument();
+    expect(screen.queryByText("Sharko's home cluster")).not.toBeInTheDocument();
   });
 });
 
@@ -1039,14 +924,7 @@ describe('Dashboard stale-while-refresh (perf S2)', () => {
         clusters: { total: 3, connected: 3, pending: 0, untested: 0, missing: 0, failed: 0 },
       },
       recentSyncs: [],
-      versionDrifts: [],
-      clusters: [],
       argoCDUnreachable: false,
-      homeCluster: null,
-      sharkoVersion: undefined,
-      argocdVersion: undefined,
-      argocdConnected: false,
-      uptime: undefined,
       upgrades: { withUpgrade: 0, checked: 0, namesWithUpgrade: [] },
     });
 

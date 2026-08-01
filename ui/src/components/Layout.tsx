@@ -22,6 +22,7 @@ import {
   X,
 } from 'lucide-react'
 import { useConnections } from '@/hooks/useConnections'
+import { useNavBadges } from '@/hooks/useNavBadges'
 import { FloatingAssistant } from '@/components/FloatingAssistant'
 import { CommandPalette } from '@/components/CommandPalette'
 import {
@@ -84,6 +85,12 @@ const navSections: NavSection[] = [
     ],
   },
 ]
+
+// WQ-3 — nav badge display cap. "9+" past that; no badge at zero, enforced
+// by the callers (badgeCounts[item.to] > 0 gates rendering, not this).
+function formatBadgeCount(n: number): string {
+  return n > 9 ? '9+' : String(n)
+}
 
 const routeLabels: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -195,6 +202,14 @@ export function Layout() {
   const [openPRCount, setOpenPRCount] = useState(0)
   const [aiPanelWidth, setAiPanelWidth] = useState(380)
   const isDragging = useRef(false)
+  // WQ-3 — messenger-style unread badges for Observability / System. Same
+  // shared computation as the Dashboard's thin attention line (one truth,
+  // two mirrors); see hooks/useNavBadges.tsx.
+  const navBadges = useNavBadges()
+  const badgeCounts: Record<string, number> = {
+    '/observability': navBadges.observability,
+    '/system': navBadges.system,
+  }
 
   useEffect(() => {
     fetch('/api/v1/health')
@@ -332,6 +347,20 @@ export function Layout() {
                             {openPRCount}
                           </span>
                         )}
+                        {/* WQ-3 — messenger-style red unread-problem badge.
+                          * Observability/System only; every other nav entry
+                          * is unaffected. Zero renders nothing; the count
+                          * itself already excludes settling-window items
+                          * (see hooks/useNavBadges.tsx). */}
+                        {(badgeCounts[item.to] ?? 0) > 0 && (
+                          <span
+                            className="ml-1 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white"
+                            title={`${badgeCounts[item.to]} unread problem${badgeCounts[item.to] !== 1 ? 's' : ''}`}
+                            aria-label={`${badgeCounts[item.to]} unread problem${badgeCounts[item.to] !== 1 ? 's' : ''}`}
+                          >
+                            {formatBadgeCount(badgeCounts[item.to])}
+                          </span>
+                        )}
                       </span>
                     )}
                     {/* V2-cleanup-65.1: kept at 9px deliberately — this is a
@@ -348,6 +377,15 @@ export function Layout() {
                         aria-label={`${openPRCount} open pull request${openPRCount !== 1 ? 's' : ''}`}
                       >
                         {openPRCount}
+                      </span>
+                    )}
+                    {collapsed && !mobileOpen && (badgeCounts[item.to] ?? 0) > 0 && (
+                      <span
+                        className="absolute -top-1 -right-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white"
+                        title={`${badgeCounts[item.to]} unread problem${badgeCounts[item.to] !== 1 ? 's' : ''}`}
+                        aria-label={`${badgeCounts[item.to]} unread problem${badgeCounts[item.to] !== 1 ? 's' : ''}`}
+                      >
+                        {formatBadgeCount(badgeCounts[item.to])}
                       </span>
                     )}
                   </NavLink>

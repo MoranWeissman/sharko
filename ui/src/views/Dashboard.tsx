@@ -5,7 +5,7 @@ import {
   Clock, ChevronRight, ShieldAlert, RefreshCw,
   Hourglass, Store, PlusCircle
 } from 'lucide-react';
-import { api, extractArgocdVersionString } from '@/services/api';
+import { api } from '@/services/api';
 import type { DashboardStats, SyncActivityEntry, ClustersResponse } from '@/services/models';
 import { getCached, setCached } from '@/lib/viewCache';
 import { WaveDecoration } from '@/components/WaveDecoration';
@@ -16,21 +16,16 @@ import { MigrationBanner } from '@/components/MigrationBanner';
 import { PullRequestsPanel } from '@/components/PullRequestsPanel';
 import { DriftAlertsPanel } from '@/components/DriftAlertsPanel';
 import { EmptyState } from '@/components/EmptyState';
-import { HomeClusterCard } from '@/components/HomeClusterCard';
 import { showToast } from '@/components/ToastNotification';
 import {
   FleetStatusStrip,
   summarizeUpgrades,
   type UpgradesSummary,
 } from '@/components/FleetStatusStrip';
+import { splitAddonStates } from '@/components/AttentionSection';
 import { prettyOperation } from '@/lib/utils';
 import type { TrackedPR } from '@/services/models';
-import {
-  useAddonStates,
-  deepLinkToAddonOnCluster,
-  isSettling,
-} from '@/hooks/useAddonStates';
-import { isClusterNeedsAttention, getClusterConnectionState } from '@/lib/clusterStatus';
+import { useAddonStates, deepLinkToAddonOnCluster } from '@/hooks/useAddonStates';
 
 // --- Time ago helpers ---
 
@@ -40,60 +35,6 @@ function timeAgo(timestamp: string): string {
   if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
   if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
   return `${Math.floor(secs / 86400)}d ago`;
-}
-
-function timeAgoMs(ms: number): string {
-  return timeAgo(new Date(ms).toISOString());
-}
-
-function minutesAgo(ms: number): number {
-  return Math.max(0, Math.floor((Date.now() - ms) / 60_000));
-}
-
-// --- The one attention surface ---
-//
-// dashboard UX review 2026-08-01: this list is the ONLY place on the page
-// allowed to show red or amber. Every problem — a disconnected cluster, a
-// confirmed-degraded app, an app still settling, an app ArgoCD isn't
-// reporting on, an addon with version drift — appears here exactly once,
-// with a name, a plain reason, and a link straight to where you'd go to
-// look at it.
-interface AttentionRow {
-  key: string;
-  severity: 'problem' | 'attention';
-  title: string;
-  reason: string;
-  link: string;
-  badge?: string;
-}
-
-function AttentionRowView({ row }: { row: AttentionRow }) {
-  const dot = row.severity === 'problem' ? 'bg-red-500' : 'bg-amber-500';
-  const badgeClass =
-    row.severity === 'problem'
-      ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-      : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
-  return (
-    <div className="flex items-start gap-3 rounded-lg bg-card px-3 py-2 text-xs">
-      <div className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${dot}`} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Link
-            to={row.link}
-            className="font-medium text-card-foreground hover:text-teal-600 hover:underline dark:hover:text-teal-400"
-          >
-            {row.title}
-          </Link>
-          {row.badge && (
-            <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${badgeClass}`}>{row.badge}</span>
-          )}
-        </div>
-        <p className="mt-1 text-muted-foreground" title={row.reason}>
-          {row.reason.length > 140 ? row.reason.slice(0, 140) + '...' : row.reason}
-        </p>
-      </div>
-    </div>
-  );
 }
 
 // --- Bootstrap Health Banner ---
@@ -154,10 +95,10 @@ function BootstrapHealthBanner({ health, sync }: BootstrapHealthBannerProps) {
       <div className={`flex items-start gap-3 text-sm ${textClass}`}>
         <ShieldAlert className={`h-5 w-5 shrink-0 mt-0.5 ${iconClass}`} />
         <div>
-          <p className="font-semibold">ArgoCD Bootstrap Application Issue</p>
+          <p className="font-semibold">Sharko Engine Issue</p>
           <p className="mt-0.5 text-xs opacity-90">
             The <code className="rounded bg-black/10 px-1 dark:bg-white/10">sharko-engine</code> application
-            is the foundation of all addon deployments. An unhealthy bootstrap app may prevent addons from syncing.
+            is the foundation of all addon deployments. An unhealthy engine app may prevent addons from syncing.
           </p>
           <div className="mt-2 flex items-center gap-2">
             <span className={`rounded px-2 py-0.5 text-xs font-medium ${badgeBg}`}>
@@ -185,16 +126,7 @@ function BootstrapHealthBanner({ health, sync }: BootstrapHealthBannerProps) {
 
 // --- Main Dashboard ---
 
-type HomeClusterInfo = {
-  available: boolean;
-  message?: string;
-  kubernetes_version?: string;
-  node_count?: number;
-  nodes_ready?: number;
-  nodes_not_ready?: number;
-} | null;
-
-// perf S2 — everything the page renders from its 8 fetches, snapshotted
+// perf S2 — everything the page renders from its reads, snapshotted
 // into one cache entry once a load finishes. A revisit within the same
 // browser session hydrates all of this in one shot (instant paint, no
 // spinner) before kicking a background refresh — see the mount effect
@@ -202,14 +134,7 @@ type HomeClusterInfo = {
 interface DashboardSnapshot {
   stats: DashboardStats;
   recentSyncs: SyncActivityEntry[];
-  versionDrifts: { addon: string; count: number }[];
-  clusters: { name: string; connectionStatus: string }[];
   argoCDUnreachable: boolean;
-  homeCluster: HomeClusterInfo;
-  sharkoVersion: string | undefined;
-  argocdVersion: string | undefined;
-  argocdConnected: boolean;
-  uptime: string | undefined;
   upgrades: UpgradesSummary;
 }
 
@@ -220,37 +145,23 @@ export function Dashboard() {
   const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recentSyncs, setRecentSyncs] = useState<SyncActivityEntry[]>([]);
-  const [versionDrifts, setVersionDrifts] = useState<{ addon: string; count: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Addon health/sync state is sourced from the unified AddonStatesProvider
-  // so the Dashboard's attention list agrees with AddonDetail / ClusterDetail.
-  // The provider polls /dashboard/attention once for the whole app.
+  // so the Dashboard's attention count agrees with Observability / AddonDetail
+  // / ClusterDetail. The provider polls /dashboard/attention once for the
+  // whole app.
   const { byApp: addonStateMap, refresh: refreshAddonStates } = useAddonStates();
-  const [showAttention, setShowAttention] = useState(false);
   const [showProgressing, setShowProgressing] = useState(false);
-  // Cluster problem rows — failed/missing ONLY (dashboard UX review
-  // 2026-08-01: cluster rows in the attention list are for connectivity
-  // problems, not a duplicate of addon health under a cluster heading).
-  const [clusters, setClusters] = useState<{ name: string; connectionStatus: string }[]>([]);
+  // ArgoCD-unreachable is the ONLY signal the machinery banner needs — the
+  // detailed cluster attention rows live on Observability now (WQ-3).
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
-  const [homeCluster, setHomeCluster] = useState<HomeClusterInfo>(null);
-  // Home-cluster identity card (Package 3) — three more thin reads, each
-  // degrading independently to undefined ("—" in the card) rather than
-  // failing the whole dashboard fetch.
-  const [sharkoVersion, setSharkoVersion] = useState<string | undefined>(undefined);
-  const [argocdVersion, setArgocdVersion] = useState<string | undefined>(undefined);
-  const [argocdConnected, setArgocdConnected] = useState(false);
-  const [uptime, setUptime] = useState<string | undefined>(undefined);
   // Upgrades stat (Package 2 #1) — derived from the version matrix.
   const [upgrades, setUpgrades] = useState<UpgradesSummary>({ withUpgrade: 0, checked: 0, namesWithUpgrade: [] });
-  // Wall-clock time of the last successful (or attempted) fetch — powers
-  // the calm all-fine line's "last checked" timestamp.
-  const [lastChecked, setLastChecked] = useState<number | null>(null);
 
   // S3 — progressive paint: every read still fires at once (unchanged
-  // parallelism), but the page no longer waits for Promise.all on all 8
+  // parallelism), but the page no longer waits for Promise.all on all reads
   // before showing anything. /dashboard/stats alone clears the spinner and
   // paints the frame + stat cards; every other panel fills in on its own,
   // whenever its own fetch lands, using the .catch(()=>null) degrade it
@@ -267,10 +178,6 @@ export function Dashboard() {
     const obsPromise = api.getObservability().catch(() => null);
     const matrixPromise = api.getVersionMatrix().catch(() => null);
     const clustersPromise = api.getClusters().catch(() => null);
-    const homeClusterPromise = api.getHomeCluster().catch(() => null);
-    const healthPromise = api.health().catch(() => null);
-    const configPromise = api.getConfig().catch(() => null);
-    const fleetPromise = api.getFleetStatus().catch(() => null);
 
     let statsData: DashboardStats;
     try {
@@ -281,7 +188,6 @@ export function Dashboard() {
       }
       setLoading(false);
       setIsRefreshing(false);
-      setLastChecked(Date.now());
       return;
     }
 
@@ -295,14 +201,7 @@ export function Dashboard() {
     // as each read below lands, written once everything has settled so the
     // NEXT visit this session can paint the whole page instantly.
     let snapRecentSyncs: SyncActivityEntry[] = [];
-    let snapVersionDrifts: { addon: string; count: number }[] = [];
-    let snapClusters: { name: string; connectionStatus: string }[] = [];
     let snapArgoCDUnreachable = false;
-    let snapHomeCluster: HomeClusterInfo = null;
-    let snapSharkoVersion: string | undefined;
-    let snapArgocdVersion: string | undefined;
-    let snapArgocdConnected = false;
-    let snapUptime: string | undefined;
     let snapUpgrades: UpgradesSummary = { withUpgrade: 0, checked: 0, namesWithUpgrade: [] };
 
     obsPromise.then((obsData) => {
@@ -316,25 +215,6 @@ export function Dashboard() {
     matrixPromise.then((matrixData) => {
       snapUpgrades = summarizeUpgrades(matrixData);
       setUpgrades(snapUpgrades);
-
-      if (matrixData?.addons) {
-        // Version drifts
-        const drifts: { addon: string; count: number }[] = [];
-        for (const row of matrixData.addons) {
-          let driftCount = 0;
-          for (const cell of Object.values(row.cells || {})) {
-            if (cell?.drift_from_catalog) driftCount++;
-          }
-          if (driftCount > 0) {
-            drifts.push({ addon: row.addon_name, count: driftCount });
-          }
-        }
-        snapVersionDrifts = drifts;
-        setVersionDrifts(drifts);
-      } else {
-        snapVersionDrifts = [];
-        setVersionDrifts([]);
-      }
     });
 
     clustersPromise.then((clustersData) => {
@@ -347,79 +227,20 @@ export function Dashboard() {
       const typedClusters = clustersData as ClustersResponse | null;
       snapArgoCDUnreachable = typedClusters === null;
       setArgoCDUnreachable(snapArgoCDUnreachable);
-
-      // Cluster attention rows — failed/missing only, built from the
-      // per-cluster /clusters list (the aggregate /dashboard/stats has
-      // counts but not names/links). A cluster with an open (not yet
-      // merged) registration PR is excluded — it's mid-lifecycle, not
-      // broken.
-      if (typedClusters?.clusters) {
-        const pendingNames = new Set(
-          (typedClusters.pending_registrations ?? []).map((p) => p.cluster_name),
-        );
-        snapClusters = typedClusters.clusters
-          .filter((c) => !pendingNames.has(c.name) && isClusterNeedsAttention(c.connection_status))
-          .map((c) => ({ name: c.name, connectionStatus: c.connection_status || 'Unknown' }));
-      } else {
-        snapClusters = [];
-      }
-      setClusters(snapClusters);
+      // Named cluster attention rows (with reasons + deep links) now live
+      // on Observability (WQ-3) — this fetch here only needs to prove
+      // ArgoCD answered at all.
     });
 
-    homeClusterPromise.then((homeClusterData) => {
-      snapHomeCluster = homeClusterData;
-      setHomeCluster(homeClusterData);
-    });
-
-    healthPromise.then((healthData) => {
-      snapSharkoVersion = healthData?.version;
-      setSharkoVersion(snapSharkoVersion);
-    });
-
-    configPromise.then((configData) => {
-      snapArgocdConnected = !!configData?.argocd?.connected;
-      // Defensive: api.getConfig() already normalizes argocd.version to a
-      // plain string (the server sends ArgoCD's full version-info object,
-      // not a string — see extractArgocdVersionString in services/api.ts).
-      // Re-normalizing here too means a non-string ever reaching this line
-      // (e.g. a mocked/older api client) still can't crash the render — it
-      // becomes "—" via HomeClusterCard's own fallback instead of a raw
-      // object hitting JSX.
-      snapArgocdVersion = extractArgocdVersionString(configData?.argocd?.version);
-      setArgocdConnected(snapArgocdConnected);
-      setArgocdVersion(snapArgocdVersion);
-    });
-
-    fleetPromise.then((fleetData) => {
-      snapUptime = fleetData?.uptime;
-      setUptime(snapUptime);
-    });
-
-    await Promise.allSettled([
-      obsPromise,
-      matrixPromise,
-      clustersPromise,
-      homeClusterPromise,
-      healthPromise,
-      configPromise,
-      fleetPromise,
-    ]);
+    await Promise.allSettled([obsPromise, matrixPromise, clustersPromise]);
 
     setIsRefreshing(false);
-    setLastChecked(Date.now());
 
     // Write-through: next mount this session paints all of this instantly.
     setCached<DashboardSnapshot>(DASHBOARD_CACHE_KEY, {
       stats: statsData,
       recentSyncs: snapRecentSyncs,
-      versionDrifts: snapVersionDrifts,
-      clusters: snapClusters,
       argoCDUnreachable: snapArgoCDUnreachable,
-      homeCluster: snapHomeCluster,
-      sharkoVersion: snapSharkoVersion,
-      argocdVersion: snapArgocdVersion,
-      argocdConnected: snapArgocdConnected,
-      uptime: snapUptime,
       upgrades: snapUpgrades,
     });
   }, [refreshAddonStates]);
@@ -442,14 +263,7 @@ export function Dashboard() {
     if (cached) {
       setStats(cached.data.stats);
       setRecentSyncs(cached.data.recentSyncs);
-      setVersionDrifts(cached.data.versionDrifts);
-      setClusters(cached.data.clusters);
       setArgoCDUnreachable(cached.data.argoCDUnreachable);
-      setHomeCluster(cached.data.homeCluster);
-      setSharkoVersion(cached.data.sharkoVersion);
-      setArgocdVersion(cached.data.argocdVersion);
-      setArgocdConnected(cached.data.argocdConnected);
-      setUptime(cached.data.uptime);
       setUpgrades(cached.data.upgrades);
       setLoading(false);
       void fetchData(true);
@@ -475,83 +289,23 @@ export function Dashboard() {
   const appTotal = stats.applications.total;
   const healthyCount = stats.applications.by_health_status.healthy;
 
-  // Split addon states into: confirmed problems (red), settling problems
-  // (amber, degraded/missing but inside the settling window), apps ArgoCD
-  // isn't reporting on (amber, never red — a Suspended or Unknown health
-  // status is not a failure), and Progressing (its own calm blue widget,
-  // never counted here at all).
-  const allAddonStates = Array.from(addonStateMap.values());
-  const badAddonStates = allAddonStates.filter(
-    (s) => s.displayState === 'degraded' || s.displayState === 'missing',
-  );
-  const confirmedAddonItems = badAddonStates.filter((s) => !isSettling(s));
-  const settlingAddonItems = badAddonStates.filter((s) => isSettling(s));
-  const unknownAddonItems = allAddonStates.filter((s) => s.displayState === 'unknown');
-  const progressingItems = allAddonStates.filter((s) => s.displayState === 'progressing-advisory');
-
-  const addonLink = (item: { addonName: string; cluster: string }) =>
-    item.cluster ? deepLinkToAddonOnCluster(item.addonName, item.cluster) : `/addons/${encodeURIComponent(item.addonName)}`;
-
-  const confirmedAddonRows: AttentionRow[] = confirmedAddonItems.map((item) => ({
-    key: `addon-${item.addonName}@${item.cluster}`,
-    severity: 'problem',
-    title: item.appName || item.addonName,
-    reason: item.advisoryMessage
-      ? `${item.errorType ? item.errorType + ': ' : ''}${item.advisoryMessage}`
-      : `Health: ${item.healthStatus}${item.cluster ? ` on ${item.cluster}` : ''}`,
-    link: addonLink(item),
-    badge: item.healthStatus,
-  }));
-
-  const settlingAddonRows: AttentionRow[] = settlingAddonItems.map((item) => ({
-    key: `settling-${item.addonName}@${item.cluster}`,
-    severity: 'attention',
-    title: item.appName || item.addonName,
-    reason: `Settling — degraded for ${minutesAgo(item.badSince ?? Date.now())}m. Given a grace window before counting as a confirmed problem.`,
-    link: addonLink(item),
-    badge: item.healthStatus,
-  }));
-
-  const unknownAddonRows: AttentionRow[] = unknownAddonItems.map((item) => ({
-    key: `unknown-${item.addonName}@${item.cluster}`,
-    severity: 'attention',
-    title: item.appName || item.addonName,
-    reason: `ArgoCD is not reporting a health status for this app${item.cluster ? ` on ${item.cluster}` : ''}.`,
-    link: addonLink(item),
-    badge: item.healthStatus,
-  }));
-
-  // Cluster problem rows — failed/missing only, reason text straight from
-  // clusterStatus.ts (the single source of truth for this vocabulary).
-  const clusterAttentionRows: AttentionRow[] = clusters.map((c) => ({
-    key: `cluster-${c.name}`,
-    severity: 'problem',
-    title: c.name,
-    reason: getClusterConnectionState(c.connectionStatus).meaning,
-    link: `/clusters/${encodeURIComponent(c.name)}`,
-  }));
-
-  const driftRows: AttentionRow[] = versionDrifts.map((d) => ({
-    key: `drift-${d.addon}`,
-    severity: 'attention',
-    title: d.addon,
-    reason: `Different versions deployed across ${d.count} cluster${d.count !== 1 ? 's' : ''}.`,
-    link: `/addons/${encodeURIComponent(d.addon)}`,
-  }));
-
+  // Confirmed (non-settling) addon problems + Progressing items — the same
+  // split Observability's detail rows use (components/AttentionSection.tsx),
+  // so the Dashboard's thin line agrees with the detail page byte-for-byte.
+  // Settling/unknown/drift rows and their names+links are Observability's
+  // job now (WQ-3) — Dashboard only needs the confirmed COUNT.
+  const { confirmed: confirmedAddonItems, progressing: progressingItems } = splitAddonStates(addonStateMap);
+  const redAppCount = confirmedAddonItems.length;
   // The Dashboard's own "how many clusters are actually disconnected"
-  // number comes from the server's single classification (Package 1),
-  // not a browser-side re-derivation — every surface on this page that
-  // states the COUNT reads stats.clusters. The named clusterAttentionRows
-  // above exist only because the aggregate endpoint has no per-cluster
-  // names/links to give the expanded list; in the ordinary case both
-  // describe the same clusters.
+  // number comes from the server's single classification (Package 1), not
+  // a browser-side re-derivation — every surface on this page that states
+  // the count reads stats.clusters.
   const clusterProblemCount = stats.clusters.failed + stats.clusters.missing;
-  const redAppCount = confirmedAddonRows.length;
-  const settlingCount = settlingAddonRows.length;
-  const unknownCount = unknownAddonRows.length;
-  const driftCount = driftRows.length;
-  const hasIssues = clusterProblemCount > 0 || redAppCount > 0 || settlingCount > 0 || unknownCount > 0 || driftCount > 0;
+  // The ONE number on the thin attention line, mirrored verbatim by the
+  // Observability nav badge (components/AttentionSection.tsx's
+  // getConfirmedProblemCount — same shared computation, one truth, two
+  // mirrors).
+  const confirmedProblemCount = redAppCount + clusterProblemCount;
 
   // V2-cleanup-61.3 (B1): a fresh install with nothing registered used to
   // show green "All systems operational" + "0/0 healthy" — a false-positive
@@ -653,116 +407,22 @@ export function Dashboard() {
         />
       )}
 
-      {/* Needs Attention — the ONE surface allowed red/amber on this page
-          (dashboard UX review 2026-08-01). Every problem appears once,
-          with a name, a plain reason, and a deep link. */}
-      {hasIssues ? (
-        <div className="rounded-xl border-2 border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-900/20">
-          <div className="flex items-center justify-between p-5 pb-3">
-            <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
-              <AlertTriangle className="h-5 w-5" />
-              <h3 className="text-sm font-semibold">Needs Attention</h3>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {redAppCount > 0 && (
-                <button onClick={() => setShowAttention(!showAttention)}
-                  aria-expanded={showAttention}
-                  className="flex items-center gap-2 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400">
-                  <div className="h-2 w-2 rounded-full bg-red-500" />
-                  {redAppCount} app{redAppCount !== 1 ? 's' : ''} with issues
-                  <ChevronRight className={`h-3 w-3 transition-transform ${showAttention ? 'rotate-90' : ''}`} />
-                </button>
-              )}
-              {clusterProblemCount > 0 && (
-                <button onClick={() => setShowAttention(!showAttention)}
-                  aria-expanded={showAttention}
-                  className="flex items-center gap-2 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400">
-                  <div className="h-2 w-2 rounded-full bg-red-500" />
-                  {clusterProblemCount} disconnected cluster{clusterProblemCount !== 1 ? 's' : ''}
-                  <ChevronRight className={`h-3 w-3 transition-transform ${showAttention ? 'rotate-90' : ''}`} />
-                </button>
-              )}
-              {settlingCount > 0 && (
-                <button onClick={() => setShowAttention(!showAttention)}
-                  aria-expanded={showAttention}
-                  className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400">
-                  <div className="h-2 w-2 rounded-full bg-amber-500" />
-                  {settlingCount} settling
-                </button>
-              )}
-              {unknownCount > 0 && (
-                <button onClick={() => setShowAttention(!showAttention)}
-                  aria-expanded={showAttention}
-                  className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400">
-                  <div className="h-2 w-2 rounded-full bg-amber-500" />
-                  {unknownCount} app{unknownCount !== 1 ? 's' : ''} not reporting
-                </button>
-              )}
-              {driftCount > 0 && (
-                <button onClick={() => setShowAttention(!showAttention)}
-                  aria-expanded={showAttention}
-                  className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400">
-                  <div className="h-2 w-2 rounded-full bg-amber-500" />
-                  {driftCount} addon{driftCount !== 1 ? 's' : ''} with drift
-                </button>
-              )}
-            </div>
-          </div>
-          {/* Expanded detail — cluster/addon names route to their own
-              detail pages for quick debug + AI-assisted investigation. */}
-          {showAttention && (
-            <div className="border-t border-amber-200 p-4 dark:border-amber-700 space-y-4">
-              {clusterAttentionRows.length > 0 && (
-                <div>
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <h4 className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">Clusters</h4>
-                    <button onClick={() => navigate('/clusters?status=disconnected')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
-                      View in Clusters
-                    </button>
-                  </div>
-                  <div className="space-y-1.5">
-                    {clusterAttentionRows.map((row) => (
-                      <AttentionRowView key={row.key} row={row} />
-                    ))}
-                  </div>
-                </div>
-              )}
-              {(confirmedAddonRows.length > 0 || settlingAddonRows.length > 0 || unknownAddonRows.length > 0) && (
-                <div>
-                  <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">Apps</h4>
-                  <div className="max-h-64 overflow-y-auto space-y-1.5">
-                    {[...confirmedAddonRows, ...settlingAddonRows, ...unknownAddonRows].map((row) => (
-                      <AttentionRowView key={row.key} row={row} />
-                    ))}
-                  </div>
-                </div>
-              )}
-              {driftRows.length > 0 && (
-                <div>
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <h4 className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">Version drift</h4>
-                    <button onClick={() => navigate('/version-matrix?drift=true')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
-                      View matrix
-                    </button>
-                  </div>
-                  <div className="space-y-1.5">
-                    {driftRows.map((row) => (
-                      <AttentionRowView key={row.key} row={row} />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 px-5 py-3 dark:border-green-800 dark:bg-green-900/20">
-          <div className="h-2 w-2 shrink-0 rounded-full bg-green-500" />
-          <span className="text-sm font-medium text-green-700 dark:text-green-400">All systems operational</span>
-          <span className="text-xs text-green-600/80 dark:text-green-400/70">
-            · last checked {lastChecked ? timeAgoMs(lastChecked) : 'just now'}
-          </span>
-        </div>
+      {/* Thin attention line (WQ-3, maintainer's "middle option") — the
+          detailed rows moved to Observability; the Dashboard keeps just
+          this one line, and only when there's something confirmed to look
+          at. Same count as the Observability nav badge (one truth, two
+          mirrors — components/AttentionSection.tsx's
+          getConfirmedProblemCount). Renders nothing at zero — a quiet
+          work-queue page has nothing to announce. */}
+      {confirmedProblemCount > 0 && (
+        <button
+          onClick={() => navigate('/observability')}
+          className="flex w-full items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-left text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/30"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          {confirmedProblemCount} thing{confirmedProblemCount !== 1 ? 's' : ''} need{confirmedProblemCount === 1 ? 's' : ''} attention
+          <ChevronRight className="ml-auto h-4 w-4 shrink-0" />
+        </button>
       )}
 
       {/* Progressing widget — apps can still be healthy while progressing;
@@ -874,24 +534,10 @@ export function Dashboard() {
       </div>
 
       {/* GitOps corrections (audit-derived orphan/drift cleanup — distinct
-          from the addon version-drift rows in Needs Attention above). */}
+          from the addon version-drift rows that now live on Observability).
+          Unchanged by WQ-3 — this is a different surface (GitOps self-heal
+          corrections), not part of the attention-detail move. */}
       <DriftAlertsPanel />
-
-      {/* Bottom row: home-cluster identity card only (Quick Actions and
-          Available Addons are gone — maintainer's call). A 3-column grid
-          with two empty cells reads like a layout bug, so this renders as
-          a standalone, width-capped block instead of a grid — Tier 3
-          ("compact, quieter") stays compact rather than stretching to
-          fill a row it doesn't need. */}
-      {homeCluster && (
-        <HomeClusterCard
-          homeCluster={homeCluster}
-          sharkoVersion={sharkoVersion}
-          argocdVersion={argocdVersion}
-          argocdConnected={argocdConnected}
-          uptime={uptime}
-        />
-      )}
     </div>
   );
 }
