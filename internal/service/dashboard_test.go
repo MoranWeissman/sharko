@@ -79,6 +79,202 @@ func argocdEmptyStub(t *testing.T) *argocd.Client {
 	return argocd.NewClient(srv.URL, "test-token", true)
 }
 
+// argocdClustersStub returns an httptest server that answers
+// GET /api/v1/clusters with the given name -> connectionState pairs (in
+// the same nested shape ArgoCD's real API uses, per argocdClusterItem in
+// internal/argocd/client.go) and every other endpoint (applications, etc.)
+// with an empty items list. Lets the cluster-classification tests below
+// drive DashboardService.GetStats's five-state breakdown through the real
+// ArgoCD client/JSON-decoding path rather than only unit-testing the
+// switch statement in isolation.
+func argocdClustersStub(t *testing.T, clusters map[string]string) *argocd.Client {
+	t.Helper()
+	type item struct {
+		Name string `json:"name"`
+		Info struct {
+			ConnectionState struct {
+				Status string `json:"status"`
+			} `json:"connectionState"`
+		} `json:"info"`
+	}
+	items := make([]item, 0, len(clusters))
+	for name, state := range clusters {
+		it := item{Name: name}
+		it.Info.ConnectionState.Status = state
+		items = append(items, it)
+	}
+	body, err := json.Marshal(struct {
+		Items []item `json:"items"`
+	}{Items: items})
+	if err != nil {
+		t.Fatalf("marshalling stub cluster items: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/clusters" {
+			_, _ = w.Write(body)
+			return
+		}
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	return argocd.NewClient(srv.URL, "test-token", true)
+}
+
+// dashboardClassificationFixture builds a v4 fakeGitProvider with two
+// Git-registered clusters: "with-addon" (one enabled addon) and
+// "no-addons" (zero enabled addons) — the exact split the
+// untested-vs-pending distinction hinges on.
+func dashboardClassificationFixture(t *testing.T) *fakeGitProvider {
+	t.Helper()
+	withAddon, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "with-addon",
+		Addons:  map[string]models.ClusterAddonsAddon{"cert-manager": {Enabled: true}},
+	})
+	if err != nil {
+		t.Fatalf("building with-addon assignment: %v", err)
+	}
+	noAddons, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "no-addons",
+		Addons:  map[string]models.ClusterAddonsAddon{},
+	})
+	if err != nil {
+		t.Fatalf("building no-addons assignment: %v", err)
+	}
+	approved, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
+			"cert-manager": {RepoURL: "https://charts.jetstack.io", Chart: "cert-manager", Version: "1.14.5"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building catalog: %v", err)
+	}
+	return &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:         []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			orchestrator.V4ManagedClustersPath: []byte("clusters:\n  - name: with-addon\n  - name: no-addons\n"),
+			"clusters/with-addon.yaml":         withAddon,
+			"clusters/no-addons.yaml":          noAddons,
+			config.AddonCatalogPath:            approved,
+		},
+	}
+}
+
+// TestGetStats_ClusterClassification_FiveStates locks down the five-state
+// breakdown (dashboard UX review 2026-08-01, blocker B1): the server is
+// now the single place this classification is computed, using the SAME
+// vocabulary as ui/src/lib/clusterStatus.ts.
+func TestGetStats_ClusterClassification_FiveStates(t *testing.T) {
+	cases := []struct {
+		name            string
+		argocdState     string // ConnectionState for "with-addon"; "" means absent from ArgoCD entirely (missing)
+		absentFromArgo  bool
+		wantConnected   int
+		wantPending     int
+		wantFailed      int
+		wantMissing     int
+		wantUntestedMin int // "no-addons" is always untested/unknown in ArgoCD in these cases
+	}{
+		{name: "Successful is connected", argocdState: "Successful", wantConnected: 1},
+		{name: "Connected (alt spelling) is also connected", argocdState: "Connected", wantConnected: 1},
+		{name: "empty status with addons enabled is pending", argocdState: "", wantPending: 1},
+		{name: "Unknown status with addons enabled is pending", argocdState: "Unknown", wantPending: 1},
+		{name: "Failed is failed", argocdState: "Failed", wantFailed: 1},
+		{name: "an unrecognised status falls through to failed", argocdState: "SomeNewArgoStatus", wantFailed: 1},
+		{name: "absent from ArgoCD entirely is missing", absentFromArgo: true, wantMissing: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			connSvc := NewConnectionService(&inMemoryConnStore{})
+			svc := NewDashboardService(connSvc, "")
+			gp := dashboardClassificationFixture(t)
+
+			clusters := map[string]string{"no-addons": "Unknown"}
+			if !tc.absentFromArgo {
+				clusters["with-addon"] = tc.argocdState
+			}
+			ac := argocdClustersStub(t, clusters)
+
+			resp, err := svc.GetStats(context.Background(), gp, ac)
+			if err != nil {
+				t.Fatalf("GetStats returned error: %v", err)
+			}
+			if resp.Clusters.Total != 2 {
+				t.Fatalf("Clusters.Total = %d, want 2", resp.Clusters.Total)
+			}
+			if resp.Clusters.Connected != tc.wantConnected {
+				t.Errorf("Connected = %d, want %d", resp.Clusters.Connected, tc.wantConnected)
+			}
+			if resp.Clusters.Pending != tc.wantPending {
+				t.Errorf("Pending = %d, want %d", resp.Clusters.Pending, tc.wantPending)
+			}
+			if resp.Clusters.Failed != tc.wantFailed {
+				t.Errorf("Failed = %d, want %d", resp.Clusters.Failed, tc.wantFailed)
+			}
+			if resp.Clusters.Missing != tc.wantMissing {
+				t.Errorf("Missing = %d, want %d", resp.Clusters.Missing, tc.wantMissing)
+			}
+			// "no-addons" (zero enabled addons, Unknown in ArgoCD) is
+			// ALWAYS untested in every case here — it never has anything
+			// for ArgoCD to probe regardless of what "with-addon" is doing.
+			if resp.Clusters.Untested != 1 {
+				t.Errorf("Untested = %d, want 1 (the zero-addon cluster)", resp.Clusters.Untested)
+			}
+		})
+	}
+}
+
+// TestGetStats_ClusterClassification_UntestedVsPending is the direct
+// regression test for blocker B1: a cluster with ZERO enabled addons and
+// an unresolved ArgoCD status is "untested" (ArgoCD will never probe it
+// until something is enabled), never "pending"/"disconnected" — the old
+// binary count called this cluster "disconnected" forever.
+func TestGetStats_ClusterClassification_UntestedVsPending(t *testing.T) {
+	connSvc := NewConnectionService(&inMemoryConnStore{})
+	svc := NewDashboardService(connSvc, "")
+	gp := dashboardClassificationFixture(t)
+	ac := argocdClustersStub(t, map[string]string{
+		"with-addon": "Unknown", // has an addon enabled -> pending, a probe is coming
+		"no-addons":  "Unknown", // nothing enabled -> untested, no probe ever coming
+	})
+
+	resp, err := svc.GetStats(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetStats returned error: %v", err)
+	}
+	if resp.Clusters.Pending != 1 {
+		t.Errorf("Pending = %d, want 1 (with-addon)", resp.Clusters.Pending)
+	}
+	if resp.Clusters.Untested != 1 {
+		t.Errorf("Untested = %d, want 1 (no-addons)", resp.Clusters.Untested)
+	}
+	// Neither untested nor pending count toward failed/missing — the old
+	// "disconnected" bucket that a fresh, zero-addon cluster fell into
+	// forever must be zero here.
+	if resp.Clusters.Failed != 0 || resp.Clusters.Missing != 0 {
+		t.Errorf("expected 0 failed/missing, got failed=%d missing=%d", resp.Clusters.Failed, resp.Clusters.Missing)
+	}
+}
+
+// TestGetStats_Addons_EnabledDeploymentsIsPlainCount is the regression
+// test for finding H5: EnabledDeployments must be a plain count, not one
+// half of a fake "N/N" ratio. (The old TotalDeployments field is gone
+// from the model entirely — this test would fail to compile if it ever
+// came back as a sibling field defined equal to EnabledDeployments.)
+func TestGetStats_Addons_EnabledDeploymentsIsPlainCount(t *testing.T) {
+	connSvc := NewConnectionService(&inMemoryConnStore{})
+	svc := NewDashboardService(connSvc, "")
+	gp := dashboardClassificationFixture(t)
+	ac := argocdClustersStub(t, map[string]string{"with-addon": "Successful", "no-addons": "Unknown"})
+
+	resp, err := svc.GetStats(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetStats returned error: %v", err)
+	}
+	if resp.Addons.EnabledDeployments != 1 {
+		t.Errorf("EnabledDeployments = %d, want 1", resp.Addons.EnabledDeployments)
+	}
+}
+
 // TestGetStats_MissingFileReturnsZeroState is the V124-23 / BUG-048
 // regression test. When managed-clusters.yaml (or addons-catalog.yaml) is
 // missing — fresh-install gitops repo, no clusters yet — GetStats MUST

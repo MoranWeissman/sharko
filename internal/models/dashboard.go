@@ -6,11 +6,37 @@ type DashboardConnectionStats struct {
 	Active string `json:"active"`
 }
 
-// DashboardClusterStats holds cluster statistics.
+// DashboardClusterStats holds the cluster connection breakdown, using the
+// SAME five-state vocabulary as ui/src/lib/clusterStatus.ts
+// (connected/pending/untested/missing/failed — "unmanaged" is not
+// applicable here, this endpoint only counts Git-registered clusters).
+// This replaces the old binary connected_to_argocd/disconnected_from_argocd
+// pair (dashboard UX review 2026-08-01, blocker B1): that pair called a
+// brand-new, zero-addon cluster "disconnected" forever, because ArgoCD
+// never probes a cluster with nothing scheduled on it. Format v4 is
+// unreleased, so this is a clean break rather than an additive field —
+// there is no released client depending on the old shape.
+//
+//   - Connected: ArgoCD has probed the cluster and reports it healthy
+//     (ConnectionState "Successful" or "Connected").
+//   - Pending: ArgoCD has not yet reported a probe result
+//     (ConnectionState "" or "Unknown"), AND the cluster has at least one
+//     enabled addon — a probe is coming.
+//   - Untested: same "" / "Unknown" state, but the cluster has ZERO
+//     enabled addons, so ArgoCD has nothing to probe and never will until
+//     an addon is enabled. Distinct from Pending so a freshly-registered,
+//     addon-less cluster does not read as "connecting" forever.
+//   - Missing: ArgoCD has no connection entry for this cluster at all (no
+//     cluster secret) — mirrors ClusterService's "missing" status.
+//   - Failed: ArgoCD observed an explicit failure (ConnectionState
+//     "Failed" or anything else not covered above).
 type DashboardClusterStats struct {
-	Total                  int `json:"total"`
-	ConnectedToArgocd      int `json:"connected_to_argocd"`
-	DisconnectedFromArgocd int `json:"disconnected_from_argocd"`
+	Total     int `json:"total"`
+	Connected int `json:"connected"`
+	Pending   int `json:"pending"`
+	Untested  int `json:"untested"`
+	Missing   int `json:"missing"`
+	Failed    int `json:"failed"`
 }
 
 // DashboardSyncStatusStats holds sync status breakdown.
@@ -35,10 +61,13 @@ type DashboardApplicationStats struct {
 	ByHealthStatus DashboardHealthStatusStats `json:"by_health_status"`
 }
 
-// DashboardAddonStats holds addon statistics.
+// DashboardAddonStats holds addon statistics. TotalDeployments (the old
+// "N/N" fake ratio — always equal to EnabledDeployments because it counted
+// Git intent on both sides, dashboard UX review 2026-08-01 finding H5) is
+// gone: EnabledDeployments is now a plain count, not a fraction's
+// numerator. Clean break — format v4 is unreleased.
 type DashboardAddonStats struct {
 	TotalAvailable     int `json:"total_available"`
-	TotalDeployments   int `json:"total_deployments"`
 	EnabledDeployments int `json:"enabled_deployments"`
 }
 

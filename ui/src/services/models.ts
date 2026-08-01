@@ -487,13 +487,28 @@ export interface ConnectionsListResponse {
 
 export interface DashboardStats {
   connections: { total: number; active: string }
-  clusters: { total: number; connected_to_argocd: number; disconnected_from_argocd: number }
+  // Five-state cluster breakdown — same vocabulary as
+  // ui/src/lib/clusterStatus.ts's ClusterConnectionKind (minus 'unmanaged',
+  // which doesn't apply to this Git-registered-clusters-only count).
+  // Replaces the old binary connected_to_argocd/disconnected_from_argocd
+  // pair (dashboard UX review 2026-08-01, blocker B1 — that pair called a
+  // brand-new, zero-addon cluster "disconnected" forever).
+  clusters: {
+    total: number
+    connected: number
+    pending: number
+    untested: number
+    missing: number
+    failed: number
+  }
   applications: {
     total: number
     by_sync_status: { synced: number; out_of_sync: number; unknown: number }
     by_health_status: { healthy: number; progressing: number; degraded: number; unknown: number }
   }
-  addons: { total_available: number; total_deployments: number; enabled_deployments: number }
+  // total_deployments (the old "N/N" fake ratio) is gone — enabled_deployments
+  // is a plain count now (dashboard UX review 2026-08-01, finding H5).
+  addons: { total_available: number; enabled_deployments: number }
   bootstrap_app_health?: string
   bootstrap_app_sync?: string
 }

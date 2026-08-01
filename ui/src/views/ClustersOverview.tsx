@@ -77,10 +77,13 @@ import {
 type StatusFilter =
   | 'all'
   | 'connected'
-  // 'disconnected' is the union of failed + missing + unknown — it
-  // mirrors Dashboard's `disconnected_from_argocd` headline count
-  // (managed total minus connected). The deep-link `?status=disconnected`
-  // from the Dashboard relies on this.
+  // 'disconnected' means failed + missing ONLY (dashboard UX review
+  // 2026-08-01: red is reserved for failed/missing; pending/untested
+  // clusters are neutral, not a problem, so they no longer count as
+  // "disconnected" here either). Mirrors Dashboard's
+  // `stats.clusters.failed + stats.clusters.missing` headline count. The
+  // deep-link `?status=disconnected` from the Dashboard's banner relies on
+  // this staying in sync with that definition.
   | 'disconnected'
   | 'failed'
   | 'missing_from_argocd'
@@ -822,12 +825,11 @@ export function ClustersOverview() {
             case 'connected':
               return cs === 'connected' || cs === 'successful';
             case 'disconnected':
-              // Any managed cluster that ArgoCD does not currently report
-              // as "Successful" / "Connected" — same definition the
-              // Dashboard uses for its headline count. Discovered /
-              // not_in_git clusters are NOT counted here.
-              if (cluster.managed === false || cs === 'not_in_git') return false;
-              return cs !== 'connected' && cs !== 'successful';
+              // Failed or missing ONLY — same definition the Dashboard
+              // uses for its red "disconnected clusters" count. Pending
+              // ("" / Unknown) and discovered / not_in_git clusters are
+              // NOT counted here; they aren't a problem.
+              return cs === 'failed' || cs === 'missing';
             case 'failed':
               return cs === 'failed';
             case 'missing_from_argocd':
