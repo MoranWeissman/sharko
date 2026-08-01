@@ -23,7 +23,7 @@ import {
   Boxes,
   Store,
 } from 'lucide-react'
-import { api } from '@/services/api'
+import { api, fetchTrackedPRs } from '@/services/api'
 import type {
   AddonCatalogItem,
   AddonCatalogResponse,
@@ -32,6 +32,7 @@ import type {
   CatalogValidateResponse,
   CatalogVersionsResponse,
   DryRunResult,
+  TrackedPR,
 } from '@/services/models'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -42,6 +43,7 @@ import { MarketplaceTab } from '@/components/MarketplaceTab'
 import { VersionPicker } from '@/components/VersionPicker'
 import {
   DryRunPreview,
+  EnableOnClusterField,
   SubmitPhaseBanner,
   type SubmitPhase,
 } from '@/components/AddAddonFlow'
@@ -347,6 +349,46 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
   )
 }
 
+/**
+ * PendingAddonRow — v4 walk-findings W2, item 5. Both catalog reads (this
+ * page's list and GET /addons/{name}) only see the merged base branch, so
+ * an addon whose add-PR is still open is nowhere on the Catalog tab, and
+ * "view addon" 404s during that window. This is the honest stand-in:
+ * grayed out (it isn't real yet), names the PR, links straight to it, and
+ * does NOT link to the addon detail page — that page doesn't exist until
+ * the PR merges.
+ */
+function PendingAddonRow({ pr }: { pr: TrackedPR }) {
+  return (
+    <div
+      data-testid="pending-addon-row"
+      className="flex items-center justify-between gap-3 rounded-lg ring-2 ring-[#c0ddf0] bg-[#f7fbff] px-4 py-3 opacity-80 dark:ring-gray-700 dark:bg-gray-900"
+    >
+      <div className="min-w-0">
+        <p className="truncate text-sm font-semibold text-[#3a6a8a] dark:text-gray-400">
+          {pr.addon || pr.pr_title}
+        </p>
+        <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-500">
+          {pr.pr_id ? `PR #${pr.pr_id} open — merge to approve` : 'PR open — merge to approve'}
+        </p>
+      </div>
+      {pr.pr_url ? (
+        <a
+          href={pr.pr_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex shrink-0 items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+        >
+          <GitPullRequest className="h-3 w-3" />
+          View PR
+        </a>
+      ) : (
+        <span className="shrink-0 text-xs text-[#5a8aaa] dark:text-gray-500">PR link unavailable</span>
+      )}
+    </div>
+  )
+}
+
 function PaginationControls({
   page,
   totalPages,
@@ -582,6 +624,48 @@ export function AddonCatalog() {
   // Toast notification state (shown after successful addon registration)
   const [toast, setToast] = useState<{ message: string; prUrl?: string } | null>(null)
 
+  // v4 walk-findings W2, item 4 — the OPTIONAL "also enable on a cluster"
+  // combo for the manual "Add your own chart" door. Managed cluster names
+  // are fetched once on mount (best-effort — an empty list just hides the
+  // selector, see EnableOnClusterField).
+  const [addAddonEnableOnCluster, setAddAddonEnableOnCluster] = useState('')
+  const [managedClusterNames, setManagedClusterNames] = useState<string[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getClusters()
+      .then((resp) => {
+        if (cancelled) return
+        const names = (resp.clusters ?? [])
+          .filter((c) => c.managed !== false && c.connection_status !== 'not_in_git')
+          .map((c) => c.name)
+        setManagedClusterNames(names)
+      })
+      .catch(() => {
+        if (!cancelled) setManagedClusterNames([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // v4 walk-findings W2, item 5 — addons with an open add-PR (catalog-add /
+  // catalog-add-enable) are invisible on both catalog reads (they only see
+  // the merged base branch). Fetch the open PRs alongside the catalog so a
+  // "pending" lane can render them instead of them vanishing until merge.
+  const [pendingAddonPRs, setPendingAddonPRs] = useState<TrackedPR[]>([])
+
+  const fetchPendingAddonPRs = useCallback(() => {
+    return fetchTrackedPRs({ status: 'open', operation: 'catalog-add,catalog-add-enable' })
+      .then((resp) => setPendingAddonPRs(resp.prs ?? []))
+      .catch(() => setPendingAddonPRs([]))
+  }, [])
+
+  useEffect(() => {
+    void fetchPendingAddonPRs()
+  }, [fetchPendingAddonPRs])
+
   const fetchCatalog = useCallback((background = false) => {
     if (background) {
       setIsRefreshing(true)
@@ -608,13 +692,17 @@ export function AddonCatalog() {
     void fetchCatalog()
   }, [fetchCatalog])
 
-  // Auto-refresh every 60s (less critical page)
+  // Auto-refresh every 60s (less critical page). Also re-polls the pending
+  // add-PR lane on the same cadence — existing refresh cadence is fine
+  // (v4 walk-findings W2, item 5): a pending row disappears once its PR
+  // merges without needing a full page reload.
   useEffect(() => {
     const interval = setInterval(() => {
       void fetchCatalog(true)
+      void fetchPendingAddonPRs()
     }, 60_000)
     return () => clearInterval(interval)
-  }, [fetchCatalog])
+  }, [fetchCatalog, fetchPendingAddonPRs])
 
   const resetAddonFormState = useCallback(() => {
     setAddAddonError(null)
@@ -632,6 +720,9 @@ export function AddonCatalog() {
     setAddAddonPhase('idle')
     setAddAddonResult(null)
     setAddAddonSubmittedName('')
+    // v4 walk-findings W2, item 4 — never carry a picked cluster into the
+    // next open of the dialog; the combo is opt-in every time.
+    setAddAddonEnableOnCluster('')
   }, [])
 
   const openAddAddon = useCallback(() => {
@@ -756,6 +847,13 @@ export function AddonCatalog() {
   // "add your own chart" door — a non-marketplace catalog entry — so it
   // posts to POST /api/v1/catalog/addons (v4 wave 2.5 review B-3; the old
   // legacy POST /addons 409s on a v4 repo).
+  //
+  // v4 walk-findings W2, item 4 — when a cluster is picked in the optional
+  // "Also enable on a cluster" selector, this sends the SAME combo payload
+  // the cluster-side V4EnableAddonDialog sends: `enable_on_cluster` + one
+  // pull request that touches both catalog.yaml and clusters/<name>.yaml.
+  // `yes: true` is only required (and only sent) on the real submit — the
+  // server does not require it for a dry-run preview.
   const buildAddRequest = useCallback(
     (dryRun: boolean) => ({
       addons: [
@@ -768,10 +866,12 @@ export function AddonCatalog() {
           namespace: addonForm.namespace.trim() || undefined,
         },
       ],
+      enable_on_cluster: addAddonEnableOnCluster || undefined,
+      yes: !dryRun && addAddonEnableOnCluster ? true : undefined,
       // auto_merge omitted — falls back to the global GitOps setting.
       dry_run: dryRun,
     }),
-    [addonForm],
+    [addonForm, addAddonEnableOnCluster],
   )
 
   const addAddonFormValid =
@@ -791,6 +891,7 @@ export function AddonCatalog() {
     addonForm.repo_url,
     addonForm.version,
     addonForm.namespace,
+    addAddonEnableOnCluster,
   ])
 
   // Preview step: dry-run the add and render the files it would write. No PR,
@@ -853,6 +954,9 @@ export function AddonCatalog() {
           prUrl: prUrl || undefined,
         })
         setTimeout(() => setToast(null), 8000)
+        // v4 walk-findings W2, item 5 — an open catalog-add PR belongs in
+        // the pending lane immediately, not after the next 60s poll.
+        void fetchPendingAddonPRs()
       }
     } catch (e: unknown) {
       setAddAddonPhase('idle')
@@ -860,7 +964,7 @@ export function AddonCatalog() {
     } finally {
       setAddAddonSubmitting(false)
     }
-  }, [addAddonFormValid, buildAddRequest, addonForm, fetchCatalog])
+  }, [addAddonFormValid, buildAddRequest, addonForm, fetchCatalog, fetchPendingAddonPRs])
 
   // Reset page on filter/search/sort/pageSize change
   useEffect(() => {
@@ -1054,19 +1158,11 @@ export function AddonCatalog() {
         >
           <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
         </button>
-        {/* Primary CTA is the Marketplace (V2-cleanup-61.3, finding A2) — it's
-            the recommended path for adding an addon. The manual chart-URL
-            dialog below is the advanced/secondary path, demoted to an
-            outline button; it stays fully reachable, just not the default
-            affordance. */}
-        <button
-          type="button"
-          onClick={() => switchTab('marketplace')}
-          className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
-        >
-          <Store className="h-4 w-4" />
-          Browse Marketplace
-        </button>
+        {/* The "Browse Marketplace" action-bar CTA was dropped (v4
+            walk-findings W2, item 1) — the always-visible Marketplace tab
+            above does exactly the same thing, so the CTA was a redundant
+            second door to the same place. "Add addon manually" stays as
+            the secondary path for charts not in the Marketplace. */}
         <RoleGuard adminOnly>
           <button
             type="button"
@@ -1294,6 +1390,17 @@ export function AddonCatalog() {
               />
             </div>
 
+            {/* v4 walk-findings W2, item 4 — optional add+enable combo.
+                Default is always "Don't enable yet"; never pre-selected. */}
+            {!addAddonResult && (
+              <EnableOnClusterField
+                clusterNames={managedClusterNames}
+                value={addAddonEnableOnCluster}
+                onChange={setAddAddonEnableOnCluster}
+                addonName={addonForm.name.trim()}
+              />
+            )}
+
             {/* Note: where to set advanced options after creation. */}
             <div className="rounded-md bg-[#e8f4ff] p-3 text-xs text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
               After adding, advanced options like sync options, ignore
@@ -1438,6 +1545,30 @@ export function AddonCatalog() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* v4 walk-findings W2, item 5 — addons with an open catalog-add PR
+          are invisible on the merged-branch-only catalog read below; this
+          lane keeps them visible until the PR merges. Precedent: pending
+          cluster registrations render as their own lane on ClustersOverview. */}
+      {pendingAddonPRs.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
+            <GitPullRequest className="h-4 w-4 text-[#3a6a8a]" />
+            Pending Addons
+            <span className="rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-700 dark:text-gray-300">
+              {pendingAddonPRs.length}
+            </span>
+            <span className="text-xs font-normal text-[#3a6a8a] dark:text-gray-500">
+              — add-PR open, will appear in the catalog once merged
+            </span>
+          </h3>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {pendingAddonPRs.map((pr) => (
+              <PendingAddonRow key={pr.pr_id} pr={pr} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Summary stat cards — click to filter */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

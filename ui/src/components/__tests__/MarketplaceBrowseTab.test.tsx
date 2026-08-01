@@ -31,6 +31,9 @@ const getFreshnessMock = vi.fn()
 const refreshFreshnessMock = vi.fn().mockResolvedValue({ message: 'freshness refresh requested' })
 
 vi.mock('@/services/api', () => ({
+  // v4 walk-findings W2, item 5: the pending-add-PR check uses this
+  // standalone export. Defaults to "no open PRs".
+  fetchTrackedPRs: vi.fn().mockResolvedValue({ prs: [] }),
   api: {
     listCuratedCatalog: () => listMock(),
     getAddonCatalog: () => getCatalogMock(),

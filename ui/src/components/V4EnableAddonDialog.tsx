@@ -406,6 +406,19 @@ export function V4EnableAddonDialog({
           />
         )}
         {phase === 'result' && <V4Warnings warnings={result?.warnings} />}
+        {/* v4 walk-findings W2, item 6 — missing values are by design (the
+            chart's own defaults apply, the engine tolerates absence), but a
+            silent no-values enable reads as "did that actually work?". One
+            line, only when nothing was set. The per-cluster values file
+            (values/clusters/<cluster>/<addon>.yaml) now always exists —
+            enable writes it as a commented stub even with no values typed
+            — so this points straight at the real, editable file, with the
+            addon page as the friendlier alternative. */}
+        {phase === 'result' && result && mode === 'enable' && !valuesText.trim() && (
+          <p className="mt-2 text-sm text-[#3a6a8a] dark:text-gray-400">
+            Running with chart defaults — edit values/clusters/{cluster}/{addon}.yaml or use the addon page.
+          </p>
+        )}
 
         {phase === 'error' && errorMessage && (
           <p className="text-sm text-red-600 dark:text-red-400">{errorMessage}</p>

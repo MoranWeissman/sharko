@@ -226,6 +226,70 @@ describe('V4EnableAddonDialog', () => {
     expect(mockEnableAddonV4).toHaveBeenLastCalledWith('prod-eu', 'cert-manager', { yes: true, values: undefined });
   });
 
+  // v4 walk-findings W2, item 6 — missing values are by design (chart
+  // defaults apply), but a silent no-values enable used to look like
+  // nothing happened. One line, only when the values field was left empty.
+  it('success with no values entered adds the chart-defaults nudge', async () => {
+    mockEnableAddonV4
+      .mockResolvedValueOnce({
+        dry_run: {
+          effective_addons: ['cert-manager'],
+          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+          pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
+          secrets_to_create: [],
+        },
+      })
+      .mockResolvedValueOnce({
+        pr_url: 'https://github.com/demo/sharko-addons/pull/99',
+        pr_id: 99,
+        merged: false,
+      });
+
+    renderDialog();
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    await waitFor(() => expect(screen.getByTestId('v4-confirm')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('v4-confirm'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/View PR #99/)).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText('Running with chart defaults — edit values/clusters/prod-eu/cert-manager.yaml or use the addon page.'),
+    ).toBeInTheDocument();
+  });
+
+  it('success WITH values entered does not show the chart-defaults nudge', async () => {
+    mockEnableAddonV4
+      .mockResolvedValueOnce({
+        dry_run: {
+          effective_addons: ['cert-manager'],
+          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+          pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
+          secrets_to_create: [],
+        },
+      })
+      .mockResolvedValueOnce({
+        pr_url: 'https://github.com/demo/sharko-addons/pull/99',
+        pr_id: 99,
+        merged: false,
+      });
+
+    renderDialog();
+    fireEvent.change(screen.getByTestId('v4-enable-values'), {
+      target: { value: 'installCRDs: true' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    await waitFor(() => expect(screen.getByTestId('v4-confirm')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('v4-confirm'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/View PR #99/)).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText('Running with chart defaults — set values on the addon page.'),
+    ).not.toBeInTheDocument();
+  });
+
   it('preview shows a non-blocking runtime-secret warning without hiding the confirm button', async () => {
     mockEnableAddonV4.mockResolvedValue({
       dry_run: {

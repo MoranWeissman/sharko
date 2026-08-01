@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { RefreshCw, Sparkles } from 'lucide-react'
-import { api } from '@/services/api'
+import { api, fetchTrackedPRs } from '@/services/api'
 import type {
   CatalogCategory,
   CatalogCuratedBy,
@@ -177,6 +177,30 @@ export function MarketplaceBrowseTab() {
       .catch(() => {
         // Non-fatal — cards just won't show the "in your catalog" badge.
         if (!cancelled) setInstalledNames(new Set())
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // v4 walk-findings W2, item 5 — addon names with an open catalog-add PR,
+  // so tiles can show "Pending" instead of offering a duplicate add.
+  const [pendingNames, setPendingNames] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    let cancelled = false
+    fetchTrackedPRs({ status: 'open', operation: 'catalog-add,catalog-add-enable' })
+      .then((resp) => {
+        if (cancelled) return
+        const names = new Set(
+          (resp.prs ?? [])
+            .map((pr) => pr.addon?.trim().toLowerCase())
+            .filter((n): n is string => !!n),
+        )
+        setPendingNames(names)
+      })
+      .catch(() => {
+        // Non-fatal — cards just won't show the "Pending" badge.
+        if (!cancelled) setPendingNames(new Set())
       })
     return () => {
       cancelled = true
@@ -371,6 +395,7 @@ export function MarketplaceBrowseTab() {
                 <MarketplaceCard
                   entry={entry}
                   inCatalog={installedNames.has(entry.name.trim().toLowerCase())}
+                  pending={pendingNames.has(entry.name.trim().toLowerCase())}
                   sourceRecord={sourceByURL[entry.source ?? 'embedded']}
                 />
               </li>

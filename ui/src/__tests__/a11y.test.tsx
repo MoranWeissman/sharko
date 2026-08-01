@@ -67,6 +67,9 @@ const getReadmeMock = vi
   .mockResolvedValue({ readme: '## Hello\nWelcome.', source: 'artifacthub' })
 
 vi.mock('@/services/api', () => ({
+  // v4 walk-findings W2, item 5: the pending-add-PR check uses this
+  // standalone export. Defaults to "no open PRs".
+  fetchTrackedPRs: vi.fn().mockResolvedValue({ prs: [] }),
   api: {
     listCuratedCatalog: () => listMock(),
     listCuratedCatalogVersions: (...a: unknown[]) => listVersionsMock(...a),
@@ -76,6 +79,9 @@ vi.mock('@/services/api', () => ({
     getCuratedCatalogEntry: (...a: unknown[]) => getEntryMock(...a),
     getCuratedCatalogReadme: (...a: unknown[]) => getReadmeMock(...a),
     reprobeArtifactHub: () => Promise.resolve({ reachable: true, probed_at: '' }),
+    // v4 walk-findings W2, item 4: the optional "also enable on a cluster"
+    // selector fetches managed clusters on mount.
+    getClusters: vi.fn().mockResolvedValue({ clusters: [] }),
   },
   addAddon: vi.fn(),
   isAddonAlreadyExistsError: () => false,

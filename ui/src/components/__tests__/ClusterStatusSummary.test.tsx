@@ -116,6 +116,25 @@ describe('clusterStatusParts', () => {
     expect(parts[1].meaning).toBe('waiting for pod');
   });
 
+  // v4 walk-findings W2, item 2: a managed cluster with zero enabled addons
+  // never gets an ArgoCD probe result, so it sat at "Connecting…" forever.
+  it('shows "No addons yet" instead of "Connecting…" when enabledAddonCount is 0', () => {
+    const parts = clusterStatusParts({ connectionStatus: '', enabledAddonCount: 0 });
+    expect(parts).toHaveLength(1);
+    expect(parts[0].label).toBe('No addons yet — connection untested');
+    expect(parts[0].severity).toBe('unknown');
+  });
+
+  it('still shows "Connecting…" when enabledAddonCount is greater than 0', () => {
+    const parts = clusterStatusParts({ connectionStatus: '', enabledAddonCount: 2 });
+    expect(parts[0].label).toBe('Connecting…');
+  });
+
+  it('still shows "Connecting…" when enabledAddonCount is not passed at all', () => {
+    const parts = clusterStatusParts({ connectionStatus: 'Unknown' });
+    expect(parts[0].label).toBe('Connecting…');
+  });
+
   it('never uses internal Stage vocabulary in any meaning', () => {
     const parts = clusterStatusParts({
       connectionStatus: 'Failed',
