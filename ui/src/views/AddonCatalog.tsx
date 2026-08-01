@@ -596,6 +596,19 @@ export function AddonCatalog() {
   const [filterType, setFilterType] = useState<FilterType>(
     searchParams.get('drift') === 'true' ? 'drifted' : 'all',
   )
+  // Fleet Status Strip v2 (WQ-2) — the Upgrades segment is now a bare
+  // clickable number that deep-links here with `?view=matrix&filter=outdated`
+  // (same pattern as ?drift=true above) so it lands pre-filtered to just the
+  // outdated rows in the version matrix, not the plain catalog grid.
+  const [matrixOutdatedOnly, setMatrixOutdatedOnly] = useState(
+    searchParams.get('filter') === 'outdated',
+  )
+  const clearMatrixOutdatedFilter = useCallback(() => {
+    setMatrixOutdatedOnly(false)
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('filter')
+    setSearchParams(params, { replace: true })
+  }, [searchParams, setSearchParams])
   const [sortBy, setSortBy] = useState<SortBy>('name')
   const [pageSize, setPageSize] = useState<PageSize>(15)
   const [page, setPage] = useState(1)
@@ -1739,7 +1752,12 @@ export function AddonCatalog() {
         </div>
       </div>
 
-      {viewMode === 'matrix' && <VersionMatrixTable />}
+      {viewMode === 'matrix' && (
+        <VersionMatrixTable
+          outdatedOnly={matrixOutdatedOnly}
+          onClearOutdatedFilter={clearMatrixOutdatedFilter}
+        />
+      )}
 
       {viewMode !== 'matrix' && (
       <>

@@ -685,6 +685,96 @@ describe('AddonCatalog — ?view=matrix deep-link (walk finding #1)', () => {
 })
 
 /**
+ * WQ-2: the Fleet Status Strip's Upgrades segment is now a bare clickable
+ * number that deep-links to /addons?view=matrix&filter=outdated (same
+ * pattern as ?view=matrix and ?drift=true above) so it lands directly on
+ * the matrix, already filtered to just the outdated rows.
+ */
+describe('AddonCatalog — ?filter=outdated deep-link (WQ-2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const twoRowMatrix = {
+    clusters: ['prod-eu'],
+    addons: [
+      {
+        addon_name: 'up-to-date-addon',
+        catalog_version: '1.0.0',
+        chart: 'up-to-date-addon',
+        cells: { 'prod-eu': { version: '1.0.0', health: 'healthy', drift_from_catalog: false } },
+        newest_available: '1.0.0',
+        last_checked: '2026-07-29T12:00:00Z',
+      },
+      {
+        addon_name: 'outdated-addon',
+        catalog_version: '1.0.0',
+        chart: 'outdated-addon',
+        cells: { 'prod-eu': { version: '1.0.0', health: 'healthy', drift_from_catalog: false } },
+        newest_available: '2.0.0',
+        last_checked: '2026-07-29T12:00:00Z',
+      },
+    ],
+  }
+
+  it('lands on the matrix pre-filtered to outdated rows when ?view=matrix&filter=outdated is present', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(twoRowMatrix)
+
+    render(
+      <MemoryRouter initialEntries={['/addons?view=matrix&filter=outdated']}>
+        <AddonCatalog />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('outdated-addon')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('up-to-date-addon')).not.toBeInTheDocument()
+    expect(screen.getByTestId('matrix-outdated-chip')).toBeInTheDocument()
+  })
+
+  it('clearing the chip shows every row again and drops ?filter from the URL', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(twoRowMatrix)
+
+    render(
+      <MemoryRouter initialEntries={['/addons?view=matrix&filter=outdated']}>
+        <AddonCatalog />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('matrix-outdated-chip')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /clear the outdated filter/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('up-to-date-addon')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('matrix-outdated-chip')).not.toBeInTheDocument()
+  })
+
+  it('matrix shows every row (no chip) when ?filter is absent', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(twoRowMatrix)
+
+    render(
+      <MemoryRouter initialEntries={['/addons?view=matrix']}>
+        <AddonCatalog />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('up-to-date-addon')).toBeInTheDocument()
+    })
+    expect(screen.getByText('outdated-addon')).toBeInTheDocument()
+    expect(screen.queryByTestId('matrix-outdated-chip')).not.toBeInTheDocument()
+  })
+})
+
+/**
  * V2-cleanup-36: DeploymentBadge new states — sync_failing (red) and
  * deploying (blue). These states are checked first in the priority chain
  * so they surface before the running-count logic.

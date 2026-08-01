@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { VersionMatrixTable } from '@/components/VersionMatrixTable'
 import { api } from '@/services/api'
 
@@ -110,5 +110,105 @@ describe('VersionMatrixTable — sort-first-what\'s-outdated (walk finding #1)',
     // The outdated row carries the "newer version available" marker; the
     // up-to-date one doesn't.
     expect(screen.getByLabelText('A newer version is available')).toBeInTheDocument()
+  })
+})
+
+// outdatedOnly (WQ-2) — the Fleet Status Strip's Upgrades segment is now a
+// bare clickable number that deep-links to the matrix with
+// ?view=matrix&filter=outdated. AddonCatalog reads that param and passes
+// outdatedOnly down; the table hides up-to-date rows and shows a
+// dismissible "outdated only ×" chip.
+describe('VersionMatrixTable — outdatedOnly filter (WQ-2)', () => {
+  const twoRowFixture = {
+    clusters: ['prod-eu'],
+    addons: [
+      {
+        addon_name: 'up-to-date-addon',
+        catalog_version: '1.0.0',
+        chart: 'up-to-date-addon',
+        cells: { 'prod-eu': { version: '1.0.0', health: 'healthy', drift_from_catalog: false } },
+        newest_available: '1.0.0',
+        last_checked: '2026-07-29T12:00:00Z',
+      },
+      {
+        addon_name: 'outdated-addon',
+        catalog_version: '1.0.0',
+        chart: 'outdated-addon',
+        cells: { 'prod-eu': { version: '1.0.0', health: 'healthy', drift_from_catalog: false } },
+        newest_available: '2.0.0',
+        last_checked: '2026-07-29T12:00:00Z',
+      },
+    ],
+  }
+
+  it('shows only rows with an available upgrade when outdatedOnly is true', async () => {
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(twoRowFixture)
+
+    render(<VersionMatrixTable outdatedOnly />)
+
+    await waitFor(() => {
+      expect(screen.getByText('outdated-addon')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('up-to-date-addon')).not.toBeInTheDocument()
+  })
+
+  it('shows every row when outdatedOnly is false (default)', async () => {
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(twoRowFixture)
+
+    render(<VersionMatrixTable />)
+
+    await waitFor(() => {
+      expect(screen.getByText('outdated-addon')).toBeInTheDocument()
+    })
+    expect(screen.getByText('up-to-date-addon')).toBeInTheDocument()
+  })
+
+  it('renders a dismissible "outdated only" chip that clears the filter on click', async () => {
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(twoRowFixture)
+    const onClear = vi.fn()
+
+    render(<VersionMatrixTable outdatedOnly onClearOutdatedFilter={onClear} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('matrix-outdated-chip')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('matrix-outdated-chip').textContent).toContain('outdated only')
+
+    fireEvent.click(screen.getByRole('button', { name: /clear the outdated filter/i }))
+    expect(onClear).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not render the chip when outdatedOnly is false', async () => {
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(twoRowFixture)
+
+    render(<VersionMatrixTable />)
+
+    await waitFor(() => {
+      expect(screen.getByText('outdated-addon')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('matrix-outdated-chip')).not.toBeInTheDocument()
+  })
+
+  it('shows a "nothing outdated" message when the filter excludes every row', async () => {
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce({
+      clusters: ['prod-eu'],
+      addons: [
+        {
+          addon_name: 'up-to-date-addon',
+          catalog_version: '1.0.0',
+          chart: 'up-to-date-addon',
+          cells: { 'prod-eu': { version: '1.0.0', health: 'healthy', drift_from_catalog: false } },
+          newest_available: '1.0.0',
+          last_checked: '2026-07-29T12:00:00Z',
+        },
+      ],
+    })
+
+    render(<VersionMatrixTable outdatedOnly />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/Nothing outdated/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText('up-to-date-addon')).not.toBeInTheDocument()
   })
 })
