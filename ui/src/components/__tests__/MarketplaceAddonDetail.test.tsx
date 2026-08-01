@@ -74,9 +74,11 @@ vi.mock('@/services/api', () => ({
 }))
 
 function renderDetail() {
-  sessionStorage.setItem('sharko-auth-token', 'test-token')
-  sessionStorage.setItem('sharko-auth-user', 'tester')
-  sessionStorage.setItem('sharko-auth-role', 'admin')
+  // Auth session lives in localStorage (shared across tabs) — see
+  // ui/src/lib/authStorage.ts.
+  localStorage.setItem('sharko-auth-token', 'test-token')
+  localStorage.setItem('sharko-auth-user', 'tester')
+  localStorage.setItem('sharko-auth-role', 'admin')
   return render(
     <MemoryRouter>
       <AuthProvider>
@@ -106,6 +108,7 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     sessionStorage.clear()
+    localStorage.clear()
   })
 
   // V2-cleanup-40: per-flow auto-merge toggle removed. Global GitOps setting governs.
@@ -298,6 +301,7 @@ describe('MarketplaceAddonDetail — disabled-reason banner (v4 walk-findings W2
   beforeEach(() => {
     vi.clearAllMocks()
     sessionStorage.clear()
+    localStorage.clear()
   })
 
   it('names the reason and offers a Retry when the version list fails to load', async () => {
@@ -426,6 +430,7 @@ describe('MarketplaceAddonDetail — pending add-PR (v4 walk-findings W2, item 5
   beforeEach(() => {
     vi.clearAllMocks()
     sessionStorage.clear()
+    localStorage.clear()
     vi.mocked(api.getClusters).mockResolvedValue({ clusters: [] })
   })
 
@@ -479,5 +484,40 @@ describe('MarketplaceAddonDetail — pending add-PR (v4 walk-findings W2, item 5
 
     expect(screen.queryByText(/already has an add-PR open/i)).not.toBeInTheDocument()
     expect(screen.getByLabelText(/display name/i)).toBeInTheDocument()
+  })
+})
+
+// Login-survives-new-tabs fix (walk finding): the project README fetch is a
+// raw `fetch()` call, not routed through the `api` module, so it needed its
+// own sweep to read the token from authStorage instead of sessionStorage
+// directly. This locks down that it still attaches the Bearer token.
+describe('MarketplaceAddonDetail — project README fetch attaches the Bearer token', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    sessionStorage.clear()
+    localStorage.clear()
+  })
+
+  it('sends Authorization: Bearer <token> from authStorage when loading the project README', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({ readme: '# Hi', available: true, source_url: 'https://example.com' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    renderDetail()
+    await waitForActionPanel()
+
+    fireEvent.click(screen.getByRole('tab', { name: /project/i }))
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringContaining('/project-readme'),
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer test-token' },
+        }),
+      )
+    })
   })
 })

@@ -313,10 +313,11 @@ describe('AddonCatalog — empty catalog points to the Marketplace (V2-cleanup-6
   // doors in: pick from the Marketplace, or add your own chart. Both are
   // admin-only (RoleGuard), so this test renders with an admin session.
   it('shows both empty-catalog doors ("Browse the Marketplace" + "Add your own chart") to an admin', async () => {
-    sessionStorage.clear()
-    sessionStorage.setItem('sharko-auth-token', 'test-token')
-    sessionStorage.setItem('sharko-auth-user', 'tester')
-    sessionStorage.setItem('sharko-auth-role', 'admin')
+    // Auth session lives in localStorage — see ui/src/lib/authStorage.ts.
+    localStorage.clear()
+    localStorage.setItem('sharko-auth-token', 'test-token')
+    localStorage.setItem('sharko-auth-user', 'tester')
+    localStorage.setItem('sharko-auth-role', 'admin')
 
     vi.mocked(api.getAddonCatalog).mockResolvedValueOnce({
       addons: [],
@@ -343,7 +344,7 @@ describe('AddonCatalog — empty catalog points to the Marketplace (V2-cleanup-6
       within(emptyState).getByRole('button', { name: /add your own chart/i }),
     ).toBeInTheDocument()
 
-    sessionStorage.clear()
+    localStorage.clear()
   })
 
   // The locked two-surface sentence (design decision 8) should be visible
@@ -873,9 +874,11 @@ describe('AddonCatalog — add-addon parity flow (V2-cleanup-15.1)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     sessionStorage.clear()
-    sessionStorage.setItem('sharko-auth-token', 'test-token')
-    sessionStorage.setItem('sharko-auth-user', 'tester')
-    sessionStorage.setItem('sharko-auth-role', 'admin')
+    // Auth session lives in localStorage — see ui/src/lib/authStorage.ts.
+    localStorage.clear()
+    localStorage.setItem('sharko-auth-token', 'test-token')
+    localStorage.setItem('sharko-auth-user', 'tester')
+    localStorage.setItem('sharko-auth-role', 'admin')
   })
 
   async function renderAndOpenDialog() {

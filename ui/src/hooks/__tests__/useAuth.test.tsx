@@ -65,12 +65,14 @@ function renderWithProvider() {
 describe('useAuth — BUG-047 sharko:dismiss-wizard lifecycle', () => {
   beforeEach(() => {
     sessionStorage.clear()
+    localStorage.clear()
     vi.clearAllMocks()
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
     sessionStorage.clear()
+    localStorage.clear()
   })
 
   it('clears sharko:dismiss-wizard on successful login', async () => {
@@ -98,8 +100,10 @@ describe('useAuth — BUG-047 sharko:dismiss-wizard lifecycle', () => {
     // Post-state: dismiss flag MUST be cleared so the next render of the
     // wizard gate (App.tsx shouldShowSetupWizard) sees a clean slate.
     expect(sessionStorage.getItem(DISMISS_KEY)).toBeNull()
-    // And the auth fields landed in sessionStorage as expected.
-    expect(sessionStorage.getItem('sharko-auth-token')).toBe('test-token-123')
+    // And the auth fields landed in localStorage (shared across tabs), NOT
+    // sessionStorage — that's the fix that keeps a second tab logged in.
+    expect(localStorage.getItem('sharko-auth-token')).toBe('test-token-123')
+    expect(sessionStorage.getItem('sharko-auth-token')).toBeNull()
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/auth/login',
       expect.objectContaining({ method: 'POST' }),
@@ -109,11 +113,13 @@ describe('useAuth — BUG-047 sharko:dismiss-wizard lifecycle', () => {
   it('clears sharko:dismiss-wizard on logout', async () => {
     // Pre-state: the user is mid-session, has dismissed the wizard, and
     // now clicks "Log out" in the user menu. We seed the flag plus a stale
-    // token so the AuthProvider mounts with isAuthenticated=true.
+    // token so the AuthProvider mounts with isAuthenticated=true. The auth
+    // session lives in localStorage (the dismiss flag stays in
+    // sessionStorage — it's deliberately per-tab).
     sessionStorage.setItem(DISMISS_KEY, '1')
-    sessionStorage.setItem('sharko-auth-token', 'stale-token')
-    sessionStorage.setItem('sharko-auth-user', 'admin')
-    sessionStorage.setItem('sharko-auth-role', 'admin')
+    localStorage.setItem('sharko-auth-token', 'stale-token')
+    localStorage.setItem('sharko-auth-user', 'admin')
+    localStorage.setItem('sharko-auth-role', 'admin')
 
     // The verify-token effect hits /api/v1/health on mount — answer with
     // 200 so the token sticks long enough for our logout click.
@@ -136,11 +142,12 @@ describe('useAuth — BUG-047 sharko:dismiss-wizard lifecycle', () => {
     // Post-state: dismiss flag MUST be cleared so the next login (same tab
     // or otherwise) gets a fresh wizard gate.
     expect(sessionStorage.getItem(DISMISS_KEY)).toBeNull()
-    // Auth keys also cleared (this part was the pre-existing logout
-    // contract — we re-assert here to lock down the full lifecycle).
-    expect(sessionStorage.getItem('sharko-auth-token')).toBeNull()
-    expect(sessionStorage.getItem('sharko-auth-user')).toBeNull()
-    expect(sessionStorage.getItem('sharko-auth-role')).toBeNull()
+    // Auth keys also cleared from localStorage (this part was the
+    // pre-existing logout contract — we re-assert here to lock down the
+    // full lifecycle).
+    expect(localStorage.getItem('sharko-auth-token')).toBeNull()
+    expect(localStorage.getItem('sharko-auth-user')).toBeNull()
+    expect(localStorage.getItem('sharko-auth-role')).toBeNull()
   })
 
   it('does NOT clear sharko:dismiss-wizard on failed login', async () => {
@@ -171,5 +178,134 @@ describe('useAuth — BUG-047 sharko:dismiss-wizard lifecycle', () => {
 
     // Flag survives the failed attempt — only successful login clears it.
     expect(sessionStorage.getItem(DISMISS_KEY)).toBe('1')
+  })
+})
+
+/**
+ * useAuth — login survives "open in new tab" (walk finding).
+ *
+ * The maintainer's finding: right-click a link -> open in new tab -> the
+ * new tab shows the login screen even though the user is already logged
+ * in. Root cause was the auth session living in sessionStorage, which is
+ * per-tab. The fix moves it to localStorage (shared across tabs) via
+ * `authStorage`, with a one-time migration for tabs that still have the
+ * old sessionStorage-only session, plus a cross-tab logout so logging out
+ * in one tab logs the others out too.
+ */
+describe('useAuth — login survives new tabs (localStorage session)', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+    localStorage.clear()
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    sessionStorage.clear()
+    localStorage.clear()
+  })
+
+  it('initializes authenticated from localStorage alone (new-tab simulation)', async () => {
+    // Simulate a brand new tab: sessionStorage is empty (fresh per-tab
+    // storage), but localStorage already has a session from the tab that
+    // logged in.
+    localStorage.setItem('sharko-auth-token', 'shared-token')
+    localStorage.setItem('sharko-auth-user', 'admin')
+    localStorage.setItem('sharko-auth-role', 'admin')
+
+    // The verify-token effect hits /api/v1/health on mount — answer 200 so
+    // the token isn't treated as stale.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    )
+
+    renderWithProvider()
+
+    // Authenticated immediately from localStorage, no login click needed.
+    expect(screen.getByTestId('token').textContent).toBe('shared-token')
+  })
+
+  it('migrates a legacy sessionStorage-only session to localStorage on init', async () => {
+    // Simulate a tab that was logged in before this fix shipped: the token
+    // is only in sessionStorage.
+    sessionStorage.setItem('sharko-auth-token', 'legacy-token')
+    sessionStorage.setItem('sharko-auth-user', 'admin')
+    sessionStorage.setItem('sharko-auth-role', 'admin')
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    )
+
+    renderWithProvider()
+
+    // Stays authenticated through the migration — no forced re-login.
+    expect(screen.getByTestId('token').textContent).toBe('legacy-token')
+
+    // The session moved to localStorage and was removed from sessionStorage.
+    expect(localStorage.getItem('sharko-auth-token')).toBe('legacy-token')
+    expect(localStorage.getItem('sharko-auth-user')).toBe('admin')
+    expect(localStorage.getItem('sharko-auth-role')).toBe('admin')
+    expect(sessionStorage.getItem('sharko-auth-token')).toBeNull()
+    expect(sessionStorage.getItem('sharko-auth-user')).toBeNull()
+    expect(sessionStorage.getItem('sharko-auth-role')).toBeNull()
+  })
+
+  it('clears auth state when another tab logs out (cross-tab logout)', async () => {
+    localStorage.setItem('sharko-auth-token', 'shared-token')
+    localStorage.setItem('sharko-auth-user', 'admin')
+    localStorage.setItem('sharko-auth-role', 'admin')
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    )
+
+    renderWithProvider()
+    await waitFor(() => {
+      expect(screen.getByTestId('token').textContent).toBe('shared-token')
+    })
+
+    // Simulate another tab logging out: it clears localStorage and the
+    // browser fires a `storage` event in THIS tab (browsers never fire it
+    // in the tab that made the change, so we dispatch it by hand here).
+    localStorage.removeItem('sharko-auth-token')
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'sharko-auth-token',
+        oldValue: 'shared-token',
+        newValue: null,
+        storageArea: localStorage,
+      }),
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('token').textContent).toBe('none')
+    })
+  })
+
+  it('ignores storage events for unrelated keys', async () => {
+    localStorage.setItem('sharko-auth-token', 'shared-token')
+    localStorage.setItem('sharko-auth-user', 'admin')
+    localStorage.setItem('sharko-auth-role', 'admin')
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    )
+
+    renderWithProvider()
+    await waitFor(() => {
+      expect(screen.getByTestId('token').textContent).toBe('shared-token')
+    })
+
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'sharko-theme',
+        oldValue: 'light',
+        newValue: null,
+        storageArea: localStorage,
+      }),
+    )
+
+    // Unrelated key removal must not log the user out.
+    expect(screen.getByTestId('token').textContent).toBe('shared-token')
   })
 })

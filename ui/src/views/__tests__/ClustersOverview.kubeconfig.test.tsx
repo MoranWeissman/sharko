@@ -47,12 +47,13 @@ const baseClusters = {
 };
 
 function renderView() {
-  // The Add Cluster button is admin-gated via RoleGuard. Seed sessionStorage
-  // with an admin token+role before mounting AuthProvider so the button
-  // renders and the dialog can be opened.
-  sessionStorage.setItem('sharko-auth-token', 'test-token');
-  sessionStorage.setItem('sharko-auth-user', 'tester');
-  sessionStorage.setItem('sharko-auth-role', 'admin');
+  // The Add Cluster button is admin-gated via RoleGuard. Seed localStorage
+  // (the auth session lives there — see ui/src/lib/authStorage.ts) with an
+  // admin token+role before mounting AuthProvider so the button renders and
+  // the dialog can be opened.
+  localStorage.setItem('sharko-auth-token', 'test-token');
+  localStorage.setItem('sharko-auth-user', 'tester');
+  localStorage.setItem('sharko-auth-role', 'admin');
   return render(
     <MemoryRouter>
       <AuthProvider>
@@ -85,6 +86,7 @@ describe('ClustersOverview — creds-reframe-2 credential source', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
+    localStorage.clear();
     mockGetClusters.mockResolvedValue(baseClusters);
     mockGetAddonCatalog.mockResolvedValue({ addons: [] });
     // Default: inline credential paste is allowed (today's behavior) unless
