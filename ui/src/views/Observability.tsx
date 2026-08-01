@@ -597,7 +597,11 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
   }
 
   return (
-    <section>
+    // id="addon-health" — the Dashboard's Applications card deep-links here
+    // (walk finding #2: "which apps are unhealthy" is answered by this
+    // section, which already sorts by issue count first and lists
+    // per-app-per-cluster health, not just a per-addon aggregate).
+    <section id="addon-health">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           <Server className="h-5 w-5 text-teal-500" />
@@ -1384,6 +1388,17 @@ export function Observability() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  // Dashboard deep-link (walk finding #2): the Applications card navigates
+  // to /observability#addon-health. A client-side route change doesn't
+  // auto-scroll to a hash the way a full page load does, so once the
+  // section has real content to scroll to, do it ourselves.
+  useEffect(() => {
+    if (loading || !data) return;
+    if (window.location.hash !== '#addon-health') return;
+    const el = document.getElementById('addon-health');
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [loading, data]);
 
   if (loading) return <LoadingState message="Loading observability data..." />;
   if (error) return <ErrorState message={error} onRetry={fetchData} />;

@@ -1,5 +1,12 @@
 import type { ReactNode } from 'react';
 
+export interface StatCardStatItem {
+  label: string;
+  value: string | number;
+  /** Optional test hook — scoped queries in tests without ambiguous text matches. */
+  testId?: string;
+}
+
 interface StatCardProps {
   title: string;
   value: string | number;
@@ -9,6 +16,14 @@ interface StatCardProps {
   selected?: boolean;
   subtitle?: string;
   size?: 'default' | 'large';
+  /**
+   * Large variant only (dashboard UX review 2026-08-01, finding H2 +
+   * Package 2 #5): a row of small labeled numbers ("Total 10 · Connected 8
+   * · Disconnected 1") instead of one big poster number. Falls back to a
+   * single stat built from title/value when omitted, so existing large
+   * callers keep working unchanged.
+   */
+  stats?: StatCardStatItem[];
 }
 
 const borderColorMap: Record<string, string> = {
@@ -27,6 +42,7 @@ export function StatCard({
   selected = false,
   subtitle,
   size = 'default',
+  stats,
 }: StatCardProps) {
   const borderClass = borderColorMap[color];
   const isClickable = Boolean(onClick);
@@ -39,14 +55,18 @@ export function StatCard({
     ? 'cursor-pointer transition-shadow hover:shadow-md'
     : '';
 
-  // Tier 1 hero variant (dashboard facelift): bg-card, rounded-xl, a soft
-  // shadow, NO ring — the "permanently neutral" stat cards no longer need a
-  // colored shell (Package 2 #3 already dropped the last of the severity
-  // color from these), so the ring-2 border that used to be the universal
-  // card shell is gone here too. Icon moves inline-left in a caption-style
-  // title row instead of floating absolute top-right (one icon spec, kills
-  // the h-5/h-6 mix).
+  // Tier 1 hero variant (dashboard UX review 2026-08-01, finding H2 +
+  // Package 2 #5): "a labeled row of small stats", title first — NOT a
+  // poster number. A big lone numeral over a tiny label reads well for one
+  // count but stops meaning anything once a card wants to say "10 total, 8
+  // connected, 1 disconnected" — the old text-4xl treatment forced that
+  // into a fraction or a hand-picked single number instead. Title moves
+  // above the stats (text-sm font-semibold, always readable) and the
+  // number(s) shrink to text-lg — still bold and tabular, just no longer
+  // the loudest thing on the card. bg-card, rounded-xl, soft shadow, no
+  // ring — stat cards stay permanently neutral (Package 2 #3).
   if (size === 'large') {
+    const items: StatCardStatItem[] = stats ?? [{ label: title, value }];
     return (
       <div
         role={isClickable ? 'button' : undefined}
@@ -64,13 +84,20 @@ export function StatCard({
         }
         className={`relative rounded-xl bg-card p-6 shadow-sm transition-shadow ${selectedClass} ${interactiveClass}`}
       >
-        <div className="text-4xl font-bold tabular-nums text-card-foreground">{value}</div>
-        <div className="mt-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <div className="flex items-center gap-1.5 text-sm font-semibold text-card-foreground">
           {icon && <span className="text-muted-foreground [&_svg]:h-4 [&_svg]:w-4">{icon}</span>}
           <span>{title}</span>
         </div>
+        <div className="mt-3 flex flex-wrap items-baseline gap-x-5 gap-y-1.5">
+          {items.map((item) => (
+            <div key={item.label} className="flex flex-col" data-testid={item.testId}>
+              <span className="text-xs text-muted-foreground">{item.label}</span>
+              <span className="text-lg font-semibold tabular-nums text-card-foreground">{item.value}</span>
+            </div>
+          ))}
+        </div>
         {subtitle && (
-          <div className="mt-1 text-sm text-muted-foreground normal-case tracking-normal">{subtitle}</div>
+          <div className="mt-2 text-sm text-muted-foreground">{subtitle}</div>
         )}
       </div>
     );

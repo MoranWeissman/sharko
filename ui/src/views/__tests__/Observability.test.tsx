@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Observability } from '@/views/Observability';
@@ -278,5 +278,44 @@ describe('Observability', () => {
     });
 
     expect(screen.getAllByText('No sync activity yet').length).toBeGreaterThan(0);
+  });
+});
+
+// Walk finding #2: the Dashboard's Applications card deep-links to
+// /observability#addon-health so "which apps are unhealthy" lands right on
+// the Addon Health section instead of the top of the page.
+describe('Observability — #addon-health deep-link (walk finding #2)', () => {
+  const originalHash = window.location.hash;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  afterEach(() => {
+    window.location.hash = originalHash;
+  });
+
+  it('renders the Addon Health section with the #addon-health anchor', async () => {
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Addon Health')).toBeInTheDocument();
+    });
+
+    const section = screen.getByText('Addon Health').closest('section');
+    expect(section?.id).toBe('addon-health');
+  });
+
+  it('scrolls the section into view when the page loads with the #addon-health hash', async () => {
+    window.location.hash = '#addon-health';
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Addon Health')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+    });
   });
 });

@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
-import { RefreshCw } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { RefreshCw, ArrowUpCircle } from 'lucide-react'
 import { api } from '@/services/api'
 import type { VersionMatrixResponse } from '@/services/models'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { StatusBadge } from '@/components/StatusBadge'
+import { isNewerVersion } from '@/lib/utils'
 
 // VersionMatrixTable — Epic 7 Story 7.1 (v4 Wave 2). Fleet-wide grid: one
 // row per addon, one column per cluster, showing the actual version
@@ -32,6 +33,29 @@ export function VersionMatrixTable() {
   useEffect(() => {
     load()
   }, [])
+
+  // Sort-first-what's-outdated (dashboard UX review 2026-08-01, walk
+  // finding #1): a row "has an upgrade" if any deployed cell is behind the
+  // row's newest_available. Rows with an upgrade sort to the top; ties keep
+  // the server's original order (stable sort). Same isNewerVersion the
+  // Dashboard's Upgrades stat uses, so "outdated" means the same thing in
+  // both places.
+  const sortedAddons = useMemo(() => {
+    const rows = data?.addons ?? []
+    const hasUpgrade = (row: VersionMatrixResponse['addons'][number]) => {
+      if (!row.newest_available) return false
+      return Object.values(row.cells || {}).some(
+        (cell) => cell?.version && isNewerVersion(cell.version, row.newest_available!),
+      )
+    }
+    return rows
+      .map((row, index) => ({ row, index, hasUpgrade: hasUpgrade(row) }))
+      .sort((a, b) => {
+        if (a.hasUpgrade !== b.hasUpgrade) return a.hasUpgrade ? -1 : 1
+        return a.index - b.index
+      })
+      .map((entry) => entry)
+  }, [data])
 
   if (loading) return <LoadingState message="Loading version matrix..." />
   if (error) return <ErrorState message={error} onRetry={load} />
@@ -84,10 +108,20 @@ export function VersionMatrixTable() {
             </tr>
           </thead>
           <tbody className="divide-y divide-[#d6eeff] dark:divide-gray-800">
-            {data.addons.map((row) => (
+            {sortedAddons.map(({ row, hasUpgrade }) => (
               <tr key={row.addon_name} className="bg-[#f0f7ff] dark:bg-gray-800">
                 <td className="sticky left-0 z-10 bg-[#f0f7ff] px-3 py-2 font-medium text-[#0a2a4a] dark:bg-gray-800 dark:text-gray-100">
-                  <div>{row.addon_name}</div>
+                  <div className="flex items-center gap-1.5">
+                    <span>{row.addon_name}</span>
+                    {hasUpgrade && (
+                      <span title="A newer version is available">
+                        <ArrowUpCircle
+                          className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+                          aria-label="A newer version is available"
+                        />
+                      </span>
+                    )}
+                  </div>
                   <div className="font-mono text-xs text-[#5a8aaa] dark:text-gray-500">
                     catalog {row.catalog_version || '—'}
                   </div>

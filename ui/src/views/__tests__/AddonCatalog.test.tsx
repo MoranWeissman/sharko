@@ -147,6 +147,10 @@ vi.mock('@/services/api', () => ({
       total_clusters: 10,
       addons_only_in_git: 2,
     }),
+    // Matrix view (VersionMatrixTable) fetches this on mount whenever the
+    // view toggle — or a `?view=matrix` deep-link from the Dashboard's
+    // Upgrades card — lands on it. Empty by default; overridden per test.
+    getVersionMatrix: vi.fn().mockResolvedValue({ clusters: [], addons: [] }),
   },
 }))
 
@@ -617,6 +621,65 @@ describe('AddonCatalog — ?drift=true deep-link (V2-cleanup-61.2)', () => {
     expect(
       (screen.getByDisplayValue('With version drift') as HTMLSelectElement).value,
     ).toBe('drifted')
+  })
+})
+
+/**
+ * Walk finding #1: the version matrix view is now linkable. The Dashboard's
+ * Upgrades card deep-links to /addons?view=matrix (via the /version-matrix
+ * redirect, same pattern as the ?drift=true deep-link above) so clicking it
+ * lands directly on the matrix instead of the plain catalog grid.
+ */
+describe('AddonCatalog — ?view=matrix deep-link (walk finding #1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('lands on the version matrix view when ?view=matrix is present', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce({
+      clusters: ['prod-eu'],
+      addons: [
+        {
+          addon_name: 'cert-manager',
+          catalog_version: '1.14.5',
+          chart: 'cert-manager',
+          cells: { 'prod-eu': { version: '1.14.5', health: 'healthy', drift_from_catalog: false } },
+          newest_available: '1.14.5',
+          last_checked: '2026-07-29T12:00:00Z',
+        },
+      ],
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/addons?view=matrix']}>
+        <AddonCatalog />
+      </MemoryRouter>,
+    )
+
+    // The matrix table rendered, not the grid/list view.
+    await waitFor(() => {
+      expect(screen.getAllByText('cert-manager').length).toBeGreaterThan(0)
+    })
+    expect(screen.getByText('prod-eu')).toBeInTheDocument()
+    // The grid pagination copy ("Showing N addons") only renders outside
+    // matrix mode.
+    expect(screen.queryByText(/Showing \d+ addons?/)).not.toBeInTheDocument()
+    // The matrix toggle button reflects the active view.
+    expect(screen.getByRole('button', { name: /version matrix view/i }).className).toContain('bg-teal-600')
+  })
+
+  it('defaults to the grid view when ?view is absent', async () => {
+    render(
+      <MemoryRouter initialEntries={['/addons']}>
+        <AddonCatalog />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('ingress-nginx')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /grid view/i }).className).toContain('bg-teal-600')
   })
 })
 

@@ -67,3 +67,48 @@ describe('VersionMatrixTable', () => {
     })
   })
 })
+
+// Sort-first-what's-outdated (dashboard UX review 2026-08-01, walk finding
+// #1): rows with a newer version available move to the top, so landing on
+// the matrix from the Dashboard's Upgrades card shows what's outdated
+// without scrolling. Same isNewerVersion the Dashboard's Upgrades stat
+// uses (lib/utils.ts).
+describe('VersionMatrixTable — sort-first-what\'s-outdated (walk finding #1)', () => {
+  it('sorts rows with an available upgrade before rows that are up to date, and marks them', async () => {
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce({
+      clusters: ['prod-eu'],
+      addons: [
+        {
+          addon_name: 'up-to-date-addon',
+          catalog_version: '1.0.0',
+          chart: 'up-to-date-addon',
+          cells: { 'prod-eu': { version: '1.0.0', health: 'healthy', drift_from_catalog: false } },
+          newest_available: '1.0.0',
+          last_checked: '2026-07-29T12:00:00Z',
+        },
+        {
+          addon_name: 'outdated-addon',
+          catalog_version: '1.0.0',
+          chart: 'outdated-addon',
+          cells: { 'prod-eu': { version: '1.0.0', health: 'healthy', drift_from_catalog: false } },
+          newest_available: '2.0.0',
+          last_checked: '2026-07-29T12:00:00Z',
+        },
+      ],
+    })
+
+    render(<VersionMatrixTable />)
+
+    await waitFor(() => {
+      expect(screen.getByText('outdated-addon')).toBeInTheDocument()
+    })
+
+    const rows = screen.getAllByRole('row').filter((r) => r.textContent?.includes('-addon'))
+    expect(rows[0].textContent).toContain('outdated-addon')
+    expect(rows[1].textContent).toContain('up-to-date-addon')
+
+    // The outdated row carries the "newer version available" marker; the
+    // up-to-date one doesn't.
+    expect(screen.getByLabelText('A newer version is available')).toBeInTheDocument()
+  })
+})
