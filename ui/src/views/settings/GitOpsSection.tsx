@@ -4,7 +4,6 @@ import {
   GitBranch,
   Loader2,
   CheckCircle,
-  Info,
   Search,
   Eye,
 } from 'lucide-react'
@@ -60,9 +59,6 @@ export function GitOpsSection() {
   const [defaultsPreviewLoading, setDefaultsPreviewLoading] = useState(false)
   const [defaultsPreviewError, setDefaultsPreviewError] = useState<string | null>(null)
 
-  // Detected host cluster name from platform info
-  const [detectedClusterName, setDetectedClusterName] = useState<string | null>(null)
-
   const fetchCatalog = useCallback(() => {
     setCatalogLoading(true)
     api.getAddonCatalog()
@@ -71,15 +67,6 @@ export function GitOpsSection() {
       })
       .catch(() => setCatalogAddons([]))
       .finally(() => setCatalogLoading(false))
-  }, [])
-
-  const fetchPlatformInfo = useCallback(() => {
-    api.health()
-      .then((data: Record<string, unknown>) => {
-        const clusterName = (data?.host_cluster_name || data?.cluster_name) as string | undefined
-        if (clusterName) setDetectedClusterName(clusterName)
-      })
-      .catch(() => {})
   }, [])
 
   const fetchDefaultAddons = useCallback(() => {
@@ -94,9 +81,8 @@ export function GitOpsSection() {
 
   useEffect(() => {
     fetchCatalog()
-    fetchPlatformInfo()
     fetchDefaultAddons()
-  }, [fetchCatalog, fetchPlatformInfo, fetchDefaultAddons])
+  }, [fetchCatalog, fetchDefaultAddons])
 
   // Sync form state from saved connection data when it loads
   useEffect(() => {
@@ -176,8 +162,6 @@ export function GitOpsSection() {
     )
   }
 
-  const isHostClusterDetected = !!detectedClusterName && !form.gitops_host_cluster_name
-
   return (
     <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800 space-y-6">
       {/* Git section */}
@@ -226,34 +210,13 @@ export function GitOpsSection() {
             Host Cluster Name
             <span className="ml-1 text-[#3a6a8a] font-normal">(optional)</span>
           </label>
-          {isHostClusterDetected ? (
-            <div className="mt-1 flex items-center gap-2">
-              <div className="flex-1 rounded-lg border border-[#5a9dd0] bg-[#e0f0ff] px-3 py-2 text-sm text-[#0a2a4a] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">
-                {detectedClusterName}
-              </div>
-              <span className="flex items-center gap-1 rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
-                <Info className="h-3 w-3" />
-                detected
-              </span>
-            </div>
-          ) : (
-            <input
-              className={inputCls}
-              value={form.gitops_host_cluster_name}
-              onChange={(e) => setForm(prev => ({ ...prev, gitops_host_cluster_name: e.target.value }))}
-              placeholder={detectedClusterName || 'e.g. management'}
-            />
-          )}
+          <input
+            className={inputCls}
+            value={form.gitops_host_cluster_name}
+            onChange={(e) => setForm(prev => ({ ...prev, gitops_host_cluster_name: e.target.value }))}
+            placeholder="e.g. management"
+          />
           <p className="mt-1 text-sm text-[#3a6a8a]">Name of the cluster running Sharko + ArgoCD</p>
-          {isHostClusterDetected && (
-            <button
-              type="button"
-              onClick={() => setDetectedClusterName(null)}
-              className="mt-1 text-sm text-[#3a6a8a] underline hover:text-[#1a4a6a]"
-            >
-              Override
-            </button>
-          )}
         </div>
       </div>
 

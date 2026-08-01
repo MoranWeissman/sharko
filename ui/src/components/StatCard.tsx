@@ -39,7 +39,13 @@ export function StatCard({
     ? 'cursor-pointer transition-shadow hover:shadow-md'
     : '';
 
-  // Large variant: big bold numeral + small muted label (Akuity-style)
+  // Tier 1 hero variant (dashboard facelift): bg-card, rounded-xl, a soft
+  // shadow, NO ring — the "permanently neutral" stat cards no longer need a
+  // colored shell (Package 2 #3 already dropped the last of the severity
+  // color from these), so the ring-2 border that used to be the universal
+  // card shell is gone here too. Icon moves inline-left in a caption-style
+  // title row instead of floating absolute top-right (one icon spec, kills
+  // the h-5/h-6 mix).
   if (size === 'large') {
     return (
       <div
@@ -56,21 +62,24 @@ export function StatCard({
               }
             : undefined
         }
-        className={`relative rounded-lg ring-2 ring-[#6aade0] border-l-4 bg-[#f0f7ff] p-6 shadow-sm dark:ring-gray-700 dark:bg-gray-800 ${borderClass} ${selectedClass} ${interactiveClass}`}
+        className={`relative rounded-xl bg-card p-6 shadow-sm transition-shadow ${selectedClass} ${interactiveClass}`}
       >
-        {icon && (
-          <div className="absolute right-6 top-6 text-[#3a6a8a] dark:text-gray-500">{icon}</div>
-        )}
-        <div className="text-5xl font-bold text-[#0a2a4a] dark:text-gray-100">{value}</div>
-        <div className="mt-2 text-sm text-[#5a8aaa] dark:text-gray-500">{title}</div>
+        <div className="text-4xl font-bold tabular-nums text-card-foreground">{value}</div>
+        <div className="mt-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {icon && <span className="text-muted-foreground [&_svg]:h-4 [&_svg]:w-4">{icon}</span>}
+          <span>{title}</span>
+        </div>
         {subtitle && (
-          <div className="mt-1 text-sm text-[#5a8aaa] dark:text-gray-500">{subtitle}</div>
+          <div className="mt-1 text-sm text-muted-foreground normal-case tracking-normal">{subtitle}</div>
         )}
       </div>
     );
   }
 
-  // Default variant (unchanged)
+  // Default variant — used by other pages (AddonDetail, AddonCatalog,
+  // ClusterDetail, ClustersOverview). Same shell as before, hex colors
+  // mapped onto the design-token system (Package 1) so it reads correctly
+  // in both themes without a paired dark:* override.
   return (
     <div
       role={isClickable ? 'button' : undefined}
@@ -86,15 +95,15 @@ export function StatCard({
             }
           : undefined
       }
-      className={`relative rounded-lg ring-2 ring-[#6aade0] border-l-4 bg-[#f0f7ff] p-4 shadow-sm dark:ring-gray-700 dark:bg-gray-800 ${borderClass} ${selectedClass} ${interactiveClass}`}
+      className={`relative rounded-lg ring-2 ring-border border-l-4 bg-card p-4 shadow-sm ${borderClass} ${selectedClass} ${interactiveClass}`}
     >
       {icon && (
-        <div className="absolute right-4 top-4 text-[#3a6a8a] dark:text-gray-500">{icon}</div>
+        <div className="absolute right-4 top-4 text-muted-foreground">{icon}</div>
       )}
-      <div className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{value}</div>
-      <div className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">{title}</div>
+      <div className="text-2xl font-bold text-card-foreground">{value}</div>
+      <div className="mt-1 text-sm text-muted-foreground">{title}</div>
       {subtitle && (
-        <div className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-500">{subtitle}</div>
+        <div className="mt-0.5 text-sm text-muted-foreground">{subtitle}</div>
       )}
     </div>
   );

@@ -140,7 +140,7 @@ describe('ClusterCard addon health ratio (LW-17)', () => {
     renderCard({ connectionStatus: 'Successful', healthyCount: 0, totalCount: 0 });
     const text = screen.getByText('No addons');
     expect(text).toBeInTheDocument();
-    expect(text.className).toContain('text-[#2a5a7a]');
+    expect(text.className).toContain('text-muted-foreground');
   });
 });
 
