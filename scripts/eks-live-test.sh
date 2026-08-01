@@ -65,8 +65,15 @@
 #                                distinct from the kind dev env's 8080)
 #   EKS_TEST_HUB_ARGOCD_PORT     default: 18090 (local port-forward to hub ArgoCD)
 #   EKS_TEST_PODINFO_VERSION     default: 6.7.1 (api-smoke's catalog entry)
-#   AWS_PROFILE                 (standard aws var) refused if it matches a
-#                                work-account naming pattern — see preflight.
+#   AWS_PROFILE                 (standard aws var) refused if it matches
+#                                SHARKO_EKS_TEST_FORBIDDEN_PROFILE_PATTERNS
+#                                — see preflight.
+#   SHARKO_EKS_TEST_FORBIDDEN_PROFILE_PATTERNS
+#                                default: "" (none). Space-separated glob
+#                                patterns for AWS_PROFILE values this script
+#                                must refuse to run under — set this in your
+#                                own local, untracked shell rc, e.g.
+#                                "mycompany mycompany-*".
 #
 
 # Deliberately NO `set -e` — same reasoning as sharko-dev.sh: explicit
@@ -228,14 +235,23 @@ account_guard() {
         return 1
     fi
 
-    case "${AWS_PROFILE:-}" in
-        feedlot|feedlot-*|sensehub|sensehub-*|swine|swine-*)
-            log_fail "AWS_PROFILE='${AWS_PROFILE}' matches a work-account naming pattern."
-            echo "       Refusing to run — this harness is for your personal AWS account only." >&2
-            echo "       Unset AWS_PROFILE or point it at your personal profile and try again." >&2
-            return 1
-            ;;
-    esac
+    # SHARKO_EKS_TEST_FORBIDDEN_PROFILE_PATTERNS: a space-separated list of
+    # shell glob patterns naming AWS_PROFILE values this script must refuse
+    # to run under (e.g. your own employer's profile prefixes). Nothing
+    # org-specific ships in this script by default — set this in your own
+    # local, untracked shell rc if you want the same protection this guard
+    # gave earlier versions that hardcoded specific profile names here.
+    if [ -n "${SHARKO_EKS_TEST_FORBIDDEN_PROFILE_PATTERNS:-}" ]; then
+        for pattern in ${SHARKO_EKS_TEST_FORBIDDEN_PROFILE_PATTERNS}; do
+            # shellcheck disable=SC2053
+            if [[ "${AWS_PROFILE:-}" == $pattern ]]; then
+                log_fail "AWS_PROFILE='${AWS_PROFILE}' matches a forbidden-profile pattern (\$SHARKO_EKS_TEST_FORBIDDEN_PROFILE_PATTERNS)."
+                echo "       Refusing to run — this harness is for your personal AWS account only." >&2
+                echo "       Unset AWS_PROFILE or point it at your personal profile and try again." >&2
+                return 1
+            fi
+        done
+    fi
 
     local caller_account
     caller_account=$(aws sts get-caller-identity --query 'Account' --output text 2>&1)
