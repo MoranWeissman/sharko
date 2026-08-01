@@ -317,7 +317,7 @@ func detectConnectivityCheckDrift(ctx context.Context, ac connectivityAppSetGett
 		// ArgoCD confirms no such ApplicationSet exists at all — the
 		// engine chart running this repo simply does not include the
 		// connectivity check yet.
-		return "Sharko expected a connectivity-check application for this cluster, but this repo's engine chart does not include the connectivity check yet. Pin engine.yaml to the current sharko-engine chart version to add it."
+		return "Sharko expected a connectivity-check application for this cluster, but this repo's engine chart does not include the connectivity check yet. Pin sharko-engine.yaml to the current sharko-engine chart version to add it."
 	default:
 		// Could not confirm either way (network blip, auth issue) — leave
 		// the caller's baseline detail alone rather than guess.

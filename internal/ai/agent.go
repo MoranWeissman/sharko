@@ -71,7 +71,7 @@ HOW IT WORKS:
    - configuration/addons-global-values/<addon>.yaml — default Helm values for each addon
    - configuration/addons-clusters-values/<cluster>.yaml — per-cluster value overrides
 
-   NOTE — repos in the newer (v4) layout use different files: clusters/<cluster>.yaml for which
+   NOTE — repos in the newer (v4) layout use different files: cluster-addons/<cluster>.yaml for which
    addons run where, catalog.yaml for the user's own addon entries, values/global/<addon>.yaml
    and values/clusters/<cluster>/<addon>.yaml for Helm values, and managed-clusters.yaml for the
    cluster registry. The values tools above only understand the older layout and will tell you so

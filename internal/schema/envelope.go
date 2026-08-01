@@ -145,7 +145,7 @@ const (
 	// V3-Phase-3: GitOps-native third-party catalog source URLs (env fallback for tokened URLs).
 	KindMarketplaceSources = "MarketplaceSources"
 
-	// KindClusterAddons identifies a clusters/<cluster-name>.yaml
+	// KindClusterAddons identifies a cluster-addons/<cluster-name>.yaml
 	// document (v4 Wave 1 Story 2.6). One file per cluster: which addons
 	// run there, at which version, tuned how. See
 	// docs/design/2026-07-30-v4-data-file-format.md §2.1.

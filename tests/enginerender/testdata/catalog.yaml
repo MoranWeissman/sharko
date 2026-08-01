@@ -3,7 +3,7 @@
 # defines it: every entry is a FULL entry (repoURL, chart, namespace,
 # version), not a delta against a shipped default — the chart carries no
 # curated data of its own any more (decision 6). This is the ONE enveloped
-# Helm values file the engine pin (engine.yaml) passes to the chart (design
+# Helm values file the engine pin (sharko-engine.yaml) passes to the chart (design
 # doc section 2.5 / decision D6), so it is also exactly what the render test
 # passes as --values. No `metadata:`/`spec:` wrapper (decision 9, the
 # kustomize school): `addons:` sits at the top level alongside apiVersion

@@ -180,7 +180,7 @@ func TestEnableAddonV4_BlocksOnMissingRequiredValue_BeforeAnyGitWrite(t *testing
 		t.Errorf("expected no PR to be created, got %d", len(git.prs))
 	}
 	if _, ok := git.files[assignPath(t, "prod-eu")]; ok {
-		t.Error("expected no clusters/prod-eu.yaml write on validation failure")
+		t.Error("expected no cluster-addons/prod-eu.yaml write on validation failure")
 	}
 }
 
@@ -247,7 +247,7 @@ func TestEnableAddonV4_RuntimeSecretMissing_RealEnable_ProceedsWithWarning(t *te
 		t.Errorf("expected a warning naming external-secrets and its runtime secret, got %v", result.Warnings)
 	}
 	if _, ok := git.files[assignPath(t, "prod-eu")]; !ok {
-		t.Error("expected clusters/prod-eu.yaml to still be written despite the missing runtime secret")
+		t.Error("expected cluster-addons/prod-eu.yaml to still be written despite the missing runtime secret")
 	}
 }
 
@@ -313,7 +313,7 @@ func TestEnableAddonV4_ValidInputs_WritesExpectedFiles(t *testing.T) {
 	}
 	spec, err := models.LoadClusterAddons(clusterBytes)
 	if err != nil {
-		t.Fatalf("clusters/prod-eu.yaml failed to round-trip through LoadClusterAddons: %v", err)
+		t.Fatalf("cluster-addons/prod-eu.yaml failed to round-trip through LoadClusterAddons: %v", err)
 	}
 	entry, ok := spec.Addons["cert-manager"]
 	if !ok || !entry.Enabled || entry.Version != "1.12.0" {
@@ -326,7 +326,7 @@ func TestEnableAddonV4_ValidInputs_WritesExpectedFiles(t *testing.T) {
 	// this is the explicit round-trip proof the story's gate asks for.
 	if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
 		if err := validator.Validate(schema.KindClusterAddons, clusterBytes); err != nil {
-			t.Errorf("clusters/prod-eu.yaml failed sharko validate: %v", err)
+			t.Errorf("cluster-addons/prod-eu.yaml failed sharko validate: %v", err)
 		}
 	}
 
@@ -414,7 +414,7 @@ func TestEnableAddonV4_NoValues_ScaffoldsClusterValuesStub(t *testing.T) {
 		t.Errorf("scaffolded stub should name the addon and the cluster in plain English, got:\n%s", valuesBytes)
 	}
 	if _, ok := git.files[assignPath(t, "prod-eu")]; !ok {
-		t.Error("expected clusters/prod-eu.yaml to be written")
+		t.Error("expected cluster-addons/prod-eu.yaml to be written")
 	}
 }
 
@@ -627,7 +627,7 @@ func strPtrTest(s string) *string { return &s }
 
 // TestEnableAddonV4_UnknownCluster_ReturnsErrV4ClusterNotFound_BeforeAnyGitWrite
 // proves EnableAddonV4 refuses a cluster that is not in managed-clusters.yaml
-// (and has no clusters/<name>.yaml either) BEFORE writing anything — the API
+// (and has no cluster-addons/<name>.yaml either) BEFORE writing anything — the API
 // layer maps ErrV4ClusterNotFound to 404 (Wave 2 ride-along w2-q6 items 2/6).
 func TestEnableAddonV4_UnknownCluster_ReturnsErrV4ClusterNotFound_BeforeAnyGitWrite(t *testing.T) {
 	git := newMockGitProvider() // deliberately NOT going through newV4TestOrchestrator's seed
@@ -646,7 +646,7 @@ func TestEnableAddonV4_UnknownCluster_ReturnsErrV4ClusterNotFound_BeforeAnyGitWr
 		t.Error("expected zero git side effects for an unknown cluster")
 	}
 	if _, ok := git.files[assignPath(t, "no-such-cluster")]; ok {
-		t.Error("expected no clusters/no-such-cluster.yaml write for an unregistered cluster")
+		t.Error("expected no cluster-addons/no-such-cluster.yaml write for an unregistered cluster")
 	}
 }
 

@@ -26,7 +26,7 @@ import (
 // BootstrapRootAppPath, and that test fails the build the moment the two
 // disagree. Do not un-export it without moving that assertion somewhere it
 // can still run.
-const V4EnginePinPath = "engine.yaml"
+const V4EnginePinPath = "sharko-engine.yaml"
 
 // v4ValuesUnsupportedMessage is what the values-reading tools return on a
 // v4 repo. Same sentence the HTTP editors answer with (api's
@@ -64,8 +64,8 @@ func (e *ToolExecutor) isV4Repo(ctx context.Context) bool {
 // there is two things the assistant does not write — the addon has to be in
 // the org's catalog.yaml first (that is the approval, and it goes through a
 // pull request somebody reviews), then switching it on writes
-// clusters/<name>.yaml. Skipping the catalog half would walk straight past
-// the approval step, which is the one rule the whole model rests on.
+// cluster-addons/<name>.yaml. Skipping the catalog half would walk straight
+// past the approval step, which is the one rule the whole model rests on.
 //
 // Returned as an ordinary tool RESULT, not an error, so the model reads it
 // and relays it instead of retrying or inventing an answer.

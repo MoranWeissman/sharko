@@ -16,7 +16,7 @@ import (
 
 // The live-smoke bug this file guards, in one sentence: on a v4 repo the
 // cluster Secret already exists (registration writes it, with no addon
-// labels by design), enabling an addon only writes clusters/<name>.yaml, and
+// labels by design), enabling an addon only writes cluster-addons/<name>.yaml, and
 // the reconciler used to apply the derived addons.sharko.dev/ label ONLY
 // when the opt-in managed-cluster self-heal setting was ON — which it is not
 // on a default install. So enable merged a PR and deployed nothing, forever,
@@ -77,7 +77,7 @@ func getSecret(t *testing.T, client *fake.Clientset, name string) *corev1.Secret
 	return s
 }
 
-// unreadableFileGit is a fakeGit whose clusters/ listing still names the
+// unreadableFileGit is a fakeGit whose cluster-addons/ listing still names the
 // file but whose read of that one path fails — a git hiccup, or a file
 // somebody broke. Everything else behaves normally.
 type unreadableFileGit struct {
@@ -120,7 +120,7 @@ func TestV4Enable_StampsAddonLabelWithSelfHealOff(t *testing.T) {
 
 	// Somebody enables cert-manager: the PR merges, the assignment file
 	// gains the addon. Nothing else changes.
-	gp.files["clusters/spoke-eu.yaml"] = clusterAddonsYAML("spoke-eu", map[string]bool{"cert-manager": true})
+	gp.files["cluster-addons/spoke-eu.yaml"] = clusterAddonsYAML("spoke-eu", map[string]bool{"cert-manager": true})
 	r.pollOnce(ctx)
 
 	secret = getSecret(t, client, "spoke-eu")
@@ -155,7 +155,7 @@ func TestV4Disable_RemovesAddonLabelWithSelfHealOff(t *testing.T) {
 	r.deps.SelfHealFn = countingSelfHeal(&selfHealAsked)
 
 	// Somebody disables it: the entry flips to enabled:false.
-	gp.files["clusters/spoke-eu.yaml"] = clusterAddonsYAML("spoke-eu", map[string]bool{"cert-manager": false})
+	gp.files["cluster-addons/spoke-eu.yaml"] = clusterAddonsYAML("spoke-eu", map[string]bool{"cert-manager": false})
 	r.pollOnce(ctx)
 
 	secret := getSecret(t, client, "spoke-eu")
@@ -240,7 +240,7 @@ func TestV4Converge_LeavesNonAddonLabelsAlone(t *testing.T) {
 }
 
 // TestV3Drift_StaysDriftOnlyWithSelfHealOff is the "nothing about v3 moved"
-// guard. A v3 repo has no clusters/ assignments at all, so the unconditional
+// guard. A v3 repo has no cluster-addons/ assignments at all, so the unconditional
 // path can never fire there: drift is reported, nothing is written, exactly
 // as before this fix.
 func TestV3Drift_StaysDriftOnlyWithSelfHealOff(t *testing.T) {
@@ -282,7 +282,7 @@ func TestV3Drift_StaysDriftOnlyWithSelfHealOff(t *testing.T) {
 
 // TestV4Converge_HeldWhenAssignmentFileUnreadable is the safety valve that
 // comes with writing on every tick. If Sharko cannot read
-// clusters/<name>.yaml, it does not know which addons should be on —
+// cluster-addons/<name>.yaml, it does not know which addons should be on —
 // converging to "none" would undeploy the cluster's whole stack over a git
 // hiccup or a YAML typo. Report the drift, write nothing.
 func TestV4Converge_HeldWhenAssignmentFileUnreadable(t *testing.T) {
@@ -293,7 +293,7 @@ func TestV4Converge_HeldWhenAssignmentFileUnreadable(t *testing.T) {
 	base := &fakeGit{files: v4RepoFiles(map[string]map[string]bool{
 		"spoke-eu": {"cert-manager": true},
 	}, "spoke-eu")}
-	gp := &unreadableFileGit{fakeGit: base, failPath: "clusters/spoke-eu.yaml"}
+	gp := &unreadableFileGit{fakeGit: base, failPath: "cluster-addons/spoke-eu.yaml"}
 
 	client := fake.NewSimpleClientset()
 	seedClusterSecret(t, client, "spoke-eu", map[string]string{key: models.LabelEnabled}, nil)
@@ -308,7 +308,7 @@ func TestV4Converge_HeldWhenAssignmentFileUnreadable(t *testing.T) {
 }
 
 // TestV4Converge_HeldWhenClustersFolderUnreadable is the fleet-wide version
-// of the same valve: the clusters/ listing itself failed, so no cluster's
+// of the same valve: the cluster-addons/ listing itself failed, so no cluster's
 // desired set is known and none of their labels may be touched.
 func TestV4Converge_HeldWhenClustersFolderUnreadable(t *testing.T) {
 	t.Parallel()
@@ -327,11 +327,11 @@ func TestV4Converge_HeldWhenClustersFolderUnreadable(t *testing.T) {
 
 	secret := getSecret(t, client, "spoke-eu")
 	if got := secret.Labels[key]; got != models.LabelEnabled {
-		t.Errorf("an unreadable clusters/ folder wiped the fleet's addon labels: %v", secret.Labels)
+		t.Errorf("an unreadable cluster-addons/ folder wiped the fleet's addon labels: %v", secret.Labels)
 	}
 }
 
-// listFailsGit is a fakeGit whose clusters/ listing errors out for a real
+// listFailsGit is a fakeGit whose cluster-addons/ listing errors out for a real
 // reason (not "the folder does not exist", which is a normal fresh repo).
 type listFailsGit struct {
 	*fakeGit

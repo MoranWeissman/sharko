@@ -121,10 +121,10 @@ func TestCollectBootstrapFiles_ExactlyTheSeed(t *testing.T) {
 	}
 
 	want := map[string]bool{
-		"clusters/.gitkeep":        true,
+		"cluster-addons/.gitkeep":  true,
 		"values/global/.gitkeep":   true,
 		"values/clusters/.gitkeep": true,
-		"engine.yaml":              true,
+		"sharko-engine.yaml":       true,
 		"README.md":                true,
 	}
 

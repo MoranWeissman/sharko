@@ -52,9 +52,9 @@ func TestTakeoverClusterGit_WritesBothV4FilesAndTurnsNothingOn(t *testing.T) {
 		t.Errorf("a takeover must not author addon labels on the fleet entry, got %v", entry.Labels)
 	}
 
-	addonsBytes, ok := git.files["clusters/prod-eu.yaml"]
+	addonsBytes, ok := git.files["cluster-addons/prod-eu.yaml"]
 	if !ok {
-		t.Fatalf("clusters/prod-eu.yaml was not written; wrote: %v", keysOf(git.files))
+		t.Fatalf("cluster-addons/prod-eu.yaml was not written; wrote: %v", keysOf(git.files))
 	}
 	addons, err := models.LoadClusterAddons(addonsBytes)
 	if err != nil {
@@ -107,7 +107,7 @@ func TestTakeoverClusterGit_DryRunWritesNothingAndShowsBothFiles(t *testing.T) {
 	if _, ok := git.files[V4ManagedClustersPath]; ok {
 		t.Error("a dry run wrote to the repo")
 	}
-	if _, ok := git.files["clusters/prod-eu.yaml"]; ok {
+	if _, ok := git.files["cluster-addons/prod-eu.yaml"]; ok {
 		t.Error("a dry run wrote to the repo")
 	}
 }
@@ -123,7 +123,7 @@ func TestTakeoverClusterGit_RefusesOnAV3Repo(t *testing.T) {
 	if _, ok := git.files[V4ManagedClustersPath]; ok {
 		t.Error("no v4 fleet record may be written on a v3 repo")
 	}
-	if _, ok := git.files["clusters/prod-eu.yaml"]; ok {
+	if _, ok := git.files["cluster-addons/prod-eu.yaml"]; ok {
 		t.Error("no v4 assignment file may be written on a v3 repo")
 	}
 }
@@ -170,14 +170,14 @@ func TestTakeoverClusterGit_KeepsAnExistingAssignmentFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fixture: %v", err)
 	}
-	git.files["clusters/prod-eu.yaml"] = existing
+	git.files["cluster-addons/prod-eu.yaml"] = existing
 
 	orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 	if _, err := orch.TakeoverClusterGit(context.Background(), TakeoverClusterRequest{Name: "prod-eu", Yes: true}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	after, err := models.LoadClusterAddons(git.files["clusters/prod-eu.yaml"])
+	after, err := models.LoadClusterAddons(git.files["cluster-addons/prod-eu.yaml"])
 	if err != nil {
 		t.Fatalf("assignment file does not parse: %v", err)
 	}

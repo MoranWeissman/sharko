@@ -12,7 +12,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
-// clusterAddonsYAML renders a clusters/<name>.yaml body with the given
+// clusterAddonsYAML renders a cluster-addons/<name>.yaml body with the given
 // addon -> enabled map. Written as a literal (rather than through
 // models.SaveClusterAddons) so the test pins the ON-DISK shape a person
 // would actually author, not whatever the writer happens to emit.
@@ -35,7 +35,7 @@ func v4RepoFiles(assignments map[string]map[string]bool, clusters ...string) map
 		V4ManagedClustersPath: envelopedManagedClusters(clusters...),
 	}
 	for cluster, addons := range assignments {
-		files["clusters/"+cluster+".yaml"] = clusterAddonsYAML(cluster, addons)
+		files["cluster-addons/"+cluster+".yaml"] = clusterAddonsYAML(cluster, addons)
 	}
 	return files
 }
@@ -56,7 +56,7 @@ func v4TestVault(clusters ...string) *fakeVault {
 // nothing in Sharko used to write the addons.sharko.dev/<addon> label the v4
 // engine's ApplicationSet selects on, so enabling an addon on a v4 repo
 // deployed nothing at all. The reconciler now derives that label from
-// clusters/*.yaml.
+// cluster-addons/*.yaml.
 func TestPollOnce_V4Repo_DerivesAddonLabelsPerCluster(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -133,7 +133,7 @@ func TestPollOnce_V4Repo_DisableRemovesLabelOnNextReconcile(t *testing.T) {
 	}
 
 	// Somebody disables the addon: the assignment file flips to false.
-	gp.files["clusters/prod-eu.yaml"] = clusterAddonsYAML("prod-eu", map[string]bool{"cert-manager": false})
+	gp.files["cluster-addons/prod-eu.yaml"] = clusterAddonsYAML("prod-eu", map[string]bool{"cert-manager": false})
 	r.pollOnce(ctx)
 
 	secret, err = k8sClient.CoreV1().Secrets(DefaultArgoCDNamespace).Get(ctx, "prod-eu", metav1.GetOptions{})
@@ -150,7 +150,7 @@ func TestPollOnce_V4Repo_DisableRemovesLabelOnNextReconcile(t *testing.T) {
 }
 
 // TestPollOnce_V3Repo_NoV4LabelsDerived is the "v3 path unchanged" guard:
-// a v3 repo never lists clusters/, never derives an addons.sharko.dev/ key,
+// a v3 repo never lists cluster-addons/, never derives an addons.sharko.dev/ key,
 // and keeps writing exactly the bare labels its managed-clusters.yaml
 // declares.
 func TestPollOnce_V3Repo_NoV4LabelsDerived(t *testing.T) {
@@ -167,7 +167,7 @@ func TestPollOnce_V3Repo_NoV4LabelsDerived(t *testing.T) {
 	gp := &fakeGit{files: map[string][]byte{
 		DefaultManagedClustersPath: v3Body,
 		// A stray v4 tree that must be completely ignored on a v3 repo.
-		"clusters/prod-eu.yaml": clusterAddonsYAML("prod-eu", map[string]bool{"falco": true}),
+		"cluster-addons/prod-eu.yaml": clusterAddonsYAML("prod-eu", map[string]bool{"falco": true}),
 	}}
 
 	k8sClient := fake.NewSimpleClientset()

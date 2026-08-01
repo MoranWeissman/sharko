@@ -55,7 +55,7 @@ var embeddedDefaultAddonsSchema []byte
 var embeddedMarketplaceSourcesSchema []byte
 
 // embeddedClusterAddonsSchema is the JSON Schema bytes for
-// clusters/<name>.yaml (v4 Wave 1 Story 2.6). Same lifecycle as the
+// cluster-addons/<name>.yaml (v4 Wave 1 Story 2.6). Same lifecycle as the
 // other embedded schemas.
 //
 //go:embed cluster-addons.v1.json

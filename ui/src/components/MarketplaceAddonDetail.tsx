@@ -412,6 +412,18 @@ export function MarketplaceAddonDetail({
     // across renders except when `source` changes, and `entry` changing is
     // already the trigger this effect cares about.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      // Bump the sequence on unmount (and on every re-run) too, not just
+      // at the start of the next loadVersions call — otherwise a mock/
+      // fetch that resolves after this component has already unmounted
+      // still passes loadVersions' own stillCurrent() check and calls
+      // setVersionsResp/setVersion/setVersionsLoading on a gone
+      // component. Every sibling effect in this file guards the same way
+      // via a local `cancelled` flag; this one reuses the ref the
+      // staleness check already maintains instead of adding a second,
+      // parallel guard mechanism.
+      versionLoadSeqRef.current += 1
+    }
   }, [entry, source])
 
   const retryLoadVersions = useCallback(() => {
@@ -558,7 +570,7 @@ export function MarketplaceAddonDetail({
   // v4 walk-findings W2, item 4 — when a cluster is picked in the optional
   // "Also enable on a cluster" selector, this sends the SAME combo payload
   // the cluster-side V4EnableAddonDialog sends: `enable_on_cluster` + one
-  // pull request touching both catalog.yaml and clusters/<name>.yaml.
+  // pull request touching both catalog.yaml and cluster-addons/<name>.yaml.
   // `yes: true` is only required (and only sent) on the real submit.
   const buildAddRequest = (dryRun: boolean) => {
     if (!entry) return null

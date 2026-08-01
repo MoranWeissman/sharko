@@ -8,12 +8,12 @@ import (
 )
 
 // Story 8.6 (v4 Wave 2) — the all-or-nothing audit for readV4AddonLabels,
-// the reader behind clusters/*.yaml on the reconciler's poll path.
+// the reader behind cluster-addons/*.yaml on the reconciler's poll path.
 //
 // This reader's contract is deliberately DIFFERENT from every other
 // reader in this audit: it is a per-tick CONVERGENCE loop, not a batch
 // write, so "all-or-nothing" here does not mean "one bad file blocks
-// everything" — it means the OPPOSITE: one malformed clusters/<name>.yaml
+// everything" — it means the OPPOSITE: one malformed cluster-addons/<name>.yaml
 // must be skipped (logged, not applied) while every OTHER cluster in the
 // same tick still converges normally. See the doc comment on
 // readV4AddonLabels in v4_assignments.go for the reasoning ("the other
@@ -60,8 +60,8 @@ addons:
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			gp := &fakeGit{files: map[string][]byte{
-				"clusters/prod-eu.yaml":        goodClusterYAML,
-				"clusters/broken-cluster.yaml": badBody,
+				"cluster-addons/prod-eu.yaml":        goodClusterYAML,
+				"cluster-addons/broken-cluster.yaml": badBody,
 			}}
 
 			var got *v4Assignments
@@ -94,14 +94,14 @@ addons:
 }
 
 // TestMalformedInput_ReadV4AddonLabels_AllFilesMalformed proves the
-// degenerate case — every file in clusters/ is broken — comes back as an
+// degenerate case — every file in cluster-addons/ is broken — comes back as an
 // empty map, never a panic and never a partial/garbled result.
 func TestMalformedInput_ReadV4AddonLabels_AllFilesMalformed(t *testing.T) {
 	t.Parallel()
 	gp := &fakeGit{files: map[string][]byte{
-		"clusters/a.yaml": malformed.BinaryJunk(),
-		"clusters/b.yaml": malformed.TruncatedBlockMapping(),
-		"clusters/c.yaml": []byte("not: enveloped\n"),
+		"cluster-addons/a.yaml": malformed.BinaryJunk(),
+		"cluster-addons/b.yaml": malformed.TruncatedBlockMapping(),
+		"cluster-addons/c.yaml": []byte("not: enveloped\n"),
 	}}
 
 	var got *v4Assignments

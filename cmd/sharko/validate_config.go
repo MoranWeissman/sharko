@@ -318,7 +318,7 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 				kind:   "fail",
 				reason: fmt.Sprintf("preserveResourcesOnDeletion is not allowed on a per-cluster addon (addon %q)", addonName),
 				details: []string{fmt.Sprintf(
-					"line %d: preserveResourcesOnDeletion can only vary per addon, fleet-wide, because the engine builds one ApplicationSet per addon covering every cluster — set it in catalog.yaml's addon settings instead, not in this clusters/*.yaml file",
+					"line %d: preserveResourcesOnDeletion can only vary per addon, fleet-wide, because the engine builds one ApplicationSet per addon covering every cluster — set it in catalog.yaml's addon settings instead, not in this cluster-addons/*.yaml file",
 					line,
 				)},
 			}
@@ -425,7 +425,7 @@ func detectClusterSettingsPreserveResourcesOnDeletion(body []byte) (addonName st
 
 // detectClusterAddonsFilenameMismatch compares a ClusterAddons
 // body's cluster: field against the file's own basename (design doc §2.1:
-// "clusters/prod-eu.yaml is the cluster called prod-eu... a mismatch
+// "cluster-addons/prod-eu.yaml is the cluster called prod-eu... a mismatch
 // means the cluster silently gets nothing"). Returns the value on disk,
 // the value the filename implies, and the source line of the cluster:
 // field. mismatch is false (and the other returns are zero) when the
@@ -504,7 +504,7 @@ func schemaURLForSchemaKey(key string) string {
 //	✓ path/to/valid.yaml                       (pass; suppressed when quiet)
 //	skip: path/to/non-sharko.yaml (reason)     (always shown; cheap signal)
 //	✘ path/to/invalid.yaml: <reason>           (always shown)
-//	   ✘ /spec/clusters/0: missing "name"      (per-violation indent)
+//	   ✘ /spec/cluster-addons/0: missing "name"      (per-violation indent)
 //	   → for details: https://raw.githubusercontent.com/...    (schema URL pointer)
 //
 // Keeping the formatting helper isolated makes the test harness simpler:

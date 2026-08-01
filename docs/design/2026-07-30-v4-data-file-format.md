@@ -33,7 +33,7 @@ the text below knows which parts are still true.
   four-line envelope (`apiVersion` + `kind` + `metadata.name` + `spec:`)
   is now `apiVersion` + `kind` + the payload fields directly at the top
   level — the same shape `kustomization.yaml`, `kind`'s own config, and
-  Skaffold use for files nobody applies with `kubectl`. `engine.yaml`
+  Skaffold use for files nobody applies with `kubectl`. `sharko-engine.yaml`
   (renamed from `engine/application.yaml`, see below) is the one
   exception: it is a real ArgoCD `Application` object that actually gets
   applied, so it keeps its full `apiVersion`/`kind`/`metadata`/`spec`
@@ -46,14 +46,14 @@ the text below knows which parts are still true.
   `fleet/connections.yaml` is now `managed-clusters.yaml` (kind stays
   `ManagedClusters` — "fleet" is retired everywhere, reserved for nothing;
   the UI page is "Managed Clusters"), `catalog/addons.yaml` is now
-  `catalog.yaml`, and `engine/application.yaml` is now `engine.yaml`. Each
+  `catalog.yaml`, and `engine/application.yaml` is now `sharko-engine.yaml`. Each
   is one file, not a folder — a folder is for when there are genuinely
   many files, and each of these is exactly one.
 - **A fresh repo's catalog starts empty**, not seeded with any built-in
   addons. Nothing runs in an org that nobody in that org chose, from the
   very first bootstrap.
 - **Enabling an addon on a cluster now requires it to already be in the
-  catalog.** This document's `clusters/<cluster>.yaml` shape (section 2.1)
+  catalog.** This document's `cluster-addons/<cluster>.yaml` shape (section 2.1)
   is unchanged — the gate is new behavior at the point an addon gets
   enabled, not a format change.
 - **The v3-to-v4 migration converts every entry straight across**, with no
@@ -169,7 +169,7 @@ my-gitops-repo/
 ├── README.md                          written once by the bootstrap PR
 ├── engine/
 │   └── application.yaml               the engine pin — the ONLY moving part Sharko ships
-├── clusters/
+├── cluster-addons/
 │   └── prod-eu.yaml                   which addons run here, at which version, tuned how
 ├── fleet/
 │   └── connections.yaml               how Sharko reaches each cluster
@@ -192,7 +192,7 @@ a bug in them, you had to copy the new ones in. In v4 that logic lives in a char
 publishes and signs, and your repo points at one version of it. The pointer is
 `engine/application.yaml`. Upgrading is a pull request that changes one line.
 
-**What the bootstrap PR actually contains.** Empty folders (`clusters/`, `fleet/`,
+**What the bootstrap PR actually contains.** Empty folders (`cluster-addons/`, `fleet/`,
 `values/global/`, `values/clusters/`, `catalog/`), the engine pin, and the README.
 Nothing else. Git cannot track an empty folder, so each empty folder carries a `.gitkeep`
 file — that is a git limitation, not Sharko data.
@@ -233,14 +233,14 @@ That is the whole exception list. It is short on purpose.
 
 ### 2.1 The per-cluster assignment file
 
-**Path:** `clusters/<cluster-name>.yaml`
+**Path:** `cluster-addons/<cluster-name>.yaml`
 **Kind:** `ClusterAddons`
 **Who writes it:** Sharko (through a PR), or a person editing by hand
 **Who reads it:** the engine, and `sharko validate`
 
 One file per cluster. It answers one question: *what runs on this cluster, and how.*
 
-The file name is the cluster name. `clusters/prod-eu.yaml` is the cluster called
+The file name is the cluster name. `cluster-addons/prod-eu.yaml` is the cluster called
 `prod-eu`. This is not a convention Sharko is free to break — the engine finds the file
 by name (section 4.2), so a mismatch means the cluster silently gets nothing.
 `sharko validate` fails when the file name and `spec.cluster` disagree.
@@ -423,7 +423,7 @@ how it was registered. It is the same shape the code already reads through
 One thing does change in meaning. In v3 this file's `labels` block held the addon
 on/off keys (`datadog: enabled`) and the version overrides (`datadog-version: 3.70.7`).
 In v4, **Sharko no longer authors addon keys here.** They are derived from the assignment
-files in `clusters/` and pushed onto the Argo CD cluster secret by the reconciler that
+files in `cluster-addons/` and pushed onto the Argo CD cluster secret by the reconciler that
 already exists. The `labels` field stays in the format because brownfield takeover needs
 it — Journey 6 preserves a cluster's old labels so the user's own ApplicationSets keep
 selecting on them.
@@ -589,7 +589,7 @@ the generated *Application*, not on the *ApplicationSet*.
 | Per-Application | `namespace`, `createNamespace`, `syncOptions`, `ignoreDifferences`, `prune`, `selfHeal` | **Yes** |
 | Per-ApplicationSet | `preserveResourcesOnDeletion` | **No** — addon-wide |
 
-Setting `preserveResourcesOnDeletion` inside a `clusters/*.yaml` file is a validation
+Setting `preserveResourcesOnDeletion` inside a `cluster-addons/*.yaml` file is a validation
 error, not a silent no-op. Sharko names the file and says where the field belongs.
 
 #### Two words that both mean "self-heal"
@@ -612,7 +612,7 @@ Four places can set the same setting. Later wins:
 1. engine built-in defaults        (the table in 3.2)
 2. shipped catalog entry settings  (the known-quirk defaults, inside the engine chart)
 3. your catalog/addons.yaml        (fleet-wide, your choice)
-4. clusters/<cluster>.yaml         (this cluster only, your choice)
+4. cluster-addons/<cluster>.yaml         (this cluster only, your choice)
 ```
 
 **In one sentence:** engine defaults, then the shipped catalog's known-quirk defaults,
@@ -630,7 +630,7 @@ Versions follow the same shape, one level shorter:
 ```text
 1. shipped catalog version (optional — often absent)
 2. your catalog/addons.yaml version
-3. clusters/<cluster>.yaml version
+3. cluster-addons/<cluster>.yaml version
 ```
 
 ### 3.4 The escape ladder
@@ -700,7 +700,7 @@ generators:
             repoURL: https://github.com/example-org/fleet-gitops.git
             revision: main
             files:
-              - path: "clusters/{{ .name }}.yaml"
+              - path: "cluster-addons/{{ .name }}.yaml"
 ```
 
 **Arm 1 — the cluster generator — decides *whether*.** It lists Argo CD's registered
@@ -710,7 +710,7 @@ in the cluster's assignment file. Git decides; the label is how the decision rea
 CD.
 
 **Arm 2 — the git files generator — decides *how*.** It reads
-`clusters/<that cluster>.yaml` and makes the whole file available to the template. That
+`cluster-addons/<that cluster>.yaml` and makes the whole file available to the template. That
 is where the version pin and the settings come from.
 
 The order is forced. Arm 2's file path contains `{{ .name }}`, and `.name` only exists
@@ -792,7 +792,7 @@ So this is a hard rule for the engine, not a style preference:
 > may use are `.name` and `.server`.
 
 Pins as data are better anyway — visible in a pull request, diffable, reviewable. Version
-pins live in `clusters/<cluster>.yaml`'s own `spec.addons.<name>.version`, read via `dig`
+pins live in `cluster-addons/<cluster>.yaml`'s own `spec.addons.<name>.version`, read via `dig`
 against `.spec` — never against `metadata` — regardless of which arm's data happens to
 survive there.
 
@@ -867,7 +867,7 @@ spec:
               repoURL: https://github.com/example-org/fleet-gitops.git
               revision: main
               files:
-                - path: "clusters/{{ .name }}.yaml"
+                - path: "cluster-addons/{{ .name }}.yaml"
   template:
     metadata:
       name: 'cert-manager-{{ .name }}'
@@ -1003,7 +1003,7 @@ metrics-server everywhere on the catalog default.
 ├── engine/application.yaml
 ├── fleet/connections.yaml
 ├── catalog/addons.yaml
-├── clusters/
+├── cluster-addons/
 │   ├── prod-eu.yaml
 │   └── staging-us.yaml
 └── values/
@@ -1026,7 +1026,7 @@ spec:
       version: "3.12.1"
 ```
 
-### `clusters/prod-eu.yaml`
+### `cluster-addons/prod-eu.yaml`
 
 ```yaml
 apiVersion: sharko.dev/v1
@@ -1049,7 +1049,7 @@ spec:
       enabled: true
 ```
 
-### `clusters/staging-us.yaml`
+### `cluster-addons/staging-us.yaml`
 
 ```yaml
 apiVersion: sharko.dev/v1
@@ -1132,7 +1132,7 @@ revertable with `git revert`. That is the shape every fleet upgrade takes.
 
 Every judgement call, with its reason.
 
-**D1 — One file per cluster for assignments, at `clusters/<name>.yaml`.**
+**D1 — One file per cluster for assignments, at `cluster-addons/<name>.yaml`.**
 It is the file a person opens to answer "what runs here", and per-cluster files mean two
 people changing two clusters never touch the same file. The path also matches the error
 message the PRD already promises in Journey 5.

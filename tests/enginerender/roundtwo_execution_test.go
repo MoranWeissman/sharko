@@ -30,7 +30,7 @@ import (
 // generator is index 0 and the git generator is index 1 in the matrix's
 // generators list — a swap silently breaks every round-two `.name`/`.`
 // (the whole merged data, per-cluster settings included) lookup, since the
-// git arm's file path (clusters/{{ .name }}.yaml) depends on the cluster
+// git arm's file path (cluster-addons/{{ .name }}.yaml) depends on the cluster
 // arm having already resolved `.name`, so the ORDER is load-bearing, not
 // incidental.
 func TestEngineChartMatrixGeneratorClusterArmFirst(t *testing.T) {
@@ -58,7 +58,7 @@ func TestEngineChartMatrixGeneratorClusterArmFirst(t *testing.T) {
 		t.Errorf("matrix generator arm 0 = %v, want the \"clusters\" generator (arm 1 in appset.yaml, decides WHETHER a cluster runs this addon)", arms[0])
 	}
 	if _, ok := arms[1]["git"]; !ok {
-		t.Errorf("matrix generator arm 1 = %v, want the \"git\" generator (arm 2, reads clusters/{{.name}}.yaml — depends on arm 0 having resolved .name first)", arms[1])
+		t.Errorf("matrix generator arm 1 = %v, want the \"git\" generator (arm 2, reads cluster-addons/{{.name}}.yaml — depends on arm 0 having resolved .name first)", arms[1])
 	}
 }
 

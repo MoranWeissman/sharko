@@ -156,12 +156,12 @@ func TestMigration_VersionOverrideBecomesAPinNotAnAddon(t *testing.T) {
 
 	var body []byte
 	for _, change := range append(append([]orchestrator.MigrationFileChange{}, plan.Add...), plan.Convert...) {
-		if change.Path == "clusters/prod-eu.yaml" {
+		if change.Path == "cluster-addons/prod-eu.yaml" {
 			body = []byte(change.Content)
 		}
 	}
 	if body == nil {
-		t.Fatal("the plan has no clusters/prod-eu.yaml")
+		t.Fatal("the plan has no cluster-addons/prod-eu.yaml")
 	}
 
 	spec, err := models.LoadClusterAddons(body)

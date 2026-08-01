@@ -51,11 +51,11 @@ addons:
 `
 
 // TestValidateConfig_ClusterAddons_Valid_Exit0 — a well-formed
-// clusters/<name>.yaml validates cleanly.
+// cluster-addons/<name>.yaml validates cleanly.
 func TestValidateConfig_ClusterAddons_Valid_Exit0(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	clustersDir := filepath.Join(dir, "clusters")
+	clustersDir := filepath.Join(dir, "cluster-addons")
 	if err := os.Mkdir(clustersDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestValidateConfig_ClusterAddons_Valid_Exit0(t *testing.T) {
 func TestValidateConfig_ClusterAddons_MissingEnabled_FailsWithLine(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	clustersDir := filepath.Join(dir, "clusters")
+	clustersDir := filepath.Join(dir, "cluster-addons")
 	if err := os.Mkdir(clustersDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -115,7 +115,7 @@ addons:
 func TestValidateConfig_ClusterAddons_PreserveResourcesOnDeletion_Rejected(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	clustersDir := filepath.Join(dir, "clusters")
+	clustersDir := filepath.Join(dir, "cluster-addons")
 	if err := os.Mkdir(clustersDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -160,7 +160,7 @@ addons:
 func TestValidateConfig_ClusterAddons_FilenameMismatch_Fails(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	clustersDir := filepath.Join(dir, "clusters")
+	clustersDir := filepath.Join(dir, "cluster-addons")
 	if err := os.Mkdir(clustersDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -240,23 +240,23 @@ kind: AddonCatalog
 
 // buildV4FixtureRepo lays out the design doc's §6 worked end-to-end
 // example on disk: two clusters, a catalog, cluster connections, and a
-// values override — plus engine.yaml, which is a real
+// values override — plus sharko-engine.yaml, which is a real
 // ArgoCD Application (not a Sharko envelope) and must be silently
 // skipped, same as the plain Helm values files.
 //
 // The v4 repo layout is flat for the single-file kinds: catalog.yaml,
-// managed-clusters.yaml and engine.yaml all live at the repo root —
+// managed-clusters.yaml and sharko-engine.yaml all live at the repo root —
 // there is no catalog/, fleet/ or engine/ folder.
 func buildV4FixtureRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	mustMkdirAll(t, filepath.Join(dir, "clusters"))
+	mustMkdirAll(t, filepath.Join(dir, "cluster-addons"))
 	mustMkdirAll(t, filepath.Join(dir, "values", "global"))
 	mustMkdirAll(t, filepath.Join(dir, "values", "clusters", "prod-eu"))
 
 	writeTempFile(t, dir, "catalog.yaml", validAddonCatalog)
-	writeTempFile(t, filepath.Join(dir, "clusters"), "prod-eu.yaml", validClusterAddons)
-	writeTempFile(t, filepath.Join(dir, "clusters"), "staging-us.yaml", `apiVersion: sharko.dev/v1
+	writeTempFile(t, filepath.Join(dir, "cluster-addons"), "prod-eu.yaml", validClusterAddons)
+	writeTempFile(t, filepath.Join(dir, "cluster-addons"), "staging-us.yaml", `apiVersion: sharko.dev/v1
 kind: ClusterAddons
 cluster: staging-us
 addons:
@@ -284,7 +284,7 @@ resources:
 `)
 	writeTempFile(t, filepath.Join(dir, "values", "clusters", "prod-eu"), "cert-manager.yaml", `replicaCount: 3
 `)
-	writeTempFile(t, dir, "engine.yaml", `apiVersion: argoproj.io/v1alpha1
+	writeTempFile(t, dir, "sharko-engine.yaml", `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: sharko-engine
@@ -322,13 +322,13 @@ func TestValidateConfig_V4FixtureRepo_EndToEnd_Exit0(t *testing.T) {
 	}
 	out := buf.String()
 	for _, want := range []string{
-		"✓ " + filepath.Join(dir, "clusters", "prod-eu.yaml"),
-		"✓ " + filepath.Join(dir, "clusters", "staging-us.yaml"),
+		"✓ " + filepath.Join(dir, "cluster-addons", "prod-eu.yaml"),
+		"✓ " + filepath.Join(dir, "cluster-addons", "staging-us.yaml"),
 		"✓ " + filepath.Join(dir, "catalog.yaml"),
 		"✓ " + filepath.Join(dir, "managed-clusters.yaml"),
 		"skip: " + filepath.Join(dir, "values", "global", "cert-manager.yaml"),
 		"skip: " + filepath.Join(dir, "values", "clusters", "prod-eu", "cert-manager.yaml"),
-		"skip: " + filepath.Join(dir, "engine.yaml"),
+		"skip: " + filepath.Join(dir, "sharko-engine.yaml"),
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
@@ -350,7 +350,7 @@ func TestValidateConfig_V4FixtureRepo_BrokenFile_Exit1_NamesFileReasonLine(t *te
 	t.Parallel()
 	dir := buildV4FixtureRepo(t)
 
-	brokenPath := filepath.Join(dir, "clusters", "staging-us.yaml")
+	brokenPath := filepath.Join(dir, "cluster-addons", "staging-us.yaml")
 	broken := `apiVersion: sharko.dev/v1
 kind: ClusterAddons
 cluster: staging-eu
@@ -374,7 +374,7 @@ addons:
 		"line 3",
 		"1 file(s) failed validation",
 		// every other file in the repo still gets its own clean verdict
-		"✓ " + filepath.Join(dir, "clusters", "prod-eu.yaml"),
+		"✓ " + filepath.Join(dir, "cluster-addons", "prod-eu.yaml"),
 		"✓ " + filepath.Join(dir, "catalog.yaml"),
 		"✓ " + filepath.Join(dir, "managed-clusters.yaml"),
 	} {

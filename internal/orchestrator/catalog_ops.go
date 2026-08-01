@@ -15,7 +15,7 @@ package orchestrator
 // that is what the first-run wizard needs when somebody ticks five things.
 // One call can also enable the addons on a cluster at the same time, which
 // makes one pull request touching both catalog.yaml and
-// clusters/<name>.yaml: the reviewer sees the whole change in one diff, and
+// cluster-addons/<name>.yaml: the reviewer sees the whole change in one diff, and
 // one merge makes both true.
 
 import (
@@ -68,7 +68,7 @@ type AddToCatalogRequest struct {
 
 	// EnableOnCluster, when set, also switches every addon in this request
 	// on for that cluster — one pull request touching catalog.yaml and
-	// clusters/<name>.yaml together. Empty means catalog only.
+	// cluster-addons/<name>.yaml together. Empty means catalog only.
 	EnableOnCluster string `json:"enable_on_cluster,omitempty"`
 
 	// Yes is the caller's confirmation, and it is REQUIRED whenever
@@ -151,7 +151,7 @@ const (
 const CatalogFileEmptyMessage = "catalog.yaml is in your repo but has nothing in it — it needs the two header lines first: apiVersion: sharko.dev/v1 and kind: AddonCatalog. Delete the file if you meant to start from scratch; Sharko treats a missing catalog.yaml as an empty catalog."
 
 // AddToCatalog writes the given addons into catalog.yaml — and, when
-// EnableOnCluster is set, into clusters/<name>.yaml too — and commits the
+// EnableOnCluster is set, into cluster-addons/<name>.yaml too — and commits the
 // lot as one pull request.
 //
 // A missing catalog.yaml is not an error: a fresh repo has no approved

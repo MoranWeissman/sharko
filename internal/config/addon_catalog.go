@@ -25,7 +25,7 @@ import (
 const AddonCatalogPath = "catalog.yaml"
 
 // V4ClustersDir is the folder holding one ClusterAddons file per cluster
-// in a v4 repo: "clusters/<cluster-name>.yaml" (design doc §2.1).
+// in a v4 repo: "cluster-addons/<cluster-name>.yaml" (design doc §2.1).
 //
 // Declared here, next to AddonCatalogPath, rather than imported from
 // internal/orchestrator: orchestrator imports config, not the other way
@@ -33,7 +33,7 @@ const AddonCatalogPath = "catalog.yaml"
 // lives with. Keep the literal identical to orchestrator.V4ClustersDir;
 // TestLockstep_V4ClusterAddonsPath (internal/orchestrator) fails the build
 // if the two drift.
-const V4ClustersDir = "clusters"
+const V4ClustersDir = "cluster-addons"
 
 // V4ClusterAddonsPath returns the repo path of a cluster's assignment file
 // — which addons that cluster runs. It refuses a name that could climb out
@@ -152,7 +152,7 @@ func (s AddonSecretRequirement) EffectiveRequiredFor() string {
 // cluster that runs it, so PreserveResourcesOnDeletion (a
 // syncPolicy-level field on that ApplicationSet) can only be set here,
 // never per cluster. See models.ClusterAddonsAddonSettings for the
-// six-field sibling used in clusters/<name>.yaml, which deliberately
+// six-field sibling used in cluster-addons/<name>.yaml, which deliberately
 // omits this field so a hand-authored per-cluster override of it fails
 // JSON Schema validation.
 type AddonSettings struct {

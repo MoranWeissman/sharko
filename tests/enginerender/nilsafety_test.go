@@ -1,15 +1,15 @@
 // Round-two nil-safety simulation for the FIX-3 review fix (v4 Wave 1 R2),
-// updated for the flat clusters/<name>.yaml shape (decision 9 of
+// updated for the flat cluster-addons/<name>.yaml shape (decision 9 of
 // .bmad/output/architecture/2026-07-31-catalog-approved-model.md — no more
 // `spec:` wrapper).
 //
 // charts/sharko-engine/templates/appset.yaml's targetRevision, namespace,
 // and templatePatch fields all `dig` into `.` (the round-two data itself —
 // the assignment file the git-files matrix arm reads from
-// clusters/<cluster>.yaml, merged with the clusters arm's own params) to
-// find a per-cluster override. `helm template` never reads clusters/*.yaml
+// cluster-addons/<cluster>.yaml, merged with the clusters arm's own params) to
+// find a per-cluster override. `helm template` never reads cluster-addons/*.yaml
 // (see the package doc comment at the top of render_test.go and
-// testdata/clusters/prod-eu.yaml): that file is a round-two input the real
+// testdata/cluster-addons/prod-eu.yaml): that file is a round-two input the real
 // ArgoCD ApplicationSet controller reads, so there is no way to exercise
 // the nil-safety fix by rendering the chart alone.
 //
@@ -218,8 +218,8 @@ func loadNilSafetyFixture(t *testing.T, name string) map[string]interface{} {
 }
 
 // TestEngineChartTemplatePatchNilSafety proves the FIX-3 review fix, updated
-// for the flat clusters/<name>.yaml shape (decision 9): a per-cluster
-// clusters/<cluster>.yaml file with an addon's `settings:` present but
+// for the flat cluster-addons/<name>.yaml shape (decision 9): a per-cluster
+// cluster-addons/<cluster>.yaml file with an addon's `settings:` present but
 // null, or an entirely empty file (no `addons:` key at all — the flat
 // model's equivalent of the old "no spec: key" scenario), must not crash
 // the round-two dig chains the real ArgoCD ApplicationSet controller

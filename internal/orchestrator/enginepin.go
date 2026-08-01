@@ -2,7 +2,7 @@
 // (v4 Wave 1 Story 2.5).
 //
 // docs/design/2026-07-30-v4-data-file-format.md section 2.5 defines
-// engine.yaml, "the engine pin" — a real ArgoCD Application
+// sharko-engine.yaml, "the engine pin" — a real ArgoCD Application
 // whose spec.sources[0].targetRevision names the exact sharko-engine
 // chart version deployed. Upgrading the engine is, by design, "a pull
 // request that changes one line" — nothing in the user's clusters moves
@@ -39,7 +39,7 @@ import (
 // RepoPathsConfig's other paths, this one is not read from server Helm
 // values: the engine chart's own ApplicationSet generator arm
 // (charts/sharko-engine/templates/appset.yaml) hard-codes the same
-// "clusters/<name>.yaml"-style repo convention, so the pin's own location
+// "cluster-addons/<name>.yaml"-style repo convention, so the pin's own location
 // is likewise fixed by the format, not by per-connection configuration.
 //
 // Aliased to BootstrapRootAppPath (constants.go) rather than duplicating the
@@ -50,7 +50,7 @@ const EnginePinPath = BootstrapRootAppPath
 
 // EnginePinCheckResult is the outcome of CheckEnginePin.
 type EnginePinCheckResult struct {
-	// V4Repo is false when engine.yaml does not exist in the
+	// V4Repo is false when sharko-engine.yaml does not exist in the
 	// connected repo — a v3 repo, or a v4 repo that has not been
 	// bootstrapped yet. Every other field is the zero value in that case.
 	// This is NOT an error condition (story brief: "v3 repos: the check
@@ -62,7 +62,7 @@ type EnginePinCheckResult struct {
 	BundledVersion string `json:"bundled_version,omitempty"`
 
 	// PinnedVersion is the version currently pinned in the repo's
-	// engine.yaml. Empty when V4Repo is false.
+	// sharko-engine.yaml. Empty when V4Repo is false.
 	PinnedVersion string `json:"pinned_version,omitempty"`
 
 	// UpgradeAvailable is true when BundledVersion is newer than
@@ -74,7 +74,7 @@ type EnginePinCheckResult struct {
 	Message string `json:"message"`
 }
 
-// CheckEnginePin reads the connected repo's engine.yaml (if
+// CheckEnginePin reads the connected repo's sharko-engine.yaml (if
 // any) and compares its pinned engine chart version against the version
 // bundled with this Sharko build.
 //

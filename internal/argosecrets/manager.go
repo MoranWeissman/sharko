@@ -866,7 +866,7 @@ func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels m
 // The one qualified exception is the v4 vocabulary
 // (models.V4AddonLabelPrefix, "addons.sharko.dev/<addon>") — the key the v4
 // engine chart's ApplicationSet selector matches on. It carries a "/" but it
-// is unambiguously Sharko's own namespace, derived from clusters/*.yaml by
+// is unambiguously Sharko's own namespace, derived from cluster-addons/*.yaml by
 // the reconciler and written by nobody else. Without this arm the v4 keys
 // would be classified foreign, which means SyncManagedClusterLabels would
 // neither ADD them (they get filtered out of the desired set) nor DELETE a

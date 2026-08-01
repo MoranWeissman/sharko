@@ -32,20 +32,20 @@ const DefaultEngineChartRepoURL = "ghcr.io/moranweissman/sharko"
 // — that is a git limitation, not Sharko data.
 //
 // Only the folders that genuinely hold MANY files are here. The three
-// single files — managed-clusters.yaml, catalog.yaml and engine.yaml — sit
-// at the repo root with no folder around them (design doc
+// single files — managed-clusters.yaml, catalog.yaml and sharko-engine.yaml
+// — sit at the repo root with no folder around them (design doc
 // 2026-07-31-catalog-approved-model.md §2), so there is nothing to .gitkeep
 // for them. A folder gets born the day a per-file split is really needed,
 // not before.
 var v4SeedFolders = []string{
-	"clusters",
+	V4ClustersDir,
 	"values/global",
 	"values/clusters",
 }
 
 // BuildV4SeedFiles returns the exact, complete set of files the v4
 // bootstrap PR commits: one .gitkeep per empty data folder, the engine pin
-// (engine.yaml, at BootstrapRootAppPath), and README.md.
+// (sharko-engine.yaml, at BootstrapRootAppPath), and README.md.
 // Nothing else — no AppProject, no Chart.yaml, no catalog seed, no addon
 // values stubs. This is the ONLY writer of the bootstrap PR's file set;
 // CollectBootstrapFiles and the synchronous InitRepo both call this rather
@@ -64,12 +64,18 @@ func BuildV4SeedFiles(gitops GitOpsConfig, paths RepoPathsConfig) map[string][]b
 	return files
 }
 
-// buildEnginePin renders engine.yaml — the whole of Sharko's
+// buildEnginePin renders sharko-engine.yaml — the whole of Sharko's
 // deployment logic, reduced to one pointer (design doc §2.5). Every value
 // is resolved from server-side config at write time; there are no
 // placeholder tokens left for a later substitution pass (contrast the v3
 // bootstrap path's replacePlaceholdersFull), because v4's engine pin is
 // generated fresh per repo rather than copied from a static template.
+//
+// The file opens with a plain-English comment header (v4 naming polish,
+// item 3) — a YAML comment ahead of apiVersion, which every YAML parser
+// (including ArgoCD's own) ignores as content, so it costs nothing and
+// tells a person what this one real Kubernetes manifest in the repo is for
+// before they read a line of it.
 func buildEnginePin(gitops GitOpsConfig, paths RepoPathsConfig) []byte {
 	repoURL := gitops.RepoURL
 	branch := gitops.BaseBranch
@@ -82,6 +88,7 @@ func buildEnginePin(gitops GitOpsConfig, paths RepoPathsConfig) []byte {
 	}
 
 	var b strings.Builder
+	b.WriteString(sharkoEngineYAMLHeader)
 	b.WriteString("apiVersion: argoproj.io/v1alpha1\n")
 	b.WriteString("kind: Application\n")
 	b.WriteString("metadata:\n")
@@ -150,12 +157,12 @@ render to understand what is running.
 ` + "```" + `text
 managed-clusters.yaml   the clusters Sharko manages, and how it reaches them
 catalog.yaml            the addons your org has approved for those clusters
-engine.yaml             which version of Sharko's engine chart to run — the
+sharko-engine.yaml      which version of Sharko's engine chart to run — the
                         ONLY moving part Sharko ships. Upgrading it is a
                         pull request that changes one line.
-clusters/               which addons run on each cluster, at which version,
+cluster-addons/         which addons run on each cluster, at which version,
                         tuned how (one file per cluster:
-                        clusters/<cluster-name>.yaml)
+                        cluster-addons/<cluster-name>.yaml)
 values/                 Helm values for each addon
                         values/global/<addon>.yaml              — everywhere
                         values/clusters/<cluster>/<addon>.yaml  — one cluster
@@ -175,9 +182,9 @@ whole story.
 ## How it works
 
 Sharko manages this repository through pull requests — every change is
-reviewable before it merges. The engine pin (` + "`engine.yaml`" + `)
+reviewable before it merges. The engine pin (` + "`sharko-engine.yaml`" + `)
 tells ArgoCD which version of Sharko's engine chart to run; that chart
-reads ` + "`catalog.yaml`" + `, ` + "`clusters/`" + `, and ` + "`values/`" + ` and turns them into
+reads ` + "`catalog.yaml`" + `, ` + "`cluster-addons/`" + `, and ` + "`values/`" + ` and turns them into
 one ArgoCD ApplicationSet per approved addon. There are no other templates
 or generated files in this repository — see
 https://github.com/MoranWeissman/sharko/blob/main/docs/design/2026-07-30-v4-data-file-format.md

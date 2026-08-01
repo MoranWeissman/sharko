@@ -278,8 +278,8 @@ export function V4EnableAddonDialog({
 
         <p className="text-sm text-[#3a6a8a] dark:text-gray-400">
           {mode === 'enable'
-            ? 'This writes clusters/' + cluster + '.yaml (v4 data-file format). Every required value and declared secret is checked before anything is written.'
-            : 'The addon entry stays in clusters/' + cluster + '.yaml with enabled: false — re-enabling later is a one-word change.'}
+            ? 'This writes cluster-addons/' + cluster + '.yaml (v4 data-file format). Every required value and declared secret is checked before anything is written.'
+            : 'The addon entry stays in cluster-addons/' + cluster + '.yaml with enabled: false — re-enabling later is a one-word change.'}
         </p>
 
         {phase === 'form' && mode === 'enable' && (

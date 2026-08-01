@@ -37,7 +37,7 @@ func deepNestingFlat(depth int) []byte {
 //   - LoadManagedClusters — managed-clusters.yaml (v4) / managed-clusters.yaml
 //     (v3 legacy, still read by the migration and by ParseClusterAddons'
 //     enveloped branch).
-//   - LoadClusterAddons — clusters/<name>.yaml (v4 only, no legacy shape).
+//   - LoadClusterAddons — cluster-addons/<name>.yaml (v4 only, no legacy shape).
 //
 // Both readers already go through schema.IsEnveloped + schema.DefaultValidator
 // before unmarshalling into a typed struct, so the expectation going in is

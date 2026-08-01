@@ -58,9 +58,15 @@ func writeCatalogFile(
 		return nil, false, fullErr
 	}
 
-	// A repo with no catalog.yaml yet has nothing to preserve.
+	// A repo with no catalog.yaml yet has nothing to preserve — and this is
+	// the one case that is a genuine CREATE, so it is the one case that
+	// gets the plain-English header (v4 naming polish, item 3). Every other
+	// return path below is a REWRITE of a file that already existed, and
+	// headers ride creation only. The header rides ahead of every future
+	// splice edit too, since spliceCatalogEntries only ever touches the
+	// lines belonging to the addons it is adding or replacing.
 	if len(bytes.TrimSpace(original)) == 0 {
-		return full, false, nil
+		return append([]byte(catalogYAMLHeader), full...), false, nil
 	}
 
 	edited, editErr := spliceCatalogEntries(original, entries, names)

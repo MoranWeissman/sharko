@@ -60,7 +60,7 @@ type AuditFunc func(clusterName string, created, updated int)
 //     plus the configured managed-clusters path, with the cluster's addon
 //     labels saying which addons it runs.
 //   - v4 — catalog.yaml (a requirement's `push:` block) plus the root
-//     managed-clusters.yaml, with clusters/<name>.yaml saying which addons
+//     managed-clusters.yaml, with cluster-addons/<name>.yaml saying which addons
 //     it runs.
 //
 // Both flatten into the same list of pushes, so a rotation lands on a
@@ -424,7 +424,7 @@ func (r *Reconciler) planV3(ctx context.Context, gr GitReader, catalogData []byt
 
 // planV4 builds the plan from a v4 repo: catalog.yaml for the push
 // definitions each approved addon carries, the root managed-clusters.yaml
-// for the clusters, and clusters/<name>.yaml for which addons each one
+// for the clusters, and cluster-addons/<name>.yaml for which addons each one
 // actually runs.
 //
 // A cluster with no assignment file yet is not an error — it is a

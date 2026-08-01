@@ -548,7 +548,7 @@ export interface DisableAddonV4Request {
 
 /**
  * enableAddonV4 — POST /api/v1/v4/clusters/{name}/addons/{addon} (v4 Wave
- * 1 Story 4.3). Writes clusters/{name}.yaml (kind ClusterAddons) and,
+ * 1 Story 4.3). Writes cluster-addons/{name}.yaml (kind ClusterAddons) and,
  * when values are supplied, values/clusters/{name}/{addon}.yaml — the v4
  * data-file format, distinct from the v3 per-addon endpoint
  * (previewEnableAddon / enableAddonOnCluster above). A 422 throws
@@ -624,7 +624,7 @@ export async function addToCatalog(
 
 /**
  * disableAddonV4 — DELETE /api/v1/v4/clusters/{name}/addons/{addon} (v4
- * Wave 1 Story 4.3). Sets enabled=false in clusters/{name}.yaml — the
+ * Wave 1 Story 4.3). Sets enabled=false in cluster-addons/{name}.yaml — the
  * entry (version pin + settings) is kept by default so re-enabling is a
  * one-word change; pass remove:true to delete it entirely. No semantic
  * validation runs (disabling never needs required values or secrets), so
@@ -1575,7 +1575,7 @@ export const api = {
    * Add one or more addons to the approved catalog, committed via a pull
    * request — one element = a single add, N elements = ONE batch PR,
    * never N. Passing `enable_on_cluster` makes it the combo: one PR that
-   * touches both catalog.yaml and clusters/<name>.yaml.
+   * touches both catalog.yaml and cluster-addons/<name>.yaml.
    */
   addToCatalog,
 

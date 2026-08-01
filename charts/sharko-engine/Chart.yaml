@@ -1,11 +1,11 @@
 apiVersion: v2
 name: sharko-engine
 description: >-
-  The Sharko v4 engine — turns a data-file repo (clusters/, catalog/, values/)
-  into one ArgoCD ApplicationSet per addon. This is the whole of Sharko's
-  deployment logic; see docs/design/2026-07-30-v4-data-file-format.md.
+  The Sharko v4 engine — turns a data-file repo (cluster-addons/, catalog/,
+  values/) into one ArgoCD ApplicationSet per addon. This is the whole of
+  Sharko's deployment logic; see docs/design/2026-07-30-v4-data-file-format.md.
 type: application
-version: 0.3.0
+version: 0.4.0
 appVersion: "4.0.0"
 keywords:
   - argocd

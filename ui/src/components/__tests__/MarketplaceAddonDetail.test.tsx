@@ -450,7 +450,21 @@ describe('MarketplaceAddonDetail — pending add-PR (v4 walk-findings W2, item 5
     renderDetail()
 
     expect(await screen.findByText(/already has an add-PR open/i)).toBeInTheDocument()
-    const link = screen.getByRole('link', { name: /view pr #42/i })
+    // The banner's static text appears as soon as `entry` (from
+    // getCuratedCatalogEntry) and `pendingAddonPRs` (from fetchTrackedPRs)
+    // have both loaded — but the "View PR #42" link inside it also needs
+    // `name` to have been seeded from `entry` by a SEPARATE effect
+    // (pendingPR is matched against the trimmed `name` state, not
+    // `entry.name` directly). That seed effect and the pendingAddonPRs
+    // fetch are two independent promise chains with no ordering guarantee
+    // between them, so the very first render carrying the banner text can
+    // still be one render short of the link — asserting on it with a
+    // synchronous getByRole right after the findByText above was the race
+    // (it worked when the seed effect happened to flush first, and failed
+    // under heavier scheduling load when it didn't). findByRole waits for
+    // the same final, settled state instead of assuming that first render
+    // is already it.
+    const link = await screen.findByRole('link', { name: /view pr #42/i })
     expect(link).toHaveAttribute('href', 'https://gh/pr/42')
 
     // The form itself must not render — no duplicate-add door while pending.

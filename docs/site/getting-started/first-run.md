@@ -55,8 +55,8 @@ You can skip this and configure the secrets provider later in **Settings → Sec
 
 This step creates the starting layout in your Git repo — nothing more:
 
-- **`engine.yaml`** — the pointer to Sharko's engine chart, the one moving part Sharko ships
-- **`clusters/`** and **`values/`** — empty folders, ready for the first cluster and the first addon
+- **`sharko-engine.yaml`** — the pointer to Sharko's engine chart, the one moving part Sharko ships
+- **`cluster-addons/`** and **`values/`** — empty folders, ready for the first cluster and the first addon
 - **`managed-clusters.yaml`** and **`catalog.yaml`** are not created yet — a file that isn't there means "empty," and Sharko creates each one the first time you have something to put in it
 
 Sharko shows you a step-by-step progress log as it creates each file and opens the PR.

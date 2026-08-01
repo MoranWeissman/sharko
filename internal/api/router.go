@@ -881,7 +881,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/clusters/{name}/addons/{addon}", srv.handleDisableAddon)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}/restart-sync", srv.handleRestartAddonSync)
 	// v4 Wave 1 Story 4.3 — the sharpened enable/disable pipeline for v4
-	// (clusters/*.yaml) repos. Distinct routes from the pair above so a v3
+	// (cluster-addons/*.yaml) repos. Distinct routes from the pair above so a v3
 	// repo's behavior never changes underfoot (addon_ops_v4.go).
 	mux.HandleFunc("POST /api/v1/v4/clusters/{name}/addons/{addon}", srv.handleEnableAddonV4)
 	mux.HandleFunc("DELETE /api/v1/v4/clusters/{name}/addons/{addon}", srv.handleDisableAddonV4)
@@ -910,7 +910,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("PATCH /api/v1/addons/{name}", srv.handleConfigureAddon)
 
 	// Engine pin (v4 Wave 1 Story 2.5) — check + upgrade-PR for
-	// engine.yaml. Read-only check is Viewer+; opening the
+	// sharko-engine.yaml. Read-only check is Viewer+; opening the
 	// upgrade PR is Operator+, same tier as the addon-write endpoints above.
 	mux.HandleFunc("GET /api/v1/engine/pin", srv.handleCheckEnginePin)
 	mux.HandleFunc("POST /api/v1/engine/pin/upgrade", srv.handleUpgradeEnginePin)

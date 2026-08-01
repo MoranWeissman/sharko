@@ -227,7 +227,7 @@ type Deps struct {
 	// settings.Store.IsManagedClusterSelfHealEnabled in cmd/sharko/serve.go.
 	//
 	// It does NOT gate the v4 addons.sharko.dev/ labels. Those are derived
-	// from clusters/<name>.yaml and are the only way an enabled addon ever
+	// from cluster-addons/<name>.yaml and are the only way an enabled addon ever
 	// reaches a cluster, so applying them is ordinary convergence and runs
 	// on every tick regardless of this setting — see reconcileDiff and
 	// applyV4AddonLabels. This setting still governs everything else,
@@ -616,7 +616,7 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 	}
 
 	// Step 2b (v4 only): derive each cluster's addon-enablement labels from
-	// clusters/*.yaml. On a v4 repo the connection record's own labels
+	// cluster-addons/*.yaml. On a v4 repo the connection record's own labels
 	// block no longer carries addon on/off keys (design doc §2.4 / D9) —
 	// the ClusterAddons files do — so without this read the desired
 	// label set would be empty and enabling an addon would deploy nothing.
@@ -671,7 +671,7 @@ func orphanSweepHeld(desiredCount int, fileNonEmpty bool, observedManaged int) b
 // sanity guard (orphanSweepHeld, V2-cleanup-60.2).
 //
 // v4 is the per-cluster addon-enablement label set derived from
-// clusters/*.yaml on a v4 repo (readV4AddonLabels), plus which clusters
+// cluster-addons/*.yaml on a v4 repo (readV4AddonLabels), plus which clusters
 // this tick could not read. It is nil on a v3 repo, and every use of it
 // below is a no-op when nil — the v3 path computes its desired labels
 // exactly as it always did, from the connection record's own labels block,
@@ -776,7 +776,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 				// when they don't match (honest reporting, same as before G1)
 
 				// v4: stamping the addons.sharko.dev/ labels derived from
-				// clusters/<name>.yaml is NORMAL CONVERGENCE, not self-heal.
+				// cluster-addons/<name>.yaml is NORMAL CONVERGENCE, not self-heal.
 				// Git is the source of truth and this reconciler is the only
 				// thing that turns an assignment file into the label the
 				// engine's ApplicationSet generator selects on — so if it
@@ -1011,7 +1011,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 // whether the cluster's OWN addon labels are correct.
 //
 // v4AddonLabels (v4 repos only, nil on v3) is the addon-enablement label
-// set derived from this cluster's clusters/<name>.yaml — see
+// set derived from this cluster's cluster-addons/<name>.yaml — see
 // readV4AddonLabels. It is merged on top of the entry's own labels because
 // on a v4 repo the assignment file, not the connection record, is the
 // source of truth for which addons run here. nil means "nothing derived",
@@ -1264,7 +1264,7 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 // partition):
 //
 //   - applyV4AddonLabels, on every tick, whenever a v4 repo's
-//     addons.sharko.dev/ labels disagree with clusters/<name>.yaml. No
+//     addons.sharko.dev/ labels disagree with cluster-addons/<name>.yaml. No
 //     setting gates that — it is how enable and disable take effect.
 //   - the drift-detection section, for any OTHER label drift, and only
 //     when managed_cluster_self_heal is ON (V3 GF1 — opt-in, default OFF).
@@ -1391,7 +1391,7 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 }
 
 // applyV4AddonLabels stamps the addon labels derived from
-// clusters/<cluster>.yaml onto a Sharko-owned ArgoCD cluster Secret. On a v4
+// cluster-addons/<cluster>.yaml onto a Sharko-owned ArgoCD cluster Secret. On a v4
 // repo this is what "enable an addon" and "disable an addon" actually mean:
 // the PR changed the assignment file, and this is the moment the change
 // reaches the label the engine's ApplicationSet generator selects on. It
@@ -1765,7 +1765,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			clusterLabels[k] = normalized
 		}
 	}
-	// v4 repos: the addon on/off keys come from clusters/<name>.yaml, not
+	// v4 repos: the addon on/off keys come from cluster-addons/<name>.yaml, not
 	// from the connection record. nil on v3, where this is a no-op.
 	clusterLabels = mergeV4AddonLabels(clusterLabels, v4AddonLabels)
 	// Apply the connectivity-check label (V2-cleanup-29). The label is DERIVED

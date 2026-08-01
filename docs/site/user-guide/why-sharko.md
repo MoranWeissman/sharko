@@ -106,7 +106,7 @@ So Sharko runs its own process that writes the cluster Secret directly, using cr
 
 ## Why do Sharko's files look like Kubernetes resources — and why isn't Sharko an operator?
 
-Open `catalog.yaml` or `clusters/prod-eu.yaml` in your repo and the first
+Open `catalog.yaml` or `cluster-addons/prod-eu.yaml` in your repo and the first
 two lines look like a Kubernetes object: `apiVersion: sharko.dev/v1` and
 `kind: AddonCatalog`. There is no `AddonCatalog` custom resource, and
 `kubectl get addoncatalog` will never work. So why the Kubernetes-looking
@@ -140,11 +140,11 @@ no `spec:` wrapper. Sharko follows that same convention, on purpose,
 because `metadata:` and `spec:` are the signal of a real applied resource,
 and none of Sharko's data files are one.
 
-**The one exception is `engine.yaml`.** That file *is* a real, applied
+**The one exception is `sharko-engine.yaml`.** That file *is* a real, applied
 Kubernetes object — an ArgoCD `Application` — so it keeps the full
 `apiVersion` / `kind` / `metadata` / `spec` shape a real manifest needs.
 Every other Sharko-read file (`catalog.yaml`, `managed-clusters.yaml`,
-`clusters/<name>.yaml`) is header-plus-top-level-fields, exactly like
+`cluster-addons/<name>.yaml`) is header-plus-top-level-fields, exactly like
 `kustomization.yaml`. One rule, one exception, and the exception is the
 one file ArgoCD actually applies.
 

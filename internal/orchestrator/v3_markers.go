@@ -22,7 +22,7 @@ type RepoFileReader interface {
 // SET UP v3 GitOps repo — one Sharko bootstrapped (or has been managing)
 // under the pre-v4 layout.
 //
-// It exists because "does engine.yaml exist?" is the v4
+// It exists because "does sharko-engine.yaml exist?" is the v4
 // question, and answering only that question tells a v3 user their repo was
 // never bootstrapped. The first-run wizard believes that answer and offers
 // Initialize, which would seed the whole v4 folder tree on top of a live v3

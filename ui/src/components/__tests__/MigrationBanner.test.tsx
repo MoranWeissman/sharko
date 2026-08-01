@@ -137,7 +137,7 @@ describe('MigrationBanner', () => {
     });
     mockedApi.previewMigration.mockResolvedValue({
       format: 'v3',
-      add: [{ path: 'engine.yaml', action: 'add' }],
+      add: [{ path: 'sharko-engine.yaml', action: 'add' }],
       convert: [{ path: 'managed-clusters.yaml', from_path: 'configuration/managed-clusters.yaml', action: 'convert' }],
       remove: [{ path: 'bootstrap/Chart.yaml', action: 'remove' }],
       notes: [
@@ -149,7 +149,7 @@ describe('MigrationBanner', () => {
     fireEvent.click(await screen.findByText('Preview migration'));
 
     expect(await screen.findByText('Files this pull request would touch (3)')).toBeInTheDocument();
-    expect(screen.getByText('engine.yaml')).toBeInTheDocument();
+    expect(screen.getByText('sharko-engine.yaml')).toBeInTheDocument();
     expect(screen.getByText('configuration/managed-clusters.yaml → managed-clusters.yaml')).toBeInTheDocument();
     expect(screen.getByText(/lists secrets in your old catalog file/)).toBeInTheDocument();
   });

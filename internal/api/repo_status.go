@@ -12,7 +12,7 @@ import (
 // RepoStatusResponse is the body returned by GET /api/v1/repo/status.
 //
 // `Initialized` reports whether the engine pin (orchestrator.BootstrapRootAppPath
-// — "engine.yaml", v4 Wave 1 Story 4.2) is readable on the
+// — "sharko-engine.yaml", v4 Wave 1 Story 4.2) is readable on the
 // configured base branch — i.e. the GitOps repo has been seeded. Before
 // Story 4.2 this checked the v3 "bootstrap/Chart.yaml" marker; the engine
 // pin is the one file every v4 bootstrap PR is guaranteed to contain, so
@@ -67,7 +67,7 @@ type RepoStatusResponse struct {
 // handleRepoStatus godoc
 //
 // @Summary Get repo initialization status
-// @Description Checks whether the GitOps repository has been bootstrapped (the engine pin at engine.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present.
+// @Description Checks whether the GitOps repository has been bootstrapped (the engine pin at sharko-engine.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present.
 // @Tags system
 // @Produce json
 // @Security BearerAuth

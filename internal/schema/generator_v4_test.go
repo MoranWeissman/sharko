@@ -38,7 +38,7 @@ func genClusterAddons(t *testing.T) []byte {
 		&clusterAddonsDoc{},
 		sharkoschema.ClusterAddonsSchemaID,
 		"Sharko ClusterAddons",
-		"clusters/<cluster-name>.yaml — which addons run on this cluster, at which version, tuned how (v4).",
+		"cluster-addons/<cluster-name>.yaml — which addons run on this cluster, at which version, tuned how (v4).",
 		sharkoschema.KindClusterAddons,
 	)
 	if err != nil {

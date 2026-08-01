@@ -68,7 +68,7 @@ func v4Catalog(t *testing.T, secrets []config.AddonSecretRequirement) []byte {
 	return body
 }
 
-// v4Assignment renders one clusters/<name>.yaml — which addons that cluster
+// v4Assignment renders one cluster-addons/<name>.yaml — which addons that cluster
 // runs — through the real writer.
 func v4Assignment(t *testing.T, cluster string, addons map[string]bool) []byte {
 	t.Helper()
@@ -180,7 +180,7 @@ func TestReconcileV4_CreatesSkipsAndRotates(t *testing.T) {
 }
 
 // TestReconcileV4_AddonSwitchedOffIsLeftAlone: on v4, which addons a cluster
-// runs comes from clusters/<name>.yaml, not from labels. An addon with
+// runs comes from cluster-addons/<name>.yaml, not from labels. An addon with
 // enabled:false must not get its Secret.
 func TestReconcileV4_AddonSwitchedOffIsLeftAlone(t *testing.T) {
 	client := fake.NewSimpleClientset()
@@ -223,7 +223,7 @@ func TestReconcileV4_ProseOnlyRequirementPushesNothing(t *testing.T) {
 }
 
 // TestReconcileV4_ClusterWithNoAssignmentFileIsNotAnError: a registered
-// cluster nobody has given an addon to yet has no clusters/<name>.yaml.
+// cluster nobody has given an addon to yet has no cluster-addons/<name>.yaml.
 // That is an ordinary state, not a failure — it must not fill the status
 // with errors every five minutes.
 func TestReconcileV4_ClusterWithNoAssignmentFileIsNotAnError(t *testing.T) {

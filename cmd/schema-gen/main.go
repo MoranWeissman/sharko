@@ -149,7 +149,7 @@ type marketplaceSourcesDoc struct {
 	Spec       config.MarketplaceSourcesSpec `json:"spec"`
 }
 
-// clusterAddonsDoc is the flat shape of clusters/<cluster-name>.yaml.
+// clusterAddonsDoc is the flat shape of cluster-addons/<cluster-name>.yaml.
 type clusterAddonsDoc struct {
 	APIVersion               string `json:"apiVersion"`
 	Kind                     string `json:"kind"`
@@ -278,7 +278,7 @@ func run(logger *slog.Logger) error {
 		&clusterAddonsDoc{},
 		schema.ClusterAddonsSchemaID,
 		"Sharko ClusterAddons",
-		"clusters/<cluster-name>.yaml — which addons run on this cluster, at which version, tuned how (v4).",
+		"cluster-addons/<cluster-name>.yaml — which addons run on this cluster, at which version, tuned how (v4).",
 		schema.KindClusterAddons,
 	)
 	if err != nil {
