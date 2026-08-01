@@ -4,7 +4,7 @@
 // given an addon that is outdated on N of a fleet's M clusters, the caller
 // picks exactly which of the N clusters to move, and Sharko writes ONE
 // pull request that bumps the per-cluster version pin
-// (clusters/<cluster>.yaml, design doc §2.1's spec.addons.<name>.version)
+// (cluster-addons/<cluster>.yaml, design doc §2.1's spec.addons.<name>.version)
 // on those clusters only — every other cluster's file is untouched, so the
 // diff is small and reviewable one block per cluster.
 //
@@ -34,7 +34,7 @@ type UpgradeAddonClustersV4Request struct {
 	// run preview are deterministic regardless of request order.
 	Clusters []string `json:"clusters"`
 	// Version is the new pin, written identically to every selected
-	// cluster's clusters/<cluster>.yaml. Required and non-empty — this
+	// cluster's cluster-addons/<cluster>.yaml. Required and non-empty — this
 	// endpoint always sets an explicit pin; use DisableAddonV4/
 	// EnableAddonV4(version: nil) to remove a pin and fall back to the
 	// catalog default.

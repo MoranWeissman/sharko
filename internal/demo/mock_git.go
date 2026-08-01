@@ -83,7 +83,7 @@ alertmanager:
 
 	// Engine pin (marks repo as initialised). The demo simulates a repo
 	// that has already been through v4 init. The rest of the v4 layout
-	// this pin implies (clusters/, catalog.yaml, values/,
+	// this pin implies (cluster-addons/, catalog.yaml, values/,
 	// managed-clusters.yaml) is built by buildV4DemoFiles (v4_fixtures.go)
 	// and merged into p.files by NewMockGitProvider, right after this
 	// method returns.

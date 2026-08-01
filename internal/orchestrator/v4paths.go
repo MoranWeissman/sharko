@@ -3,7 +3,7 @@
 // Like EnginePinPath (enginepin.go), these paths are NOT read from
 // RepoPathsConfig / server Helm values — the v4 data-file format fixes
 // them (design doc §2.1, §2.2), the same way the engine chart's own
-// generator arms hard-code "clusters/<name>.yaml". A per-connection
+// generator arms hard-code "cluster-addons/<name>.yaml". A per-connection
 // override would let a repo silently stop matching what the engine
 // actually reads.
 package orchestrator
@@ -23,7 +23,7 @@ import (
 // in a v4 repo: a root file called "managed-clusters.yaml". Same kind
 // (ManagedClusters) and shape models.LoadManagedClusters already reads —
 // only the path and the MEANING of the labels field change (v4 no longer
-// authors addon on/off keys there; that lives in clusters/*.yaml instead —
+// authors addon on/off keys there; that lives in cluster-addons/*.yaml instead —
 // see EnableAddonV4/DisableAddonV4).
 //
 // It used to be fleet/connections.yaml. Two things changed (design doc
@@ -35,15 +35,19 @@ import (
 // file managed-clusters.yaml holds kind ManagedClusters and the UI page
 // that shows it is called Managed Clusters.
 //
-// This file, catalog.yaml and engine.yaml are ROOT files. They are fixed,
-// complete paths — no name from a request is ever joined onto them — so
-// they never go near checkV4PathSegment/joinUnder. Those guard the paths
-// that ARE built from user input: clusters/<name>.yaml and the values tree.
+// This file, catalog.yaml and sharko-engine.yaml are ROOT files. They are
+// fixed, complete paths — no name from a request is ever joined onto them —
+// so they never go near checkV4PathSegment/joinUnder. Those guard the paths
+// that ARE built from user input: cluster-addons/<name>.yaml and the values
+// tree.
 const V4ManagedClustersPath = "managed-clusters.yaml"
 
 // V4ClustersDir is where one ClusterAddons file per cluster lives
-// (design doc §2.1): "clusters/<cluster-name>.yaml".
-const V4ClustersDir = "clusters"
+// (design doc §2.1): "cluster-addons/<cluster-name>.yaml". Named
+// "cluster-addons" (not "clusters") because the files inside are per-cluster
+// ADDON ASSIGNMENTS, not cluster records — those live in
+// managed-clusters.yaml (v4 naming polish).
+const V4ClustersDir = "cluster-addons"
 
 // V4GlobalValuesDir is where addon Helm values that apply to every
 // cluster live (design doc §2.2): "values/global/<addon>.yaml".
@@ -60,8 +64,8 @@ const V4ClusterValuesDir = "values/clusters"
 // match models.ResourceNamePattern, and this is the second, independent
 // check that runs no matter how the orchestrator was called (CLI, a future
 // caller, a test). It exists because path.Join CLEANS its result: joining
-// "clusters" with "../../engine.yaml" quietly yields "engine.yaml", so an
-// unchecked name here would let a caller
+// "cluster-addons" with "../../sharko-engine.yaml" quietly yields
+// "sharko-engine.yaml", so an unchecked name here would let a caller
 // rewrite the engine pin — or any other file in the repo — through what
 // looks like an ordinary enable-addon request. Go 1.22's ServeMux hands a
 // URL-encoded "..%2F" to PathValue already decoded, so the traversal never

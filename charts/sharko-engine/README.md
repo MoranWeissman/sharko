@@ -1,12 +1,12 @@
 # sharko-engine
 
 The Sharko v4 "engine" — a standalone Helm chart that turns a user's GitOps
-repo (`clusters/`, `catalog.yaml`, `values/`) into ArgoCD ApplicationSets.
+repo (`cluster-addons/`, `catalog.yaml`, `values/`) into ArgoCD ApplicationSets.
 This chart **is** the whole of Sharko's deployment logic — see
 `docs/design/2026-07-30-v4-data-file-format.md` for the render mechanics and
 `.bmad/output/architecture/2026-07-31-catalog-approved-model.md` (decision
 6) for the "catalog = the approved list" model this chart implements: it
-reads `catalog.yaml` + `clusters/` + `values/` from the user's own repo,
+reads `catalog.yaml` + `cluster-addons/` + `values/` from the user's own repo,
 nothing else. There is no shipped/curated addon data baked into this chart
 — that set now lives only on the Sharko server, feeding the Marketplace.
 
@@ -28,10 +28,10 @@ identical.
 Each generated ApplicationSet:
 
 - Selects clusters labelled `addons.sharko.dev/<addon>: enabled` (that
-  label is derived from `clusters/<cluster>.yaml` and pushed onto the
+  label is derived from `cluster-addons/<cluster>.yaml` and pushed onto the
   ArgoCD cluster secret by Sharko's existing reconciler — the engine never
   reads a cluster secret's labels directly, see the hard rule below).
-- Reads that cluster's `clusters/<cluster>.yaml` for its version pin and
+- Reads that cluster's `cluster-addons/<cluster>.yaml` for its version pin and
   per-cluster settings.
 - Layers Helm values: chart defaults → `values/global/<addon>.yaml` →
   `values/clusters/<cluster>/<addon>.yaml`, via Helm's own `valueFiles`
@@ -48,7 +48,7 @@ secret's labels/annotations, never a clean handoff to either side. The
 only cluster-identity fields safe to use are `.name` and `.server`. This
 is why the v3 per-cluster version-override label (`<addon>-version` read
 via `index .metadata.labels ...`) could never reliably carry over into v4;
-version pins moved into `clusters/<cluster>.yaml` instead (decision D8).
+version pins moved into `cluster-addons/<cluster>.yaml` instead (decision D8).
 
 **createNamespace precedence rule.** ArgoCD has no dedicated `createNamespace`
 field — it is only ever expressed as `CreateNamespace=true` membership in
@@ -71,7 +71,7 @@ helm template testengine charts/sharko-engine \
 ```
 
 Against your own repo, in production shape, the two values sources are
-`engine.yaml`'s `helm.parameters` (repo URL/revision, host cluster name,
+`sharko-engine.yaml`'s `helm.parameters` (repo URL/revision, host cluster name,
 project name) and your own `catalog.yaml` (passed as the chart's one
 enveloped Helm values file — see decision D6 for why it is exactly one
 file, never more).
@@ -95,7 +95,7 @@ same keyless (OIDC) signing identity.
 release pipeline publishes this chart at **exactly its own committed
 `version:`/`appVersion:` from this file's `Chart.yaml`** — never an
 override, and never the product's release tag. The pin a user merges into
-their `engine.yaml` references that same chart version, and
+their `sharko-engine.yaml` references that same chart version, and
 `internal/engineversion/generated.go` (regenerated from this file's `name`
 + `version` fields, CI-gated to match) is what the pin-bump check compares
 a repo's current pin against — so the published OCI tag and the number
@@ -148,12 +148,12 @@ before merging is on you, same as reviewing any other dependency bump).
 
 ## The kill-Sharko story
 
-Delete the `sharko-engine` Application (`engine.yaml`) from
+Delete the `sharko-engine` Application (`sharko-engine.yaml`) from
 ArgoCD, or stop running Sharko entirely. Every ApplicationSet this chart
 generated has `preserveResourcesOnDeletion: true`, so ArgoCD leaves the
 running workloads exactly as they are — nothing gets torn down. What you
-lose is only the automation: nobody is watching `clusters/*.yaml` for
-changes anymore. `kubectl apply -f engine.yaml` at any point
+lose is only the automation: nobody is watching `cluster-addons/*.yaml` for
+changes anymore. `kubectl apply -f sharko-engine.yaml` at any point
 brings that back, unchanged, because the Application it recreates is the
 same one Sharko applied in the first place — Sharko does not manage a
 resource that manages itself (decision D15).

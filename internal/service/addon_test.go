@@ -29,7 +29,7 @@ func (f *fakeGitProvider) GetFileContent(_ context.Context, path, _ string) ([]b
 // ListDirectory returns the basenames of entries directly under dir,
 // derived from the keys of f.files (immediate children only — no nested
 // path segments). Real enough for the v4 GetVersionMatrix tests
-// (clusters/*.yaml listing) without needing a full fake filesystem.
+// (cluster-addons/*.yaml listing) without needing a full fake filesystem.
 func (f *fakeGitProvider) ListDirectory(_ context.Context, dir, _ string) ([]string, error) {
 	prefix := strings.TrimSuffix(dir, "/") + "/"
 	var names []string
@@ -556,7 +556,7 @@ applicationsets:
 // TestGetVersionMatrix_V4Repo is the v4 Wave 1 Story 4.2 counterpart to
 // TestGetVersionMatrix: the presence of the engine pin
 // (orchestrator.EnginePinPath) routes GetVersionMatrix through
-// getVersionMatrixV4, which reads clusters/*.yaml (ClusterAddons) and
+// getVersionMatrixV4, which reads cluster-addons/*.yaml (ClusterAddons) and
 // the delta-merged catalog (catalog/addons.yaml overlaid on the curated
 // set) instead of the v3 managed-clusters.yaml / addons-catalog.yaml
 // files — even though both v3 files are ALSO present in this fixture, to
@@ -639,8 +639,8 @@ func TestGetVersionMatrix_V4Repo(t *testing.T) {
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
 			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-			"clusters/prod-eu.yaml":      prodEU,
-			"clusters/staging-us.yaml":   stagingUS,
+			"cluster-addons/prod-eu.yaml":      prodEU,
+			"cluster-addons/staging-us.yaml":   stagingUS,
 			config.AddonCatalogPath: delta,
 			// v3 files are ALSO present, to prove they are ignored once the
 			// engine pin routes this to the v4 branch.
@@ -657,7 +657,7 @@ func TestGetVersionMatrix_V4Repo(t *testing.T) {
 	}
 
 	if len(resp.Clusters) != 2 || resp.Clusters[0] != "prod-eu" || resp.Clusters[1] != "staging-us" {
-		t.Fatalf("expected clusters [prod-eu staging-us] (v4 clusters/*.yaml), got %v — v3 managed-clusters.yaml must be ignored", resp.Clusters)
+		t.Fatalf("expected clusters [prod-eu staging-us] (v4 cluster-addons/*.yaml), got %v — v3 managed-clusters.yaml must be ignored", resp.Clusters)
 	}
 
 	byName := make(map[string]models.VersionMatrixRow)
@@ -680,7 +680,7 @@ func TestGetVersionMatrix_V4Repo(t *testing.T) {
 		t.Fatal("expected a prod-eu cell for cert-manager")
 	}
 	if prodCell.Version != "1.12.0" {
-		t.Errorf("prod-eu cert-manager version = %q, want %q (per-cluster pin from clusters/prod-eu.yaml)", prodCell.Version, "1.12.0")
+		t.Errorf("prod-eu cert-manager version = %q, want %q (per-cluster pin from cluster-addons/prod-eu.yaml)", prodCell.Version, "1.12.0")
 	}
 	if !prodCell.DriftFromCatalog {
 		t.Error("expected DriftFromCatalog=true when the per-cluster pin (1.12.0) differs from the catalog version (1.14.5)")
@@ -749,7 +749,7 @@ func (f *refRecordingGitProvider) ListDirectory(ctx context.Context, dir, ref st
 }
 
 // TestGetVersionMatrix_V4Repo_HonorsBaseBranch proves the v4 branch of
-// GetVersionMatrix (the engine-pin probe, the clusters/*.yaml listing, and
+// GetVersionMatrix (the engine-pin probe, the cluster-addons/*.yaml listing, and
 // the catalog/addons.yaml delta read) reads from the connection's
 // configured GitOps base branch — wired via SetBaseBranchFn — rather than a
 // hardcoded "main". A connection with base_branch: "release" is a real
@@ -789,7 +789,7 @@ func TestGetVersionMatrix_V4Repo_HonorsBaseBranch(t *testing.T) {
 
 	gp := newRefRecordingGitProvider(map[string][]byte{
 		orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-		"clusters/prod-eu.yaml":      prodEU,
+		"cluster-addons/prod-eu.yaml":      prodEU,
 		config.AddonCatalogPath: delta,
 	})
 	ac := argocd.NewClient(ts.URL, "fake-token", false)
@@ -825,7 +825,7 @@ func TestGetVersionMatrix_V4Repo_HonorsBaseBranch(t *testing.T) {
 
 // TestGetCatalog_V4Repo is the getCatalogV4 counterpart to
 // TestGetVersionMatrix_V4Repo: the engine pin routes GetCatalog through
-// getCatalogV4, which reads clusters/*.yaml (ClusterAddons) and the
+// getCatalogV4, which reads cluster-addons/*.yaml (ClusterAddons) and the
 // delta-merged catalog instead of the v3 managed-clusters.yaml /
 // addons-catalog.yaml files — even though both v3 files are ALSO present
 // in this fixture, to prove the v4 branch is the one that actually ran.
@@ -895,8 +895,8 @@ func TestGetCatalog_V4Repo(t *testing.T) {
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
 			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-			"clusters/prod-eu.yaml":      prodEU,
-			"clusters/staging-us.yaml":   stagingUS,
+			"cluster-addons/prod-eu.yaml":      prodEU,
+			"cluster-addons/staging-us.yaml":   stagingUS,
 			config.AddonCatalogPath: delta,
 			// v3 files are ALSO present, to prove they are ignored once the
 			// engine pin routes this to the v4 branch.
@@ -912,7 +912,7 @@ func TestGetCatalog_V4Repo(t *testing.T) {
 		t.Fatalf("GetCatalog returned error: %v", err)
 	}
 	if resp.TotalClusters != 2 {
-		t.Errorf("TotalClusters = %d, want 2 (v4 clusters/*.yaml)", resp.TotalClusters)
+		t.Errorf("TotalClusters = %d, want 2 (v4 cluster-addons/*.yaml)", resp.TotalClusters)
 	}
 
 	byName := make(map[string]models.AddonCatalogItem)
@@ -952,7 +952,7 @@ func TestGetCatalog_V4Repo(t *testing.T) {
 		}
 	}
 	if prodDep == nil || prodDep.ConfiguredVersion != "1.12.0" {
-		t.Errorf("prod-eu cert-manager deployment = %+v, want ConfiguredVersion=1.12.0 (per-cluster pin from clusters/prod-eu.yaml)", prodDep)
+		t.Errorf("prod-eu cert-manager deployment = %+v, want ConfiguredVersion=1.12.0 (per-cluster pin from cluster-addons/prod-eu.yaml)", prodDep)
 	}
 	if stagingDep == nil || stagingDep.ConfiguredVersion != "1.14.5" {
 		t.Errorf("staging-us cert-manager deployment = %+v, want ConfiguredVersion=1.14.5 (no per-cluster pin — follows catalog default)", stagingDep)

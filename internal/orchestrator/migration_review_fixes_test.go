@@ -202,7 +202,7 @@ func TestMigrate_DanglingVersionPin_BecomesASwitchedOffEntry(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	body, ok := git.branchWrites["clusters/prod-eu.yaml"]
+	body, ok := git.branchWrites["cluster-addons/prod-eu.yaml"]
 	if !ok {
 		t.Fatal("no assignment file written for prod-eu")
 	}

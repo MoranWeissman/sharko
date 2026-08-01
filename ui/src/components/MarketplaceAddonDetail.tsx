@@ -558,7 +558,7 @@ export function MarketplaceAddonDetail({
   // v4 walk-findings W2, item 4 — when a cluster is picked in the optional
   // "Also enable on a cluster" selector, this sends the SAME combo payload
   // the cluster-side V4EnableAddonDialog sends: `enable_on_cluster` + one
-  // pull request touching both catalog.yaml and clusters/<name>.yaml.
+  // pull request touching both catalog.yaml and cluster-addons/<name>.yaml.
   // `yes: true` is only required (and only sent) on the real submit.
   const buildAddRequest = (dryRun: boolean) => {
     if (!entry) return null

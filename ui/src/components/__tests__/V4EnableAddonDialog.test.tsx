@@ -62,7 +62,7 @@ describe('V4EnableAddonDialog', () => {
     mockEnableAddonV4.mockResolvedValue({
       dry_run: {
         effective_addons: ['cert-manager'],
-        files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update', diff: '--- a\n+++ b\n' }],
+        files_to_write: [{ path: 'cluster-addons/prod-eu.yaml', action: 'update', diff: '--- a\n+++ b\n' }],
         pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
         secrets_to_create: [],
       },
@@ -72,7 +72,7 @@ describe('V4EnableAddonDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: /preview/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('clusters/prod-eu.yaml')).toBeInTheDocument();
+      expect(screen.getByText('cluster-addons/prod-eu.yaml')).toBeInTheDocument();
     });
     expect(mockEnableAddonV4).toHaveBeenCalledWith('prod-eu', 'cert-manager', { dry_run: true, values: undefined });
     // Confirm button appears once a clean preview is shown.
@@ -203,7 +203,7 @@ describe('V4EnableAddonDialog', () => {
       .mockResolvedValueOnce({
         dry_run: {
           effective_addons: ['cert-manager'],
-          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+          files_to_write: [{ path: 'cluster-addons/prod-eu.yaml', action: 'update' }],
           pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
           secrets_to_create: [],
         },
@@ -234,7 +234,7 @@ describe('V4EnableAddonDialog', () => {
       .mockResolvedValueOnce({
         dry_run: {
           effective_addons: ['cert-manager'],
-          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+          files_to_write: [{ path: 'cluster-addons/prod-eu.yaml', action: 'update' }],
           pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
           secrets_to_create: [],
         },
@@ -263,7 +263,7 @@ describe('V4EnableAddonDialog', () => {
       .mockResolvedValueOnce({
         dry_run: {
           effective_addons: ['cert-manager'],
-          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+          files_to_write: [{ path: 'cluster-addons/prod-eu.yaml', action: 'update' }],
           pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
           secrets_to_create: [],
         },
@@ -294,7 +294,7 @@ describe('V4EnableAddonDialog', () => {
     mockEnableAddonV4.mockResolvedValue({
       dry_run: {
         effective_addons: ['external-secrets'],
-        files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'create' }],
+        files_to_write: [{ path: 'cluster-addons/prod-eu.yaml', action: 'create' }],
         pr_title: 'sharko: enable addon external-secrets on cluster prod-eu',
         secrets_to_create: [],
       },
@@ -321,7 +321,7 @@ describe('V4EnableAddonDialog', () => {
       .mockResolvedValueOnce({
         dry_run: {
           effective_addons: ['external-secrets'],
-          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'create' }],
+          files_to_write: [{ path: 'cluster-addons/prod-eu.yaml', action: 'create' }],
           pr_title: 'sharko: enable addon external-secrets on cluster prod-eu',
           secrets_to_create: [],
         },
@@ -351,7 +351,7 @@ describe('V4EnableAddonDialog', () => {
     mockDisableAddonV4.mockResolvedValue({
       dry_run: {
         effective_addons: [],
-        files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+        files_to_write: [{ path: 'cluster-addons/prod-eu.yaml', action: 'update' }],
         pr_title: 'sharko: disable addon cert-manager on cluster prod-eu',
         secrets_to_create: [],
       },
@@ -432,7 +432,7 @@ describe('V4EnableAddonDialog', () => {
       mockEnableAddonV4.mockResolvedValue({
         dry_run: {
           effective_addons: ['cert-manager'],
-          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+          files_to_write: [{ path: 'cluster-addons/prod-eu.yaml', action: 'update' }],
           pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
           secrets_to_create: [],
         },
@@ -456,7 +456,7 @@ describe('V4EnableAddonDialog', () => {
       mockEnableAddonV4.mockResolvedValue({
         dry_run: {
           effective_addons: ['cert-manager'],
-          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+          files_to_write: [{ path: 'cluster-addons/prod-eu.yaml', action: 'update' }],
           pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
           secrets_to_create: [],
         },
@@ -510,7 +510,7 @@ describe('V4EnableAddonDialog', () => {
       mockEnableAddonV4.mockResolvedValue({
         dry_run: {
           effective_addons: ['cert-manager'],
-          files_to_write: [{ path: 'clusters/prod-eu.yaml', action: 'update' }],
+          files_to_write: [{ path: 'cluster-addons/prod-eu.yaml', action: 'update' }],
           pr_title: 'sharko: enable addon cert-manager on cluster prod-eu',
           secrets_to_create: [],
         },

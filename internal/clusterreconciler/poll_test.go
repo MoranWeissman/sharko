@@ -43,7 +43,7 @@ func (f *fakeGit) GetFileContent(_ context.Context, path, _ string) ([]byte, err
 	return nil, fmt.Errorf("fakeGit: %s: %w", path, gitprovider.ErrFileNotFound)
 }
 // ListDirectory is a real (if simple) implementation now that pollOnce
-// lists clusters/ on a v4 repo to derive addon labels. It returns the
+// lists cluster-addons/ on a v4 repo to derive addon labels. It returns the
 // basenames of entries directly under dir, sorted so a tick's behaviour is
 // deterministic. A directory with no entries reports ErrFileNotFound, which
 // is exactly what a git provider does for a path that does not exist —

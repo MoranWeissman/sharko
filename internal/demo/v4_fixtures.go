@@ -35,7 +35,7 @@ import (
 )
 
 // v4ClusterAddonPin is one (cluster, addon) pairing this fixture writes
-// into clusters/*.yaml, with the per-cluster version pin when there is one.
+// into cluster-addons/*.yaml, with the per-cluster version pin when there is one.
 type v4ClusterAddonPin struct {
 	name     string
 	version  string // "" means "no per-cluster pin — follow the catalog default"
@@ -121,7 +121,7 @@ func buildV4DemoFiles() (map[string][]byte, error) {
 	}
 	files[config.AddonCatalogPath] = catalogBytes
 
-	// ---- clusters/<name>.yaml (one ClusterAddons per cluster) ----
+	// ---- cluster-addons/<name>.yaml (one ClusterAddons per cluster) ----
 	//
 	// prod-eu carries the design doc's worked example verbatim (§6):
 	// cert-manager pinned to an older version with the webhook
@@ -187,7 +187,7 @@ func buildV4DemoFiles() (map[string][]byte, error) {
 		spec := models.ClusterAddonsSpec{Cluster: clusterName, Addons: addons}
 		body, err := models.SaveClusterAddons(spec)
 		if err != nil {
-			return nil, fmt.Errorf("rendering demo clusters/%s.yaml: %w", clusterName, err)
+			return nil, fmt.Errorf("rendering demo cluster-addons/%s.yaml: %w", clusterName, err)
 		}
 		files[orchestrator.V4ClustersDir+"/"+clusterName+".yaml"] = body
 	}
@@ -196,7 +196,7 @@ func buildV4DemoFiles() (map[string][]byte, error) {
 	//
 	// Same five clusters as the v3 configuration/managed-clusters.yaml,
 	// minus the addon on/off labels — v4 no longer authors those here
-	// (design doc §2.4); they're derived from clusters/*.yaml instead.
+	// (design doc §2.4); they're derived from cluster-addons/*.yaml instead.
 	connSpec := models.ManagedClustersSpec{
 		Clusters: []models.ManagedClusterEntry{
 			{Name: "prod-eu", Region: "eu-west-1", SecretPath: "k8s-prod-eu", CredsSource: "secret-kubeconfig"},

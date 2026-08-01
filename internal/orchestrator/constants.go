@@ -49,16 +49,17 @@ func BootstrapAppNames() []string {
 }
 
 // BootstrapRootAppPath is the canonical commit path of the ArgoCD root
-// application YAML in the GitOps repo: a root file called "engine.yaml".
-// The v4 seed (BuildV4SeedFiles) commits the engine pin at exactly this
-// path, and the API layer polls the same path to detect a successful PR
-// merge (isPRMerged) and to gate the already-initialized check
-// (repo_status.go, init_status.go).
+// application YAML in the GitOps repo: a root file called
+// "sharko-engine.yaml". The v4 seed (BuildV4SeedFiles) commits the engine
+// pin at exactly this path, and the API layer polls the same path to
+// detect a successful PR merge (isPRMerged) and to gate the
+// already-initialized check (repo_status.go, init_status.go).
 //
 // The folder went away with the rest of the v4 layout (design doc
 // 2026-07-31-catalog-approved-model.md §2) — one file needs no folder. The
-// word "engine" stayed, because it matches the published sharko-engine
-// chart this file pins.
+// name is "sharko-engine.yaml", not "engine.yaml" (v4 naming polish): it is
+// the ArgoCD Application that deploys the sharko-engine chart, so the file
+// name matches the chart it pins instead of the generic word "engine".
 //
 // This is the one file in the repo that is a REAL Kubernetes manifest: an
 // ArgoCD Application that actually gets applied to the hub cluster. So it
@@ -70,7 +71,7 @@ func BootstrapAppNames() []string {
 // two names because they answer two different questions (what bootstrap
 // writes vs. what the pin-bump machinery edits), but they MUST stay the
 // same literal value; enginepin_test.go pins the equality.
-const BootstrapRootAppPath = "engine.yaml"
+const BootstrapRootAppPath = "sharko-engine.yaml"
 
 // V3BootstrapMarkerPath is the file every v3 bootstrap PR wrote and every
 // v3 repo therefore still has: the bootstrap Helm chart's Chart.yaml. It

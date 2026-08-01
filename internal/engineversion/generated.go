@@ -7,7 +7,7 @@ package engineversion
 
 // BundledChartName is the sharko-engine chart's name, as declared in its
 // own Chart.yaml. Used to locate the engine chart's source block inside a
-// user's engine.yaml (the source with a matching 'chart:'
+// user's sharko-engine.yaml (the source with a matching 'chart:'
 // field is the engine pin; the second source in that file, the git values
 // ref, has no 'chart:' field at all — see
 // docs/design/2026-07-30-v4-data-file-format.md section 2.5).
@@ -17,5 +17,5 @@ const BundledChartName = "sharko-engine"
 // build of the Sharko server — i.e. the version Story 2.4's release
 // pipeline packages, pushes to the OCI registry, and cosign-signs
 // alongside this binary. The engine pin-bump check compares a repo's
-// pinned engine.yaml targetRevision against this constant.
-const BundledVersion = "0.3.0"
+// pinned sharko-engine.yaml targetRevision against this constant.
+const BundledVersion = "0.4.0"

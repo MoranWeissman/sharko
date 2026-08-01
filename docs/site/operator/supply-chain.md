@@ -66,7 +66,7 @@ If verification passes, pull it:
 helm pull oci://ghcr.io/moranweissman/sharko/sharko-engine --version ${ENGINE_VERSION} --untar
 ```
 
-This is the chart `engine.yaml` (the "engine pin" — see `docs/design/2026-07-30-v4-data-file-format.md` section 2.5, amended 2026-07-31) points ArgoCD at. You do not normally pull it by hand — ArgoCD does, from the `targetRevision` in that file — but pulling it yourself is how you inspect a version before bumping the pin, or render it locally against your own repo (`charts/sharko-engine/README.md`'s "Rendering locally" section).
+This is the chart `sharko-engine.yaml` (the "engine pin" — see `docs/design/2026-07-30-v4-data-file-format.md` section 2.5, amended 2026-07-31) points ArgoCD at. You do not normally pull it by hand — ArgoCD does, from the `targetRevision` in that file — but pulling it yourself is how you inspect a version before bumping the pin, or render it locally against your own repo (`charts/sharko-engine/README.md`'s "Rendering locally" section).
 
 ## Verifying release binaries
 

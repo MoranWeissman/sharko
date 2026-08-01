@@ -376,7 +376,7 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 // getCatalogV4 is GetCatalog's v4-repo branch. It builds the same
 // models.AddonCatalogResponse shape as the v3 branch (Marketplace/browse
 // surface — GET /addons/catalog), but sources per-cluster enablement from
-// clusters/*.yaml (kind ClusterAddons) instead of managed-clusters.yaml
+// cluster-addons/*.yaml (kind ClusterAddons) instead of managed-clusters.yaml
 // labels, and the addon set from the org's approved list
 // (catalog.BuildCatalogView over catalog.yaml) instead of
 // addons-catalog.yaml — mirroring getVersionMatrixV4 exactly, including the
@@ -388,7 +388,7 @@ func (s *AddonService) getCatalogV4(ctx context.Context, gp gitprovider.GitProvi
 
 	clusterAddons, err := listClusterAddonsSpecs(ctx, gp, s.branch())
 	if err != nil {
-		return nil, fmt.Errorf("reading clusters/*.yaml: %w", err)
+		return nil, fmt.Errorf("reading cluster-addons/*.yaml: %w", err)
 	}
 
 	approvedData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
@@ -567,12 +567,12 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 // health across all clusters.
 //
 // v4-repo detection (v4 Wave 1 Story 4.2): the presence of the engine pin
-// (orchestrator.EnginePinPath, "engine.yaml") on the base
+// (orchestrator.EnginePinPath, "sharko-engine.yaml") on the base
 // branch is the single signal Sharko already uses to distinguish a v4
 // repo from a v3 one — CheckEnginePin (internal/orchestrator/enginepin.go)
 // uses the identical probe for the same reason: "no pin found" is the
 // ordinary, non-error "not a v4 repo yet" case, never a hard failure. When
-// the pin is present, the matrix is built from clusters/*.yaml (kind
+// the pin is present, the matrix is built from cluster-addons/*.yaml (kind
 // ClusterAddons) and the org's approved list (catalog.yaml, with s.curated
 // supplying display fields for the entries the Marketplace recognises)
 // instead of managed-clusters.yaml labels and addons-catalog.yaml.
@@ -709,7 +709,7 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 }
 
 // getVersionMatrixV4 is GetVersionMatrix's v4-repo branch (v4 Wave 1 Story
-// 4.2). It reads clusters/*.yaml (kind ClusterAddons, one file per
+// 4.2). It reads cluster-addons/*.yaml (kind ClusterAddons, one file per
 // cluster — design doc §2.1) instead of managed-clusters.yaml labels, and
 // the org's catalog (catalog.yaml)
 // instead of addons-catalog.yaml. ArgoCD Application health is looked up by
@@ -721,7 +721,7 @@ func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.Gi
 
 	clusterAddons, err := listClusterAddonsSpecs(ctx, gp, s.branch())
 	if err != nil {
-		return nil, fmt.Errorf("reading clusters/*.yaml: %w", err)
+		return nil, fmt.Errorf("reading cluster-addons/*.yaml: %w", err)
 	}
 
 	approvedData, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.branch())
@@ -817,12 +817,12 @@ func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.Gi
 	}, nil
 }
 
-// listClusterAddonsSpecs lists clusters/*.yaml and parses each into a
+// listClusterAddonsSpecs lists cluster-addons/*.yaml and parses each into a
 // ClusterAddonsSpec, keyed by cluster name. An empty (or absent —
-// pre-first-cluster v4 repos have only clusters/.gitkeep) directory
+// pre-first-cluster v4 repos have only cluster-addons/.gitkeep) directory
 // returns an empty, non-nil map rather than an error.
 func listClusterAddonsSpecs(ctx context.Context, gp gitprovider.GitProvider, baseBranch string) (map[string]models.ClusterAddonsSpec, error) {
-	entries, err := gp.ListDirectory(ctx, "clusters", baseBranch)
+	entries, err := gp.ListDirectory(ctx, orchestrator.V4ClustersDir, baseBranch)
 	if err != nil {
 		if isGitFileNotFound(err) {
 			return map[string]models.ClusterAddonsSpec{}, nil
@@ -835,13 +835,13 @@ func listClusterAddonsSpecs(ctx context.Context, gp gitprovider.GitProvider, bas
 		if !strings.HasSuffix(name, ".yaml") {
 			continue // .gitkeep and any non-YAML entry
 		}
-		data, readErr := gp.GetFileContent(ctx, path.Join("clusters", name), baseBranch)
+		data, readErr := gp.GetFileContent(ctx, path.Join(orchestrator.V4ClustersDir, name), baseBranch)
 		if readErr != nil {
-			return nil, fmt.Errorf("reading clusters/%s: %w", name, readErr)
+			return nil, fmt.Errorf("reading %s/%s: %w", orchestrator.V4ClustersDir, name, readErr)
 		}
 		spec, parseErr := models.LoadClusterAddons(data)
 		if parseErr != nil {
-			return nil, fmt.Errorf("parsing clusters/%s: %w", name, parseErr)
+			return nil, fmt.Errorf("parsing %s/%s: %w", orchestrator.V4ClustersDir, name, parseErr)
 		}
 		out[spec.Cluster] = spec
 	}

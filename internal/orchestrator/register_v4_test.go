@@ -15,7 +15,7 @@ import (
 // per-cluster values file (that concept does not exist in v4 — values
 // live under values/global|clusters/, written by EnableAddonV4), and must
 // NOT author any addon labels on the connection record (v4 addon state
-// lives in clusters/<name>.yaml exclusively).
+// lives in cluster-addons/<name>.yaml exclusively).
 func TestRegisterCluster_V4Repo_WritesFleetConnectionsNoValuesFile(t *testing.T) {
 	git := newMockGitProvider()
 	git.files[EnginePinPath] = []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n")

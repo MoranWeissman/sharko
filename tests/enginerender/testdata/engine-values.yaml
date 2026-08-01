@@ -1,5 +1,5 @@
 # Fixture engine-values.yaml — stands in for what production sets via
-# `helm.parameters` on the engine pin, engine.yaml (design doc section 2.5).
+# `helm.parameters` on the engine pin, sharko-engine.yaml (design doc section 2.5).
 # No curated addon data here any more — decision 6 of the
 # 2026-07-31-catalog-approved-model design doc removed the chart's own baked
 # curated block entirely. catalog.yaml (this fixture directory's own

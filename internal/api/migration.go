@@ -297,7 +297,7 @@ func (s *Server) handleMigrateRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The reconciler derives the v4 addon labels from clusters/*.yaml, so
+	// The reconciler derives the v4 addon labels from cluster-addons/*.yaml, so
 	// nudge it — on an auto-merged migration the new files are already on
 	// the base branch and the fleet converges without waiting for the
 	// periodic tick.

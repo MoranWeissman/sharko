@@ -17,7 +17,7 @@ import (
 // names, valid "<addon>-<cluster>" ArgoCD Application names, and addon
 // counts — computed by EITHER the v3 branch (managed-clusters.yaml +
 // addons-catalog.yaml labels) or the v4 branch (managed-clusters.yaml +
-// clusters/*.yaml + the approved list in catalog.yaml), so the downstream
+// cluster-addons/*.yaml + the approved list in catalog.yaml), so the downstream
 // ArgoCD-side stats code (cluster connectivity, application sync/health,
 // bootstrap app) runs identically regardless of repo format (Wave 2
 // ride-along w2-q6 item 4).
@@ -152,7 +152,7 @@ func (s *DashboardService) gitStatsV3(ctx context.Context, gp gitprovider.GitPro
 }
 
 // gitStatsV4 computes gitDerivedDashboardStats from the v4 file shape
-// (managed-clusters.yaml for the cluster registry, clusters/*.yaml for
+// (managed-clusters.yaml for the cluster registry, cluster-addons/*.yaml for
 // per-cluster addon enablement, catalog.yaml for how many addons the org
 // approved) — the v4-aware counterpart the review flagged as missing (Wave
 // 2 ride-along w2-q6 item 4: "dashboard git-side stats v3-only"). Mirrors
@@ -199,11 +199,11 @@ func (s *DashboardService) gitStatsV4(ctx context.Context, gp gitprovider.GitPro
 	}
 	out.totalAvailable = len(catalog.BuildCatalogView(s.curated, approved))
 
-	// listClusterAddonsSpecs (addon.go, same package) lists clusters/*.yaml
+	// listClusterAddonsSpecs (addon.go, same package) lists cluster-addons/*.yaml
 	// and is already "missing dir means empty" tolerant.
 	clusterAddons, err := listClusterAddonsSpecs(ctx, gp, s.branch())
 	if err != nil {
-		return gitDerivedDashboardStats{}, fmt.Errorf("reading clusters/*.yaml: %w", err)
+		return gitDerivedDashboardStats{}, fmt.Errorf("reading cluster-addons/*.yaml: %w", err)
 	}
 	for clusterName, spec := range clusterAddons {
 		for addonName, addon := range spec.Addons {

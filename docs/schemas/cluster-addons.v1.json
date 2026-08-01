@@ -72,5 +72,5 @@
     "addons"
   ],
   "title": "Sharko ClusterAddons",
-  "description": "clusters/\u003ccluster-name\u003e.yaml — which addons run on this cluster, at which version, tuned how (v4)."
+  "description": "cluster-addons/\u003ccluster-name\u003e.yaml — which addons run on this cluster, at which version, tuned how (v4)."
 }

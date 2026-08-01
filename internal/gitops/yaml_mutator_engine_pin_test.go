@@ -2,7 +2,7 @@ package gitops
 
 // v4 Wave 1 Story 2.5 — pins the minimal-diff contract for
 // UpdateEnginePinVersion: the pin-bump PR must change ONLY the engine
-// chart's targetRevision line inside engine.yaml. Nothing
+// chart's targetRevision line inside sharko-engine.yaml. Nothing
 // else — not comments, not the git-values source's own targetRevision
 // (the branch, e.g. "main"), not formatting.
 

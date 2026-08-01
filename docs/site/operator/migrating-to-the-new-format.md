@@ -82,7 +82,7 @@ see it before you merge.
 **After the pull request merges:**
 
 4. Sharko removes the old ApplicationSets.
-5. Then it applies `engine.yaml`, which starts the new engine.
+5. Then it applies `sharko-engine.yaml`, which starts the new engine.
 
 The new engine creates its own ApplicationSets, which create Applications
 with **the same names as before** (`cert-manager-prod-eu`, and so on).

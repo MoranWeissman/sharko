@@ -7,7 +7,7 @@ import (
 
 // ResourceNamePattern is the ONE regular expression Sharko accepts for a
 // user-supplied cluster name or addon name — the two identifiers that get
-// pasted straight into a git file path (clusters/<name>.yaml,
+// pasted straight into a git file path (cluster-addons/<name>.yaml,
 // values/clusters/<cluster>/<addon>.yaml) and into a Kubernetes label key
 // (addons.sharko.dev/<addon>).
 //

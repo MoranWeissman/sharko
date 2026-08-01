@@ -26,7 +26,7 @@ import (
 // caller's line stays `if err := validateV4PathNames(...); err != nil { return }`.
 //
 // This is the request-edge half of the path-traversal fix. Both names land
-// verbatim in a git commit path (clusters/<cluster>.yaml,
+// verbatim in a git commit path (cluster-addons/<cluster>.yaml,
 // values/clusters/<cluster>/<addon>.yaml) and the addon name also becomes a
 // Kubernetes label key, so an unchecked "../.." would let a caller rewrite
 // any file in the repo — including the engine pin. Go 1.22's ServeMux
@@ -113,7 +113,7 @@ func writeV4OrchestratorError(w http.ResponseWriter, err error) {
 // handleEnableAddonV4 godoc
 //
 // @Summary Enable addon on cluster (v4 format)
-// @Description Enables an addon on a cluster by writing clusters/{name}.yaml (kind ClusterAddons) and, when values are supplied, values/clusters/{name}/{addon}.yaml — the v4 data-file format (design doc 2026-07-30-v4-data-file-format.md). Runs semantic validation BEFORE any branch or pull request exists: every required value the catalog entry declares must be present (in the supplied values or already on disk), and every secret the addon declares as needed to INSTALL must have a Sharko secret definition wired up. A validation failure returns 422 naming exactly what is missing, in plain English — nothing is written, not even a branch. Secrets the addon only needs at RUNTIME (required_for: runtime on the catalog entry) never block the install; a missing one is instead listed in the response's warnings field, both on a dry-run preview and on the real enable. Requires yes=true for confirmation (or dry_run=true to preview, which also runs validation first).
+// @Description Enables an addon on a cluster by writing cluster-addons/{name}.yaml (kind ClusterAddons) and, when values are supplied, values/clusters/{name}/{addon}.yaml — the v4 data-file format (design doc 2026-07-30-v4-data-file-format.md). Runs semantic validation BEFORE any branch or pull request exists: every required value the catalog entry declares must be present (in the supplied values or already on disk), and every secret the addon declares as needed to INSTALL must have a Sharko secret definition wired up. A validation failure returns 422 naming exactly what is missing, in plain English — nothing is written, not even a branch. Secrets the addon only needs at RUNTIME (required_for: runtime on the catalog entry) never block the install; a missing one is instead listed in the response's warnings field, both on a dry-run preview and on the real enable. Requires yes=true for confirmation (or dry_run=true to preview, which also runs validation first).
 // @Tags addons
 // @Accept json
 // @Produce json
@@ -201,7 +201,7 @@ func (s *Server) handleEnableAddonV4(w http.ResponseWriter, r *http.Request) {
 // handleDisableAddonV4 godoc
 //
 // @Summary Disable addon on cluster (v4 format)
-// @Description Disables an addon on a cluster by setting enabled=false in clusters/{name}.yaml (kind ClusterAddons) — the entry (and its version pin and settings) is KEPT by default so re-enabling is a one-word change; pass remove=true to delete the entry entirely instead. No semantic validation runs (disabling never needs required values or secrets). Requires yes=true for confirmation (or dry_run=true to preview).
+// @Description Disables an addon on a cluster by setting enabled=false in cluster-addons/{name}.yaml (kind ClusterAddons) — the entry (and its version pin and settings) is KEPT by default so re-enabling is a one-word change; pass remove=true to delete the entry entirely instead. No semantic validation runs (disabling never needs required values or secrets). Requires yes=true for confirmation (or dry_run=true to preview).
 // @Tags addons
 // @Accept json
 // @Produce json

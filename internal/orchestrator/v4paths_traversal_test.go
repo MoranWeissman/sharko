@@ -8,15 +8,15 @@ import (
 
 // traversalNames is the shared attack list: every shape a cluster or addon
 // name could take that would let path.Join's own cleaning walk the write
-// out of the v4 data folders. "../../engine.yaml" is the
-// confirmed exploit — path.Join("clusters", "../../engine.yaml"
-// + ".yaml") cleans to a path outside clusters/ entirely, so an
+// out of the v4 data folders. "../../sharko-engine.yaml" is the
+// confirmed exploit — path.Join("cluster-addons", "../../sharko-engine.yaml"
+// + ".yaml") cleans to a path outside cluster-addons/ entirely, so an
 // enable-addon call could have rewritten the engine pin.
 var traversalNames = []string{
 	"..",
 	"../evil",
 	"../../engine/application",
-	"../../engine.yaml",
+	"../../sharko-engine.yaml",
 	"a/../../b",
 	"nested/name",
 	`back\slash`,
@@ -48,8 +48,8 @@ func TestV4PathBuilders_RejectTraversalNames(t *testing.T) {
 
 func TestV4PathBuilders_AcceptOrdinaryNames(t *testing.T) {
 	got, err := v4ClusterAddonsPath("prod-eu")
-	if err != nil || got != "clusters/prod-eu.yaml" {
-		t.Errorf("v4ClusterAddonsPath(prod-eu) = (%q, %v), want (clusters/prod-eu.yaml, nil)", got, err)
+	if err != nil || got != "cluster-addons/prod-eu.yaml" {
+		t.Errorf("v4ClusterAddonsPath(prod-eu) = (%q, %v), want (cluster-addons/prod-eu.yaml, nil)", got, err)
 	}
 	got, err = v4GlobalValuesPath("cert-manager")
 	if err != nil || got != "values/global/cert-manager.yaml" {

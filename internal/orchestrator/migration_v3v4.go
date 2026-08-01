@@ -55,7 +55,7 @@ const RepoFormatMixed = "mixed"
 // MixedLayoutMessage is the plain-words explanation for RepoFormatMixed,
 // shared by the status surfaces and by the refusal every v4 write gives on
 // such a repo, so a person hears one story.
-const MixedLayoutMessage = "this repo has both the old and the new layout in it — engine.yaml is there, and so are the old v3 files. Finish the conversion or revert it: while both are present the engine reads one set of files and the cluster reconciler prefers the other, so they disagree about which clusters and addons are real. Sharko will not change your catalog or your clusters' addons until one of the two is gone."
+const MixedLayoutMessage = "this repo has both the old and the new layout in it — sharko-engine.yaml is there, and so are the old v3 files. Finish the conversion or revert it: while both are present the engine reads one set of files and the cluster reconciler prefers the other, so they disagree about which clusters and addons are real. Sharko will not change your catalog or your clusters' addons until one of the two is gone."
 
 // Migration file actions, as reported in a plan.
 const (
@@ -456,6 +456,11 @@ func (o *Orchestrator) buildMigration(ctx context.Context) (*migrationBuild, err
 	if err != nil {
 		return nil, fmt.Errorf("building %s: %w", config.AddonCatalogPath, err)
 	}
+	// v4 naming polish item 3: the migration always creates a brand-new
+	// catalog.yaml (there is no v4 catalog.yaml to preserve here, only the
+	// v3 addons-catalog.yaml it converts from) — so it always gets the
+	// plain-English header, same as the create path in catalog_yaml_edit.go.
+	catalogBody = append([]byte(catalogYAMLHeader), catalogBody...)
 	b.files[config.AddonCatalogPath] = catalogBody
 	b.convertedFrom[config.AddonCatalogPath] = paths.catalog
 
@@ -467,7 +472,7 @@ func (o *Orchestrator) buildMigration(ctx context.Context) (*migrationBuild, err
 		return nil, fmt.Errorf("the new catalog file would not be usable: %w", err)
 	}
 
-	// 4 — managed-clusters.yaml + one clusters/<name>.yaml per cluster.
+	// 4 — managed-clusters.yaml + one cluster-addons/<name>.yaml per cluster.
 	if err := o.buildV4ClusterFiles(b, clusters, catalogNames); err != nil {
 		return nil, err
 	}
@@ -564,7 +569,7 @@ func rejectDuplicateCatalogNames(entries []models.AddonCatalogEntry) error {
 }
 
 // buildV4ClusterFiles writes managed-clusters.yaml and one
-// clusters/<name>.yaml per cluster.
+// cluster-addons/<name>.yaml per cluster.
 //
 // The split is the heart of the format change (design doc §2.4): the
 // connection record keeps HOW Sharko reaches a cluster, and the assignment
@@ -607,7 +612,7 @@ func (o *Orchestrator) buildV4ClusterFiles(b *migrationBuild, clusters []models.
 					Version: value,
 				}
 				b.notes = append(b.notes, fmt.Sprintf(
-					"Cluster %q pinned %s to version %s but was not running it. The pin is kept in clusters/%s.yaml with the addon switched off, so turning it on later gives you that same version",
+					"Cluster %q pinned %s to version %s but was not running it. The pin is kept in cluster-addons/%s.yaml with the addon switched off, so turning it on later gives you that same version",
 					entry.Name, addon, value, entry.Name))
 				continue
 			}
@@ -644,6 +649,10 @@ func (o *Orchestrator) buildV4ClusterFiles(b *migrationBuild, clusters []models.
 		if err != nil {
 			return err
 		}
+		// v4 naming polish item 3: the migration always creates a brand-new
+		// cluster-addons/<name>.yaml — headers ride creation only, and this
+		// is a creation every time.
+		body = append([]byte(clusterAddonsFileHeader(entry.Name)), body...)
 		b.files[clusterPath] = body
 
 		// The invariant this whole story turns on: the set of addons
@@ -663,6 +672,10 @@ func (o *Orchestrator) buildV4ClusterFiles(b *migrationBuild, clusters []models.
 	if err != nil {
 		return fmt.Errorf("building %s: %w", V4ManagedClustersPath, err)
 	}
+	// v4 naming polish item 3: the migration always creates a brand-new
+	// managed-clusters.yaml (converted from the v3 registry) — headers ride
+	// creation only, and this is a creation every time.
+	connectionsBody = append([]byte(managedClustersFileHeader), connectionsBody...)
 	b.files[V4ManagedClustersPath] = connectionsBody
 	b.convertedFrom[V4ManagedClustersPath] = o.v3RegistryPath()
 	return nil
@@ -1103,8 +1116,8 @@ func migrationPRBody(b *migrationBuild) string {
 	sb.WriteString("This pull request moves the whole repository to Sharko's current file format.\n\n")
 	sb.WriteString("What changes:\n\n")
 	sb.WriteString("- The generated template files Sharko used to keep here are removed. The deploy logic they held now lives in Sharko's engine chart, which this repository points at with one file.\n")
-	sb.WriteString("- `engine.yaml` is added: that pointer, and the only moving part left.\n")
-	sb.WriteString("- Which addons run on which cluster moves into one file per cluster, under `clusters/`.\n")
+	sb.WriteString("- `sharko-engine.yaml` is added: that pointer, and the only moving part left.\n")
+	sb.WriteString("- Which addons run on which cluster moves into one file per cluster, under `cluster-addons/`.\n")
 	sb.WriteString("- How Sharko reaches each cluster moves to `managed-clusters.yaml`.\n")
 	sb.WriteString("- Helm values move under `values/` — one file per addon, per cluster where it differs.\n")
 	sb.WriteString("- The addon list becomes `catalog.yaml`: your full list of addons approved for this org, moved across whole — every chart, repo, version and setting your old catalog file had, still there, still yours to review here.\n")

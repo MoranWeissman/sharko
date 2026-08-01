@@ -116,7 +116,7 @@ func TestV4DemoProdEuMatchesWorkedExample(t *testing.T) {
 	}
 	body, ok := files[orchestrator.V4ClustersDir+"/prod-eu.yaml"]
 	if !ok {
-		t.Fatal("missing clusters/prod-eu.yaml")
+		t.Fatal("missing cluster-addons/prod-eu.yaml")
 	}
 	spec, err := models.LoadClusterAddons(body)
 	if err != nil {

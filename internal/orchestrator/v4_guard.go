@@ -74,7 +74,7 @@ var ErrMixedRepoLayout = errors.New("repo has both layouts")
 // repo.
 //
 // The two halves are read by different parts of Sharko: the engine renders
-// from catalog.yaml + clusters/*.yaml, while the cluster reconciler prefers
+// from catalog.yaml + cluster-addons/*.yaml, while the cluster reconciler prefers
 // configuration/managed-clusters.yaml whenever it exists. On a repo with
 // both, a catalog change lands in files the reconciler is not looking at,
 // and the person sees a merged pull request that changed nothing. Refusing
@@ -104,7 +104,7 @@ func (o *Orchestrator) refuseOnMixedLayout(ctx context.Context) error {
 const V4CatalogWriteDoor = `this repo keeps its approved addons in catalog.yaml, and the only way in is the approval pull request — use "Add to catalog" in the UI, or POST /api/v1/catalog/addons`
 
 // V4EnableDoor is the same pointer for switching an addon on or off.
-const V4EnableDoor = "this repo switches addons on per cluster in clusters/<cluster>.yaml — use POST /api/v1/v4/clusters/{cluster}/addons/{addon} (and the addon has to be in catalog.yaml first)"
+const V4EnableDoor = "this repo switches addons on per cluster in cluster-addons/<cluster>.yaml — use POST /api/v1/v4/clusters/{cluster}/addons/{addon} (and the addon has to be in catalog.yaml first)"
 
 // refuseV3ShapedWriteOnV4Repo is refuseOnV4Repo with a pointer at the door
 // that DOES work, for the operations that have a v4 replacement today.

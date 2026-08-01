@@ -163,7 +163,7 @@ kubectl -n argocd get applications -w
 The cluster reconciler (`internal/clusterreconciler`) is the single writer
 of addon labels on ArgoCD cluster Secrets. On this playground's v4 repo it
 converges cluster identity from `managed-clusters.yaml` and addon on/off
-state from `clusters/<name>.yaml` (both written via the real-doors flow
+state from `cluster-addons/<name>.yaml` (both written via the real-doors flow
 above, never by the playground directly), emitting labels of the form
 `addons.sharko.dev/<addon>: enabled`. ArgoCD's ApplicationSet reads those
 labels and deploys addons — Sharko stays a **guest on ArgoCD**: Sharko writes

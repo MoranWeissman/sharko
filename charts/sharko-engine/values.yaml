@@ -4,7 +4,7 @@
 # See docs/design/2026-07-30-v4-data-file-format.md for the render mechanics
 # and .bmad/output/architecture/2026-07-31-catalog-approved-model.md decision
 # 6 ("catalog = the approved list") for why this file carries no shipped
-# addon data of its own: the engine reads catalog.yaml + clusters/ + values/
+# addon data of its own: the engine reads catalog.yaml + cluster-addons/ + values/
 # from the user's own repo, nothing else. This file only carries what the
 # chart needs to render: where the user's GitOps repo is and the shared
 # AppProject name. Everything else — which addons even exist, which clusters
@@ -13,15 +13,15 @@
 # -----------------------------------------------------------------------------
 
 # repo points the engine at the user's own GitOps repo: the repo that holds
-# clusters/, catalog.yaml and values/. In production this is set via
-# `helm.parameters` on the engine pin (engine.yaml) — see design
+# cluster-addons/, catalog.yaml and values/. In production this is set via
+# `helm.parameters` on the engine pin (sharko-engine.yaml) — see design
 # doc section 2.5 — never hand-edited here. The values below are placeholders
 # so `helm lint` / `helm template` work standalone, against this chart alone.
 repo:
   # url is the git remote both generator arms read from: the git-files arm
-  # (clusters/<cluster>.yaml) and the `ref: values` source (values/**).
+  # (cluster-addons/<cluster>.yaml) and the `ref: values` source (values/**).
   url: https://github.com/example-org/fleet-gitops.git
-  # revision is the branch/tag clusters/, catalog.yaml, and values/ are read
+  # revision is the branch/tag cluster-addons/, catalog.yaml, and values/ are read
   # from. Almost always "main".
   revision: main
 
@@ -83,7 +83,7 @@ connectivityCheckOnly: false
 # self-referential connectivity-check Application source (see
 # connectivityCheckOnly above); nothing else in the chart reads it. In
 # production this is set via a Helm parameter on the engine pin
-# (engine.yaml), the same way repo.url/repo.revision are — see
+# (sharko-engine.yaml), the same way repo.url/repo.revision are — see
 # internal/orchestrator/bootstrap_v4.go's buildEnginePin, which passes the
 # exact same value used for the engine chart's own source.repoURL. The
 # value below is a placeholder so `helm lint` / `helm template` work

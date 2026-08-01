@@ -90,7 +90,7 @@ spec:
       source:
         # Self-referential: the exact chart/version this ApplicationSet
         # itself is running as. engineChart.repoURL is set on the real
-        # engine pin (engine.yaml) by internal/orchestrator/bootstrap_v4.go
+        # engine pin (sharko-engine.yaml) by internal/orchestrator/bootstrap_v4.go
         # buildEnginePin, mirroring how repo.url/repo.revision reach this
         # chart — see values.yaml for the placeholder used standalone.
         repoURL: {{ .Values.engineChart.repoURL }}

@@ -591,12 +591,12 @@ func TestPreviewMigration_ListsEveryFile(t *testing.T) {
 	}
 
 	wantWritten := map[string]string{
-		"engine.yaml":                                 "",
+		"sharko-engine.yaml":                          "",
 		"README.md":                                   "README.md",
 		"managed-clusters.yaml":                       "configuration/managed-clusters.yaml",
 		"catalog.yaml":                                "configuration/addons-catalog.yaml",
-		"clusters/prod-eu.yaml":                       "",
-		"clusters/staging-us.yaml":                    "",
+		"cluster-addons/prod-eu.yaml":                 "",
+		"cluster-addons/staging-us.yaml":              "",
 		"values/global/cert-manager.yaml":             "configuration/addons-global-values/cert-manager.yaml",
 		"values/clusters/prod-eu/cert-manager.yaml":   "configuration/addons-clusters-values/prod-eu.yaml",
 		"values/clusters/prod-eu/metrics-server.yaml": "configuration/addons-clusters-values/prod-eu.yaml",
@@ -734,9 +734,9 @@ func TestMigrate_FullConversion(t *testing.T) {
 	}
 
 	// The cluster assignment file.
-	spec, err := models.LoadClusterAddons(git.branchWrites["clusters/prod-eu.yaml"])
+	spec, err := models.LoadClusterAddons(git.branchWrites["cluster-addons/prod-eu.yaml"])
 	if err != nil {
-		t.Fatalf("clusters/prod-eu.yaml does not read back: %v", err)
+		t.Fatalf("cluster-addons/prod-eu.yaml does not read back: %v", err)
 	}
 	if spec.Cluster != "prod-eu" {
 		t.Errorf("spec.Cluster = %q, want prod-eu", spec.Cluster)

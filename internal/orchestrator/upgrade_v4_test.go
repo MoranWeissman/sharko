@@ -8,7 +8,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
-// seedClusterAddons writes an already-enabled clusters/<cluster>.yaml with
+// seedClusterAddons writes an already-enabled cluster-addons/<cluster>.yaml with
 // one addon entry at the given version, using the real
 // models.SaveClusterAddons writer so the fixture is byte-identical to what
 // EnableAddonV4 would have produced.
@@ -21,7 +21,7 @@ func seedClusterAddons(t *testing.T, git *mockGitProvider, cluster, addon, versi
 		},
 	})
 	if err != nil {
-		t.Fatalf("seeding clusters/%s.yaml: %v", cluster, err)
+		t.Fatalf("seeding cluster-addons/%s.yaml: %v", cluster, err)
 	}
 	git.files[assignPath(t, cluster)] = body
 }

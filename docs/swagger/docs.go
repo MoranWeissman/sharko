@@ -2067,7 +2067,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Writes one or more full addon entries into catalog.yaml and opens a pull request — the approval step, and the only way anything enters the org. Three shapes, one endpoint: ONE addon (a single-element ` + "`" + `addons` + "`" + ` list); MANY addons (several elements — still exactly ONE pull request, which is what the first-run wizard needs); and add-AND-enable (` + "`" + `enable_on_cluster` + "`" + ` set — one pull request touching catalog.yaml and clusters/\u003cname\u003e.yaml together, so the reviewer sees both halves in one diff and one merge makes both true). The add-and-enable shape REQUIRES ` + "`" + `yes: true` + "`" + `, the same confirmation the v4 enable endpoint asks for, because that half changes what runs on a real cluster; a catalog-only add needs no confirmation. Set ` + "`" + `from_marketplace: true` + "`" + ` on an entry to copy the chart location, default namespace and needed-secrets list out of the curated list; leave ` + "`" + `version` + "`" + ` empty there and the server fills in the newest version it knows for the chart (the same freshness data the version picker shows), so the resolved pin is visible in the pull-request diff — if Sharko has no version data for that chart you get a 422 with code ` + "`" + `version_required` + "`" + ` asking you to pick one. Nothing is written unless everything checks out: an unknown cluster, an entry with no chart location, or an addon whose required values are not set all fail before a branch exists.\nEvery 4xx body carries a machine-readable ` + "`" + `code` + "`" + ` next to the plain-English ` + "`" + `error` + "`" + `, so a client branches on the code and never on the message text. Codes: ` + "`" + `invalid_request` + "`" + ` (400); ` + "`" + `cluster_not_found` + "`" + ` (404); ` + "`" + `repo_layout` + "`" + ` (409 — the repo is still v3, or carries both layouts at once); and on 422 one of ` + "`" + `confirmation_required` + "`" + `, ` + "`" + `empty_catalog_file` + "`" + `, ` + "`" + `not_in_marketplace` + "`" + `, ` + "`" + `version_required` + "`" + `, ` + "`" + `incomplete_entry` + "`" + ` (with a ` + "`" + `problems` + "`" + ` array naming each missing piece), ` + "`" + `not_in_catalog` + "`" + `, or ` + "`" + `validation_failed` + "`" + ` (also with ` + "`" + `problems` + "`" + `). A 502 means a genuine upstream/git failure and carries no code.",
+                "description": "Writes one or more full addon entries into catalog.yaml and opens a pull request — the approval step, and the only way anything enters the org. Three shapes, one endpoint: ONE addon (a single-element ` + "`" + `addons` + "`" + ` list); MANY addons (several elements — still exactly ONE pull request, which is what the first-run wizard needs); and add-AND-enable (` + "`" + `enable_on_cluster` + "`" + ` set — one pull request touching catalog.yaml and cluster-addons/\u003cname\u003e.yaml together, so the reviewer sees both halves in one diff and one merge makes both true). The add-and-enable shape REQUIRES ` + "`" + `yes: true` + "`" + `, the same confirmation the v4 enable endpoint asks for, because that half changes what runs on a real cluster; a catalog-only add needs no confirmation. Set ` + "`" + `from_marketplace: true` + "`" + ` on an entry to copy the chart location, default namespace and needed-secrets list out of the curated list; leave ` + "`" + `version` + "`" + ` empty there and the server fills in the newest version it knows for the chart (the same freshness data the version picker shows), so the resolved pin is visible in the pull-request diff — if Sharko has no version data for that chart you get a 422 with code ` + "`" + `version_required` + "`" + ` asking you to pick one. Nothing is written unless everything checks out: an unknown cluster, an entry with no chart location, or an addon whose required values are not set all fail before a branch exists.\nEvery 4xx body carries a machine-readable ` + "`" + `code` + "`" + ` next to the plain-English ` + "`" + `error` + "`" + `, so a client branches on the code and never on the message text. Codes: ` + "`" + `invalid_request` + "`" + ` (400); ` + "`" + `cluster_not_found` + "`" + ` (404); ` + "`" + `repo_layout` + "`" + ` (409 — the repo is still v3, or carries both layouts at once); and on 422 one of ` + "`" + `confirmation_required` + "`" + `, ` + "`" + `empty_catalog_file` + "`" + `, ` + "`" + `not_in_marketplace` + "`" + `, ` + "`" + `version_required` + "`" + `, ` + "`" + `incomplete_entry` + "`" + ` (with a ` + "`" + `problems` + "`" + ` array naming each missing piece), ` + "`" + `not_in_catalog` + "`" + `, or ` + "`" + `validation_failed` + "`" + ` (also with ` + "`" + `problems` + "`" + `). A 502 means a genuine upstream/git failure and carries no code.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5430,7 +5430,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Compares the engine chart version pinned in the connected repo's engine.yaml against the version bundled with this Sharko build. Responds cleanly (v4_repo=false) for v3 repos or repos not yet bootstrapped — never errors on a missing pin.",
+                "description": "Compares the engine chart version pinned in the connected repo's sharko-engine.yaml against the version bundled with this Sharko build. Responds cleanly (v4_repo=false) for v3 repos or repos not yet bootstrapped — never errors on a missing pin.",
                 "produces": [
                     "application/json"
                 ],
@@ -7118,7 +7118,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Checks whether the GitOps repository has been bootstrapped (the engine pin at engine.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present.",
+                "description": "Checks whether the GitOps repository has been bootstrapped (the engine pin at sharko-engine.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present.",
                 "produces": [
                     "application/json"
                 ],
@@ -8466,7 +8466,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Enables an addon on a cluster by writing clusters/{name}.yaml (kind ClusterAddons) and, when values are supplied, values/clusters/{name}/{addon}.yaml — the v4 data-file format (design doc 2026-07-30-v4-data-file-format.md). Runs semantic validation BEFORE any branch or pull request exists: every required value the catalog entry declares must be present (in the supplied values or already on disk), and every secret the addon declares as needed to INSTALL must have a Sharko secret definition wired up. A validation failure returns 422 naming exactly what is missing, in plain English — nothing is written, not even a branch. Secrets the addon only needs at RUNTIME (required_for: runtime on the catalog entry) never block the install; a missing one is instead listed in the response's warnings field, both on a dry-run preview and on the real enable. Requires yes=true for confirmation (or dry_run=true to preview, which also runs validation first).",
+                "description": "Enables an addon on a cluster by writing cluster-addons/{name}.yaml (kind ClusterAddons) and, when values are supplied, values/clusters/{name}/{addon}.yaml — the v4 data-file format (design doc 2026-07-30-v4-data-file-format.md). Runs semantic validation BEFORE any branch or pull request exists: every required value the catalog entry declares must be present (in the supplied values or already on disk), and every secret the addon declares as needed to INSTALL must have a Sharko secret definition wired up. A validation failure returns 422 naming exactly what is missing, in plain English — nothing is written, not even a branch. Secrets the addon only needs at RUNTIME (required_for: runtime on the catalog entry) never block the install; a missing one is instead listed in the response's warnings field, both on a dry-run preview and on the real enable. Requires yes=true for confirmation (or dry_run=true to preview, which also runs validation first).",
                 "consumes": [
                     "application/json"
                 ],
@@ -8559,7 +8559,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Disables an addon on a cluster by setting enabled=false in clusters/{name}.yaml (kind ClusterAddons) — the entry (and its version pin and settings) is KEPT by default so re-enabling is a one-word change; pass remove=true to delete the entry entirely instead. No semantic validation runs (disabling never needs required values or secrets). Requires yes=true for confirmation (or dry_run=true to preview).",
+                "description": "Disables an addon on a cluster by setting enabled=false in cluster-addons/{name}.yaml (kind ClusterAddons) — the entry (and its version pin and settings) is KEPT by default so re-enabling is a one-word change; pass remove=true to delete the entry entirely instead. No semantic validation runs (disabling never needs required values or secrets). Requires yes=true for confirmation (or dry_run=true to preview).",
                 "consumes": [
                     "application/json"
                 ],
@@ -9883,7 +9883,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "enable_on_cluster": {
-                    "description": "EnableOnCluster, when set, also switches every addon in this request\non for that cluster — one pull request touching catalog.yaml and\nclusters/\u003cname\u003e.yaml together. Empty means catalog only.",
+                    "description": "EnableOnCluster, when set, also switches every addon in this request\non for that cluster — one pull request touching catalog.yaml and\ncluster-addons/\u003cname\u003e.yaml together. Empty means catalog only.",
                     "type": "string"
                 },
                 "yes": {
@@ -10216,7 +10216,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "remove": {
-                    "description": "Remove, when true, deletes the addon's entry from clusters/\u003ccluster\u003e.yaml\nentirely instead of keeping it with enabled=false. Design doc §2.1\nrecommends keeping the entry (a one-word re-enable later); Remove\nexists for the rare \"actually forget this addon on this cluster\"\ncase.",
+                    "description": "Remove, when true, deletes the addon's entry from cluster-addons/\u003ccluster\u003e.yaml\nentirely instead of keeping it with enabled=false. Design doc §2.1\nrecommends keeping the entry (a one-word re-enable later); Remove\nexists for the rare \"actually forget this addon on this cluster\"\ncase.",
                     "type": "boolean"
                 },
                 "yes": {
@@ -10361,7 +10361,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "pinned_version": {
-                    "description": "PinnedVersion is the version currently pinned in the repo's\nengine.yaml. Empty when V4Repo is false.",
+                    "description": "PinnedVersion is the version currently pinned in the repo's\nsharko-engine.yaml. Empty when V4Repo is false.",
                     "type": "string"
                 },
                 "upgrade_available": {
@@ -10369,7 +10369,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "v4_repo": {
-                    "description": "V4Repo is false when engine.yaml does not exist in the\nconnected repo — a v3 repo, or a v4 repo that has not been\nbootstrapped yet. Every other field is the zero value in that case.\nThis is NOT an error condition (story brief: \"v3 repos: the check\nmust respond cleanly ... never error\").",
+                    "description": "V4Repo is false when sharko-engine.yaml does not exist in the\nconnected repo — a v3 repo, or a v4 repo that has not been\nbootstrapped yet. Every other field is the zero value in that case.\nThis is NOT an error condition (story brief: \"v3 repos: the check\nmust respond cleanly ... never error\").",
                     "type": "boolean"
                 }
             }
@@ -10683,7 +10683,7 @@ const docTemplate = `{
                     }
                 },
                 "engine_applied": {
-                    "description": "EngineApplied reports whether engine.yaml has been\nhanded to ArgoCD.",
+                    "description": "EngineApplied reports whether sharko-engine.yaml has been\nhanded to ArgoCD.",
                     "type": "boolean"
                 },
                 "message": {
@@ -10777,7 +10777,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "version": {
-                    "description": "Version is the new pin, written identically to every selected\ncluster's clusters/\u003ccluster\u003e.yaml. Required and non-empty — this\nendpoint always sets an explicit pin; use DisableAddonV4/\nEnableAddonV4(version: nil) to remove a pin and fall back to the\ncatalog default.",
+                    "description": "Version is the new pin, written identically to every selected\ncluster's cluster-addons/\u003ccluster\u003e.yaml. Required and non-empty — this\nendpoint always sets an explicit pin; use DisableAddonV4/\nEnableAddonV4(version: nil) to remove a pin and fall back to the\ncatalog default.",
                     "type": "string"
                 },
                 "yes": {

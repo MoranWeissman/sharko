@@ -597,7 +597,7 @@ func TestGetRecommendations_BuildCardsRejectsDowngradeLatest(t *testing.T) {
 }
 
 // --- v4 Wave 2 Epic 7 Story 7.3: ListVersions/CheckUpgrade/GetRecommendations
-// re-pointed to the v4 data model (clusters/*.yaml + catalog/addons.yaml)
+// re-pointed to the v4 data model (cluster-addons/*.yaml + catalog/addons.yaml)
 // instead of the v3 addons-catalog.yaml / managed-clusters.yaml /
 // configuration/addons-*-values files. ---
 
@@ -762,14 +762,14 @@ func TestCheckUpgrade_V4Repo_ConflictsUseV4Paths(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("seeding clusters/prod-eu.yaml: %v", err)
+		t.Fatalf("seeding cluster-addons/prod-eu.yaml: %v", err)
 	}
 
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
 			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
 			config.AddonCatalogPath: v4DeltaYAML(t, addon, helmSrv.URL, chart, "1.12.0"),
-			"clusters/prod-eu.yaml":      prodEU,
+			"cluster-addons/prod-eu.yaml":      prodEU,
 			fmt.Sprintf("%s/%s/%s.yaml", orchestrator.V4ClusterValuesDir, "prod-eu", addon): []byte("replicaCount: 3\n"),
 			// v3 paths ALSO present, with a configured value that would
 			// ALSO conflict — if the v3 branch ran by mistake this would

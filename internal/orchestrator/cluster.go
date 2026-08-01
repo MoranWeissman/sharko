@@ -561,7 +561,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// combined per-cluster values file (that concept doesn't exist in v4;
 	// values live under values/global|clusters/, written by
 	// EnableAddonV4), and no addon on/off labels (those live in
-	// clusters/<name>.yaml, design doc §2.4 "Sharko no longer authors
+	// cluster-addons/<name>.yaml, design doc §2.4 "Sharko no longer authors
 	// addon keys here"). Any req.Addons supplied on a v4 registration
 	// request is intentionally ignored — enable each addon afterward via
 	// EnableAddonV4, which runs its own semantic validation.
@@ -684,6 +684,13 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		files[valuesPath] = valuesContent
 	}
 	if updatedClusterAddons != nil {
+		// v4 naming polish item 3: the first time Sharko creates
+		// managed-clusters.yaml for a repo, it opens with a plain-English
+		// header. !clusterAddonsExists here means the file was genuinely
+		// absent before this write — headers ride creation only.
+		if v4Repo && !clusterAddonsExists {
+			updatedClusterAddons = append([]byte(managedClustersFileHeader), updatedClusterAddons...)
+		}
 		files[clusterAddonsPath] = updatedClusterAddons
 	}
 
@@ -872,7 +879,7 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 		Cluster: ClusterResult{Name: name, Server: serverURL, Addons: addons},
 	}
 
-	// v4 repos record addon on/off in clusters/<name>.yaml, not as labels
+	// v4 repos record addon on/off in cluster-addons/<name>.yaml, not as labels
 	// in the cluster registry — this handler writes the v3 registry, which
 	// on a v4 repo would create a rival file and orphan the fleet (see
 	// ErrV4RepoUnsupported). The v4 route for the same intent is

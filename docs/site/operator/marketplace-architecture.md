@@ -46,7 +46,7 @@ bootstrap, not just after you've cleaned things up.
 
 Being in the Catalog does not mean an addon is running anywhere. A cluster
 only runs an addon once someone enables it there, which writes an entry to
-that cluster's own `clusters/<name>.yaml` file. **Enabling now requires
+that cluster's own `cluster-addons/<name>.yaml` file. **Enabling now requires
 catalog membership** — you cannot turn an addon on for a cluster unless
 it is already in `catalog.yaml`. From the Marketplace, "add to catalog and
 enable on this cluster" is offered as a single pull request that touches

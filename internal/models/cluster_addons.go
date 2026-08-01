@@ -9,13 +9,13 @@ import (
 )
 
 // ClusterAddonsSchemaHeader is the yaml-language-server header line
-// written as the first line of every Sharko-emitted clusters/<name>.yaml
+// written as the first line of every Sharko-emitted cluster-addons/<name>.yaml
 // file. Mirrors ManagedClustersSchemaHeader's pattern.
 const ClusterAddonsSchemaHeader = "# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/cluster-addons.v1.json"
 
 // ClusterAddonsAddonSettings is the PER-APPLICATION tier of the v1
 // settings schema (docs/design/2026-07-30-v4-data-file-format.md §3.2) as
-// it appears inside a clusters/<name>.yaml file: six of the seven v1
+// it appears inside a cluster-addons/<name>.yaml file: six of the seven v1
 // settings fields — every one EXCEPT PreserveResourcesOnDeletion.
 //
 // PreserveResourcesOnDeletion is deliberately NOT a field on this struct.
@@ -24,7 +24,7 @@ const ClusterAddonsSchemaHeader = "# yaml-language-server: $schema=https://raw.g
 // runs it), so it cannot vary per cluster. This struct's absence of the
 // field is the enforcement mechanism: invopop/jsonschema defaults every
 // reflected struct to `additionalProperties: false`, so a hand-authored
-// clusters/*.yaml with `settings.preserveResourcesOnDeletion` fails JSON
+// cluster-addons/*.yaml with `settings.preserveResourcesOnDeletion` fails JSON
 // Schema validation outright (belt) — cmd/sharko's validate-config CLI
 // additionally detects this specific key ahead of the generic schema
 // error and reports the contract's plain-English redirect to
@@ -83,7 +83,7 @@ type ClusterAddonsAddon struct {
 	Settings *ClusterAddonsAddonSettings `json:"settings,omitempty" yaml:"settings,omitempty"`
 }
 
-// ClusterAddonsSpec is the spec block of a clusters/<cluster-name>.yaml
+// ClusterAddonsSpec is the spec block of a cluster-addons/<cluster-name>.yaml
 // envelope (kind: ClusterAddons). One file per cluster; the file name
 // (minus .yaml) MUST equal Cluster — that invariant is enforced by
 // cmd/sharko's validate-config CLI (which has the file path in hand),
@@ -104,7 +104,7 @@ type ClusterAddonsSpec struct {
 const clusterAddonsLabel = "cluster assignment"
 
 // LoadClusterAddons parses the on-disk bytes of a
-// clusters/<cluster-name>.yaml document and returns its spec.
+// cluster-addons/<cluster-name>.yaml document and returns its spec.
 //
 // FLAT only: apiVersion + kind + cluster: and addons: at the top level, no
 // spec: wrapper (design doc 2026-07-31-catalog-approved-model.md §9).
@@ -133,10 +133,10 @@ func LoadClusterAddons(body []byte) (ClusterAddonsSpec, error) {
 	return spec, nil
 }
 
-// SaveClusterAddons renders spec as a clusters/<cluster-name>.yaml
+// SaveClusterAddons renders spec as a cluster-addons/<cluster-name>.yaml
 // document: apiVersion, kind, then cluster: and addons: at the top level.
 //
-// The file's identity is its NAME on disk — clusters/prod-eu.yaml is the
+// The file's identity is its NAME on disk — cluster-addons/prod-eu.yaml is the
 // cluster called prod-eu — with spec.cluster inside repeating it so a
 // mismatch is catchable. There is no metadata.name to keep in step with
 // either of them any more, which is one fewer place for the three to

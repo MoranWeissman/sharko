@@ -478,7 +478,7 @@ func (s *UpgradeService) checkClusterConflictsV3(ctx context.Context, addonName,
 
 // checkClusterConflictsV4 is CheckUpgrade's v4 per-cluster conflict pass
 // (v4 Wave 2 Epic 7 Story 7.3) — the re-pointed counterpart of
-// checkClusterConflictsV3: clusters/*.yaml (kind ClusterAddons) decides
+// checkClusterConflictsV3: cluster-addons/*.yaml (kind ClusterAddons) decides
 // which clusters run the addon (design doc §2.1), and
 // values/clusters/<cluster>/<addon>.yaml holds that cluster's override
 // values (design doc §2.2), instead of managed-clusters.yaml labels and
@@ -491,7 +491,7 @@ func (s *UpgradeService) checkClusterConflictsV4(ctx context.Context, addonName,
 
 	clusterAddons, err := listClusterAddonsSpecs(ctx, gp, s.branch())
 	if err != nil {
-		log.Warn("could not list clusters/*.yaml", "error", err)
+		log.Warn("could not list cluster-addons/*.yaml", "error", err)
 		return out
 	}
 

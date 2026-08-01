@@ -387,8 +387,8 @@ func TestAddToCatalog_WarnsWhenItHadToRewrite(t *testing.T) {
 }
 
 // TestAddToCatalog_RefusesHalfConvertedRepo is review F4: a repo carrying
-// engine.yaml AND the old v3 files writes into the half nothing reads, so
-// nothing is written at all.
+// sharko-engine.yaml AND the old v3 files writes into the half nothing
+// reads, so nothing is written at all.
 func TestAddToCatalog_RefusesHalfConvertedRepo(t *testing.T) {
 	git := newMockGitProvider()
 	git.files[EnginePinPath] = []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n")

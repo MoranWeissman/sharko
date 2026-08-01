@@ -11,7 +11,7 @@
 // staging-us; cert-manager pinned older on prod-eu with a webhook ignore-diff
 // quirk; metrics-server everywhere on the catalog default.
 // testdata/engine-values.yaml plus testdata/catalog.yaml are exactly the two
-// Helm values sources the real engine pin (engine.yaml) would pass at render
+// Helm values sources the real engine pin (sharko-engine.yaml) would pass at render
 // time (design doc sections 2.5 / decision D6): repo/host/project plumbing,
 // then the org's own catalog.yaml — now the ONLY source of addon
 // definitions, since decision 6 removed the chart's baked curated block
@@ -30,9 +30,9 @@
 //   - NOT proven here: that a live ArgoCD controller actually resolves
 //     those round-two `dig` calls to 1.12.0 on prod-eu and 1.14.5 on
 //     staging-us. That requires a running ApplicationSet controller
-//     (Sprig included) reading testdata/clusters/*.yaml over git — out of
+//     (Sprig included) reading testdata/cluster-addons/*.yaml over git — out of
 //     reach for a Go unit test, and explicitly deferred to the live
-//     playground per the story brief. testdata/clusters/*.yaml is
+//     playground per the story brief. testdata/cluster-addons/*.yaml is
 //     asserted directly instead (TestEngineChartFixtureClusterAddons)
 //     to prove the DATA side matches the worked example exactly, so the
 //     only unverified step is ArgoCD's own (already-documented) Sprig
@@ -343,7 +343,7 @@ func TestEngineChartTemplatePatchSettingsPassthrough(t *testing.T) {
 }
 
 // TestEngineChartFixtureClusterAddons asserts the fixture repo's
-// clusters/*.yaml files match the design doc's worked example (section 6)
+// cluster-addons/*.yaml files match the design doc's worked example (section 6)
 // exactly, in the flat shape (decision 9 — no `metadata:`/`spec:` wrapper):
 // prod-eu pins cert-manager older with the webhook ignore-diff quirk,
 // staging-us has no override, both enable metrics-server on the catalog
@@ -366,16 +366,16 @@ func TestEngineChartFixtureClusterAddons(t *testing.T) {
 
 	load := func(name string) clusterAddons {
 		t.Helper()
-		data, err := os.ReadFile(filepath.Join(dataDir, "clusters", name+".yaml"))
+		data, err := os.ReadFile(filepath.Join(dataDir, "cluster-addons", name+".yaml"))
 		if err != nil {
-			t.Fatalf("failed to read clusters/%s.yaml: %v", name, err)
+			t.Fatalf("failed to read cluster-addons/%s.yaml: %v", name, err)
 		}
 		var ca clusterAddons
 		if err := yaml.Unmarshal(data, &ca); err != nil {
-			t.Fatalf("clusters/%s.yaml is not valid YAML: %v", name, err)
+			t.Fatalf("cluster-addons/%s.yaml is not valid YAML: %v", name, err)
 		}
 		if ca.Cluster != name {
-			t.Errorf("clusters/%s.yaml: cluster = %q, want %q (design doc section 2.1 — file name must equal the in-file cluster field)", name, ca.Cluster, name)
+			t.Errorf("cluster-addons/%s.yaml: cluster = %q, want %q (design doc section 2.1 — file name must equal the in-file cluster field)", name, ca.Cluster, name)
 		}
 		return ca
 	}
@@ -383,36 +383,36 @@ func TestEngineChartFixtureClusterAddons(t *testing.T) {
 	prodEU := load("prod-eu")
 	cm, ok := prodEU.Addons["cert-manager"]
 	if !ok || !cm.Enabled {
-		t.Fatalf("clusters/prod-eu.yaml: cert-manager must be enabled")
+		t.Fatalf("cluster-addons/prod-eu.yaml: cert-manager must be enabled")
 	}
 	if cm.Version != "1.12.0" {
-		t.Errorf("clusters/prod-eu.yaml: cert-manager version = %q, want %q (the worked example's per-cluster pin)", cm.Version, "1.12.0")
+		t.Errorf("cluster-addons/prod-eu.yaml: cert-manager version = %q, want %q (the worked example's per-cluster pin)", cm.Version, "1.12.0")
 	}
 	if cm.Settings == nil || cm.Settings["ignoreDifferences"] == nil {
-		t.Errorf("clusters/prod-eu.yaml: cert-manager is missing the webhook ignoreDifferences quirk from the worked example")
+		t.Errorf("cluster-addons/prod-eu.yaml: cert-manager is missing the webhook ignoreDifferences quirk from the worked example")
 	}
 	ms, ok := prodEU.Addons["metrics-server"]
 	if !ok || !ms.Enabled {
-		t.Fatalf("clusters/prod-eu.yaml: metrics-server must be enabled")
+		t.Fatalf("cluster-addons/prod-eu.yaml: metrics-server must be enabled")
 	}
 	if ms.Version != "" {
-		t.Errorf("clusters/prod-eu.yaml: metrics-server must have no version override (follows the catalog default), got %q", ms.Version)
+		t.Errorf("cluster-addons/prod-eu.yaml: metrics-server must have no version override (follows the catalog default), got %q", ms.Version)
 	}
 
 	stagingUS := load("staging-us")
 	cm2, ok := stagingUS.Addons["cert-manager"]
 	if !ok || !cm2.Enabled {
-		t.Fatalf("clusters/staging-us.yaml: cert-manager must be enabled")
+		t.Fatalf("cluster-addons/staging-us.yaml: cert-manager must be enabled")
 	}
 	if cm2.Version != "" {
-		t.Errorf("clusters/staging-us.yaml: cert-manager must have no version override (follows the catalog default 1.14.5), got %q", cm2.Version)
+		t.Errorf("cluster-addons/staging-us.yaml: cert-manager must have no version override (follows the catalog default 1.14.5), got %q", cm2.Version)
 	}
 	if cm2.Settings != nil && cm2.Settings["ignoreDifferences"] != nil {
-		t.Errorf("clusters/staging-us.yaml: cert-manager must NOT carry the prod-eu-only webhook quirk")
+		t.Errorf("cluster-addons/staging-us.yaml: cert-manager must NOT carry the prod-eu-only webhook quirk")
 	}
 	ms2, ok := stagingUS.Addons["metrics-server"]
 	if !ok || !ms2.Enabled {
-		t.Fatalf("clusters/staging-us.yaml: metrics-server must be enabled")
+		t.Fatalf("cluster-addons/staging-us.yaml: metrics-server must be enabled")
 	}
 }
 
@@ -524,7 +524,7 @@ func TestEngineChartConnectivityCheckAppSetRendersByDefault(t *testing.T) {
 		"sharko.dev/connectivity-check: enabled",
 		"repoURL: ghcr.io/example-org/sharko-engine", // chart default (values.yaml) — testdata/engine-values.yaml does not override engineChart.repoURL
 		"chart: sharko-engine",
-		"targetRevision: 0.3.0",
+		"targetRevision: 0.4.0",
 		"name: connectivityCheckOnly",
 		`value: "true"`,
 		"namespace: sharko-connectivity",

@@ -7,8 +7,8 @@
 // anything". Both end with the same two v4 files in the repo, written
 // through a real pull request:
 //
-//   - managed-clusters.yaml — the cluster's entry in Sharko's fleet
-//   - clusters/<name>.yaml   — the cluster's addon assignment file
+//   - managed-clusters.yaml       — the cluster's entry in Sharko's fleet
+//   - cluster-addons/<name>.yaml  — the cluster's addon assignment file
 //
 // The addon file is created EMPTY. A takeover deliberately turns nothing
 // on: whatever is running on the cluster today keeps running exactly as it
@@ -59,7 +59,7 @@ type TakeoverGitResult struct {
 // it, and quietly writing the v3 registry instead would leave the operator
 // with a cluster that neither format fully describes.
 var ErrTakeoverNeedsV4Repo = fmt.Errorf(
-	"taking over a cluster writes the v4 files (managed-clusters.yaml and clusters/<name>.yaml), and this repo is still in the older format — migrate the repo first, then take the cluster over")
+	"taking over a cluster writes the v4 files (managed-clusters.yaml and cluster-addons/<name>.yaml), and this repo is still in the older format — migrate the repo first, then take the cluster over")
 
 // TakeoverClusterGit writes the two v4 files that make a cluster part of
 // Sharko's fleet, via a pull request. It is idempotent: a cluster already
@@ -75,7 +75,7 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 		return nil, fmt.Errorf("cluster name is required")
 	}
 	// Resolve the commit path before anything else, so a name that could
-	// climb out of the clusters/ folder fails with a plain-English message
+	// climb out of the cluster-addons/ folder fails with a plain-English message
 	// and zero side effects.
 	clusterPath, err := v4ClusterAddonsPath(req.Name)
 	if err != nil {
@@ -105,6 +105,7 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 	if !connectionsExists || len(connectionsData) == 0 {
 		connectionsData = []byte("clusters:\n")
 	}
+	managedClustersIsNew := !connectionsExists
 
 	// Is the cluster already in the fleet record? Checked before the write
 	// so the result can say so honestly rather than reporting a no-op diff
@@ -119,13 +120,18 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 	}
 
 	// The fleet entry carries no addon labels: in v4 those live in
-	// clusters/<name>.yaml, and a takeover enables nothing anyway.
+	// cluster-addons/<name>.yaml, and a takeover enables nothing anyway.
 	updatedConnections, addErr := gitops.AddClusterEntry(connectionsData, gitops.ClusterEntryInput{
 		Name:   req.Name,
 		Region: req.Region,
 	})
 	if addErr != nil {
 		return nil, fmt.Errorf("adding %q to %s: %w", req.Name, V4ManagedClustersPath, addErr)
+	}
+	// v4 naming polish item 3: managed-clusters.yaml was genuinely absent
+	// before this write — headers ride creation only.
+	if managedClustersIsNew {
+		updatedConnections = append([]byte(managedClustersFileHeader), updatedConnections...)
 	}
 
 	existingClusterAddons, clusterAddonsExists, addonsReadErr := o.readFileForRewrite(ctx, clusterPath)
@@ -144,6 +150,9 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 		if err != nil {
 			return nil, fmt.Errorf("rendering %s: %w", clusterPath, err)
 		}
+		// v4 naming polish item 3: this file is genuinely new — headers
+		// ride creation only.
+		updatedClusterAddons = append([]byte(clusterAddonsFileHeader(req.Name)), updatedClusterAddons...)
 	}
 
 	if req.DryRun {

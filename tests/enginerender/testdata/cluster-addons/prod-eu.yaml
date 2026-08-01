@@ -1,4 +1,4 @@
-# Fixture clusters/prod-eu.yaml — ClusterAddons, flat (decision 9 of
+# Fixture cluster-addons/prod-eu.yaml — ClusterAddons, flat (decision 9 of
 # .bmad/output/architecture/2026-07-31-catalog-approved-model.md — the
 # kustomize school: apiVersion + kind + top-level fields, no `spec:`
 # wrapper, no `metadata:` block; cluster identity is the file's own

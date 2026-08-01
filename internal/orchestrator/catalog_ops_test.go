@@ -77,6 +77,77 @@ func TestAddToCatalog_CreatesFileWhenMissing(t *testing.T) {
 	}
 }
 
+// TestAddToCatalog_CreatesFileWithPlainEnglishHeader is v4 naming polish
+// item 3: the very first catalog.yaml Sharko writes for a repo opens with a
+// short, plain-English comment explaining what the file is for — headers
+// ride creation only, so this is the one write path that must carry it.
+func TestAddToCatalog_CreatesFileWithPlainEnglishHeader(t *testing.T) {
+	git := newMockGitProvider()
+	o := newTestOrchestratorForCatalog(t, git)
+
+	if _, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{{
+			Name: "cert-manager", RepoURL: "https://charts.jetstack.io", Chart: "cert-manager", Version: "1.14.5",
+		}},
+	}); err != nil {
+		t.Fatalf("AddToCatalog: %v", err)
+	}
+
+	body := string(git.files[config.AddonCatalogPath])
+	if !strings.HasPrefix(body, catalogYAMLHeader) {
+		t.Fatalf("expected catalog.yaml to open with the plain-English header, got:\n%s", body)
+	}
+	// Still loads cleanly — the header is a comment, not part of the model.
+	if _, err := config.LoadAddonCatalog(git.files[config.AddonCatalogPath]); err != nil {
+		t.Errorf("catalog.yaml with header does not load: %v", err)
+	}
+}
+
+// TestAddToCatalog_HeaderSurvivesSpliceEdit is the other half of item 3: the
+// header written on creation must survive an ORDINARY later edit, because
+// catalog.yaml's writer is surgical (spliceCatalogEntries only rewrites the
+// lines belonging to the addon being changed) rather than a full remarshal —
+// so a header that rode in on creation keeps riding along exactly like any
+// hand-written comment would.
+func TestAddToCatalog_HeaderSurvivesSpliceEdit(t *testing.T) {
+	git := newMockGitProvider()
+	o := newTestOrchestratorForCatalog(t, git)
+
+	// First add: creates the file, header included.
+	if _, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{{
+			Name: "cert-manager", RepoURL: "https://charts.jetstack.io", Chart: "cert-manager", Version: "1.14.5",
+		}},
+	}); err != nil {
+		t.Fatalf("AddToCatalog (create): %v", err)
+	}
+	if !strings.HasPrefix(string(git.files[config.AddonCatalogPath]), catalogYAMLHeader) {
+		t.Fatalf("header missing right after creation")
+	}
+
+	// Second add: an ordinary edit to the same file. The splice path must
+	// leave the header (lines it never touches) exactly where it was.
+	if _, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+		Addons: []CatalogAddonInput{{
+			Name: "metrics-server", RepoURL: "https://example.test/charts", Chart: "metrics-server", Version: "3.12.1",
+		}},
+	}); err != nil {
+		t.Fatalf("AddToCatalog (edit): %v", err)
+	}
+
+	body := string(git.files[config.AddonCatalogPath])
+	if !strings.HasPrefix(body, catalogYAMLHeader) {
+		t.Errorf("header did not survive the splice edit, got:\n%s", body)
+	}
+	spec := readWrittenCatalog(t, git)
+	if _, ok := spec.Addons["cert-manager"]; !ok {
+		t.Errorf("cert-manager lost after the second add: %+v", spec.Addons)
+	}
+	if _, ok := spec.Addons["metrics-server"]; !ok {
+		t.Errorf("metrics-server missing after the second add: %+v", spec.Addons)
+	}
+}
+
 // TestAddToCatalog_BatchIsOnePullRequest is what the first-run wizard needs:
 // ticking several addons makes ONE pull request, never one per addon.
 func TestAddToCatalog_BatchIsOnePullRequest(t *testing.T) {
@@ -110,8 +181,8 @@ func TestAddToCatalog_BatchIsOnePullRequest(t *testing.T) {
 }
 
 // TestAddToCatalog_ComboWritesBothFilesInOnePR is the add-and-enable case:
-// one pull request touching catalog.yaml and clusters/<name>.yaml, so the
-// reviewer sees both halves in one diff.
+// one pull request touching catalog.yaml and cluster-addons/<name>.yaml, so
+// the reviewer sees both halves in one diff.
 func TestAddToCatalog_ComboWritesBothFilesInOnePR(t *testing.T) {
 	git := newMockGitProvider()
 	registerV4Cluster(t, git, "prod-eu")
@@ -139,9 +210,9 @@ func TestAddToCatalog_ComboWritesBothFilesInOnePR(t *testing.T) {
 	if _, ok := readWrittenCatalog(t, git).Addons["cert-manager"]; !ok {
 		t.Error("cert-manager missing from the written catalog")
 	}
-	clusterBody, ok := git.files["clusters/prod-eu.yaml"]
+	clusterBody, ok := git.files["cluster-addons/prod-eu.yaml"]
 	if !ok {
-		t.Fatalf("expected clusters/prod-eu.yaml to be written, files: %v", mapKeys(git.files))
+		t.Fatalf("expected cluster-addons/prod-eu.yaml to be written, files: %v", mapKeys(git.files))
 	}
 	ca, err := models.LoadClusterAddons(clusterBody)
 	if err != nil {

@@ -13,7 +13,7 @@ describe('DryRunPreview', () => {
       pr_title: 'Update cluster config',
       files_to_write: [
         {
-          path: 'clusters/prod-eu.yaml',
+          path: 'cluster-addons/prod-eu.yaml',
           action: 'update',
           diff: longDiff,
         },
@@ -27,7 +27,7 @@ describe('DryRunPreview', () => {
     expect(screen.getByText('Update cluster config')).toBeInTheDocument();
 
     // File path renders
-    expect(screen.getByText('clusters/prod-eu.yaml')).toBeInTheDocument();
+    expect(screen.getByText('cluster-addons/prod-eu.yaml')).toBeInTheDocument();
 
     // Diff content renders with the long line (check a substring)
     expect(screen.getByText(/000000000000:role\/sharko-old-very-long-role-name/)).toBeInTheDocument();
@@ -48,7 +48,7 @@ describe('DryRunPreview', () => {
       pr_title: 'Add new cluster',
       files_to_write: [
         {
-          path: 'clusters/dev-us.yaml',
+          path: 'cluster-addons/dev-us.yaml',
           action: 'create',
         },
       ],
@@ -56,7 +56,7 @@ describe('DryRunPreview', () => {
 
     render(<DryRunPreview result={result} />);
 
-    expect(screen.getByText('clusters/dev-us.yaml')).toBeInTheDocument();
+    expect(screen.getByText('cluster-addons/dev-us.yaml')).toBeInTheDocument();
     expect(screen.getByText('(new file)')).toBeInTheDocument();
   });
 
@@ -65,7 +65,7 @@ describe('DryRunPreview', () => {
       pr_title: 'Remove cluster',
       files_to_write: [
         {
-          path: 'clusters/old-cluster.yaml',
+          path: 'cluster-addons/old-cluster.yaml',
           action: 'delete',
         },
       ],
@@ -73,7 +73,7 @@ describe('DryRunPreview', () => {
 
     render(<DryRunPreview result={result} />);
 
-    expect(screen.getByText('clusters/old-cluster.yaml')).toBeInTheDocument();
+    expect(screen.getByText('cluster-addons/old-cluster.yaml')).toBeInTheDocument();
     expect(screen.getByText('(removed)')).toBeInTheDocument();
   });
 

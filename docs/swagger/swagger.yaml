@@ -945,7 +945,7 @@ definitions:
         description: |-
           EnableOnCluster, when set, also switches every addon in this request
           on for that cluster — one pull request touching catalog.yaml and
-          clusters/<name>.yaml together. Empty means catalog only.
+          cluster-addons/<name>.yaml together. Empty means catalog only.
         type: string
       "yes":
         description: |-
@@ -1207,7 +1207,7 @@ definitions:
         type: boolean
       remove:
         description: |-
-          Remove, when true, deletes the addon's entry from clusters/<cluster>.yaml
+          Remove, when true, deletes the addon's entry from cluster-addons/<cluster>.yaml
           entirely instead of keeping it with enabled=false. Design doc §2.1
           recommends keeping the entry (a one-word re-enable later); Remove
           exists for the rare "actually forget this addon on this cluster"
@@ -1332,7 +1332,7 @@ definitions:
       pinned_version:
         description: |-
           PinnedVersion is the version currently pinned in the repo's
-          engine.yaml. Empty when V4Repo is false.
+          sharko-engine.yaml. Empty when V4Repo is false.
         type: string
       upgrade_available:
         description: |-
@@ -1341,7 +1341,7 @@ definitions:
         type: boolean
       v4_repo:
         description: |-
-          V4Repo is false when engine.yaml does not exist in the
+          V4Repo is false when sharko-engine.yaml does not exist in the
           connected repo — a v3 repo, or a v4 repo that has not been
           bootstrapped yet. Every other field is the zero value in that case.
           This is NOT an error condition (story brief: "v3 repos: the check
@@ -1629,7 +1629,7 @@ definitions:
         type: array
       engine_applied:
         description: |-
-          EngineApplied reports whether engine.yaml has been
+          EngineApplied reports whether sharko-engine.yaml has been
           handed to ArgoCD.
         type: boolean
       message:
@@ -1708,7 +1708,7 @@ definitions:
       version:
         description: |-
           Version is the new pin, written identically to every selected
-          cluster's clusters/<cluster>.yaml. Required and non-empty — this
+          cluster's cluster-addons/<cluster>.yaml. Required and non-empty — this
           endpoint always sets an explicit pin; use DisableAddonV4/
           EnableAddonV4(version: nil) to remove a pin and fall back to the
           catalog default.
@@ -4440,7 +4440,7 @@ paths:
       consumes:
       - application/json
       description: |-
-        Writes one or more full addon entries into catalog.yaml and opens a pull request — the approval step, and the only way anything enters the org. Three shapes, one endpoint: ONE addon (a single-element `addons` list); MANY addons (several elements — still exactly ONE pull request, which is what the first-run wizard needs); and add-AND-enable (`enable_on_cluster` set — one pull request touching catalog.yaml and clusters/<name>.yaml together, so the reviewer sees both halves in one diff and one merge makes both true). The add-and-enable shape REQUIRES `yes: true`, the same confirmation the v4 enable endpoint asks for, because that half changes what runs on a real cluster; a catalog-only add needs no confirmation. Set `from_marketplace: true` on an entry to copy the chart location, default namespace and needed-secrets list out of the curated list; leave `version` empty there and the server fills in the newest version it knows for the chart (the same freshness data the version picker shows), so the resolved pin is visible in the pull-request diff — if Sharko has no version data for that chart you get a 422 with code `version_required` asking you to pick one. Nothing is written unless everything checks out: an unknown cluster, an entry with no chart location, or an addon whose required values are not set all fail before a branch exists.
+        Writes one or more full addon entries into catalog.yaml and opens a pull request — the approval step, and the only way anything enters the org. Three shapes, one endpoint: ONE addon (a single-element `addons` list); MANY addons (several elements — still exactly ONE pull request, which is what the first-run wizard needs); and add-AND-enable (`enable_on_cluster` set — one pull request touching catalog.yaml and cluster-addons/<name>.yaml together, so the reviewer sees both halves in one diff and one merge makes both true). The add-and-enable shape REQUIRES `yes: true`, the same confirmation the v4 enable endpoint asks for, because that half changes what runs on a real cluster; a catalog-only add needs no confirmation. Set `from_marketplace: true` on an entry to copy the chart location, default namespace and needed-secrets list out of the curated list; leave `version` empty there and the server fills in the newest version it knows for the chart (the same freshness data the version picker shows), so the resolved pin is visible in the pull-request diff — if Sharko has no version data for that chart you get a 422 with code `version_required` asking you to pick one. Nothing is written unless everything checks out: an unknown cluster, an entry with no chart location, or an addon whose required values are not set all fail before a branch exists.
         Every 4xx body carries a machine-readable `code` next to the plain-English `error`, so a client branches on the code and never on the message text. Codes: `invalid_request` (400); `cluster_not_found` (404); `repo_layout` (409 — the repo is still v3, or carries both layouts at once); and on 422 one of `confirmation_required`, `empty_catalog_file`, `not_in_marketplace`, `version_required`, `incomplete_entry` (with a `problems` array naming each missing piece), `not_in_catalog`, or `validation_failed` (also with `problems`). A 502 means a genuine upstream/git failure and carries no code.
       parameters:
       - description: Addons to add
@@ -6832,9 +6832,9 @@ paths:
   /engine/pin:
     get:
       description: Compares the engine chart version pinned in the connected repo's
-        engine.yaml against the version bundled with this Sharko build. Responds cleanly
-        (v4_repo=false) for v3 repos or repos not yet bootstrapped — never errors
-        on a missing pin.
+        sharko-engine.yaml against the version bundled with this Sharko build. Responds
+        cleanly (v4_repo=false) for v3 repos or repos not yet bootstrapped — never
+        errors on a missing pin.
       produces:
       - application/json
       responses:
@@ -8034,10 +8034,10 @@ paths:
   /repo/status:
     get:
       description: Checks whether the GitOps repository has been bootstrapped (the
-        engine pin at engine.yaml exists on the base branch) AND whether the ArgoCD
-        bootstrap Application is Synced + Healthy. The wizard gate in the UI uses
-        bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap
-        is missing or degraded even though the repo files are present.
+        engine pin at sharko-engine.yaml exists on the base branch) AND whether the
+        ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI
+        uses bootstrap_synced to auto-open the recovery wizard when the cluster-side
+        bootstrap is missing or degraded even though the repo files are present.
       produces:
       - application/json
       responses:
@@ -8951,7 +8951,7 @@ paths:
     delete:
       consumes:
       - application/json
-      description: Disables an addon on a cluster by setting enabled=false in clusters/{name}.yaml
+      description: Disables an addon on a cluster by setting enabled=false in cluster-addons/{name}.yaml
         (kind ClusterAddons) — the entry (and its version pin and settings) is KEPT
         by default so re-enabling is a one-word change; pass remove=true to delete
         the entry entirely instead. No semantic validation runs (disabling never needs
@@ -9015,7 +9015,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Enables an addon on a cluster by writing clusters/{name}.yaml
+      description: 'Enables an addon on a cluster by writing cluster-addons/{name}.yaml
         (kind ClusterAddons) and, when values are supplied, values/clusters/{name}/{addon}.yaml
         — the v4 data-file format (design doc 2026-07-30-v4-data-file-format.md).
         Runs semantic validation BEFORE any branch or pull request exists: every required

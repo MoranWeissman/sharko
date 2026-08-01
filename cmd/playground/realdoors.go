@@ -25,7 +25,7 @@ package main
 //     never added to the catalog cannot be enabled on any cluster, so step
 //     4 fails outright without it. Sharko also supports adding-and-enabling
 //     in one combined pull request (AddToCatalogRequest.EnableOnCluster —
-//     one PR touching both catalog.yaml and clusters/<name>.yaml) — the
+//     one PR touching both catalog.yaml and cluster-addons/<name>.yaml) — the
 //     playground deliberately keeps them as two separate steps here so the
 //     walkthrough sees the approval gate before it sees the shortcut.
 //  4. Addon enable: POST /api/v1/v4/clusters/{name}/addons/{addon} opens a

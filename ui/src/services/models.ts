@@ -992,7 +992,7 @@ export interface AddToCatalogAddonInput {
  * Request body for POST /api/v1/catalog/addons. One element in `addons` =
  * a single add; N elements = ONE batch pull request, never N. Adding
  * `enable_on_cluster` makes it the combo: one PR touching both
- * catalog.yaml and clusters/<name>.yaml — and REQUIRES `yes: true` (the
+ * catalog.yaml and cluster-addons/<name>.yaml — and REQUIRES `yes: true` (the
  * same confirmation EnableAddonV4 asks for, because that half changes what
  * runs on a real cluster). A catalog-only add needs no confirmation.
  */

@@ -1,6 +1,6 @@
 // Package gitops — v4 cluster-addons mutator (v4 Wave 1 Story 4.3).
 //
-// clusters/<cluster-name>.yaml (kind ClusterAddons, design doc §2.1) is
+// cluster-addons/<cluster-name>.yaml (kind ClusterAddons, design doc §2.1) is
 // a brand-new v4 kind with no legacy bare-YAML precedent, so — unlike the
 // v3 managed-clusters.yaml / addons-catalog.yaml mutators in this package —
 // there is no back-compat branch to preserve. This mutator always
@@ -18,7 +18,7 @@ import (
 )
 
 // SetClusterAddonsAddon upserts one addon entry in a
-// clusters/<cluster-name>.yaml document: always sets Enabled, and
+// cluster-addons/<cluster-name>.yaml document: always sets Enabled, and
 // conditionally touches Version and Settings — both are pointers so "leave
 // as-is" is distinguishable from "set to empty/zero":
 //
@@ -72,7 +72,7 @@ func SetClusterAddonsAddon(
 }
 
 // RemoveClusterAddonsAddon deletes addonName's entry entirely from a
-// clusters/<cluster-name>.yaml document. Unlike SetClusterAddonsAddon
+// cluster-addons/<cluster-name>.yaml document. Unlike SetClusterAddonsAddon
 // with enabled=false (which KEEPS the entry — design doc §2.1: "false
 // keeps the entry — and its settings — but stops deploying"), this drops
 // the block completely. Used by the v3-parity "cleanup=all" removal path,
@@ -85,13 +85,13 @@ func RemoveClusterAddonsAddon(data []byte, clusterName, addonName string) ([]byt
 		return nil, fmt.Errorf("RemoveClusterAddonsAddon: %w", err)
 	}
 	if _, ok := spec.Addons[addonName]; !ok {
-		return nil, fmt.Errorf("addon %q not found in clusters/%s.yaml", addonName, clusterName)
+		return nil, fmt.Errorf("addon %q not found in cluster-addons/%s.yaml", addonName, clusterName)
 	}
 	delete(spec.Addons, addonName)
 	return models.SaveClusterAddons(spec)
 }
 
-// loadOrBootstrapClusterAddons parses an existing clusters/<name>.yaml
+// loadOrBootstrapClusterAddons parses an existing cluster-addons/<name>.yaml
 // body, or — when data is empty/whitespace-only — returns a fresh spec
 // seeded with spec.cluster = clusterName and an empty addons map. Mirrors
 // loadOrBootstrap (yaml_mutator_cluster.go) for the v3 managed-clusters

@@ -47,7 +47,7 @@ addons:
 }
 
 // TestLoadAddonCatalog_PreserveResourcesOnDeletion_Allowed — unlike
-// a clusters/*.yaml ClusterAddons file, catalog/addons.yaml's
+// a cluster-addons/*.yaml ClusterAddons file, catalog/addons.yaml's
 // AddonSettings DOES permit preserveResourcesOnDeletion (design doc
 // §3.2: it's per-ApplicationSet, addon-wide, and this is the only place
 // it can be set).

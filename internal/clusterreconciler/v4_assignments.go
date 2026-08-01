@@ -13,14 +13,14 @@ import (
 
 // v4ClustersDir is the v4 data-file format's per-cluster assignment folder
 // (design doc docs/design/2026-07-30-v4-data-file-format.md §2.1 —
-// "clusters/<cluster-name>.yaml"). Fixed by the format, not configurable:
+// "cluster-addons/<cluster-name>.yaml"). Fixed by the format, not configurable:
 // the engine chart's own ApplicationSet generator arm hard-codes the same
 // literal (charts/sharko-engine/templates/appset.yaml), so a configurable
 // override here would let a repo silently stop matching what the engine
 // reads. Kept in lockstep with orchestrator.V4ClustersDir — clusterreconciler
 // cannot import orchestrator, the same dependency boundary V4ManagedClustersPath
 // already lives with.
-const v4ClustersDir = "clusters"
+const v4ClustersDir = "cluster-addons"
 
 // v4ClusterFilePath is the in-repo path of one cluster's assignment file.
 // The name is the format's convention (design doc §2.1) and the engine
@@ -30,7 +30,7 @@ func v4ClusterFilePath(cluster string) string {
 }
 
 // v4Assignments is everything one reconcile tick managed to learn from a v4
-// repo's clusters/ folder. It is deliberately more than a plain map: the
+// repo's cluster-addons/ folder. It is deliberately more than a plain map: the
 // reconciler now WRITES these labels on a normal tick (no opt-in setting
 // gates it any more), so "I read zero addons for this cluster" and "I could
 // not read this cluster's file at all" must not look the same. The first
@@ -42,7 +42,7 @@ func v4ClusterFilePath(cluster string) string {
 // the v3 path never allocates one.
 type v4Assignments struct {
 	// labels maps cluster name -> the addon labels derived from that
-	// cluster's clusters/<name>.yaml. Only enabled addons get a key.
+	// cluster's cluster-addons/<name>.yaml. Only enabled addons get a key.
 	labels map[string]map[string]string
 
 	// unknown holds the clusters whose assignment file was listed but could
@@ -50,7 +50,7 @@ type v4Assignments struct {
 	// set is UNKNOWN this tick, which is not the same as empty.
 	unknown map[string]struct{}
 
-	// listFailed is true when the clusters/ listing itself failed for a
+	// listFailed is true when the cluster-addons/ listing itself failed for a
 	// reason other than "the folder does not exist" — no cluster's desired
 	// addon set is known this tick.
 	listFailed bool
@@ -79,7 +79,7 @@ func (a *v4Assignments) desiredKnown(cluster string) bool {
 }
 
 // readV4AddonLabels builds the desired addon-enablement labels for every
-// cluster on a v4 repo, straight from clusters/*.yaml.
+// cluster on a v4 repo, straight from cluster-addons/*.yaml.
 //
 // This is the piece that makes "enable an addon" actually deploy anything
 // on a v4 repo. The v4 engine's ApplicationSet selects clusters by
@@ -87,7 +87,7 @@ func (a *v4Assignments) desiredKnown(cluster string) bool {
 // registration writes NO labels onto the connection record
 // (managed-clusters.yaml's labels block stays empty by design — design doc
 // §2.4/D9 moved addon on/off out of it), and EnableAddonV4 writes only
-// clusters/<cluster>.yaml. Something has to turn the assignment file into
+// cluster-addons/<cluster>.yaml. Something has to turn the assignment file into
 // the label the engine matches on; that something is this reconciler, which
 // is already the single writer of those labels for v3.
 //
@@ -99,13 +99,13 @@ func (a *v4Assignments) desiredKnown(cluster string) bool {
 // disables the addon.
 //
 // Failure stance matches the rest of pollOnce's read step: a missing
-// clusters/ directory (a v4 repo with no clusters registered yet) is not an
+// cluster-addons/ directory (a v4 repo with no clusters registered yet) is not an
 // error, it is an empty set. A single unreadable or unparseable assignment
 // file is logged and skipped rather than aborting the whole tick — the
 // other clusters still converge. The affected cluster is recorded in
 // `unknown` so the write paths leave its live labels alone instead of
 // wiping them on a "successfully read zero addons" lie; the same goes,
-// fleet-wide, for a clusters/ listing that failed outright.
+// fleet-wide, for a cluster-addons/ listing that failed outright.
 func readV4AddonLabels(ctx context.Context, gp gitprovider.GitProvider, branch string) *v4Assignments {
 	log := logging.LoggerFromContext(ctx)
 	out := &v4Assignments{
@@ -117,7 +117,7 @@ func readV4AddonLabels(ctx context.Context, gp gitprovider.GitProvider, branch s
 	if err != nil {
 		if !errors.Is(err, gitprovider.ErrFileNotFound) {
 			out.listFailed = true
-			log.Warn("[clusterreconciler] could not list the v4 clusters/ folder — no addon labels derived this tick, and none will be changed",
+			log.Warn("[clusterreconciler] could not list the v4 cluster-addons/ folder — no addon labels derived this tick, and none will be changed",
 				"dir", v4ClustersDir, "branch", branch, "error", err)
 		}
 		return out
@@ -182,8 +182,8 @@ func v4LabelsFor(spec models.ClusterAddonsSpec) map[string]string {
 
 // mergeV4AddonLabels combines the connection record's own labels (env,
 // region, anything a person put in managed-clusters.yaml's labels block)
-// with the addon labels derived from clusters/<name>.yaml. The derived
-// addon labels win on a key collision — clusters/<name>.yaml is the v4
+// with the addon labels derived from cluster-addons/<name>.yaml. The derived
+// addon labels win on a key collision — cluster-addons/<name>.yaml is the v4
 // source of truth for addon on/off, and nothing else is allowed to
 // contradict it.
 //
@@ -229,7 +229,7 @@ func hasStaleV4AddonLabels(desired, have map[string]string) bool {
 // driftTouchesV4AddonKeys reports whether a detected label drift involves at
 // least one addons.sharko.dev/ key — added, removed, or with a changed
 // value. That is the exact question "does this cluster's ArgoCD Secret
-// disagree with clusters/<name>.yaml about which addons run here?", and it
+// disagree with cluster-addons/<name>.yaml about which addons run here?", and it
 // is what tells the reconciler to converge the labels on this tick instead
 // of only reporting the drift.
 //

@@ -5,7 +5,7 @@
 // docs/design/2026-07-30-v4-data-file-format.md §2.1/§2.2/§2.3 define the
 // v4 write targets this file produces:
 //
-//   - clusters/<cluster>.yaml (kind ClusterAddons) — enabled flag,
+//   - cluster-addons/<cluster>.yaml (kind ClusterAddons) — enabled flag,
 //     the per-cluster version pin, per-cluster settings.
 //   - values/global/<addon>.yaml and values/clusters/<cluster>/<addon>.yaml
 //     — plain Helm values, no envelope.
@@ -77,16 +77,16 @@ var ErrV4AddonNotInCatalog = errors.New("addon not in catalog")
 
 // ErrV4ClusterNotFound marks a v4 write naming a cluster that is not
 // registered — absent from both managed-clusters.yaml (the v4 cluster
-// registry, design doc §2.4) and clusters/<name>.yaml. The API layer maps
+// registry, design doc §2.4) and cluster-addons/<name>.yaml. The API layer maps
 // this to 404 (Wave 2 ride-along w2-q6 items 2 and 6): EnableAddonV4/
 // DisableAddonV4 must refuse BEFORE any git write rather than silently
-// bootstrapping a brand-new clusters/<name>.yaml for a cluster nobody
+// bootstrapping a brand-new cluster-addons/<name>.yaml for a cluster nobody
 // registered.
 var ErrV4ClusterNotFound = errors.New("cluster not found")
 
 // v4ClusterExists reports whether clusterName is a known v4 cluster —
 // present in managed-clusters.yaml (the registry every RegisterCluster/
-// AdoptClusters v4 write populates) or already has a clusters/<name>.yaml
+// AdoptClusters v4 write populates) or already has a cluster-addons/<name>.yaml
 // assignment file. Checking both means a cluster that has never had an
 // addon touched (no assignment file yet, connections-only) still passes,
 // while a name that is not registered anywhere gets refused before any
@@ -144,7 +144,7 @@ type EnableAddonV4Request struct {
 type DisableAddonV4Request struct {
 	Cluster string `json:"cluster"`
 	Addon   string `json:"addon"`
-	// Remove, when true, deletes the addon's entry from clusters/<cluster>.yaml
+	// Remove, when true, deletes the addon's entry from cluster-addons/<cluster>.yaml
 	// entirely instead of keeping it with enabled=false. Design doc §2.1
 	// recommends keeping the entry (a one-word re-enable later); Remove
 	// exists for the rare "actually forget this addon on this cluster"
@@ -268,7 +268,7 @@ func (o *Orchestrator) validateV4AddonInputs(addon catalog.CatalogAddon, mergedV
 // Story 4.3). Unlike the v3 path (labels + a combined per-cluster values
 // stub), this writes:
 //
-//   - clusters/<cluster>.yaml  — the addon's enabled flag, version pin,
+//   - cluster-addons/<cluster>.yaml  — the addon's enabled flag, version pin,
 //     and settings (gitops.SetClusterAddonsAddon).
 //   - values/clusters/<cluster>/<addon>.yaml — ONLY when req.Values is
 //     non-empty, deep-merged onto whatever is already there.
@@ -310,7 +310,7 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 
 	// Refuse a cluster nobody registered BEFORE any git write — without
 	// this, SetClusterAddonsAddon happily bootstraps a brand-new
-	// clusters/<name>.yaml for a typo'd or never-registered cluster name
+	// cluster-addons/<name>.yaml for a typo'd or never-registered cluster name
 	// (Wave 2 ride-along w2-q6 item 6). Runs AFTER the path-safety checks
 	// above (so a traversal name still fails with "invalid cluster name",
 	// not a generic not-found) and is read-only, so it costs nothing on
@@ -341,7 +341,7 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 	// addon assignment (or every other value) on this cluster. Only a
 	// genuinely absent file starts from nothing. globalValuesPath below is
 	// read for validation only and never written back, so it stays lenient.
-	existingClusterAddons, _, readErr := o.readFileForRewrite(ctx, clusterPath)
+	existingClusterAddons, clusterAddonsFileExists, readErr := o.readFileForRewrite(ctx, clusterPath)
 	if readErr != nil {
 		return nil, readErr
 	}
@@ -388,6 +388,11 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 	updatedClusterAddons, err := gitops.SetClusterAddonsAddon(existingClusterAddons, req.Cluster, req.Addon, true, req.Version, req.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("updating %s: %w", clusterPath, err)
+	}
+	// v4 naming polish item 3: this cluster's assignment file did not exist
+	// before this write — headers ride creation only.
+	if !clusterAddonsFileExists {
+		updatedClusterAddons = append([]byte(clusterAddonsFileHeader(req.Cluster)), updatedClusterAddons...)
 	}
 
 	// v4-walkfix W1 item 6 (upgraded to real template seeding in the v4

@@ -247,7 +247,7 @@ export interface EnableOnClusterFieldProps {
  * dialog and the Marketplace detail page's "Add to catalog" panel). Wires
  * to the same combo the cluster-side V4EnableAddonDialog already uses:
  * POST /api/v1/catalog/addons with `enable_on_cluster` + `yes: true` opens
- * ONE pull request touching both catalog.yaml and clusters/<name>.yaml
+ * ONE pull request touching both catalog.yaml and cluster-addons/<name>.yaml
  * (v4 walk-findings W2, item 4). Default is always "Don't enable yet" —
  * never pre-selected, so a plain catalog-only add stays the default path.
  */

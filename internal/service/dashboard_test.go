@@ -378,16 +378,16 @@ func TestGetStats_EmptyResponseHasNoLeakedError(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Wave 2 ride-along w2-q6 item 4: dashboard git-side stats must be v4-aware
-// (managed-clusters.yaml + clusters/*.yaml + catalog/addons.yaml delta)
+// (managed-clusters.yaml + cluster-addons/*.yaml + catalog/addons.yaml delta)
 // instead of only ever reading the v3 files. fakeGitProvider (defined in
 // addon_test.go, same package) is reused here because — unlike fakeGP — its
 // ListDirectory derives real entries from the files map, which the v4
-// clusters/*.yaml listing needs.
+// cluster-addons/*.yaml listing needs.
 // ---------------------------------------------------------------------------
 
 // TestGetStats_V4Repo_UsesV4Sources proves GetStats detects a v4 repo (the
 // same engine-pin probe AddonService.GetVersionMatrix uses) and counts
-// clusters/addons from managed-clusters.yaml + clusters/*.yaml +
+// cluster-addons/addons from managed-clusters.yaml + cluster-addons/*.yaml +
 // catalog/addons.yaml instead of the v3 files — even when v3 files are
 // ALSO present (a repo mid-migration), the v4 branch must win once the
 // engine pin exists.
@@ -428,8 +428,8 @@ func TestGetStats_V4Repo_UsesV4Sources(t *testing.T) {
 		files: map[string][]byte{
 			orchestrator.EnginePinPath:     []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
 			orchestrator.V4ManagedClustersPath: []byte("clusters:\n  - name: prod-eu\n  - name: staging-us\n"),
-			"clusters/prod-eu.yaml":        prodEU,
-			"clusters/staging-us.yaml":     stagingUS,
+			"cluster-addons/prod-eu.yaml":        prodEU,
+			"cluster-addons/staging-us.yaml":     stagingUS,
 			config.AddonCatalogPath:   delta,
 			// v3 files ALSO present, to prove they are ignored once the
 			// engine pin routes this to the v4 branch.

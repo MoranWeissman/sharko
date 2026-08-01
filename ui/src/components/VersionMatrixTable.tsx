@@ -12,7 +12,7 @@ import { StatusBadge } from '@/components/StatusBadge'
 // the catalog default. The two summary columns (Newest available, Last
 // checked) come from the backend's catalog freshness scheduler snapshot —
 // GET /addons/version-matrix already re-points to the v4 data model
-// (clusters/*.yaml + catalog/addons.yaml) for a v4 repo, same endpoint,
+// (cluster-addons/*.yaml + catalog/addons.yaml) for a v4 repo, same endpoint,
 // same response shape, no separate v3/v4 UI branch needed here.
 export function VersionMatrixTable() {
   const [data, setData] = useState<VersionMatrixResponse | null>(null)
