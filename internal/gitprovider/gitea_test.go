@@ -296,6 +296,96 @@ func TestGiteaProviderListPullRequestsUnknownState(t *testing.T) {
 	}
 }
 
+// TestGiteaProviderListPullRequestsMergedStatus tests that ListPullRequests
+// translates Gitea's closed+merged state to "merged" (walk finding: Gitea
+// reports merged PRs with state "closed" — merged-ness lives in the separate
+// merged/merged_at fields — so without this translation every merged PR on
+// Gitea was reported as "closed" and the Merged PRs panel stayed empty).
+func TestGiteaProviderListPullRequestsMergedStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.URL.Path != "/api/v1/repos/testowner/testrepo/pulls" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+
+		mergedAt := "2026-07-30T12:00:00Z"
+		response := []map[string]interface{}{
+			{
+				"number":     1,
+				"title":      "Closed and merged PR",
+				"state":      "closed",
+				"merged":     true,
+				"merged_at":  mergedAt,
+				"html_url":   "https://gitea.example.com/testowner/testrepo/pulls/1",
+			},
+			{
+				"number":   2,
+				"title":    "Closed without merge",
+				"state":    "closed",
+				"merged":   false,
+				"html_url": "https://gitea.example.com/testowner/testrepo/pulls/2",
+			},
+			{
+				"number":   3,
+				"title":    "Still open",
+				"state":    "open",
+				"merged":   false,
+				"html_url": "https://gitea.example.com/testowner/testrepo/pulls/3",
+			},
+		}
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	prs, err := provider.ListPullRequests(context.Background(), "all")
+	if err != nil {
+		t.Fatalf("ListPullRequests failed: %v", err)
+	}
+	if len(prs) != 3 {
+		t.Fatalf("expected 3 PRs, got %d", len(prs))
+	}
+
+	byID := make(map[int]PullRequest, len(prs))
+	for _, pr := range prs {
+		byID[pr.ID] = pr
+	}
+
+	merged := byID[1]
+	if merged.Status != "merged" {
+		t.Errorf("expected PR #1 status 'merged', got %q", merged.Status)
+	}
+	if merged.ClosedAt == "" {
+		t.Errorf("expected PR #1 to have a merged/closed timestamp set, got empty string")
+	}
+
+	closedNoMerge := byID[2]
+	if closedNoMerge.Status != "closed" {
+		t.Errorf("expected PR #2 status 'closed', got %q", closedNoMerge.Status)
+	}
+
+	open := byID[3]
+	if open.Status != "open" {
+		t.Errorf("expected PR #3 status 'open', got %q", open.Status)
+	}
+}
+
 // TestGiteaProviderWritePath tests the full write cycle: CreateBranch, CreateOrUpdateFile,
 // BatchCreateFiles, CreatePullRequest, GetPullRequestStatus, MergePullRequest, DeleteBranch, DeleteFile.
 func TestGiteaProviderWritePath(t *testing.T) {
@@ -558,6 +648,51 @@ func TestGiteaProviderGetPullRequestStatusNotFound(t *testing.T) {
 	}
 	if !errors.Is(err, ErrPullRequestNotFound) {
 		t.Errorf("expected ErrPullRequestNotFound, got: %v", err)
+	}
+}
+
+// TestGiteaProviderGetPullRequestStatusMerged tests that GetPullRequestStatus
+// reports "merged" for a closed+merged PR, not "closed". Unlike ListPullRequests
+// (the walk finding fixed above), GetPullRequestStatus already checked
+// pr.HasMerged before falling back to state — this test locks that behavior in.
+func TestGiteaProviderGetPullRequestStatusMerged(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42" {
+			pr := map[string]interface{}{
+				"number":     42,
+				"state":      "closed",
+				"merged":     true,
+				"has_merged": true,
+			}
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	status, err := provider.GetPullRequestStatus(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("GetPullRequestStatus failed: %v", err)
+	}
+	if status != "merged" {
+		t.Errorf("expected status 'merged', got %q", status)
 	}
 }
 

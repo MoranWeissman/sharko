@@ -147,13 +147,27 @@ func (g *GiteaProvider) ListPullRequests(ctx context.Context, state string) ([]P
 			Title:        p.Title,
 			Description:  p.Body,
 			Author:       "", // Will be set below if Poster is not nil
-			Status:       string(p.State),
 			SourceBranch: "",
 			TargetBranch: "",
 			URL:          p.HTMLURL,
 			CreatedAt:    "",
 			UpdatedAt:    "",
 			ClosedAt:     "",
+		}
+
+		// Gitea reports merged PRs with State "closed" — merged-ness lives
+		// in the separate HasMerged/Merged fields. Without this, a merged
+		// PR maps to Status "closed" and the Merged PRs panel (which
+		// filters on Status == "merged") stays empty forever, even though
+		// the PR really is merged. Mirror the GitHub provider's vocabulary:
+		// "merged", "closed", "open".
+		switch {
+		case p.HasMerged:
+			pr.Status = "merged"
+		case p.State == gitea.StateClosed:
+			pr.Status = "closed"
+		default:
+			pr.Status = "open"
 		}
 
 		if p.Poster != nil {
@@ -173,6 +187,13 @@ func (g *GiteaProvider) ListPullRequests(ctx context.Context, state string) ([]P
 		}
 		if p.Closed != nil {
 			pr.ClosedAt = p.Closed.String()
+		}
+		// Prefer Merged over Closed for the surfaced timestamp on merged
+		// PRs — same value in practice but semantically what the UI labels
+		// render ("Merged …"). Done after the Closed check so it wins when
+		// both are populated.
+		if p.Merged != nil {
+			pr.ClosedAt = p.Merged.String()
 		}
 
 		result = append(result, pr)
