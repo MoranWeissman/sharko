@@ -1027,6 +1027,95 @@ func (m *Manager) SyncManagedClusterLabels(ctx context.Context, name string, des
 	return ManagedLabelSyncResult{Found: true, Changed: true, Adopted: adopted, Converged: sortedKeys(desired)}, nil
 }
 
+// SyncConnectivityCheckLabel converges ONLY the connectivity-check label
+// (both key spellings, per models.ApplyConnectivityCheckLabel) on an
+// existing Sharko-managed cluster Secret — independent of, and without
+// touching, addon keys, ownership/type labels, Data, StringData, or
+// annotations. This is the fix for the walk finding "bare spoke": the label
+// was previously only ever derived at Secret-CREATE time (createOne), so a
+// cluster that reached zero enabled addons any other way (a pre-existing
+// Secret that predates the label, or one whose addon count changed without
+// touching any OTHER label this tick) never got it — or never lost it.
+//
+// Runs unconditionally on EVERY reconcile tick for every Sharko-managed
+// cluster, regardless of the managed_cluster_self_heal setting: the
+// connectivity-check label is not an opt-in convergence, the same way v4's
+// addons.sharko.dev/ labels are not (see applyV4AddonLabels).
+//
+// desiredAddonLabels is the SAME git-desired addon-label set the tick
+// already computed for this cluster (desiredAddonLabels() in
+// clusterreconciler) — the "enabled addon count" this label is derived from
+// is git's desired state, not whatever is currently live, so the check
+// label reflects what SHOULD be true once convergence finishes, not a
+// mid-drift snapshot. Only genuine addon-label keys are counted (the same
+// IsAddonLabelKey boundary SyncManagedClusterLabels uses) so a stray
+// "/"-qualified key in the git labels block can never influence the count.
+//
+// featureOn is the caller's already-resolved
+// effectiveDisableConnectivityCheck negation (static env-var escape hatch OR
+// the live probe_mode setting — either one disabling the check wins). An
+// ADOPTED Secret (argosecrets.IsAdopted) is always treated as featureOn=false
+// here regardless of what the caller passed: adopted clusters are guests and
+// must never carry the label, exactly like the createOne / adoption-gate
+// call sites (V2-cleanup-29).
+//
+// Not-found is NOT an error (Found=false) — same contract as
+// SyncManagedClusterLabels / SyncLabelsOnly.
+func (m *Manager) SyncConnectivityCheckLabel(ctx context.Context, name string, desiredAddonLabels map[string]string, featureOn bool) (changed, found bool, err error) {
+	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(getErr) {
+		return false, false, nil
+	}
+	if getErr != nil {
+		return false, false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, getErr)
+	}
+
+	adopted := IsAdopted(existing.Annotations)
+
+	// Build the same addon-key-only view SyncManagedClusterLabels derives
+	// its desired set from, so both writers agree on "what counts as an
+	// enabled addon" for this cluster.
+	desired := make(map[string]string, len(desiredAddonLabels))
+	for k, v := range desiredAddonLabels {
+		if !IsAddonLabelKey(k) {
+			continue
+		}
+		if normalized, changedVal := models.NormalizeAddonLabelValue(v); changedVal {
+			v = normalized
+		}
+		desired[k] = v
+	}
+	models.ApplyConnectivityCheckLabel(desired, featureOn && !adopted)
+	wantCheck := models.HasConnectivityCheckLabel(desired)
+	haveCheck := models.HasConnectivityCheckLabel(existing.Labels)
+
+	if wantCheck == haveCheck {
+		return false, true, nil
+	}
+
+	updated := existing.DeepCopy()
+	if wantCheck {
+		if updated.Labels == nil {
+			updated.Labels = make(map[string]string, 2)
+		}
+		updated.Labels[models.LabelConnectivityCheck] = models.LabelEnabled
+		updated.Labels[models.LabelConnectivityCheckLegacy] = models.LabelEnabled
+	} else {
+		models.RemoveConnectivityCheckLabels(updated.Labels)
+	}
+
+	// Data / StringData / Annotations / every other label are deliberately
+	// NOT touched — DeepCopy preserved them and only the two connectivity
+	// keys above were mutated.
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return false, true, fmt.Errorf("syncing connectivity-check label on secret %q in namespace %q: %w", name, m.namespace, updateErr)
+	}
+	slog.Info("[argosecrets] connectivity-check label converged from the live enabled-addon count",
+		"cluster", name, "namespace", m.namespace, "enabled", wantCheck, "adopted", adopted,
+	)
+	return true, true, nil
+}
+
 // labelsEqual reports whether two label maps have exactly the same keys and
 // values. nil and empty are treated as equal.
 func labelsEqual(a, b map[string]string) bool {

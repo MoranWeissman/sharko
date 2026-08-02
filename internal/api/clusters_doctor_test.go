@@ -807,11 +807,12 @@ func TestDoctorCheckSecretOwnership_Fail_RBACError(t *testing.T) {
 // *argocd.Client — there is no interface seam to fake here), and the repo
 // layout (git provider content at BootstrapRootAppPath).
 type doctorConnectivityFixture struct {
-	clusterName  string
-	secretLabels map[string]string
-	argoClusters []map[string]interface{}
-	argoApps     []map[string]interface{}
-	v4Repo       bool
+	clusterName       string
+	secretLabels      map[string]string
+	secretAnnotations map[string]string
+	argoClusters      []map[string]interface{}
+	argoApps          []map[string]interface{}
+	v4Repo            bool
 }
 
 func newConnectivityDoctorServer(t *testing.T, f doctorConnectivityFixture) *Server {
@@ -829,9 +830,10 @@ func newConnectivityDoctorServer(t *testing.T, f doctorConnectivityFixture) *Ser
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      f.clusterName,
-			Namespace: "argocd",
-			Labels:    f.secretLabels,
+			Name:        f.clusterName,
+			Namespace:   "argocd",
+			Labels:      f.secretLabels,
+			Annotations: f.secretAnnotations,
 		},
 	}
 	k8sClient := fake.NewSimpleClientset(secret)
@@ -1037,6 +1039,103 @@ func TestDoctorCheckConnectivityApp_Warn_V4Layout(t *testing.T) {
 	}
 	if strings.Contains(check.Fix, "templates/bootstrap/") {
 		t.Errorf("Fix = %q, must not use v3 template wording on a v4 repo (v4 has no scaffolded templates)", check.Fix)
+	}
+}
+
+// ----- missing-label finding (walk finding: bare spoke) -------------------
+//
+// Before the reconciler self-heal fix, the connectivity-check label was only
+// ever derived at Secret-CREATE time, so a Sharko-managed cluster with zero
+// enabled addons could sit missing the label forever. The doctor learns to
+// tell that apart from the (correct) cases where no label is expected at
+// all: self-managed connections, adopted (guest) clusters, and managed
+// clusters that genuinely have an addon enabled.
+
+// TestDoctorCheckConnectivityApp_Fail_ManagedZeroAddonsMissingLabel is the
+// bug itself: a Sharko-managed (non-adopted) Secret with zero enabled
+// addons and no connectivity-check label is a real finding, not
+// not-applicable.
+func TestDoctorCheckConnectivityApp_Fail_ManagedZeroAddonsMissingLabel(t *testing.T) {
+	srv := newConnectivityDoctorServer(t, doctorConnectivityFixture{
+		clusterName: "spoke-us",
+		secretLabels: map[string]string{
+			argosecrets.LabelManagedBy:       argosecrets.ManagedByValue,
+			"argocd.argoproj.io/secret-type": "cluster",
+			// zero addon labels, no connectivity-check label — the bug
+		},
+	})
+
+	check := srv.doctorCheckConnectivityApp(context.Background(), "spoke-us")
+	if check.Status != doctorStatusFail {
+		t.Fatalf("Status = %q, want fail (detail=%s)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Detail, "zero enabled addons") {
+		t.Errorf("Detail = %q, want it to name zero enabled addons as the reason", check.Detail)
+	}
+	if !strings.Contains(check.Fix, "reconciler") {
+		t.Errorf("Fix = %q, want it to point at the reconciler self-healing this automatically", check.Fix)
+	}
+}
+
+// TestDoctorCheckConnectivityApp_NotApplicable_ManagedWithAddonMissingLabel
+// verifies the finding is scoped to zero-addon clusters: a managed Secret
+// with an enabled addon and no connectivity-check label is correctly
+// unlabeled (the label auto-removes itself once an addon is on), so this
+// stays not-applicable.
+func TestDoctorCheckConnectivityApp_NotApplicable_ManagedWithAddonMissingLabel(t *testing.T) {
+	srv := newConnectivityDoctorServer(t, doctorConnectivityFixture{
+		clusterName: "spoke-us",
+		secretLabels: map[string]string{
+			argosecrets.LabelManagedBy:       argosecrets.ManagedByValue,
+			"argocd.argoproj.io/secret-type": "cluster",
+			"datadog":                        "enabled",
+		},
+	})
+
+	check := srv.doctorCheckConnectivityApp(context.Background(), "spoke-us")
+	if check.Status != doctorStatusNotApplicable {
+		t.Fatalf("Status = %q, want not-applicable (detail=%s)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Detail, "not labeled for connectivity-check") {
+		t.Errorf("Detail = %q, want the standard not-labeled wording", check.Detail)
+	}
+}
+
+// TestDoctorCheckConnectivityApp_NotApplicable_SelfManagedZeroAddonsMissingLabel
+// verifies self-managed (user-owned) connections are never flagged: they
+// never carry the label by design, regardless of addon count.
+func TestDoctorCheckConnectivityApp_NotApplicable_SelfManagedZeroAddonsMissingLabel(t *testing.T) {
+	srv := newConnectivityDoctorServer(t, doctorConnectivityFixture{
+		clusterName: "self-managed-cluster",
+		secretLabels: map[string]string{
+			"argocd.argoproj.io/secret-type": "cluster",
+			// no managed-by — user-owned connection, zero addons
+		},
+	})
+
+	check := srv.doctorCheckConnectivityApp(context.Background(), "self-managed-cluster")
+	if check.Status != doctorStatusNotApplicable {
+		t.Fatalf("Status = %q, want not-applicable (detail=%s)", check.Status, check.Detail)
+	}
+}
+
+// TestDoctorCheckConnectivityApp_NotApplicable_AdoptedZeroAddonsMissingLabel
+// verifies adopted (guest) clusters are never flagged: they are guests in a
+// shared ArgoCD and must never carry the label, regardless of addon count.
+func TestDoctorCheckConnectivityApp_NotApplicable_AdoptedZeroAddonsMissingLabel(t *testing.T) {
+	srv := newConnectivityDoctorServer(t, doctorConnectivityFixture{
+		clusterName: "adopted-cluster",
+		secretLabels: map[string]string{
+			argosecrets.LabelManagedBy:       argosecrets.ManagedByValue,
+			"argocd.argoproj.io/secret-type": "cluster",
+			// zero addon labels, no connectivity-check label
+		},
+		secretAnnotations: map[string]string{argosecrets.AnnotationAdopted: "true"},
+	})
+
+	check := srv.doctorCheckConnectivityApp(context.Background(), "adopted-cluster")
+	if check.Status != doctorStatusNotApplicable {
+		t.Fatalf("Status = %q, want not-applicable (detail=%s)", check.Status, check.Detail)
 	}
 }
 
