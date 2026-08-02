@@ -243,7 +243,7 @@ export function ConnectionSection() {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Repository not initialized</p>
             <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">
-              Your Git repository has not been bootstrapped yet. Sharko cannot manage addons until the repository is initialized.
+              Your Git repository has not been set up yet. Sharko cannot manage addons until the repository is initialized.
             </p>
             <div className="mt-3 space-y-3">
               {initState === 'idle' && (
@@ -550,7 +550,7 @@ export function ConnectionSection() {
               </div>
             )}
             <p className="mb-4 text-sm text-[#1a4a6a] dark:text-gray-400">
-              Bootstrap the Git repository with the required Sharko directory structure and ArgoCD resources.
+              Set up the Git repository with the required Sharko directory structure and ArgoCD resources.
               Safe to run on an already-initialized repository.
             </p>
             <div className="space-y-3">
