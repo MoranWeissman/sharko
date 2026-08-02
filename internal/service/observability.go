@@ -13,7 +13,11 @@ import (
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/readcache"
 )
+
+// observabilityOverviewCacheKey is the readcache key for GetOverview (perf M1).
+const observabilityOverviewCacheKey = "observability:overview"
 
 // ObservabilityService provides aggregated observability data from ArgoCD.
 type ObservabilityService struct {
@@ -24,12 +28,24 @@ type ObservabilityService struct {
 	// w2-q6 item 1). nil (tests, e2e harness) falls back to "main" via the
 	// branch() helper below.
 	baseBranchFn func() string
+
+	// cache is the per-instance TTL cache for GetOverview (perf M1). See
+	// DashboardService.cache's doc for the shared-vs-private-per-test
+	// discipline; SetCache mirrors DashboardService.SetCache exactly.
+	cache *readcache.Cache
+}
+
+// SetCache replaces this service's read cache with a shared instance (see
+// internal/readcache and DashboardService.SetCache).
+func (s *ObservabilityService) SetCache(c *readcache.Cache) {
+	s.cache = c
 }
 
 // NewObservabilityService creates a new ObservabilityService.
 func NewObservabilityService(clusterSvc *ClusterService) *ObservabilityService {
 	return &ObservabilityService{
 		clusterSvc: clusterSvc,
+		cache:      readcache.New(readcache.DefaultTTL),
 	}
 }
 
@@ -52,8 +68,20 @@ func (s *ObservabilityService) branch() string {
 	return "main"
 }
 
-// GetOverview returns the full observability dashboard data.
+// GetOverview returns the full observability dashboard data. Cached for
+// readcache.DefaultTTL (perf M1) — see internal/readcache's package doc
+// for the invalidation contract. Fleet-wide, not per-user: every
+// authenticated caller sees the same health/sync data, so a single cache
+// entry (not keyed by role/user) is safe.
 func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Client, gp gitprovider.GitProvider) (*models.ObservabilityOverviewResponse, error) {
+	return readcache.GetOrCompute(s.cache, observabilityOverviewCacheKey, func() (*models.ObservabilityOverviewResponse, error) {
+		return s.getOverviewUncached(ctx, ac, gp)
+	})
+}
+
+// getOverviewUncached is GetOverview's actual computation, unchanged in
+// output from before perf M1/M2.
+func (s *ObservabilityService) getOverviewUncached(ctx context.Context, ac *argocd.Client, gp gitprovider.GitProvider) (*models.ObservabilityOverviewResponse, error) {
 	log := logging.LoggerFromContext(ctx)
 	// 1. Get ArgoCD version info
 	versionInfo, err := ac.GetVersion(ctx)
@@ -106,19 +134,17 @@ func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Clien
 		healthSummary[h]++
 	}
 
-	// 5. Fetch full detail for each addon app to get history and resources
-	var fullApps []models.ArgocdApplication
-	for _, app := range addonApps {
-		detail, err := ac.GetApplication(ctx, app.Name)
-		if err != nil {
-			log.Warn("could not fetch detail for app", "app", app.Name, "error", err)
-			fullApps = append(fullApps, app) // fall back to summary
-			continue
-		}
-		fullApps = append(fullApps, *detail)
-	}
+	// 5. addonApps already carries full detail (history + resources) — no
+	// per-app fetch needed. ac.ListApplicationsSummary (called above) is a
+	// plain alias for ac.ListApplications (internal/argocd/client.go): both
+	// decode the ArgoCD response through the exact same argocdApplicationItem
+	// struct that GetApplication uses, including the History and Resources
+	// fields. The per-app ac.GetApplication follow-up that used to live here
+	// was therefore a pure N+1 — one extra ArgoCD round trip per addon app
+	// for data the list call had already returned (perf M2).
+	fullApps := addonApps
 
-	// 5. Build sync activity timeline from history entries (exclude infra apps)
+	// 6. Build sync activity timeline from history entries (exclude infra apps)
 	allSyncs := buildRecentSyncs(fullApps, clusterNames)
 
 	// Sort by timestamp descending (most recent first)
@@ -132,10 +158,10 @@ func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Clien
 		recentSyncs = recentSyncs[:20]
 	}
 
-	// 6. Group by addon and build per-addon health detail
+	// 7. Group by addon and build per-addon health detail
 	addonMap := make(map[string]*models.AddonHealthDetail)
 	for _, app := range fullApps {
-		addonName, clusterName := extractAddonCluster(app.Name, clusterNames)
+		addonName, clusterName := ExtractAddonCluster(app.Name, clusterNames)
 
 		detail, ok := addonMap[addonName]
 		if !ok {
@@ -211,13 +237,13 @@ func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Clien
 		return addonHealth[i].AddonName < addonHealth[j].AddonName
 	})
 
-	// 7. Build addon groups (grouped by addon name with health counts and child apps)
+	// 8. Build addon groups (grouped by addon name with health counts and child apps)
 	addonGroups := s.buildAddonGroups(fullApps, clusterNames)
 
-	// 8. Check resource alerts via Git values
+	// 9. Check resource alerts via Git values
 	resourceAlerts := s.checkResourceAlerts(ctx, gp, addonGroups)
 
-	// 9. Get Sharko-configured cluster count from Git (exclude in-cluster)
+	// 10. Get Sharko-configured cluster count from Git (exclude in-cluster)
 	var configuredClusters int
 	var configuredClustersAvailable bool
 	if gp != nil && s.clusterSvc != nil {
@@ -232,7 +258,7 @@ func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Clien
 		}
 	}
 
-	// 10. Count addon groups (1 per addon in catalog)
+	// 11. Count addon groups (1 per addon in catalog)
 	totalAppSets := len(addonGroups)
 
 	controlPlane := models.ControlPlaneInfo{
@@ -267,7 +293,7 @@ func (s *ObservabilityService) buildAddonGroups(apps []models.ArgocdApplication,
 			continue
 		}
 
-		addonName, clusterName := extractAddonCluster(app.Name, clusterNames)
+		addonName, clusterName := ExtractAddonCluster(app.Name, clusterNames)
 
 		// Skip apps where we couldn't extract a valid cluster name
 		// (these are typically bootstrap/infra apps like "external-secrets-operator")
@@ -449,7 +475,7 @@ func buildRecentSyncs(apps []models.ArgocdApplication, clusterNames map[string]b
 		if isInfrastructureApp(app.Name) || orchestrator.IsSharkoSystemApp(app.Name) {
 			continue
 		}
-		addonName, clusterName := extractAddonCluster(app.Name, clusterNames)
+		addonName, clusterName := ExtractAddonCluster(app.Name, clusterNames)
 		for _, h := range app.History {
 			entry := models.SyncActivityEntry{
 				Timestamp:   h.DeployedAt,
@@ -473,10 +499,15 @@ func buildRecentSyncs(apps []models.ArgocdApplication, clusterNames map[string]b
 	return allSyncs
 }
 
-// extractAddonCluster extracts addon name and cluster name from an ArgoCD app name.
+// ExtractAddonCluster extracts addon name and cluster name from an ArgoCD app name.
 // App names follow the pattern {addon}-{cluster}. Cluster names from the known set are
 // matched against the suffix; the remainder is the addon name.
-func extractAddonCluster(appName string, clusterNames map[string]bool) (addon, cluster string) {
+//
+// Exported (perf M2 / walk finding #691) so internal/api's attention-items
+// handler can reuse the exact same split instead of the naive
+// `addonName := app.Name` it used to do — see handleGetAttentionItems in
+// internal/api/dashboard.go.
+func ExtractAddonCluster(appName string, clusterNames map[string]bool) (addon, cluster string) {
 	// Try to match a known cluster name as suffix
 	for name := range clusterNames {
 		suffix := "-" + name

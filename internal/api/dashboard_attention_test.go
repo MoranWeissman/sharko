@@ -17,17 +17,18 @@ import (
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
-// attentionFakeArgocd is a minimal ArgocdClient whose ListApplications returns
-// a fixed list. All other methods are no-ops.
+// attentionFakeArgocd is a minimal ArgocdClient whose ListApplications and
+// ListClusters return fixed lists. All other methods are no-ops.
 type attentionFakeArgocd struct {
-	apps []models.ArgocdApplication
+	apps     []models.ArgocdApplication
+	clusters []models.ArgocdCluster
 }
 
 func (a *attentionFakeArgocd) ListApplications(_ context.Context) ([]models.ArgocdApplication, error) {
 	return a.apps, nil
 }
 func (a *attentionFakeArgocd) ListClusters(_ context.Context) ([]models.ArgocdCluster, error) {
-	return nil, nil
+	return a.clusters, nil
 }
 func (a *attentionFakeArgocd) RegisterCluster(_ context.Context, _, _ string, _ []byte, _ string, _ map[string]string) error {
 	return nil
@@ -115,5 +116,57 @@ func TestHandleGetAttentionItems_SystemAppsExcluded(t *testing.T) {
 	// Healthy addon must not appear.
 	if returned["cert-manager-prod"] {
 		t.Errorf("healthy addon cert-manager-prod must NOT appear in attention items")
+	}
+}
+
+// TestHandleGetAttentionItems_SplitsAddonAndCluster is the regression test
+// for the #691 root cause (perf M2 ride-along): addon_name used to be set
+// to the FULL ArgoCD app name (e.g. "metrics-server-spoke-eu") despite a
+// comment claiming it split the name. The handler now reuses
+// service.ExtractAddonCluster — the same helper
+// internal/service/observability.go's GetOverview uses — so addon_name and
+// cluster split the same way, and app_name still carries the original
+// unsplit name for the UI's existing app-name matching.
+func TestHandleGetAttentionItems_SplitsAddonAndCluster(t *testing.T) {
+	srv := newTestServer()
+	srv.connSvc.SetArgocdClientOverride(&attentionFakeArgocd{
+		clusters: []models.ArgocdCluster{
+			{Name: "spoke-eu"},
+		},
+		apps: []models.ArgocdApplication{
+			{
+				Name:         "metrics-server-spoke-eu",
+				HealthStatus: "Degraded",
+				SyncStatus:   "OutOfSync",
+			},
+		},
+	})
+
+	router := NewRouter(srv, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/attention", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var items []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&items); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected exactly 1 attention item, got %d: %+v", len(items), items)
+	}
+
+	item := items[0]
+	if got := item["app_name"]; got != "metrics-server-spoke-eu" {
+		t.Errorf("app_name = %v, want the full unsplit app name %q", got, "metrics-server-spoke-eu")
+	}
+	if got := item["addon_name"]; got != "metrics-server" {
+		t.Errorf("addon_name = %v, want %q (split, not the full app name)", got, "metrics-server")
+	}
+	if got := item["cluster"]; got != "spoke-eu" {
+		t.Errorf("cluster = %v, want %q", got, "spoke-eu")
 	}
 }

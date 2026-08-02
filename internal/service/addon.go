@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
@@ -16,7 +18,20 @@ import (
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/readcache"
 )
+
+// Cache keys for the two AddonService reads wrapped by readcache (perf M1).
+const (
+	addonsCatalogCacheKey       = "addons:catalog"
+	addonsVersionMatrixCacheKey = "addons:version_matrix"
+)
+
+// listClusterAddonsSpecsConcurrency bounds the fan-out in
+// listClusterAddonsSpecs (perf M2 N+1 fix) so a very large fleet doesn't
+// open one goroutine (and one Git provider round trip) per cluster file
+// all at once.
+const listClusterAddonsSpecsConcurrency = 8
 
 // parseJSONObject decodes data as a JSON object. Used by the values-editor
 // schema lookup where we accept any well-formed JSON object as the schema —
@@ -85,6 +100,18 @@ type AddonService struct {
 	// in tests and the e2e harness that never call the setter) falls back
 	// to "main" via the branch() helper below.
 	baseBranchFn func() string
+
+	// cache is the per-instance TTL cache for GetCatalog and
+	// GetVersionMatrix (perf M1). See DashboardService.cache's doc for the
+	// shared-vs-private-per-test discipline; SetCache mirrors
+	// DashboardService.SetCache exactly.
+	cache *readcache.Cache
+}
+
+// SetCache replaces this service's read cache with a shared instance (see
+// internal/readcache and DashboardService.SetCache).
+func (s *AddonService) SetCache(c *readcache.Cache) {
+	s.cache = c
 }
 
 // SetCuratedCatalog wires in the Marketplace's curated list so the v4 read
@@ -127,6 +154,7 @@ func NewAddonService(managedClustersPath string) *AddonService {
 	return &AddonService{
 		parser:              config.NewParser(),
 		managedClustersPath: managedClustersPath,
+		cache:               readcache.New(readcache.DefaultTTL),
 	}
 }
 
@@ -222,6 +250,17 @@ func mergedAddonToCatalogEntry(m catalog.CatalogAddon) models.AddonCatalogEntry 
 // the v4 branch. GetAddonDetail delegates to GetCatalog and needs no
 // separate v4 branch of its own.
 func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.AddonCatalogResponse, error) {
+	return readcache.GetOrCompute(s.cache, addonsCatalogCacheKey, func() (*models.AddonCatalogResponse, error) {
+		return s.getCatalogUncached(ctx, gp, ac)
+	})
+}
+
+// getCatalogUncached is GetCatalog's actual computation (v3/v4 dispatch +
+// both branch bodies), unchanged from before perf M1. GetCatalog wraps it
+// with a readcache.DefaultTTL cache — fleet-wide, not per-user: every
+// authenticated caller sees the same catalog, so a single cache entry (not
+// keyed by role/user) is safe.
+func (s *AddonService) getCatalogUncached(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.AddonCatalogResponse, error) {
 	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, s.branch()); pinErr == nil && len(pinContent) > 0 {
 		return s.getCatalogV4(ctx, gp, ac)
 	}
@@ -588,6 +627,20 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 // mention "404" still surface as real 5xx — only the genuinely
 // missing-file path short-circuits.
 func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.VersionMatrixResponse, error) {
+	return readcache.GetOrCompute(s.cache, addonsVersionMatrixCacheKey, func() (*models.VersionMatrixResponse, error) {
+		return s.getVersionMatrixUncached(ctx, gp, ac)
+	})
+}
+
+// getVersionMatrixUncached is GetVersionMatrix's actual computation
+// (v3/v4 dispatch + both branch bodies), unchanged from before perf M1.
+// GetVersionMatrix wraps it with a readcache.DefaultTTL cache — fleet-wide,
+// not per-user, so a single cache entry (not keyed by role/user) is safe.
+// The handler (handleGetVersionMatrix) enriches the returned response with
+// freshness data in place after calling this — readcache.GetOrCompute
+// hands back a fresh JSON-decoded copy on every call specifically so that
+// mutation can never corrupt a later cache hit.
+func (s *AddonService) getVersionMatrixUncached(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.VersionMatrixResponse, error) {
 	// Non-empty-content check (not just err == nil) because some
 	// GitProvider fakes in this codebase's own test suites return
 	// (nil, nil) rather than an error for an unknown path — matching the
@@ -821,6 +874,17 @@ func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.Gi
 // ClusterAddonsSpec, keyed by cluster name. An empty (or absent —
 // pre-first-cluster v4 repos have only cluster-addons/.gitkeep) directory
 // returns an empty, non-nil map rather than an error.
+// listClusterAddonsSpecs reads every cluster-addons/*.yaml file. The
+// per-file reads are independent — nothing about parsing one cluster's
+// spec depends on any other — so on a fleet with many clusters this used
+// to be a classic N+1: one sequential Git provider round trip per cluster
+// (perf M2). GitProvider has no batch/multi-file read, so the fix is a
+// bounded concurrent fan-out over the single ListDirectory result instead
+// of a second network primitive: still exactly one call per file, but they
+// happen in parallel (capped by listClusterAddonsSpecsConcurrency) rather
+// than one after another. Output and error behavior are unchanged — the
+// first error from any file still fails the whole call, with the same
+// wrapped message.
 func listClusterAddonsSpecs(ctx context.Context, gp gitprovider.GitProvider, baseBranch string) (map[string]models.ClusterAddonsSpec, error) {
 	entries, err := gp.ListDirectory(ctx, orchestrator.V4ClustersDir, baseBranch)
 	if err != nil {
@@ -830,19 +894,38 @@ func listClusterAddonsSpecs(ctx context.Context, gp gitprovider.GitProvider, bas
 		return nil, err
 	}
 
-	out := make(map[string]models.ClusterAddonsSpec, len(entries))
+	var yamlNames []string
 	for _, name := range entries {
-		if !strings.HasSuffix(name, ".yaml") {
-			continue // .gitkeep and any non-YAML entry
+		if strings.HasSuffix(name, ".yaml") {
+			yamlNames = append(yamlNames, name)
 		}
-		data, readErr := gp.GetFileContent(ctx, path.Join(orchestrator.V4ClustersDir, name), baseBranch)
-		if readErr != nil {
-			return nil, fmt.Errorf("reading %s/%s: %w", orchestrator.V4ClustersDir, name, readErr)
-		}
-		spec, parseErr := models.LoadClusterAddons(data)
-		if parseErr != nil {
-			return nil, fmt.Errorf("parsing %s/%s: %w", orchestrator.V4ClustersDir, name, parseErr)
-		}
+	}
+
+	// Each goroutine writes to its own index — no lock needed, and no
+	// races even though the slice itself is shared.
+	specs := make([]models.ClusterAddonsSpec, len(yamlNames))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(listClusterAddonsSpecsConcurrency)
+	for i, name := range yamlNames {
+		g.Go(func() error {
+			data, readErr := gp.GetFileContent(gctx, path.Join(orchestrator.V4ClustersDir, name), baseBranch)
+			if readErr != nil {
+				return fmt.Errorf("reading %s/%s: %w", orchestrator.V4ClustersDir, name, readErr)
+			}
+			spec, parseErr := models.LoadClusterAddons(data)
+			if parseErr != nil {
+				return fmt.Errorf("parsing %s/%s: %w", orchestrator.V4ClustersDir, name, parseErr)
+			}
+			specs[i] = spec
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]models.ClusterAddonsSpec, len(specs))
+	for _, spec := range specs {
 		out[spec.Cluster] = spec
 	}
 	return out, nil

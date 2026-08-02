@@ -1217,6 +1217,13 @@ var serveCmd = &cobra.Command{
 				}
 
 				prTracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
+					// perf M1: a merged PR just changed what dashboard
+					// stats/clusters list/fleet status/catalog/version
+					// matrix/observability overview report. This callback
+					// fires from the PR tracker's background poll loop, not
+					// an HTTP request, so auditMiddleware's invalidation net
+					// can't see it — invalidate explicitly.
+					srv.InvalidateReadCache()
 					triggerMergeReconcilers(clusterRecon, secretRecon)
 					// The second half of a v3 → v4 migration: retire the old
 					// ApplicationSets and start the engine in their place.

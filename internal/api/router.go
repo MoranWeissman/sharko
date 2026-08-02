@@ -46,6 +46,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
+	"github.com/MoranWeissman/sharko/internal/readcache"
 	"github.com/MoranWeissman/sharko/internal/service"
 	"github.com/MoranWeissman/sharko/internal/settings"
 )
@@ -202,6 +203,18 @@ type Server struct {
 
 	// Audit log for external-change events (always available — initialised in NewServer).
 	auditLog *audit.Log
+
+	// readCache is the shared TTL cache backing the six hot fleet-wide
+	// reads (perf M1 — see internal/readcache's package doc): dashboard
+	// stats, clusters list, fleet status, catalog list, version matrix,
+	// observability overview. Always available — initialised in
+	// NewServer, which also wires the SAME instance into clusterSvc,
+	// addonSvc, dashboardSvc, and observabilitySvc via their SetCache
+	// setters, so InvalidateReadCache() (called from auditMiddleware on
+	// every successful mutating request, and explicitly from the PR
+	// tracker's merge callback in cmd/sharko/serve.go) clears every
+	// service's cache in one call.
+	readCache *readcache.Cache
 
 	// Notification store (always available — initialised in NewServer as
 	// in-memory only; upgraded to ConfigMap-backed persistence via
@@ -391,6 +404,14 @@ func NewServer(
 		slog.Warn("WARNING: Authentication is DISABLED — all API endpoints are publicly accessible. Configure users via K8s ConfigMap or SHARKO_AUTH_USER env var.")
 	}
 
+	// perf M1: one shared read cache, threaded into every service that
+	// reads or invalidates it. See the readCache field doc.
+	readCache := readcache.New(readcache.DefaultTTL)
+	clusterSvc.SetCache(readCache)
+	addonSvc.SetCache(readCache)
+	dashboardSvc.SetCache(readCache)
+	observabilitySvc.SetCache(readCache)
+
 	return &Server{
 		connSvc:           connSvc,
 		clusterSvc:        clusterSvc,
@@ -408,7 +429,18 @@ func NewServer(
 		changeLogStore:    changelog.NewStore(changelog.DefaultMaxPerCluster, nil),
 		opsStore:          operations.NewStore(),
 		startTime:         time.Now(),
+		readCache:         readCache,
 	}
+}
+
+// InvalidateReadCache drops every entry in the shared read cache (perf
+// M1). Called from auditMiddleware after any successful mutating request,
+// and explicitly from the PR tracker's merge callback in
+// cmd/sharko/serve.go (a background-goroutine trigger that never goes
+// through the HTTP middleware). Safe to call liberally — a cache miss just
+// means the next read recomputes instead of hitting a stale-forever entry.
+func (s *Server) InvalidateReadCache() {
+	s.readCache.InvalidateAll()
 }
 
 // SetVersion stores the build version (injected via ldflags) for use in the health endpoint.
