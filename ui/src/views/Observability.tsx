@@ -124,119 +124,95 @@ function statusIcon(status: string) {
 
 function ControlPlaneSection({
   data,
+  stats,
+  argoCDUrl,
 }: {
   data: ObservabilityOverviewResponse['control_plane'];
+  stats: DashboardStats | null;
+  argoCDUrl: string | null;
 }) {
-  const healthData = useMemo(
-    () =>
-      Object.entries(data?.health_summary ?? {}).map(([name, value]) => ({
-        name,
-        value,
-      })),
-    [data?.health_summary],
-  );
-
-  const total = healthData.reduce((sum, d) => sum + d.value, 0);
+  // v4 slim (maintainer's lock: "go with the slim version") — this panel is
+  // now ONE machinery-of-deployment header: version chips + the Sharko
+  // Engine app health, folded in from the old standalone
+  // "Sharko Engine" section. The four v3 tiles (Applications, ApplicationSets,
+  // Clusters configured, In ArgoCD) and the health-summary bar are gone —
+  // they either mislabeled addon data as control-plane data, or duplicated
+  // the fleet 5-state model / the addon-health section below.
+  const health = stats?.bootstrap_app_health ?? 'Unknown';
+  const sync = stats?.bootstrap_app_sync ?? 'Unknown';
+  const { dot, badge } = bootstrapHealthColor(health);
+  const appExists = health !== 'Missing' && health !== 'Unknown' && health !== '';
+  const argoCDLink =
+    appExists && argoCDUrl
+      ? `${argoCDUrl.replace(/\/$/, '')}/applications/sharko-engine`
+      : null;
 
   return (
     <section className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:ring-gray-700 dark:bg-gray-900">
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <h2 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
-          ArgoCD Control Plane
-        </h2>
-        <span className="rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-medium text-teal-800 dark:bg-teal-900/40 dark:text-teal-300">
-          ArgoCD {data.argocd_version}
-        </span>
-        <span className="rounded-full bg-[#d6eeff] px-2.5 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400">
-          Helm {data.helm_version}
-        </span>
-        <span className="rounded-full bg-[#d6eeff] px-2.5 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400">
-          kubectl {data.kubectl_version}
-        </span>
-      </div>
-
-      <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <StatBlock label="Applications" value={data.total_apps} />
-        <StatBlock label="ApplicationSets" value={data.total_appsets} />
-        {data.configured_clusters_available ? (
-          <StatBlock label="Clusters configured" value={data.configured_clusters} sub={`of ${data.total_clusters}`} />
-        ) : (
-          <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#d0e8f8] p-4 dark:ring-gray-700 dark:bg-gray-800" title="Cluster count from Git is not available">
-            <p className="text-xs font-medium uppercase tracking-wide text-[#2a5a7a] dark:text-gray-400">
-              Clusters configured
-            </p>
-            <p className="mt-1 text-2xl font-bold text-[#3a6a8a] dark:text-gray-500">
-              unavailable
-            </p>
-          </div>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
+            ArgoCD Control Plane
+          </h2>
+          <span className="rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-medium text-teal-800 dark:bg-teal-900/40 dark:text-teal-300">
+            ArgoCD {data.argocd_version}
+          </span>
+          <span className="rounded-full bg-[#d6eeff] px-2.5 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400">
+            Helm {data.helm_version}
+          </span>
+          <span className="rounded-full bg-[#d6eeff] px-2.5 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400">
+            kubectl {data.kubectl_version}
+          </span>
+        </div>
+        {argoCDLink && (
+          <a
+            href={argoCDLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 rounded-md bg-[#d6eeff] px-3 py-1 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#bee0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            View in ArgoCD
+          </a>
         )}
-        <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#d0e8f8] p-4 dark:ring-gray-700 dark:bg-gray-800" title="Total clusters ArgoCD knows about (Sharko manages the configured subset)">
-          <p className="text-xs font-medium uppercase tracking-wide text-[#2a5a7a] dark:text-gray-400">
-            In ArgoCD
-          </p>
-          <p className="mt-1 text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">
-            {data.total_clusters}
-          </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-6 border-t border-[#6aade0] pt-4 dark:border-gray-700">
+        <div className="flex items-center gap-2">
+          <Heart className="h-4 w-4 text-teal-500" />
+          <span className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
+            Sharko Engine
+          </span>
+          <span className="text-xs text-[#5a8aaa] dark:text-gray-500">
+            the ArgoCD application that deploys your addons from git
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`inline-block h-3 w-3 rounded-full ${dot}`} />
+          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${badge}`}>
+            {health || 'Unknown'}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">
+            Sync
+          </span>
+          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${syncBadgeCls(sync)}`}>
+            {sync || 'Unknown'}
+          </span>
         </div>
       </div>
 
-      {/* Health bar */}
-      <div>
-        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-[#2a5a7a] dark:text-gray-400">
-          Health Summary
-        </p>
-        <div className="flex h-4 overflow-hidden rounded-full">
-          {healthData.map((d) => (
-            <div
-              key={d.name}
-              style={{
-                width: total > 0 ? `${(d.value / total) * 100}%` : '0%',
-                backgroundColor: HEALTH_COLORS[d.name] ?? '#9ca3af',
-              }}
-              title={`${d.name}: ${d.value}`}
-            />
-          ))}
+      {health && health.toLowerCase() !== 'healthy' && health.toLowerCase() !== 'unknown' && health !== '' && (
+        <div className="mt-4 flex items-start gap-2 rounded-lg bg-amber-50 p-3 ring-1 ring-amber-300 dark:bg-amber-950/30 dark:ring-amber-700">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="text-sm text-amber-800 dark:text-amber-300">
+            The engine app is <strong>{health}</strong>. Check ArgoCD for sync errors or missing resources.
+            Addon installations and updates may not work until this is resolved.
+          </p>
         </div>
-        <div className="mt-2 flex flex-wrap gap-4">
-          {healthData.map((d) => (
-            <span
-              key={d.name}
-              className="flex items-center gap-1.5 text-sm text-[#1a4a6a] dark:text-gray-400"
-            >
-              <span
-                className="inline-block h-2.5 w-2.5 rounded-full"
-                style={{ backgroundColor: HEALTH_COLORS[d.name] ?? '#9ca3af' }}
-              />
-              {d.name}: {d.value}
-            </span>
-          ))}
-        </div>
-      </div>
+      )}
     </section>
-  );
-}
-
-function StatBlock({
-  label,
-  value,
-  sub,
-}: {
-  label: string;
-  value: number;
-  sub?: string;
-}) {
-  return (
-    <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#d0e8f8] p-4 dark:ring-gray-700 dark:bg-gray-800">
-      <p className="text-xs font-medium uppercase tracking-wide text-[#2a5a7a] dark:text-gray-400">
-        {label}
-      </p>
-      <p className="mt-1 text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">
-        {value}
-        {sub && (
-          <span className="text-base font-normal text-[#3a6a8a]"> {sub}</span>
-        )}
-      </p>
-    </div>
   );
 }
 
@@ -1248,7 +1224,7 @@ function SyncDurationSection({
 }
 
 // ---------------------------------------------------------------------------
-// Section 8: Bootstrap Application Health
+// Sharko Engine health color helper — used inline in ControlPlaneSection
 // ---------------------------------------------------------------------------
 
 function bootstrapHealthColor(health: string): { dot: string; badge: string } {
@@ -1272,99 +1248,6 @@ function bootstrapHealthColor(health: string): { dot: string; badge: string } {
     dot: 'bg-[#9ca3af]',
     badge: 'bg-[#d6eeff] text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400',
   };
-}
-
-function BootstrapAppSection({
-  stats,
-  argoCDUrl,
-}: {
-  stats: DashboardStats | null;
-  argoCDUrl: string | null;
-}) {
-  const health = stats?.bootstrap_app_health ?? 'Unknown';
-  const sync = stats?.bootstrap_app_sync ?? 'Unknown';
-
-  const { dot, badge } = bootstrapHealthColor(health);
-
-  const appExists =
-    health !== 'Missing' && health !== 'Unknown' && health !== '';
-
-  // v4: the bootstrap ArgoCD Application is named "sharko-engine" (was
-  // "cluster-addons-bootstrap" pre-v4). DashboardStats doesn't carry the
-  // actual app name, so this can't be derived per-connection; the current
-  // (v4) name is used directly rather than the dead v3 literal.
-  const argoCDLink =
-    appExists && argoCDUrl
-      ? `${argoCDUrl.replace(/\/$/, '')}/applications/sharko-engine`
-      : null;
-
-  return (
-    <section className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:ring-gray-700 dark:bg-gray-900">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
-            <Heart className="h-5 w-5 text-teal-500" />
-            Sharko Engine
-          </h2>
-          <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-500">
-            the ArgoCD application that deploys your addons from git
-          </p>
-        </div>
-        {argoCDLink && (
-          <a
-            href={argoCDLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 rounded-md bg-[#d6eeff] px-3 py-1 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#bee0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-            View in ArgoCD
-          </a>
-        )}
-      </div>
-
-      <p className="mb-5 text-sm text-[#2a5a7a] dark:text-gray-400">
-        The <code className="rounded bg-[#d6eeff] px-1 py-0.5 text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300">sharko-engine</code> application
-        manages the foundation of your Sharko deployment. If unhealthy, addon deployments may fail.
-      </p>
-
-      <div className="flex flex-wrap gap-6">
-        {/* Health */}
-        <div className="flex flex-col gap-1">
-          <p className="text-xs font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">
-            Health
-          </p>
-          <div className="flex items-center gap-2">
-            <span className={`inline-block h-3 w-3 rounded-full ${dot}`} />
-            <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${badge}`}>
-              {health || 'Unknown'}
-            </span>
-          </div>
-        </div>
-
-        {/* Sync */}
-        <div className="flex flex-col gap-1">
-          <p className="text-xs font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">
-            Sync
-          </p>
-          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${syncBadgeCls(sync)}`}>
-            {sync || 'Unknown'}
-          </span>
-        </div>
-      </div>
-
-      {/* Warning note if not healthy */}
-      {health && health.toLowerCase() !== 'healthy' && health.toLowerCase() !== 'unknown' && health !== '' && (
-        <div className="mt-5 flex items-start gap-2 rounded-lg bg-amber-50 p-3 ring-1 ring-amber-300 dark:bg-amber-950/30 dark:ring-amber-700">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          <p className="text-sm text-amber-800 dark:text-amber-300">
-            The engine app is <strong>{health}</strong>. Check ArgoCD for sync errors or missing resources.
-            Addon installations and updates may not work until this is resolved.
-          </p>
-        </div>
-      )}
-    </section>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1502,7 +1385,7 @@ export function Observability() {
           </p>
         </div>
         {attentionSection}
-        <BootstrapAppSection stats={stats} argoCDUrl={argoCDUrl} />
+        <ControlPlaneSection data={data.control_plane} stats={stats} argoCDUrl={argoCDUrl} />
         <EmptyState
           title="No observability data available yet"
           description="Deploy addons to clusters to see sync status, health metrics, and version information."
@@ -1520,8 +1403,7 @@ export function Observability() {
         </p>
       </div>
       {attentionSection}
-      <BootstrapAppSection stats={stats} argoCDUrl={argoCDUrl} />
-      <ControlPlaneSection data={data.control_plane ?? { health_summary: {}, total_applications: 0, synced: 0, out_of_sync: 0 }} />
+      <ControlPlaneSection data={data.control_plane} stats={stats} argoCDUrl={argoCDUrl} />
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <HealthDistributionSection data={data.control_plane} />
         <SyncDistributionSection addonGroups={data.addon_groups ?? []} />
