@@ -1178,7 +1178,7 @@ export function ClusterDetail() {
             * before this, a failed reconcile here was server-log-only. */}
           {data?.cluster?.last_reconcile && (
             <p className="mt-1 text-sm text-[#5a8aaa] dark:text-gray-500">
-              Last sync: {relativeTime(data.cluster.last_reconcile.time)}
+              Last sync check: {relativeTime(data.cluster.last_reconcile.time)}
               {data.cluster.last_reconcile.outcome === 'succeeded' && ' — succeeded'}
               {data.cluster.last_reconcile.outcome === 'skipped' && ' — skipped'}
               {data.cluster.last_reconcile.outcome === 'failed' && (
@@ -1529,7 +1529,7 @@ export function ClusterDetail() {
             let label = 'Not synced yet';
             let state: 'synced' | 'out_of_sync' | 'failed' | 'reconciling' | 'unknown' = 'unknown';
             if (syncingNow) {
-              label = 'Reconciling';
+              label = 'Syncing';
               state = 'reconciling';
             } else if (lastRec?.outcome === 'succeeded') {
               label = hasDrift ? 'OutOfSync' : 'Synced';

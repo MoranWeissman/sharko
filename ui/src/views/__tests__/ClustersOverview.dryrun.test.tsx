@@ -174,7 +174,7 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     const previewBtn = screen.getByRole('button', { name: /preview/i });
     expect(previewBtn).toHaveAttribute(
       'title',
-      expect.stringContaining('Dry-run'),
+      expect.stringContaining('Preview'),
     );
     // Sanity-check the substance of the tooltip — operator should know it
     // does not apply changes.

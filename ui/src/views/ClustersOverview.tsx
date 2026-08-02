@@ -613,7 +613,7 @@ export function ClustersOverview() {
         setDryRunResult(result.dry_run);
       }
     } catch (e: unknown) {
-      setAddClusterError(e instanceof Error ? e.message : 'Dry run failed');
+      setAddClusterError(e instanceof Error ? e.message : 'Preview failed');
     } finally {
       setDryRunLoading(false);
     }
@@ -1588,7 +1588,7 @@ export function ClustersOverview() {
                 !addClusterName.trim() ||
                 directRequiredMissing
               }
-              title="Dry-run: show the PR title, files that would be committed, and ArgoCD secret that would be created — without actually applying anything."
+              title="Preview: show the PR title, files that would be committed, and ArgoCD secret that would be created — without actually applying anything."
               className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {dryRunLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}

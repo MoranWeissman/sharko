@@ -9,7 +9,7 @@ import { AuthContext } from '@/hooks/useAuth';
 //  1. "Sync now" renders as a prominent primary button next to Test connection.
 //  2. A status pill shows the reconcile outcome (In sync / Sync failed / Reconciling… / Not synced yet).
 //  3. Clicking Sync now calls POST /clusters/{name}/reconcile for THIS cluster.
-//  4. The "Last sync" line still renders relative time + outcome (kept from V2-cleanup-89.4).
+//  4. The "Last sync check" line still renders relative time + outcome (kept from V2-cleanup-89.4).
 
 const adminAuth = {
   token: 'test-token',
@@ -182,7 +182,7 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
     });
   });
 
-  it('does not render a "Last sync" line when last_reconcile is absent', async () => {
+  it('does not render a "Last sync check" line when last_reconcile is absent', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse());
     renderView();
 
@@ -190,19 +190,19 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/^Last sync:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Last sync check:/)).not.toBeInTheDocument();
   });
 
-  it('renders a succeeded "Last sync" line with a relative time', async () => {
+  it('renders a succeeded "Last sync check" line with a relative time', async () => {
     mockGetClusterComparison.mockResolvedValue(
       baseComparisonResponse({ time: new Date(Date.now() - 5 * 60 * 1000).toISOString(), outcome: 'succeeded' }),
     );
     renderView();
 
     await waitFor(() => {
-      expect(screen.getByText(/^Last sync:/)).toBeInTheDocument();
+      expect(screen.getByText(/^Last sync check:/)).toBeInTheDocument();
     });
-    expect(screen.getByText(/Last sync:.*succeeded/)).toBeInTheDocument();
+    expect(screen.getByText(/Last sync check:.*succeeded/)).toBeInTheDocument();
   });
 
   it('renders a failed outcome with its plain-English message', async () => {
@@ -216,11 +216,11 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
     renderView();
 
     await waitFor(() => {
-      expect(screen.getByText(/^Last sync:/)).toBeInTheDocument();
+      expect(screen.getByText(/^Last sync check:/)).toBeInTheDocument();
     });
     // The "— failed" outcome text renders inside its own (red-styled) span,
     // so it's checked as a separate node rather than concatenated with the
-    // "Last sync:" text — Testing Library only matches a node's own direct
+    // "Last sync check:" text — Testing Library only matches a node's own direct
     // text children, not nested elements' text.
     expect(screen.getByText(/—\s*failed/)).toBeInTheDocument();
     expect(
@@ -275,7 +275,7 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
       );
       renderView();
       await waitFor(() => {
-        expect(screen.getByText(/^Last sync:/)).toBeInTheDocument();
+        expect(screen.getByText(/^Last sync check:/)).toBeInTheDocument();
       });
 
       vi.useFakeTimers({ shouldAdvanceTime: true });
