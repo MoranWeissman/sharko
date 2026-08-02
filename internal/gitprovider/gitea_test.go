@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -610,6 +611,341 @@ func TestGiteaProviderWritePath(t *testing.T) {
 	// 9. DeleteBranch
 	if err := provider.DeleteBranch(ctx, "feature-branch"); err != nil {
 		t.Errorf("DeleteBranch failed: %v", err)
+	}
+}
+
+// giteaFileRequestBody mirrors the JSON shape the Gitea SDK sends for
+// create/update/delete file calls (gitea.FileOptions embedded, plus the
+// per-call fields) — used by the attribution tests below to inspect exactly
+// what the server received, the same way TestCreateOrUpdateFile_NewFile
+// (github_write_test.go) decodes the raw request body rather than trusting
+// the SDK's own round-trip.
+type giteaFileRequestBody struct {
+	Message   string `json:"message"`
+	Branch    string `json:"branch"`
+	Author    struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	} `json:"author"`
+	Committer struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	} `json:"committer"`
+}
+
+// TestGiteaProviderCreateFile_SetsAuthorAndCommitter is the create half of
+// task #67 / review finding M1: the Gitea write path did not set
+// FileOptions.Author/Committer at all, so a Tier 2 commit made with a
+// per-user PAT was still authored as whichever account the token belongs
+// to — the acting user's identity, resolved by
+// internal/api/tiered_git.go's GitProviderForTier and attached to ctx via
+// gitprovider.WithAttribution, never reached the Gitea SDK request body.
+func TestGiteaProviderCreateFile_SetsAuthorAndCommitter(t *testing.T) {
+	var captured giteaFileRequestBody
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/newfile.txt" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/newfile.txt" {
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"newfile.txt","sha":"newsha"}}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	ctx := WithAttribution(context.Background(), CommitAttribution{
+		AuthorName:  "Jane Dev",
+		AuthorEmail: "jane@example.com",
+	})
+	if err := provider.CreateOrUpdateFile(ctx, "newfile.txt", []byte("content"), "feature-branch", "Add new file"); err != nil {
+		t.Fatalf("CreateOrUpdateFile failed: %v", err)
+	}
+
+	if captured.Author.Name != "Jane Dev" || captured.Author.Email != "jane@example.com" {
+		t.Errorf("author = %+v, want Jane Dev <jane@example.com>", captured.Author)
+	}
+	if captured.Committer.Name != "Jane Dev" || captured.Committer.Email != "jane@example.com" {
+		t.Errorf("committer = %+v, want Jane Dev <jane@example.com>", captured.Committer)
+	}
+	if !strings.Contains(captured.Message, "Signed-off-by: Jane Dev <jane@example.com>") {
+		t.Errorf("message %q missing Signed-off-by trailer for the effective author", captured.Message)
+	}
+}
+
+// TestGiteaProviderUpdateFile_SetsAuthorAndCommitter is the update half of
+// the same fix: CreateOrUpdateFile routes to updateFile when the file
+// already exists, and that path had the identical gap.
+func TestGiteaProviderUpdateFile_SetsAuthorAndCommitter(t *testing.T) {
+	var captured giteaFileRequestBody
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/existingfile.txt" {
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"name": "existingfile.txt",
+				"path": "existingfile.txt",
+				"sha":  "oldsha123",
+				"type": "file",
+			})
+			return
+		}
+		if r.Method == "PUT" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/existingfile.txt" {
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+			w.WriteHeader(200)
+			w.Write([]byte(`{"content":{"name":"existingfile.txt","sha":"newsha"}}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	ctx := WithAttribution(context.Background(), CommitAttribution{
+		AuthorName:  "Jane Dev",
+		AuthorEmail: "jane@example.com",
+	})
+	if err := provider.CreateOrUpdateFile(ctx, "existingfile.txt", []byte("updated"), "feature-branch", "Update file"); err != nil {
+		t.Fatalf("CreateOrUpdateFile failed: %v", err)
+	}
+
+	if captured.Author.Name != "Jane Dev" || captured.Author.Email != "jane@example.com" {
+		t.Errorf("author = %+v, want Jane Dev <jane@example.com>", captured.Author)
+	}
+	if captured.Committer.Name != "Jane Dev" || captured.Committer.Email != "jane@example.com" {
+		t.Errorf("committer = %+v, want Jane Dev <jane@example.com>", captured.Committer)
+	}
+}
+
+// TestGiteaProviderDeleteFile_SetsAuthorAndCommitter covers the third write
+// method the story calls out: DeleteFile.
+func TestGiteaProviderDeleteFile_SetsAuthorAndCommitter(t *testing.T) {
+	var captured giteaFileRequestBody
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/deleteme.txt" {
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"name": "deleteme.txt",
+				"path": "deleteme.txt",
+				"sha":  "deletesha",
+				"type": "file",
+			})
+			return
+		}
+		if r.Method == "DELETE" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/deleteme.txt" {
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+			w.WriteHeader(200)
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	ctx := WithAttribution(context.Background(), CommitAttribution{
+		AuthorName:  "Jane Dev",
+		AuthorEmail: "jane@example.com",
+	})
+	if err := provider.DeleteFile(ctx, "deleteme.txt", "main", "Remove file"); err != nil {
+		t.Fatalf("DeleteFile failed: %v", err)
+	}
+
+	if captured.Author.Name != "Jane Dev" || captured.Author.Email != "jane@example.com" {
+		t.Errorf("author = %+v, want Jane Dev <jane@example.com>", captured.Author)
+	}
+	if captured.Committer.Name != "Jane Dev" || captured.Committer.Email != "jane@example.com" {
+		t.Errorf("committer = %+v, want Jane Dev <jane@example.com>", captured.Committer)
+	}
+}
+
+// TestGiteaProviderBatchCreateFiles_SetsAuthorAndCommitter covers
+// BatchCreateFiles, which the doc comment on the Gitea provider says falls
+// back to sequential CreateOrUpdateFile calls (no native batch API) — so
+// the attribution fix has to reach every file in the batch, not just a
+// single-file call.
+func TestGiteaProviderBatchCreateFiles_SetsAuthorAndCommitter(t *testing.T) {
+	captured := map[string]giteaFileRequestBody{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.Method == "GET" && (r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch1.txt" ||
+			r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch2.txt") {
+			w.WriteHeader(404)
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch1.txt" {
+			var body giteaFileRequestBody
+			json.NewDecoder(r.Body).Decode(&body)
+			captured["batch1.txt"] = body
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"batch1.txt"}}`))
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch2.txt" {
+			var body giteaFileRequestBody
+			json.NewDecoder(r.Body).Decode(&body)
+			captured["batch2.txt"] = body
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"batch2.txt"}}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	ctx := WithAttribution(context.Background(), CommitAttribution{
+		AuthorName:  "Jane Dev",
+		AuthorEmail: "jane@example.com",
+	})
+	files := map[string][]byte{
+		"batch1.txt": []byte("one"),
+		"batch2.txt": []byte("two"),
+	}
+	if err := provider.BatchCreateFiles(ctx, files, "feature-branch", "Batch commit"); err != nil {
+		t.Fatalf("BatchCreateFiles failed: %v", err)
+	}
+
+	for _, name := range []string{"batch1.txt", "batch2.txt"} {
+		body, ok := captured[name]
+		if !ok {
+			t.Fatalf("%s: no request captured", name)
+		}
+		if body.Author.Name != "Jane Dev" || body.Author.Email != "jane@example.com" {
+			t.Errorf("%s: author = %+v, want Jane Dev <jane@example.com>", name, body.Author)
+		}
+		if body.Committer.Name != "Jane Dev" || body.Committer.Email != "jane@example.com" {
+			t.Errorf("%s: committer = %+v, want Jane Dev <jane@example.com>", name, body.Committer)
+		}
+	}
+}
+
+// TestGiteaProviderCreateFile_NoAttribution_FallsBackToServiceIdentity is
+// the no-PAT half of the tiered model: when ctx carries no
+// CommitAttribution at all (Tier 1, or a caller that never resolved a
+// per-user PAT), the commit must still carry an explicit identity — the
+// same "Sharko Bot" service identity commitAuthorFor falls back to on
+// GitHub — rather than silently defaulting to whatever account the
+// connection's own service PAT belongs to with no record of who triggered
+// the change.
+func TestGiteaProviderCreateFile_NoAttribution_FallsBackToServiceIdentity(t *testing.T) {
+	var captured giteaFileRequestBody
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/newfile.txt" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/newfile.txt" {
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"newfile.txt","sha":"newsha"}}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	// No WithAttribution call — plain background context, exactly like a
+	// caller that never resolved a per-user PAT.
+	if err := provider.CreateOrUpdateFile(context.Background(), "newfile.txt", []byte("content"), "feature-branch", "Add new file"); err != nil {
+		t.Fatalf("CreateOrUpdateFile failed: %v", err)
+	}
+
+	if captured.Author.Name != DefaultAuthorName || captured.Author.Email != DefaultAuthorEmail {
+		t.Errorf("author = %+v, want the default service identity %s <%s>", captured.Author, DefaultAuthorName, DefaultAuthorEmail)
+	}
+	if captured.Committer.Name != DefaultAuthorName || captured.Committer.Email != DefaultAuthorEmail {
+		t.Errorf("committer = %+v, want the default service identity %s <%s>", captured.Committer, DefaultAuthorName, DefaultAuthorEmail)
+	}
+	if !strings.Contains(captured.Message, "Signed-off-by: "+DefaultAuthorName+" <"+DefaultAuthorEmail+">") {
+		t.Errorf("message %q missing Signed-off-by trailer for the default service identity", captured.Message)
 	}
 }
 

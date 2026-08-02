@@ -26,9 +26,9 @@ Sharko maintains one active ArgoCD connection and one active Git connection. You
 
 | Field | Description |
 |-------|-------------|
-| **Provider** | GitHub or Azure DevOps |
+| **Provider** | GitHub, Azure DevOps, or Gitea (see [Gitea Provider reference](../operator/gitea-provider.md) for Gitea-specific fields and limits) |
 | **Repository URL** | The addons repo URL (e.g., `https://github.com/your-org/addons-repo`) |
-| **Personal Access Token** | PAT with `repo` read/write (GitHub) or `Code (Read & Write)` (Azure DevOps) |
+| **Personal Access Token** | PAT with `repo` read/write (GitHub), `Code (Read & Write)` (Azure DevOps), or an access token with repo read/write (Gitea) |
 
 Sharko validates each connection when you save it. To re-test at any time:
 

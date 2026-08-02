@@ -395,6 +395,34 @@ func fileExists(p string) bool {
 // Direct ArgoCD cluster registration helper
 // ---------------------------------------------------------------------------
 
+// buildTLSClientConfig returns the ArgoCD cluster-secret tlsClientConfig
+// block, enforcing the same insecure/caData mutual exclusion Sharko's own
+// production client uses when it builds this exact payload
+// (internal/argocd/client_write.go::RegisterCluster): caData present always
+// pairs with insecure:false, never insecure:true. The two fields answer the
+// same question two different ways — "skip verifying the cert" vs. "verify
+// it against this CA" — so sending both is a contradiction the ArgoCD
+// cluster API is entitled to reject, or at best silently ignore one of.
+//
+// insecure:true drops caData entirely rather than sending both — this is
+// task #49 round 2: round 1 (PR #585) changed this helper's hard-coded
+// "insecure": false to "insecure": true so the ephemeral kind cluster's
+// self-signed cert would be tolerated under a stricter, unpinned ArgoCD
+// stable, but left the caData field sitting right next to it, so the
+// payload asked ArgoCD to both skip verification AND validate against a CA
+// in the same breath. Every registration/cluster payload the harness builds
+// should go through this helper rather than assembling tlsClientConfig
+// inline, so the class does not resurface at a second call site.
+func buildTLSClientConfig(insecure bool, caDataB64 string) map[string]any {
+	if insecure {
+		return map[string]any{"insecure": true}
+	}
+	return map[string]any{
+		"caData":   caDataB64,
+		"insecure": false,
+	}
+}
+
 // registerClusterInArgoCDDirect registers a target kind cluster directly in
 // ArgoCD via ArgoCD's REST API, bypassing Sharko's POST /api/v1/clusters
 // flow entirely.
@@ -439,16 +467,15 @@ func registerClusterInArgoCDDirect(t *testing.T, argoAccess *argocdAccess, targe
 	// 3. Build the ArgoCD POST /api/v1/clusters payload. The shape matches
 	//    internal/argocd/client_write.go::RegisterCluster exactly so the
 	//    resulting cluster Secret carries the same auth shape Sharko would
-	//    have produced. insecure=true matches the in-process e2e baseline.
+	//    have produced. insecure=true matches the in-process e2e baseline
+	//    (see the buildTLSClientConfig doc comment for why caData is
+	//    dropped when insecure is set).
 	payload := map[string]any{
 		"name":   clusterName,
 		"server": server,
 		"config": map[string]any{
-			"bearerToken": token,
-			"tlsClientConfig": map[string]any{
-				"caData":   caDataB64, // already base64; Sharko also passes base64 here
-				"insecure": true,
-			},
+			"bearerToken":     token,
+			"tlsClientConfig": buildTLSClientConfig(true, caDataB64),
 		},
 	}
 	body, err := json.Marshal(payload)

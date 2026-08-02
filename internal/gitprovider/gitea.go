@@ -46,6 +46,26 @@ func base64Encode(content []byte) string {
 	return base64.StdEncoding.EncodeToString(content)
 }
 
+// commitIdentityFor returns the gitea.Identity to use as both author and
+// committer for a write, mirroring commitAuthorFor's GitHub behaviour
+// (github.go): the attribution's explicit override when one is set (Tier 2
+// happy path with a per-user PAT) is used as-is, otherwise the same
+// "Sharko Bot" fallback identity GitHub falls back to. This is what makes
+// tiered attribution behave the same on Gitea as it does on GitHub — before
+// this, the Gitea write methods left FileOptions.Author/Committer at their
+// zero value, so every Gitea commit was authored as whichever account the
+// service PAT belongs to, silently dropping the per-user identity the tier
+// resolver (internal/api/tiered_git.go) had already picked.
+//
+// Read through CommitAttribution.EffectiveAuthor so the identity here is
+// the exact same (name, email) pair the Signed-off-by trailer signs off in
+// ApplyToMessage below — the two must never drift, same reasoning as
+// commitAuthorFor's doc comment.
+func commitIdentityFor(attr CommitAttribution) gitea.Identity {
+	name, email := attr.EffectiveAuthor()
+	return gitea.Identity{Name: name, Email: email}
+}
+
 // ---------- Read operations ----------
 
 // TestConnection verifies that the configured repository is accessible.
@@ -246,10 +266,14 @@ func (g *GiteaProvider) CreateOrUpdateFile(ctx context.Context, filePath string,
 // createFile creates a new file using the Gitea SDK CreateFile.
 func (g *GiteaProvider) createFile(ctx context.Context, filePath string, content []byte, branch, commitMessage string) error {
 	encoded := base64Encode(content)
+	attr := FromContext(ctx)
+	identity := commitIdentityFor(attr)
 	opt := gitea.CreateFileOptions{
 		FileOptions: gitea.FileOptions{
-			Message:    commitMessage,
+			Message:    attr.ApplyToMessage(commitMessage),
 			BranchName: branch,
+			Author:     identity,
+			Committer:  identity,
 		},
 		Content: encoded,
 	}
@@ -270,10 +294,14 @@ func (g *GiteaProvider) createFile(ctx context.Context, filePath string, content
 // updateFile updates an existing file using the Gitea SDK UpdateFile.
 func (g *GiteaProvider) updateFile(ctx context.Context, filePath string, content []byte, branch, commitMessage, sha string) error {
 	encoded := base64Encode(content)
+	attr := FromContext(ctx)
+	identity := commitIdentityFor(attr)
 	opt := gitea.UpdateFileOptions{
 		FileOptions: gitea.FileOptions{
-			Message:    commitMessage,
+			Message:    attr.ApplyToMessage(commitMessage),
 			BranchName: branch,
+			Author:     identity,
+			Committer:  identity,
 		},
 		SHA:     sha,
 		Content: encoded,
@@ -320,10 +348,14 @@ func (g *GiteaProvider) DeleteFile(ctx context.Context, filePath, branch, commit
 		return fmt.Errorf("delete file: path %q is not a file", filePath)
 	}
 
+	attr := FromContext(ctx)
+	identity := commitIdentityFor(attr)
 	opt := gitea.DeleteFileOptions{
 		FileOptions: gitea.FileOptions{
-			Message:    commitMessage,
+			Message:    attr.ApplyToMessage(commitMessage),
 			BranchName: branch,
+			Author:     identity,
+			Committer:  identity,
 		},
 		SHA: existing.SHA,
 	}

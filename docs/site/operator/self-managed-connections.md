@@ -12,10 +12,12 @@ In that mode, for that cluster:
 - **Sharko never writes, rotates, or deletes the ArgoCD cluster secret.**
   Not at registration, not from the reconcilers, not when you remove the
   cluster from Sharko.
-- **Sharko only manages the addon labels on it.** The reconcilers merge
-  your addon selections (`monitoring: enabled`, `logging: disabled`, …)
-  onto the secret you created, and touch nothing else — the labels are the
-  only thing ArgoCD's ApplicationSet selector needs to deploy addons.
+- **Sharko only manages the addon labels on it.** The reconciler works out
+  which addons should be running on the cluster — from its entry in
+  `cluster-addons/<cluster>.yaml`, the file that says which addons are on
+  for this cluster — and merges just those labels onto the secret you
+  created, touching nothing else. The labels are the only thing ArgoCD's
+  ApplicationSet selector needs to deploy addons.
 - **Credentials become optional.** If you give Sharko a kubeconfig at
   registration it only uses it to test connectivity; if you don't,
   registration skips the test and goes straight to the Git record.
@@ -40,13 +42,18 @@ curl -X POST https://sharko.example.com/api/v1/clusters \
   -H "Content-Type: application/json" \
   -d '{
     "name": "prod-us",
-    "connection_managed_by": "user",
-    "addons": {"monitoring": true}
+    "connection_managed_by": "user"
   }'
 ```
 
-**In Git:** the mode is recorded on the cluster's entry in
-`configuration/managed-clusters.yaml`:
+Registration is addon-free by design: turn addons on afterward, one at a
+time, through `POST /api/v1/v4/clusters/prod-us/addons/<name>` — the same
+door every cluster (self-managed or not) uses. If you send an `addons`
+field on this request anyway, Sharko logs that it ignored it; nothing about
+addon enablement happens at registration time any more.
+
+**In Git:** the connection mode is recorded on the cluster's entry in
+`managed-clusters.yaml`, a root file in your GitOps repo:
 
 ```yaml
 apiVersion: sharko.dev/v1
@@ -58,11 +65,40 @@ spec:
     - name: prod-us
       connectionManagedBy: user   # omit the field (or use "sharko") for the default
       labels:
-        monitoring: enabled
+        team: payments             # your own labels — never an addon name
 ```
 
 An absent `connectionManagedBy` means Sharko-managed — every file written
 before this field existed keeps working unchanged.
+
+`managed-clusters.yaml`'s own `labels` block is for labels **you** put
+there — team, region, anything that isn't an addon. It is not where addons
+get turned on any more. Which addons run on `prod-us` lives in its own
+file, `cluster-addons/prod-us.yaml`:
+
+```yaml
+apiVersion: sharko.dev/v1
+kind: ClusterAddons
+cluster: prod-us
+addons:
+  monitoring:
+    enabled: true
+```
+
+The reconciler reads that file, turns `monitoring: enabled: true` into the
+label ArgoCD's selector matches on, and merges just that label onto the
+secret you created — the same "merge, never touch anything else" promise
+described above, just sourced from this file instead of from
+`managed-clusters.yaml` itself.
+
+!!! note "Repo still on the older layout?"
+    If your repo has not gone through the [one-pull-request
+    migration](migrating-to-the-new-format.md) yet, the cluster registry
+    lives at `configuration/managed-clusters.yaml` instead, and addon on/off
+    for a cluster is a label directly on that entry (`labels: {monitoring:
+    enabled}`) rather than a separate `cluster-addons/` file. Everything
+    else on this page — the guest philosophy, the secret shapes, the doctor
+    check — is unchanged either way.
 
 ## The secret you create
 
@@ -147,10 +183,10 @@ kubectl apply -n argocd -f prod-us-cluster-secret.yaml
 
 ## Which labels Sharko manages — and which it never touches
 
-On a self-managed connection, the reconcilers converge **addon labels
-only**: one label per addon, valued `enabled` or `disabled`, mirrored from
-the cluster's entry in `managed-clusters.yaml`. Everything else is yours,
-verbatim:
+On a self-managed connection, the reconciler converges **addon labels
+only**, one label per addon that is on, mirrored from the cluster's
+`cluster-addons/<cluster>.yaml` file — a disabled or missing addon simply
+has no label. Everything else is yours, verbatim:
 
 | On your secret                              | Sharko's behavior                     |
 | ------------------------------------------- | ------------------------------------- |
@@ -197,8 +233,8 @@ Sharko surfaces both cases without asking you to go digging first:
 - **The reconciler** keeps a running count of consecutive ticks where a
   label it just wrote comes back with a different value than the one it
   wrote — not merely "changed" (an addon toggle in
-  `managed-clusters.yaml` changes what Sharko wants too, and that's never
-  flagged). After 2 ticks in a row of the SAME reverted value, the
+  `cluster-addons/<cluster>.yaml` changes what Sharko wants too, and that's
+  never flagged). After 2 ticks in a row of the SAME reverted value, the
   cluster's `last_reconcile` outcome stays `succeeded` (Sharko is still
   re-applying its labels every tick) but the message tells you something
   keeps overwriting them.
@@ -221,8 +257,7 @@ the secret up as soon as you create it and syncs the addon labels onto it.
 ## Switching modes
 
 Both directions are a one-line Git edit to the cluster's entry in
-`configuration/managed-clusters.yaml` (via a PR, like every other Sharko
-change).
+`managed-clusters.yaml` (via a PR, like every other Sharko change).
 
 **Sharko-managed → self-managed:** add `connectionManagedBy: user` to the
 entry. On the next reconcile tick Sharko releases the existing secret: it
@@ -294,50 +329,49 @@ Two safety nets soften this, but don't skip the pause:
   reports `skip_argocd_secret_not_sharko_labeled` with a plain-English
   explanation instead — your hand-made secret is not deleted just because
   the entry that said "managed by me" no longer exists.
-## Turning off an addon on a self-managed cluster — set `disabled`, don't delete the line
 
-On a Sharko-managed cluster, removing an addon's line from `labels:` is
-enough — Sharko replaces the whole label set on every write, so a label with
-no corresponding entry just disappears.
+## Turning off an addon on a self-managed cluster
 
-**A self-managed cluster is different.** The reconcilers only ever *merge*
-addon labels onto your secret — they never remove one, because there is no
-reliable way to tell "this label is a stale addon Sharko should clean up"
-apart from "this is your own label that happens to look similar." Removing
-an addon's line from the cluster's entry in `managed-clusters.yaml` means
-Sharko simply stops mentioning that label — it does **not** go back and
-delete it from your secret. The label (and whatever it was pointing the
-ArgoCD ApplicationSet selector at) stays exactly as it was.
-
-To actually turn an addon off for a self-managed cluster, set its value to
-`disabled` instead of deleting the line:
+Edit `cluster-addons/prod-us.yaml` — either delete the addon's block, or set
+`enabled: false` and keep it:
 
 ```yaml
 apiVersion: sharko.dev/v1
-kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters:
-    - name: prod-us
-      connectionManagedBy: user
-      labels:
-        monitoring: disabled   # turns it off — keep the line
-        logging: enabled
+kind: ClusterAddons
+cluster: prod-us
+addons:
+  monitoring:
+    enabled: false   # or just remove this block entirely — both work
+  logging:
+    enabled: true
 ```
 
-The next reconcile tick merges `monitoring: disabled` onto your secret, the
-ApplicationSet selector stops matching, and the addon's Application prunes —
-exactly like the Sharko-managed case. Deleting the `monitoring:` line
-instead would leave whatever value was last written (`enabled`, most likely)
-untouched on your secret, so the addon would keep deploying.
+Either way, the next reconcile tick removes the `monitoring` label from your
+secret, the ApplicationSet selector stops matching, and the addon's
+Application prunes — the same outcome as a Sharko-managed cluster. Unlike
+`managed-clusters.yaml`'s own `labels:` block (which the reconciler only
+ever merges onto your secret, and never removes a key from), a cluster's
+addon file is the one source of truth for which addons it runs: an addon
+missing from `addons:` and an addon present with `enabled: false` mean the
+exact same thing, so the reconciler removes the label from your secret
+either way instead of leaving a stale one behind.
+
+!!! note "Repo still on the older layout?"
+    On a repo that has not gone through the
+    [migration](migrating-to-the-new-format.md) yet, this is different: the
+    reconciler only ever *merges* addon labels onto your secret and never
+    removes one (there is no reliable way to tell "stale addon label" apart
+    from "your own label that happens to look similar"), so removing an
+    addon's line from `labels:` on the old `configuration/managed-clusters.yaml`
+    does nothing — you have to set it to `disabled` and keep the line. Once
+    the repo is migrated this caveat goes away.
 
 ## Related pages
 
 - [If You Remove Sharko (no lock-in)](removing-sharko.md) — the same
   guest philosophy applied to the whole installation.
 - [Connection Doctor](connection-doctor.md) — the `secret-ownership`
-  check (and the other four) in full, plus how to run them.
+  check (and the other five) in full, plus how to run them.
 - [Cluster Reconciler reference](cluster-reconciler.md) — how the label
   sync loop works, and where `last_reconcile` visibility + "Sync now"
   live.
