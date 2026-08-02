@@ -4,11 +4,14 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/service"
 )
 
 // observeDashboardRead is the V2-3 SLO instrumentation shared across the
@@ -86,12 +89,41 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	apps, err := ac.ListApplications(ctx)
-	if err != nil {
+
+	// Fetch applications and clusters concurrently. The cluster list is
+	// only needed to split each app's "<addon>-<cluster>" name via
+	// service.ExtractAddonCluster (same helper as
+	// internal/service/observability.go's GetOverview) — a ListClusters
+	// failure degrades to ExtractAddonCluster's last-hyphen fallback
+	// (empty clusterNames set) rather than failing the whole endpoint,
+	// since the apps list is what actually matters here.
+	var (
+		apps         []models.ArgocdApplication
+		appsErr      error
+		argoClusters []models.ArgocdCluster
+	)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		apps, appsErr = ac.ListApplications(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		argoClusters, _ = ac.ListClusters(ctx) // best-effort; nil clusterNames on failure
+	}()
+	wg.Wait()
+
+	if appsErr != nil {
 		// Upstream call (ArgoCD): classify so an ArgoCD timeout reads as
 		// 504 rather than 500.
-		writeUpstreamError(w, "dashboard_attention", err)
+		writeUpstreamError(w, "dashboard_attention", appsErr)
 		return
+	}
+
+	clusterNames := make(map[string]bool, len(argoClusters))
+	for _, c := range argoClusters {
+		clusterNames[c.Name] = true
 	}
 
 	type AttentionItem struct {
@@ -116,12 +148,13 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 		if app.HealthStatus == "Healthy" && len(app.Conditions) == 0 {
 			continue
 		}
-		// Extract addon and cluster from app name (convention: addon-cluster)
-		addonName := app.Name
-		cluster := ""
-		if app.DestinationName != "" {
-			cluster = app.DestinationName
-		}
+		// Split "<addon>-<cluster>" the same way
+		// internal/service/observability.go's GetOverview does (walk
+		// finding from #691: this used to be `addonName := app.Name` —
+		// the FULL ArgoCD app name, e.g. "metrics-server-spoke-eu" — with
+		// a comment claiming it split the name, which it never actually
+		// did).
+		addonName, cluster := service.ExtractAddonCluster(app.Name, clusterNames)
 
 		errMsg := ""
 		errType := ""

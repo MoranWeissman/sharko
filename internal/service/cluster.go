@@ -17,7 +17,11 @@ import (
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/readcache"
 )
+
+// clustersListCacheKey is the readcache key for ListClusters (perf M1).
+const clustersListCacheKey = "clusters:list"
 
 // isGitFileNotFound reports whether err signals "file does not exist" from a
 // gitprovider.GitProvider.GetFileContent call.
@@ -58,6 +62,17 @@ type ClusterService struct {
 	// configured branch instead of a hardcoded "main". nil (tests, e2e
 	// harness) falls back to "main" via the branch() helper below.
 	baseBranchFn func() string
+
+	// cache is the per-instance TTL cache for ListClusters (perf M1). See
+	// DashboardService.cache's doc for the shared-vs-private-per-test
+	// discipline; SetCache mirrors DashboardService.SetCache exactly.
+	cache *readcache.Cache
+}
+
+// SetCache replaces this service's read cache with a shared instance (see
+// internal/readcache and DashboardService.SetCache).
+func (s *ClusterService) SetCache(c *readcache.Cache) {
+	s.cache = c
 }
 
 // SetBaseBranchFn wires in a live accessor for the configured GitOps base
@@ -90,6 +105,7 @@ func NewClusterService(managedClustersPath string) *ClusterService {
 	return &ClusterService{
 		parser:              config.NewParser(),
 		managedClustersPath: managedClustersPath,
+		cache:               readcache.New(readcache.DefaultTTL),
 	}
 }
 
@@ -124,7 +140,25 @@ func (s *ClusterService) readManagedClustersData(ctx context.Context, gp gitprov
 }
 
 // ListClusters returns all clusters with health stats from Git + ArgoCD.
+// Cached for readcache.DefaultTTL (perf M1) — see internal/readcache's
+// package doc for the invalidation contract. Fleet-wide, not per-user:
+// every authenticated caller sees the same cluster registry and health
+// stats, so a single cache entry (not keyed by role/user) is safe.
+//
+// Callers (handleListClusters) mutate the returned *models.ClustersResponse
+// in place afterward (connectivity enrichment, filter/sort/paginate) —
+// readcache.GetOrCompute hands back a fresh JSON-decoded copy on every
+// call specifically so that in-place mutation can never corrupt what a
+// later cache hit returns to a different request.
 func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClustersResponse, error) {
+	return readcache.GetOrCompute(s.cache, clustersListCacheKey, func() (*models.ClustersResponse, error) {
+		return s.listClustersUncached(ctx, gp, ac)
+	})
+}
+
+// listClustersUncached is ListClusters' actual computation, unchanged from
+// before perf M1.
+func (s *ClusterService) listClustersUncached(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClustersResponse, error) {
 	log := logging.LoggerFromContext(ctx)
 	// Fetch Git config — v3 managed-clusters.yaml, or its v4 equivalent
 	// managed-clusters.yaml (v4 Wave 1 Story 4.4).

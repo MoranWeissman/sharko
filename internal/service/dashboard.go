@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/catalog"
@@ -11,7 +12,11 @@ import (
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/readcache"
 )
+
+// dashboardStatsCacheKey is the readcache key for GetStats (perf M1).
+const dashboardStatsCacheKey = "dashboard:stats"
 
 // gitDerivedDashboardStats is the git-sourced half of GetStats — cluster
 // names, valid "<addon>-<cluster>" ArgoCD Application names, and addon
@@ -56,6 +61,24 @@ type DashboardService struct {
 	// w2-q6 item 1). nil (tests, e2e harness) falls back to "main" via the
 	// branch() helper below.
 	baseBranchFn func() string
+
+	// cache is the per-instance TTL cache for GetStats (perf M1).
+	// NewDashboardService gives every instance its own private cache by
+	// default; SetCache overrides it with a shared instance so production
+	// code can invalidate every cached endpoint from one call (api.Server
+	// wires ONE *readcache.Cache into every service that needs it via
+	// NewServer). Tests that never call SetCache keep their own unshared
+	// cache and can't leak state into other tests — see internal/readcache's
+	// package doc for why this is per-instance rather than a package-level
+	// global.
+	cache *readcache.Cache
+}
+
+// SetCache replaces this service's read cache with a shared instance (see
+// internal/readcache and the AddonService/ClusterService/ObservabilityService
+// analogues).
+func (s *DashboardService) SetCache(c *readcache.Cache) {
+	s.cache = c
 }
 
 // SetCuratedCatalog wires in the Marketplace's curated list so gitStatsV4
@@ -97,6 +120,7 @@ func NewDashboardService(connSvc *ConnectionService, managedClustersPath string)
 		parser:              config.NewParser(),
 		connSvc:             connSvc,
 		managedClustersPath: managedClustersPath,
+		cache:               readcache.New(readcache.DefaultTTL),
 	}
 }
 
@@ -218,10 +242,30 @@ func (s *DashboardService) gitStatsV4(ctx context.Context, gp gitprovider.GitPro
 	return out, nil
 }
 
-// GetStats returns aggregated dashboard statistics.
+// GetStats returns aggregated dashboard statistics. Cached for
+// readcache.DefaultTTL (perf M1) — see internal/readcache's package doc
+// for the invalidation contract. Fleet-wide, not per-user: every
+// authenticated caller sees the same connection/cluster/addon counts, so a
+// single cache entry (not keyed by role/user) is safe.
 func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.DashboardStatisticsResponse, error) {
+	return readcache.GetOrCompute(s.cache, dashboardStatsCacheKey, func() (*models.DashboardStatisticsResponse, error) {
+		return s.getStatsUncached(ctx, gp, ac)
+	})
+}
+
+// getStatsUncached is GetStats' actual computation, unchanged in output
+// from before perf M1/M2. The only behavior change is perf M2: the four
+// independent upstream reads below (gitStats, the ArgoCD cluster list, the
+// ArgoCD application list, and the bootstrap-app probe) used to run one
+// after another; none of them consume another's result, so they now run
+// concurrently and are combined once every goroutine has returned. Each
+// keeps its EXACT original error handling (gitStats failure still fails
+// the whole call; the two ArgoCD list failures still degrade to a
+// log.Warn + zeroed stats; the bootstrap probe still tries every name in
+// orchestrator.BootstrapAppNames() and keeps the last error).
+func (s *DashboardService) getStatsUncached(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.DashboardStatisticsResponse, error) {
 	log := logging.LoggerFromContext(ctx)
-	// Connection stats
+	// Connection stats — local config-store read, not worth fanning out.
 	connList, err := s.connSvc.List()
 	if err != nil {
 		return nil, err
@@ -231,18 +275,69 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 		Active: connList.ActiveConnection,
 	}
 
-	// v4-repo detection: identical probe to AddonService.GetVersionMatrix
-	// (orchestrator.EnginePinPath resolving to non-empty content on the
-	// base branch) — "no pin found" is the ordinary "not a v4 repo yet"
-	// case, never a hard failure.
-	var gitStats gitDerivedDashboardStats
-	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, s.branch()); pinErr == nil && len(pinContent) > 0 {
-		gitStats, err = s.gitStatsV4(ctx, gp)
-	} else {
-		gitStats, err = s.gitStatsV3(ctx, gp)
-	}
-	if err != nil {
-		return nil, err
+	var (
+		gitStats       gitDerivedDashboardStats
+		gitStatsErr    error
+		argocdClusters []models.ArgocdCluster
+		clustersErr    error
+		apps           []models.ArgocdApplication
+		appsErr        error
+		bootstrapApp   *models.ArgocdApplication
+		bootstrapErr   error
+	)
+
+	var wg sync.WaitGroup
+	wg.Add(4)
+
+	go func() {
+		defer wg.Done()
+		// v4-repo detection: identical probe to AddonService.GetVersionMatrix
+		// (orchestrator.EnginePinPath resolving to non-empty content on the
+		// base branch) — "no pin found" is the ordinary "not a v4 repo yet"
+		// case, never a hard failure.
+		if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, s.branch()); pinErr == nil && len(pinContent) > 0 {
+			gitStats, gitStatsErr = s.gitStatsV4(ctx, gp)
+		} else {
+			gitStats, gitStatsErr = s.gitStatsV3(ctx, gp)
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		argocdClusters, clustersErr = ac.ListClusters(ctx)
+	}()
+
+	go func() {
+		defer wg.Done()
+		apps, appsErr = ac.ListApplications(ctx)
+	}()
+
+	go func() {
+		defer wg.Done()
+		// v4 Wave 1 Story 4.2: the canonical bootstrap app is the engine
+		// pin (orchestrator.BootstrapRootAppName = "sharko-engine"), not
+		// the old v3 "cluster-addons-bootstrap" AppSet-fanout root. Both
+		// names are tried, current first: a cluster bootstrapped before
+		// the v4 rename still runs "cluster-addons-bootstrap", and
+		// reading only the new name would show its dashboard tile as
+		// Unknown forever.
+		for _, name := range orchestrator.BootstrapAppNames() {
+			app, err := ac.GetApplication(ctx, name)
+			if err == nil && app != nil {
+				bootstrapApp = app
+				bootstrapErr = nil
+				break
+			}
+			if err != nil {
+				bootstrapErr = err
+			}
+		}
+	}()
+
+	wg.Wait()
+
+	if gitStatsErr != nil {
+		return nil, gitStatsErr
 	}
 
 	// Cluster stats from ArgoCD — five-state breakdown (connected/pending/
@@ -253,11 +348,10 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 	// "server vs clusterStatus.ts:127" alignment note): the server now
 	// accepts both spellings just like the UI classifier does, instead of
 	// only "Successful".
-	argocdClusters, err := ac.ListClusters(ctx)
 	clusterStats := models.DashboardClusterStats{
 		Total: len(gitStats.clusterNames),
 	}
-	if err == nil {
+	if clustersErr == nil {
 		// ArgoCD's cluster-list API only returns an entry for a cluster
 		// that HAS a cluster secret registered — a Git-registered cluster
 		// with no ArgoCD secret at all produces no entry, mirroring
@@ -290,14 +384,13 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 			}
 		}
 	} else {
-		log.Warn("could not fetch argocd clusters for dashboard", "error", err)
+		log.Warn("could not fetch argocd clusters for dashboard", "error", clustersErr)
 	}
 
 	// Application stats from ArgoCD — only count addon apps (not bootstrap/infrastructure)
 	// Addon apps follow the pattern: {addon-name}-{cluster-name}
 	appStats := models.DashboardApplicationStats{}
-	apps, err := ac.ListApplications(ctx)
-	if err == nil {
+	if appsErr == nil {
 		for _, app := range apps {
 			if !gitStats.validAddonApps[app.Name] {
 				continue
@@ -325,7 +418,7 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 			}
 		}
 	} else {
-		log.Warn("could not fetch argocd applications for dashboard", "error", err)
+		log.Warn("could not fetch argocd applications for dashboard", "error", appsErr)
 	}
 
 	// Addon stats — EnabledDeployments is a plain count of addons enabled
@@ -341,28 +434,6 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 	// If unreachable, report "Unknown" rather than failing the whole dashboard request.
 	bootstrapHealth := "Unknown"
 	bootstrapSync := "Unknown"
-	// v4 Wave 1 Story 4.2: the canonical bootstrap app is the engine pin
-	// (orchestrator.BootstrapRootAppName = "sharko-engine"), not the old
-	// v3 "cluster-addons-bootstrap" AppSet-fanout root. Reading the
-	// literal here would silently report every v4 repo's dashboard tile
-	// as "bootstrap missing" even when the engine is healthy.
-	//
-	// Both names are tried, current first: a cluster bootstrapped before the
-	// v4 rename still runs "cluster-addons-bootstrap", and reading only the
-	// new name would show its dashboard tile as Unknown forever.
-	var bootstrapApp *models.ArgocdApplication
-	var lastErr error
-	for _, name := range orchestrator.BootstrapAppNames() {
-		app, err := ac.GetApplication(ctx, name)
-		if err == nil && app != nil {
-			bootstrapApp = app
-			lastErr = nil
-			break
-		}
-		if err != nil {
-			lastErr = err
-		}
-	}
 	if bootstrapApp != nil {
 		if bootstrapApp.HealthStatus != "" {
 			bootstrapHealth = bootstrapApp.HealthStatus
@@ -370,8 +441,8 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 		if bootstrapApp.SyncStatus != "" {
 			bootstrapSync = bootstrapApp.SyncStatus
 		}
-	} else if lastErr != nil {
-		log.Warn("could not fetch bootstrap app status for dashboard", "error", lastErr)
+	} else if bootstrapErr != nil {
+		log.Warn("could not fetch bootstrap app status for dashboard", "error", bootstrapErr)
 	}
 
 	return &models.DashboardStatisticsResponse{

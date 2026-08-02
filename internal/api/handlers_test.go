@@ -517,6 +517,57 @@ func TestHandleGetFleetStatus_DefaultVersion(t *testing.T) {
 	}
 }
 
+// TestHandleGetFleetStatus_ClustersFailureDiscardsCatalogResult is the
+// perf M2 behavior-preservation regression test: computeFleetStatus now
+// fetches the cluster-list and catalog pipelines CONCURRENTLY (they used
+// to run one after another), but the original code only ever used the
+// catalog result when the clusters fetch also succeeded. This test forces
+// a hard Git-side error on both pipelines (both read managed-clusters.yaml)
+// and asserts the output is EXACTLY what the original sequential code
+// would have produced: ArgoUnavailable set (from the clusters-fetch
+// failure), and AddonDataUnavailable / TotalAddons left untouched at their
+// zero values — never reached, because the concurrent catalog fetch's
+// result must still be discarded when the clusters fetch fails, byte-
+// identical to the pre-M2 sequential behavior.
+func TestHandleGetFleetStatus_ClustersFailureDiscardsCatalogResult(t *testing.T) {
+	// A closed local port — GetActiveArgocdClient constructs successfully
+	// (no I/O at construction time) but any actual HTTP call against it
+	// fails immediately with connection-refused. Good enough here: the
+	// clusters pipeline fails on the GIT side before ever needing a real
+	// ArgoCD response, and the catalog pipeline's own ArgoCD calls just
+	// degrade to a log.Warn (GetCatalog only hard-fails on Git errors).
+	srv := newTestServerWithArgocd(t, "http://127.0.0.1:1", "dummy-token")
+	srv.connSvc.SetGitProviderOverride(&handlerFakeGitProvider{
+		getErr: fmt.Errorf("simulated git outage"), // NOT wrapped with ErrFileNotFound — a hard failure
+	})
+
+	router := NewRouter(srv, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var body fleetStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.ArgoUnavailable {
+		t.Error("expected argo_unavailable=true when the clusters fetch hard-fails")
+	}
+	if body.AddonDataUnavailable {
+		t.Error("expected addon_data_unavailable=false — the catalog branch must never be reached when the clusters fetch fails, even though the catalog fetch itself ran concurrently")
+	}
+	if body.TotalAddons != 0 {
+		t.Errorf("expected total_addons=0 (catalog result discarded), got %d", body.TotalAddons)
+	}
+	if body.TotalClusters != 0 {
+		t.Errorf("expected total_clusters=0, got %d", body.TotalClusters)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ReinitializeFromConnection
 // ---------------------------------------------------------------------------

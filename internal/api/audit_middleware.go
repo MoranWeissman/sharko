@@ -15,9 +15,21 @@ import (
 // emits — handlers enrich the entry via audit.Enrich(ctx, ...) before
 // returning. Handlers that previously called s.auditLog.Add directly should
 // migrate to audit.Enrich so only one entry is emitted per request.
+//
+// perf M1: this is also the invalidation choke point for the shared read
+// cache (internal/readcache — dashboard stats, clusters list, fleet
+// status, catalog list, version matrix, observability overview). Every
+// mutating request that reaches this middleware and completes without a
+// 4xx/5xx invalidates the cache, regardless of which branch below handles
+// its audit entry — a broad net that covers addon enable/disable/add/
+// remove, cluster register/unregister/update, connection save/set-active,
+// and migration/takeover operations without requiring every individual
+// handler to remember to call it. The one write path this can't see is
+// the PR tracker's merge callback (a background poll loop, not an HTTP
+// request) — that path invalidates explicitly in cmd/sharko/serve.go.
 func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Only audit mutating methods on API paths.
+		// Only audit (and cache-invalidate) mutating methods on API paths.
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 			next.ServeHTTP(w, r)
@@ -28,6 +40,13 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		defer func() {
+			if rec.statusCode < 400 {
+				s.InvalidateReadCache()
+			}
+		}()
+
 		// Skip paths that emit their own fine-grained audit entries inside the handler.
 		// login/logout emit login, login_failed, logout with exact semantics the middleware
 		// cannot reproduce (e.g. login_failed on 401 before handler responds).
@@ -36,7 +55,7 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 		if path == "/api/v1/auth/login" || path == "/api/v1/auth/logout" ||
 			path == "/api/v1/webhooks/git" || path == "/api/v1/auth/hash" ||
 			path == "/api/v1/login" /* dead-route stub, no audit needed */ {
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(rec, r)
 			return
 		}
 
@@ -45,7 +64,6 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 		ctx, fields := audit.WithEnrichment(r.Context())
 		r = r.WithContext(ctx)
 
-		rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		start := time.Now()
 		next.ServeHTTP(rec, r)
 		duration := time.Since(start)
