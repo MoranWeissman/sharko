@@ -722,7 +722,10 @@ func (s *Server) doctorCheckSecretOwnership(ctx context.Context, clusterName str
 //     real addon deployment intentionally makes the placeholder check app
 //     yield (see the hasAnyAddon branch below).
 //
-// Not-applicable for clusters without the connectivity-check label.
+// Not-applicable for clusters without the connectivity-check label — UNLESS
+// the cluster is Sharko-managed (not adopted, not self-managed) with zero
+// enabled addons, in which case the label is a genuine miss and this reports
+// a real finding instead (walk finding: bare spoke).
 func (s *Server) doctorCheckConnectivityApp(ctx context.Context, clusterName string) doctorCheck {
 	if s.argoSecretManager == nil {
 		return doctorCheck{
@@ -767,6 +770,23 @@ func (s *Server) doctorCheckConnectivityApp(ctx context.Context, clusterName str
 	// Use the models.HasConnectivityCheckLabel helper which recognizes
 	// both canonical and legacy keys.
 	if !models.HasConnectivityCheckLabel(secret.Labels) {
+		// Walk finding (bare spoke): a Sharko-MANAGED cluster (not adopted,
+		// not self-managed — those never carry this label by design) with
+		// zero enabled addons SHOULD carry the connectivity-check label.
+		// Before the reconciler self-heal fix, a Secret created outside
+		// createOne's create-time derivation could sit missing this label
+		// forever. Adopted and self-managed connections are correctly
+		// unlabeled regardless of addon count, so this is scoped to Sharko's
+		// own (non-adopted) Secrets only.
+		isSharkoManaged := secret.Labels[argosecrets.LabelManagedBy] == argosecrets.ManagedByValue && !argosecrets.IsAdopted(secret.Annotations)
+		if isSharkoManaged && models.EnabledAddonCount(secret.Labels) == 0 {
+			return doctorCheck{
+				ID:     doctorCheckConnectivityApp,
+				Status: doctorStatusFail,
+				Detail: fmt.Sprintf("Cluster %q has zero enabled addons — this cluster should carry the connectivity-check label so ArgoCD can prove the connection, but it doesn't.", clusterName),
+				Fix:    "Sharko's reconciler adds it automatically within ~30 seconds; if it doesn't appear, check that the reconciler is running.",
+			}
+		}
 		return doctorCheck{
 			ID:     doctorCheckConnectivityApp,
 			Status: doctorStatusNotApplicable,

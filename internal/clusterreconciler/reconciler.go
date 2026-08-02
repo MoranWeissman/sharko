@@ -417,6 +417,7 @@ type reconcileStats struct {
 	ClearedPending   int // pending annotation stripped — cluster became managed (V2-cleanup-11.1)
 	UserLabelSynced  int // self-managed connection — addon labels merged onto the user's Secret (V2-cleanup-57.2)
 	UserPending      int // self-managed connection — user's Secret not created yet; visible wait, no write (V2-cleanup-57.2)
+	ConnCheckSynced  int // managed cluster — connectivity-check label converged from the live enabled-addon count (walk finding: bare spoke)
 	Errors           int
 }
 
@@ -753,6 +754,16 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 		msg := "cluster Secret present"
 		var drift *LabelDrift
 		desiredLabels := desiredAddonLabels(desired[name], v4.labelsFor(name))
+
+		// Connectivity-check convergence (walk finding: bare spoke) is
+		// independent of addon-label drift and runs unconditionally on
+		// EVERY tick — it must not depend on some OTHER label also being
+		// out of sync this tick, and it must not wait on the opt-in
+		// managed_cluster_self_heal setting the block below is gated by.
+		// See syncConnectivityCheckLabel's doc comment.
+		if !r.syncConnectivityCheckLabel(ctx, name, desiredLabels, stats) {
+			continue
+		}
 		if secret := existing[name]; secret != nil {
 			// v4 adds one extra question to "are we in sync?". labelsMatch
 			// is a SUBSET check, which is the right question for v3 (off is
@@ -967,10 +978,12 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 	// normal managed Secret (and is no longer immune to a future orphan
 	// sweep). Idempotent: Secrets without the annotation are untouched.
 	//
-	// Self-managed entries are EXCLUDED: their Secret is the user's (the
-	// registration flow never direct-writes one for them), and this pass
-	// updates from the pre-sync cached object — running it after
-	// syncSelfManaged could clobber the label handover with stale metadata.
+	// Self-managed entries are EXCLUDED: their Secret is the user's, and the
+	// registration flow never direct-writes one for them — this pass has
+	// nothing to clear for a self-managed connection regardless of ordering.
+	// (clearRegistrationPending re-Gets fresh before writing, so it no
+	// longer matters that this pass runs after syncSelfManaged / the
+	// connectivity-check sync in tick order.)
 	for name := range desired {
 		if desired[name].UserManagedConnection() {
 			continue
@@ -980,7 +993,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 			continue // will be created above; nothing to clear.
 		}
 		if _, has := models.RegistrationPendingValue(annotationsOf(secret)); has {
-			r.clearRegistrationPending(ctx, name, secret, stats)
+			r.clearRegistrationPending(ctx, name, stats)
 		}
 	}
 
@@ -1254,6 +1267,81 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 	// IS successfully re-applying its labels every tick; the warning is
 	// visibility into a fight, not a sync failure).
 	r.recordReconcile(entry.Name, OutcomeSucceeded, fightWarning, nil)
+}
+
+// syncConnectivityCheckLabel converges the connectivity-check label on a
+// Sharko-MANAGED cluster's ArgoCD Secret (walk finding: bare spoke). Before
+// this, the label was only ever derived at Secret-CREATE time (createOne)
+// — a Secret created any other way, or one whose enabled-addon count
+// changed without any OTHER label also drifting that tick, could carry a
+// stale or entirely absent connectivity-check label forever. This makes the
+// label self-healing on every tick, exactly like the design doc promises
+// ("deterministic, self-healing" — internal/models/connectivity_check.go).
+//
+// Deliberately independent of the addon-label inSync/drift decision above:
+// it runs whether or not this cluster's addon labels are in sync, and
+// whether or not managed_cluster_self_heal is on — the connectivity-check
+// label is not an opt-in convergence, the same way applyV4AddonLabels's v4
+// keys are not. Self-managed (user-owned) connections never reach this
+// function — syncSelfManaged is their write path and deliberately never
+// touches this label (see its NOTE).
+//
+// desiredLabels is the SAME git-desired addon-label set this tick already
+// computed for this cluster, so the "zero enabled addons" count this label
+// is derived from is git's desired state, not a live snapshot mid-drift.
+//
+// Returns false when the cluster's outcome for this tick has already been
+// terminally recorded (a write error) so the caller skips its own
+// subsequent handling of this cluster; true otherwise, including the
+// overwhelmingly common no-op case.
+func (r *Reconciler) syncConnectivityCheckLabel(ctx context.Context, name string, desiredLabels map[string]string, stats *reconcileStats) bool {
+	log := logging.LoggerFromContext(ctx)
+
+	mgr := argosecrets.NewManager(r.deps.ArgoClient, r.namespace)
+	changed, found, err := mgr.SyncConnectivityCheckLabel(ctx, name, desiredLabels, !r.effectiveDisableConnectivityCheck(ctx))
+	if err != nil {
+		stats.Errors++
+		log.Error("[clusterreconciler] connectivity-check label sync failed — continuing to next cluster",
+			"cluster", name, "namespace", r.namespace, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     "cluster_secret_connectivity_check_sync",
+			User:      "sharko",
+			Action:    "sync_connectivity_check_label",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     err.Error(),
+			RequestID: logging.RequestID(ctx),
+		})
+		r.recordReconcile(name, OutcomeFailed,
+			"Sharko couldn't converge the connectivity-check label on this cluster's ArgoCD secret: "+err.Error(), nil)
+		return false
+	}
+	if !found {
+		// The Secret disappeared between listManagedSecrets and this call —
+		// a race, not an error. The rest of this tick's per-cluster flow
+		// re-Gets the Secret itself and will report on it honestly.
+		return true
+	}
+	if changed {
+		stats.ConnCheckSynced++
+		log.Info("[clusterreconciler] connectivity-check label converged from the live enabled-addon count",
+			"cluster", name, "namespace", r.namespace,
+		)
+		r.audit(audit.Entry{
+			Level:     "info",
+			Event:     "cluster_secret_connectivity_check_sync",
+			User:      "sharko",
+			Action:    "sync_connectivity_check_label",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "success",
+			RequestID: logging.RequestID(ctx),
+		})
+	}
+	return true
 }
 
 // selfHealManagedCluster converges the git-desired addon labels onto a
@@ -1593,9 +1681,43 @@ func annotationsOf(secret *corev1.Secret) map[string]string {
 // now-managed cluster Secret. Best-effort + isolated: a failure is logged +
 // audited but does not abort the tick. Re-applies the ownership label
 // defensively (the annotation strip must never drop the managed-by label).
-func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, cached *corev1.Secret, stats *reconcileStats) {
+//
+// Re-Gets the Secret fresh rather than working from the pre-tick
+// listManagedSecrets snapshot: this pass runs LAST among this tick's
+// per-cluster label writes (after the connectivity-check sync and any
+// addon-label self-heal), and a stale DeepCopy-then-Update here would
+// silently clobber whatever those earlier writes just landed with a full
+// Update from the OLD object — connectivity-check convergence found this
+// the hard way (a freshly-stamped label was reverted by this pass one
+// mutation later in the very same tick).
+func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, stats *reconcileStats) {
 	log := logging.LoggerFromContext(ctx)
-	updated := cached.DeepCopy()
+	fresh, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, name, metav1.GetOptions{})
+	if getErr != nil {
+		if apierrors.IsNotFound(getErr) {
+			log.Info("[clusterreconciler] registration-pending Secret already gone before annotation clear — nothing to do",
+				"cluster", name, "namespace", r.namespace,
+			)
+			return
+		}
+		stats.Errors++
+		log.Error("[clusterreconciler] re-reading registration-pending Secret before annotation clear failed — continuing",
+			"cluster", name, "namespace", r.namespace, "error", getErr,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     "cluster_secret_clear_pending",
+			User:      "sharko",
+			Action:    "clear_registration_pending",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     getErr.Error(),
+			RequestID: logging.RequestID(ctx),
+		})
+		return
+	}
+	updated := fresh.DeepCopy()
 	delete(updated.Annotations, models.AnnotationRegistrationPending)
 	// A registration that was in flight across the V2-cleanup-59 upgrade
 	// carries the legacy key — clear it too so the Secret cannot stay
@@ -1962,6 +2084,7 @@ func (r *Reconciler) emitSummaryAudit(ctx context.Context, stats reconcileStats)
 			"skipped_unlabeled", stats.SkippedUnlabeled, "skipped_pending", stats.SkippedPending,
 			"skipped_adopted", stats.SkippedAdopted, "cleared_pending", stats.ClearedPending,
 			"user_label_synced", stats.UserLabelSynced, "user_pending", stats.UserPending,
+			"connectivity_check_synced", stats.ConnCheckSynced,
 		)
 		return
 	}
@@ -1977,8 +2100,8 @@ func (r *Reconciler) emitSummaryAudit(ctx context.Context, stats reconcileStats)
 		Event:  "cluster_secret_reconcile_tick",
 		User:   "sharko",
 		Action: "reconcile",
-		Resource: fmt.Sprintf("created:%d deleted:%d skipped_unlabeled:%d skipped_pending:%d skipped_adopted:%d cleared_pending:%d user_label_synced:%d user_pending:%d errors:%d",
-			stats.Created, stats.Deleted, stats.SkippedUnlabeled, stats.SkippedPending, stats.SkippedAdopted, stats.ClearedPending, stats.UserLabelSynced, stats.UserPending, stats.Errors),
+		Resource: fmt.Sprintf("created:%d deleted:%d skipped_unlabeled:%d skipped_pending:%d skipped_adopted:%d cleared_pending:%d user_label_synced:%d user_pending:%d connectivity_check_synced:%d errors:%d",
+			stats.Created, stats.Deleted, stats.SkippedUnlabeled, stats.SkippedPending, stats.SkippedAdopted, stats.ClearedPending, stats.UserLabelSynced, stats.UserPending, stats.ConnCheckSynced, stats.Errors),
 		Source:    "reconciler",
 		Result:    result,
 		RequestID: logging.RequestID(ctx),

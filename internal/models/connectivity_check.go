@@ -69,6 +69,29 @@ func RemoveConnectivityCheckLabels(labels map[string]string) {
 	delete(labels, LabelConnectivityCheckLegacy)
 }
 
+// EnabledAddonCount returns how many entries in labels carry the canonical
+// "addon is on" value (LabelEnabled), EXCLUDING the connectivity-check keys
+// themselves (both spellings) so the check label can never count toward its
+// own trigger. nil-safe (returns 0 for a nil map).
+//
+// This is the single counting primitive behind ApplyConnectivityCheckLabel
+// and any other reader that needs to ask "does this cluster have zero
+// enabled addons right now" from a labels map — e.g. the doctor's
+// connectivity-app check, which uses it to tell a genuinely-missing label
+// apart from a cluster that correctly has none.
+func EnabledAddonCount(labels map[string]string) int {
+	count := 0
+	for k, v := range labels {
+		if k == LabelConnectivityCheck || k == LabelConnectivityCheckLegacy {
+			continue // exclude self (both spellings)
+		}
+		if AddonLabelEnabled(v) {
+			count++
+		}
+	}
+	return count
+}
+
 // ApplyConnectivityCheckLabel sets or removes the connectivity-check label
 // on labels (the working copy of a cluster Secret's labels before it is
 // written to the API server). Mutates in place. nil-safe.
@@ -105,16 +128,7 @@ func ApplyConnectivityCheckLabel(labels map[string]string, featureOn bool) {
 	// the connectivity-check keys themselves (which would create a
 	// self-referential loop) and the standard system labels that are never
 	// addon-enablement keys.
-	enabledCount := 0
-	for k, v := range labels {
-		if k == LabelConnectivityCheck || k == LabelConnectivityCheckLegacy {
-			continue // exclude self (both spellings)
-		}
-		if AddonLabelEnabled(v) {
-			enabledCount++
-		}
-	}
-	if enabledCount == 0 {
+	if EnabledAddonCount(labels) == 0 {
 		// W4b (V3 RW1.8): Stamp BOTH the canonical AND the legacy key
 		// transitionally so ANY ApplicationSet selector (old or new) matches.
 		// This makes the sharko.io → sharko.dev label rename non-stranding:
