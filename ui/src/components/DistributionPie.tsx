@@ -102,6 +102,17 @@ export interface DistributionPieProps {
   testId?: string;
   /** data-testid on the legend list. */
   legendTestId?: string;
+  /**
+   * Appends one more row after the per-slice rows: a neutral gray dot, the
+   * word "total", and the raw total count — styled identically to every
+   * other legend row. FleetStatusStrip (S4, walk day 5 ride-along) uses
+   * this to replace the detached bold total number that used to float next
+   * to the legend; the total is now just another row in the same list,
+   * not a special case. Defaults to false, so every other call site
+   * (Observability) is unaffected. Gray means a muted/neutral token here,
+   * never one of the status colors the other rows use.
+   */
+  showTotalRow?: boolean;
 }
 
 /** Pie chart + one shared legend style + hover tooltip + accessible breakdown text. */
@@ -113,6 +124,7 @@ export function DistributionPie({
   legendAriaHidden,
   testId,
   legendTestId,
+  showTotalRow,
 }: DistributionPieProps) {
   const nonZero = useMemo(() => slices.filter((s) => s.value > 0), [slices]);
   const rawTotal = useMemo(() => slices.reduce((sum, s) => sum + s.value, 0), [slices]);
@@ -183,6 +195,13 @@ export function DistributionPie({
             <span className="font-mono font-medium text-foreground">{s.value}</span>
           </li>
         ))}
+        {showTotalRow && (
+          <li className="flex items-center gap-1.5 text-sm">
+            <span aria-hidden="true" className="inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-muted-foreground/50" />
+            <span className="text-muted-foreground">total</span>
+            <span className="font-mono font-medium text-foreground">{rawTotal}</span>
+          </li>
+        )}
       </ul>
     </div>
   );

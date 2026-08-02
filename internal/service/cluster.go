@@ -156,8 +156,8 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 	})
 }
 
-// listClustersUncached is ListClusters' actual computation, unchanged from
-// before perf M1.
+// listClustersUncached is ListClusters' actual computation (perf M1 wraps
+// it with a cache; S1 walk-day-5 added the v4 label synthesis below).
 func (s *ClusterService) listClustersUncached(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClustersResponse, error) {
 	log := logging.LoggerFromContext(ctx)
 	// Fetch Git config — v3 managed-clusters.yaml, or its v4 equivalent
@@ -173,6 +173,25 @@ func (s *ClusterService) listClustersUncached(ctx context.Context, gp gitprovide
 	clusters, err := s.parser.ParseClusterAddons(clusterData)
 	if err != nil {
 		return nil, err
+	}
+
+	// v4 repos keep per-cluster addon enablement in cluster-addons/<name>.yaml,
+	// never in managed-clusters.yaml labels — a v4 cluster's Labels map is
+	// always empty at this point. Synthesize the same `<addon>: enabled`
+	// label shape a v3 file carries so every label-reading consumer
+	// downstream (this service's own GetEnabledAddons, and the UI's addon
+	// count in ClustersOverview.tsx) works unchanged for either repo layout
+	// (S1 walk-day-5 root cause).
+	if isV4Repo(ctx, gp, s.branch()) {
+		clusterAddons, caErr := listClusterAddonsSpecs(ctx, gp, s.branch())
+		if caErr != nil {
+			return nil, fmt.Errorf("reading cluster-addons/*.yaml: %w", caErr)
+		}
+		for i := range clusters {
+			if spec, ok := clusterAddons[clusters[i].Name]; ok {
+				clusters[i].Labels = v4ClusterLabels(spec)
+			}
+		}
 	}
 
 	// Fetch ArgoCD clusters for health stats
@@ -252,18 +271,28 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 		clusterData = []byte("clusters: []")
 	}
 
-	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
-	if err != nil {
-		if isGitFileNotFound(err) {
-			catalogData = []byte("applicationsets: []")
-		} else {
-			return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
+	isV4 := isV4Repo(ctx, gp, s.branch())
+	var repoCfg *config.RepoConfig
+	if isV4 {
+		repoCfg, err = buildV4RepoConfig(ctx, gp, s.branch(), s.parser, nil, clusterData)
+		if err != nil {
+			return nil, err
 		}
-	}
+	} else {
+		catalogData, catErr := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
+		if catErr != nil {
+			if isGitFileNotFound(catErr) {
+				log.Warn("addons-catalog.yaml not found — treating as an empty catalog", "path", "configuration/addons-catalog.yaml", "branch", s.branch())
+				catalogData = []byte("applicationsets: []")
+			} else {
+				return nil, fmt.Errorf("reading addons-catalog.yaml: %w", catErr)
+			}
+		}
 
-	repoCfg, err := s.parser.ParseAll(clusterData, catalogData)
-	if err != nil {
-		return nil, err
+		repoCfg, err = s.parser.ParseAll(clusterData, catalogData)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Find the target cluster
@@ -276,6 +305,20 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 	}
 	if cluster == nil {
 		return nil, nil
+	}
+
+	// v4 repos keep per-cluster addon enablement in
+	// cluster-addons/<name>.yaml, never in managed-clusters.yaml labels —
+	// synthesize the same label shape GetEnabledAddons already reads so it
+	// works unchanged for either repo layout (S1 walk-day-5 root cause).
+	if isV4 {
+		v4Spec, found, v4Err := readV4ClusterAddons(ctx, gp, s.branch(), clusterName)
+		if v4Err != nil {
+			return nil, fmt.Errorf("reading cluster-addons for %s: %w", clusterName, v4Err)
+		}
+		if found {
+			cluster.Labels = v4ClusterLabels(v4Spec)
+		}
 	}
 
 	// Get enabled addons for this cluster
@@ -346,18 +389,28 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 		clusterData = []byte("clusters: []")
 	}
 
-	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
-	if err != nil {
-		if isGitFileNotFound(err) {
-			catalogData = []byte("applicationsets: []")
-		} else {
-			return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
+	isV4 := isV4Repo(ctx, gp, s.branch())
+	var repoCfg *config.RepoConfig
+	if isV4 {
+		repoCfg, err = buildV4RepoConfig(ctx, gp, s.branch(), s.parser, nil, clusterData)
+		if err != nil {
+			return nil, err
 		}
-	}
+	} else {
+		catalogData, catErr := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
+		if catErr != nil {
+			if isGitFileNotFound(catErr) {
+				log.Warn("addons-catalog.yaml not found — treating as an empty catalog", "path", "configuration/addons-catalog.yaml", "branch", s.branch())
+				catalogData = []byte("applicationsets: []")
+			} else {
+				return nil, fmt.Errorf("reading addons-catalog.yaml: %w", catErr)
+			}
+		}
 
-	repoCfg, err := s.parser.ParseAll(clusterData, catalogData)
-	if err != nil {
-		return nil, err
+		repoCfg, err = s.parser.ParseAll(clusterData, catalogData)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Find cluster
@@ -370,6 +423,20 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 	}
 	if cluster == nil {
 		return nil, nil
+	}
+
+	// v4 repos keep per-cluster addon enablement in
+	// cluster-addons/<name>.yaml, never in managed-clusters.yaml labels —
+	// synthesize the same label shape GetEnabledAddons already reads so it
+	// works unchanged for either repo layout (S1 walk-day-5 root cause).
+	if isV4 {
+		v4Spec, found, v4Err := readV4ClusterAddons(ctx, gp, s.branch(), clusterName)
+		if v4Err != nil {
+			return nil, fmt.Errorf("reading cluster-addons for %s: %w", clusterName, v4Err)
+		}
+		if found {
+			cluster.Labels = v4ClusterLabels(v4Spec)
+		}
 	}
 
 	// Surface the ArgoCD-registered API-server URL so the UI's

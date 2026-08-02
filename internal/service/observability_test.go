@@ -178,3 +178,73 @@ func TestBuildRecentSyncs_SkipsSharkoSystemApps(t *testing.T) {
 		t.Errorf("AddonName/ClusterName = %q/%q, want %q/%q", got[0].AddonName, got[0].ClusterName, "metrics-server", "prod-eu")
 	}
 }
+
+// TestBuildRecentSyncs_MarksEarliestInstalledLaterUpdated is the S3
+// (walk day 5 ride-along) regression guard: every Recent Activity row used
+// to say "deployed" no matter how many times an app had already been
+// upgraded. An app's earliest history entry (lowest ID — ArgoCD assigns
+// IDs sequentially) must be models.SyncActionInstalled; every later entry
+// must be models.SyncActionUpdated. History here is intentionally NOT in
+// ID order, to prove the function finds the earliest one rather than
+// trusting array position.
+func TestBuildRecentSyncs_MarksEarliestInstalledLaterUpdated(t *testing.T) {
+	t.Parallel()
+
+	clusterNames := map[string]bool{"prod-eu": true}
+
+	apps := []models.ArgocdApplication{
+		{
+			Name: "cert-manager-prod-eu",
+			History: []models.AppHistoryEntry{
+				{ID: 5, DeployedAt: "2026-07-03T00:00:00Z", Revision: "rev5"},
+				{ID: 3, DeployedAt: "2026-07-01T00:00:00Z", Revision: "rev3"}, // earliest, out of order
+				{ID: 7, DeployedAt: "2026-07-05T00:00:00Z", Revision: "rev7"},
+			},
+		},
+	}
+
+	got := buildRecentSyncs(apps, clusterNames)
+	if len(got) != 3 {
+		t.Fatalf("buildRecentSyncs len = %d, want 3 (got=%+v)", len(got), got)
+	}
+
+	byRevision := make(map[string]models.SyncActivityEntry, len(got))
+	for _, entry := range got {
+		byRevision[entry.Revision] = entry
+	}
+
+	if got := byRevision["rev3"].Action; got != models.SyncActionInstalled {
+		t.Errorf("rev3 (ID 3, earliest) Action = %q, want %q", got, models.SyncActionInstalled)
+	}
+	if got := byRevision["rev5"].Action; got != models.SyncActionUpdated {
+		t.Errorf("rev5 (ID 5) Action = %q, want %q", got, models.SyncActionUpdated)
+	}
+	if got := byRevision["rev7"].Action; got != models.SyncActionUpdated {
+		t.Errorf("rev7 (ID 7) Action = %q, want %q", got, models.SyncActionUpdated)
+	}
+}
+
+// TestBuildRecentSyncs_SingleHistoryEntryIsInstalled locks down the common
+// case: an app with only one history entry (its first and only deploy so
+// far) reports that entry as installed, never updated.
+func TestBuildRecentSyncs_SingleHistoryEntryIsInstalled(t *testing.T) {
+	t.Parallel()
+
+	clusterNames := map[string]bool{"prod-eu": true}
+	apps := []models.ArgocdApplication{
+		{
+			Name: "ingress-nginx-prod-eu",
+			History: []models.AppHistoryEntry{
+				{ID: 1, DeployedAt: "2026-07-01T00:00:00Z", Revision: "rev1"},
+			},
+		},
+	}
+
+	got := buildRecentSyncs(apps, clusterNames)
+	if len(got) != 1 {
+		t.Fatalf("buildRecentSyncs len = %d, want 1 (got=%+v)", len(got), got)
+	}
+	if got[0].Action != models.SyncActionInstalled {
+		t.Errorf("Action = %q, want %q", got[0].Action, models.SyncActionInstalled)
+	}
+}

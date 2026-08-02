@@ -62,7 +62,7 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
 
     // Legend text is visible (not tooltip-only) — label + count per state.
     // Scoped to the legend list itself (not the whole segment) because the
-    // NumberWord total can share the same digits as a legend count.
+    // total row (S4) can share the same digits as a per-state legend count.
     const legend = within(segment).getByTestId('fleet-strip-legend');
     expect(within(legend).getByText('connected')).toBeInTheDocument();
     expect(within(legend).getByText('8')).toBeInTheDocument();
@@ -83,13 +83,17 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
 
     const segment = screen.getByTestId('fleet-strip-clusters');
     const legend = within(segment).getByTestId('fleet-strip-legend');
-    expect(within(legend).getByText('connected')).toBeInTheDocument();
-    expect(within(legend).getByText('5')).toBeInTheDocument();
+    const connectedRow = within(legend).getByText('connected').closest('li');
+    expect(connectedRow).not.toBeNull();
+    // Scoped to the connected row itself — the total row (S4) also reads
+    // "5" here since every cluster is connected, so an unscoped getByText
+    // would match both.
+    expect(within(connectedRow as HTMLElement).getByText('5')).toBeInTheDocument();
     expect(within(legend).queryByText('not connected')).not.toBeInTheDocument();
     expect(within(legend).queryByText('disconnected')).not.toBeInTheDocument();
   });
 
-  it('renders the total as a plain number plus one short word next to the pie', () => {
+  it('renders the total as another legend row — "total" + the count, not a detached bold number (S4)', () => {
     renderStrip({
       clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
       appsTotal: 50,
@@ -97,16 +101,21 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
       behindCatalog: noBehindCatalogData,
     });
 
-    const clustersSegment = screen.getByTestId('fleet-strip-clusters');
-    expect(clustersSegment.textContent).toContain('10');
-    expect(clustersSegment.textContent).toContain('clusters');
+    const clustersLegend = within(screen.getByTestId('fleet-strip-clusters')).getByTestId('fleet-strip-legend');
+    expect(within(clustersLegend).getByText('total')).toBeInTheDocument();
+    // '10' also appears as the clusters total legend row; scope to the row
+    // itself so it can't accidentally match a per-state count instead.
+    const clustersTotalRow = within(clustersLegend).getByText('total').closest('li');
+    expect(clustersTotalRow).not.toBeNull();
+    expect(within(clustersTotalRow as HTMLElement).getByText('10')).toBeInTheDocument();
 
-    const appsSegment = screen.getByTestId('fleet-strip-applications');
-    expect(appsSegment.textContent).toContain('50');
-    expect(appsSegment.textContent).toContain('apps');
+    const appsLegend = within(screen.getByTestId('fleet-strip-applications')).getByTestId('fleet-strip-legend');
+    const appsTotalRow = within(appsLegend).getByText('total').closest('li');
+    expect(appsTotalRow).not.toBeNull();
+    expect(within(appsTotalRow as HTMLElement).getByText('50')).toBeInTheDocument();
   });
 
-  it('pluralizes the word correctly: "1 cluster"/"1 app" singular, "2 clusters"/"2 apps" plural (same rule as v1)', () => {
+  it('the total row stays lowercase and carries no plural noun (S4 — "total", never "clusters"/"apps")', () => {
     renderStrip({
       clusters: { total: 1, connected: 1, pending: 0, untested: 0, missing: 0, failed: 0 },
       appsTotal: 1,
@@ -114,22 +123,30 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
       behindCatalog: noBehindCatalogData,
     });
 
-    expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('1 cluster');
-    expect(screen.getByTestId('fleet-strip-clusters').textContent).not.toContain('1 clusters');
-    expect(screen.getByTestId('fleet-strip-applications').textContent).toContain('1 app');
-    expect(screen.getByTestId('fleet-strip-applications').textContent).not.toContain('1 apps');
+    const clustersLegend = within(screen.getByTestId('fleet-strip-clusters')).getByTestId('fleet-strip-legend');
+    expect(within(clustersLegend).getByText('total')).toBeInTheDocument();
+    expect(within(clustersLegend).queryByText(/cluster/)).not.toBeInTheDocument();
+
+    const appsLegend = within(screen.getByTestId('fleet-strip-applications')).getByTestId('fleet-strip-legend');
+    expect(within(appsLegend).getByText('total')).toBeInTheDocument();
+    expect(within(appsLegend).queryByText(/^\d+ app/)).not.toBeInTheDocument();
   });
 
-  it('pluralizes for counts other than 1, including zero', () => {
+  it('the total row\'s dot is a neutral gray token, not one of the status colors (S4)', () => {
     renderStrip({
-      clusters: { total: 2, connected: 2, pending: 0, untested: 0, missing: 0, failed: 0 },
+      clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
       appsTotal: 0,
       appsHealthy: 0,
       behindCatalog: noBehindCatalogData,
     });
 
-    expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('2 clusters');
-    expect(screen.getByTestId('fleet-strip-applications').textContent).toContain('0 apps');
+    const legend = within(screen.getByTestId('fleet-strip-clusters')).getByTestId('fleet-strip-legend');
+    const totalRow = within(legend).getByText('total').closest('li');
+    const dot = totalRow?.querySelector('span[aria-hidden="true"]');
+    expect(dot).not.toBeNull();
+    expect(dot?.className).toContain('bg-muted-foreground');
+    // Never one of the status hex colors the other rows use.
+    expect(dot?.className).not.toMatch(/text-\[#/);
   });
 
   it('carries the full breakdown (label + count per non-zero state) on the aria-label — identity is never color-alone', () => {
@@ -163,8 +180,12 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
 
     const segment = screen.getByTestId('fleet-strip-applications');
     const legend = within(segment).getByTestId('fleet-strip-legend');
-    expect(within(legend).getByText('healthy')).toBeInTheDocument();
-    expect(within(legend).getByText('20')).toBeInTheDocument();
+    const healthyRow = within(legend).getByText('healthy').closest('li');
+    expect(healthyRow).not.toBeNull();
+    // Scoped to the healthy row itself — the total row (S4) also reads
+    // "20" here since every app is healthy, so an unscoped getByText would
+    // match both.
+    expect(within(healthyRow as HTMLElement).getByText('20')).toBeInTheDocument();
     expect(within(legend).queryByText('not healthy')).not.toBeInTheDocument();
   });
 

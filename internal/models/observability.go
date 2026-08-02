@@ -24,7 +24,24 @@ type SyncActivityEntry struct {
 	ClusterName  string  `json:"cluster_name"`
 	Revision     string  `json:"revision,omitempty"`
 	Status       string  `json:"status"`
+	// Action is "installed" for an app's earliest ArgoCD history entry and
+	// "updated" for every later one (S3, walk day 5 ride-along) — every row
+	// used to say "deployed" regardless, which read as a fresh install even
+	// for an app that has been running and upgrading for months. Omitted
+	// (never both zero-valued and rendered) only when the entry predates
+	// this field; the UI falls back to "deployed" in that case.
+	Action string `json:"action,omitempty"`
 }
+
+// SyncActionInstalled marks an app's earliest ArgoCD history entry still on
+// record. SyncActionUpdated marks every later one. ArgoCD caps how many
+// history entries it keeps (~10) — a long-lived app's true first deploy may
+// have already rolled off, so "installed" here means "the earliest entry
+// ArgoCD still remembers", an honest limit rather than a bug.
+const (
+	SyncActionInstalled = "installed"
+	SyncActionUpdated   = "updated"
+)
 
 // SyncActivityResponse wraps sync activity entries.
 type SyncActivityResponse struct {

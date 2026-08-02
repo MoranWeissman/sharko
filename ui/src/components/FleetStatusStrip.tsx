@@ -17,14 +17,18 @@ import type { DashboardStats, VersionMatrixResponse } from '@/services/models';
 // states non-zero the segment text overflowed, longer state labels didn't
 // fit, and naming one outdated addon ("metrics-server and 49 more") told
 // you nothing useful. WQ-2's fix: the Clusters and Applications segments
-// become a compact donut chart (breakdown on hover/aria, not in text) plus
-// the total as a plain number; the third segment becomes a bare clickable
-// count that opens the version matrix already filtered. It still states
-// facts — no severity logic, no settling window. That stays exactly where
-// it lives today (the Needs Attention layer). Walk day 5: that third
-// segment's count changed meaning from "behind the newest version seen
-// upstream" to "behind this install's own catalog version" — see the
-// summarizeBehindCatalog comment below for why.
+// become a compact donut chart (breakdown on hover/aria, not in text); the
+// third segment becomes a bare clickable count that opens the version
+// matrix already filtered. It still states facts — no severity logic, no
+// settling window. That stays exactly where it lives today (the Needs
+// Attention layer). Walk day 5: that third segment's count changed meaning
+// from "behind the newest version seen upstream" to "behind this install's
+// own catalog version" — see the summarizeBehindCatalog comment below for
+// why. S4 (walk day 5 ride-along): the total used to float next to the
+// legend as its own bold number + word ("2 clusters"); it's now just
+// another row in the SAME legend list (DistributionPie's showTotalRow), a
+// neutral gray dot + "total" + the count — one style for every row, no
+// special-cased number.
 
 // --- Behind-catalog summary (walk day 5 finding) ---
 //
@@ -104,23 +108,6 @@ function appSlices(total: number, healthy: number): DistributionSlice[] {
 // blue-violet "waiting" state) changes between modes.
 const PIE_SIZE = DISTRIBUTION_PIE_SIZE;
 const PIE_CONTAINER_HEIGHT = PIE_SIZE + 38;
-
-// The total number + one short word underneath the donut. The number is
-// the primary read — the donut is decoration-plus. `word` is the singular
-// form ("cluster" / "app") — pluralized here the same way the v1 strip did
-// (`cluster${total !== 1 ? 's' : ''}`), so a fleet of one still reads
-// "1 cluster", not "1 clusters".
-function NumberWord({ total, word }: { total: number; word: string }) {
-  return (
-    <span className="whitespace-nowrap">
-      <span className="text-base font-semibold text-foreground">{total}</span>{' '}
-      <span className="text-sm text-muted-foreground">
-        {word}
-        {total !== 1 ? 's' : ''}
-      </span>
-    </span>
-  );
-}
 
 interface SegmentProps {
   onClick: () => void;
@@ -213,10 +200,10 @@ export function FleetStatusStrip({ clusters, appsTotal, appsHealthy, behindCatal
           ariaPrefix="Clusters"
           size={PIE_SIZE}
           legendAriaHidden
+          showTotalRow
           testId="fleet-strip-pie"
           legendTestId="fleet-strip-legend"
         />
-        <NumberWord total={clusters.total} word="cluster" />
       </Segment>
       <Segment
         onClick={() => navigate('/observability#addon-health')}
@@ -229,10 +216,10 @@ export function FleetStatusStrip({ clusters, appsTotal, appsHealthy, behindCatal
           ariaPrefix="Applications"
           size={PIE_SIZE}
           legendAriaHidden
+          showTotalRow
           testId="fleet-strip-pie"
           legendTestId="fleet-strip-legend"
         />
-        <NumberWord total={appsTotal} word="app" />
       </Segment>
       <Segment
         onClick={() => navigate('/version-matrix?view=matrix&filter=behind-catalog')}
