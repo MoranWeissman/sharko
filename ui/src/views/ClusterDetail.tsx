@@ -50,7 +50,6 @@ import {
   CHECK_PERMISSIONS_LABEL,
   CHECK_PERMISSIONS_HINT,
 } from '@/components/ClusterActionHints';
-import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
 import { InfoHint } from '@/components/InfoHint';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
@@ -1354,9 +1353,6 @@ export function ClusterDetail() {
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-2.5 dark:ring-gray-700 dark:bg-gray-800">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{data.cluster.name}</h2>
-          {/* Type badge is suppressed in the "not connected yet" state — the
-            * banner below already says so once, in plain words (V2-cleanup-85.1). */}
-          {!notConnected && <ClusterTypeBadge server={data.cluster.server_url} />}
         </div>
         {data.cluster.server_version && (
           <div className="flex items-center gap-1.5 text-xs text-[#2a5a7a] dark:text-gray-400">

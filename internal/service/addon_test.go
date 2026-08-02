@@ -1038,3 +1038,81 @@ func TestListAddons_V4Repo(t *testing.T) {
 		t.Errorf("cert-manager entry = %+v, want RepoURL/Chart/Version from the delta", entries[0])
 	}
 }
+
+// TestGetAddonDetail_ApplicationSetName pins the ApplicationSet name
+// GetAddonDetail asks ArgoCD for: bare on a v3 repo (the bootstrap
+// template's own ApplicationSet name), `sharko-<addon>` on a v4 repo (the
+// engine chart's naming — charts/sharko-engine/templates/appset.yaml). A
+// fake ArgoCD server records the exact path it was asked for, so the
+// assertion is on the real request, not on a guess about what the client
+// does internally.
+func TestGetAddonDetail_ApplicationSetName(t *testing.T) {
+	tests := []struct {
+		name           string
+		v4Repo         bool
+		wantAppSetName string
+	}{
+		{name: "v3 repo queries the bare addon name", v4Repo: false, wantAppSetName: "metrics-server"},
+		{name: "v4 repo queries the sharko-prefixed engine name", v4Repo: true, wantAppSetName: "sharko-metrics-server"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var requestedAppSetPath string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/api/v1/applicationsets/") {
+					requestedAppSetPath = r.URL.Path
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"items": []}`))
+			}))
+			defer ts.Close()
+
+			files := map[string][]byte{
+				"configuration/managed-clusters.yaml": []byte("clusters: []\n"),
+			}
+			if tc.v4Repo {
+				delta, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+					Addons: map[string]config.AddonCatalogEntry{
+						"metrics-server": {
+							RepoURL: "https://kubernetes-sigs.github.io/metrics-server",
+							Chart:   "metrics-server",
+							Version: "3.12.0",
+						},
+					},
+				})
+				if err != nil {
+					t.Fatalf("building catalog delta: %v", err)
+				}
+				files[orchestrator.EnginePinPath] = []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n")
+				files[config.AddonCatalogPath] = delta
+			} else {
+				files["configuration/addons-catalog.yaml"] = []byte(`
+applicationsets:
+  - name: metrics-server
+    repoURL: https://kubernetes-sigs.github.io/metrics-server
+    chart: metrics-server
+    version: "3.12.0"
+    namespace: kube-system
+`)
+			}
+
+			gp := &fakeGitProvider{files: files}
+			ac := argocd.NewClient(ts.URL, "fake-token", false)
+			svc := NewAddonService("")
+
+			resp, err := svc.GetAddonDetail(context.Background(), "metrics-server", gp, ac)
+			if err != nil {
+				t.Fatalf("GetAddonDetail returned error: %v", err)
+			}
+			if resp == nil {
+				t.Fatal("expected a non-nil detail response for metrics-server")
+			}
+
+			wantPath := "/api/v1/applicationsets/" + tc.wantAppSetName
+			if requestedAppSetPath != wantPath {
+				t.Errorf("ArgoCD was asked for appset path %q, want %q", requestedAppSetPath, wantPath)
+			}
+		})
+	}
+}

@@ -804,9 +804,15 @@ export function AddonCatalog() {
       })
   }, [])
 
+  // Refresh has to re-check both: the catalog itself AND the pending-PR
+  // lane. Before this fix it only called fetchCatalog, so a "ghost" card
+  // for a PR that got closed/deleted on the server would survive every
+  // click of this button and only clear on the 60s auto-poll or a full
+  // page reload (maintainer's live finding).
   const handleRefresh = useCallback(() => {
     void fetchCatalog(true)
-  }, [fetchCatalog])
+    void fetchPendingAddonPRs()
+  }, [fetchCatalog, fetchPendingAddonPRs])
 
   // perf S2 — stale-while-refresh: a cache hit paints the grid instantly
   // (no spinner) from this session's last successful load, then a normal

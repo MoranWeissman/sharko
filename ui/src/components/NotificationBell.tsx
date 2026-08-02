@@ -49,15 +49,21 @@ export function NotificationBell() {
 
   const unreadCount = notifications.filter(n => !n.read).length
 
-  const markAllRead = () => {
-    api.markAllNotificationsRead()
-      .then(() => {
-        setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+  // S4 (maintainer's live finding): opening the bell IS reading it — the
+  // red counter and the unread styling clear the moment the popover opens,
+  // no extra "Mark all as read" click needed. Fires once per open, only
+  // when there's something unread to clear.
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen)
+    if (nextOpen && unreadCount > 0) {
+      setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+      api.markAllNotificationsRead().catch(() => {
+        // Silent — if the backend call fails, the badge stays cleared for
+        // this view (no revert, no toast). If the next 60s poll still shows
+        // unread items because the write never landed, opening the bell
+        // again just retries the same mark-all-read call.
       })
-      .catch(() => {
-        // Optimistic — mark locally even if API fails
-        setNotifications(prev => prev.map(n => ({ ...n, read: true })))
-      })
+    }
   }
 
   const timeAgo = (ts: string) => {
@@ -77,19 +83,12 @@ export function NotificationBell() {
     }
   }
 
-  // S3 (walk day 4): every notification is clickable now — clicking marks
-  // that one item read (optimistic update, then the real request). A
-  // connection-health alert ALSO navigates to Settings → Connection so the
-  // user can inspect/fix the Git or ArgoCD link; other types just clear
-  // their unread state. "Mark all as read" is unchanged.
+  // S4: opening the bell already marks every notification read (see
+  // handleOpenChange above), so a row click no longer needs its own
+  // mark-read call — it only handles the connection-alert navigation, to
+  // Settings → Connection so the user can inspect/fix the Git or ArgoCD
+  // link. Other row types have nothing left to do on click.
   const handleItemClick = (n: Notification) => {
-    if (!n.read) {
-      setNotifications(prev => prev.map(item => (item.id === n.id ? { ...item, read: true } : item)))
-      api.markNotificationRead(n.id).catch(() => {
-        // Optimistic — the item stays marked read locally even if the
-        // request fails; the next poll will reconcile with the server.
-      })
-    }
     if (n.type === 'connection') {
       setOpen(false)
       navigate(CONNECTION_SETTINGS_ROUTE)
@@ -97,7 +96,7 @@ export function NotificationBell() {
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
           className="relative flex items-center justify-center rounded-lg p-2 text-[#2a5a7a] hover:bg-[#d6eeff] transition-colors"
@@ -121,18 +120,10 @@ export function NotificationBell() {
         sideOffset={8}
         className="w-80 rounded-xl p-0 shadow-xl"
       >
-        <div className="flex items-center justify-between border-b border-[#6aade0] px-4 py-3 dark:border-gray-700">
+        <div className="border-b border-[#6aade0] px-4 py-3 dark:border-gray-700">
           <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
             Notifications {unreadCount > 0 && `(${unreadCount})`}
           </h3>
-          {unreadCount > 0 && (
-            <button
-              onClick={markAllRead}
-              className="text-xs text-[#2a5a7a] hover:text-[#0a2a4a] dark:text-gray-400"
-            >
-              Mark all as read
-            </button>
-          )}
         </div>
 
         <div className="max-h-80 overflow-y-auto">

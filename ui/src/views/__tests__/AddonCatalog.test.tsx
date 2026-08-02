@@ -1340,6 +1340,35 @@ describe('AddonCatalog — pending addons render as ghost cards in the real grid
     expect(warnSpy).toHaveBeenCalled()
     expect(screen.queryByTestId('pending-addon-card')).not.toBeInTheDocument()
   })
+
+  // Maintainer's live finding: the Refresh button only ever called
+  // fetchCatalog, never fetchPendingAddonPRs — so a PR that got closed or
+  // deleted server-side left its ghost card on screen through every click,
+  // clearing only on the 60s auto-poll or a full page reload.
+  it('Refresh also re-checks pending PRs, clearing a stale ghost card without a reload', async () => {
+    mockFetchTrackedPRs.mockResolvedValueOnce({ prs: [pendingPR] })
+    renderCatalog()
+
+    const ghost = await screen.findByTestId('pending-addon-card')
+    expect(within(ghost).getByText('loki')).toBeInTheDocument()
+
+    const catalogCallsBefore = vi.mocked(api.getAddonCatalog).mock.calls.length
+    const prsCallsBefore = mockFetchTrackedPRs.mock.calls.length
+
+    // The PR was closed/deleted server-side — the next /prs read no longer
+    // contains it.
+    mockFetchTrackedPRs.mockResolvedValueOnce({ prs: [] })
+    fireEvent.click(screen.getByTitle('Refresh'))
+
+    await waitFor(() => {
+      expect(mockFetchTrackedPRs.mock.calls.length).toBeGreaterThan(prsCallsBefore)
+    })
+    expect(vi.mocked(api.getAddonCatalog).mock.calls.length).toBeGreaterThan(catalogCallsBefore)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('pending-addon-card')).not.toBeInTheDocument()
+    })
+  })
 })
 
 // perf S2 — a same-session revisit paints from the last successful load
