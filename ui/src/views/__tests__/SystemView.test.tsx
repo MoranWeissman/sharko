@@ -21,6 +21,7 @@ import SystemView, {
   versionOutsideTestedRange,
 } from '@/views/SystemView'
 import type { Cluster } from '@/services/models'
+import type { RepoStatusReason } from '@/services/api'
 
 const mockGetSystemCapabilities = vi.fn()
 
@@ -64,7 +65,7 @@ function obsWithVersion(version?: string) {
 }
 
 interface MockAllOpts {
-  repo?: { initialized: boolean; bootstrap_synced: boolean; reason?: string }
+  repo?: { initialized: boolean; bootstrap_synced: boolean; reason?: RepoStatusReason }
   clusters?: Cluster[]
   notifications?: { id: string; type: string; title: string; description: string; timestamp: string; read: boolean }[]
   argocdVersion?: string
@@ -161,16 +162,27 @@ describe('deriveArgoRepoArrow', () => {
   // Error review package 1 — these two reasons mean Sharko never got a
   // usable answer from ArgoCD at all, distinct from a genuinely degraded
   // engine app. The System page must not assert the engine app is broken
-  // when it never got that far.
-  it('is degraded (credential problem) when ArgoCD rejected Sharko\'s token', () => {
+  // when it never got that far. Review findings r1, L13: both are
+  // "couldn't check", so both map to the SAME status ('unknown') — a
+  // rejected token is not evidence of degradation any more than an
+  // unreachable ArgoCD is.
+  it('is unknown (not degraded) when ArgoCD rejected Sharko\'s token — a couldn\'t-check state', () => {
     const v = deriveArgoRepoArrow({ initialized: true, bootstrap_synced: false, reason: 'argocd_auth_failed' })
-    expect(v.status).toBe('degraded')
+    expect(v.status).toBe('unknown')
     expect(v.detail).toMatch(/rejected Sharko's token/)
   })
   it('is unknown when Sharko could not reach ArgoCD at all', () => {
     const v = deriveArgoRepoArrow({ initialized: true, bootstrap_synced: false, reason: 'argocd_unreachable' })
     expect(v.status).toBe('unknown')
     expect(v.detail).toMatch(/couldn't reach ArgoCD/)
+  })
+  // H1 (review findings r1) — a 403 means the token is valid but lacks
+  // permission. Sharko never got to check the engine app, so this is the
+  // same couldn't-check bucket, not a claim the app is degraded.
+  it('is unknown when ArgoCD refused Sharko\'s token permission (403)', () => {
+    const v = deriveArgoRepoArrow({ initialized: true, bootstrap_synced: false, reason: 'argocd_forbidden' })
+    expect(v.status).toBe('unknown')
+    expect(v.detail).toMatch(/refused Sharko's token permission/)
   })
 })
 

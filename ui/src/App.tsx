@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { lazy, Suspense, useState, useEffect } from 'react'
+import { lazy, Suspense, useState, useEffect, useCallback } from 'react'
 import { Loader2 } from 'lucide-react'
 import { AuthProvider, useAuth } from '@/hooks/useAuth'
 import { ConnectionProvider, useConnections } from '@/hooks/useConnections'
@@ -11,6 +11,7 @@ import { FirstRunWizard } from '@/components/FirstRunWizard'
 import { ConnectionErrorBanner } from '@/components/ConnectionErrorBanner'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { api } from '@/services/api'
+import type { RepoStatusResponse } from '@/services/api'
 
 // Lazy-loaded views — split into separate chunks for faster initial load
 const Dashboard = lazy(() => import('@/views/Dashboard'))
@@ -102,7 +103,7 @@ export function isConnectionErrorReason(reason?: string): boolean {
  * wizard yet" — the parent gate handles those upstream branches.
  */
 export function shouldShowSetupWizard(
-  repoStatus: { initialized: boolean; bootstrap_synced?: boolean; reason?: string } | null,
+  repoStatus: RepoStatusResponse | null,
   dismissed: boolean,
 ): boolean {
   if (dismissed) return false
@@ -137,7 +138,7 @@ export function shouldShowSetupWizard(
  *     engine-app case, offers a button to open the repair screen on request.
  */
 export function shouldShowConnectionErrorBanner(
-  repoStatus: { initialized: boolean; bootstrap_synced?: boolean; reason?: string } | null,
+  repoStatus: RepoStatusResponse | null,
 ): boolean {
   if (!repoStatus) return false
   if (repoStatus.initialized) return !repoStatus.bootstrap_synced
@@ -146,7 +147,7 @@ export function shouldShowConnectionErrorBanner(
 
 export function ConnectedApp() {
   const { connections, loading } = useConnections()
-  const [repoStatus, setRepoStatus] = useState<{ initialized: boolean; bootstrap_synced?: boolean; reason?: string } | null>(null)
+  const [repoStatus, setRepoStatus] = useState<RepoStatusResponse | null>(null)
   const [checkingRepo, setCheckingRepo] = useState(true)
   // User-invited repair screen: set only by clicking the banner's repair
   // button (never by the gate itself — see shouldShowSetupWizard). Reusing
@@ -156,21 +157,26 @@ export function ConnectedApp() {
   // case, with no new UI to build.
   const [repairWizardOpen, setRepairWizardOpen] = useState(false)
 
+  // Shared fetch so the initial mount AND a post-repair refresh (below) read
+  // repo status the exact same way.
+  const fetchRepoStatus = useCallback(() => {
+    return api.getRepoStatus()
+      .then(data => setRepoStatus(data))
+      // Failed probe → degraded posture, route to wizard
+      // (bootstrap_synced=false makes the gate fire even if the
+      // initialized flag is misreported elsewhere).
+      .catch(() => setRepoStatus({ initialized: false, bootstrap_synced: false, reason: 'error' }))
+  }, [])
+
   useEffect(() => {
     if (!loading) {
       if (connections.length > 0) {
-        api.getRepoStatus()
-          .then(data => setRepoStatus(data))
-          // Failed probe → degraded posture, route to wizard
-          // (bootstrap_synced=false makes the gate fire even if the
-          // initialized flag is misreported elsewhere).
-          .catch(() => setRepoStatus({ initialized: false, bootstrap_synced: false, reason: 'error' }))
-          .finally(() => setCheckingRepo(false))
+        fetchRepoStatus().finally(() => setCheckingRepo(false))
       } else {
         setCheckingRepo(false)
       }
     }
-  }, [loading, connections.length])
+  }, [loading, connections.length, fetchRepoStatus])
 
   // Show spinner while loading connections or checking repo status
   if (loading || checkingRepo) {
@@ -200,11 +206,24 @@ export function ConnectedApp() {
 
   // The user clicked "repair" on the banner below — open the SAME Step 4
   // screen the day-zero resume path uses, but only because they asked for
-  // it. onExit resets this flag so closing/finishing the wizard returns to
-  // the normal app instead of leaving this overlay stuck open.
+  // it (isRepair=true tells the wizard to use repair copy, not "resuming
+  // setup", and to skip the day-zero catalog-seeding handoff on success —
+  // see FirstRunWizard). onExit resets the repairWizardOpen flag AND
+  // re-fetches repo status, so closing/finishing the wizard both returns to
+  // the normal app and clears the banner once the install is actually
+  // healthy again (review findings r1, M4 — repoStatus was only ever fetched
+  // once, so a successful repair left the banner accusing a now-healthy
+  // install).
   if (repairWizardOpen) {
     return (
-      <FirstRunWizard initialStep={4} onExit={() => setRepairWizardOpen(false)} />
+      <FirstRunWizard
+        initialStep={4}
+        isRepair
+        onExit={() => {
+          setRepairWizardOpen(false)
+          fetchRepoStatus()
+        }}
+      />
     )
   }
 

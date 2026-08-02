@@ -231,7 +231,7 @@ func classifyBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (st
 // @Security BearerAuth
 // @Success 200 {object} api.InitStatusResponse "Repo state probe result"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 502 {object} map[string]interface{} "No active Git/ArgoCD connection"
+// @Failure 502 {object} map[string]interface{} "No active Git connection. A missing or broken ArgoCD connection does NOT 502 here — it surfaces as state \"unknown\" in a 200 response, since the Git-side probe can still run."
 // @Router /init/status [get]
 func (s *Server) handleInitStatus(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "init.status") {
@@ -244,10 +244,21 @@ func (s *Server) handleInitStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ac, err := s.connSvc.GetActiveOrchestratorArgocdClient()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
-		return
+	// A missing/broken ArgoCD connection is NOT the same failure as a missing
+	// Git connection: this probe can still answer "is the repo bootstrapped?"
+	// from Git alone, it just can't classify the bootstrap app's health. The
+	// documented "unknown" state exists exactly for this case (see
+	// RepoStateUnknown and ProbeBootstrapApp's nil-client branch) — 502-ing
+	// here instead of probing meant that documented state was unreachable in
+	// practice, and the wizard's catch handler had to invent an "empty"
+	// fallback that wrongly offered to set up an unchecked repo (review
+	// findings r1, M11). Explicitly nil out ac on error rather than passing
+	// the failed call's return value through: GetActiveOrchestratorArgocdClient
+	// can return a non-nil interface wrapping a nil concrete client on error,
+	// which would fail ProbeBootstrapApp's `ac == nil` check and panic on use.
+	ac, acErr := s.connSvc.GetActiveOrchestratorArgocdClient()
+	if acErr != nil {
+		ac = nil
 	}
 
 	baseBranch := s.gitopsConfig().BaseBranch

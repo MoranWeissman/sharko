@@ -13,7 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { FirstRunWizard, detectGitProvider } from '@/components/FirstRunWizard'
 import * as apiModule from '@/services/api'
 
@@ -124,14 +124,49 @@ afterEach(() => {
   sessionStorage.clear()
 })
 
-function renderWizard(initialStep?: number) {
+function renderWizard(
+  initialStep?: number,
+  opts?: { isRepair?: boolean; onExit?: () => void },
+) {
   return render(
     <MemoryRouter>
       {initialStep !== undefined ? (
-        <FirstRunWizard initialStep={initialStep} />
+        <FirstRunWizard
+          initialStep={initialStep}
+          isRepair={opts?.isRepair}
+          onExit={opts?.onExit}
+        />
       ) : (
         <FirstRunWizard />
       )}
+    </MemoryRouter>,
+  )
+}
+
+// H2 (review findings r1) — a small location probe so tests can assert
+// WHERE navigate() actually landed, not just that a button with the right
+// label exists. Rendered alongside the wizard inside the same MemoryRouter.
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="test-location">{location.pathname + location.search}</div>
+}
+
+function renderWizardWithLocationProbe(
+  initialStep?: number,
+  opts?: { isRepair?: boolean; onExit?: () => void },
+) {
+  return render(
+    <MemoryRouter>
+      {initialStep !== undefined ? (
+        <FirstRunWizard
+          initialStep={initialStep}
+          isRepair={opts?.isRepair}
+          onExit={opts?.onExit}
+        />
+      ) : (
+        <FirstRunWizard />
+      )}
+      <LocationProbe />
     </MemoryRouter>,
   )
 }
@@ -1311,18 +1346,25 @@ describe('FirstRunWizard — Step 4 conditional render by repo state (V2-cleanup
     ).not.toBeInTheDocument()
   })
 
-  it('probe failure → falls back to the Initialize offer (never blocks the user)', async () => {
+  // Review findings r1, M11: a genuine probe failure (network/5xx) used to
+  // fall back to the Set Up offer — but Sharko never actually checked the
+  // repo in that case, so offering to set it up risked writing the v4
+  // folder tree on top of a live, already-set-up repo the probe just
+  // couldn't reach. The honest fallback is the same couldn't-check surface
+  // the server's own "unknown" state renders — never the empty/set-up offer.
+  it('probe failure → shows the honest could-not-check state, never the Set Up offer', async () => {
     getInitStatusMock().mockRejectedValueOnce(new Error('network down'))
     renderWizard(4)
 
-    // Fallback shows the empty-state Initialize offer …
     expect(
-      await screen.findByRole('button', { name: /Set Up.*Auto-merge/i }),
+      await screen.findByText(/Sharko couldn't check whether the engine application is healthy/i),
     ).toBeInTheDocument()
-    // … plus a subtle note that the state couldn't be confirmed.
     expect(
-      screen.getByText(/Couldn't confirm the repository state/i),
-    ).toBeInTheDocument()
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/This repository is empty/i),
+    ).not.toBeInTheDocument()
   })
 })
 
@@ -1500,8 +1542,10 @@ describe('FirstRunWizard — Step 4 auth_failed / forbidden states (error review
     })
     renderWizard(4)
 
+    // M8: match the auth_failed sibling's phrasing and the server detail
+    // below it ("ArgoCD refused Sharko's token permission...").
     expect(
-      await screen.findByText(/ArgoCD's token doesn't have permission to check the engine app/i),
+      await screen.findByText(/ArgoCD refused Sharko's token permission to read applications/i),
     ).toBeInTheDocument()
     // The exact RBAC message from the server must render verbatim.
     expect(screen.getByText(rbacMessage)).toBeInTheDocument()
@@ -1532,5 +1576,302 @@ describe('FirstRunWizard — Step 4 auth_failed / forbidden states (error review
     expect(
       screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
     ).not.toBeInTheDocument()
+  })
+})
+
+// Review findings r1, H2 — "Go to Settings → Connections" must actually land
+// on Settings, not the Dashboard. Root cause: the click handler called
+// `navigate('/settings?...')` immediately followed by `onDone()`, and
+// onDone's own `navigate('/dashboard')` always won the race — the button
+// silently redirected to the Dashboard every time. One test per affected
+// repoState branch (unreachable was named explicitly as a pre-existing
+// instance; forbidden/auth_failed/unknown share the same fixed code path).
+describe('FirstRunWizard — Step 4 "Go to Settings → Connections" actually navigates to Settings (H2)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+  })
+
+  it('unreachable state: clicking the button ends on /settings?section=connections, not /dashboard', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'unreachable',
+      detail: 'argocd app "cluster-addons-bootstrap" sync=Unknown health=Error',
+    })
+    renderWizardWithLocationProbe(4)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Go to Settings → Connections/i }),
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('test-location').textContent).toBe(
+        '/settings?section=connections',
+      )
+    })
+  })
+
+  it('forbidden state: clicking the button ends on /settings?section=connections, not /dashboard', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'forbidden',
+      detail: "ArgoCD rejected Sharko's token (permission denied)",
+    })
+    renderWizardWithLocationProbe(4)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Go to Settings → Connections/i }),
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('test-location').textContent).toBe(
+        '/settings?section=connections',
+      )
+    })
+  })
+
+  it('auth_failed state: clicking the button ends on /settings?section=connections, not /dashboard', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'auth_failed',
+      detail: 'invalid ArgoCD token',
+    })
+    renderWizardWithLocationProbe(4)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Go to Settings → Connections/i }),
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('test-location').textContent).toBe(
+        '/settings?section=connections',
+      )
+    })
+  })
+
+  it('unknown state: clicking the button ends on /settings?section=connections, not /dashboard', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'unknown',
+      detail: 'listing argocd applications failed: dial tcp: connection refused',
+    })
+    renderWizardWithLocationProbe(4)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Go to Settings → Connections/i }),
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('test-location').textContent).toBe(
+        '/settings?section=connections',
+      )
+    })
+  })
+})
+
+// Review findings r1, M7 — a user-invited repair on an already-initialized
+// install must say "Repair", never "Resuming setup" (that install was never
+// mid-setup). Both the day-zero resume and the invited-repair screen land on
+// initialStep=4, so isRepair is the only signal the component has to tell
+// them apart.
+describe('FirstRunWizard — Step 4 repair vs day-zero-resume framing (M7)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+  })
+
+  it('isRepair=true renders "Repair — Repository" in the step label, not "Resuming setup"', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'argocd app "sharko-engine" is not created on this cluster yet',
+      repairable: true,
+    })
+    renderWizard(4, { isRepair: true })
+
+    await screen.findByRole('button', { name: /Repair now/i })
+    const label = screen.getByTestId('wizard-step-label')
+    expect(label.textContent).toBe('Repair — Repository')
+    expect(label.textContent).not.toContain('Resuming setup')
+  })
+
+  it('isRepair=false (day-zero resume) keeps "Resuming setup — Repository"', async () => {
+    getInitStatusMock().mockResolvedValueOnce({ state: 'empty', detail: '' })
+    renderWizard(4)
+
+    await screen.findByRole('button', { name: /Set Up.*Auto-merge/i })
+    const label = screen.getByTestId('wizard-step-label')
+    expect(label.textContent).toBe('Resuming setup — Repository')
+  })
+
+  it('isRepair=true shows repair framing in the banner, not "Pick up the repository below"', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'argocd app "sharko-engine" is not created on this cluster yet',
+      repairable: true,
+    })
+    renderWizard(4, { isRepair: true })
+
+    await screen.findByRole('button', { name: /Repair now/i })
+    expect(
+      screen.getByText(/Sharko will check the engine app below and offer a repair/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Pick up the repository below/i),
+    ).not.toBeInTheDocument()
+  })
+})
+
+// Review findings r1, M5 — the footer's "…or go back to change your
+// connection details." must only render when the Back control is actually
+// on screen. hasOwnExitAction hides Back for
+// unreachable/forbidden/auth_failed/unknown/partial-not-repairable, each of
+// which renders its own exit button instead — the footer used to promise a
+// "go back" that didn't exist on any of those screens.
+describe('FirstRunWizard — Step 4 footer only mentions "go back" when Back is actually rendered (M5)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+  })
+
+  it('empty state (Back IS rendered): footer keeps the "or go back" mention', async () => {
+    getInitStatusMock().mockResolvedValueOnce({ state: 'empty', detail: '' })
+    renderWizard(4)
+
+    await screen.findByRole('button', { name: /Set Up.*Auto-merge/i })
+    expect(screen.getByRole('button', { name: /^Back$/ })).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /Finish setting up the repository, or go back to change your connection details\./i,
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it.each([
+    ['unreachable', { state: 'unreachable', detail: 'sync=Unknown health=Error' }],
+    ['forbidden', { state: 'forbidden', detail: "ArgoCD rejected Sharko's token (permission denied)" }],
+    ['auth_failed', { state: 'auth_failed', detail: 'invalid ArgoCD token' }],
+    ['unknown', { state: 'unknown', detail: 'listing argocd applications failed: dial tcp: connection refused' }],
+    [
+      'partial-not-repairable',
+      {
+        state: 'partial',
+        detail: 'argocd app "cluster-addons-bootstrap" sync=OutOfSync health=Degraded',
+        repairable: false,
+      },
+    ],
+  ] as const)(
+    'repoState=%s (Back is HIDDEN, own exit action shown): footer drops "or go back"',
+    async (_name, mockStatus) => {
+      getInitStatusMock().mockResolvedValueOnce(mockStatus)
+      renderWizard(4)
+
+      // The generic Back button must be absent — that's exactly what makes
+      // the "or go back" footer mention false for this state. Each of these
+      // repoStates instead renders its own exit action (Settings and/or
+      // "Back to Dashboard"), never the plain "Back" control.
+      //
+      // The footer's "canGoBackInStep4" flag is reported up from StepInit to
+      // FirstRunWizard via a child→parent effect (onExitAvailabilityChange),
+      // which lands one render pass after the probe resolves — so the whole
+      // settled assertion (not just the loading spinner going away) needs to
+      // be inside waitFor.
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /^Back$/ })).not.toBeInTheDocument()
+        expect(
+          screen.queryByText(/or go back to change your connection details/i),
+        ).not.toBeInTheDocument()
+        // It still finishes the sentence with the no-back variant.
+        expect(
+          screen.getByText(/^Finish setting up the repository below\.$/i),
+        ).toBeInTheDocument()
+      })
+    },
+  )
+
+  it('initialized state (Back is HIDDEN via L16, own exit action shown): footer drops "or go back"', async () => {
+    getInitStatusMock().mockResolvedValueOnce({ state: 'initialized', detail: '' })
+    renderWizard(4)
+
+    await screen.findByRole('button', { name: /Go to Dashboard/i })
+    // Same child→parent effect timing note as above.
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /^Back$/ })).not.toBeInTheDocument()
+      expect(
+        screen.queryByText(/or go back to change your connection details/i),
+      ).not.toBeInTheDocument()
+      expect(
+        screen.getByText(/^Finish setting up the repository below\.$/i),
+      ).toBeInTheDocument()
+    })
+  })
+})
+
+// Ride-along (review findings r1, end note) — a successful REPAIR on an
+// already-initialized install must return to the app, never hand off to the
+// day-zero catalog-seeding step (Step 5). Day-zero setup (isRepair=false)
+// keeps seeding — only the repair path skips it.
+describe('FirstRunWizard — repair completion skips catalog seeding (ride-along)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+  const initRepoMock = () => apiModule.initRepo as ReturnType<typeof vi.fn>
+  const getOperationMock = () => apiModule.getOperation as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+    getOperationMock().mockResolvedValue({ id: 'op-1', status: 'pending', steps: [] })
+    initRepoMock().mockResolvedValue({ operation_id: 'op-1' })
+  })
+
+  it('isRepair=true: a successful repair goes straight to onExit/onDone, never shows the Catalog step', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'argocd app "sharko-engine" is not created on this cluster yet',
+      repairable: true,
+    })
+    initRepoMock().mockResolvedValueOnce({
+      operation_id: undefined,
+      pr_url: null,
+    })
+
+    const onExit = vi.fn()
+    renderWizardWithLocationProbe(4, { isRepair: true, onExit })
+
+    fireEvent.click(await screen.findByRole('button', { name: /Repair now/i }))
+
+    // Synchronous-response fallback path (no operation_id) lands directly on
+    // state 'done'. Click Continue and confirm it exits the wizard (onExit
+    // fires, location lands on /dashboard) instead of rendering Step 5.
+    fireEvent.click(await screen.findByRole('button', { name: /Continue/i }))
+
+    await waitFor(() => {
+      expect(onExit).toHaveBeenCalled()
+    })
+    expect(screen.getByTestId('test-location').textContent).toBe('/dashboard')
+    // The Catalog step's distinctive "skip for now" control must never render.
+    expect(
+      screen.queryByRole('button', { name: /skip for now/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('isRepair=false (day-zero): a successful init still moves on to the Catalog step', async () => {
+    getInitStatusMock().mockResolvedValueOnce({ state: 'empty', detail: '' })
+    initRepoMock().mockResolvedValueOnce({
+      operation_id: undefined,
+      pr_url: null,
+    })
+
+    renderWizard(4)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Set Up.*Auto-merge/i }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /Continue/i }))
+
+    // Day-zero setup still lands on the Catalog step (Step 5).
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /skip for now/i })).toBeInTheDocument()
+    })
   })
 })

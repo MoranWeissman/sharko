@@ -5680,7 +5680,7 @@
                         }
                     },
                     "502": {
-                        "description": "No active Git/ArgoCD connection",
+                        "description": "No active Git connection. A missing or broken ArgoCD connection does NOT 502 here — it surfaces as state \\\"unknown\\\" in a 200 response, since the Git-side probe can still run.",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -7133,7 +7133,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Checks whether the GitOps repository has been bootstrapped (the engine pin at sharko-engine.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present — except for reason \"argocd_auth_failed\" (ArgoCD rejected Sharko's token) or \"argocd_unreachable\" (Sharko could not get a usable answer from ArgoCD), which are credential/connectivity problems the wizard cannot fix, so the UI surfaces those as a banner instead of re-opening setup.",
+                "description": "Checks whether the GitOps repository has been bootstrapped (the engine pin at sharko-engine.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present — except for reason \"argocd_auth_failed\" (ArgoCD rejected Sharko's token), \"argocd_forbidden\" (ArgoCD rejected Sharko's token with a 403 — the token is valid but lacks permission to read applications), or \"argocd_unreachable\" (Sharko could not get a usable answer from ArgoCD), which are credential/permission/connectivity problems the wizard cannot fix, so the UI surfaces those as a banner instead of re-opening setup.",
                 "produces": [
                     "application/json"
                 ],

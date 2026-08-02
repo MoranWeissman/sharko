@@ -8,6 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -185,6 +190,89 @@ func TestShapeError_GenericUpstreamError_NoLeakedCause(t *testing.T) {
 		t.Errorf("code = %q, want %q", code, verify.ERR_NETWORK)
 	}
 	_ = hint // ERR_NETWORK's hint is empty today; not asserted to avoid over-pinning verify's table.
+}
+
+// TestShapeError_StatusError_NotFound_MessagePassesThrough — review findings
+// r1, M3. NotFound is on the bounded-reason allowlist, and client-go's
+// NotFound message is a controlled, structured surface (`namespaces "x" not
+// found") — safe to echo verbatim.
+func TestShapeError_StatusError_NotFound_MessagePassesThrough(t *testing.T) {
+	err := apierrors.NewNotFound(schema.GroupResource{Resource: "namespaces"}, "sharko-test")
+	_, cause, _, _ := shapeError(err, "headline")
+
+	if cause != err.Error() {
+		t.Errorf("cause = %q, want the NotFound message %q to pass through", cause, err.Error())
+	}
+}
+
+// TestShapeError_StatusError_Invalid_NeverLeaksFieldValue — review findings
+// r1, M3. A NewInvalid error's field.ErrorList can embed arbitrary
+// caller-supplied values verbatim into Status().Message. Reason=Invalid is
+// NOT on the bounded allowlist, so cause must be a safe summary naming only
+// the Reason — the offending value must never reach the response.
+func TestShapeError_StatusError_Invalid_NeverLeaksFieldValue(t *testing.T) {
+	secretLookingValue := "sk-should-never-leak-abc123"
+	fieldErrs := field.ErrorList{
+		field.Invalid(field.NewPath("spec", "template", "spec", "containers").Index(0).Child("image"), secretLookingValue, "invalid image reference"),
+	}
+	err := apierrors.NewInvalid(schema.GroupKind{Group: "apps", Kind: "Deployment"}, "my-deploy", fieldErrs)
+
+	// Sanity: prove the raw error DOES embed the value (otherwise this test
+	// proves nothing about the leak this fix closes).
+	if !strings.Contains(err.Error(), secretLookingValue) {
+		t.Fatalf("test setup: expected the raw NewInvalid error to embed %q, got: %v", secretLookingValue, err)
+	}
+
+	_, cause, _, _ := shapeError(err, "headline")
+
+	if strings.Contains(cause, secretLookingValue) {
+		t.Errorf("cause leaked the field value: %q", cause)
+	}
+	if cause == "" {
+		t.Error("cause should still be populated with a safe summary, not empty")
+	}
+	if !strings.Contains(cause, string(metav1.StatusReasonInvalid)) {
+		t.Errorf("cause = %q, want it to name the Reason (%q)", cause, metav1.StatusReasonInvalid)
+	}
+}
+
+// TestShapeError_StatusError_AdmissionWebhookDenial_NeverLeaksMessage —
+// review findings r1, M3. An admission webhook can return an arbitrary
+// denial message that client-go surfaces as a StatusError. Even when the
+// Reason happens to land on the bounded allowlist (Forbidden), a message
+// mentioning "admission webhook" must still get the safe summary — webhook
+// authors control that text, not Sharko.
+func TestShapeError_StatusError_AdmissionWebhookDenial_NeverLeaksMessage(t *testing.T) {
+	secretLookingValue := "internal-policy-detail-should-not-leak"
+	err := &apierrors.StatusError{
+		ErrStatus: metav1.Status{
+			Status:  metav1.StatusFailure,
+			Message: fmt.Sprintf("admission webhook \"my-policy.example.com\" denied the request: %s", secretLookingValue),
+			Reason:  metav1.StatusReasonForbidden, // on the allowlist — the webhook mention must still win
+			Code:    403,
+		},
+	}
+
+	_, cause, _, _ := shapeError(err, "headline")
+
+	if strings.Contains(cause, secretLookingValue) {
+		t.Errorf("cause leaked the webhook denial message: %q", cause)
+	}
+	if strings.Contains(cause, "admission webhook") {
+		t.Errorf("cause should be a safe summary, not the raw webhook message: %q", cause)
+	}
+}
+
+// TestShapeError_StatusError_Forbidden_MessagePassesThrough — the bounded
+// sibling: a genuine Forbidden (RBAC) StatusError with a plain, controlled
+// message (no webhook mention) still passes its message through as cause.
+func TestShapeError_StatusError_Forbidden_MessagePassesThrough(t *testing.T) {
+	err := apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "my-secret", errors.New("user cannot get resource"))
+	_, cause, _, _ := shapeError(err, "headline")
+
+	if cause != err.Error() {
+		t.Errorf("cause = %q, want the Forbidden message %q to pass through", cause, err.Error())
+	}
 }
 
 // TestWriteErrorWithCause_EmitsShapedEnvelope is the HTTP-level integration

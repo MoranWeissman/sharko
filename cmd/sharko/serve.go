@@ -549,6 +549,17 @@ var serveCmd = &cobra.Command{
 					"Sharko couldn't get an answer from ArgoCD, so it can't confirm whether the cluster is in sync.",
 					detail,
 				)
+			case "forbidden":
+				// Review findings r1, H1: a 403 means the token is valid but
+				// lacks permission — Sharko never got to check the bootstrap
+				// app, so this must not fall into the default "can't sync the
+				// repo" title, which would falsely claim Sharko found the
+				// repo broken.
+				return notifications.UnhealthyResultWithTitle(
+					notifications.TitleArgoForbidden,
+					"ArgoCD refused Sharko's token permission to read applications, so Sharko can't confirm the cluster is in sync.",
+					detail,
+				)
 			default:
 				if detail == "" {
 					detail = "argocd repo sync status: " + status

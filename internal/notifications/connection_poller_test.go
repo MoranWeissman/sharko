@@ -221,3 +221,50 @@ func TestPoller_ArgoAuthFailedThenHealthy_ResolvesTheOverrideTitle(t *testing.T)
 		t.Fatalf("expected the auth-failed alert resolved after recovery, got %d", got)
 	}
 }
+
+// TestPoller_UnhealthyReclassifiedWithoutRecovering_UpdatesTitle — review
+// findings r1, L12. Before this fix, an unhealthy→unhealthy reclassification
+// (the connection never recovers in between, just the reason changes) fell
+// through evaluate()'s "no transition" no-op, so the bell kept showing the
+// FIRST title forever — actively wrong once the underlying reason changed.
+func TestPoller_UnhealthyReclassifiedWithoutRecovering_UpdatesTitle(t *testing.T) {
+	p, _, argo, store := newTestPoller()
+
+	// First tick: ArgoCD can't sync the repo (generic degraded-app title).
+	argo.result = UnhealthyResult("argocd app sync=OutOfSync health=Degraded")
+	p.check()
+	if got := titlesInStore(store)[TitleArgoRepoBroken]; got != 1 {
+		t.Fatalf("setup: expected the repo-broken alert raised, got %d", got)
+	}
+
+	// Second tick: still unhealthy, but now ArgoCD is rejecting the token —
+	// a different problem, never having gone healthy in between.
+	argo.result = UnhealthyResultWithTitle(
+		TitleArgoAuthFailed,
+		"ArgoCD rejected the token Sharko uses to check on the bootstrap app.",
+		"invalid ArgoCD token",
+	)
+	p.check()
+
+	counts := titlesInStore(store)
+	if counts[TitleArgoAuthFailed] != 1 {
+		t.Fatalf("expected the reclassified alert %q to be raised, got %d", TitleArgoAuthFailed, counts[TitleArgoAuthFailed])
+	}
+	if counts[TitleArgoRepoBroken] != 0 {
+		t.Fatalf("expected the stale %q alert to be resolved once the title changed, got %d still open", TitleArgoRepoBroken, counts[TitleArgoRepoBroken])
+	}
+
+	// Third tick: same reclassified reason again — must NOT re-add or
+	// re-resolve (no title change this time).
+	p.check()
+	if got := titlesInStore(store)[TitleArgoAuthFailed]; got != 1 {
+		t.Fatalf("expected no duplicate add on a repeated identical reclassification, got %d", got)
+	}
+
+	// Recovery still resolves the CURRENT (reclassified) title.
+	argo.result = HealthyResult()
+	p.check()
+	if got := len(store.List()); got != 0 {
+		t.Fatalf("expected all alerts resolved after recovery, got %d remaining: %+v", got, store.List())
+	}
+}
