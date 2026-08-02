@@ -1024,9 +1024,24 @@ export async function initRepo(data?: { bootstrap_argocd?: boolean; auto_merge?:
  *                      corporate Zscaler proxy). Re-initializing won't fix it;
  *                      the fix lives in Settings → Connections. `detail` carries
  *                      the ArgoCD diagnostic (e.g. "sync=Unknown health=Error").
+ *   - "forbidden"    — repo files exist but ArgoCD rejected the read with a
+ *                      403: the token lacks RBAC permission. `detail` carries
+ *                      the server's actionable permission message.
+ *   - "auth_failed"  — repo files exist but ArgoCD rejected the read with a
+ *                      401: the token itself is invalid or expired. `detail`
+ *                      carries the actionable token message. (error review
+ *                      package 1)
+ *   - "unknown"      — repo files exist but Sharko could not determine the
+ *                      bootstrap app's health at all (the ArgoCD read failed
+ *                      for a reason that is neither a permission problem nor
+ *                      an invalid token, or no ArgoCD connection is
+ *                      configured). This state must NEVER be treated like
+ *                      "partial" — it does not mean the app is missing or
+ *                      degraded, only that Sharko couldn't check. (error
+ *                      review package 1)
  */
 export interface InitStatus {
-  state: 'empty' | 'initialized' | 'partial' | 'unreachable'
+  state: 'empty' | 'initialized' | 'partial' | 'unreachable' | 'forbidden' | 'auth_failed' | 'unknown'
   detail: string
   /** Only meaningful when state is "partial" — see the state doc above. */
   repairable?: boolean

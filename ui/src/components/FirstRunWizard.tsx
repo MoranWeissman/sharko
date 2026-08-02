@@ -542,7 +542,14 @@ function StepInit({
   // network/probe failure we fall back to the Initialize offer ('empty') so a
   // flaky probe never blocks the user.
   const [repoState, setRepoState] = useState<
-    'loading' | 'empty' | 'initialized' | 'partial' | 'unreachable'
+    | 'loading'
+    | 'empty'
+    | 'initialized'
+    | 'partial'
+    | 'unreachable'
+    | 'forbidden'
+    | 'auth_failed'
+    | 'unknown'
   >('loading')
   const [probeDetail, setProbeDetail] = useState<string>('')
   const [probeFailed, setProbeFailed] = useState(false)
@@ -594,7 +601,7 @@ function StepInit({
         setState('done')
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to initialize repository')
+      setError(e instanceof Error ? e.message : "Couldn't set up the repository")
       setState('error')
     }
   }
@@ -650,21 +657,33 @@ function StepInit({
     }
   }, [operationId])
 
+  // repoState branches that already render their own "Back to Dashboard" /
+  // "Go to Settings → Connections" button — the generic resumed-mode Back
+  // button (below) must not ALSO render for these, or the wizard shows two
+  // differently-worded ways out at once (wizard copy pass, error review
+  // package 1).
+  const hasOwnExitAction =
+    repoState === 'unreachable' ||
+    repoState === 'forbidden' ||
+    repoState === 'auth_failed' ||
+    repoState === 'unknown' ||
+    (repoState === 'partial' && !probeRepairable)
+
   return (
     <div className="space-y-5">
       {resumed && (
         <div className="rounded-lg bg-[#e8f4ff] p-3 text-sm text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300 mb-4">
-          <strong>Resuming setup</strong> — your connection is configured. Initialize the repository to complete setup.
+          <strong>Resuming setup</strong> — your connection is set up. Pick up the repository below.
         </div>
       )}
       <div className="flex items-center gap-2">
         <FolderGit2 className="h-5 w-5 text-[#1a3d5c] dark:text-blue-400" />
         <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
-          Initialize Repository
+          Set Up Repository
         </h3>
       </div>
 
-      {/* Probe in flight — don't show the Initialize offer or a misleading
+      {/* Probe in flight — don't show the Set Up offer or a misleading
           "empty" claim until we know the real repo state. */}
       {repoState === 'loading' && (
         <div className="flex items-center gap-2 text-sm text-[#2a5a7a] dark:text-gray-400">
@@ -696,16 +715,21 @@ function StepInit({
 
       {/* Partial + repairable (w2-q2) — the ArgoCD bootstrap app was simply
           never created. POST /init's repair path fixes this with no PR:
-          the "Re-run initialize to repair it" promise is honest here. */}
+          the "run setup again to repair it" promise is honest here. */}
       {repoState === 'partial' && probeRepairable && state === 'idle' && (
         <div className="space-y-3">
           <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-5 dark:bg-amber-900/20">
             <p className="text-sm font-medium text-amber-800 dark:text-amber-300 mb-1">
               This repo has Sharko files, but the ArgoCD app hasn't been
-              created yet{probeDetail ? `: ${probeDetail}` : '.'}
+              created yet.
             </p>
-            <p className="text-sm text-amber-700 dark:text-amber-400">
-              Re-run initialize to repair it — no PR needed, this only
+            {probeDetail && (
+              <p className="mt-1 pl-0 text-sm text-amber-700 dark:text-amber-400">
+                {probeDetail}
+              </p>
+            )}
+            <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">
+              Run setup again to repair it — no PR needed, this only
               creates the ArgoCD app.
             </p>
           </div>
@@ -721,22 +745,46 @@ function StepInit({
       )}
 
       {/* Partial + NOT repairable (w2-q2) — the ArgoCD app already exists
-          but is degraded. Re-running Initialize cannot fix a live app, so
-          this must NOT promise a repair or show the Initialize buttons —
-          point the user at ArgoCD directly instead (same shape as the
-          unreachable state below). */}
+          but is degraded. Running setup again cannot fix a live app, so
+          this must NOT promise a repair or show the Set Up buttons — point
+          the user at ArgoCD directly instead (same shape as the unreachable
+          state below).
+          Guard (error review package 1, mirrors internal/api/init.go's
+          unhealthyRepairRefusalMessage): the "already exists" claim is only
+          honest when probeDetail carries a RESOLVED app's sync=/health=
+          values — i.e. ArgoCD actually looked at the app. If the probe
+          couldn't resolve an app at all, Sharko doesn't know whether it
+          exists, so say that honestly instead of asserting it does. */}
       {repoState === 'partial' && !probeRepairable && state === 'idle' && (
         <div className="space-y-3">
           <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-5 dark:bg-amber-900/20">
-            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-              This repo's Sharko engine application already exists but is
-              not healthy{probeDetail ? `: ${probeDetail}` : '.'}
-            </p>
-            <p className="mt-1 text-sm text-amber-700 dark:text-amber-400">
-              Re-running Initialize will not fix a live application. Check
-              its sync and health status in ArgoCD directly, or use the
-              diagnostics tools.
-            </p>
+            {probeDetail.includes('sync=') ? (
+              <>
+                <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                  This repo's Sharko engine application already exists but is
+                  not healthy.
+                </p>
+                <p className="mt-2 pl-0 text-sm text-amber-700 dark:text-amber-400">
+                  {probeDetail}
+                </p>
+                <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">
+                  Running setup again will not fix a live application. Check
+                  its sync and health status in ArgoCD directly.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                  Sharko couldn&apos;t check whether the engine application is
+                  healthy.
+                </p>
+                {probeDetail && (
+                  <p className="mt-2 pl-0 text-sm text-amber-700 dark:text-amber-400">
+                    {probeDetail}
+                  </p>
+                )}
+              </>
+            )}
           </div>
           <button
             type="button"
@@ -761,7 +809,7 @@ function StepInit({
               <span>
                 ArgoCD can't reach your Git repo right now — this is usually a
                 connection or network problem, not a setup problem.
-                Re-initializing won't fix it. Check your connection in Settings →
+                Running setup again won't fix it. Check your connection in Settings →
                 Connections (and your network / proxy).
               </span>
             </p>
@@ -794,7 +842,134 @@ function StepInit({
         </div>
       )}
 
-      {/* Empty repo — the honest, probe-backed Initialize offer. Also the
+      {/* Auth-failed state (error review package 1) — repo files exist, but
+          ArgoCD rejected Sharko's token outright (401). This is a credential
+          problem, not a broken bootstrap — same shape as the unreachable
+          state above: a bold plain sentence, the raw detail as its own
+          dimmer indented line, and a real button to Settings → Connections
+          (never diagnostics tools). */}
+      {repoState === 'auth_failed' && state === 'idle' && (
+        <div className="space-y-3">
+          <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-5 dark:bg-amber-900/20">
+            <p className="flex items-start gap-2 text-sm font-medium text-amber-800 dark:text-amber-300">
+              <KeyRound className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>
+                ArgoCD rejected Sharko's token — it's likely expired or was
+                revoked. Update the token in Settings → Connections.
+              </span>
+            </p>
+            {probeDetail && (
+              <p className="mt-2 pl-6 text-sm text-amber-700 dark:text-amber-400">
+                {probeDetail}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => {
+                navigate('/settings?section=connections')
+                onDone()
+              }}
+              className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#6aade0]"
+            >
+              <SettingsIcon className="h-4 w-4" />
+              Go to Settings → Connections
+            </button>
+            <button
+              type="button"
+              onClick={onDone}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400"
+            >
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Forbidden state (V2-cleanup-10) — repo files exist, but ArgoCD
+          rejected the read with a 403: the token is valid but lacks RBAC
+          permission. probeDetail carries the server's actionable RBAC
+          message verbatim (previously this branch didn't exist at all, so
+          the wizard rendered blank space here — error review package 1). */}
+      {repoState === 'forbidden' && state === 'idle' && (
+        <div className="space-y-3">
+          <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-5 dark:bg-amber-900/20">
+            <p className="flex items-start gap-2 text-sm font-medium text-amber-800 dark:text-amber-300">
+              <KeyRound className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>ArgoCD's token doesn&apos;t have permission to check the engine app.</span>
+            </p>
+            {probeDetail && (
+              <p className="mt-2 pl-6 text-sm text-amber-700 dark:text-amber-400">
+                {probeDetail}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => {
+                navigate('/settings?section=connections')
+                onDone()
+              }}
+              className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#6aade0]"
+            >
+              <SettingsIcon className="h-4 w-4" />
+              Go to Settings → Connections
+            </button>
+            <button
+              type="button"
+              onClick={onDone}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400"
+            >
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Unknown state (error review package 1) — repo files exist, but
+          Sharko could not determine the engine app's health at all (the
+          ArgoCD read failed for a reason that's neither a permission
+          problem nor an invalid token). This is the honest "couldn't check"
+          state: it must NEVER claim the app is missing or degraded. */}
+      {repoState === 'unknown' && state === 'idle' && (
+        <div className="space-y-3">
+          <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-5 dark:bg-amber-900/20">
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+              Sharko couldn&apos;t check whether the engine application is
+              healthy.
+            </p>
+            {probeDetail && (
+              <p className="mt-2 pl-0 text-sm text-amber-700 dark:text-amber-400">
+                {probeDetail}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => {
+                navigate('/settings?section=connections')
+                onDone()
+              }}
+              className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#6aade0]"
+            >
+              <SettingsIcon className="h-4 w-4" />
+              Go to Settings → Connections
+            </button>
+            <button
+              type="button"
+              onClick={onDone}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400"
+            >
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Empty repo — the honest, probe-backed Set Up offer. Also the
           graceful-fallback surface when the probe itself failed. */}
       {repoState === 'empty' && state === 'idle' && (
         <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:bg-gray-800">
@@ -804,14 +979,14 @@ function StepInit({
           </p>
           {probeFailed && (
             <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">
-              (Couldn't confirm the repository state — you can still initialize
+              (Couldn't confirm the repository state — you can still set it up
               safely; Sharko skips files that already exist.)
             </p>
           )}
         </div>
       )}
 
-      {/* Initialize buttons — shown only for empty (set up). w2-q2: partial
+      {/* Set Up buttons — shown only for empty (set up). w2-q2: partial
           now has its own CTA — a single "Repair now" button when
           repairable, no button at all (just "Back to Dashboard") when not —
           rendered above, since a repair is not a PR-vs-auto-merge choice.
@@ -824,7 +999,7 @@ function StepInit({
             className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#6aade0]"
           >
             <Sparkles className="h-4 w-4" />
-            Initialize &amp; Auto-merge
+            Set Up &amp; Auto-merge
           </button>
           <button
             type="button"
@@ -832,7 +1007,7 @@ function StepInit({
             className="inline-flex items-center gap-2 rounded-full border border-[#5a9dd0] bg-[#f0f7ff] px-5 py-2.5 text-sm font-semibold text-[#0a3a5a] transition-colors hover:bg-[#d6eeff] focus:outline-none focus:ring-2 focus:ring-[#6aade0] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
           >
             <FolderGit2 className="h-4 w-4" />
-            Initialize (manual PR review)
+            Set Up (Manual PR Review)
           </button>
         </div>
       )}
@@ -841,7 +1016,7 @@ function StepInit({
       {state === 'running' && steps.length === 0 && (
         <div className="flex items-center gap-2 text-sm text-[#2a5a7a] dark:text-gray-400">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Starting initialization…
+          Setting up…
         </div>
       )}
 
@@ -896,7 +1071,7 @@ function StepInit({
           <div className="flex items-start gap-2 text-sm text-green-700 dark:text-green-400">
             <CheckCircle className="h-4 w-4 mt-0.5 shrink-0" />
             <div>
-              <p>Repository initialized successfully.</p>
+              <p>Repository set up successfully.</p>
               {prUrl && (
                 <a
                   href={prUrl}
@@ -969,10 +1144,15 @@ function StepInit({
           StepInit needs a Back button to walk back to the connection-edit
           screens. Back is hidden while state !== 'idle': clicking Back
           mid-operation would tear down the polling effect while the
-          backend keeps running, and a later Initialize click could hit a
+          backend keeps running, and a later Set Up click could hit a
           half-created repo state. Done/error states are also non-Back:
-          done → "Go to Dashboard"; error → Retry/Skip/"Log in again". */}
-      {resumed && onBack && state === 'idle' && (
+          done → "Go to Dashboard"; error → Retry/Skip/"Log in again".
+          Also hidden whenever the current repoState already renders its own
+          way out ("Back to Dashboard" / "Go to Settings → Connections") —
+          showing a second, differently-worded Back button next to that one
+          read as a duplicated control (wizard copy pass, error review
+          package 1). */}
+      {resumed && onBack && state === 'idle' && !hasOwnExitAction && (
         <div className="pt-2 border-t border-[#bee0ff] dark:border-gray-700">
           <button
             type="button"
@@ -1441,7 +1621,18 @@ export function detectGitProvider(repoURL: string): 'github' | 'azuredevops' | u
 /*  Main wizard                                                         */
 /* ------------------------------------------------------------------ */
 
-export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {}) {
+export function FirstRunWizard({
+  initialStep = 1,
+  onExit,
+}: {
+  initialStep?: number
+  // Called (in addition to the usual navigate-to-dashboard) when the wizard
+  // finishes or is escaped. Only passed when App.tsx opened this wizard as a
+  // user-invited repair screen (the banner's "repair" button) rather than the
+  // day-zero auto-open path — it resets the parent's "repair wizard open"
+  // flag so the overlay doesn't get stuck open after the user is done.
+  onExit?: () => void
+} = {}) {
   const navigate = useNavigate()
   const { connections, refreshConnections } = useConnections()
   const [step, setStep] = useState(initialStep)
@@ -1609,8 +1800,9 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
 
   const handleDone = useCallback(() => {
     refreshConnections()
+    onExit?.()
     navigate('/dashboard')
-  }, [navigate, refreshConnections])
+  }, [navigate, refreshConnections, onExit])
 
   // The X button can't just navigate('/dashboard') — App.tsx's wizard gate
   // would immediately re-render FirstRunWizard whenever a connection exists
@@ -1621,8 +1813,9 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
   const handleEscape = useCallback(() => {
     sessionStorage.setItem('sharko:dismiss-wizard', '1')
     refreshConnections()
+    onExit?.()
     navigate('/dashboard')
-  }, [navigate, refreshConnections])
+  }, [navigate, refreshConnections, onExit])
 
   // Nuclear "start over" affordance from step 2 in resume mode. Confirm,
   // then DELETE every saved connection so App.tsx's empty-connections
@@ -1673,7 +1866,7 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
     }
   }, [form.argocd_server_url])
 
-  const stepLabels = ['Welcome', 'Git', 'ArgoCD', 'Initialize', 'Catalog']
+  const stepLabels = ['Welcome', 'Git', 'ArgoCD', 'Repository', 'Catalog']
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#bee0ff] dark:bg-gray-950 p-4">
@@ -1779,11 +1972,13 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
         </div>
 
         {/* In resume mode the wizard hard-gates Settings, so "update later
-            in Settings" is misleading — point at the in-wizard controls
-            instead. */}
+            in Settings" is misleading. The old copy also claimed "controls
+            above to edit or reset" — but no edit/reset control is actually
+            visible on this screen, only Back (wizard copy pass, error
+            review package 1). Point at what's really there instead. */}
         <p className="mt-4 text-center text-xs text-[#3a6a8a] dark:text-gray-600">
           {initialStep === 4
-            ? 'Initialize the repository to continue, or use the controls above to edit or reset.'
+            ? 'Finish setting up the repository, or go back to change your connection details.'
             : 'You can always update connections later in Settings.'}
         </p>
       </div>

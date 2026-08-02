@@ -202,13 +202,14 @@ describe('FirstRunWizard step header', () => {
   })
 
   it('drops the "Step N of M" counter when resumed at step 4', () => {
-    // V124-6.4: resume-mode header reads "Resuming setup — Initialize"
+    // V124-6.4: resume-mode header reads "Resuming setup — Repository"
     // because steps 1-3 were completed in a prior session. The "Step 4 of 4"
     // counter would imply the user just clicked through 1-3 in this session,
-    // which they did not.
+    // which they did not. (Step label renamed from "Initialize" to
+    // "Repository" in the wizard copy pass, error review package 1.)
     renderWizard(4)
     const label = screen.getByTestId('wizard-step-label')
-    expect(label.textContent).toBe('Resuming setup — Initialize')
+    expect(label.textContent).toBe('Resuming setup — Repository')
     // Defensive: explicitly assert the counter substring is absent.
     expect(label.textContent).not.toContain('Step 4 of 4')
     expect(label.textContent).not.toContain('Step 4 of 5')
@@ -365,7 +366,7 @@ describe('FirstRunWizard step 4 — sync-failure surfacing (V124-14 / BUG-032)',
       })
 
       // Click "Initialize & Auto-merge" to kick off init.
-      const initBtn = await screen.findByRole('button', { name: /Initialize.*Auto-merge/i })
+      const initBtn = await screen.findByRole('button', { name: /Set Up.*Auto-merge/i })
       fireEvent.click(initBtn)
 
       // Let the initRepo promise resolve (microtasks).
@@ -430,7 +431,7 @@ describe('FirstRunWizard step 4 — error-state skip escapes properly (w2-q2)', 
         await Promise.resolve()
       })
 
-      const initBtn = await screen.findByRole('button', { name: /Initialize.*Auto-merge/i })
+      const initBtn = await screen.findByRole('button', { name: /Set Up.*Auto-merge/i })
       fireEvent.click(initBtn)
 
       await act(async () => {
@@ -500,7 +501,7 @@ describe('FirstRunWizard step 4 — 401 during polling (V124-15 / BUG-033)', () 
       })
 
       const initBtn = await screen.findByRole('button', {
-        name: /Initialize.*Auto-merge/i,
+        name: /Set Up.*Auto-merge/i,
       })
       fireEvent.click(initBtn)
 
@@ -604,9 +605,13 @@ describe('FirstRunWizard — V124-16 escape hatches (BUG-035 / 036 / 037 / 038)'
     mockState.connections = [resumeConnection]
     renderWizard(4)
 
+    // Wizard copy pass (error review package 1): the old copy claimed
+    // "controls above to edit or reset" — but no edit/reset control is
+    // actually visible on this screen, only Back. The rewritten copy names
+    // what's really there.
     expect(
       screen.getByText(
-        /Initialize the repository to continue, or use the controls above to edit or reset\./i,
+        /Finish setting up the repository, or go back to change your connection details\./i,
       ),
     ).toBeInTheDocument()
     // The fresh-mode copy must NOT appear in resume mode — Settings is
@@ -634,7 +639,7 @@ describe('FirstRunWizard — V124-16 escape hatches (BUG-035 / 036 / 037 / 038)'
     // setup" strings render in resume mode (header label + StepInit
     // banner) so a generic match is ambiguous.
     expect(
-      screen.getByRole('heading', { name: /Initialize Repository/i }),
+      screen.getByRole('heading', { name: /Set Up Repository/i }),
     ).toBeInTheDocument()
 
     // The Back button is the only "Back" button in StepInit's idle state.
@@ -782,7 +787,7 @@ describe('FirstRunWizard — V124-17 wizard polish (BUG-039 / 040 / 042)', () =>
 
       // Click Initialize — wizard transitions to 'running'.
       fireEvent.click(
-        await screen.findByRole('button', { name: /Initialize.*Auto-merge/i }),
+        await screen.findByRole('button', { name: /Set Up.*Auto-merge/i }),
       )
 
       // Resolve the initRepo promise so setOperationId fires and the
@@ -802,7 +807,7 @@ describe('FirstRunWizard — V124-17 wizard polish (BUG-039 / 040 / 042)', () =>
 
       // Belt-and-suspenders: the running indicator IS visible.
       expect(
-        screen.getByText(/Starting initialization|Creating bootstrap files/i),
+        screen.getByText(/Setting up…|Creating bootstrap files/i),
       ).toBeInTheDocument()
     } finally {
       vi.useRealTimers()
@@ -1207,7 +1212,7 @@ describe('FirstRunWizard — Step 4 conditional render by repo state (V2-cleanup
     ).toBeInTheDocument()
     // The Initialize buttons are present for an empty repo.
     expect(
-      screen.getByRole('button', { name: /Initialize.*Auto-merge/i }),
+      screen.getByRole('button', { name: /Set Up.*Auto-merge/i }),
     ).toBeInTheDocument()
     // The old hardcoded alarming copy is gone.
     expect(
@@ -1227,7 +1232,7 @@ describe('FirstRunWizard — Step 4 conditional render by repo state (V2-cleanup
     ).toBeInTheDocument()
     // No clobber offer when the repo is already initialized.
     expect(
-      screen.queryByRole('button', { name: /Initialize.*Auto-merge/i }),
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
     ).not.toBeInTheDocument()
   })
 
@@ -1252,11 +1257,11 @@ describe('FirstRunWizard — Step 4 conditional render by repo state (V2-cleanup
       screen.getByText(/sync=OutOfSync health=Degraded/i),
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/Re-running Initialize will not fix a live application/i),
+      screen.getByText(/Running setup again will not fix a live application/i),
     ).toBeInTheDocument()
     // No repair CTA — just a way back to the dashboard.
     expect(
-      screen.queryByRole('button', { name: /Initialize.*Auto-merge/i }),
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
     ).not.toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: /Repair now/i }),
@@ -1290,7 +1295,7 @@ describe('FirstRunWizard — Step 4 conditional render by repo state (V2-cleanup
     ).toBeInTheDocument()
     // The old two-button PR-vs-auto-merge choice does not apply to a repair.
     expect(
-      screen.queryByRole('button', { name: /Initialize.*Auto-merge/i }),
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
     ).not.toBeInTheDocument()
   })
 
@@ -1302,7 +1307,7 @@ describe('FirstRunWizard — Step 4 conditional render by repo state (V2-cleanup
     expect(screen.getByText(/Checking repository…/i)).toBeInTheDocument()
     // No Initialize offer while the probe is in flight.
     expect(
-      screen.queryByRole('button', { name: /Initialize.*Auto-merge/i }),
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
     ).not.toBeInTheDocument()
   })
 
@@ -1312,7 +1317,7 @@ describe('FirstRunWizard — Step 4 conditional render by repo state (V2-cleanup
 
     // Fallback shows the empty-state Initialize offer …
     expect(
-      await screen.findByRole('button', { name: /Initialize.*Auto-merge/i }),
+      await screen.findByRole('button', { name: /Set Up.*Auto-merge/i }),
     ).toBeInTheDocument()
     // … plus a subtle note that the state couldn't be confirmed.
     expect(
@@ -1352,7 +1357,7 @@ describe('FirstRunWizard — Step 4 unreachable state (V2-cleanup-51)', () => {
       ),
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/Re-initializing won't fix it/i),
+      screen.getByText(/Running setup again won't fix it/i),
     ).toBeInTheDocument()
 
     // The ArgoCD detail is surfaced verbatim as secondary text.
@@ -1368,15 +1373,15 @@ describe('FirstRunWizard — Step 4 unreachable state (V2-cleanup-51)', () => {
     // CRITICAL: the Initialize buttons must NOT be shown — re-init can't fix a
     // connection problem.
     expect(
-      screen.queryByRole('button', { name: /Initialize.*Auto-merge/i }),
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
     ).not.toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: /Initialize \(manual PR review\)/i }),
+      screen.queryByRole('button', { name: /Set Up \(Manual PR Review\)/i }),
     ).not.toBeInTheDocument()
 
     // The old re-init repair copy must NOT appear for the unreachable state.
     expect(
-      screen.queryByText(/Re-run initialize to repair it/i),
+      screen.queryByText(/Run setup again to repair it/i),
     ).not.toBeInTheDocument()
   })
 
@@ -1399,15 +1404,133 @@ describe('FirstRunWizard — Step 4 unreachable state (V2-cleanup-51)', () => {
       ),
     ).toBeInTheDocument()
     expect(
-      screen.queryByText(/Re-run initialize to repair it/i),
+      screen.queryByText(/Run setup again to repair it/i),
     ).not.toBeInTheDocument()
     // No repair CTA for a genuinely degraded (existing) app.
     expect(
-      screen.queryByRole('button', { name: /Initialize.*Auto-merge/i }),
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
     ).not.toBeInTheDocument()
     // And the connection-problem copy must NOT leak into the partial branch.
     expect(
       screen.queryByText(/ArgoCD can't reach your Git repo right now/i),
+    ).not.toBeInTheDocument()
+  })
+
+  // Error review package 1 — a genuinely UNRESOLVED probe (the ArgoCD LIST
+  // call itself failed, so Sharko never got as far as reading the app's
+  // sync/health) must NOT claim the engine app "already exists" — that
+  // assumes a fact Sharko never observed. detail here deliberately has no
+  // "sync=" substring, mirroring the guard in internal/api/init.go's
+  // unhealthyRepairRefusalMessage.
+  it('partial + not repairable, with a LIST-failed detail (no sync=) → shows the honest could-not-check copy', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'listing argocd applications failed: dial tcp: i/o timeout',
+      repairable: false,
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(
+        /Sharko couldn't check whether the engine application is healthy/i,
+      ),
+    ).toBeInTheDocument()
+    // The raw detail is still surfaced, just without the false "already
+    // exists" claim.
+    expect(
+      screen.getByText(/listing argocd applications failed/i),
+    ).toBeInTheDocument()
+    // The false "already exists but is not healthy" claim must NOT render.
+    expect(
+      screen.queryByText(/Sharko engine application already exists but is not healthy/i),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Back to Dashboard/i }),
+    ).toBeInTheDocument()
+  })
+})
+
+// Error review package 1 — a rejected (401) or genuinely unclassifiable
+// ArgoCD probe must render an honest state, never the false "already exists
+// but is not healthy" claim. Before these branches existed, both statuses
+// rendered blank space (forbidden) or fell through to the misleading
+// degraded-app copy (auth_failed folded into a generic "unhealthy" bucket).
+describe('FirstRunWizard — Step 4 auth_failed / forbidden states (error review package 1)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+  })
+
+  it('auth_failed → shows the invalid-token copy + a Settings → Connections button, no Set Up buttons', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'auth_failed',
+      detail: 'invalid ArgoCD token — check that the token is correct and not expired',
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(/ArgoCD rejected Sharko's token/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/invalid ArgoCD token — check that the token is correct and not expired/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Go to Settings → Connections/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+    // Must not claim anything about the engine app's health — Sharko never
+    // got past the token check.
+    expect(
+      screen.queryByText(/already exists but is not healthy/i),
+    ).not.toBeInTheDocument()
+  })
+
+  // V2-cleanup-10: the forbidden branch previously did not exist at all, so
+  // the wizard rendered blank space instead of the server's RBAC message.
+  it('forbidden → shows the server\'s RBAC message, not blank space', async () => {
+    const rbacMessage =
+      "ArgoCD rejected Sharko's token (permission denied) — the token needs permission to read applications. Check your ArgoCD RBAC: the account needs role:admin (or at least applications:get)."
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'forbidden',
+      detail: rbacMessage,
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(/ArgoCD's token doesn't have permission to check the engine app/i),
+    ).toBeInTheDocument()
+    // The exact RBAC message from the server must render verbatim.
+    expect(screen.getByText(rbacMessage)).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Go to Settings → Connections/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  // The dedicated "unknown" state (probe failed entirely, or no ArgoCD
+  // client configured) — the honest couldn't-check surface at the top
+  // level, distinct from the partial+no-sync= guard covered above.
+  it('unknown → shows the honest could-not-check copy, no Set Up buttons', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'unknown',
+      detail: 'listing argocd applications failed: dial tcp: connection refused',
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(/Sharko couldn't check whether the engine application is healthy/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/listing argocd applications failed/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
     ).not.toBeInTheDocument()
   })
 })

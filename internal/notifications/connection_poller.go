@@ -19,6 +19,17 @@ const (
 	TitleGitConnectionBroken = "Sharko can't reach your Git connection"
 	// TitleArgoRepoBroken is raised when ArgoCD cannot sync the repo.
 	TitleArgoRepoBroken = "ArgoCD can't sync the repo"
+	// TitleArgoAuthFailed is raised when ArgoCD rejects the token Sharko
+	// uses to check on the bootstrap app. This is a credential problem, not
+	// a repo-sync problem — distinct from TitleArgoRepoBroken, which
+	// implies ArgoCD looked at the repo and found it broken.
+	TitleArgoAuthFailed = "ArgoCD rejected Sharko's token"
+	// TitleArgoUnreachable is raised when Sharko could not get a usable
+	// answer from ArgoCD at all (not a permission problem, not an invalid
+	// token — e.g. a network blip). Distinct from TitleArgoRepoBroken:
+	// Sharko never established that anything is actually broken, only that
+	// it could not check.
+	TitleArgoUnreachable = "Sharko can't reach ArgoCD"
 )
 
 // DefaultConnectionCheckInterval is how often the poller probes both
@@ -32,19 +43,37 @@ const DefaultConnectionCheckInterval = 60 * time.Second
 // connection configured). In that case healthy/detail are ignored and the
 // poller leaves the connection's last-known state untouched — it does not
 // raise a false "broken" alert just because nothing is set up.
+// title/lead default to empty, meaning "use the caller's title/lead passed
+// to evaluate()". A health-check closure that can distinguish more than one
+// kind of failure (e.g. argoHealthFn distinguishing "ArgoCD rejected our
+// token" from "ArgoCD can't sync the repo") sets these via
+// UnhealthyResultWithTitle so the bell alert names the right problem instead
+// of a generic one.
 type HealthResult struct {
 	determined bool
 	healthy    bool
 	detail     string
+	title      string
+	lead       string
 }
 
 // HealthyResult builds a determined-healthy result.
 func HealthyResult() HealthResult { return HealthResult{determined: true, healthy: true} }
 
 // UnhealthyResult builds a determined-unhealthy result with a plain-English
-// reason (e.g. the TestConnection error or the bootstrap-probe detail).
+// reason (e.g. the TestConnection error or the bootstrap-probe detail). Uses
+// the default title/lead evaluate() was called with.
 func UnhealthyResult(detail string) HealthResult {
 	return HealthResult{determined: true, healthy: false, detail: detail}
+}
+
+// UnhealthyResultWithTitle builds a determined-unhealthy result that
+// overrides the default alert title and lead sentence. Use this when a
+// health-check closure can distinguish more than one kind of failure and the
+// generic title would mislabel the problem (e.g. a credential rejection is
+// not the same as "can't sync the repo").
+func UnhealthyResultWithTitle(title, lead, detail string) HealthResult {
+	return HealthResult{determined: true, healthy: false, detail: detail, title: title, lead: lead}
 }
 
 // UndeterminedResult is used when the connection can't be probed (not
@@ -67,6 +96,15 @@ type ConnectionPoller struct {
 	// Last-known health per connection. nil = no prior determination yet.
 	gitHealthy  *bool
 	argoHealthy *bool
+
+	// Last title used to Add() an unhealthy alert for each connection, so a
+	// later healthy transition resolves the SAME alert even when a health
+	// closure raises different titles across checks (e.g. argoHealthFn
+	// switching between "ArgoCD can't sync the repo" and "ArgoCD rejected
+	// Sharko's token" without ever going healthy in between). Empty when no
+	// alert is currently open for that connection.
+	gitLastTitle  string
+	argoLastTitle string
 
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -132,6 +170,7 @@ func (p *ConnectionPoller) check() {
 		ctx,
 		p.gitHealthFn,
 		&p.gitHealthy,
+		&p.gitLastTitle,
 		TitleGitConnectionBroken,
 		"Sharko uses this Git connection for every commit and pull request, and right now it can't reach it.",
 	)
@@ -139,6 +178,7 @@ func (p *ConnectionPoller) check() {
 		ctx,
 		p.argoHealthFn,
 		&p.argoHealthy,
+		&p.argoLastTitle,
 		TitleArgoRepoBroken,
 		"ArgoCD can't sync from the repo right now, so cluster changes won't roll out until this is fixed.",
 	)
@@ -150,18 +190,37 @@ func (p *ConnectionPoller) check() {
 //   - unhealthy → healthy : Resolve the titled alert
 //   - no change           : do nothing (no re-nag, survives mark-read)
 //   - can't determine      : no-op, last-known state untouched
+//
+// defaultTitle/defaultLead are used unless the probe's HealthResult supplies
+// its own (via UnhealthyResultWithTitle) — a health closure that can
+// distinguish more than one kind of failure (e.g. argoHealthFn separating
+// "ArgoCD rejected our token" from "ArgoCD can't sync the repo") overrides
+// per-result so the alert names the right problem. lastTitle records which
+// title is currently open for this connection so a later healthy transition
+// resolves that SAME alert, even if the unhealthy classification changed
+// across checks without ever going healthy in between.
 func (p *ConnectionPoller) evaluate(
 	ctx context.Context,
 	probe func(ctx context.Context) HealthResult,
 	last **bool,
-	title string,
-	lead string,
+	lastTitle *string,
+	defaultTitle string,
+	defaultLead string,
 ) {
 	res := probe(ctx)
 	if !res.determined {
 		// Nothing to probe (no active connection). Don't invent a "broken"
 		// alert and don't disturb the last-known state.
 		return
+	}
+
+	title := defaultTitle
+	if res.title != "" {
+		title = res.title
+	}
+	lead := defaultLead
+	if res.lead != "" {
+		lead = res.lead
 	}
 
 	prev := *last
@@ -172,9 +231,10 @@ func (p *ConnectionPoller) evaluate(
 	}
 
 	if res.healthy {
-		if prev != nil { // only resolve if we'd previously flagged a break
-			p.store.Resolve(title)
+		if prev != nil && *lastTitle != "" { // only resolve if we'd previously flagged a break
+			p.store.Resolve(*lastTitle)
 		}
+		*lastTitle = ""
 	} else {
 		desc := lead
 		if res.detail != "" {
@@ -189,6 +249,7 @@ func (p *ConnectionPoller) evaluate(
 		})
 		logging.LoggerFromContext(ctx).Warn("connection health degraded",
 			"title", title, "detail", res.detail, "component", "notifications")
+		*lastTitle = title
 	}
 
 	healthy := res.healthy

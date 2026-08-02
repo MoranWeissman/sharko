@@ -21,6 +21,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -253,11 +255,15 @@ func TestRunInitOperation_AlreadyInitialized_HealthyArgoCD_Completes(t *testing.
 	}
 }
 
-// When the repo is already initialized but the ArgoCD app is missing
-// (GetApplication returns an error), the operation must Fail with a
-// descriptive error so the user knows the cluster reality is broken even
-// though the Git side looks done.
-func TestRunInitOperation_AlreadyInitialized_MissingArgoCDApp_Fails(t *testing.T) {
+// TestRunInitOperation_ListFailsGeneric_Fails covers a LIST call that fails
+// for an uncategorized reason (neither a 403 permission problem nor a 401
+// invalid token) when the repo is already initialized. Sharko never got app
+// data back, so the operation must Fail honestly with "couldn't check" —
+// NOT the old "missing or unhealthy" wording, which asserted a fact Sharko
+// never established (error review package 1; this fixture predates
+// ErrTokenInvalid and used to stand in for what a real 401 looked like
+// before that sentinel existed).
+func TestRunInitOperation_ListFailsGeneric_Fails(t *testing.T) {
 	s := newInitTestServer()
 	gp := &initFakeGit{rootAppExists: true}
 	ac := &initFakeArgocd{
@@ -274,14 +280,49 @@ func TestRunInitOperation_AlreadyInitialized_MissingArgoCDApp_Fails(t *testing.T
 		t.Errorf("expected status=%s, got %s (result=%q)",
 			operations.StatusFailed, sess.Status, sess.Result)
 	}
-	wantSubstr := "repo initialized but ArgoCD bootstrap is missing or unhealthy"
+	wantSubstr := "Sharko could not check whether the ArgoCD bootstrap application is healthy"
 	if !strings.Contains(sess.Error, wantSubstr) {
 		t.Errorf("expected error to contain %q, got %q", wantSubstr, sess.Error)
 	}
-	// The detail from GetApplication must be threaded through so the user
+	// The underlying LIST error must still be threaded through so the user
 	// sees the actual reason — not a generic message.
 	if !strings.Contains(sess.Error, "not found") {
-		t.Errorf("expected error to surface the GetApplication error, got %q", sess.Error)
+		t.Errorf("expected error to surface the underlying LIST error, got %q", sess.Error)
+	}
+}
+
+// TestRunInitOperation_AuthFailed_Fails — a 401 from ArgoCD's LIST call
+// (invalid/expired token) must Fail with the actionable token message, not
+// be mislabeled as a broken bootstrap app. This is the exact root-cause
+// scenario error review package 1 exists to fix: before ErrTokenInvalid and
+// bootstrapAuthFailed existed, this fell through to the same generic bucket
+// as TestRunInitOperation_ListFailsGeneric_Fails and produced the false
+// "already exists but is not healthy" claim.
+func TestRunInitOperation_AuthFailed_Fails(t *testing.T) {
+	s := newInitTestServer()
+	gp := &initFakeGit{rootAppExists: true}
+	ac := &initFakeArgocd{
+		listErr: fmt.Errorf("listing applications: %w", argocd.ErrTokenInvalid),
+	}
+
+	sessID := runInit(s, gp, ac)
+
+	sess, ok := s.opsStore.Get(sessID)
+	if !ok {
+		t.Fatalf("session %q not found in store", sessID)
+	}
+	if sess.Status != operations.StatusFailed {
+		t.Errorf("expected status=%s, got %s (result=%q)",
+			operations.StatusFailed, sess.Status, sess.Result)
+	}
+	if !strings.Contains(sess.Error, "invalid ArgoCD token") {
+		t.Errorf("expected error to contain the actionable token message, got %q", sess.Error)
+	}
+	if strings.Contains(sess.Error, "already exists") {
+		t.Errorf("auth-failed must NOT claim anything about the app already existing, got %q", sess.Error)
+	}
+	if gp.writeCalls.Load() != 0 {
+		t.Errorf("expected zero git writes when refusing on an auth failure, got %d", gp.writeCalls.Load())
 	}
 }
 

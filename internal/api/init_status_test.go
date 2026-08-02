@@ -113,14 +113,21 @@ func TestHandleInitStatus_Initialized(t *testing.T) {
 	}
 }
 
-func TestHandleInitStatus_Partial_AppMissing(t *testing.T) {
+// TestHandleInitStatus_ListFailsGeneric_MapsToUnknown covers a LIST call
+// that fails for a reason that is neither a permission problem (403) nor an
+// invalid token (401) — e.g. this generic error fixture. Before error review
+// package 1, this fell into "unhealthy" and thus "partial", which told the
+// user the bootstrap app was missing/degraded — a fact Sharko never actually
+// established (the LIST call itself failed, so no app data was ever read).
+// It must now classify as the honest "unknown" state.
+func TestHandleInitStatus_ListFailsGeneric_MapsToUnknown(t *testing.T) {
 	ac := &initFakeArgocd{getErr: errors.New("application not found: cluster-addons-bootstrap")}
 	body := initStatusBody(t, initializedRepoGit(), ac)
-	if body.State != RepoStatePartial {
-		t.Errorf("expected state=%q, got %q", RepoStatePartial, body.State)
+	if body.State != RepoStateUnknown {
+		t.Errorf("expected state=%q, got %q", RepoStateUnknown, body.State)
 	}
 	if body.Detail == "" {
-		t.Error("expected a non-empty detail for partial state")
+		t.Error("expected a non-empty detail for unknown state")
 	}
 }
 
@@ -227,14 +234,19 @@ func TestProbeRepoState_Initialized(t *testing.T) {
 	}
 }
 
-func TestProbeRepoState_Partial(t *testing.T) {
+// TestProbeRepoState_ListFailsGeneric_Unknown — a LIST failure for an
+// uncategorized reason (neither 403 nor 401) must classify as "unknown", not
+// "partial". "partial" asserts the app is absent or degraded, a fact Sharko
+// never established when the LIST call itself failed (error review
+// package 1).
+func TestProbeRepoState_ListFailsGeneric_Unknown(t *testing.T) {
 	ac := &initFakeArgocd{getErr: errors.New("application not found")}
 	state, detail, _ := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
-	if state != RepoStatePartial {
-		t.Errorf("expected state=partial, got %q", state)
+	if state != RepoStateUnknown {
+		t.Errorf("expected state=unknown, got %q", state)
 	}
 	if detail == "" {
-		t.Error("expected non-empty detail for partial state")
+		t.Error("expected non-empty detail for unknown state")
 	}
 }
 
@@ -298,17 +310,24 @@ func TestProbeBootstrapApp_Forbidden(t *testing.T) {
 
 // A genuine not-found error → "unhealthy" + the bootstrap-missing message,
 // NOT the permission message. Proves the special-casing is conservative.
-func TestProbeBootstrapApp_NotFound(t *testing.T) {
+// TestProbeBootstrapApp_ListFailsGeneric_Unknown — a LIST failure for a
+// reason that isn't a permission problem (403) or an invalid token (401)
+// classifies as "unknown". Sharko never got app data back, so it must not
+// guess "unhealthy" (error review package 1 — this is the fixture that used
+// to stand in for a real 401 before ErrTokenInvalid existed, and it was
+// exactly this uncategorized-failure path that mislabeled an expired token
+// as a broken bootstrap).
+func TestProbeBootstrapApp_ListFailsGeneric_Unknown(t *testing.T) {
 	ac := &initFakeArgocd{getErr: errors.New("application not found")}
 	status, detail := ProbeBootstrapApp(context.Background(), ac)
-	if status != "unhealthy" {
-		t.Errorf("expected status=unhealthy, got %q", status)
+	if status != "unknown" {
+		t.Errorf("expected status=unknown, got %q", status)
 	}
 	if detail == permissionDeniedDetail {
-		t.Errorf("not-found must NOT use the permission message, got %q", detail)
+		t.Errorf("generic LIST failure must NOT use the permission message, got %q", detail)
 	}
 	if detail == "" {
-		t.Error("expected non-empty detail for missing app")
+		t.Error("expected non-empty detail for unknown status")
 	}
 }
 
@@ -409,6 +428,37 @@ func TestProbeBootstrapApp_ListForbidden(t *testing.T) {
 	}
 	if detail != permissionDeniedDetail {
 		t.Errorf("expected permission-denied detail, got %q", detail)
+	}
+}
+
+// TestProbeBootstrapApp_ListAuthFailed — a LIST 401 (invalid/expired token)
+// classifies as "auth_failed", NOT "unhealthy". This is the exact root-cause
+// bug error review package 1 fixes: before ErrTokenInvalid existed, a 401
+// fell through to the generic bucket and got mislabeled as a broken (but
+// existing) bootstrap app.
+func TestProbeBootstrapApp_ListAuthFailed(t *testing.T) {
+	ac := &initFakeArgocd{listErr: fmt.Errorf("listing applications: %w", argocd.ErrTokenInvalid)}
+	status, detail := ProbeBootstrapApp(context.Background(), ac)
+	if status != "auth_failed" {
+		t.Errorf("expected status=auth_failed on a LIST 401, got %q", status)
+	}
+	if detail == "" {
+		t.Error("expected a non-empty detail for auth_failed status")
+	}
+	if detail == permissionDeniedDetail {
+		t.Errorf("a 401 must NOT use the 403 permission-denied message, got %q", detail)
+	}
+}
+
+// TestProbeBootstrapApp_NoClient_Unknown — no ArgoCD client configured at
+// all classifies as "unknown" (couldn't check), not "unhealthy" (broken).
+func TestProbeBootstrapApp_NoClient_Unknown(t *testing.T) {
+	status, detail := ProbeBootstrapApp(context.Background(), nil)
+	if status != "unknown" {
+		t.Errorf("expected status=unknown with no ArgoCD client, got %q", status)
+	}
+	if detail == "" {
+		t.Error("expected a non-empty detail for unknown status")
 	}
 }
 

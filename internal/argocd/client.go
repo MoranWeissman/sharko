@@ -28,6 +28,17 @@ import (
 // be surfaced as an RBAC problem, not mislabeled as a broken bootstrap.
 var ErrPermissionDenied = errors.New("ArgoCD access denied — the token does not have permission for this operation")
 
+// ErrTokenInvalid is the sentinel returned (wrapped) when ArgoCD answers an
+// API call with HTTP 401. Callers can detect it with errors.Is to distinguish
+// a genuinely bad/expired credential from other failures (permission denied,
+// a missing application, a network error). Before this sentinel existed, a
+// 401 fell into the same generic error path as every other ArgoCD failure,
+// so the bootstrap-app probe could not tell "the token is dead" apart from
+// "the app is unhealthy" — an expired token made a fully set-up install show
+// the first-run wizard with a false "app already exists but is not healthy"
+// message, because Sharko never actually got an answer from ArgoCD.
+var ErrTokenInvalid = errors.New("invalid ArgoCD token — check that the token is correct and not expired")
+
 // Client is a REST API client for ArgoCD.
 type Client struct {
 	baseURL    string
@@ -421,7 +432,11 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 		// Translate common errors into user-friendly messages
 		switch resp.StatusCode {
 		case 401:
-			return nil, fmt.Errorf("invalid ArgoCD token — check that the token is correct and not expired")
+			// Wrap the sentinel so callers (e.g. the bootstrap-app probe) can
+			// detect an invalid/expired token with errors.Is and surface an
+			// honest "couldn't check" state instead of silently mislabeling
+			// this as "bootstrap missing or unhealthy".
+			return nil, fmt.Errorf("%w", ErrTokenInvalid)
 		case 403:
 			// Wrap the sentinel so callers (e.g. the bootstrap-app probe) can
 			// detect permission-denied with errors.Is and surface an

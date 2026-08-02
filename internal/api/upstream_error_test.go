@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/MoranWeissman/sharko/internal/argocd"
 )
 
 // V124-3.2 / M2 extended — classifyUpstreamError pins the mapping from
@@ -27,6 +29,20 @@ import (
 //   - *url.Error with Timeout()   → 504 Gateway Timeout
 //   - "rate limit" / "too many requests" / "429" string match → 429
 //   - default                     → 500 Internal Server Error
+
+// TestClassifyUpstreamError_ArgoCDTokenInvalid_502 — error review package 1:
+// ArgoCD outright refusing Sharko's credentials is an upstream-refused-us
+// problem, like a refused connection, not an internal one. Before this
+// branch existed, an expired token bubbling up through classifyUpstreamError
+// (e.g. from list_clusters or get_addon_catalog) fell to the 500 default,
+// hiding "the token is dead" behind a generic server-error response.
+func TestClassifyUpstreamError_ArgoCDTokenInvalid_502(t *testing.T) {
+	wrapped := fmt.Errorf("listing argocd applications: %w", argocd.ErrTokenInvalid)
+	got := classifyUpstreamError(wrapped)
+	if got != http.StatusBadGateway {
+		t.Errorf("ErrTokenInvalid → %d, want %d (502 Bad Gateway)", got, http.StatusBadGateway)
+	}
+}
 
 func TestClassifyUpstreamError_ConnRefused_502(t *testing.T) {
 	// Realistic shape: a net.OpError wrapping an os.SyscallError carrying

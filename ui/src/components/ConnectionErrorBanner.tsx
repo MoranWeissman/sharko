@@ -1,38 +1,99 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, ExternalLink, X } from 'lucide-react'
+import { AlertTriangle, ExternalLink, Wrench, X } from 'lucide-react'
 
 /**
- * Non-blocking, dismissible banner shown at the top of the app when Sharko
- * can't reach or verify the active Git connection (V2-cleanup-50).
+ * Non-blocking, dismissible banner shown at the top of the app whenever
+ * Sharko cannot confirm the install is healthy — a broken Git connection, a
+ * rejected/unreachable ArgoCD credential, or a missing/degraded engine app
+ * (V2-cleanup-50, extended by error review package 1 and the 2026-08-02
+ * scope extension).
  *
  * Background: a broken connection (e.g. a corporate Zscaler TLS-inspection
  * proxy producing an x509 "unknown authority" error) used to be mistaken for
- * "the repo was never set up", throwing the user into the re-bootstrap wizard.
- * A broken connection is NOT a setup problem — it belongs in Settings →
- * Connections. So instead of hard-blocking the app, we keep the user in their
- * working app and surface the problem here, with a link to fix it.
+ * "the repo was never set up", throwing the user into the re-bootstrap
+ * wizard. Later, an expired ArgoCD token produced the same false "the engine
+ * app already exists but is not healthy" claim. None of that is a setup
+ * problem — it belongs in Settings → Connections, or (for a genuinely broken
+ * engine app) a user-invited repair screen. So instead of hard-blocking the
+ * app or auto-opening the wizard, Sharko keeps the user in their working app
+ * and surfaces the actual problem here, with a way to fix it.
  *
  * The amber/warning styling + AlertTriangle icon + dismiss X mirror the
  * established AttributionNudge / DriftAlertsPanel inline-banner pattern.
  */
 
-/** Maps the machine reason tag to a short, plain-English secondary line. */
-function reasonDetail(reason?: string): string {
+type BannerAction = 'settings' | 'repair'
+
+interface BannerContent {
+  heading: string
+  body: string
+  action: BannerAction
+}
+
+/** Maps the machine reason tag to the heading/body/action the banner shows. */
+function bannerContent(reason?: string): BannerContent {
   switch (reason) {
     case 'connection_error':
-      return "Sharko reached your Git host but couldn't verify it — often a TLS or certificate problem (for example a corporate proxy that inspects traffic)."
+      return {
+        heading: "Sharko can't reach your Git connection right now.",
+        body: "Sharko reached your Git host but couldn't verify it — often a TLS or certificate problem (for example a corporate proxy that inspects traffic).",
+        action: 'settings',
+      }
     case 'no_connection':
-      return 'There is no usable Git connection configured right now.'
+      return {
+        heading: "Sharko can't reach your Git connection right now.",
+        body: 'There is no usable Git connection configured right now.',
+        action: 'settings',
+      }
+    case 'argocd_auth_failed':
+      return {
+        heading: "Sharko's ArgoCD credential is no longer valid.",
+        body: "ArgoCD rejected the token Sharko uses to check on the cluster (401) — the token is likely expired or was revoked.",
+        action: 'settings',
+      }
+    case 'argocd_unreachable':
+      return {
+        heading: "Sharko can't reach ArgoCD right now.",
+        body: "Sharko couldn't get an answer from ArgoCD, so it can't confirm whether the cluster is in sync.",
+        action: 'settings',
+      }
+    case 'bootstrap_unreachable':
+      return {
+        heading: "ArgoCD can't reach your Git repo right now.",
+        body: "This is usually a connection or network problem on ArgoCD's side, not a setup problem — check your connection in Settings, and your network or proxy.",
+        action: 'settings',
+      }
     case 'error':
+      return {
+        heading: "Sharko can't reach your Git connection right now.",
+        body: "The status check couldn't complete. Your connection may be offline or unreachable.",
+        action: 'settings',
+      }
+    // "bootstrap_degraded" and any other initialized-but-unhealthy reason —
+    // ArgoCD read the repo and found the engine app missing or degraded, a
+    // problem the repair screen can act on.
     default:
-      return "The status check couldn't complete. Your connection may be offline or unreachable."
+      return {
+        heading: "Sharko's engine app needs attention.",
+        body: 'The ArgoCD application Sharko uses to manage addons is missing or not healthy.',
+        action: 'repair',
+      }
   }
 }
 
-export function ConnectionErrorBanner({ reason }: { reason?: string }) {
+export function ConnectionErrorBanner({
+  reason,
+  onOpenRepair,
+}: {
+  reason?: string
+  /** Called when the user clicks the repair action (only shown for engine-app problems). */
+  onOpenRepair?: () => void
+}) {
   const [dismissed, setDismissed] = useState(false)
   if (dismissed) return null
+
+  const { heading, body, action } = bannerContent(reason)
 
   return (
     <div
@@ -41,15 +102,26 @@ export function ConnectionErrorBanner({ reason }: { reason?: string }) {
     >
       <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
       <div className="flex-1">
-        <p className="font-medium">Sharko can&apos;t reach your Git connection right now.</p>
-        <p className="mt-1">{reasonDetail(reason)}</p>
-        <Link
-          to="/settings?section=connections"
-          className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-400 bg-amber-100 px-3 py-1 text-xs font-medium hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900 dark:hover:bg-amber-800"
-        >
-          Open Settings → Connections
-          <ExternalLink className="h-3 w-3" />
-        </Link>
+        <p className="font-medium">{heading}</p>
+        <p className="mt-1">{body}</p>
+        {action === 'repair' ? (
+          <button
+            type="button"
+            onClick={onOpenRepair}
+            className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-400 bg-amber-100 px-3 py-1 text-xs font-medium hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900 dark:hover:bg-amber-800"
+          >
+            <Wrench className="h-3 w-3" />
+            Review and repair
+          </button>
+        ) : (
+          <Link
+            to="/settings?section=connections"
+            className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-400 bg-amber-100 px-3 py-1 text-xs font-medium hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900 dark:hover:bg-amber-800"
+          >
+            Open Settings → Connections
+            <ExternalLink className="h-3 w-3" />
+          </Link>
+        )}
       </div>
       <button
         type="button"

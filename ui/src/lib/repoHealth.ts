@@ -68,6 +68,23 @@ export function deriveArgoRepoArrow(repo: RepoStatus | null): ArrowVerdict {
         "ArgoCD can't reach the repo (a connection problem — often a proxy or TLS trust issue on the ArgoCD side).",
     }
   }
+  // Error review package 1: these two reasons mean Sharko never got a
+  // usable answer from ArgoCD at all — distinct from the fallthrough below,
+  // which asserts ArgoCD actually looked at the engine app and found it
+  // degraded or missing. Asserting that here would be a claim Sharko never
+  // verified.
+  if (repo.reason === 'argocd_auth_failed') {
+    return {
+      status: 'degraded',
+      detail: "ArgoCD rejected Sharko's token, so Sharko can't confirm whether the repo is synced.",
+    }
+  }
+  if (repo.reason === 'argocd_unreachable') {
+    return {
+      status: 'unknown',
+      detail: "Sharko couldn't reach ArgoCD to check the repo's sync status.",
+    }
+  }
   return {
     status: 'degraded',
     detail: 'ArgoCD read the repo but the engine app is degraded or missing.',

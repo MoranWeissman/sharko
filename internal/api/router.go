@@ -27,6 +27,7 @@ import (
 	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/appsets"
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/auth"
@@ -2050,6 +2051,7 @@ func writeServerError(w http.ResponseWriter, status int, op string, err error) {
 // rate-limited us" (429), and "something went wrong on our end" (500).
 //
 // Branches:
+//   - errors.Is(err, argocd.ErrTokenInvalid)             → 502 Bad Gateway
 //   - errors.Is(err, syscall.ECONNREFUSED)               → 502 Bad Gateway
 //   - errors.As to *net.DNSError                         → 502 Bad Gateway
 //   - errors.As to *url.Error with Timeout()             → 504 Gateway Timeout
@@ -2066,6 +2068,14 @@ func writeServerError(w http.ResponseWriter, status int, op string, err error) {
 func classifyUpstreamError(err error) int {
 	if err == nil {
 		return http.StatusInternalServerError
+	}
+
+	// 502 — ArgoCD rejected Sharko's own credentials outright. This is an
+	// upstream-refused-us problem (like a refused connection), not an
+	// internal one — a bare 500 here used to hide "the token is dead" behind
+	// a generic server-error response (error review package 1).
+	if errors.Is(err, argocd.ErrTokenInvalid) {
+		return http.StatusBadGateway
 	}
 
 	// 502 — connection refused (the remote port wasn't accepting).
