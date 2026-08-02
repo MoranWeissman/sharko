@@ -160,4 +160,60 @@ describe('ClusterDetail — v4 enable routing', () => {
     expect(screen.queryByText('Enable metrics-server on prod-eu')).not.toBeInTheDocument();
     expect(mockEnableAddonV4).not.toHaveBeenCalled();
   });
+
+  // Walk day 5 finding: a fresh enable-PR's addon has no comparison row
+  // until it merges, so ClusterDetail needs its tracked-PR fetch to run
+  // again the instant the dialog applies — not wait for the next
+  // background poll — or the operator sees nothing pending after "Done".
+  it('a successful v4 enable refetches tracked PRs immediately (onApplied → fetchData)', async () => {
+    mockGetRepoStatus.mockResolvedValue({ initialized: true, bootstrap_synced: true });
+    mockEnableAddonV4
+      .mockResolvedValueOnce({
+        dry_run: {
+          effective_addons: ['metrics-server'],
+          files_to_write: [{ path: 'cluster-addons/prod-eu.yaml', action: 'update' }],
+          pr_title: 'sharko: enable addon metrics-server on cluster prod-eu',
+          secrets_to_create: [],
+        },
+      })
+      .mockResolvedValueOnce({
+        pr_url: 'https://github.com/example/repo/pull/6001',
+        pr_id: 6001,
+        merged: false,
+      });
+
+    const user = userEvent.setup();
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('manage-addons-enable-btn')).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId('manage-addons-enable-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('addon-picker-item-metrics-server')).toBeInTheDocument();
+    });
+    const callsBeforeEnable = mockFetchTrackedPRs.mock.calls.length;
+    await user.click(screen.getByTestId('addon-picker-item-metrics-server'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Enable metrics-server on prod-eu')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /preview/i }));
+    await waitFor(() => expect(screen.getByTestId('v4-confirm')).toBeInTheDocument());
+    await user.click(screen.getByTestId('v4-confirm'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/View PR #6001/)).toBeInTheDocument();
+    });
+
+    // The apply's onApplied callback refetches right away, not on the
+    // next 10-30s background poll.
+    await waitFor(() => {
+      expect(mockFetchTrackedPRs.mock.calls.length).toBeGreaterThan(callsBeforeEnable);
+    });
+    expect(mockFetchTrackedPRs).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cluster: 'prod-eu', status: 'open' }),
+    );
+  });
 });

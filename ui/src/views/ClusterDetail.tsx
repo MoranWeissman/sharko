@@ -700,12 +700,16 @@ export function ClusterDetail() {
       setOriginalToggles({ ...addonToggles });
       setTogglePreview(null);
       setTogglePreviewError(null);
+      // Same fix as the v4 enable dialog's onApplied: refetch immediately
+      // so a newly-opened enable PR shows up as a pending row right away
+      // instead of waiting for the next 10-30s background poll.
+      void fetchData(true);
     } catch (e: unknown) {
       setToggleError(e instanceof Error ? e.message : 'Failed to apply changes');
     } finally {
       setApplyingToggles(false);
     }
-  }, [name, addonToggles, buildTogglePayload]);
+  }, [name, addonToggles, buildTogglePayload, fetchData]);
 
   const handlePreviewSecretPath = useCallback(async () => {
     if (!name) return;
@@ -1006,6 +1010,35 @@ export function ClusterDetail() {
       }
     });
   }, [data, statusFilter]);
+
+  // Pending-addon rows (walk day 5 finding): an addon whose enable PR
+  // hasn't merged yet has no comparison row at all — git doesn't know
+  // about it until the PR lands, so it fetches, resolves, and shows
+  // nothing to the operator right after they click "Done". Same gap the
+  // catalog's PendingAddonCard closed for the marketplace grid; here we
+  // close it for the per-cluster addon table.
+  //
+  // Built straight off pendingPRsByAddon (already scoped to this cluster's
+  // open PRs with an addon attribution) rather than re-filtering the raw
+  // PR list — one row per addon name that has an open PR but no matching
+  // comparison entry. Once the PR merges and the comparison refetches, the
+  // addon gets a real row and drops out of this list on its own.
+  const existingAddonNames = useMemo(() => {
+    const names = new Set<string>();
+    (data?.addon_comparisons ?? []).forEach((a) => names.add(a.addon_name.trim().toLowerCase()));
+    return names;
+  }, [data]);
+
+  const pendingAddonRows = useMemo(() => {
+    return Object.entries(pendingPRsByAddon)
+      .filter(([addonName]) => !existingAddonNames.has(addonName.trim().toLowerCase()))
+      .map(([addonName, prs]) => ({ addonName, prs }));
+  }, [pendingPRsByAddon, existingAddonNames]);
+
+  // Pending rows aren't health-classified (no deployed/version/issue data
+  // to filter on), so — same convention as the catalog's pending ghosts —
+  // they only show in the unfiltered view, not under a status filter chip.
+  const visiblePendingAddonRows = statusFilter === 'all' ? pendingAddonRows : [];
 
   const handleStatusFilter = (filter: StatusFilter) => {
     setStatusFilter(statusFilter === filter ? 'all' : filter);
@@ -2106,7 +2139,10 @@ export function ClusterDetail() {
                         }}
                       />
                     ))}
-                    {filteredAddons.length === 0 && (
+                    {visiblePendingAddonRows.map(({ addonName, prs }) => (
+                      <PendingAddonRow key={`pending-${addonName}`} addonName={addonName} prs={prs} />
+                    ))}
+                    {filteredAddons.length === 0 && visiblePendingAddonRows.length === 0 && (
                       <tr>
                         <td
                           colSpan={7}
@@ -2684,6 +2720,71 @@ function ComparisonRow({ addon, clusterName, argocdBaseURL, highlighted, pending
           </RoleGuard>
         )}
       </td>
+    </tr>
+  );
+}
+
+/**
+ * PendingAddonRow — an addon with an open enable PR that hasn't merged
+ * yet, so it has no comparison row (git doesn't know about it until the
+ * PR lands). Same amber/translucent visual language as the catalog's
+ * PendingAddonCard and its table-view pending row: a "Pending" badge, no
+ * real health/version data (it isn't deployed yet — showing anything
+ * there would be a lie), and the whole row opens the PR in a new tab.
+ * Disappears on its own once the PR merges and a real comparison row
+ * takes its place.
+ */
+function PendingAddonRow({ addonName, prs }: { addonName: string; prs: TrackedPR[] }) {
+  const primary = prs[0];
+  const subtitle =
+    prs.length > 1
+      ? `${prs.length} pull requests open — merge to approve`
+      : primary
+        ? `PR #${primary.pr_id} open — merge to approve${primary.operation ? ` (${primary.operation.replace(/^addon-/, '')})` : ''}`
+        : 'Pull request open — merge to approve';
+
+  return (
+    <tr
+      data-testid="pending-addon-row"
+      onClick={() => {
+        if (primary?.pr_url) window.open(primary.pr_url, '_blank', 'noopener,noreferrer');
+      }}
+      className="cursor-pointer bg-amber-50/50 opacity-60 hover:bg-amber-50/80 hover:opacity-90 dark:bg-amber-950/10 dark:hover:bg-amber-950/20"
+    >
+      <td className="px-4 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span>{addonName}</span>
+            {prs.map((pr) => (
+              <a
+                key={pr.pr_id}
+                href={pr.pr_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                data-testid="addon-pending-pr-badge"
+                title={`Open PR #${pr.pr_id} — ${pr.pr_title}`}
+                className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/60"
+              >
+                <GitPullRequest className="h-3 w-3" />
+                PR #{pr.pr_id}
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            ))}
+          </div>
+          <span className="text-xs font-normal text-[#3a6a8a] dark:text-gray-500">{subtitle}</span>
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-700">
+          Pending
+        </span>
+      </td>
+      <td className="px-4 py-3 text-xs text-[#3a6a8a] dark:text-gray-500">—</td>
+      <td className="px-4 py-3 text-xs text-[#3a6a8a] dark:text-gray-500">—</td>
+      <td className="px-4 py-3 text-[#3a6a8a] dark:text-gray-500">—</td>
+      <td className="px-4 py-3 text-sm text-[#3a6a8a] dark:text-gray-500">—</td>
+      <td className="px-4 py-3" />
     </tr>
   );
 }
