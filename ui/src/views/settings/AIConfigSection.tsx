@@ -19,7 +19,10 @@ const selectCls =
 export function AIConfigSection() {
   const [aiConfig, setAiConfig] = useState<AIConfigResponse | null>(null)
   const [loading, setLoading] = useState(true)
-  const [testResult, setTestResult] = useState<string | null>(null)
+  // ok is a real success/failure signal, not text-sniffed off the message
+  // (error review package 2 walk finding — the icon/color used to be keyed
+  // on testResult.includes('correctly'), so server copy drove UI state).
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [testing, setTesting] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [formProvider, setFormProvider] = useState('gemini')
@@ -88,9 +91,10 @@ export function AIConfigSection() {
     setTestResult(null)
     try {
       const res = await api.testAI()
-      setTestResult(res.status === 'ok' ? 'AI is responding correctly' : 'AI returned unexpected response')
+      const ok = res.status === 'ok'
+      setTestResult({ ok, message: ok ? 'AI is responding correctly' : 'AI returned unexpected response' })
     } catch (err) {
-      setTestResult(err instanceof Error ? err.message : 'Connection failed')
+      setTestResult({ ok: false, message: err instanceof Error ? err.message : 'Connection failed' })
     } finally { setTesting(false) }
   }
 
@@ -208,10 +212,10 @@ export function AIConfigSection() {
 
       {testResult && (
         <div className={`mt-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${
-          testResult.includes('correctly') ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400' : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+          testResult.ok ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400' : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
         }`}>
-          {testResult.includes('correctly') ? <CheckCircle className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
-          {testResult}
+          {testResult.ok ? <CheckCircle className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+          {testResult.message}
         </div>
       )}
 

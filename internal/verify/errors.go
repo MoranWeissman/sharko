@@ -72,7 +72,19 @@ func ClassifyError(err error) ErrorCode {
 		return ERR_AWS_ASSUME
 	case strings.Contains(msg, "throttl") || strings.Contains(msg, "Too many requests"):
 		return ERR_QUOTA
-	case strings.Contains(msg, "admission webhook") || strings.Contains(msg, "namespace"):
+	// ERR_NAMESPACE (tightened — error review package 2): a bare "namespace"
+	// substring used to be enough to classify here, which misfired on almost
+	// any Kubernetes error that happens to mention a namespace in passing
+	// (e.g. "listing pods in namespace sharko-system: connection refused" —
+	// that's a network failure, not a namespace problem). Now this arm
+	// requires either the admission-webhook phrase, or "namespace" PLUS a
+	// genuine not-found/already-exists/terminating signal, so a namespace
+	// mention alone falls through to ERR_UNKNOWN (or an earlier, more
+	// specific arm) instead of being misclassified.
+	case strings.Contains(msg, "admission webhook"),
+		strings.Contains(lower, "namespace") && strings.Contains(lower, "not found"),
+		strings.Contains(lower, "namespace") && strings.Contains(lower, "already exists"),
+		strings.Contains(lower, "namespace") && strings.Contains(lower, "terminating"):
 		return ERR_NAMESPACE
 	case strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline exceeded"):
 		return ERR_TIMEOUT
@@ -106,14 +118,16 @@ func Hint(code ErrorCode) string {
 // (ErrorMessage) for diagnosis. Both the register-preview and adopt call sites
 // use this helper so their wording can never drift apart.
 //
-// Shape: "[ERR_AUTH] <raw cause> — <hint>" when a hint exists, otherwise
-// "[ERR_AUTH] <raw cause>".
+// Shape: "<raw cause> — <hint>" when a hint exists, otherwise "<raw cause>".
+// A bracketed machine token used to lead this string ("[ERR_AUTH] ...") —
+// retired (error review package 2): a machine code has no business leading
+// a sentence meant for a person, and a caller that needs the code has
+// r.ErrorCode directly rather than parsing it back out of prose.
 func FriendlyMessage(r Result) string {
-	base := "[" + string(r.ErrorCode) + "] " + r.ErrorMessage
 	if hint := Hint(r.ErrorCode); hint != "" {
-		return base + " — " + hint
+		return r.ErrorMessage + " — " + hint
 	}
-	return base
+	return r.ErrorMessage
 }
 
 // AssumeRoleHint returns a cause-specific hint for an assume-role failure by

@@ -34,6 +34,45 @@ import (
 // their own classification path (writeUpstreamError).
 var ErrValidation = errors.New("validation failed")
 
+// validationError is a message-only error that errors.Is-matches
+// ErrValidation without literally embedding ErrValidation's own text
+// ("validation failed") in the rendered message.
+//
+// Before this type existed, every validation call site below wrapped
+// ErrValidation directly with fmt.Errorf's %w verb (e.g.
+// `fmt.Errorf("invalid git URL: %w: %w", ErrValidation, err)`), and %w
+// renders the wrapped error's own Error() text into the final string. That
+// made every validation message end (or, worse — mid-chain, for the double
+// %w git-URL case — sit in the middle) with a meaningless ": validation
+// failed" segment that told the operator nothing (error review package 2).
+//
+// validationError keeps the errors.Is(err, ErrValidation) contract working
+// (its Is method matches ErrValidation directly) while its Error() returns
+// only the real, already-actionable message. cause optionally unwraps to a
+// lower-level error (e.g. the URL parser's own error) so errors.Unwrap
+// chains and any future cause-extraction machinery still reach it.
+type validationError struct {
+	msg   string
+	cause error
+}
+
+func (e *validationError) Error() string        { return e.msg }
+func (e *validationError) Unwrap() error        { return e.cause }
+func (e *validationError) Is(target error) bool { return target == ErrValidation }
+
+// newValidationError builds a validationError with no further cause — the
+// message itself is the whole story.
+func newValidationError(format string, args ...interface{}) error {
+	return &validationError{msg: fmt.Sprintf(format, args...)}
+}
+
+// wrapValidationError builds a validationError whose message is msg but
+// which still unwraps to cause, so a chain-walking caller can still reach
+// the lower-level error (e.g. a URL parse failure) if it wants to.
+func wrapValidationError(msg string, cause error) error {
+	return &validationError{msg: msg, cause: cause}
+}
+
 // ConnectionService manages connections and provides active provider instances.
 type ConnectionService struct {
 	store                config.Store
@@ -247,7 +286,7 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 	}
 	// Parse repo URL into provider/owner/repo if provided
 	if err := req.Git.ParseRepoURL(); err != nil {
-		return fmt.Errorf("invalid git URL: %w: %w", ErrValidation, err)
+		return wrapValidationError(fmt.Sprintf("invalid git URL: %s", err), err)
 	}
 	conn := models.Connection{
 		Name:                req.Name,
@@ -305,7 +344,7 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 func deriveProviderFromURL(repoURL string) (string, error) {
 	u, err := url.Parse(repoURL)
 	if err != nil || u.Host == "" {
-		return "", fmt.Errorf("cannot parse git repo URL %q: %w", repoURL, ErrValidation)
+		return "", newValidationError("cannot parse git repo URL %q", repoURL)
 	}
 	host := strings.ToLower(u.Host)
 	switch {
@@ -327,7 +366,7 @@ func deriveProviderFromURL(repoURL string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("unsupported git host %q (supported: github.com, dev.azure.com): %w", host, ErrValidation)
+	return "", newValidationError("unsupported git host %q (supported: github.com, dev.azure.com)", host)
 }
 
 // validateConnectionRequest checks that the create/update request has the
@@ -356,7 +395,7 @@ func validateConnectionRequest(req models.CreateConnectionRequest) error {
 		req.Git.Provider != models.GitProviderGitHub &&
 		req.Git.Provider != models.GitProviderAzureDevOps &&
 		req.Git.Provider != models.GitProviderGitea {
-		return fmt.Errorf("git.provider %q is not supported (must be one of: github, azuredevops, gitea): %w", req.Git.Provider, ErrValidation)
+		return newValidationError("git.provider %q is not supported (must be one of: github, azuredevops, gitea)", req.Git.Provider)
 	}
 
 	// Probe with a synthetic non-empty name. Create() auto-derives the name
@@ -371,15 +410,15 @@ func validateConnectionRequest(req models.CreateConnectionRequest) error {
 		// operator-facing wording stable for the TestRejects… cases.
 		switch missing[0] {
 		case "git.provider":
-			return fmt.Errorf("git.provider is required (one of: github, azuredevops, gitea): %w", ErrValidation)
+			return newValidationError("git.provider is required (one of: github, azuredevops, gitea)")
 		case "git.owner_repo_or_repo_url":
-			return fmt.Errorf("git.repo_url or (git.owner + git.repo) is required for github provider: %w", ErrValidation)
+			return newValidationError("git.repo_url or (git.owner + git.repo) is required for github provider")
 		case "git.azure_repo_or_repo_url":
-			return fmt.Errorf("git.repo_url or (git.organization + git.project + git.repository) is required for azuredevops provider: %w", ErrValidation)
+			return newValidationError("git.repo_url or (git.organization + git.project + git.repository) is required for azuredevops provider")
 		case "git.gitea_repo_or_repo_url":
-			return fmt.Errorf("git.repo_url or (git.owner + git.repo) is required for gitea provider: %w", ErrValidation)
+			return newValidationError("git.repo_url or (git.owner + git.repo) is required for gitea provider")
 		default:
-			return fmt.Errorf("connection request missing required fields %v: %w", missing, ErrValidation)
+			return newValidationError("connection request missing required fields %v", missing)
 		}
 	}
 	return nil

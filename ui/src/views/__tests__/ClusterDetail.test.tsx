@@ -1133,6 +1133,27 @@ describe('ClusterDetail', () => {
         secret_path: 'k8s-prod-eu',
       });
     });
+
+    // error review package 2 walk finding: a FAILED secret-path save used to
+    // render in teal success styling because the result box only tracked
+    // `message`, never whether the save actually failed. Pin that a failed
+    // save renders in red (text-red-600), not teal (text-teal-600).
+    it('secret-path: a failed Save renders red, not teal success styling', async () => {
+      mockUpdateClusterSettings.mockRejectedValueOnce(new Error('cluster not reachable'));
+
+      renderView('settings');
+      await waitFor(() => expect(screen.getByText('Cluster Settings')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByLabelText(/Edit secret path/i));
+      const input = await screen.findByPlaceholderText('e.g. k8s-my-cluster');
+      fireEvent.change(input, { target: { value: 'k8s-prod-eu' } });
+
+      fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+
+      const message = await screen.findByText('cluster not reachable');
+      expect(message).toHaveClass('text-red-600');
+      expect(message).not.toHaveClass('text-teal-600');
+    });
   });
 
   // V2-cleanup-30: sharko_system row rendering

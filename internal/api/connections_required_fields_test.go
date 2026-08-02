@@ -42,8 +42,13 @@ func TestHandleCreateConnection_EmptyBody_Returns400(t *testing.T) {
 	if !strings.Contains(resp["error"], "git.provider") {
 		t.Errorf("error body should mention git.provider, got: %q", resp["error"])
 	}
-	if !strings.Contains(resp["error"], "validation failed") {
-		t.Errorf("error body should mention validation failed (ErrValidation sentinel), got: %q", resp["error"])
+	// error review package 2: the message no longer carries the meaningless
+	// ": validation failed" segment ErrValidation's own text used to leave
+	// behind — errors.Is(err, ErrValidation) still holds server-side (see
+	// internal/service/connection_test.go), it just doesn't leak into the
+	// user-visible string anymore.
+	if strings.Contains(resp["error"], "validation failed") {
+		t.Errorf("error body should NOT carry the meaningless 'validation failed' segment, got: %q", resp["error"])
 	}
 }
 

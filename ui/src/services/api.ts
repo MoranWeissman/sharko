@@ -142,6 +142,68 @@ function unwrapAttribution<T>(json: unknown): T {
   return json as T
 }
 
+/**
+ * ApiErrorBody — the shape the server's error boundary emits (error review
+ * package 2, backend counterpart in internal/api/router.go's
+ * errorResponse). `error` is always populated; `cause`, `hint`, and `code`
+ * are additive and simply absent when the server had nothing to say.
+ * `problems` is a pre-existing field some coded refusals attach (see
+ * internal/api/catalog_org.go's writeCodedError) — carried through
+ * unchanged.
+ */
+export interface ApiErrorBody {
+  error?: string
+  cause?: string
+  hint?: string
+  code?: string
+  problems?: unknown
+  [key: string]: unknown
+}
+
+/**
+ * ApiError — thrown by every fetch helper below in place of a bare Error,
+ * so a call site that wants the server's full shape (cause/hint/code/
+ * problems) can get it, while every existing call site that only ever did
+ * `err instanceof Error ? err.message : '...'` keeps working unchanged:
+ * `.message` is exactly the headline that a bare `new Error(err.error ||
+ * res.statusText)` used to carry.
+ *
+ * `cause` here is intentionally a plain string, not the ES2022
+ * `Error.cause` (which is typically an Error/unknown, not a display
+ * string) — this is server-supplied technical detail meant for rendering,
+ * not a JS-level error chain.
+ */
+export class ApiError extends Error {
+  status: number
+  code?: string
+  cause?: string
+  hint?: string
+  problems?: unknown
+  body: ApiErrorBody
+
+  constructor(status: number, body: ApiErrorBody, fallbackMessage: string) {
+    super(body.error || fallbackMessage)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = typeof body.code === 'string' ? body.code : undefined
+    this.cause = typeof body.cause === 'string' ? body.cause : undefined
+    this.hint = typeof body.hint === 'string' ? body.hint : undefined
+    this.problems = body.problems
+    this.body = body
+  }
+}
+
+/**
+ * throwApiError reads the failed response's JSON body (falling back to
+ * `{error: res.statusText}` for a non-JSON or empty body — the exact
+ * fallback the six call sites below all duplicated before this) and throws
+ * an ApiError built from it. Never returns.
+ */
+async function throwApiError(res: Response): Promise<never> {
+  const body = (await res.json().catch(() => ({ error: res.statusText }))) as ApiErrorBody
+  throw new ApiError(res.status, body, res.statusText)
+}
+
 async function fetchJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: authHeaders(),
@@ -152,8 +214,7 @@ async function fetchJSON<T>(path: string): Promise<T> {
     throw new Error('Session expired')
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || res.statusText)
+    await throwApiError(res)
   }
   return unwrapAttribution<T>(await res.json())
 }
@@ -170,8 +231,7 @@ async function postJSON<T>(path: string, body?: unknown): Promise<T> {
     throw new Error('Session expired')
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || res.statusText)
+    await throwApiError(res)
   }
   return unwrapAttribution<T>(await res.json())
 }
@@ -188,8 +248,7 @@ async function putJSON<T>(path: string, body?: unknown): Promise<T> {
     throw new Error('Session expired')
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || res.statusText)
+    await throwApiError(res)
   }
   return unwrapAttribution<T>(await res.json())
 }
@@ -206,8 +265,7 @@ async function patchJSON<T>(path: string, body?: unknown): Promise<T> {
     throw new Error('Session expired')
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || res.statusText)
+    await throwApiError(res)
   }
   return unwrapAttribution<T>(await res.json())
 }
@@ -223,8 +281,7 @@ async function deleteJSON<T>(path: string): Promise<T> {
     throw new Error('Session expired')
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || res.statusText)
+    await throwApiError(res)
   }
   return unwrapAttribution<T>(await res.json())
 }
@@ -241,8 +298,7 @@ async function fetchJSONMethod<T>(path: string, method: string, body?: unknown):
     throw new Error('Session expired')
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || res.statusText)
+    await throwApiError(res)
   }
   return unwrapAttribution<T>(await res.json())
 }

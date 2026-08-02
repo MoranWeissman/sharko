@@ -152,6 +152,87 @@ func TestDeriveProviderFromURL(t *testing.T) {
 
 // TestGetAddonSecretProviderConfig exercises the V3-P1.1 separate addon-secret
 // provider field accessor.
+// TestErrValidation_MessageNoLongerCarriesValidationFailedText — error
+// review package 2 / step 1b. fmt.Errorf's %w verb used to render
+// ErrValidation's own text ("validation failed") into every validation
+// message, leaving a meaningless ": validation failed" segment at the end
+// (or, for the double-wrapped git-URL case, mid-chain). The fix
+// (validationError) must keep errors.Is(err, ErrValidation) working while
+// dropping that text from the rendered message.
+func TestErrValidation_MessageNoLongerCarriesValidationFailedText(t *testing.T) {
+	store := config.NewFileStore(t.TempDir() + "/test-config.yaml")
+	svc := NewConnectionService(store)
+
+	tests := []struct {
+		name        string
+		req         models.CreateConnectionRequest
+		errContains string
+	}{
+		{
+			name: "malformed git URL",
+			req: models.CreateConnectionRequest{
+				Git: models.GitRepoConfig{
+					Provider: models.GitProviderAzureDevOps,
+					RepoURL:  "https://dev.azure.com/org/project/repo", // missing /_git/
+				},
+			},
+			errContains: "invalid git URL",
+		},
+		{
+			name: "unsupported provider",
+			req: models.CreateConnectionRequest{
+				Git: models.GitRepoConfig{Provider: "gitlab"},
+			},
+			errContains: "git.provider",
+		},
+		{
+			name:        "missing everything",
+			req:         models.CreateConnectionRequest{},
+			errContains: "git.provider",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := svc.Create(tt.req)
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if !errors.Is(err, ErrValidation) {
+				t.Errorf("error must still errors.Is(ErrValidation), got: %v", err)
+			}
+			if strings.Contains(err.Error(), "validation failed") {
+				t.Errorf("message must not carry the meaningless %q segment, got: %q", "validation failed", err.Error())
+			}
+			if !strings.Contains(err.Error(), tt.errContains) {
+				t.Errorf("message %q does not contain expected %q", err.Error(), tt.errContains)
+			}
+		})
+	}
+}
+
+// TestErrValidation_UnwrapReachesUnderlyingParseError locks that
+// wrapValidationError's cause still surfaces through errors.Unwrap, so a
+// caller that wants the concrete parser error underneath the clean message
+// (e.g. future cause-extraction machinery) can still reach it.
+func TestErrValidation_UnwrapReachesUnderlyingParseError(t *testing.T) {
+	store := config.NewFileStore(t.TempDir() + "/test-config.yaml")
+	svc := NewConnectionService(store)
+
+	err := svc.Create(models.CreateConnectionRequest{
+		Git: models.GitRepoConfig{
+			Provider: models.GitProviderAzureDevOps,
+			RepoURL:  "https://dev.azure.com/org/project/repo", // missing /_git/
+		},
+	})
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if errors.Unwrap(err) == nil {
+		t.Error("expected Unwrap to reach the underlying ParseRepoURL error, got nil")
+	}
+}
+
 func TestGetAddonSecretProviderConfig(t *testing.T) {
 	store := config.NewFileStore(t.TempDir() + "/test-config.yaml")
 	svc := NewConnectionService(store)

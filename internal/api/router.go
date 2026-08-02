@@ -22,6 +22,7 @@ import (
 
 	httpSwagger "github.com/swaggo/http-swagger"
 	"golang.org/x/crypto/bcrypt"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 
 	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
@@ -39,6 +40,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/events"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/notifications"
@@ -50,6 +52,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/readcache"
 	"github.com/MoranWeissman/sharko/internal/service"
 	"github.com/MoranWeissman/sharko/internal/settings"
+	"github.com/MoranWeissman/sharko/internal/verify"
 )
 
 // providerSet is the immutable snapshot published through
@@ -2015,33 +2018,151 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	}
 }
 
-// writeError writes a JSON error response.
+// errorResponse is the one shape every error leaves the server in (error
+// review package 2): a plain headline that's always populated — every
+// existing consumer that reads only `.error` keeps working unchanged — plus
+// three additive fields that are left out of the JSON entirely (not sent as
+// "") when there's nothing to say. API stability: additive-only, nothing
+// renamed or removed from what shipped before this.
+type errorResponse struct {
+	Error string `json:"error"`
+	Cause string `json:"cause,omitempty"`
+	Hint  string `json:"hint,omitempty"`
+	Code  string `json:"code,omitempty"`
+}
+
+// writeError writes a JSON error response with just a headline — the ~271
+// existing call sites that only have a message string (no error value to
+// classify) keep this exact call and keep getting exactly {"error": "..."}.
 func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+	writeJSON(w, status, errorResponse{Error: message})
+}
+
+// writeErrorWithCause writes the full shaped envelope for a call site that
+// has both a plain headline and the error that produced it — e.g. the
+// connection test/save boundary (see connection_messages.go). headline is
+// the caller's own plain sentence (unchanged, still the `.error` field);
+// shapeError fills in cause/hint/code around it. This is additive — new
+// call sites can adopt it incrementally without any of the existing
+// writeError(w, status, msg) sites having to change.
+func writeErrorWithCause(w http.ResponseWriter, status int, headline string, err error) {
+	h, cause, hint, code := shapeError(err, headline)
+	writeJSON(w, status, errorResponse{Error: h, Cause: cause, Hint: hint, Code: code})
+}
+
+// shapeError builds the additive fields of the error envelope from err: a
+// technical-detail cause, an actionable hint, and a machine code. headline
+// passes straight through unchanged — the caller already knows the plain
+// sentence for what it was doing; this only adds the supporting fields.
+//
+// cause is populated ONLY for four families whose error carries safe,
+// well-understood text — never from a generic "innermost error in the
+// chain" walk. That was the first design tried here, and it does NOT hold
+// up: while Go's structured wrapped types (net.OpError, url.Error,
+// syscall.Errno, …) strip identifying context on Unwrap, plenty of leaf
+// error types do not — a gopkg.in/yaml.v3 TypeError's Error() embeds the
+// actual offending line of the file being parsed, verbatim, and that
+// surfaced through this exact code path (values-file preview) in testing.
+// A single "walk to the bottom" rule can't tell those two cases apart, so
+// rather than risk it case by case, cause is opt-in per family:
+//
+//   - ArgoCD credential sentinels (argocd.ErrTokenInvalid /
+//     ErrPermissionDenied) — fixed sentence, and verify.Hint's generic
+//     auth/RBAC wording is written for cluster credentials, not Sharko's
+//     own ArgoCD connection, so these also get a hint naming Settings →
+//     Connections directly.
+//   - Git-provider sentinels (gitprovider.ErrFileNotFound /
+//     ErrPullRequestNotFound) — fixed sentence.
+//   - Kubernetes API errors (apierrors.StatusError) — Status().Message is a
+//     controlled, structured surface (e.g. `namespaces "x" not found`), not
+//     free-form file/user content.
+//   - Sharko input-validation errors (service.ErrValidation) — already a
+//     clean, Sharko-authored sentence (see internal/service/connection.go's
+//     validationError), so it's used as-is.
+//
+// Everything else — including every plain upstream network/timeout/DNS
+// failure classified below — gets cause = "" (omitted). This keeps
+// writeServerError/writeUpstreamError's existing no-leak guarantee intact
+// without needing to audit every error type that might ever reach them.
+//
+// hint/code come from internal/verify's fixed classification table
+// (ClassifyError/Hint) and never echo err's own text, so they're always
+// safe to expose regardless of what err says. code is left empty when
+// classification lands on ERR_UNKNOWN — an unclassified code isn't
+// actionable, so there's nothing worth putting in the field.
+func shapeError(err error, headline string) (respHeadline, cause, hint, code string) {
+	if err == nil {
+		return headline, "", "", ""
+	}
+	cause, hint, code = classifyBoundaryError(err)
+	return headline, cause, hint, code
+}
+
+// classifyBoundaryError is shapeError's cause/hint/code logic, split out so
+// it can be unit-tested directly against the four bespoke families plus the
+// generic (cause-less) fallback.
+func classifyBoundaryError(err error) (cause, hint, code string) {
+	switch {
+	case errors.Is(err, argocd.ErrTokenInvalid):
+		return argocd.ErrTokenInvalid.Error(),
+			"check the ArgoCD token in Settings → Connections and replace it if it's expired.",
+			string(verify.ERR_AUTH)
+	case errors.Is(err, argocd.ErrPermissionDenied):
+		return argocd.ErrPermissionDenied.Error(),
+			"grant the token the required permission in ArgoCD, or replace it in Settings → Connections.",
+			string(verify.ERR_RBAC)
+	case errors.Is(err, gitprovider.ErrFileNotFound):
+		return "the file was not found in the Git repository", "", ""
+	case errors.Is(err, gitprovider.ErrPullRequestNotFound):
+		return "the pull request was not found in the Git repository", "", ""
+	case errors.Is(err, service.ErrValidation):
+		return err.Error(), "", ""
+	}
+
+	var statusErr *apierrors.StatusError
+	if errors.As(err, &statusErr) {
+		cause = statusErr.Status().Message
+	}
+
+	if ec := verify.ClassifyError(err); ec != verify.ERR_UNKNOWN {
+		code = string(ec)
+		hint = verify.Hint(ec)
+	}
+	return cause, hint, code
 }
 
 // writeServerError writes a sanitized 5xx response while logging the full
-// error server-side. The response body deliberately does NOT include the
-// underlying error string because that often leaks filesystem paths or
-// upstream error messages (e.g. "reading managed-clusters.yaml: file not
-// found: configuration/managed-clusters.yaml"). The full error is preserved
-// in structured logs under "error" + context fields so debugging is
-// unaffected.
+// error server-side. The user-visible `error` field deliberately stays
+// http.StatusText(status) rather than echoing err — that field's job is to
+// stay consistent with the HTTP status line, not to explain the failure.
+// The additive `cause` field (see shapeError) only ever surfaces for the
+// four bespoke, pre-written error families shapeError knows about — never a
+// generic "whatever err says," which is exactly what keeps this sanitized:
+// err itself is never echoed into the response body, only logged.
 //
 // status MUST be a 5xx HTTP status (e.g. http.StatusInternalServerError,
-// http.StatusServiceUnavailable, http.StatusBadGateway). The response body
-// uses http.StatusText(status) for the user-visible "error" field so the
-// message stays consistent with the HTTP status line.
+// http.StatusServiceUnavailable, http.StatusBadGateway).
 //
 // op should be a short, snake_case identifier for the failing operation
 // (e.g. "list_clusters") so logs are grep-friendly. Use writeError for any
 // 4xx response — those messages are user-actionable and safe to surface.
 func writeServerError(w http.ResponseWriter, status int, op string, err error) {
 	slog.Error("server error", "op", op, "status", status, "error", err)
-	writeJSON(w, status, map[string]string{
+	_, cause, hint, code := shapeError(err, http.StatusText(status))
+	body := map[string]string{
 		"error": http.StatusText(status),
 		"op":    op,
-	})
+	}
+	if cause != "" {
+		body["cause"] = cause
+	}
+	if hint != "" {
+		body["hint"] = hint
+	}
+	if code != "" {
+		body["code"] = code
+	}
+	writeJSON(w, status, body)
 }
 
 // classifyUpstreamError maps a Go error returned from an upstream service

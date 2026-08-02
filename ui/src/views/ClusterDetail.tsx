@@ -359,8 +359,11 @@ export function ClusterDetail() {
   const [secretPathSaving, setSecretPathSaving] = useState(false);
   // Defect 2.2: secret-path save now keeps the PR result so we can render a
   // clickable PR link (PRResultBanner) instead of dumping the raw URL as text.
-  // `message` carries the non-PR / error fallback.
-  const [secretPathResult, setSecretPathResult] = useState<{ pr?: PRWriteResult; message?: string } | null>(null);
+  // `message` carries the non-PR / error fallback. `isError` (error review
+  // package 2 walk finding) distinguishes a genuine failure from a plain
+  // success message so the render below doesn't paint a failed save in
+  // success-teal styling.
+  const [secretPathResult, setSecretPathResult] = useState<{ pr?: PRWriteResult; message?: string; isError?: boolean } | null>(null);
   const [secretPathPreview, setSecretPathPreview] = useState<DryRunResult | null>(null);
   const [secretPathPreviewLoading, setSecretPathPreviewLoading] = useState(false);
   const [secretPathPreviewError, setSecretPathPreviewError] = useState<string | null>(null);
@@ -2294,7 +2297,7 @@ export function ClusterDetail() {
                             setSecretPathPreview(null);
                             setSecretPathPreviewError(null);
                           } catch (e: unknown) {
-                            setSecretPathResult({ message: e instanceof Error ? e.message : 'Failed to update' });
+                            setSecretPathResult({ message: e instanceof Error ? e.message : 'Failed to update', isError: true });
                           } finally {
                             setSecretPathSaving(false);
                           }
@@ -2346,7 +2349,15 @@ export function ClusterDetail() {
                     </div>
                   )}
                   {secretPathResult?.message && (
-                    <p className="mt-0.5 text-xs text-teal-600 dark:text-teal-400">{secretPathResult.message}</p>
+                    <p
+                      className={
+                        secretPathResult.isError
+                          ? 'mt-0.5 text-xs text-red-600 dark:text-red-400'
+                          : 'mt-0.5 text-xs text-teal-600 dark:text-teal-400'
+                      }
+                    >
+                      {secretPathResult.message}
+                    </p>
                   )}
                   {secretPathPreview && (
                     <div className="mt-2">
