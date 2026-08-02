@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react'
 import { Server } from 'lucide-react'
+import { api } from '@/services/api'
+import type { NodeInfo } from '@/services/models'
 
 export interface HomeClusterInfo {
   available: boolean
@@ -36,6 +39,34 @@ export function HomeClusterCard({ homeCluster, sharkoVersion, argocdVersion, arg
   const hasReadiness =
     homeCluster.available && homeCluster.node_count != null && homeCluster.nodes_ready != null
   const allReady = hasReadiness && homeCluster.nodes_ready === homeCluster.node_count && (homeCluster.node_count ?? 0) > 0
+  const notAllReady = hasReadiness && !allReady
+
+  // S4 (walk day 4): only fetch the richer per-node endpoint when there's
+  // something to explain — a cluster with all nodes ready never fetches
+  // it, matching the old behavior exactly. A fetch error just means the
+  // names don't show; the X/Y badge above still renders from homeCluster.
+  const [notReadyNodes, setNotReadyNodes] = useState<NodeInfo[] | null>(null)
+
+  useEffect(() => {
+    if (!notAllReady) {
+      setNotReadyNodes(null)
+      return
+    }
+    let cancelled = false
+    api
+      .getNodeInfo()
+      .then((resp) => {
+        if (cancelled) return
+        setNotReadyNodes((resp?.nodes ?? []).filter((n) => n.status !== 'Ready'))
+      })
+      .catch(() => {
+        if (!cancelled) setNotReadyNodes(null)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notAllReady])
 
   return (
     <div className="max-w-md rounded-xl border border-border bg-card p-4 shadow-sm">
@@ -46,16 +77,27 @@ export function HomeClusterCard({ homeCluster, sharkoVersion, argocdVersion, arg
         </div>
         {hasReadiness && (
           <span
+            data-testid="node-readiness-badge"
             className={`rounded-full px-2 py-0.5 text-xs font-medium ${
               allReady
                 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                : 'bg-muted text-muted-foreground'
+                : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
             }`}
           >
             {allReady ? 'all nodes ready' : `${homeCluster.nodes_ready}/${homeCluster.node_count} nodes ready`}
           </span>
         )}
       </div>
+
+      {notAllReady && notReadyNodes && notReadyNodes.length > 0 && (
+        <ul className="mt-2 space-y-0.5">
+          {notReadyNodes.map((n) => (
+            <li key={n.name} className="text-xs text-amber-700 dark:text-amber-400">
+              {n.name} — {n.status}
+            </li>
+          ))}
+        </ul>
+      )}
 
       <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
         <div>

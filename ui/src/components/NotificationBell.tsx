@@ -77,11 +77,19 @@ export function NotificationBell() {
     }
   }
 
-  // Connection-health alerts are actionable: clicking one takes the user to
-  // Settings → Connection so they can inspect/fix the Git or ArgoCD link.
-  // Other notification types remain non-navigating. Mark-read behavior is
-  // unchanged (the bell still uses mark-all-as-read).
+  // S3 (walk day 4): every notification is clickable now — clicking marks
+  // that one item read (optimistic update, then the real request). A
+  // connection-health alert ALSO navigates to Settings → Connection so the
+  // user can inspect/fix the Git or ArgoCD link; other types just clear
+  // their unread state. "Mark all as read" is unchanged.
   const handleItemClick = (n: Notification) => {
+    if (!n.read) {
+      setNotifications(prev => prev.map(item => (item.id === n.id ? { ...item, read: true } : item)))
+      api.markNotificationRead(n.id).catch(() => {
+        // Optimistic — the item stays marked read locally even if the
+        // request fails; the next poll will reconcile with the server.
+      })
+    }
     if (n.type === 'connection') {
       setOpen(false)
       navigate(CONNECTION_SETTINGS_ROUTE)
@@ -138,22 +146,18 @@ export function NotificationBell() {
               return (
               <div
                 key={n.id}
-                role={actionable ? 'button' : undefined}
-                tabIndex={actionable ? 0 : undefined}
-                onClick={actionable ? () => handleItemClick(n) : undefined}
-                onKeyDown={
-                  actionable
-                    ? (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault()
-                          handleItemClick(n)
-                        }
-                      }
-                    : undefined
-                }
-                className={`border-b border-[#d6eeff] px-4 py-3 last:border-0 dark:border-gray-800 ${
+                role="button"
+                tabIndex={0}
+                onClick={() => handleItemClick(n)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    handleItemClick(n)
+                  }
+                }}
+                className={`cursor-pointer border-b border-[#d6eeff] px-4 py-3 last:border-0 hover:bg-[#d6eeff] dark:border-gray-800 dark:hover:bg-gray-700 ${
                   !n.read ? 'bg-[#e0f0ff] dark:bg-gray-900/50' : ''
-                } ${actionable ? 'cursor-pointer hover:bg-[#d6eeff] dark:hover:bg-gray-700' : ''}`}
+                }`}
               >
                 <div className="flex items-start gap-2">
                   <span className="mt-0.5 text-sm">{typeIcon(n.type)}</span>

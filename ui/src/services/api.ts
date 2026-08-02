@@ -26,6 +26,7 @@ import type {
   MigrationPlan,
   MigrationStatus,
   RuntimeHandoffReport,
+  NodeInfoResponse,
   ObservabilityOverviewResponse,
   PullRequestsResponse,
   RegisterClusterResult,
@@ -1622,7 +1623,7 @@ export const api = {
     postJSON<unknown>('/embedded-dashboards', dashboards),
 
   // Cluster nodes
-  getNodeInfo: () => fetchJSON<{ nodes: unknown[]; total: number; ready: number; not_ready: number; message?: string }>('/cluster/nodes'),
+  getNodeInfo: () => fetchJSON<NodeInfoResponse>('/cluster/nodes'),
 
   // Home cluster (where Sharko & ArgoCD run)
   getHomeCluster: () => fetchJSON<{
@@ -1735,6 +1736,8 @@ export const api = {
   }>('/notifications'),
 
   markAllNotificationsRead: () => postJSON<unknown>('/notifications/read-all'),
+
+  markNotificationRead: (id: string) => postJSON<unknown>(`/notifications/${encodeURIComponent(id)}/read`),
 
   // ─── Curated catalog (Marketplace) ──────────────────────────────────────
   // Three reads:

@@ -1130,6 +1130,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Notifications
 	mux.HandleFunc("GET /api/v1/notifications", srv.handleListNotifications)
 	mux.HandleFunc("POST /api/v1/notifications/read-all", srv.handleMarkAllNotificationsRead)
+	mux.HandleFunc("POST /api/v1/notifications/{id}/read", srv.handleMarkNotificationRead)
 
 	// Pull request tracking
 	mux.HandleFunc("GET /api/v1/prs", srv.handleListPRs)

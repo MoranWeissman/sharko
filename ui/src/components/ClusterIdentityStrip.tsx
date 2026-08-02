@@ -63,12 +63,16 @@ export function ClusterIdentityStrip({ capabilities, loading }: ClusterIdentityS
       )}
 
       {showNotDetected && (
+        // S5 follow-up (walk day 4): same neutral-first fix as
+        // ClusterIdentityPanel — detection is of credentials, not cluster
+        // type, so this never claims the cluster IS or ISN'T EKS. Shrunk
+        // to the strip's one-line format instead of the panel's two lines.
         <p
           className="flex flex-wrap items-center gap-1.5 text-sm text-amber-700 dark:text-amber-400"
           data-testid="identity-strip-not-detected"
         >
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          No AWS identity detected — for EKS clusters, paste a kubeconfig or point at a secret.{' '}
+          Sharko will connect with the credentials you provide. Running on EKS?{' '}
           <a
             href={IDENTITY_DOCS_URL}
             target="_blank"
@@ -76,8 +80,8 @@ export function ClusterIdentityStrip({ capabilities, loading }: ClusterIdentityS
             className="font-medium text-teal-700 underline hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-300"
           >
             See the setup guide
-          </a>
-          .
+          </a>{' '}
+          to use an AWS identity instead.
         </p>
       )}
     </div>

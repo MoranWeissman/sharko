@@ -7648,6 +7648,38 @@ paths:
       summary: List notifications
       tags:
       - notifications
+  /notifications/{id}/read:
+    post:
+      description: Marks one notification as read by id
+      parameters:
+      - description: Notification ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Notification not found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Mark a single notification as read
+      tags:
+      - notifications
   /notifications/read-all:
     post:
       description: Marks all notifications as read

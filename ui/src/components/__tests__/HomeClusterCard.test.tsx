@@ -1,8 +1,19 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
 import { HomeClusterCard } from '@/components/HomeClusterCard'
 
+const getNodeInfo = vi.fn()
+vi.mock('@/services/api', () => ({
+  api: {
+    getNodeInfo: () => getNodeInfo(),
+  },
+}))
+
 describe('HomeClusterCard (dashboard facelift, Package 3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('renders all four identity fields when everything is known', () => {
     render(
       <HomeClusterCard
@@ -21,9 +32,25 @@ describe('HomeClusterCard (dashboard facelift, Package 3)', () => {
     expect(screen.getByText('3')).toBeInTheDocument()
     expect(screen.getByText('all nodes ready')).toBeInTheDocument()
     expect(screen.getByText('up 3h12m · running in-cluster')).toBeInTheDocument()
+    // S4 (walk day 4): all nodes ready — no reason to fetch the richer
+    // per-node endpoint, behavior stays exactly as before this story.
+    expect(getNodeInfo).not.toHaveBeenCalled()
   })
 
-  it('shows a neutral "X/Y nodes ready" chip when not all nodes are ready — no severity color change', () => {
+  // S4 (walk day 4): the chip used to stay neutral gray for "not all
+  // ready" — now it's amber, a real warning color, and the card lists
+  // which nodes aren't Ready underneath.
+  it('shows an amber "X/Y nodes ready" chip and the failing node names when not all nodes are ready', async () => {
+    getNodeInfo.mockResolvedValue({
+      nodes: [
+        { name: 'worker-1', status: 'Ready' },
+        { name: 'worker-2', status: 'NotReady' },
+        { name: 'worker-3', status: 'Ready' },
+      ],
+      total: 3,
+      ready: 2,
+      not_ready: 1,
+    })
     render(
       <HomeClusterCard
         homeCluster={{ available: true, kubernetes_version: 'v1.29.0', node_count: 3, nodes_ready: 2 }}
@@ -33,8 +60,34 @@ describe('HomeClusterCard (dashboard facelift, Package 3)', () => {
 
     const chip = screen.getByText('2/3 nodes ready')
     expect(chip).toBeInTheDocument()
+    expect(chip.className).toContain('amber')
     expect(chip.className).not.toContain('green')
-    expect(chip.className).not.toContain('red')
+
+    await waitFor(() => {
+      expect(screen.getByText(/worker-2/)).toBeInTheDocument()
+    })
+    expect(screen.getByText('worker-2 — NotReady')).toBeInTheDocument()
+    // Only the not-Ready node shows — worker-1 and worker-3 are Ready.
+    expect(screen.queryByText(/worker-1/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/worker-3/)).not.toBeInTheDocument()
+  })
+
+  it('degrades gracefully when the node-info fetch fails — badge still shows X/Y, no crash', async () => {
+    getNodeInfo.mockRejectedValue(new Error('boom'))
+    render(
+      <HomeClusterCard
+        homeCluster={{ available: true, kubernetes_version: 'v1.29.0', node_count: 3, nodes_ready: 2 }}
+        argocdConnected={false}
+      />,
+    )
+
+    expect(screen.getByText('2/3 nodes ready')).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(getNodeInfo).toHaveBeenCalled()
+    })
+    // No node names rendered, no crash, badge unaffected.
+    expect(screen.getByText('2/3 nodes ready')).toBeInTheDocument()
   })
 
   it('degrades every missing field to "—" independently — never errors', () => {

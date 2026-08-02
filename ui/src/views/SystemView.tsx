@@ -23,8 +23,6 @@ import { Link } from 'react-router-dom'
 import {
   ArrowRight,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
   ExternalLink,
   Fingerprint,
   GitBranch,
@@ -273,47 +271,45 @@ function ArrowCard({
   )
 }
 
-/** Expandable per-cluster status list under a cluster arrow. */
-function ClusterList({
+/**
+ * One honest line per cluster arrow — "N managed clusters — X healthy, Y
+ * with issues" — instead of the old expandable per-cluster list (walk-day
+ * finding, maintainer-approved). Counts all three buckets (healthy,
+ * degraded, unknown) but only mentions the non-zero ones, so "8 managed
+ * clusters — 7 healthy, 1 with issues" reads clean instead of "0 unknown".
+ */
+export function summarizeClusterStatuses(statuses: ArrowStatus[]): string {
+  const total = statuses.length
+  const clusterWord = total === 1 ? 'managed cluster' : 'managed clusters'
+  const healthy = statuses.filter((s) => s === 'healthy').length
+  const degraded = statuses.filter((s) => s === 'degraded').length
+  const unknown = statuses.filter((s) => s === 'unknown').length
+
+  const parts: string[] = []
+  if (healthy > 0) parts.push(`${healthy} healthy`)
+  if (degraded > 0) parts.push(`${degraded} with issues`)
+  if (unknown > 0) parts.push(`${unknown} unknown`)
+
+  if (parts.length === 0) return `${total} ${clusterWord}`
+  return `${total} ${clusterWord} — ${parts.join(', ')}`
+}
+
+/** One-line cluster status summary under a cluster arrow, linking to /clusters. */
+function ClusterStatusLine({
   clusters,
   derive,
-  deriveLabel,
-  toggleLabel,
 }: {
   clusters: Cluster[]
   derive: (c: Cluster) => ArrowStatus
-  /** Optional honest label override (e.g. "Reachable" vs "Healthy") — falls back to the StatusPill default. */
-  deriveLabel?: (c: Cluster) => string | undefined
-  toggleLabel: string
 }) {
-  const [open, setOpen] = useState(false)
   if (clusters.length === 0) return null
   return (
-    <div>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-1 text-xs font-medium text-[#3a6a8a] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:text-white"
-        aria-expanded={open}
-      >
-        {open ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-        {toggleLabel}
-      </button>
-      {open && (
-        <ul className="mt-2 space-y-1.5">
-          {clusters.map((c) => (
-            <li key={c.name} className="flex items-center justify-between gap-2">
-              <Link
-                to={`/clusters/${encodeURIComponent(c.name)}`}
-                className="truncate text-sm text-[#1a4a6a] underline-offset-2 hover:underline dark:text-blue-300"
-              >
-                {c.name}
-              </Link>
-              <StatusPill status={derive(c)} label={deriveLabel?.(c)} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <Link
+      to="/clusters"
+      className="inline-flex w-fit text-sm text-[#1a4a6a] underline-offset-2 hover:underline dark:text-blue-300"
+    >
+      {summarizeClusterStatuses(clusters.map(derive))}
+    </Link>
   )
 }
 
@@ -502,12 +498,7 @@ export function SystemView() {
             actionTo="/clusters"
             actionLabel="Open the Managed Clusters page"
           >
-            <ClusterList
-              clusters={managedClusters}
-              derive={deriveSharkoClusterStatus}
-              deriveLabel={deriveSharkoClusterLabel}
-              toggleLabel={`Per-cluster status (${SHARKO_CONN_LABEL})`}
-            />
+            <ClusterStatusLine clusters={managedClusters} derive={deriveSharkoClusterStatus} />
           </ArrowCard>
           <ArrowCard
             from="ArgoCD"
@@ -519,11 +510,7 @@ export function SystemView() {
             actionTo="/clusters"
             actionLabel="Open the Managed Clusters page"
           >
-            <ClusterList
-              clusters={managedClusters}
-              derive={deriveArgoClusterStatus}
-              toggleLabel={`Per-cluster status (${ARGOCD_CONN_LABEL})`}
-            />
+            <ClusterStatusLine clusters={managedClusters} derive={deriveArgoClusterStatus} />
           </ArrowCard>
         </div>
       </section>

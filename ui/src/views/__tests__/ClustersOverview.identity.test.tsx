@@ -126,7 +126,12 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
     await waitFor(() => {
       expect(screen.getByTestId('identity-strip-not-detected')).toBeInTheDocument();
     });
-    expect(screen.getByText(/No AWS identity detected/)).toBeInTheDocument();
+    // S5 follow-up (walk day 4): neutral-first copy — detection is of
+    // credentials, not cluster type, so the strip never claims the
+    // cluster IS or ISN'T EKS.
+    expect(
+      screen.getByText(/Sharko will connect with the credentials you provide/),
+    ).toBeInTheDocument();
     const guideLink = screen.getByRole('link', { name: /see the setup guide/i });
     expect(guideLink).toHaveAttribute(
       'href',

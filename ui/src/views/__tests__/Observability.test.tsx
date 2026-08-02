@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { Observability } from '@/views/Observability';
 // WQ-3 (attention-move-badges): Observability now renders the attention
@@ -52,7 +53,11 @@ vi.mock('@/services/api', () => ({
         total_apps: 120,
         total_clusters: 15,
         connected_clusters: 13,
-        health_summary: { Healthy: 100, Degraded: 10, Progressing: 5, Unknown: 5 },
+        // S1 (walk day 4): health_summary and addon_groups[].child_apps are
+        // built from the same server-side app list, so a real-shaped
+        // fixture keeps them in sync — child_apps below sums to exactly
+        // this: Healthy: 3, Degraded: 1, Unknown: 1 (total 5).
+        health_summary: { Healthy: 3, Degraded: 1, Unknown: 1 },
       },
       recent_syncs: [
         {
@@ -112,6 +117,65 @@ vi.mock('@/services/api', () => ({
                 total_pods: 5,
                 running_pods: 5,
                 total_containers: 3,
+                has_missing_limits: false,
+              },
+            },
+            {
+              app_name: 'istio-prod-cluster2',
+              cluster_name: 'prod-cluster2',
+              health: 'Healthy',
+              sync_status: 'Synced',
+              reconciled_at: new Date(Date.now() - 600000).toISOString(),
+              resource_summary: {
+                total_pods: 5,
+                running_pods: 5,
+                total_containers: 3,
+                has_missing_limits: false,
+              },
+            },
+            {
+              app_name: 'istio-staging',
+              cluster_name: 'staging',
+              health: 'Degraded',
+              sync_status: 'OutOfSync',
+              reconciled_at: new Date(Date.now() - 600000).toISOString(),
+              resource_summary: {
+                total_pods: 5,
+                running_pods: 3,
+                total_containers: 3,
+                has_missing_limits: false,
+              },
+            },
+          ],
+        },
+        {
+          addon_name: 'prometheus',
+          total_apps: 2,
+          health_counts: { Healthy: 1, Unknown: 1 },
+          child_apps: [
+            {
+              app_name: 'prometheus-prod-cluster1',
+              cluster_name: 'prod-cluster1',
+              health: 'Healthy',
+              sync_status: 'Synced',
+              reconciled_at: new Date(Date.now() - 600000).toISOString(),
+              resource_summary: {
+                total_pods: 2,
+                running_pods: 2,
+                total_containers: 1,
+                has_missing_limits: false,
+              },
+            },
+            {
+              app_name: 'prometheus-staging',
+              cluster_name: 'staging',
+              health: 'Unknown',
+              sync_status: 'Unknown',
+              reconciled_at: new Date(Date.now() - 600000).toISOString(),
+              resource_summary: {
+                total_pods: 0,
+                running_pods: 0,
+                total_containers: 0,
                 has_missing_limits: false,
               },
             },
@@ -190,8 +254,8 @@ describe('Observability', () => {
     expect(screen.queryByText('In ArgoCD')).not.toBeInTheDocument();
     expect(screen.queryByText('Known to ArgoCD')).not.toBeInTheDocument();
     // The panel's own health-summary bar is gone too — the donut chart
-    // below (Application Health Distribution) is the only health-summary
-    // surface left, and that section is unaffected.
+    // below (Addon Application Health) is the only health-summary surface
+    // left, and that section is unaffected.
     expect(screen.queryByText('Health Summary')).not.toBeInTheDocument();
   });
 
@@ -240,64 +304,108 @@ describe('Observability', () => {
     });
   });
 
-  it('renders health distribution donut chart', async () => {
+  it('renders health distribution donut chart, titled and subtitled as addon applications', async () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Application Health Distribution')).toBeInTheDocument();
+      expect(screen.getByText('Addon Application Health')).toBeInTheDocument();
     });
 
-    // Chart should show total applications
-    expect(screen.getByText(/Total: 120 applications/)).toBeInTheDocument();
+    // Scoped to the health card — both pies share the identical subtitle
+    // and (in this fixture) the same total, so an unscoped query would
+    // match both.
+    const healthCard = screen.getByTestId('health-distribution-card');
+    expect(
+      within(healthCard).getByText('All addon applications across your managed clusters'),
+    ).toBeInTheDocument();
+    expect(within(healthCard).getByText(/Total: 5 applications/)).toBeInTheDocument();
   });
 
   // #685 (maintainer's middle-size lock) — this pie now goes through the
   // shared DistributionPie, same component FleetStatusStrip uses. The
   // legend is real, always-visible markup (name + count per state), and
   // the pie region itself carries the full breakdown as one aria sentence.
-  it('shows a name+count legend row per health state and an aria breakdown on the shared pie', async () => {
+  //
+  // S1 (walk day 4): the pie no longer reads control_plane.health_summary
+  // directly — it's recomputed from addon_groups[].child_apps[] so "All
+  // addons" and any single-addon filter share the same computation. This
+  // fixture is deliberately real-shaped: child_apps sums to exactly the
+  // mocked health_summary (Healthy: 3, Degraded: 1, Unknown: 1), so this
+  // test also stands as the parity check between the two.
+  it('computes the health pie from child_apps, matching health_summary on a real-shaped fixture', async () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Application Health Distribution')).toBeInTheDocument();
+      expect(screen.getByText('Addon Application Health')).toBeInTheDocument();
     });
 
     const legend = screen.getByTestId('health-distribution-legend');
     expect(within(legend).getByText('Healthy')).toBeInTheDocument();
-    expect(within(legend).getByText('100')).toBeInTheDocument();
+    expect(within(legend).getByText('3')).toBeInTheDocument();
     expect(within(legend).getByText('Degraded')).toBeInTheDocument();
-    expect(within(legend).getByText('10')).toBeInTheDocument();
+    expect(within(legend).getByText('Unknown')).toBeInTheDocument();
+    expect(within(legend).getAllByText('1').length).toBe(2);
 
     const pie = within(screen.getByTestId('health-distribution-pie')).getByRole('img');
     const ariaLabel = pie.getAttribute('aria-label');
-    expect(ariaLabel).toContain('100 Healthy');
-    expect(ariaLabel).toContain('10 Degraded');
+    expect(ariaLabel).toContain('3 Healthy');
+    expect(ariaLabel).toContain('1 Degraded');
+    expect(ariaLabel).toContain('1 Unknown');
+    expect(
+      within(screen.getByTestId('health-distribution-card')).getByText(/Total: 5 applications/),
+    ).toBeInTheDocument();
   });
 
-  it('renders sync distribution donut chart', async () => {
+  it('renders sync distribution donut chart, titled and subtitled as addon applications', async () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Application Sync Distribution')).toBeInTheDocument();
+      expect(screen.getByText('Addon Application Sync')).toBeInTheDocument();
     });
 
-    // Chart should show total from addon_groups child_apps (1 in mock data)
-    expect(screen.getByText(/Total: 1 application/)).toBeInTheDocument();
+    // Total from addon_groups child_apps across both addons (5 in mock data)
+    expect(
+      within(screen.getByTestId('sync-distribution-card')).getByText(/Total: 5 applications/),
+    ).toBeInTheDocument();
   });
 
   it('shows a name+count legend row per sync state on the shared pie (#685)', async () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Application Sync Distribution')).toBeInTheDocument();
+      expect(screen.getByText('Addon Application Sync')).toBeInTheDocument();
     });
 
     const legend = screen.getByTestId('sync-distribution-legend');
     expect(within(legend).getByText('Synced')).toBeInTheDocument();
-    expect(within(legend).getByText('1')).toBeInTheDocument();
+    expect(within(legend).getByText('3')).toBeInTheDocument();
 
     const pie = within(screen.getByTestId('sync-distribution-pie')).getByRole('img');
-    expect(pie.getAttribute('aria-label')).toContain('1 Synced');
+    expect(pie.getAttribute('aria-label')).toContain('3 Synced');
+  });
+
+  it('offers an "All addons" default plus one option per addon, and filters both pies to the selected addon', async () => {
+    const user = userEvent.setup();
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Addon Application Health')).toBeInTheDocument();
+    });
+
+    const select = screen.getByLabelText('Filter distribution charts by addon') as HTMLSelectElement;
+    const optionLabels = Array.from(select.options).map((o) => o.value);
+    expect(optionLabels).toEqual(['all', 'istio', 'prometheus']);
+    expect(select.value).toBe('all');
+
+    await user.selectOptions(select, 'istio');
+
+    // istio's child_apps: 2 Healthy + 1 Degraded = 3 total (both pies).
+    await waitFor(() => {
+      expect(screen.getAllByText(/Total: 3 applications/).length).toBe(2);
+    });
+    expect(
+      screen.getAllByText('istio applications across your managed clusters').length,
+    ).toBe(2);
   });
 
   it('renders deployment frequency chart', async () => {
@@ -611,7 +719,14 @@ describe('Observability — Health section open issues (walk-day fold)', () => {
     // Problem-tier-first: zzz-quiet's card comes before aaa-clean's card
     // even though it's alphabetically last and its own group snapshot says
     // Healthy — the live addon-state map is what decides the order.
-    const names = screen.getAllByText(/^(aaa-clean|zzz-quiet)$/).map((el) => el.textContent);
+    //
+    // Scoped to the Health section itself (S1, walk day 4): the new
+    // per-addon distribution filter above also lists every addon name as a
+    // <select><option>, so an unscoped getAllByText would pick those up too.
+    const healthSection = screen.getByText('Health').closest('section')!;
+    const names = within(healthSection)
+      .getAllByText(/^(aaa-clean|zzz-quiet)$/)
+      .map((el) => el.textContent);
     expect(names.indexOf('zzz-quiet')).toBeLessThan(names.indexOf('aaa-clean'));
 
     // No double-listing — the reason appears exactly once (on the group),
@@ -706,8 +821,11 @@ describe('Observability — Health section open issues (walk-day fold)', () => {
     expect(screen.queryByText('metrics-server-spoke-eu')).not.toBeInTheDocument();
 
     // The catalog addon name ("metrics-server") — the group header — is
-    // the only place this addon's name renders.
-    expect(screen.getAllByText('metrics-server')).toHaveLength(1);
+    // the only place this addon's name renders. Scoped to the Health
+    // section (S1, walk day 4): the per-addon distribution filter above
+    // also lists it as a <select><option>.
+    const healthSection = screen.getByText('Health').closest('section')!;
+    expect(within(healthSection).getAllByText('metrics-server')).toHaveLength(1);
   });
 
   it('genuine orphan: an addon@cluster the attention feed flags that has no matching group at all still renders — once, as a fallback row', async () => {

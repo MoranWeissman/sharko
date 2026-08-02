@@ -193,8 +193,9 @@ var HandlerTier = map[string]audit.Tier{
 	// ─── Operation heartbeat / system noise ─────────────────────────────────
 	"handleOperationHeartbeat": audit.TierPersonal, // client keep-alive ping
 
-	// ─── Mark-all-read (UI state, not a real mutation) ──────────────────────
+	// ─── Mark-all-read / mark-one-read (UI state, not a real mutation) ──────
 	"handleMarkAllNotificationsRead": audit.TierPersonal,
+	"handleMarkNotificationRead":     audit.TierPersonal,
 
 	// ─── Agent chat (high-frequency, no Git effect) ─────────────────────────
 	"handleAgentChat":  audit.TierPersonal,

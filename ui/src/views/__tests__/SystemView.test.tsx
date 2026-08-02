@@ -17,6 +17,7 @@ import SystemView, {
   deriveSharkoClusterStatus,
   deriveSharkoRepoArrow,
   parseMajorMinor,
+  summarizeClusterStatuses,
   testedRangeLabel,
   versionOutsideTestedRange,
 } from '@/views/SystemView'
@@ -277,6 +278,30 @@ describe('aggregateStatuses', () => {
   })
 })
 
+// S2 (walk day 4) — the honest one-line summary that replaced the
+// expandable per-cluster list under each cluster arrow.
+describe('summarizeClusterStatuses', () => {
+  it('counts all three buckets but only mentions the non-zero ones', () => {
+    expect(
+      summarizeClusterStatuses(['healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'degraded']),
+    ).toBe('8 managed clusters — 7 healthy, 1 with issues')
+  })
+  it('says "1 managed cluster" (singular) for a single cluster', () => {
+    expect(summarizeClusterStatuses(['healthy'])).toBe('1 managed cluster — 1 healthy')
+  })
+  it('mentions unknown when that is the only non-zero bucket', () => {
+    expect(summarizeClusterStatuses(['unknown'])).toBe('1 managed cluster — 1 unknown')
+  })
+  it('mentions every non-zero bucket when all three are present', () => {
+    expect(summarizeClusterStatuses(['healthy', 'degraded', 'unknown'])).toBe(
+      '3 managed clusters — 1 healthy, 1 with issues, 1 unknown',
+    )
+  })
+  it('handles zero clusters', () => {
+    expect(summarizeClusterStatuses([])).toBe('0 managed clusters')
+  })
+})
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Version badge logic — dumb and safe, minor-version comparison only
 // ─────────────────────────────────────────────────────────────────────────────
@@ -438,16 +463,10 @@ describe('SystemView', () => {
     await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
     expect(screen.getAllByText('2 of 2 healthy')).toHaveLength(2)
 
-    // Expand the Sharko → Clusters list and confirm the honest label split
-    // (scoped to each row — the repo arrows above also render a default
-    // "Healthy" pill, so we check per-cluster-row text, not page-wide).
-    fireEvent.click(screen.getByRole('button', { name: /Per-cluster status \(Sharko → cluster\)/ }))
-    const prod1Row = screen.getByText('prod-1').closest('li')
-    const prod2Row = screen.getByText('prod-2').closest('li')
-    expect(prod1Row).not.toBeNull()
-    expect(prod2Row).not.toBeNull()
-    expect(prod1Row!.textContent).toContain('Healthy')
-    expect(prod2Row!.textContent).toContain('Reachable')
+    // S2 (walk day 4): the per-cluster expandable list is gone — both
+    // cluster arrows now show one honest summary line each, computed with
+    // the same derive function the arrow's own aggregate uses.
+    expect(screen.getAllByText('2 managed clusters — 2 healthy')).toHaveLength(2)
   })
 
   it('links every arrow to the page where you would act (read-only page)', async () => {
@@ -466,10 +485,15 @@ describe('SystemView', () => {
     expect(clustersLinks).toHaveLength(2)
     clustersLinks.forEach((l) => expect(l).toHaveAttribute('href', '/clusters'))
 
-    // Expanding a per-cluster list exposes a link to the cluster detail page
-    fireEvent.click(screen.getByRole('button', { name: /Per-cluster status \(Sharko → cluster\)/ }))
-    const clusterLink = screen.getByRole('link', { name: 'prod-1' })
-    expect(clusterLink).toHaveAttribute('href', '/clusters/prod-1')
+    // S2 — the one-line cluster status summary under each arrow also links
+    // to /clusters (no more per-cluster deep link on this page: the
+    // maintainer-approved simplification points both arrows at the same
+    // Managed Clusters page instead of expanding a list here). This
+    // cluster is healthy on both the Sharko and ArgoCD arrows, so the
+    // identical summary line renders twice.
+    const summaryLines = screen.getAllByText('1 managed cluster — 1 healthy')
+    expect(summaryLines).toHaveLength(2)
+    summaryLines.forEach((el) => expect(el.closest('a')).toHaveAttribute('href', '/clusters'))
   })
 })
 
@@ -508,6 +532,16 @@ describe('SystemView — Sharko identity section (V2-cleanup-89.2)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('identity-not-detected')).toBeInTheDocument()
     })
+    // S5 (walk day 4): neutral-first main line — detection is of
+    // credentials, not cluster type, so this never claims the cluster IS
+    // or ISN'T EKS. The old copy led with "for EKS clusters", which read
+    // as an AWS assumption on a non-EKS playground (e.g. kind).
+    expect(
+      screen.getByText(
+        "Sharko isn't using a cloud identity — it connects to clusters with the credentials you gave it.",
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/Running on EKS\?/)).toBeInTheDocument()
     const guideLink = screen.getByRole('link', { name: /see the setup guide/i })
     expect(guideLink).toHaveAttribute(
       'href',
