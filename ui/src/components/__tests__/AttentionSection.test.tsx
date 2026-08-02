@@ -91,13 +91,15 @@ describe('row builders', () => {
     expect(rows[0].link).toContain('/clusters/prod');
   });
 
-  it('buildSettlingAddonRows uses the "new — confirming" vocabulary, never "settling" or "grace window"', () => {
-    const rows = buildSettlingAddonRows([makeState({ badSince: Date.now() })]);
+  it('buildSettlingAddonRows shows state + where + when it started, moves the grace explanation to a tooltip', () => {
+    const rows = buildSettlingAddonRows([makeState({ cluster: 'prod', healthStatus: 'Degraded', badSince: Date.now() })]);
     expect(rows[0].severity).toBe('attention');
-    expect(rows[0].reason).toMatch(/new — confirming/i);
-    expect(rows[0].reason).toMatch(/grace period/i);
+    expect(rows[0].reason).toMatch(/^Degraded on prod — started \d+m ago$/);
+    expect(rows[0].reason).not.toMatch(/new — confirming/i);
+    expect(rows[0].reason).not.toMatch(/grace period/i);
     expect(rows[0].reason).not.toMatch(/settling/i);
     expect(rows[0].reason).not.toMatch(/grace window/i);
+    expect(rows[0].tooltip).toBe(GRACE_PERIOD_TOOLTIP);
   });
 
   it('buildUnknownAddonRows leads with "no status reported"', () => {
@@ -209,6 +211,30 @@ describe('classifyAddonGroupProblem (drives problem-tier-first sorting + the gro
     const result = classifyAddonGroupProblem(group, byApp);
     expect(result.tier).toBe('none');
   });
+
+  it('falls back to the byAppName index when the primary addon@cluster key misses (live-bug case: the feed carries the full app name as addonName)', () => {
+    const groupWithAppNames = {
+      addon_name: 'metrics-server',
+      child_apps: [{ cluster_name: 'spoke-eu', app_name: 'metrics-server-spoke-eu' }],
+    };
+    // The feed's own key ("metrics-server-spoke-eu@spoke-eu") doesn't match
+    // the primary key ("metrics-server@spoke-eu") the group needs — only
+    // the byAppName index (keyed by the feed item's real app name) rescues
+    // the match.
+    const badState = makeState({
+      addonName: 'metrics-server-spoke-eu',
+      appName: 'metrics-server-spoke-eu',
+      cluster: 'spoke-eu',
+      badSince: Date.now() - 11 * 60 * 1000,
+    });
+    const byApp = new Map([['metrics-server-spoke-eu@spoke-eu', badState]]);
+    const byAppName = new Map([['metrics-server-spoke-eu', badState]]);
+
+    expect(classifyAddonGroupProblem(groupWithAppNames, byApp).tier).toBe('none');
+    const result = classifyAddonGroupProblem(groupWithAppNames, byApp, byAppName);
+    expect(result.tier).toBe('confirmed');
+    expect(result.state?.cluster).toBe('spoke-eu');
+  });
 });
 
 describe('describeAddonProblem (plain-words inline reason for a problem addon group)', () => {
@@ -220,11 +246,11 @@ describe('describeAddonProblem (plain-words inline reason for a problem addon gr
     expect(tooltip).toBeUndefined();
   });
 
-  it('grace: says "new — confirming" and carries the grace-period tooltip', () => {
+  it('grace: drops the "new — confirming" phrase from the visible text, keeps it in the tooltip only', () => {
     const state = makeState({ cluster: 'spoke-eu', advisoryMessage: 'pod not ready', badSince: Date.now() - 4 * 60 * 1000 });
     const { text, tooltip } = describeAddonProblem(state, 'grace');
     expect(text).toMatch(/pod not ready/);
-    expect(text).toMatch(/new — confirming/);
+    expect(text).not.toMatch(/new — confirming/i);
     expect(text).not.toMatch(/settling/i);
     expect(tooltip).toBe(GRACE_PERIOD_TOOLTIP);
   });

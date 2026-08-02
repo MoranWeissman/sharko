@@ -6,6 +6,7 @@ import { Observability } from '@/views/Observability';
 // detail rows via useAddonStates() — has to be mounted inside the provider
 // or the hook throws.
 import { AddonStatesProvider } from '@/hooks/useAddonStates';
+import { GRACE_PERIOD_TOOLTIP } from '@/components/AttentionSection';
 
 vi.mock('recharts', () => {
   const C = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
@@ -595,11 +596,17 @@ describe('Observability — Health section open issues (walk-day fold)', () => {
       expect(screen.getByText('Health')).toBeInTheDocument();
     });
     // The reason line is composed inline on the group header — plain
-    // words, the cluster name, the detail, and the grace-tier vocabulary.
+    // words, the cluster name, and the detail. The grace-period wording
+    // ("new — confirming" and the full explanation) doesn't show inline
+    // any more — the amber color already says "not confirmed yet"; the
+    // explanation only lives in the row's hover tooltip.
+    let reasonEl: HTMLElement;
     await waitFor(() => {
-      expect(screen.getByText(/degraded on c1 — pod not ready/i)).toBeInTheDocument();
+      reasonEl = screen.getByText(/degraded on c1 — pod not ready/i);
+      expect(reasonEl).toBeInTheDocument();
     });
-    expect(screen.getByText(/new — confirming/)).toBeInTheDocument();
+    expect(screen.queryByText(/new — confirming/)).not.toBeInTheDocument();
+    expect(reasonEl!.closest('p')).toHaveAttribute('title', GRACE_PERIOD_TOOLTIP);
 
     // Problem-tier-first: zzz-quiet's card comes before aaa-clean's card
     // even though it's alphabetically last and its own group snapshot says
@@ -610,6 +617,148 @@ describe('Observability — Health section open issues (walk-day fold)', () => {
     // No double-listing — the reason appears exactly once (on the group),
     // there is no separate flat "zzz-quiet" attention row anywhere else.
     expect(screen.getAllByText(/degraded on c1 — pod not ready/i)).toHaveLength(1);
+  });
+
+  // Regression coverage for the maintainer's live-bug finding: the earlier
+  // tests in this file (and the ones above) hand-write an "idealized"
+  // addon_name on the attention feed that already matches the catalog
+  // addon name — that's exactly the kind of mock drift that let the real
+  // bug ship unnoticed. These two fixtures copy field names straight off
+  // the Go wire structs (internal/api/dashboard.go's AttentionItem,
+  // internal/models/observability.go's AddonGroupHealth/ChildAppHealth)
+  // instead, including the real bug: AttentionItem.AddonName is set to the
+  // full ArgoCD app name, not the catalog addon name.
+  it('cross-feed: one app flowing through both feeds with the REAL (buggy) wire shape renders exactly once, as the group\'s inline reason — never as a fallback row', async () => {
+    const { api } = await import('@/services/api');
+    vi.mocked(api.getClusters).mockResolvedValue({ clusters: [] });
+    vi.mocked(api.getDashboardStats).mockResolvedValue({
+      total_clusters: 0,
+      connected_clusters: 0,
+      bootstrap_app_health: 'Healthy',
+      bootstrap_app_sync: 'Synced',
+      clusters: { total: 0, connected: 0, pending: 0, untested: 0, missing: 0, failed: 0 },
+    } as never);
+    vi.mocked(api.getVersionMatrix).mockResolvedValue({ addons: [] } as never);
+
+    // /dashboard/attention wire shape — the live bug: dashboard.go sets
+    // `addonName := app.Name` directly (no split), so AddonName carries the
+    // full ArgoCD app name ("metrics-server-spoke-eu"), not the catalog
+    // addon name ("metrics-server").
+    vi.mocked(api.getAttentionItems).mockResolvedValue([
+      {
+        app_name: 'metrics-server-spoke-eu',
+        addon_name: 'metrics-server-spoke-eu',
+        cluster: 'spoke-eu',
+        health: 'Degraded',
+        sync: 'OutOfSync',
+        error: 'pod not ready',
+      },
+    ] as never);
+
+    // /observability wire shape — the catalog addon name is correct here
+    // (extractAddonCluster splits app.Name properly), and each child app
+    // carries its own real ArgoCD app_name.
+    vi.mocked(api.getObservability).mockResolvedValue({
+      control_plane: {
+        argocd_version: 'v3.2.2',
+        helm_version: 'v3.14.0',
+        kubectl_version: 'v1.29.0',
+        total_apps: 1,
+        total_clusters: 1,
+        connected_clusters: 1,
+        health_summary: { Degraded: 1 },
+      },
+      recent_syncs: [],
+      addon_health: [],
+      addon_groups: [
+        {
+          addon_name: 'metrics-server',
+          total_apps: 1,
+          health_counts: { Degraded: 1 },
+          child_apps: [
+            {
+              app_name: 'metrics-server-spoke-eu',
+              cluster_name: 'spoke-eu',
+              health: 'Degraded',
+              sync_status: 'OutOfSync',
+              resource_summary: { total_pods: 1, running_pods: 0, total_containers: 1 },
+            },
+          ],
+        },
+      ],
+      resource_alerts: [],
+    } as never);
+
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Open issues (1)')).toBeInTheDocument();
+    });
+
+    // The group's inline reason line is present.
+    await waitFor(() => {
+      expect(screen.getByText(/degraded on spoke-eu — pod not ready/i)).toBeInTheDocument();
+    });
+
+    // No fallback row: the raw ArgoCD app name ("metrics-server-spoke-eu")
+    // is the fallback row's title (item.appName) — it should never render
+    // anywhere, because the group already claimed this problem.
+    expect(screen.queryByText('metrics-server-spoke-eu')).not.toBeInTheDocument();
+
+    // The catalog addon name ("metrics-server") — the group header — is
+    // the only place this addon's name renders.
+    expect(screen.getAllByText('metrics-server')).toHaveLength(1);
+  });
+
+  it('genuine orphan: an addon@cluster the attention feed flags that has no matching group at all still renders — once, as a fallback row', async () => {
+    const { api } = await import('@/services/api');
+    vi.mocked(api.getClusters).mockResolvedValue({ clusters: [] });
+    vi.mocked(api.getDashboardStats).mockResolvedValue({
+      total_clusters: 0,
+      connected_clusters: 0,
+      bootstrap_app_health: 'Healthy',
+      bootstrap_app_sync: 'Synced',
+      clusters: { total: 0, connected: 0, pending: 0, untested: 0, missing: 0, failed: 0 },
+    } as never);
+    vi.mocked(api.getVersionMatrix).mockResolvedValue({ addons: [] } as never);
+    vi.mocked(api.getAttentionItems).mockResolvedValue([
+      {
+        app_name: 'ghost-addon-spoke-eu',
+        addon_name: 'ghost-addon',
+        cluster: 'spoke-eu',
+        health: 'Degraded',
+        sync: 'OutOfSync',
+        error: 'pod not ready',
+      },
+    ] as never);
+    // No addon_groups at all — there is genuinely nowhere for this problem
+    // to live, so the fallback row is the right call here.
+    vi.mocked(api.getObservability).mockResolvedValue({
+      control_plane: {
+        argocd_version: 'v3.2.2',
+        helm_version: 'v3.14.0',
+        kubectl_version: 'v1.29.0',
+        total_apps: 0,
+        total_clusters: 1,
+        connected_clusters: 1,
+        health_summary: {},
+      },
+      recent_syncs: [],
+      addon_health: [],
+      addon_groups: [],
+      resource_alerts: [],
+    } as never);
+
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Open issues (1)')).toBeInTheDocument();
+    });
+
+    // Renders exactly once, as the fallback row.
+    const rows = screen.getAllByText('ghost-addon-spoke-eu');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].closest('a')).toHaveAttribute('href', expect.stringContaining('/clusters/spoke-eu'));
   });
 
   it('never renders "settling", "fleet", or "needs attention" anywhere on the page', async () => {

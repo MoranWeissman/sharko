@@ -33,6 +33,11 @@ export interface AttentionRow {
   reason: string;
   link: string;
   badge?: string;
+  /** Extra explanation for a hover title, when the visible `reason` was
+   * trimmed down and shouldn't carry the full explanation inline (e.g. the
+   * grace-period rows — see GRACE_PERIOD_TOOLTIP). Falls back to `reason`
+   * itself so a long reason still shows in full on hover. */
+  tooltip?: string;
 }
 
 export function AttentionRowView({ row }: { row: AttentionRow }) {
@@ -56,7 +61,7 @@ export function AttentionRowView({ row }: { row: AttentionRow }) {
             <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${badgeClass}`}>{row.badge}</span>
           )}
         </div>
-        <p className="mt-1 text-muted-foreground" title={row.reason}>
+        <p className="mt-1 text-muted-foreground" title={row.tooltip ?? row.reason}>
           {row.reason.length > 140 ? row.reason.slice(0, 140) + '...' : row.reason}
         </p>
       </div>
@@ -76,11 +81,14 @@ function addonLink(item: { addonName: string; cluster: string }): string {
 
 // Plain-words vocabulary (maintainer's walk-day lock): a freshly-bad addon
 // isn't "settling" and it isn't "needs attention" — it's new, and Sharko is
-// still confirming it's a real problem. Shared here so the row builder
-// below and describeAddonProblem (used for the addon-group header line)
-// say the exact same sentence.
+// still confirming it's a real problem. Maintainer's follow-up finding
+// (live-bug fix, 2026-08-02): the visible row/inline text doesn't need to
+// teach the grace-period concept — the amber color already says "not
+// confirmed yet". The explanation now lives ONLY in a hover tooltip, shared
+// here so the row builder below and describeAddonProblem (used for the
+// addon-group header line) attach the exact same tooltip text.
 export const GRACE_PERIOD_TOOLTIP =
-  'Seen less than 10 minutes ago. Sharko gives new problems a short grace period before counting them as confirmed issues.';
+  'Started less than 10 minutes ago. Sharko waits a few minutes before counting a new problem as a confirmed issue.';
 
 // --- Splitting the addon-state map into severity buckets --------------
 
@@ -144,14 +152,23 @@ export function buildConfirmedAddonRows(items: AddonState[]): AttentionRow[] {
 }
 
 export function buildSettlingAddonRows(items: AddonState[]): AttentionRow[] {
-  return items.map((item) => ({
-    key: `settling-${item.addonName}@${item.cluster}`,
-    severity: 'attention',
-    title: item.appName || item.addonName,
-    reason: `New — confirming. Seen ${minutesAgo(item.badSince ?? Date.now())}m ago; addons get a short grace period before counting as a confirmed issue.`,
-    link: addonLink(item),
-    badge: item.healthStatus,
-  }));
+  return items.map((item) => {
+    const state = item.healthStatus || 'Unknown';
+    const capitalizedState = state.charAt(0).toUpperCase() + state.slice(1);
+    return {
+      key: `settling-${item.addonName}@${item.cluster}`,
+      severity: 'attention',
+      title: item.appName || item.addonName,
+      // Maintainer's finding: the row doesn't need to teach the grace-period
+      // concept — the amber color already signals "not confirmed yet". Just
+      // state + where + when it started (e.g. "Degraded on spoke-eu —
+      // started 1m ago"); the full explanation lives in the tooltip only.
+      reason: `${capitalizedState}${item.cluster ? ` on ${item.cluster}` : ''} — started ${minutesAgo(item.badSince ?? Date.now())}m ago`,
+      tooltip: GRACE_PERIOD_TOOLTIP,
+      link: addonLink(item),
+      badge: item.healthStatus,
+    };
+  });
 }
 
 export function buildUnknownAddonRows(items: AddonState[]): AttentionRow[] {
@@ -270,16 +287,28 @@ const TIER_RANK: Record<Exclude<AddonGroupProblemTier, 'none'>, number> = {
  * the worst tier present. Only apps the map actually knows about (i.e.
  * ones the /dashboard/attention feed currently lists as degraded/missing/
  * unknown) count — healthy and progressing-advisory apps never do.
+ *
+ * `byAppName` is an optional second index (feed items keyed by their real
+ * ArgoCD app name) used as a fallback lookup when the primary
+ * `<addon>@<cluster>` key doesn't line up. Maintainer's live-bug finding:
+ * /dashboard/attention currently ships the full ArgoCD app name in its
+ * addon_name field instead of the catalog addon name (internal/api/
+ * dashboard.go — tracked as a separate Go-side fix), so the primary key
+ * can miss even though the app name itself matches this child exactly. See
+ * `isOrphan` in Observability.tsx for the identical divergence.
  */
 export function classifyAddonGroupProblem(
-  group: { addon_name: string; child_apps: { cluster_name: string }[] },
+  group: { addon_name: string; child_apps: { cluster_name: string; app_name?: string }[] },
   byApp: Map<string, AddonState>,
+  byAppName?: Map<string, AddonState>,
 ): AddonGroupProblem {
   let best: { tier: Exclude<AddonGroupProblemTier, 'none'>; state: AddonState } | null = null;
   let count = 0;
 
   for (const child of group.child_apps ?? []) {
-    const state = byApp.get(`${group.addon_name}@${child.cluster_name}`);
+    const state =
+      byApp.get(`${group.addon_name}@${child.cluster_name}`) ??
+      (child.app_name ? byAppName?.get(child.app_name) : undefined);
     if (!state) continue;
 
     let tier: Exclude<AddonGroupProblemTier, 'none'> | null = null;
@@ -311,9 +340,12 @@ export interface AddonProblemDescription {
  * describeAddonProblem — turns one AddonState + its tier into the plain
  * sentence a problem addon group's header shows. Vocabulary lock: the
  * unknown tier says "no status reported" (never "not reporting" jargon in
- * the headline), the grace tier says "new — confirming" and carries the
- * grace-period explanation as a tooltip rather than inline prose. Neither
- * "settling" nor "needs attention" appears anywhere in this output.
+ * the headline). Maintainer's finding: the grace tier's amber color already
+ * signals "not confirmed yet" on its own, so the visible text is just
+ * state + where + detail + when — the "new — confirming" phrase and the
+ * grace-period explanation only ever show up in the tooltip (see
+ * GRACE_PERIOD_TOOLTIP). Neither "settling" nor "needs attention" appears
+ * anywhere in this output.
  */
 export function describeAddonProblem(
   state: AddonState,
@@ -334,7 +366,7 @@ export function describeAddonProblem(
   const base = `${badge}${clusterPart}${detail ? ` — ${detail}` : ''}${seenPart}`;
 
   if (tier === 'grace') {
-    return { text: `${base} · new — confirming`, tooltip: GRACE_PERIOD_TOOLTIP };
+    return { text: base, tooltip: GRACE_PERIOD_TOOLTIP };
   }
   return { text: base };
 }
