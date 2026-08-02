@@ -215,6 +215,36 @@ func installArgoCD() error {
 func grantArgoCDAdminRBAC(kubeconfigPath string) error {
 	fmt.Println("    Granting admin role:admin in argocd-rbac-cm...")
 
+	changed, err := ensureRBACGrantLine(kubeconfigPath, adminRoleGrantLine)
+	if err != nil {
+		return err
+	}
+	if changed {
+		fmt.Println("    argocd-rbac-cm patched — admin granted role:admin")
+	} else {
+		fmt.Println("    argocd-rbac-cm already grants admin role:admin")
+	}
+	return nil
+}
+
+// adminRoleGrantLine is the policy.csv line grantArgoCDAdminRBAC ensures is
+// present — a group-membership binding of the admin account to ArgoCD's
+// built-in role:admin. Exported as a constant (not inlined) so
+// mergeAdminRoleGrant's test can assert against the exact same string the
+// production path writes.
+const adminRoleGrantLine = "g, admin, role:admin"
+
+// ensureRBACGrantLine is the shared read-merge-patch cycle behind every
+// argocd-rbac-cm grant this playground manages (the admin grant above, and
+// the sharko account grant in argocd_sharko_token.go). Each call re-reads
+// policy.csv fresh, so two grants applied back-to-back in the same process
+// compose correctly instead of clobbering each other: the second call's read
+// already sees whatever the first call just wrote.
+//
+// Returns whether a patch was actually issued, so callers that also need to
+// restart argocd-server (only the sharko-account flow does — see
+// argocd_sharko_token.go) can skip the restart when nothing changed.
+func ensureRBACGrantLine(kubeconfigPath, grantLine string) (changed bool, err error) {
 	current, _, err := runCmd(15*time.Second, "kubectl",
 		"--kubeconfig", kubeconfigPath,
 		"--context", ContextHub,
@@ -226,13 +256,12 @@ func grantArgoCDAdminRBAC(kubeconfigPath string) error {
 		// here means something is genuinely wrong with the install, not an
 		// expected "not found yet" state — surface it rather than silently
 		// skipping the grant.
-		return fmt.Errorf("read argocd-rbac-cm: %w", err)
+		return false, fmt.Errorf("read argocd-rbac-cm: %w", err)
 	}
 
-	newPolicy, alreadyGranted := mergeAdminRoleGrant(current)
+	newPolicy, alreadyGranted := mergeRoleGrantLine(current, grantLine)
 	if alreadyGranted {
-		fmt.Println("    argocd-rbac-cm already grants admin role:admin")
-		return nil
+		return false, nil
 	}
 
 	patch := map[string]map[string]string{
@@ -240,7 +269,7 @@ func grantArgoCDAdminRBAC(kubeconfigPath string) error {
 	}
 	patchJSON, err := json.Marshal(patch)
 	if err != nil {
-		return fmt.Errorf("marshal argocd-rbac-cm patch: %w", err)
+		return false, fmt.Errorf("marshal argocd-rbac-cm patch: %w", err)
 	}
 
 	if _, stderr, err := runCmd(15*time.Second, "kubectl",
@@ -250,45 +279,45 @@ func grantArgoCDAdminRBAC(kubeconfigPath string) error {
 		"patch", "configmap", "argocd-rbac-cm",
 		"--type", "merge",
 		"-p", string(patchJSON)); err != nil {
-		return fmt.Errorf("patch argocd-rbac-cm: %w (stderr=%s)", err, stderr)
+		return false, fmt.Errorf("patch argocd-rbac-cm: %w (stderr=%s)", err, stderr)
 	}
 
-	fmt.Println("    argocd-rbac-cm patched — admin granted role:admin")
-	return nil
+	return true, nil
 }
 
-// adminRoleGrantLine is the policy.csv line grantArgoCDAdminRBAC ensures is
-// present — a group-membership binding of the admin account to ArgoCD's
-// built-in role:admin. Exported as a constant (not inlined) so
-// mergeAdminRoleGrant's test can assert against the exact same string the
-// production path writes.
-const adminRoleGrantLine = "g, admin, role:admin"
-
-// mergeAdminRoleGrant is the pure decision half of grantArgoCDAdminRBAC:
-// given the CURRENT contents of argocd-rbac-cm's policy.csv field, it
-// reports the policy.csv value that should be written, and whether the
-// grant was already present (in which case newPolicy equals current
-// unchanged and the caller should skip the write entirely — argocd-rbac-cm
-// hot-reloads, but there is no reason to issue a no-op patch every run).
+// mergeRoleGrantLine is the pure decision logic shared by every
+// argocd-rbac-cm grant this playground manages: given the CURRENT contents
+// of policy.csv and the exact grant line desired, it reports the policy.csv
+// value that should be written, and whether the grant was already present
+// (in which case newPolicy equals current unchanged and the caller should
+// skip the write entirely — argocd-rbac-cm hot-reloads, but there is no
+// reason to issue a no-op patch every run).
 //
-// Split out from grantArgoCDAdminRBAC (which does the kubectl read/patch)
-// so this line-matching/merge logic — the part most likely to have an
+// Split out from ensureRBACGrantLine (which does the kubectl read/patch) so
+// this line-matching/merge logic — the part most likely to have an
 // off-by-one bug (trailing newlines, blank lines, an existing rule that
 // differs only in whitespace) — has a direct unit test that needs no
 // cluster.
-func mergeAdminRoleGrant(currentPolicyCSV string) (newPolicy string, alreadyGranted bool) {
+func mergeRoleGrantLine(currentPolicyCSV, grantLine string) (newPolicy string, alreadyGranted bool) {
 	trimmed := strings.TrimSpace(currentPolicyCSV)
 
 	for _, line := range strings.Split(trimmed, "\n") {
-		if strings.TrimSpace(line) == adminRoleGrantLine {
+		if strings.TrimSpace(line) == grantLine {
 			return currentPolicyCSV, true
 		}
 	}
 
 	if trimmed == "" {
-		return adminRoleGrantLine, false
+		return grantLine, false
 	}
-	return trimmed + "\n" + adminRoleGrantLine, false
+	return trimmed + "\n" + grantLine, false
+}
+
+// mergeAdminRoleGrant is mergeRoleGrantLine specialized to adminRoleGrantLine
+// — kept as its own named function because argocd_rbac_test.go asserts
+// against it directly.
+func mergeAdminRoleGrant(currentPolicyCSV string) (newPolicy string, alreadyGranted bool) {
+	return mergeRoleGrantLine(currentPolicyCSV, adminRoleGrantLine)
 }
 
 // buildAndLoadImages builds Sharko + GitFake Docker images and loads them onto the hub.
@@ -649,15 +678,63 @@ func installSharko(gitBackend, gitfakeURL, giteaURL string) error {
 	return nil
 }
 
-// mintArgoCDToken retrieves the ArgoCD admin password and mints an API token
-// by authenticating via the ArgoCD REST session endpoint. This token is needed
-// for Sharko to write ArgoCD cluster secrets when registering managed clusters.
+// mintArgoCDToken is what hands Sharko the credential for its ArgoCD
+// connection. It used to just log in as admin and return that SESSION
+// token — but ArgoCD session tokens expire after 24h, and when that
+// happened on the live playground every ArgoCD read started returning 401
+// and the product broke (verified live). The admin account itself CANNOT
+// hold apiKey tokens (also verified live), so there is no way to make
+// admin's own token non-expiring.
+//
+// The fix: provision a dedicated local ArgoCD account ("sharko") with
+// apiKey capability + role:admin (both idempotent — steps 1-3 below), then
+// use an admin session ONLY to mint that account a token with NO expiry
+// (steps 4-5). Admin/admin stays exactly as it was for logging into the
+// ArgoCD UI by hand; the token this function returns — the one that ends
+// up in Sharko's stored connection — is never admin's own session token.
+//
+// Steps:
+//  1. Ensure argocd-cm declares accounts.sharko: apiKey (ensureSharkoAccountCapability).
+//  2. Ensure argocd-rbac-cm grants the sharko account role:admin (ensureSharkoRBACGrant)
+//     — composes with grantArgoCDAdminRBAC's own admin grant via the shared
+//     ensureRBACGrantLine read-merge-patch cycle (see its doc comment).
+//  3. Restart argocd-server + wait for ready, but ONLY if step 1 or 2 actually
+//     changed a ConfigMap — on a re-run against an already-provisioned
+//     playground this is a no-op and no restart happens.
+//  4. Log in as admin via POST /api/v1/session (existing retry loop, unchanged
+//     from before this fix) — this session is used ONLY to authorize minting
+//     the sharko account's token in step 5.
+//  5. POST /api/v1/account/sharko/token with an empty body (no "expiresIn"
+//     key — ArgoCD's CreateToken treats that as "never expires") to mint the
+//     token Sharko actually gets.
+//
+// Every step returns a plain error naming what failed and why — there is no
+// fallback path that silently hands back the old expiring session token.
 func mintArgoCDToken(kubeconfigPath string) (string, error) {
 	const argoCDPort = 18443
 	const maxAttempts = 5
 	const retryDelay = 3 * time.Second
 
-	// 1. Read ArgoCD admin password from the initial admin secret.
+	// 1-3. Provision the sharko account (idempotent) and restart
+	// argocd-server only if something actually changed.
+	fmt.Println("    Provisioning dedicated sharko ArgoCD account for a non-expiring token...")
+	cmChanged, err := ensureSharkoAccountCapability(kubeconfigPath)
+	if err != nil {
+		return "", fmt.Errorf("grant sharko account apiKey capability in argocd-cm: %w", err)
+	}
+	rbacChanged, err := ensureSharkoRBACGrant(kubeconfigPath)
+	if err != nil {
+		return "", fmt.Errorf("grant sharko account role:admin in argocd-rbac-cm: %w", err)
+	}
+	if cmChanged || rbacChanged {
+		if err := restartArgoCDServerAndWait(kubeconfigPath); err != nil {
+			return "", fmt.Errorf("restart argocd-server to apply sharko account changes: %w", err)
+		}
+	} else {
+		fmt.Println("    sharko account already provisioned — no argocd-server restart needed")
+	}
+
+	// Read ArgoCD admin password from the initial admin secret.
 	fmt.Println("    Reading ArgoCD admin password...")
 	passwordB64, _, err := runCmd(10*time.Second, "kubectl",
 		"--kubeconfig", kubeconfigPath,
@@ -674,12 +751,13 @@ func mintArgoCDToken(kubeconfigPath string) (string, error) {
 	}
 	password := strings.TrimSpace(string(passwordBytes))
 
-	// 2. Check if the port is available.
+	// Check if the port is available.
 	if isLocalPortInUse(argoCDPort) {
 		return "", fmt.Errorf("local port %d is already in use — the playground needs it to mint the ArgoCD token. Stop whatever is using it and re-run", argoCDPort)
 	}
 
-	// 3. Start background port-forward to argocd-server.
+	// Start background port-forward to argocd-server. Used for both the
+	// admin login below and the account-token mint that follows it.
 	fmt.Println("    Starting port-forward to argocd-server...")
 	pfCmd, err := startBackground("kubectl",
 		"--kubeconfig", kubeconfigPath,
@@ -694,16 +772,18 @@ func mintArgoCDToken(kubeconfigPath string) (string, error) {
 		_ = killProcessGroup(pfCmd)
 	}()
 
-	// 4. Wait for argocd-server to be reachable and POST /api/v1/session to mint a token.
-	// Use an insecure TLS client since ArgoCD uses a self-signed cert.
+	// Wait for argocd-server to be reachable and POST /api/v1/session to log
+	// in as admin. Use an insecure TLS client since ArgoCD uses a
+	// self-signed cert.
 	insecureClient := &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
 	}
+	argoCDBaseURL := fmt.Sprintf("https://localhost:%d", argoCDPort)
 
-	sessionURL := fmt.Sprintf("https://localhost:%d/api/v1/session", argoCDPort)
+	sessionURL := argoCDBaseURL + "/api/v1/session"
 	sessionBody := map[string]string{
 		"username": "admin",
 		"password": password,
@@ -713,8 +793,8 @@ func mintArgoCDToken(kubeconfigPath string) (string, error) {
 		return "", fmt.Errorf("marshal session request: %w", err)
 	}
 
-	fmt.Println("    Waiting for argocd-server and minting API token...")
-	var token string
+	fmt.Println("    Waiting for argocd-server and logging in as admin...")
+	var adminSessionToken string
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
@@ -748,16 +828,24 @@ func mintArgoCDToken(kubeconfigPath string) (string, error) {
 		if err := json.Unmarshal(respBody, &sessionResp); err != nil {
 			return "", fmt.Errorf("parse session response: %w", err)
 		}
-		token = sessionResp.Token
+		adminSessionToken = sessionResp.Token
 		break
 	}
 
-	if token == "" {
-		return "", fmt.Errorf("mint argocd token: %w", lastErr)
+	if adminSessionToken == "" {
+		return "", fmt.Errorf("log in to argocd as admin: %w", lastErr)
 	}
 
-	fmt.Println("    ArgoCD API token minted successfully")
-	return token, nil
+	// Mint the actual token Sharko gets: a NO-EXPIRY apiKey token on the
+	// dedicated sharko account, authorized by the admin session above.
+	fmt.Println("    Minting non-expiring apiKey token for sharko account...")
+	sharkoToken, err := createArgoCDAccountToken(insecureClient, argoCDBaseURL, adminSessionToken, sharkoAccountName)
+	if err != nil {
+		return "", fmt.Errorf("mint sharko account token: %w", err)
+	}
+
+	fmt.Println("    ArgoCD sharko account token minted successfully (no expiry)")
+	return sharkoToken, nil
 }
 
 // registerSpokes registers the N spokes as Sharko-managed clusters via REST API.
