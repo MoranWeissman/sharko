@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Observability } from '@/views/Observability';
 // WQ-3 (attention-move-badges): Observability now renders the attention
@@ -162,10 +162,14 @@ describe('Observability', () => {
     expect(screen.getByText('ArgoCD v3.2.2')).toBeInTheDocument();
     expect(screen.getByText('Helm v3.14.0')).toBeInTheDocument();
     expect(screen.getByText('kubectl v1.29.0')).toBeInTheDocument();
-    // Engine health/sync folded into the same panel (v4 slim lock).
+    // Engine health/sync folded into the same panel (v4 slim lock). Scoped
+    // to the control-plane section itself — the shared DistributionPie
+    // legend below now also renders a real (unmocked) "Healthy" row for
+    // the health-distribution pie, so a page-wide getByText is ambiguous.
     expect(screen.getByText('Sharko Engine')).toBeInTheDocument();
-    expect(screen.getByText('Healthy')).toBeInTheDocument();
-    expect(screen.getByText('Synced')).toBeInTheDocument();
+    const controlPlaneSection = screen.getByText('ArgoCD Control Plane').closest('section')!;
+    expect(within(controlPlaneSection).getByText('Healthy')).toBeInTheDocument();
+    expect(within(controlPlaneSection).getByText('Synced')).toBeInTheDocument();
   });
 
   // Maintainer's slim lock: "go with the slim version" — the four v3 tiles
@@ -246,6 +250,29 @@ describe('Observability', () => {
     expect(screen.getByText(/Total: 120 applications/)).toBeInTheDocument();
   });
 
+  // #685 (maintainer's middle-size lock) — this pie now goes through the
+  // shared DistributionPie, same component FleetStatusStrip uses. The
+  // legend is real, always-visible markup (name + count per state), and
+  // the pie region itself carries the full breakdown as one aria sentence.
+  it('shows a name+count legend row per health state and an aria breakdown on the shared pie', async () => {
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Application Health Distribution')).toBeInTheDocument();
+    });
+
+    const legend = screen.getByTestId('health-distribution-legend');
+    expect(within(legend).getByText('Healthy')).toBeInTheDocument();
+    expect(within(legend).getByText('100')).toBeInTheDocument();
+    expect(within(legend).getByText('Degraded')).toBeInTheDocument();
+    expect(within(legend).getByText('10')).toBeInTheDocument();
+
+    const pie = within(screen.getByTestId('health-distribution-pie')).getByRole('img');
+    const ariaLabel = pie.getAttribute('aria-label');
+    expect(ariaLabel).toContain('100 Healthy');
+    expect(ariaLabel).toContain('10 Degraded');
+  });
+
   it('renders sync distribution donut chart', async () => {
     renderObservability();
 
@@ -255,6 +282,21 @@ describe('Observability', () => {
 
     // Chart should show total from addon_groups child_apps (1 in mock data)
     expect(screen.getByText(/Total: 1 application/)).toBeInTheDocument();
+  });
+
+  it('shows a name+count legend row per sync state on the shared pie (#685)', async () => {
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Application Sync Distribution')).toBeInTheDocument();
+    });
+
+    const legend = screen.getByTestId('sync-distribution-legend');
+    expect(within(legend).getByText('Synced')).toBeInTheDocument();
+    expect(within(legend).getByText('1')).toBeInTheDocument();
+
+    const pie = within(screen.getByTestId('sync-distribution-pie')).getByRole('img');
+    expect(pie.getAttribute('aria-label')).toContain('1 Synced');
   });
 
   it('renders deployment frequency chart', async () => {
