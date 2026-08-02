@@ -58,6 +58,16 @@ export interface Cluster {
   // holds them), or absent for records that predate the field. Used by the
   // V2-cleanup-89.6 migrate-nudge on ClusterDetail.
   creds_source?: string
+  // The real "namespace/name" of the ArgoCD cluster Secret this cluster's
+  // page is about (walk day 4 locks, S1) — e.g. "argocd/prod-eu". Absent
+  // when no cluster-secret reconciler is wired in this deployment mode.
+  managed_secret_name?: string
+  // True when the live ArgoCD cluster Secret already carries the
+  // app.kubernetes.io/managed-by=sharko label (walk day 4 locks, S2).
+  // Absent/false means either the Secret is foreign (a real "Take
+  // ownership" candidate) or Sharko could not check — the UI treats both
+  // the same way (show the button) rather than hide it on a guess.
+  already_managed_by_sharko?: boolean
 }
 
 // ClusterLastReconcileLabelDrift mirrors internal/models.ClusterLastReconcileLabelDrift

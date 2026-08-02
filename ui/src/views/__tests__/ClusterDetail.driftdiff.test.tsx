@@ -1,14 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
 
-// V3 G2 — read-only live drift diff for managed clusters. Pins:
-//  1. When label_drift is absent or empty, shows "Labels in sync" green banner.
-//  2. When label_drift has content (OutOfSync from G1), shows an amber drift diff with keys.
-//  3. Renders added/removed/changed label keys with +/-/~ markers (reuses DryRunPreview diff colors).
-//  4. This is a READ-ONLY live-drift view, not a PR preview.
+// V3 G2 — read-only live drift diff for managed clusters, folded into the
+// Managed cluster secret panel's "Diff" toggle (walk day 4 / S1 rebuild).
+// Pins:
+//  1. Clicking Diff with no label_drift (or all-empty arrays) shows a plain
+//     "no differences" message — this is the click-to-show replacement for
+//     the old always-visible "Labels in sync" banner.
+//  2. Clicking Diff with label_drift content shows plain-English sentences
+//     naming what's missing / extra / changed, with the raw label keys as
+//     secondary (dimmer) detail — never the old raw-status vocabulary
+//     ("Label Drift Detected", "Git vs Live Label Diff", +/-/~ markers).
+//  3. This is a READ-ONLY live-drift view, not a PR preview.
+
+function openDiff() {
+  fireEvent.click(screen.getByRole('button', { name: /^Diff$/ }));
+}
 
 const adminAuth = {
   token: 'test-token',
@@ -127,7 +137,7 @@ describe('ClusterDetail — label drift diff (V3 G2)', () => {
     mockGetAddonCatalog.mockResolvedValue({ addons: [] });
   });
 
-  it('renders "Labels in sync" green banner when label_drift is absent', async () => {
+  it('shows "no differences" when Diff is opened and label_drift is absent', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse());
     renderView();
 
@@ -135,11 +145,12 @@ describe('ClusterDetail — label drift diff (V3 G2)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/Labels in sync/)).toBeInTheDocument();
+    openDiff();
+    expect(screen.getByText(/No differences — this secret's addon labels match git/)).toBeInTheDocument();
     expect(screen.queryByText(/Label Drift Detected/)).not.toBeInTheDocument();
   });
 
-  it('renders "Labels in sync" when label_drift is present but all arrays are empty', async () => {
+  it('shows "no differences" when Diff is opened and label_drift is present but all arrays are empty', async () => {
     mockGetClusterComparison.mockResolvedValue(
       baseComparisonResponse({
         label_drift: {
@@ -155,11 +166,12 @@ describe('ClusterDetail — label drift diff (V3 G2)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/Labels in sync/)).toBeInTheDocument();
+    openDiff();
+    expect(screen.getByText(/No differences — this secret's addon labels match git/)).toBeInTheDocument();
     expect(screen.queryByText(/Label Drift Detected/)).not.toBeInTheDocument();
   });
 
-  it('renders drift diff with added keys when label_drift.added is populated', async () => {
+  it('shows a plain-words sentence + the raw keys when label_drift.added is populated', async () => {
     mockGetClusterComparison.mockResolvedValue(
       baseComparisonResponse({
         label_drift: {
@@ -173,13 +185,14 @@ describe('ClusterDetail — label drift diff (V3 G2)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/Label Drift Detected/)).toBeInTheDocument();
-    expect(screen.getByText(/Added in Git \(missing on cluster\)/)).toBeInTheDocument();
-    expect(screen.getByText(/\+ sharko\.addon\.metrics-server/)).toBeInTheDocument();
-    expect(screen.getByText(/\+ sharko\.addon\.cert-manager/)).toBeInTheDocument();
+    openDiff();
+    expect(screen.getByText(/This secret is missing 2 addon labels that git expects/)).toBeInTheDocument();
+    expect(screen.getByText(/sharko\.addon\.metrics-server, sharko\.addon\.cert-manager/)).toBeInTheDocument();
+    // The old raw-status vocabulary must never appear as visible text.
+    expect(screen.queryByText(/Added in Git \(missing on cluster\)/)).not.toBeInTheDocument();
   });
 
-  it('renders drift diff with removed keys when label_drift.removed is populated', async () => {
+  it('shows a plain-words sentence + the raw keys when label_drift.removed is populated', async () => {
     mockGetClusterComparison.mockResolvedValue(
       baseComparisonResponse({
         label_drift: {
@@ -193,12 +206,13 @@ describe('ClusterDetail — label drift diff (V3 G2)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/Label Drift Detected/)).toBeInTheDocument();
-    expect(screen.getByText(/Removed in Git \(present on cluster\)/)).toBeInTheDocument();
-    expect(screen.getByText(/- sharko\.addon\.old-addon/)).toBeInTheDocument();
+    openDiff();
+    expect(screen.getByText(/This secret has 1 addon label that git doesn't expect/)).toBeInTheDocument();
+    expect(screen.getByText(/sharko\.addon\.old-addon/)).toBeInTheDocument();
+    expect(screen.queryByText(/Removed in Git \(present on cluster\)/)).not.toBeInTheDocument();
   });
 
-  it('renders drift diff with changed keys when label_drift.changed is populated', async () => {
+  it('shows a plain-words sentence + the raw keys when label_drift.changed is populated', async () => {
     mockGetClusterComparison.mockResolvedValue(
       baseComparisonResponse({
         label_drift: {
@@ -212,12 +226,13 @@ describe('ClusterDetail — label drift diff (V3 G2)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/Label Drift Detected/)).toBeInTheDocument();
-    expect(screen.getByText(/Changed \(values differ\)/)).toBeInTheDocument();
-    expect(screen.getByText(/~ sharko\.addon\.nginx-version/)).toBeInTheDocument();
+    openDiff();
+    expect(screen.getByText(/1 addon label has a different value than git/)).toBeInTheDocument();
+    expect(screen.getByText(/sharko\.addon\.nginx-version/)).toBeInTheDocument();
+    expect(screen.queryByText(/Changed \(values differ\)/)).not.toBeInTheDocument();
   });
 
-  it('renders drift diff with all three categories together', async () => {
+  it('shows all three categories together, each with its own plain-words sentence', async () => {
     mockGetClusterComparison.mockResolvedValue(
       baseComparisonResponse({
         label_drift: {
@@ -233,16 +248,16 @@ describe('ClusterDetail — label drift diff (V3 G2)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/Label Drift Detected/)).toBeInTheDocument();
-    expect(screen.getByText(/Added in Git \(missing on cluster\)/)).toBeInTheDocument();
-    expect(screen.getByText(/Removed in Git \(present on cluster\)/)).toBeInTheDocument();
-    expect(screen.getByText(/Changed \(values differ\)/)).toBeInTheDocument();
-    expect(screen.getByText(/\+ sharko\.addon\.new-one/)).toBeInTheDocument();
-    expect(screen.getByText(/- sharko\.addon\.gone/)).toBeInTheDocument();
-    expect(screen.getByText(/~ sharko\.addon\.version-bump/)).toBeInTheDocument();
+    openDiff();
+    expect(screen.getByText(/This secret is missing 1 addon label that git expects/)).toBeInTheDocument();
+    expect(screen.getByText(/This secret has 1 addon label that git doesn't expect/)).toBeInTheDocument();
+    expect(screen.getByText(/1 addon label has a different value than git/)).toBeInTheDocument();
+    expect(screen.getByText(/sharko\.addon\.new-one/)).toBeInTheDocument();
+    expect(screen.getByText(/sharko\.addon\.gone/)).toBeInTheDocument();
+    expect(screen.getByText(/sharko\.addon\.version-bump/)).toBeInTheDocument();
   });
 
-  it('renders an explanatory hint that this shows what drifted', async () => {
+  it('names the Sync action as the way to apply the difference, for admin/operator', async () => {
     mockGetClusterComparison.mockResolvedValue(
       baseComparisonResponse({
         label_drift: {
@@ -256,6 +271,7 @@ describe('ClusterDetail — label drift diff (V3 G2)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/This cluster's addon labels drifted from Git/)).toBeInTheDocument();
+    openDiff();
+    expect(screen.getByText(/Click Sync above to apply git's version to this secret/)).toBeInTheDocument();
   });
 });

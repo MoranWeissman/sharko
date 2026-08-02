@@ -4,12 +4,16 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
 
-// HD1 (V3) — "Sync now" button redesign + sync-status pill. Moved to
-// primary action styling in the header. Pins:
-//  1. "Sync now" renders as a prominent primary button next to Test connection.
-//  2. A status pill shows the reconcile outcome (In sync / Sync failed / Reconciling… / Not synced yet).
-//  3. Clicking Sync now calls POST /clusters/{name}/reconcile for THIS cluster.
-//  4. The "Last sync check" line still renders relative time + outcome (kept from V2-cleanup-89.4).
+// HD1 (V3) — "Sync now" button redesign + sync-status pill. Renamed to
+// "Refresh" as part of the Managed cluster secret panel rebuild (walk day 4
+// / S1) — ArgoCD-vocabulary toolbar (Refresh / Sync / Diff), same
+// reconcileCluster call underneath. Pins:
+//  1. "Refresh" renders as a button in the Managed cluster secret panel's toolbar.
+//  2. A status pill shows the reconcile outcome (Synced / Sync failed / Syncing / Not synced yet).
+//  3. Clicking Refresh calls POST /clusters/{name}/reconcile for THIS cluster.
+//  4. The panel's "Last sync" status-row item shows relative time + outcome
+//     (S1 rebuild folded the old standalone "Last sync check:" header line
+//     into this row instead of duplicating it in two places).
 
 const adminAuth = {
   token: 'test-token',
@@ -111,7 +115,7 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
     mockReconcileCluster.mockResolvedValue({ status: 'accepted', message: 'reconcile triggered for cluster prod-eu' });
   });
 
-  it('renders "Sync now" as a primary button next to Test connection', async () => {
+  it('renders "Refresh" in the Managed cluster secret panel toolbar, next to Test connection in the header', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse());
     renderView();
 
@@ -120,9 +124,7 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
     });
 
     expect(screen.getByRole('button', { name: /^Test connection$/ })).toBeInTheDocument();
-    const syncBtn = screen.getByRole('button', { name: /^Sync now$/ });
-    expect(syncBtn).toBeInTheDocument();
-    expect(syncBtn).toHaveClass('bg-teal-600'); // Primary button style
+    expect(screen.getByRole('button', { name: /^Refresh$/ })).toBeInTheDocument();
   });
 
   it('renders "Not synced yet" status pill when last_reconcile is absent', async () => {
@@ -166,7 +168,7 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
     expect(screen.getByText('Sync failed')).toBeInTheDocument();
   });
 
-  it('clicking "Sync now" triggers a reconcile for this cluster', async () => {
+  it('clicking "Refresh" triggers a reconcile for this cluster', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse());
     renderView();
 
@@ -175,14 +177,14 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
     });
 
     expect(mockReconcileCluster).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: /^Sync now$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Refresh$/ }));
 
     await waitFor(() => {
       expect(mockReconcileCluster).toHaveBeenCalledWith('prod-eu');
     });
   });
 
-  it('does not render a "Last sync check" line when last_reconcile is absent', async () => {
+  it('the panel\'s Last sync item shows "Not checked yet" when last_reconcile is absent', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse());
     renderView();
 
@@ -190,22 +192,22 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/^Last sync check:/)).not.toBeInTheDocument();
+    expect(screen.getByText('Not checked yet')).toBeInTheDocument();
   });
 
-  it('renders a succeeded "Last sync check" line with a relative time', async () => {
+  it('renders a succeeded Last sync item with a relative time and "— OK"', async () => {
     mockGetClusterComparison.mockResolvedValue(
       baseComparisonResponse({ time: new Date(Date.now() - 5 * 60 * 1000).toISOString(), outcome: 'succeeded' }),
     );
     renderView();
 
     await waitFor(() => {
-      expect(screen.getByText(/^Last sync check:/)).toBeInTheDocument();
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
-    expect(screen.getByText(/Last sync check:.*succeeded/)).toBeInTheDocument();
+    expect(screen.getByText(/5m ago — OK/)).toBeInTheDocument();
   });
 
-  it('renders a failed outcome with its plain-English message', async () => {
+  it('renders a failed outcome\'s Last sync item with its plain-English message', async () => {
     mockGetClusterComparison.mockResolvedValue(
       baseComparisonResponse({
         time: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
@@ -216,15 +218,12 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
     renderView();
 
     await waitFor(() => {
-      expect(screen.getByText(/^Last sync check:/)).toBeInTheDocument();
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
-    // The "— failed" outcome text renders inside its own (red-styled) span,
-    // so it's checked as a separate node rather than concatenated with the
-    // "Last sync check:" text — Testing Library only matches a node's own direct
-    // text children, not nested elements' text.
-    expect(screen.getByText(/—\s*failed/)).toBeInTheDocument();
+    // Relative time + the failure message render together in the Last sync
+    // item (S1 rebuild) rather than a separate always-visible header line.
     expect(
-      screen.getByText("Sharko couldn't fetch this cluster's credentials from the secrets backend: simulated vault outage"),
+      screen.getByText(/2m ago — Sharko couldn't fetch this cluster's credentials from the secrets backend: simulated vault outage/),
     ).toBeInTheDocument();
   });
 
@@ -243,7 +242,7 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
 
       vi.useFakeTimers({ shouldAdvanceTime: true });
       try {
-        const syncBtn = screen.getByRole('button', { name: /^Sync now$/ });
+        const syncBtn = screen.getByRole('button', { name: /^Refresh$/ });
         fireEvent.click(syncBtn);
 
         await waitFor(() => {
@@ -275,12 +274,12 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
       );
       renderView();
       await waitFor(() => {
-        expect(screen.getByText(/^Last sync check:/)).toBeInTheDocument();
+        expect(screen.getByText(/5m ago — OK/)).toBeInTheDocument();
       });
 
       vi.useFakeTimers({ shouldAdvanceTime: true });
       try {
-        fireEvent.click(screen.getByRole('button', { name: /^Sync now$/ }));
+        fireEvent.click(screen.getByRole('button', { name: /^Refresh$/ }));
         await waitFor(() => {
           expect(mockReconcileCluster).toHaveBeenCalledWith('prod-eu');
         });
@@ -325,7 +324,7 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       try {
-        fireEvent.click(screen.getByRole('button', { name: /^Sync now$/ }));
+        fireEvent.click(screen.getByRole('button', { name: /^Refresh$/ }));
         await waitFor(() => {
           expect(mockReconcileCluster).toHaveBeenCalledWith('prod-eu');
         });

@@ -157,7 +157,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		// just an in-memory lookup on the reconciler.
 		applyLastReconcile(c, s.clusterRecon)
 		if obsMap != nil {
-			applyObsFields(c, obsMap[c.Name])
+			applyObsFields(c, obsMap[c.Name], hasHealthyAddon)
 		}
 	}
 
@@ -329,13 +329,14 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 	// return value (the service layer is deliberately obs-free).
 	// Best-effort: fields stay absent on failure.
 	detailApps, detailAppsErr := ac.ListApplications(r.Context())
+	hasHealthyAddon := false
 	if detailAppsErr == nil {
 		verdict := computeConnectivityVerdict(resp.Cluster.Name, resp.Cluster.ConnectionStatus, detailApps)
 		resp.Cluster.ConnectivityStatus = verdict.Status
 		resp.Cluster.ConnectivityDetail = verdict.Detail
 		// V2-cleanup-85.4: auto-derived health, independent of any manual
 		// "Test connection" click — see computeDerivedHealth.
-		hasHealthyAddon := clusterHasHealthyAddon(resp.Cluster.Name, resp.Cluster.ServerURL, detailApps)
+		hasHealthyAddon = clusterHasHealthyAddon(resp.Cluster.Name, resp.Cluster.ServerURL, detailApps)
 		resp.Cluster.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, resp.Cluster.ConnectionStatus)
 	}
 	// V2-cleanup-88.1: pure string/shape derivation, no ArgoCD call needed
@@ -350,9 +351,10 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 	if s.obsStore != nil {
 		obsMap, _ := s.obsStore.ListObservations(r.Context())
 		if obsMap != nil {
-			applyObsFields(&resp.Cluster, obsMap[name])
+			applyObsFields(&resp.Cluster, obsMap[name], hasHealthyAddon)
 		}
 	}
+	s.applyManagedSecretFields(r.Context(), &resp.Cluster)
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -476,13 +478,14 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 	// result through the service layer to avoid coupling service ↔ obs.
 	// Best-effort: fields stay absent on failure.
 	compApps, compAppsErr := ac.ListApplications(r.Context())
+	hasHealthyAddon := false
 	if compAppsErr == nil {
 		verdict := computeConnectivityVerdict(resp.Cluster.Name, resp.Cluster.ConnectionStatus, compApps)
 		resp.Cluster.ConnectivityStatus = verdict.Status
 		resp.Cluster.ConnectivityDetail = verdict.Detail
 		// V2-cleanup-85.4: auto-derived health, independent of any manual
 		// "Test connection" click — see computeDerivedHealth.
-		hasHealthyAddon := clusterHasHealthyAddon(resp.Cluster.Name, resp.Cluster.ServerURL, compApps)
+		hasHealthyAddon = clusterHasHealthyAddon(resp.Cluster.Name, resp.Cluster.ServerURL, compApps)
 		resp.Cluster.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, resp.Cluster.ConnectionStatus)
 	}
 	// V2-cleanup-88.1: pure string/shape derivation, no ArgoCD call needed
@@ -497,9 +500,10 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 	if s.obsStore != nil {
 		obsMap, _ := s.obsStore.ListObservations(r.Context())
 		if obsMap != nil {
-			applyObsFields(&resp.Cluster, obsMap[name])
+			applyObsFields(&resp.Cluster, obsMap[name], hasHealthyAddon)
 		}
 	}
+	s.applyManagedSecretFields(r.Context(), &resp.Cluster)
 
 	writeJSON(w, http.StatusOK, resp)
 }

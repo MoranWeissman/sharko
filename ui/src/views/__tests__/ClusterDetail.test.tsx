@@ -42,6 +42,12 @@ const mockGetAddonCatalog = vi.fn();
 const mockRestartAddonSync = vi.fn();
 const mockGetClusterHistory = vi.fn();
 const mockGetClusterChanges = vi.fn();
+// Managed cluster secret panel (walk day 4 locks, S1) — Refresh calls
+// reconcileCluster, Sync (behind its confirm modal) calls
+// resyncClusterLabels. Default to resolved no-ops; per-test overrides drive
+// the toolbar assertions below.
+const mockReconcileCluster = vi.fn().mockResolvedValue({});
+const mockResyncClusterLabels = vi.fn().mockResolvedValue({ message: 'Synced.' });
 // UnregisterConsequencesPanel (story 6.5 / v4-wave2 review confirm-gate
 // fix) fetches this the moment the remove modal opens. Default to a
 // quick, minimal resolve so existing remove-flow tests — which click
@@ -103,6 +109,8 @@ vi.mock('@/services/api', async () => {
     // observing the no-badges baseline; per-test overrides drive the
     // BUG-042 assertions below.
     fetchTrackedPRs: (...args: unknown[]) => mockFetchTrackedPRs(...args),
+    reconcileCluster: (...args: unknown[]) => mockReconcileCluster(...args),
+    resyncClusterLabels: (...args: unknown[]) => mockResyncClusterLabels(...args),
   };
 });
 
@@ -644,16 +652,19 @@ describe('ClusterDetail', () => {
       // The single collapsed banner must appear …
       expect(screen.getByText('Not connected yet')).toBeInTheDocument();
       // … and none of the redundant "Unknown" signals may appear alongside it.
-      expect(screen.queryByText('Status unknown')).not.toBeInTheDocument();
+      expect(screen.queryByText('ArgoCD status unknown')).not.toBeInTheDocument();
       expect(screen.queryByText('ArgoCD Connection Failed')).not.toBeInTheDocument();
       expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
     });
 
-    // The neutral "Status unknown" banner is still used for the narrower,
-    // non-redundant case: ArgoCD hasn't reported a status yet, but Sharko
-    // does have a server URL for the cluster (so the type badge resolves
-    // to something other than "Unknown" and isn't hidden).
-    it('renders "Status unknown" banner when argocd_connection_status is Unknown but a server URL is known', async () => {
+    // The neutral "ArgoCD status unknown" banner is still used for the
+    // narrower, non-redundant case: ArgoCD hasn't reported a status yet, but
+    // Sharko does have a server URL for the cluster (so the type badge
+    // resolves to something other than "Unknown" and isn't hidden). The
+    // title names ArgoCD specifically (walk day 4 / S4) so it never reads
+    // like a contradiction next to a StatusBadge showing Sharko's own
+    // persisted test result.
+    it('renders "ArgoCD status unknown" banner when argocd_connection_status is Unknown but a server URL is known', async () => {
       mockGetClusterComparison.mockResolvedValueOnce({
         ...comparisonResponse,
         cluster: { ...comparisonResponse.cluster, server_url: 'https://prod-eu.eks.amazonaws.com' },
@@ -666,7 +677,7 @@ describe('ClusterDetail', () => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
 
-      expect(screen.getByText('Status unknown')).toBeInTheDocument();
+      expect(screen.getByText('ArgoCD status unknown')).toBeInTheDocument();
       expect(screen.queryByText('Not connected yet')).not.toBeInTheDocument();
       expect(screen.queryByText('ArgoCD Connection Failed')).not.toBeInTheDocument();
     });
@@ -702,7 +713,7 @@ describe('ClusterDetail', () => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
 
-      expect(screen.queryByText('Status unknown')).not.toBeInTheDocument();
+      expect(screen.queryByText('ArgoCD status unknown')).not.toBeInTheDocument();
       expect(screen.queryByText('ArgoCD Connection Failed')).not.toBeInTheDocument();
     });
   });
@@ -2782,6 +2793,173 @@ describe('ClusterDetail', () => {
       expect(screen.getByText(/using the credentials you registered/i)).toBeInTheDocument();
       expect(screen.getByText(/not testing ArgoCD's connection/i)).toBeInTheDocument();
       expect(screen.getByText(/Two checks read ArgoCD-side state/i)).toBeInTheDocument();
+    });
+  });
+
+  // Walk day 4 locks, S1 — the "Managed cluster secret" panel rebuild:
+  // real secret name in the title, ArgoCD-vocabulary Refresh/Sync/Diff
+  // toolbar, Sync disabled with nothing to apply, Diff in plain words.
+  describe('walk day 4 / S1: Managed cluster secret panel', () => {
+    it('shows the real secret name (dimmer style) in the panel title and the Refresh / Sync / Diff toolbar', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        cluster: { ...comparisonResponse.cluster, managed_secret_name: 'argocd/prod-eu' },
+      });
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      expect(screen.getByText('Managed cluster secret')).toBeInTheDocument();
+      expect(screen.getByText('— argocd/prod-eu')).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "This secret is how ArgoCD connects to the cluster, and its labels choose which addons run here. Sharko keeps it matching git.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Refresh$/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Sync$/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Diff$/ })).toBeInTheDocument();
+    });
+
+    it('falls back to the generic title when no managed_secret_name is available', async () => {
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      expect(screen.getByText('Managed cluster secret')).toBeInTheDocument();
+      expect(screen.queryByText(/—\s*argocd\//)).not.toBeInTheDocument();
+    });
+
+    it('disables Sync when there is nothing to apply (no drift)', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        cluster: {
+          ...comparisonResponse.cluster,
+          last_reconcile: { time: '2026-08-01T12:00:00Z', outcome: 'succeeded' },
+        },
+      });
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      expect(screen.getByRole('button', { name: /^Sync$/ })).toBeDisabled();
+      expect(screen.getByText('Synced')).toBeInTheDocument();
+    });
+
+    it('enables Sync and shows the "Out of sync — N addon differences" status once the secret has drifted from git', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        cluster: {
+          ...comparisonResponse.cluster,
+          last_reconcile: {
+            time: '2026-08-01T12:00:00Z',
+            outcome: 'succeeded',
+            label_drift: { added: ['addons.sharko.dev/foo'], changed: ['env'] },
+          },
+        },
+      });
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      expect(screen.getByRole('button', { name: /^Sync$/ })).toBeEnabled();
+      expect(screen.getByText('Out of sync — 2 addon differences')).toBeInTheDocument();
+    });
+
+    it('Diff shows a plain-words summary of what differs, never the raw status vocabulary', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        cluster: {
+          ...comparisonResponse.cluster,
+          last_reconcile: {
+            time: '2026-08-01T12:00:00Z',
+            outcome: 'succeeded',
+            label_drift: { added: ['addons.sharko.dev/foo'], removed: ['env'] },
+          },
+        },
+      });
+      const user = userEvent.setup();
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /^Diff$/ }));
+
+      expect(screen.getByText(/This secret is missing 1 addon label that git expects/)).toBeInTheDocument();
+      expect(screen.getByText(/This secret has 1 addon label that git doesn't expect/)).toBeInTheDocument();
+      // The raw ArgoCD/reconciler vocabulary must never appear as visible text.
+      expect(screen.queryByText('OutOfSync')).not.toBeInTheDocument();
+      expect(screen.queryByText('Label Drift Detected')).not.toBeInTheDocument();
+      expect(screen.queryByText('Git vs Live Label Diff')).not.toBeInTheDocument();
+    });
+
+    it('Diff reports no differences when the secret already matches git', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        cluster: {
+          ...comparisonResponse.cluster,
+          last_reconcile: { time: '2026-08-01T12:00:00Z', outcome: 'succeeded' },
+        },
+      });
+      const user = userEvent.setup();
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /^Diff$/ }));
+      expect(screen.getByText(/No differences — this secret's addon labels match git/)).toBeInTheDocument();
+    });
+  });
+
+  // Walk day 4 locks, S2 + S3 — "Take ownership" gating and rename.
+  describe('walk day 4 / S2 + S3: take ownership gating and rename', () => {
+    it('shows the "Take ownership" button for a cluster Sharko does not already manage', async () => {
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      expect(screen.getByTestId('open-takeover')).toBeInTheDocument();
+      expect(screen.getByText('Take ownership')).toBeInTheDocument();
+    });
+
+    it('hides "Take ownership" once the cluster is already Sharko-managed', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        cluster: { ...comparisonResponse.cluster, already_managed_by_sharko: true },
+      });
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      expect(screen.queryByTestId('open-takeover')).not.toBeInTheDocument();
+      expect(screen.queryByText('Take ownership')).not.toBeInTheDocument();
+    });
+  });
+
+  // Walk day 4 locks, S4 — the status badge remembers Sharko's last test
+  // across a remount instead of reverting to "Unknown". This is the exact
+  // regression: testResult (tab-local React state) resets to null on
+  // remount, so the fix must come from a value that survives that —
+  // data.cluster.sharko_status, persisted server-side.
+  describe('walk day 4 / S4: status badge remembers the persisted test result', () => {
+    it('reads Sharko\'s persisted sharko_status, not just the in-session test result, and keeps reading it after a remount', async () => {
+      const persistedResponse = {
+        ...comparisonResponse,
+        cluster: {
+          ...comparisonResponse.cluster,
+          // A known server_url keeps `notConnected` false so the badge
+          // actually renders — see V2-cleanup-85.1's "not connected yet"
+          // collapse, which hides the badge entirely when Sharko has no
+          // ArgoCD signal of any kind.
+          server_url: 'https://prod-eu.eks.amazonaws.com',
+          sharko_status: 'Connected',
+          last_test_at: '2026-08-01T12:00:00Z',
+        },
+        argocd_connection_status: 'Successful',
+        total_healthy: 0,
+      };
+      mockGetClusterComparison.mockResolvedValue(persistedResponse);
+
+      const { unmount } = renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      expect(screen.getByText('Connected')).toBeInTheDocument();
+
+      // Simulate leaving the page and coming back: a brand new component
+      // instance, so any tab-local React state (testResult) starts back at
+      // null. Before the fix, this is exactly when the badge fell through
+      // past testResult to ArgoCD's own signal and read "Unknown" even
+      // though Sharko's own test had genuinely passed.
+      unmount();
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      expect(screen.getByText('Connected')).toBeInTheDocument();
     });
   });
 });

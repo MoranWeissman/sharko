@@ -412,6 +412,23 @@ type Cluster struct {
 	// startup, a registration PR that hasn't merged, or no reconciler wired
 	// in this deployment mode).
 	LastReconcile *ClusterLastReconcile `json:"last_reconcile,omitempty"`
+
+	// ManagedSecretName is the "namespace/name" of the real ArgoCD cluster
+	// Secret this cluster's page is about (walk day 4 locks, S1). Computed
+	// at read time from the reconciler's configured namespace + this
+	// cluster's name — see applyManagedSecretFields. Empty when no
+	// cluster-secret reconciler is wired in this deployment mode.
+	ManagedSecretName string `json:"managed_secret_name,omitempty"`
+
+	// AlreadyManagedBySharko is true when the live ArgoCD cluster Secret
+	// already carries the app.kubernetes.io/managed-by=sharko label (walk
+	// day 4 locks, S2). Mirrors the same check the takeover preflight uses
+	// for its "secret-owner" finding — see applyManagedSecretFields. False
+	// (the zero value / omitted) either means the Secret is foreign (a real
+	// takeover candidate) or that Sharko could not check — see
+	// applyManagedSecretFields for why "could not check" degrades to false
+	// rather than hiding the takeover action on a guess.
+	AlreadyManagedBySharko bool `json:"already_managed_by_sharko,omitempty"`
 }
 
 // ClusterLastReconcileLabelDrift is the read-model shape of label drift

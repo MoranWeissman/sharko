@@ -10,6 +10,28 @@ interface StatusBadgeProps {
   status: string;
   size?: 'sm' | 'md';
   testFailing?: boolean;
+  /** RFC3339 timestamp of Sharko's last test of this status — when present,
+   * the tooltip adds "Last tested X ago" so the badge carries time context
+   * instead of reading as a fact with no age (walk day 4 / S4 lock). */
+  lastTestAt?: string;
+}
+
+// relativeTime formats a UTC ISO-8601 timestamp as a short "X ago" string.
+// Mirrors the same three-line helper kept locally in ConnectivityBadge.tsx /
+// ClusterDetail.tsx rather than introducing a shared util for it.
+function relativeTime(isoString: string): string {
+  const then = new Date(isoString).getTime();
+  const now = Date.now();
+  const diffMs = now - then;
+  if (diffMs < 0) return 'just now';
+  const secs = Math.floor(diffMs / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
 }
 
 // --- Cluster status definitions (5-state Sharko test ladder) ---
@@ -166,7 +188,7 @@ export function statusDisplayName(status: string): string {
   return statusDisplayNames[s] ?? status;
 }
 
-export function StatusBadge({ status, size = 'sm', testFailing }: StatusBadgeProps) {
+export function StatusBadge({ status, size = 'sm', testFailing, lastTestAt }: StatusBadgeProps) {
   const colors = getStatusColor(status);
   const sizeClasses =
     size === 'md' ? 'px-2.5 py-1 text-sm' : 'px-2 py-0.5 text-xs';
@@ -176,9 +198,12 @@ export function StatusBadge({ status, size = 'sm', testFailing }: StatusBadgePro
 
   // If this is a cluster status with a tooltip, wrap in Tooltip
   if (clusterDef) {
-    const tooltipText = testFailing
+    let tooltipText = testFailing
       ? `${clusterDef.tooltip} (Test currently failing — verify connectivity.)`
       : clusterDef.tooltip;
+    if (lastTestAt) {
+      tooltipText = `${tooltipText} Last tested ${relativeTime(lastTestAt)}.`;
+    }
 
     return (
       <TooltipProvider>

@@ -45,9 +45,13 @@ import type {
   DropLegacyLabelsResponse,
 } from '@/services/models'
 
-export const TAKEOVER_LABEL = 'Take over this cluster'
+export const TAKEOVER_LABEL = 'Take ownership'
+// TAKEOVER_DIALOG_TITLE is the dialog's own title, separate from the button
+// label above (walk day 4 locks, S3) — the button says what you're about to
+// do, the dialog title says what you're about to do it to.
+export const TAKEOVER_DIALOG_TITLE = 'Take ownership of this cluster'
 export const TAKEOVER_HINT =
-  'Makes Sharko the owner of a cluster ArgoCD is already running. It keeps the same name, the same address and — unless you say otherwise — every label already on it. Nothing is deleted, and no addon is turned on.'
+  "Bring this cluster under Sharko's management. It keeps the same name, the same address and — unless you say otherwise — every label already on it. Nothing is deleted, and no addon is turned on."
 
 interface TakeoverDialogProps {
   clusterName: string
@@ -246,7 +250,7 @@ export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverD
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="takeover-dialog">
         <DialogHeader>
-          <DialogTitle>{TAKEOVER_LABEL}: {clusterName}</DialogTitle>
+          <DialogTitle>{TAKEOVER_DIALOG_TITLE}</DialogTitle>
           <DialogDescription>{TAKEOVER_HINT}</DialogDescription>
         </DialogHeader>
 
@@ -359,7 +363,7 @@ export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverD
                   className="inline-flex items-center gap-2 rounded-md bg-[#2a5a7a] px-4 py-2 text-sm font-medium text-white hover:bg-[#1a4a6a] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                  Take over {clusterName}
+                  Take ownership of {clusterName}
                 </button>
               </>
             )}
