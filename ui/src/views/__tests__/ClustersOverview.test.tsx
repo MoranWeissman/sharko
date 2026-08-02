@@ -213,6 +213,22 @@ describe('ClustersOverview', () => {
     expect(screen.getByText('in-cluster')).toBeInTheDocument();
   });
 
+  // Walk day 3 lock: the hostname-guess cluster type badge (EKS/AKS/GKE/
+  // kind/Self-hosted/Unknown) leaves list surfaces — it stays only on the
+  // cluster detail header (ClusterDetail.tsx). ClusterTypeBadge always
+  // renders an aria-label of "Cluster type: <type>", so its absence here
+  // proves the badge isn't mounted, not just that one variant is hidden.
+  it('does not render the cluster type badge on the clusters list (list surface, walk day 3 lock)', async () => {
+    mockGetClusters.mockResolvedValue(clustersResponseAtThreshold);
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Clusters')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByLabelText(/^Cluster type:/)).not.toBeInTheDocument();
+  });
+
   it('filters clusters by name search', async () => {
     // The name-search input lives in the filter bar, hidden below the
     // 5-cluster collapse threshold (V2-cleanup-61.3, B3).

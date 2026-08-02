@@ -201,11 +201,11 @@ describe('Observability', () => {
     expect(screen.getAllByText('prometheus').length).toBeGreaterThan(0);
   });
 
-  it('renders addon health groups section', async () => {
+  it('renders the Fleet Health section with addon groups', async () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Addon Health')).toBeInTheDocument();
+      expect(screen.getByText('Fleet Health')).toBeInTheDocument();
     });
 
     // The addon group card for 'istio' should be shown with app count
@@ -325,14 +325,14 @@ describe('Observability — #addon-health deep-link (walk finding #2)', () => {
     window.location.hash = originalHash;
   });
 
-  it('renders the Addon Health section with the #addon-health anchor', async () => {
+  it('renders the Fleet Health section with the #addon-health anchor', async () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Addon Health')).toBeInTheDocument();
+      expect(screen.getByText('Fleet Health')).toBeInTheDocument();
     });
 
-    const section = screen.getByText('Addon Health').closest('section');
+    const section = screen.getByText('Fleet Health').closest('section');
     expect(section?.id).toBe('addon-health');
   });
 
@@ -341,7 +341,7 @@ describe('Observability — #addon-health deep-link (walk finding #2)', () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Addon Health')).toBeInTheDocument();
+      expect(screen.getByText('Fleet Health')).toBeInTheDocument();
     });
     await waitFor(() => {
       expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
@@ -349,11 +349,12 @@ describe('Observability — #addon-health deep-link (walk finding #2)', () => {
   });
 });
 
-// WQ-3 (attention-move-badges) — the detailed "Needs Attention" rows moved
-// here from the Dashboard, rendered above the #addon-health section
-// (which stays where it is — see the deep-link tests above). Same
+// Walk day 3 lock — the detailed "Open issues" rows (formerly WQ-3's
+// standalone "Needs Attention" block) are now folded into the top of the
+// Fleet Health section (id="addon-health", same section the deep-link
+// tests above exercise) instead of rendered as their own surface. Same
 // severity honesty, same settling window, same per-row deep links.
-describe('Observability — attention detail (WQ-3)', () => {
+describe('Observability — Fleet Health open issues (walk day 3 fold)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -377,7 +378,7 @@ describe('Observability — attention detail (WQ-3)', () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Needs Attention')).toBeInTheDocument();
+      expect(screen.getByText('Open issues')).toBeInTheDocument();
     });
     fireEvent.click(screen.getByRole('button', { name: /1 disconnected cluster/i }));
 
@@ -407,7 +408,7 @@ describe('Observability — attention detail (WQ-3)', () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Needs Attention')).toBeInTheDocument();
+      expect(screen.getByText('Open issues')).toBeInTheDocument();
     });
     fireEvent.click(screen.getByRole('button', { name: /1 addon with drift/i }));
 
@@ -415,7 +416,7 @@ describe('Observability — attention detail (WQ-3)', () => {
     expect(screen.getByText(/different versions deployed across 2 clusters/i)).toBeInTheDocument();
   });
 
-  it('renders nothing when there are no attention items at all', async () => {
+  it('shows the muted "No open issues." line (not nothing) when the fleet is clean', async () => {
     const { api } = await import('@/services/api');
     // Isolate from earlier tests' overrides — mockResolvedValue persists
     // across vi.clearAllMocks() (it only clears call history).
@@ -431,12 +432,14 @@ describe('Observability — attention detail (WQ-3)', () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Observability')).toBeInTheDocument();
+      expect(screen.getByText('Fleet Health')).toBeInTheDocument();
     });
+    expect(screen.getByText('No open issues.')).toBeInTheDocument();
+    expect(screen.queryByText('Open issues')).not.toBeInTheDocument();
     expect(screen.queryByText('Needs Attention')).not.toBeInTheDocument();
   });
 
-  it('the #addon-health section is unaffected by the attention block above it', async () => {
+  it('the Fleet Health section (id="addon-health") hosts both the open issues block and the per-addon groups', async () => {
     const { api } = await import('@/services/api');
     vi.mocked(api.getClusters).mockResolvedValue({
       clusters: [{ name: 'spoke-us', connection_status: 'Failed' }],
@@ -455,10 +458,14 @@ describe('Observability — attention detail (WQ-3)', () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Needs Attention')).toBeInTheDocument();
+      expect(screen.getByText('Open issues')).toBeInTheDocument();
     });
-    const section = screen.getByText('Addon Health').closest('section');
+    const section = screen.getByText('Fleet Health').closest('section');
     expect(section?.id).toBe('addon-health');
+    // The open issues block and the per-addon health groups live in the
+    // same <section> — one surface, not two.
+    expect(section).toContainElement(screen.getByText('Open issues'));
+    expect(section).toContainElement(screen.getByText('10 Applications'));
   });
 });
 

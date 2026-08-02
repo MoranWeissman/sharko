@@ -172,9 +172,12 @@ export function buildDriftRows(versionDrifts: { addon: string; count: number }[]
   }));
 }
 
-// --- The composite detail block (moved verbatim from Dashboard, WQ-3) ---
+// --- The open-issues block (folded into Observability's Fleet Health
+// section — the maintainer's "one surface" lock replaces the old
+// standalone amber-bordered card with a plain block that sits inside the
+// Fleet Health panel's own chrome) ---
 
-export interface AttentionDetailProps {
+export interface OpenIssuesBlockProps {
   onNavigate: (path: string) => void;
   clusterAttentionRows: AttentionRow[];
   confirmedAddonRows: AttentionRow[];
@@ -187,11 +190,29 @@ export interface AttentionDetailProps {
 }
 
 /**
- * AttentionDetail — the full "Needs Attention" surface, unchanged from its
- * original Dashboard incarnation, now hosted on Observability. Same
- * severity honesty, same settling window, same per-row deep links.
+ * hasOpenIssues — same OR-of-lengths every caller of OpenIssuesBlock needs
+ * before it can decide whether to render the block or the zero-state line.
+ * Exported so Observability doesn't re-derive it a second way.
  */
-export function AttentionDetail({
+export function hasOpenIssues(props: Omit<OpenIssuesBlockProps, 'onNavigate'>): boolean {
+  return (
+    props.clusterProblemCount > 0 ||
+    props.confirmedAddonRows.length > 0 ||
+    props.settlingAddonRows.length > 0 ||
+    props.unknownAddonRows.length > 0 ||
+    props.driftRows.length > 0
+  );
+}
+
+/**
+ * OpenIssuesBlock — the "Needs Attention" row model (severity dots, deep
+ * links, settling-window honesty), unchanged, hosted directly inside
+ * Observability's Fleet Health section instead of its own bordered card.
+ * Professional terminology: "issues", not "attention" — see UI Voice rules.
+ * Renders a muted "No open issues." line at zero, never nothing, so the
+ * section always has something to say about fleet issues.
+ */
+export function OpenIssuesBlock({
   onNavigate,
   clusterAttentionRows,
   confirmedAddonRows,
@@ -199,52 +220,60 @@ export function AttentionDetail({
   unknownAddonRows,
   driftRows,
   clusterProblemCount,
-}: AttentionDetailProps) {
-  const [showAttention, setShowAttention] = useState(false);
+}: OpenIssuesBlockProps) {
+  const [showIssues, setShowIssues] = useState(false);
 
   const redAppCount = confirmedAddonRows.length;
   const settlingCount = settlingAddonRows.length;
   const unknownCount = unknownAddonRows.length;
   const driftCount = driftRows.length;
-  const hasIssues =
-    clusterProblemCount > 0 || redAppCount > 0 || settlingCount > 0 || unknownCount > 0 || driftCount > 0;
+  const hasIssues = hasOpenIssues({
+    clusterAttentionRows,
+    confirmedAddonRows,
+    settlingAddonRows,
+    unknownAddonRows,
+    driftRows,
+    clusterProblemCount,
+  });
 
-  if (!hasIssues) return null;
+  if (!hasIssues) {
+    return <p className="text-sm text-muted-foreground">No open issues.</p>;
+  }
 
   return (
-    <div className="rounded-xl border-2 border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-900/20">
-      <div className="flex items-center justify-between p-5 pb-3">
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-3">
         <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
-          <AlertTriangle className="h-5 w-5" />
-          <h3 className="text-sm font-semibold">Needs Attention</h3>
+          <AlertTriangle className="h-4 w-4" />
+          <h3 className="text-sm font-semibold">Open issues</h3>
         </div>
         <div className="flex flex-wrap gap-2">
           {redAppCount > 0 && (
             <button
-              onClick={() => setShowAttention(!showAttention)}
-              aria-expanded={showAttention}
+              onClick={() => setShowIssues(!showIssues)}
+              aria-expanded={showIssues}
               className="flex items-center gap-2 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
             >
               <div className="h-2 w-2 rounded-full bg-red-500" />
               {redAppCount} app{redAppCount !== 1 ? 's' : ''} with issues
-              <ChevronRight className={`h-3 w-3 transition-transform ${showAttention ? 'rotate-90' : ''}`} />
+              <ChevronRight className={`h-3 w-3 transition-transform ${showIssues ? 'rotate-90' : ''}`} />
             </button>
           )}
           {clusterProblemCount > 0 && (
             <button
-              onClick={() => setShowAttention(!showAttention)}
-              aria-expanded={showAttention}
+              onClick={() => setShowIssues(!showIssues)}
+              aria-expanded={showIssues}
               className="flex items-center gap-2 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
             >
               <div className="h-2 w-2 rounded-full bg-red-500" />
               {clusterProblemCount} disconnected cluster{clusterProblemCount !== 1 ? 's' : ''}
-              <ChevronRight className={`h-3 w-3 transition-transform ${showAttention ? 'rotate-90' : ''}`} />
+              <ChevronRight className={`h-3 w-3 transition-transform ${showIssues ? 'rotate-90' : ''}`} />
             </button>
           )}
           {settlingCount > 0 && (
             <button
-              onClick={() => setShowAttention(!showAttention)}
-              aria-expanded={showAttention}
+              onClick={() => setShowIssues(!showIssues)}
+              aria-expanded={showIssues}
               className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400"
             >
               <div className="h-2 w-2 rounded-full bg-amber-500" />
@@ -253,8 +282,8 @@ export function AttentionDetail({
           )}
           {unknownCount > 0 && (
             <button
-              onClick={() => setShowAttention(!showAttention)}
-              aria-expanded={showAttention}
+              onClick={() => setShowIssues(!showIssues)}
+              aria-expanded={showIssues}
               className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400"
             >
               <div className="h-2 w-2 rounded-full bg-amber-500" />
@@ -263,8 +292,8 @@ export function AttentionDetail({
           )}
           {driftCount > 0 && (
             <button
-              onClick={() => setShowAttention(!showAttention)}
-              aria-expanded={showAttention}
+              onClick={() => setShowIssues(!showIssues)}
+              aria-expanded={showIssues}
               className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400"
             >
               <div className="h-2 w-2 rounded-full bg-amber-500" />
@@ -275,8 +304,8 @@ export function AttentionDetail({
       </div>
       {/* Expanded detail — cluster/addon names route to their own detail
           pages for quick debug + AI-assisted investigation. */}
-      {showAttention && (
-        <div className="border-t border-amber-200 p-4 dark:border-amber-700 space-y-4">
+      {showIssues && (
+        <div className="border-t border-[#6aade0] pt-4 dark:border-gray-700 space-y-4">
           {clusterAttentionRows.length > 0 && (
             <div>
               <div className="mb-1.5 flex items-center justify-between">

@@ -8,12 +8,23 @@ import {
 } from '@/components/FleetStatusStrip';
 import type { DashboardStats, VersionMatrixResponse } from '@/services/models';
 
-// WQ-2 — the maintainer rejected the v1 text-list strip: with all 5
-// cluster states non-zero the segment text overflowed, longer labels
-// didn't fit, and naming one outdated addon out of many told nobody
-// anything useful. v2 replaces per-state text with a compact donut (the
-// breakdown moves to the segment's aria-label + the donut's hover
-// tooltip) and turns Upgrades into a bare clickable number.
+// Walk day 3 lock — the hand-made SVG donuts became real recharts labeled
+// pies (same library/style as Observability's HealthDistributionSection /
+// SyncDistributionSection), at roughly half the height, one row. Each pie
+// now carries a VISIBLE legend beside it (state name + count), not just a
+// tooltip — recharts internals (Pie/Cell) are mocked below the same way
+// Observability.test.tsx and Dashboard.test.tsx already do, since jsdom
+// can't lay out a ResponsiveContainer; the legend list itself is plain DOM
+// outside recharts, so it renders and is assertable regardless of the mock.
+vi.mock('recharts', () => {
+  const C = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
+  return {
+    ResponsiveContainer: C,
+    PieChart: C,
+    Pie: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+    Cell: () => null,
+  };
+});
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -36,8 +47,8 @@ function renderStrip(props: {
 
 const noUpgradeData: UpgradesSummary = { withUpgrade: 0, checked: 0, namesWithUpgrade: [] };
 
-describe('FleetStatusStrip — donut segments (WQ-2)', () => {
-  it('renders one donut slice per non-zero cluster state', () => {
+describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
+  it('renders the pie + a visible legend row (label + count) per non-zero cluster state', () => {
     renderStrip({
       clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
       appsTotal: 0,
@@ -46,15 +57,23 @@ describe('FleetStatusStrip — donut segments (WQ-2)', () => {
     });
 
     const segment = screen.getByTestId('fleet-strip-clusters');
-    expect(within(segment).getByTestId('donut-slice-connected')).toBeInTheDocument();
-    expect(within(segment).getByTestId('donut-slice-not-connected')).toBeInTheDocument();
-    expect(within(segment).getByTestId('donut-slice-disconnected')).toBeInTheDocument();
-    // Zero-count states get no slice.
-    expect(within(segment).queryByTestId('donut-slice-connecting')).not.toBeInTheDocument();
-    expect(within(segment).queryByTestId('donut-slice-waiting')).not.toBeInTheDocument();
+    // Pie + legend wrapper is present.
+    expect(within(segment).getByTestId('fleet-strip-pie')).toBeInTheDocument();
+
+    // Legend text is visible (not tooltip-only) — label + count per state.
+    // Scoped to the legend list itself (not the whole segment) because the
+    // NumberWord total can share the same digits as a legend count.
+    const legend = within(segment).getByTestId('fleet-strip-legend');
+    expect(within(legend).getByText('connected')).toBeInTheDocument();
+    expect(within(legend).getByText('8')).toBeInTheDocument();
+    expect(within(legend).getByText('not connected')).toBeInTheDocument();
+    expect(within(legend).getByText('disconnected')).toBeInTheDocument();
+    // Zero-count states get no legend row.
+    expect(within(legend).queryByText('connecting')).not.toBeInTheDocument();
+    expect(within(legend).queryByText('waiting for first addon')).not.toBeInTheDocument();
   });
 
-  it('renders a single full-ring slice when every cluster is in one state', () => {
+  it('shows only the one legend row when every cluster is in a single state', () => {
     renderStrip({
       clusters: { total: 5, connected: 5, pending: 0, untested: 0, missing: 0, failed: 0 },
       appsTotal: 0,
@@ -63,15 +82,14 @@ describe('FleetStatusStrip — donut segments (WQ-2)', () => {
     });
 
     const segment = screen.getByTestId('fleet-strip-clusters');
-    const slice = within(segment).getByTestId('donut-slice-connected');
-    // No gap subtraction for a single slice — its dash length equals the
-    // full circumference (dasharray "<circumference> 0").
-    const [dash, gap] = (slice.getAttribute('stroke-dasharray') || '').split(' ').map(Number);
-    expect(gap).toBeCloseTo(0, 5);
-    expect(dash).toBeGreaterThan(0);
+    const legend = within(segment).getByTestId('fleet-strip-legend');
+    expect(within(legend).getByText('connected')).toBeInTheDocument();
+    expect(within(legend).getByText('5')).toBeInTheDocument();
+    expect(within(legend).queryByText('not connected')).not.toBeInTheDocument();
+    expect(within(legend).queryByText('disconnected')).not.toBeInTheDocument();
   });
 
-  it('renders the total as a plain number plus one short word, not per-state text', () => {
+  it('renders the total as a plain number plus one short word next to the pie', () => {
     renderStrip({
       clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
       appsTotal: 50,
@@ -82,13 +100,10 @@ describe('FleetStatusStrip — donut segments (WQ-2)', () => {
     const clustersSegment = screen.getByTestId('fleet-strip-clusters');
     expect(clustersSegment.textContent).toContain('10');
     expect(clustersSegment.textContent).toContain('clusters');
-    // No per-state phrases in the visible text anymore.
-    expect(clustersSegment.textContent).not.toMatch(/connected|disconnected|not connected/);
 
     const appsSegment = screen.getByTestId('fleet-strip-applications');
     expect(appsSegment.textContent).toContain('50');
     expect(appsSegment.textContent).toContain('apps');
-    expect(appsSegment.textContent).not.toMatch(/healthy/);
   });
 
   it('pluralizes the word correctly: "1 cluster"/"1 app" singular, "2 clusters"/"2 apps" plural (same rule as v1)', () => {
@@ -100,7 +115,6 @@ describe('FleetStatusStrip — donut segments (WQ-2)', () => {
     });
 
     expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('1 cluster');
-    // Not the plural form.
     expect(screen.getByTestId('fleet-strip-clusters').textContent).not.toContain('1 clusters');
     expect(screen.getByTestId('fleet-strip-applications').textContent).toContain('1 app');
     expect(screen.getByTestId('fleet-strip-applications').textContent).not.toContain('1 apps');
@@ -118,7 +132,7 @@ describe('FleetStatusStrip — donut segments (WQ-2)', () => {
     expect(screen.getByTestId('fleet-strip-applications').textContent).toContain('0 apps');
   });
 
-  it('carries the full breakdown (label + count per non-zero state) on the aria-label', () => {
+  it('carries the full breakdown (label + count per non-zero state) on the aria-label — identity is never color-alone', () => {
     renderStrip({
       clusters: { total: 10, connected: 8, pending: 1, untested: 0, missing: 0, failed: 1 },
       appsTotal: 50,
@@ -139,7 +153,7 @@ describe('FleetStatusStrip — donut segments (WQ-2)', () => {
     expect(appsLabel).toContain('5 not healthy');
   });
 
-  it('applications donut: renders healthy/not-healthy slices from total vs. healthy', () => {
+  it('applications pie: legend shows healthy/not-healthy rows from total vs. healthy', () => {
     renderStrip({
       clusters: { total: 1, connected: 1, pending: 0, untested: 0, missing: 0, failed: 0 },
       appsTotal: 20,
@@ -148,12 +162,30 @@ describe('FleetStatusStrip — donut segments (WQ-2)', () => {
     });
 
     const segment = screen.getByTestId('fleet-strip-applications');
-    expect(within(segment).getByTestId('donut-slice-healthy')).toBeInTheDocument();
-    expect(within(segment).queryByTestId('donut-slice-not-healthy')).not.toBeInTheDocument();
+    const legend = within(segment).getByTestId('fleet-strip-legend');
+    expect(within(legend).getByText('healthy')).toBeInTheDocument();
+    expect(within(legend).getByText('20')).toBeInTheDocument();
+    expect(within(legend).queryByText('not healthy')).not.toBeInTheDocument();
+  });
+
+  it('applications pie: shows both healthy and not-healthy legend rows with their own counts when mixed', () => {
+    renderStrip({
+      clusters: { total: 1, connected: 1, pending: 0, untested: 0, missing: 0, failed: 0 },
+      appsTotal: 20,
+      appsHealthy: 15,
+      upgrades: noUpgradeData,
+    });
+
+    const segment = screen.getByTestId('fleet-strip-applications');
+    const legend = within(segment).getByTestId('fleet-strip-legend');
+    expect(within(legend).getByText('healthy')).toBeInTheDocument();
+    expect(within(legend).getByText('15')).toBeInTheDocument();
+    expect(within(legend).getByText('not healthy')).toBeInTheDocument();
+    expect(within(legend).getByText('5')).toBeInTheDocument();
   });
 });
 
-describe('FleetStatusStrip — Upgrades segment is a number, not a chart (WQ-2)', () => {
+describe('FleetStatusStrip — Upgrades segment is a number, not a chart (unchanged)', () => {
   const baseClusters: DashboardStats['clusters'] = {
     total: 1,
     connected: 1,
@@ -176,8 +208,8 @@ describe('FleetStatusStrip — Upgrades segment is a number, not a chart (WQ-2)'
     expect(segment.textContent).not.toContain('cert-manager');
     expect(segment.textContent).not.toContain('metrics-server');
     expect(segment.textContent).not.toContain('and');
-    // No donut in this segment.
-    expect(within(segment).queryByTestId('fleet-strip-donut')).not.toBeInTheDocument();
+    // No pie in this segment.
+    expect(within(segment).queryByTestId('fleet-strip-pie')).not.toBeInTheDocument();
   });
 
   it('shows "up to date" when checked but nothing is outdated', () => {
