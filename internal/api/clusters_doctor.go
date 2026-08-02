@@ -135,10 +135,12 @@ type doctorClusterResponse struct {
 // @Description a plain Helm release also stamps) warns instead of failing —
 // @Description not-applicable for Sharko-managed connections, and (6) for a
 // @Description cluster labeled sharko.dev/connectivity-check: enabled, does the
-// @Description expected connectivity-check Application exist in ArgoCD — missing
-// @Description when labeled is the signature of a stale ApplicationSet selector
-// @Description (sharko.io → sharko.dev label rename drift). Every check is a
-// @Description real attempt, never IAM policy simulation, and read-only except
+// @Description expected connectivity-check Application exist in ArgoCD — a
+// @Description missing app is only diagnosed as a possible stale ApplicationSet
+// @Description selector once the cluster is confirmed connected in ArgoCD and has
+// @Description no addons deployed; not-applicable when the cluster isn't yet
+// @Description registered in ArgoCD or its connection hasn't resolved. Every check
+// @Description is a real attempt, never IAM policy simulation, and read-only except
 // @Description check 4, which reuses Stage-1's existing create/read/delete
 // @Description canary secret. The whole run is bounded to about 30 seconds.
 // @Tags clusters
@@ -697,17 +699,30 @@ func (s *Server) doctorCheckSecretOwnership(ctx context.Context, clusterName str
 	}
 }
 
-// doctorCheckConnectivityApp is check 6 (V3 BUG-1): for a managed cluster
-// labeled for connectivity-check, does the expected connectivity-check
-// Application exist in ArgoCD? When a cluster's ArgoCD Secret carries
-// sharko.dev/connectivity-check: enabled but ArgoCD has no generated
-// connectivity-check-<cluster> Application, the most likely cause is a stale
-// connectivity-check ApplicationSet selector that still matches on the
-// pre-rename sharko.io/connectivity-check label — the appset never converged
-// after the V2-cleanup-59 label rename. Not-applicable for clusters without
-// the connectivity-check label and for clusters with real addons deployed
-// (the placeholder check app intentionally yields to real addons, so a
-// labeled cluster with no check app + a real addon is healthy, not drift).
+// doctorCheckConnectivityApp is check 6 (V3 BUG-1, walk-finding follow-up):
+// for a managed cluster labeled for connectivity-check, does the expected
+// connectivity-check Application exist in ArgoCD?
+//
+// A missing check app has THREE possible causes, and this function tells
+// them apart the same way the dashboard's five-state cluster breakdown does
+// (internal/service/dashboard.go GetStats, ~lines 248-294) before it ever
+// says "selector":
+//
+//  1. The cluster isn't registered in ArgoCD's cluster list at all (the
+//     dashboard's "missing" bucket) — nothing has been created for it yet,
+//     full stop. Not a selector problem.
+//  2. The cluster is registered but its connection hasn't resolved to a
+//     confirmed Successful/Connected state yet (the dashboard's
+//     "untested"/"pending" buckets) — it's still settling. Also not a
+//     selector problem; asking "where's the check app" is premature.
+//  3. ONLY when the cluster shows a confirmed Successful/Connected state,
+//     the label is present, and the check app is still absent does a
+//     stale ApplicationSet selector become a plausible cause — and even
+//     then it's named as one possible cause, not the diagnosis, because a
+//     real addon deployment intentionally makes the placeholder check app
+//     yield (see the hasAnyAddon branch below).
+//
+// Not-applicable for clusters without the connectivity-check label.
 func (s *Server) doctorCheckConnectivityApp(ctx context.Context, clusterName string) doctorCheck {
 	if s.argoSecretManager == nil {
 		return doctorCheck{
@@ -759,12 +774,6 @@ func (s *Server) doctorCheckConnectivityApp(ctx context.Context, clusterName str
 		}
 	}
 
-	// The cluster is labeled for the check. Query ArgoCD for the expected
-	// connectivity-check-<cluster> Application.
-	checkAppName := "connectivity-check-" + clusterName
-
-	// Get the ArgoCD client and list all Applications, then search for the
-	// specific check app. This matches the pattern connectivity_status.go uses.
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
 		return doctorCheck{
@@ -774,6 +783,60 @@ func (s *Server) doctorCheckConnectivityApp(ctx context.Context, clusterName str
 			Fix:    "Configure an ArgoCD connection in Settings -> Connections, then run the doctor again.",
 		}
 	}
+
+	// Cause 1 & 2 — same distinctions as dashboard.go's five-state
+	// breakdown: is the cluster even in ArgoCD's cluster list, and if so,
+	// has its connection actually resolved to Successful/Connected?
+	// ArgoCD's cluster-list API only returns an entry for a cluster that
+	// HAS a cluster secret registered, mirroring dashboard.go's own
+	// comment on this exact call.
+	argocdClusters, err := ac.ListClusters(cctx)
+	if err != nil {
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusFail,
+			Detail: fmt.Sprintf("Sharko could not list ArgoCD clusters: %s", err.Error()),
+			Fix:    "Check Sharko's RBAC permissions on ArgoCD — the service account must be able to list clusters.",
+		}
+	}
+	var clusterEntry *models.ArgocdCluster
+	for i := range argocdClusters {
+		if argocdClusters[i].Name == clusterName {
+			clusterEntry = &argocdClusters[i]
+			break
+		}
+	}
+	if clusterEntry == nil {
+		// Cause 1 — the cluster isn't registered in ArgoCD's cluster list
+		// at all. There is nothing for a selector to have matched or
+		// missed; nothing has been created for this cluster yet.
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusNotApplicable,
+			Detail: fmt.Sprintf("Cluster %q is labeled for connectivity-check but is not registered in ArgoCD's cluster list yet — there is nothing to check for a stale selector until ArgoCD has a cluster secret for it.", clusterName),
+		}
+	}
+	connected := clusterEntry.ConnectionState == "Successful" || clusterEntry.ConnectionState == "Connected"
+	if !connected {
+		// Cause 2 — the cluster is registered but its connection hasn't
+		// resolved yet (empty/Unknown = still settling) or is itself
+		// failing (a different, already-covered problem — checks 1 and 4
+		// diagnose credential/access failures). Either way, a missing
+		// check app here says nothing about the selector.
+		state := clusterEntry.ConnectionState
+		if state == "" {
+			state = "Unknown"
+		}
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusNotApplicable,
+			Detail: fmt.Sprintf("Cluster %q is labeled for connectivity-check, but ArgoCD's connection state for it is %q, not a confirmed Successful/Connected — it's too early to say a missing check application is a stale selector. If the connection itself is failing, see the credentials and cluster-access checks above.", clusterName, state),
+		}
+	}
+
+	// The cluster is labeled AND genuinely connected. Query ArgoCD for the
+	// expected connectivity-check-<cluster> Application.
+	checkAppName := "connectivity-check-" + clusterName
 
 	apps, err := ac.ListApplications(cctx)
 	if err != nil {
@@ -803,12 +866,13 @@ func (s *Server) doctorCheckConnectivityApp(ctx context.Context, clusterName str
 		}
 	}
 
-	// The cluster is labeled but the app does NOT exist. This is the drift
-	// signature from the grounding. However, check one more thing: does the
-	// cluster have any real addon applications deployed? If yes, the
-	// connectivity-check app intentionally yielded and this is NOT drift.
-	// Check for any non-system addon app (regardless of health) — if present,
-	// it means the check app should be absent.
+	// The cluster is connected and labeled but the app does NOT exist.
+	// Check one more thing: does the cluster have any real addon
+	// applications deployed? If yes, the placeholder connectivity-check
+	// app intentionally yielded and this is NOT drift — cause 3 (zero
+	// addons) of the doc comment's framing, checked here via ArgoCD's own
+	// Applications list rather than git-enabled counts, since that's what
+	// this check already has in hand.
 	hasAnyAddon := false
 	for i := range apps {
 		app := &apps[i]
@@ -836,12 +900,34 @@ func (s *Server) doctorCheckConnectivityApp(ctx context.Context, clusterName str
 		}
 	}
 
-	// The cluster is labeled, has no real addons, and the check app is
-	// missing — this is the drift signature. Warn with a plain-English fix.
+	// The cluster is connected, labeled, has no real addons, and the check
+	// app is still missing. A stale selector is now a plausible cause —
+	// named as one possibility, not declared as the diagnosis — and the
+	// fix is layout-aware: v3 repos still walk templates/bootstrap/, v4
+	// repos have no scaffolded templates at all (the check ships inside
+	// the engine chart since chart 0.3.0).
 	return doctorCheck{
 		ID:     doctorCheckConnectivityApp,
 		Status: doctorStatusWarn,
-		Detail: fmt.Sprintf("Cluster %q is labeled sharko.dev/connectivity-check: enabled, but the expected connectivity-check application is not present in ArgoCD — likely a stale ApplicationSet selector.", clusterName),
-		Fix:    "Re-apply the current bootstrap templates to this hub cluster to refresh the connectivity-check ApplicationSet selector from sharko.io/connectivity-check (legacy) to sharko.dev/connectivity-check (current). The bootstrapped templates live in templates/bootstrap/.",
+		Detail: fmt.Sprintf("Cluster %q is connected, labeled sharko.dev/connectivity-check: enabled, and has no addons deployed, but the expected connectivity-check application is not present in ArgoCD — one possible cause is a stale ApplicationSet selector.", clusterName),
+		Fix:    s.connectivityAppDriftFix(ctx),
 	}
+}
+
+// connectivityAppDriftFix returns the layout-aware Fix text for the
+// connectivity-app-drift warning. v4 repos have no scaffolded
+// templates/bootstrap/ tree to "re-apply" — the connectivity check ships
+// inside the engine chart itself (charts/sharko-engine/templates/
+// connectivity-check.yaml, since chart 0.3.0), so the actionable fix there
+// is checking the engine Application's health and pin version. v3 repos
+// keep the original bootstrap-templates wording. Reuses s.isV4Repo
+// (internal/api/v4_editor_gate.go) — the same engine-pin probe every other
+// v4-aware read path in this package uses — rather than inventing a new
+// layout detector.
+func (s *Server) connectivityAppDriftFix(ctx context.Context) string {
+	gp, err := s.connSvc.GetActiveGitProvider()
+	if err == nil && gp != nil && s.isV4Repo(ctx, gp) {
+		return "The connectivity check ships inside the sharko-engine chart (since chart 0.3.0), not a scaffolded template — check that the engine Application (sharko-engine.yaml) is healthy and pinned to chart version 0.3.0 or newer. If it's older, open the engine upgrade PR and let it merge, then run the doctor again."
+	}
+	return "Re-apply the current bootstrap templates to this hub cluster to refresh the connectivity-check ApplicationSet selector from sharko.io/connectivity-check (legacy) to sharko.dev/connectivity-check (current). The bootstrapped templates live in templates/bootstrap/."
 }

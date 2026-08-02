@@ -15,9 +15,16 @@
 //
 //   TestPerClusterValuesOverride:
 //     - GET  /api/v1/clusters/{c}/addons/{n}/values        (empty inherit)
-//     - PUT  /api/v1/clusters/{c}/addons/{n}/values        (commits override)
-//     - GET  /api/v1/clusters/{c}/addons/{n}/values        (echoes override)
-//     - GET  /api/v1/clusters/{c}/addons/{n}/values/recent-prs
+//     - PUT  /api/v1/clusters/{c}/addons/{n}/values        (refused — see below)
+//     - GET  /api/v1/clusters/{c}/addons/{n}/values        (skipped, no PR)
+//     - GET  /api/v1/clusters/{c}/addons/{n}/values/recent-prs (skipped, no PR)
+//
+// TestPerClusterValuesOverride registers a real cluster in
+// managed-clusters.yaml before the PUT — which is exactly the content the
+// v3-write-migration gate (v4 Wave 2 Story 5.1) reads as "this repo is
+// v3-format," so the PUT now correctly returns 409 rather than committing.
+// The PutOverride subtest asserts that refusal; it does not exercise the
+// commit path (walk finding, sprint-backlog-r1 Story A3).
 //
 // Both tests run with E2E_AUTO_MERGE off (the default), so PUT requests
 // open a PR and the orchestrator does NOT merge it — the recent-prs panel
@@ -32,6 +39,7 @@
 package lifecycle
 
 import (
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -377,31 +385,46 @@ func TestPerClusterValuesOverride(t *testing.T) {
 		}
 	})
 
-	// ─── Subtest 2: PUT per-cluster override → opens a PR ────────────────
+	// ─── Subtest 2: PUT per-cluster override ─────────────────────────────
+	//
+	// walk finding (sprint-backlog-r1 Story A3): SeedManagedCluster above
+	// just wrote a real cluster entry into configuration/managed-clusters.yaml
+	// — that file is orchestrator.V3SecondaryMarkerPath, and non-empty
+	// content there is exactly what the v3-write-migration gate (v4 Wave 2
+	// Story 5.1, internal/orchestrator/v3_migration_gate.go /
+	// internal/api/v3_migration_gate.go) treats as "this repo is in the v3
+	// format — refuse further v3-shaped writes until it migrates." This
+	// test's whole setup (a v3 addons-catalog.yaml, a registered cluster in
+	// managed-clusters.yaml, and a PUT at the v3-shaped
+	// configuration/addons-clusters-values/<cluster>.yaml path) unavoidably
+	// IS a v3-format repo the moment the cluster is seeded, so the PUT
+	// below is correctly refused with 409 under the current contract — this
+	// subtest was written before that gate existed and originally expected
+	// the write to succeed. It now asserts the refusal itself, and every
+	// later subtest already has a nil-putResult skip guard (added for a
+	// different reason, reused here) so nothing downstream needs to change.
 	const overrideYAML = `replicaCount: 5
 prometheus:
   enabled: false
 `
 	var putResult *harness.SetClusterAddonValuesResult
 	t.Run("PutOverride", func(t *testing.T) {
-		putResult = admin.SetClusterAddonValues(t, clusterName, testAddonName,
+		resp := admin.Do(t, http.MethodPut,
+			"/api/v1/clusters/"+clusterName+"/addons/"+testAddonName+"/values",
 			harness.SetClusterAddonValuesRequest{Values: overrideYAML})
-		if putResult.PRID <= 0 {
-			t.Fatalf("PutOverride: pr_id = %d (want > 0)", putResult.PRID)
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("PutOverride: read body: %v", err)
 		}
-		expectedPath := "configuration/addons-clusters-values/" + clusterName + ".yaml"
-		if putResult.ValuesFile != expectedPath {
-			t.Errorf("PutOverride: values_file = %q, want %q", putResult.ValuesFile, expectedPath)
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("PutOverride: status=%d, want 409 (a registered cluster makes this a v3-format repo, which now refuses v3-shaped writes until migrated); body=%s", resp.StatusCode, body)
 		}
-		// The PR's head branch carries the merged file (addonName section
-		// nested under the cluster file).
-		got := mock.FileAt(putResult.Branch, expectedPath)
-		if !strings.Contains(got, testAddonName+":") {
-			t.Errorf("PutOverride: head-branch file missing addon section.\n got: %q", got)
+		if !strings.Contains(string(body), orchestrator.V3MigrationRequiredMessage) {
+			t.Errorf("PutOverride: body=%s, want it to contain the v3-migration-required message %q", body, orchestrator.V3MigrationRequiredMessage)
 		}
-		if !strings.Contains(got, "replicaCount: 5") {
-			t.Errorf("PutOverride: head-branch file missing override scalar.\n got: %q", got)
-		}
+		// putResult stays nil — no PR was opened. Subtests 3 and 4 already
+		// skip cleanly on that (see their nil checks below).
 	})
 
 	// ─── Subtest 3: GET reflects the override post-merge ────────────────
@@ -455,9 +478,3 @@ func prTitles(entries []harness.RecentValuesPRsEntry) []string {
 	}
 	return out
 }
-
-// _ keeps the orchestrator import live — the test imports it so a future
-// refactor (e.g. story 7-1.13 covering write-tier classification) can drop
-// in a typed assertion against orchestrator.PRMetadata without re-touching
-// the import block.
-var _ = orchestrator.PRMetadata{}

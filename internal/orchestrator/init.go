@@ -40,6 +40,18 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 			V3BootstrapMarkerPath, V3SecondaryMarkerPath)
 	}
 
+	// Step 1c — Preflight (Story A1): the sharko-engine chart version this
+	// build is about to pin must actually be published on the OCI
+	// registry BEFORE any PR opens. Live failure this prevents: the pin
+	// said 0.2.0, the registry only had 0.1.0 — the seed PR opened, and
+	// only then did ArgoCD-side bootstrap fail with a confusing,
+	// disconnected error. probeEnginePinChart names chart, version, and
+	// registry in its error, and distinguishes "not published" from
+	// "registry unreachable" honestly rather than silently proceeding.
+	if err := o.probeEnginePinChart(ctx); err != nil {
+		return nil, err
+	}
+
 	// Step 2 — Build the v4 seed: empty data folders + the engine pin +
 	// README. Nothing else — no Helm chart, no catalog seed, no per-addon
 	// values stubs (design doc §1, "What the bootstrap PR actually
@@ -226,9 +238,16 @@ func (o *Orchestrator) bootstrapArgoCD(ctx context.Context, rootAppYAML []byte) 
 // CommitBootstrapFiles → CreateInitPR → (wait for merge) →
 // ReadRootAppTemplate → BootstrapArgoCD → WaitForSync one step at a time,
 // recording progress between each.
-func (o *Orchestrator) CollectBootstrapFiles(_ context.Context) (map[string][]byte, error) {
+func (o *Orchestrator) CollectBootstrapFiles(ctx context.Context) (map[string][]byte, error) {
 	if o.gitops.RepoURL == "" {
 		return nil, fmt.Errorf("git repo URL is required — set SHARKO_GITOPS_REPO_URL")
+	}
+	// Preflight (Story A1) — same check InitRepo runs, and for the same
+	// reason: this is the async init flow's Step 1 (runInitOperation,
+	// internal/api/init.go), so failing here means CommitBootstrapFiles
+	// never pushes a branch and CreateInitPR never opens a PR.
+	if err := o.probeEnginePinChart(ctx); err != nil {
+		return nil, err
 	}
 	return BuildV4SeedFiles(o.gitops, o.paths), nil
 }
