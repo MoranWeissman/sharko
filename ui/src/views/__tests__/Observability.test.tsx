@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Observability } from '@/views/Observability';
 // WQ-3 (attention-move-badges): Observability now renders the attention
@@ -205,11 +205,11 @@ describe('Observability', () => {
     expect(screen.getAllByText('prometheus').length).toBeGreaterThan(0);
   });
 
-  it('renders the Fleet Health section with addon groups', async () => {
+  it('renders the Health section with addon groups', async () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Fleet Health')).toBeInTheDocument();
+      expect(screen.getByText('Health')).toBeInTheDocument();
     });
 
     // The addon group card for 'istio' should be shown with app count
@@ -367,14 +367,14 @@ describe('Observability — #addon-health deep-link (walk finding #2)', () => {
     window.location.hash = originalHash;
   });
 
-  it('renders the Fleet Health section with the #addon-health anchor', async () => {
+  it('renders the Health section with the #addon-health anchor', async () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Fleet Health')).toBeInTheDocument();
+      expect(screen.getByText('Health')).toBeInTheDocument();
     });
 
-    const section = screen.getByText('Fleet Health').closest('section');
+    const section = screen.getByText('Health').closest('section');
     expect(section?.id).toBe('addon-health');
   });
 
@@ -383,7 +383,7 @@ describe('Observability — #addon-health deep-link (walk finding #2)', () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Fleet Health')).toBeInTheDocument();
+      expect(screen.getByText('Health')).toBeInTheDocument();
     });
     await waitFor(() => {
       expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
@@ -391,17 +391,20 @@ describe('Observability — #addon-health deep-link (walk finding #2)', () => {
   });
 });
 
-// Walk day 3 lock — the detailed "Open issues" rows (formerly WQ-3's
-// standalone "Needs Attention" block) are now folded into the top of the
-// Fleet Health section (id="addon-health", same section the deep-link
-// tests above exercise) instead of rendered as their own surface. Same
-// severity honesty, same settling window, same per-row deep links.
-describe('Observability — Fleet Health open issues (walk day 3 fold)', () => {
+// Walk-day lock — the maintainer's three findings on the old "Fleet
+// Health" section: (1) "fleet" is a banned display word — the section is
+// now just "Health"; (2) the chip-click-to-reveal issues panel is gone —
+// "Open issues (N)" is a plain one-line count, nothing to click; (3) the
+// double-listing is gone — a problem addon shows up ONLY inside its own
+// health group (reason inline), never also as a separate flat row.
+// Cluster connection problems and version drift still render as compact
+// rows above the list — they have no addon group to live inside.
+describe('Observability — Health section open issues (walk-day fold)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('renders a confirmed cluster problem row with its reason and a deep link', async () => {
+  it('renders a confirmed cluster problem as a compact row with its reason and a deep link, and counts it in "Open issues (N)"', async () => {
     const { api } = await import('@/services/api');
     vi.mocked(api.getClusters).mockResolvedValue({
       clusters: [{ name: 'spoke-us', connection_status: 'Failed' }],
@@ -420,9 +423,8 @@ describe('Observability — Fleet Health open issues (walk day 3 fold)', () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Open issues')).toBeInTheDocument();
+      expect(screen.getByText('Open issues (1)')).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByRole('button', { name: /1 disconnected cluster/i }));
 
     const row = screen.getByText('spoke-us');
     expect(row).toBeInTheDocument();
@@ -430,11 +432,18 @@ describe('Observability — Fleet Health open issues (walk day 3 fold)', () => {
     expect(screen.getByText(/argocd tried to reach this cluster and failed/i)).toBeInTheDocument();
   });
 
-  it('renders a version-drift row and links "View matrix" to the drift filter', async () => {
+  it('renders a version-drift row as a compact row above the list', async () => {
     const { api } = await import('@/services/api');
     // Isolate from the previous test's override — mockResolvedValue
     // persists across vi.clearAllMocks() (it only clears call history).
     vi.mocked(api.getClusters).mockResolvedValue({ clusters: [] });
+    vi.mocked(api.getDashboardStats).mockResolvedValue({
+      total_clusters: 0,
+      connected_clusters: 0,
+      bootstrap_app_health: 'Healthy',
+      bootstrap_app_sync: 'Synced',
+      clusters: { total: 0, connected: 0, pending: 0, untested: 0, missing: 0, failed: 0 },
+    } as never);
     vi.mocked(api.getVersionMatrix).mockResolvedValue({
       addons: [
         {
@@ -450,15 +459,14 @@ describe('Observability — Fleet Health open issues (walk day 3 fold)', () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Open issues')).toBeInTheDocument();
+      expect(screen.getByText('Open issues (1)')).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByRole('button', { name: /1 addon with drift/i }));
 
     expect(screen.getByText('cert-manager')).toBeInTheDocument();
     expect(screen.getByText(/different versions deployed across 2 clusters/i)).toBeInTheDocument();
   });
 
-  it('shows the muted "No open issues." line (not nothing) when the fleet is clean', async () => {
+  it('shows the muted "No open issues." line (not nothing) when there is nothing open', async () => {
     const { api } = await import('@/services/api');
     // Isolate from earlier tests' overrides — mockResolvedValue persists
     // across vi.clearAllMocks() (it only clears call history).
@@ -474,14 +482,13 @@ describe('Observability — Fleet Health open issues (walk day 3 fold)', () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Fleet Health')).toBeInTheDocument();
+      expect(screen.getByText('Health')).toBeInTheDocument();
     });
     expect(screen.getByText('No open issues.')).toBeInTheDocument();
-    expect(screen.queryByText('Open issues')).not.toBeInTheDocument();
-    expect(screen.queryByText('Needs Attention')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Open issues/)).not.toBeInTheDocument();
   });
 
-  it('the Fleet Health section (id="addon-health") hosts both the open issues block and the per-addon groups', async () => {
+  it('the Health section (id="addon-health") hosts both the open-issues count and the per-addon groups — one surface, not two', async () => {
     const { api } = await import('@/services/api');
     vi.mocked(api.getClusters).mockResolvedValue({
       clusters: [{ name: 'spoke-us', connection_status: 'Failed' }],
@@ -500,14 +507,148 @@ describe('Observability — Fleet Health open issues (walk day 3 fold)', () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('Open issues')).toBeInTheDocument();
+      expect(screen.getByText('Open issues (1)')).toBeInTheDocument();
     });
-    const section = screen.getByText('Fleet Health').closest('section');
+    const section = screen.getByText('Health').closest('section');
     expect(section?.id).toBe('addon-health');
-    // The open issues block and the per-addon health groups live in the
-    // same <section> — one surface, not two.
-    expect(section).toContainElement(screen.getByText('Open issues'));
+    expect(section).toContainElement(screen.getByText('Open issues (1)'));
     expect(section).toContainElement(screen.getByText('10 Applications'));
+  });
+
+  it('sorts a problem addon group before a healthy one and shows its reason inline on the group header, not as a separate row', async () => {
+    const { api } = await import('@/services/api');
+    // Isolate from earlier tests' overrides — mockResolvedValue persists
+    // across vi.clearAllMocks() (it only clears call history).
+    vi.mocked(api.getClusters).mockResolvedValue({ clusters: [] });
+    vi.mocked(api.getDashboardStats).mockResolvedValue({
+      total_clusters: 0,
+      connected_clusters: 0,
+      bootstrap_app_health: 'Healthy',
+      bootstrap_app_sync: 'Synced',
+      clusters: { total: 0, connected: 0, pending: 0, untested: 0, missing: 0, failed: 0 },
+    } as never);
+    vi.mocked(api.getVersionMatrix).mockResolvedValue({ addons: [] } as never);
+    // A freshly-observed problem — the addon-state provider always sees a
+    // newly-fetched bad app as "just went bad", so this lands in the grace
+    // tier ("new — confirming"), not confirmed. That's enough to prove
+    // problem-tier-first sorting: 'zzz-quiet' is alphabetically LAST and
+    // its own addon_groups snapshot says Healthy, but the live attention
+    // feed says it's degraded, so it must still sort ahead of 'aaa-clean'.
+    vi.mocked(api.getAttentionItems).mockResolvedValue([
+      {
+        app_name: 'zzz-quiet-c1',
+        addon_name: 'zzz-quiet',
+        cluster: 'c1',
+        health: 'Degraded',
+        sync: 'OutOfSync',
+        error: 'pod not ready',
+      },
+    ] as never);
+    vi.mocked(api.getObservability).mockResolvedValue({
+      control_plane: {
+        argocd_version: 'v3.2.2',
+        helm_version: 'v3.14.0',
+        kubectl_version: 'v1.29.0',
+        total_apps: 2,
+        total_clusters: 1,
+        connected_clusters: 1,
+        health_summary: { Healthy: 2 },
+      },
+      recent_syncs: [],
+      addon_health: [],
+      addon_groups: [
+        {
+          addon_name: 'aaa-clean',
+          total_apps: 1,
+          health_counts: { Healthy: 1 },
+          child_apps: [
+            {
+              app_name: 'aaa-clean-c1',
+              cluster_name: 'c1',
+              health: 'Healthy',
+              sync_status: 'Synced',
+              resource_summary: { total_pods: 1, running_pods: 1, total_containers: 1 },
+            },
+          ],
+        },
+        {
+          addon_name: 'zzz-quiet',
+          total_apps: 1,
+          health_counts: { Healthy: 1 },
+          child_apps: [
+            {
+              app_name: 'zzz-quiet-c1',
+              cluster_name: 'c1',
+              health: 'Healthy',
+              sync_status: 'Synced',
+              resource_summary: { total_pods: 1, running_pods: 1, total_containers: 1 },
+            },
+          ],
+        },
+      ],
+      resource_alerts: [],
+    } as never);
+
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Health')).toBeInTheDocument();
+    });
+    // The reason line is composed inline on the group header — plain
+    // words, the cluster name, the detail, and the grace-tier vocabulary.
+    await waitFor(() => {
+      expect(screen.getByText(/degraded on c1 — pod not ready/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/new — confirming/)).toBeInTheDocument();
+
+    // Problem-tier-first: zzz-quiet's card comes before aaa-clean's card
+    // even though it's alphabetically last and its own group snapshot says
+    // Healthy — the live addon-state map is what decides the order.
+    const names = screen.getAllByText(/^(aaa-clean|zzz-quiet)$/).map((el) => el.textContent);
+    expect(names.indexOf('zzz-quiet')).toBeLessThan(names.indexOf('aaa-clean'));
+
+    // No double-listing — the reason appears exactly once (on the group),
+    // there is no separate flat "zzz-quiet" attention row anywhere else.
+    expect(screen.getAllByText(/degraded on c1 — pod not ready/i)).toHaveLength(1);
+  });
+
+  it('never renders "settling", "fleet", or "needs attention" anywhere on the page', async () => {
+    const { api } = await import('@/services/api');
+    vi.mocked(api.getClusters).mockResolvedValue({
+      clusters: [{ name: 'spoke-us', connection_status: 'Failed' }],
+    } as never);
+    vi.mocked(api.getAttentionItems).mockResolvedValue([
+      {
+        app_name: 'istio-prod-cluster1',
+        addon_name: 'istio',
+        cluster: 'prod-cluster1',
+        health: 'Degraded',
+        sync: 'OutOfSync',
+        error: 'pod not ready',
+      },
+    ] as never);
+    vi.mocked(api.getVersionMatrix).mockResolvedValue({
+      addons: [
+        {
+          addon_name: 'cert-manager',
+          cells: {
+            'prod-eu': { version: '1.12.0', drift_from_catalog: true },
+            'prod-us': { version: '1.14.0', drift_from_catalog: true },
+          },
+        },
+      ],
+    } as never);
+
+    const { container } = renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText(/^Open issues/)).toBeInTheDocument();
+    });
+
+    const text = container.textContent ?? '';
+    expect(text).not.toMatch(/settling/i);
+    expect(text).not.toMatch(/fleet/i);
+    expect(text).not.toMatch(/needs attention/i);
   });
 });
 

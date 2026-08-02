@@ -187,7 +187,7 @@ export function FleetStatusStrip({ clusters, appsTotal, appsHealthy, upgrades }:
   return (
     <div
       role="group"
-      aria-label="Fleet status"
+      aria-label="Managed clusters status"
       className="flex flex-wrap overflow-hidden rounded-xl border border-border bg-card shadow-sm"
     >
       <Segment

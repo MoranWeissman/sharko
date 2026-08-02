@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import {
   BarChart,
   Bar,
@@ -43,17 +43,20 @@ import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { PaginationControls, PageSizeSelector, type PageSize } from '@/components/PaginationControls';
 import {
-  OpenIssuesBlock,
-  hasOpenIssues,
+  AttentionRowView,
+  countOpenIssues,
   splitAddonStates,
   buildConfirmedAddonRows,
   buildSettlingAddonRows,
   buildUnknownAddonRows,
   buildClusterAttentionRows,
   buildDriftRows,
+  classifyAddonGroupProblem,
+  describeAddonProblem,
   type AttentionRow,
+  type AddonGroupProblemTier,
 } from '@/components/AttentionSection';
-import { useAddonStates } from '@/hooks/useAddonStates';
+import { useAddonStates, deepLinkToAddonOnCluster, type AddonState } from '@/hooks/useAddonStates';
 import { isClusterNeedsAttention } from '@/lib/clusterStatus';
 
 // ---------------------------------------------------------------------------
@@ -398,6 +401,15 @@ function ResourceAlertsSection({ alerts }: { alerts: ResourceAlert[] }) {
 
 type GroupBy = 'addon' | 'cluster';
 
+// Problem-tier-first ordering (walk-day lock): confirmed problems, then
+// grace-window/new ones, then no-status, healthy groups last.
+const TIER_ORDER: Record<AddonGroupProblemTier, number> = {
+  confirmed: 0,
+  grace: 1,
+  unknown: 2,
+  none: 3,
+};
+
 interface ClusterGroup {
   cluster_name: string;
   addons: Array<{
@@ -413,24 +425,32 @@ interface ClusterGroup {
 
 interface AddonGroupsSectionProps {
   groups: AddonGroupHealth[];
-  onNavigate: (path: string) => void;
+  /** Live addon state map (keyed `<addon>@<cluster>`), used to classify each
+   * group's problem tier and compose its inline reason line. */
+  addonStateMap: Map<string, AddonState>;
+  /** Cluster connection problems and version-drift rows — neither has an
+   * addon group to live inside, so they render as compact rows above the
+   * list (walk-day finding: no more double-listing an addon problem as
+   * both a flat row and a full-width group). */
   clusterAttentionRows: AttentionRow[];
-  confirmedAddonRows: AttentionRow[];
-  settlingAddonRows: AttentionRow[];
-  unknownAddonRows: AttentionRow[];
   driftRows: AttentionRow[];
-  clusterProblemCount: number;
+  /** Addon problems whose addon isn't present in `groups` at all (a
+   * mismatch between the attention feed and the observability snapshot) —
+   * shown as compact rows too, so a problem never silently disappears. */
+  orphanAddonRows: AttentionRow[];
+  /** The "Open issues (N)" line's total — see countOpenIssues doc comment
+   * in AttentionSection.tsx. Already includes cluster connection problems,
+   * so this component doesn't need the raw cluster count separately. */
+  totalOpenIssues: number;
 }
 
 function AddonGroupsSection({
   groups,
-  onNavigate,
+  addonStateMap,
   clusterAttentionRows,
-  confirmedAddonRows,
-  settlingAddonRows,
-  unknownAddonRows,
   driftRows,
-  clusterProblemCount,
+  orphanAddonRows,
+  totalOpenIssues,
 }: AddonGroupsSectionProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sortMode, setSortMode] = useState<'issues' | 'alpha'>('issues');
@@ -473,20 +493,36 @@ function AddonGroupsSection({
     return copy.filter((g) => g.addon_name.toLowerCase().includes(term));
   }, [groups, searchTerm]);
 
-  // Sort filtered groups
+  // Classify every group's problem tier once (walk-day lock: confirmed
+  // problems first, then grace-window/new ones, then no-status, healthy
+  // last — this is the primary sort key regardless of which sort mode
+  // below is selected; "Most Issues"/"A-Z" only order groups WITHIN the
+  // same tier, they never let a healthy group outrank a problem one).
+  const groupProblems = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof classifyAddonGroupProblem>>();
+    for (const g of groups ?? []) {
+      map.set(g.addon_name, classifyAddonGroupProblem(g, addonStateMap));
+    }
+    return map;
+  }, [groups, addonStateMap]);
+
+  // Sort filtered groups — problem tier first (see groupProblems above),
+  // then the selected secondary order within each tier.
   const sortedAddonGroups = useMemo(() => {
     const copy = [...filteredAddonGroups];
-    if (sortMode === 'alpha') {
-      copy.sort((a, b) => a.addon_name.localeCompare(b.addon_name));
-    } else {
-      copy.sort((a, b) => {
-        const aIssues = Object.entries(a.health_counts ?? {}).filter(([k]) => k.toLowerCase() !== 'healthy').reduce((s, [, v]) => s + v, 0);
-        const bIssues = Object.entries(b.health_counts ?? {}).filter(([k]) => k.toLowerCase() !== 'healthy').reduce((s, [, v]) => s + v, 0);
-        return bIssues - aIssues;
-      });
-    }
+    copy.sort((a, b) => {
+      const tierA = TIER_ORDER[groupProblems.get(a.addon_name)?.tier ?? 'none'];
+      const tierB = TIER_ORDER[groupProblems.get(b.addon_name)?.tier ?? 'none'];
+      if (tierA !== tierB) return tierA - tierB;
+      if (sortMode === 'alpha') {
+        return a.addon_name.localeCompare(b.addon_name);
+      }
+      const aIssues = Object.entries(a.health_counts ?? {}).filter(([k]) => k.toLowerCase() !== 'healthy').reduce((s, [, v]) => s + v, 0);
+      const bIssues = Object.entries(b.health_counts ?? {}).filter(([k]) => k.toLowerCase() !== 'healthy').reduce((s, [, v]) => s + v, 0);
+      return bIssues - aIssues;
+    });
     return copy;
-  }, [filteredAddonGroups, sortMode]);
+  }, [filteredAddonGroups, sortMode, groupProblems]);
 
   // Filter cluster groups by search term
   const filteredClusterGroups = useMemo(() => {
@@ -550,14 +586,7 @@ function AddonGroupsSection({
   }, [sortedClusterGroups, page, pageSize]);
 
   const hasGroups = !!groups && groups.length > 0;
-  const hasIssues = hasOpenIssues({
-    clusterAttentionRows,
-    confirmedAddonRows,
-    settlingAddonRows,
-    unknownAddonRows,
-    driftRows,
-    clusterProblemCount,
-  });
+  const hasIssues = totalOpenIssues > 0;
 
   if (!hasGroups && !hasIssues) {
     return null;
@@ -566,15 +595,18 @@ function AddonGroupsSection({
   return (
     // id="addon-health" — the Dashboard's Applications card (and its thin
     // attention line) deep-link here (walk finding #2: "which apps are
-    // unhealthy" is answered by this section, which already sorts by issue
-    // count first and lists per-app-per-cluster health, not just a
-    // per-addon aggregate). Fleet Health (walk day 3 lock) — one surface:
-    // open issues at top, per-addon health groups below.
+    // unhealthy" is answered by this section, which already sorts problem
+    // groups first and lists per-app-per-cluster health, not just a
+    // per-addon aggregate). Walk-day lock (maintainer's three findings on
+    // the old "Fleet Health" section): "fleet" doesn't appear on screen —
+    // this section is just "Health"; the per-addon groups below are the
+    // ONLY place addon problems render (no separate expandable issue list,
+    // no chips); a problem group's header carries its reason inline.
     <section id="addon-health">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           <Server className="h-5 w-5 text-teal-500" />
-          Fleet Health
+          Health
         </h2>
         <div className="flex flex-wrap items-center gap-3">
           {/* Search */}
@@ -661,20 +693,37 @@ function AddonGroupsSection({
         </div>
       </div>
 
-      {/* Open issues (walk day 3 lock, folded from the old standalone
-          "Needs Attention" card) — always the first thing in Fleet Health,
-          "No open issues." when the fleet is clean. */}
-      <div className="mb-6">
-        <OpenIssuesBlock
-          onNavigate={onNavigate}
-          clusterAttentionRows={clusterAttentionRows}
-          confirmedAddonRows={confirmedAddonRows}
-          settlingAddonRows={settlingAddonRows}
-          unknownAddonRows={unknownAddonRows}
-          driftRows={driftRows}
-          clusterProblemCount={clusterProblemCount}
-        />
+      {/* Open issues — a plain one-line count, always the first thing in
+          this section (walk-day lock: no chips, no separate expandable
+          list — the per-addon groups below already show every problem). */}
+      <div className="mb-4">
+        {hasIssues ? (
+          <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+            Open issues ({totalOpenIssues})
+          </h3>
+        ) : (
+          <p className="text-sm text-[#2a5a7a] dark:text-gray-400">No open issues.</p>
+        )}
       </div>
+
+      {/* Cluster connection problems and version drift have no addon group
+          to live inside, so they render as compact rows here — modest
+          height, not full-width one-item containers. Orphan addon rows
+          (an addon the attention feed flags that isn't in the groups below
+          at all) render here too, so a problem never silently disappears. */}
+      {(clusterAttentionRows.length > 0 || driftRows.length > 0 || orphanAddonRows.length > 0) && (
+        <div className="mb-6 space-y-1.5">
+          {clusterAttentionRows.map((row) => (
+            <AttentionRowView key={row.key} row={row} />
+          ))}
+          {driftRows.map((row) => (
+            <AttentionRowView key={row.key} row={row} />
+          ))}
+          {orphanAddonRows.map((row) => (
+            <AttentionRowView key={row.key} row={row} />
+          ))}
+        </div>
+      )}
 
       {!hasGroups ? null : (
       <div className={viewMode === 'grid' ? 'grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3' : 'space-y-3'}>
@@ -684,6 +733,16 @@ function AddonGroupsSection({
             const isExpanded = expanded.has(group.addon_name);
             const healthEntries = Object.entries(group.health_counts);
             const total = group.total_apps;
+            // Problem-group header (walk-day lock): one addon group's
+            // header carries its reason inline, in plain words, composed
+            // from the live addon-state map — no separate flat row for
+            // this same problem exists anywhere else on the page.
+            const problem = groupProblems.get(group.addon_name);
+            const tier = problem?.tier ?? 'none';
+            const description =
+              problem?.state && tier !== 'none'
+                ? describeAddonProblem(problem.state, tier as Exclude<AddonGroupProblemTier, 'none'>)
+                : null;
 
             return (
               <div
@@ -697,6 +756,12 @@ function AddonGroupsSection({
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-3">
+                      {tier !== 'none' && (
+                        <span
+                          className={`h-2.5 w-2.5 shrink-0 rounded-full ${tier === 'confirmed' ? 'bg-red-500' : 'bg-amber-500'}`}
+                          aria-hidden="true"
+                        />
+                      )}
                       <span className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
                         {group.addon_name}
                       </span>
@@ -737,6 +802,30 @@ function AddonGroupsSection({
                     <ChevronDown className="h-4 w-4 shrink-0 text-[#3a6a8a]" />
                   )}
                 </button>
+
+                {/* Reason line — a sibling of the toggle button (not nested
+                    inside it) so the deep link below is valid markup and
+                    still lands exactly where the old flat row's link did. */}
+                {description && problem?.state && (
+                  <div className="-mt-2 px-4 pb-3">
+                    <p
+                      className={`text-sm ${tier === 'confirmed' ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}
+                      title={description.tooltip}
+                    >
+                      <Link
+                        to={deepLinkToAddonOnCluster(group.addon_name, problem.state.cluster)}
+                        className="hover:underline"
+                      >
+                        {description.text}
+                      </Link>
+                      {problem.extraCount > 0 && (
+                        <span className="text-[#3a6a8a] dark:text-gray-500">
+                          {' '}(+{problem.extraCount} more)
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                )}
 
                 {isExpanded && group.child_apps && group.child_apps.length > 0 && (
                   <div className="border-t border-[#6aade0] px-4 pb-4 dark:border-gray-700">
@@ -1253,7 +1342,6 @@ function bootstrapHealthColor(health: string): { dot: string; badge: string } {
 // ---------------------------------------------------------------------------
 
 export function Observability() {
-  const navigate = useNavigate();
   const [data, setData] = useState<ObservabilityOverviewResponse | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [argoCDUrl, setArgoCDUrl] = useState<string | null>(null);
@@ -1349,18 +1437,47 @@ export function Observability() {
 
   // Open-issues rows (walk day 3 lock, formerly WQ-3's standalone
   // "Needs Attention" block) — same severity honesty, same settling window,
-  // same per-row deep links, now folded into the Fleet Health section
-  // (AddonGroupsSection) instead of rendered as its own surface. Cluster
-  // problem count reads stats.clusters (the server's single classification,
-  // same source the old Dashboard banner and the nav badge both use) rather
-  // than re-deriving it from the named row list above.
+  // same deep links, now folded into the Health section (AddonGroupsSection)
+  // instead of rendered as its own surface. Cluster problem count reads
+  // stats.clusters (the server's single classification, same source the
+  // old Dashboard banner and the nav badge both use) rather than
+  // re-deriving it from the named row list above.
   const { confirmed, settling, unknown } = splitAddonStates(addonStateMap);
   const clusterAttentionRows = buildClusterAttentionRows(attentionClusters);
-  const confirmedAddonRows = buildConfirmedAddonRows(confirmed);
-  const settlingAddonRows = buildSettlingAddonRows(settling);
-  const unknownAddonRows = buildUnknownAddonRows(unknown);
   const driftRows = buildDriftRows(versionDrifts);
   const clusterProblemCount = (stats?.clusters?.failed ?? 0) + (stats?.clusters?.missing ?? 0);
+
+  // Addon problems whose addon appears inside data.addon_groups render
+  // ONLY as that group's inline reason line (walk-day lock: one surface,
+  // no double-listing). Anything left over — an addon@cluster the
+  // attention feed flags that the observability snapshot doesn't have a
+  // matching group+child for — still needs to be seen, so it renders as a
+  // compact row above the list instead of silently disappearing.
+  const groupChildKeys = new Set<string>();
+  for (const g of data.addon_groups ?? []) {
+    for (const c of g.child_apps ?? []) {
+      groupChildKeys.add(`${g.addon_name}@${c.cluster_name}`);
+    }
+  }
+  const isOrphan = (s: { addonName: string; cluster: string }) =>
+    !groupChildKeys.has(`${s.addonName}@${s.cluster}`);
+  const orphanAddonRows = [
+    ...buildConfirmedAddonRows(confirmed.filter(isOrphan)),
+    ...buildSettlingAddonRows(settling.filter(isOrphan)),
+    ...buildUnknownAddonRows(unknown.filter(isOrphan)),
+  ];
+
+  // The "Open issues (N)" line's total — every problem kind the section
+  // can show, not just the confirmed-only count the Dashboard's thin line
+  // and nav badges read (see countOpenIssues doc comment).
+  const totalOpenIssues = countOpenIssues({
+    clusterAttentionRows,
+    confirmedAddonRows: buildConfirmedAddonRows(confirmed),
+    settlingAddonRows: buildSettlingAddonRows(settling),
+    unknownAddonRows: buildUnknownAddonRows(unknown),
+    driftRows,
+    clusterProblemCount,
+  });
 
   // Check if there's any meaningful data to display
   const hasControlPlane = data.control_plane && (data.control_plane.total_apps > 0 || data.control_plane.total_clusters > 0);
@@ -1380,13 +1497,11 @@ export function Observability() {
         </div>
         <AddonGroupsSection
           groups={data.addon_groups ?? []}
-          onNavigate={navigate}
+          addonStateMap={addonStateMap}
           clusterAttentionRows={clusterAttentionRows}
-          confirmedAddonRows={confirmedAddonRows}
-          settlingAddonRows={settlingAddonRows}
-          unknownAddonRows={unknownAddonRows}
           driftRows={driftRows}
-          clusterProblemCount={clusterProblemCount}
+          orphanAddonRows={orphanAddonRows}
+          totalOpenIssues={totalOpenIssues}
         />
         <ControlPlaneSection data={data.control_plane} stats={stats} argoCDUrl={argoCDUrl} />
         <EmptyState
@@ -1413,13 +1528,11 @@ export function Observability() {
       <ResourceAlertsSection alerts={data.resource_alerts ?? []} />
       <AddonGroupsSection
         groups={data.addon_groups ?? []}
-        onNavigate={navigate}
+        addonStateMap={addonStateMap}
         clusterAttentionRows={clusterAttentionRows}
-        confirmedAddonRows={confirmedAddonRows}
-        settlingAddonRows={settlingAddonRows}
-        unknownAddonRows={unknownAddonRows}
         driftRows={driftRows}
-        clusterProblemCount={clusterProblemCount}
+        orphanAddonRows={orphanAddonRows}
+        totalOpenIssues={totalOpenIssues}
       />
       <SyncActivitySection syncs={data.recent_syncs ?? []} />
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
