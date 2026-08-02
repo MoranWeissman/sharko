@@ -137,6 +137,11 @@ export function MarketplaceAddonDetail({
   // invisible here and the "Add to catalog" panel would offer a duplicate
   // add.
   const [pendingAddonPRs, setPendingAddonPRs] = useState<TrackedPR[]>([])
+  // Surfaced when the pending-PR fetch itself fails (e.g. a 401 on a
+  // half-dead session) — previously swallowed silently, which let the
+  // form offer a duplicate add-PR with no visible reason. See the effect
+  // below.
+  const [pendingAddonPRsError, setPendingAddonPRsError] = useState(false)
   const pendingAddonNames = useMemo(
     () =>
       new Set(
@@ -487,12 +492,16 @@ export function MarketplaceAddonDetail({
   // offering a duplicate add.
   useEffect(() => {
     let cancelled = false
+    setPendingAddonPRsError(false)
     fetchTrackedPRs({ status: 'open', operation: 'catalog-add,catalog-add-enable' })
       .then((resp) => {
         if (!cancelled) setPendingAddonPRs(resp.prs ?? [])
       })
-      .catch(() => {
-        if (!cancelled) setPendingAddonPRs([])
+      .catch((e: unknown) => {
+        if (cancelled) return
+        console.warn('Failed to check for pending addon PRs', e)
+        setPendingAddonPRs([])
+        setPendingAddonPRsError(true)
       })
     return () => {
       cancelled = true
@@ -556,7 +565,10 @@ export function MarketplaceAddonDetail({
     !submitting &&
     submitResult === null
 
-  const prURL = submitResult?.pr_url || submitResult?.result?.pr_url
+  // api.addToCatalog now unwraps the attribution envelope centrally
+  // (ui/src/services/api.ts), so pr_url/pr_id/merged always land at the
+  // top level — the `result?.x` fallback this used to need is dead.
+  const prURL = submitResult?.pr_url
 
   // Shared request payload for both the preview and the real submit so the
   // dry-run previews exactly what the real call will write. Posts to
@@ -626,10 +638,12 @@ export function MarketplaceAddonDetail({
     try {
       const res = await api.addToCatalog(req)
       setSubmitResult(res)
-      const resPrID = res.pr_id ?? res.result?.pr_id
+      // api.addToCatalog unwraps the attribution envelope centrally — no
+      // need to also check res.result?.x here.
+      const resPrID = res.pr_id
       const label = resPrID ? `PR #${resPrID}` : 'PR'
-      const wasMerged = res.merged ?? res.result?.merged ?? false
-      const url = res.pr_url || res.result?.pr_url
+      const wasMerged = res.merged ?? false
+      const url = res.pr_url
 
       // Keep the lifecycle window (SubmitPhaseBanner / PRLifecycleProgress)
       // on screen instead of navigating away the instant the POST resolves
@@ -852,6 +866,12 @@ export function MarketplaceAddonDetail({
             until you enable it on a cluster (per-cluster, from the Catalog
             tab).
           </p>
+          {pendingAddonPRsError && (
+            <p className="text-xs italic text-[#5a8aaa] dark:text-gray-500">
+              Couldn&rsquo;t check for pending addons — this form may offer
+              an add PR that&rsquo;s already open.
+            </p>
+          )}
         </header>
 
         {entryInCatalog ? (
@@ -1078,15 +1098,28 @@ export function MarketplaceAddonDetail({
               )}
               {/* Terminal-state navigation (V2-cleanup-66.1) — explicit
                   buttons instead of an automatic jump, so the lifecycle
-                  window above stays on screen long enough to read. */}
+                  window above stays on screen long enough to read.
+                  Merged: the addon really landed, so the primary door is
+                  the catalog grid it now shows up in (not the ?tab param —
+                  the default tab already is Catalog). "Track on Dashboard"
+                  stays available as a quieter secondary action. */}
               {submitResult && submitPhase === 'merged' && (
-                <button
-                  type="button"
-                  onClick={() => navigate(`/addons/${encodeURIComponent(entry.name)}`)}
-                  className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:bg-teal-700 dark:hover:bg-teal-600"
-                >
-                  View addon
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/dashboard?prs_state=pending')}
+                    className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6aade0] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    Track on Dashboard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/addons')}
+                    className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:bg-teal-700 dark:hover:bg-teal-600"
+                  >
+                    View in catalog
+                  </button>
+                </>
               )}
               {submitResult && submitPhase === 'opened' && (
                 <button

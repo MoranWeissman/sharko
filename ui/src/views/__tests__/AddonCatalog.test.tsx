@@ -1242,6 +1242,106 @@ describe('AddonCatalog — add-addon parity flow (V2-cleanup-15.1)', () => {
   })
 })
 
+/**
+ * Pending addons as ghost cards (walk finding) — a catalog-add PR that's
+ * still open is invisible on GET /addons/catalog (merged-branch-only
+ * read). Rather than a separate "Pending Addons" lane (the old design),
+ * the maintainer's call was: render it INSIDE the normal grid/list, same
+ * card shape as a real addon, but transparent with a subtle amber tint
+ * and a "Pending" badge instead of "Not deployed yet" — and never link to
+ * the addon detail route, which 404s until the PR merges.
+ */
+describe('AddonCatalog — pending addons render as ghost cards in the real grid', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const pendingPR = {
+    pr_id: 77,
+    pr_url: 'https://gh/pr/77',
+    pr_branch: 'sharko/catalog-add-loki',
+    pr_title: 'sharko: add loki to catalog',
+    addon: 'loki',
+    operation: 'catalog-add',
+    user: 'tester',
+    source: 'ui',
+    created_at: new Date().toISOString(),
+    last_status: 'open',
+    last_polled_at: new Date().toISOString(),
+  }
+
+  it('renders a pending ghost card in the grid: pending chip, tint/opacity, links to the PR, not to /addons/<name>', async () => {
+    mockFetchTrackedPRs.mockResolvedValue({ prs: [pendingPR] })
+    renderCatalog()
+
+    const ghost = await screen.findByTestId('pending-addon-card')
+    expect(within(ghost).getByText('loki')).toBeInTheDocument()
+    expect(within(ghost).getByText('Pending')).toBeInTheDocument()
+
+    // Same visual family as a real card (ring + rounded), but transparent
+    // with a subtle amber tint — never the plain blue card background.
+    expect(ghost.className).toContain('opacity-60')
+    expect(ghost.className).toMatch(/bg-amber-50|bg-amber-950/)
+
+    // Links straight to the PR, in a new tab — never to the addon detail
+    // route (that page 404s until the PR merges).
+    expect(ghost.tagName).toBe('A')
+    expect(ghost).toHaveAttribute('href', 'https://gh/pr/77')
+    expect(ghost).toHaveAttribute('target', '_blank')
+    expect(ghost.getAttribute('href')).not.toContain('/addons/loki')
+  })
+
+  it('renders the pending ghost card in list view too', async () => {
+    mockFetchTrackedPRs.mockResolvedValue({ prs: [pendingPR] })
+    renderCatalog()
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /list view/i }))
+
+    const row = await screen.findByTestId('pending-addon-row')
+    expect(within(row).getByText('loki')).toBeInTheDocument()
+    expect(within(row).getByText('Pending')).toBeInTheDocument()
+  })
+
+  it('dedupes: an addon that is both pending AND already in the real catalog shows only the real card', async () => {
+    // ingress-nginx is already in the getAddonCatalog fixture (see module
+    // mock above) — a pending PR naming the SAME addon must not produce a
+    // second, ghost duplicate.
+    mockFetchTrackedPRs.mockResolvedValue({
+      prs: [{ ...pendingPR, addon: 'ingress-nginx', pr_title: 'sharko: add ingress-nginx to catalog' }],
+    })
+    renderCatalog()
+
+    await waitFor(() => {
+      expect(screen.getByText('ingress-nginx')).toBeInTheDocument()
+    })
+    // Only one card names ingress-nginx (the real one) — no ghost twin.
+    expect(screen.getAllByText('ingress-nginx')).toHaveLength(1)
+    expect(screen.queryByTestId('pending-addon-card')).not.toBeInTheDocument()
+  })
+
+  // No silent swallows (walk finding): a failed pending-PR check used to
+  // disappear into `.catch(() => setPendingAddonPRs([]))` with no visible
+  // trace. It must now show a muted note and the grid must still render
+  // normally (never crash, never block the real addons).
+  it('a failed pending-PR check shows a muted note and still renders the real grid', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockFetchTrackedPRs.mockRejectedValue(new Error('401 unauthorized'))
+    renderCatalog()
+
+    await waitFor(() => {
+      expect(screen.getByText('ingress-nginx')).toBeInTheDocument()
+    })
+    expect(
+      await screen.findByText(/couldn.t check for pending addons/i),
+    ).toBeInTheDocument()
+    expect(warnSpy).toHaveBeenCalled()
+    expect(screen.queryByTestId('pending-addon-card')).not.toBeInTheDocument()
+  })
+})
+
 // perf S2 — a same-session revisit paints from the last successful load
 // instantly (no spinner), then quietly refreshes in the background.
 describe('AddonCatalog stale-while-refresh (perf S2)', () => {
