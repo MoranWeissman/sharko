@@ -27,6 +27,19 @@ import (
 // workflow's signing step comment).
 const DefaultEngineChartRepoURL = "ghcr.io/moranweissman/sharko"
 
+// effectiveEngineChartRepoURL resolves the OCI registry path the engine
+// pin is actually written against — GitOpsConfig.EngineChartRepoURL when
+// set, else DefaultEngineChartRepoURL. Shared by buildEnginePin (the
+// writer) and probeEnginePinChart / chartprobe.go (the A1 preflight
+// checker) so the pin and the preflight can never disagree about which
+// registry they mean.
+func effectiveEngineChartRepoURL(gitops GitOpsConfig) string {
+	if gitops.EngineChartRepoURL != "" {
+		return gitops.EngineChartRepoURL
+	}
+	return DefaultEngineChartRepoURL
+}
+
 // v4SeedFolders are the empty data folders the bootstrap PR creates. Git
 // cannot track an empty directory, so each one gets a .gitkeep placeholder
 // — that is a git limitation, not Sharko data.
@@ -82,10 +95,7 @@ func buildEnginePin(gitops GitOpsConfig, paths RepoPathsConfig) []byte {
 	if branch == "" {
 		branch = "main"
 	}
-	engineRepoURL := gitops.EngineChartRepoURL
-	if engineRepoURL == "" {
-		engineRepoURL = DefaultEngineChartRepoURL
-	}
+	engineRepoURL := effectiveEngineChartRepoURL(gitops)
 
 	var b strings.Builder
 	b.WriteString(sharkoEngineYAMLHeader)

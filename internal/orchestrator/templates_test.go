@@ -71,6 +71,7 @@ func TestCollectBootstrapFiles_RootAppPath_MatchesConstant(t *testing.T) {
 		RepoPathsConfig{},
 		nil, // templateFS — v4 bootstrap no longer reads from it
 	)
+	orch.SetChartProbe(fakeChartProbeOK) // Story A1 preflight — no real network in unit tests
 
 	files, err := orch.CollectBootstrapFiles(context.Background())
 	if err != nil {
@@ -114,6 +115,7 @@ func TestCollectBootstrapFiles_ExactlyTheSeed(t *testing.T) {
 		RepoPathsConfig{HostClusterName: "hub"},
 		nil,
 	)
+	orch.SetChartProbe(fakeChartProbeOK) // Story A1 preflight — no real network in unit tests
 
 	files, err := orch.CollectBootstrapFiles(context.Background())
 	if err != nil {

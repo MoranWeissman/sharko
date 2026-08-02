@@ -209,15 +209,27 @@ func TestAIConfig(t *testing.T) {
 
 	t.Run("ProvidersTestConfig", func(t *testing.T) {
 		// handleTestProviderConfig validates Type via
-		// providers.NewClusterTestProvider — unknown values return
-		// "unknown cluster-test provider type" inside a 200 response
-		// (status:error). The handler does not 4xx for bad input; it always
-		// 200s with a structured body. V125-1-11.6 split the dispatcher
-		// error wording from the pre-refactor "unknown provider type" to
-		// the mechanism-scoped "unknown cluster-test provider type" — the
-		// assertion below accepts the new wording (and keeps the old
-		// substring as a compat alias since "unknown ... provider" is the
-		// stable load-bearing fragment for operators grepping logs).
+		// providers.NewClusterTestProvider — unknown values return an error
+		// inside a 200 response (status:error). The handler does not 4xx
+		// for bad input; it always 200s with a structured body.
+		//
+		// The exact message wording changed again after V125-1-11.6: every
+		// error this handler sees (constructor failure on an unknown Type,
+		// OR a real ListClusters connectivity failure) is now passed
+		// through plainConnectionError("vault", err)
+		// (internal/api/connection_messages.go, v4-wave2 8.1) by design —
+		// its own header comment says the raw err.Error() text must never
+		// reach the caller, replaced by one plain-English sentence. For any
+		// error that verify.ClassifyError doesn't recognize as a specific
+		// network/TLS/timeout cause (an "unknown provider type" validation
+		// error is exactly that case), the default branch reads "Sharko
+		// can't reach your secrets store. Check the connection settings and
+		// try again." — less specific than the old "unknown provider type"
+		// wording, but still an accurate, actionable sentence: the type
+		// field IS part of "the connection settings". The assertion below
+		// accepts that current default wording alongside every prior
+		// wording this endpoint has ever returned, so a config-shaped error
+		// and a real reachability error are both covered.
 		bad := admin.TestProviderConfig(t, harness.ProviderTestRequest{
 			Type: "definitely-not-a-real-type",
 		})
@@ -226,11 +238,13 @@ func TestAIConfig(t *testing.T) {
 		}
 		if msg, _ := bad["message"].(string); !strings.Contains(strings.ToLower(msg), "unknown cluster-test provider type") &&
 			!strings.Contains(strings.ToLower(msg), "unknown provider type") &&
-			!strings.Contains(strings.ToLower(msg), "no secrets") {
-			// We accept any of: the new V125-1-11.6 "unknown cluster-test
-			// provider type" wording (current canonical), the pre-refactor
-			// "unknown provider type" wording (compat), or the
-			// "no secrets provider" wording (auto-default fallthrough).
+			!strings.Contains(strings.ToLower(msg), "no secrets") &&
+			!strings.Contains(strings.ToLower(msg), "can't reach") {
+			// We accept any of: the pre-plainConnectionError "unknown
+			// cluster-test provider type" / "unknown provider type"
+			// wording, the "no secrets provider" auto-default wording, or
+			// the current plainConnectionError("vault", ...) default
+			// wording ("Sharko can't reach ...").
 			t.Errorf("providers/test-config (bad type): message=%q lacks expected prefix (full=%v)", msg, bad)
 		}
 

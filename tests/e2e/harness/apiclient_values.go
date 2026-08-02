@@ -484,17 +484,23 @@ func SeedAddonsCatalog(t *testing.T, mock *MockGitProvider, extras ...string) {
 		t.Fatalf("SeedAddonsCatalog: write addons-catalog.yaml: %v", err)
 	}
 
-	// Also seed an empty managed-clusters.yaml so AddonService.GetCatalog
-	// doesn't trip on the cluster-list parse path (it tolerates missing
-	// files via 404-substring detection, but we'd rather have a clean,
-	// predictable artefact on the mock).
-	if !mock.FileExists("main", "configuration/managed-clusters.yaml") {
-		if err := mock.CreateOrUpdateFile(context.Background(),
-			"configuration/managed-clusters.yaml",
-			[]byte("clusters: []\n"), "main", "seed clusters"); err != nil {
-			t.Fatalf("SeedAddonsCatalog: write managed-clusters.yaml: %v", err)
-		}
-	}
+	// Deliberately do NOT seed managed-clusters.yaml here (walk finding,
+	// sprint-backlog-r1 Story A3): a NON-EMPTY file at that path is
+	// orchestrator.V3SecondaryMarkerPath — the v3-write-migration gate
+	// (v4 Wave 2 Story 5.1, internal/orchestrator/v3_migration_gate.go)
+	// treats any non-empty content there as "this repo is in the v3
+	// format, writes are refused until it migrates." A prior version of
+	// this helper wrote "clusters: []\n" as a "clean, predictable
+	// artefact," which predates that gate and had the accidental side
+	// effect of making every values-editor test look like an
+	// already-adopted v3 repo, so every PUT in this file started
+	// returning 409 instead of committing. AddonService.GetCatalog
+	// already tolerates a missing managed-clusters.yaml via 404-substring
+	// detection (the reason the old comment gave for seeding it), so
+	// leaving the file absent is both simpler and correct: the repo
+	// then reads as "empty" (no v3 markers, no v4 engine pin), which is
+	// the one state the v3-shaped values-editor endpoints these tests
+	// exercise are still allowed to write to.
 }
 
 // SeedManagedCluster appends a cluster entry to managed-clusters.yaml so

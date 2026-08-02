@@ -212,6 +212,14 @@ type Orchestrator struct {
 	// scaffold falls back to the comment-only stub, matching every
 	// pre-existing orchestrator unit test (none of which wires one).
 	chartValuesFetcherFn ChartValuesFetcherFn
+
+	// chartProbeFn checks the sharko-engine chart pin is actually
+	// published on the OCI registry before InitRepo / CollectBootstrapFiles
+	// commit anything (sprint-backlog-r1 Story A1). New() defaults it to
+	// the real, network-backed probeOCIChartVersion (chartprobe.go) —
+	// per-instance test seam per go-expert.md convention (default real,
+	// override in test via SetChartProbe).
+	chartProbeFn ChartProbeFunc
 }
 
 // LatestVersionFn resolves the newest version Sharko knows for a chart.
@@ -334,6 +342,20 @@ func New(
 		templateFS:   templateFS,
 		drainSleep:   5 * time.Second,
 		credsRouter:  providers.NewClusterCredsRouter(credProvider, providers.ClusterTestProviderConfig{}),
+		chartProbeFn: probeOCIChartVersion,
+	}
+}
+
+// SetChartProbe overrides the engine-chart-publication check InitRepo /
+// CollectBootstrapFiles run before opening the bootstrap seed PR (Story
+// A1). Production code never needs to call this — New() already wires the
+// real OCI probe. Tests inject a stub here so InitRepo tests never touch
+// the network; passing nil restores the default network probe.
+func (o *Orchestrator) SetChartProbe(fn ChartProbeFunc) {
+	if fn != nil {
+		o.chartProbeFn = fn
+	} else {
+		o.chartProbeFn = probeOCIChartVersion
 	}
 }
 

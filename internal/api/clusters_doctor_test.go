@@ -13,6 +13,10 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
+	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	corev1 "k8s.io/api/core/v1"
@@ -783,6 +787,256 @@ func TestDoctorCheckSecretOwnership_Fail_RBACError(t *testing.T) {
 	}
 	if !strings.Contains(check.Fix, "forbidden") {
 		t.Errorf("Fix = %q, want it to include the underlying reason", check.Fix)
+	}
+}
+
+// ----- check 6: connectivity-app-drift (walk finding) --------------------
+//
+// doctorCheckConnectivityApp must tell apart three causes for a missing
+// connectivity-check application BEFORE ever blaming a stale ApplicationSet
+// selector — the same distinctions dashboard.go's five-state cluster
+// breakdown makes: cluster missing from ArgoCD, cluster present but not yet
+// confirmed connected, and only then (genuinely connected + labeled + app
+// absent) the hedged selector diagnosis. The diagnosis's Fix text is also
+// layout-aware (v3 templates/bootstrap/ vs v4 engine chart).
+
+// doctorConnectivityFixture bundles the moving parts this check reads: the
+// cluster's ArgoCD Secret labels (k8s, via the cluster reconciler's
+// k8sClientAndNamespace()), the ArgoCD cluster + application lists (a stub
+// ArgoCD HTTP server, since GetActiveArgocdClient returns the concrete
+// *argocd.Client — there is no interface seam to fake here), and the repo
+// layout (git provider content at BootstrapRootAppPath).
+type doctorConnectivityFixture struct {
+	clusterName  string
+	secretLabels map[string]string
+	argoClusters []map[string]interface{}
+	argoApps     []map[string]interface{}
+	v4Repo       bool
+}
+
+func newConnectivityDoctorServer(t *testing.T, f doctorConnectivityFixture) *Server {
+	t.Helper()
+	srv := newDoctorTestServer(t)
+
+	files := map[string][]byte{
+		srv.repoPaths.Catalog:         []byte(doctorCatalogYAML),
+		srv.repoPaths.ManagedClusters: []byte(doctorManagedClustersYAML),
+	}
+	if f.v4Repo {
+		files[orchestrator.BootstrapRootAppPath] = []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n")
+	}
+	srv.connSvc.SetGitProviderOverride(&handlerFakeGitProvider{files: files})
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      f.clusterName,
+			Namespace: "argocd",
+			Labels:    f.secretLabels,
+		},
+	}
+	k8sClient := fake.NewSimpleClientset(secret)
+	srv.SetClusterReconciler(clusterreconciler.New(clusterreconciler.Deps{
+		GitProvider: func() gitprovider.GitProvider { return nil },
+		ArgoClient:  k8sClient,
+		Vault:       nil,
+		AuditFn:     func(_ audit.Entry) {},
+	}))
+	srv.SetArgoSecretManager(argosecrets.NewManager(k8sClient, "argocd"))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/clusters", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"items": f.argoClusters})
+	})
+	mux.HandleFunc("/api/v1/applications", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"items": f.argoApps})
+	})
+	argoSrv := httptest.NewServer(mux)
+	t.Cleanup(argoSrv.Close)
+
+	if err := srv.connSvc.Create(models.CreateConnectionRequest{
+		Name: "doctor-connectivity-test",
+		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "o", Repo: "r"},
+		Argocd: models.ArgocdConfig{
+			ServerURL: argoSrv.URL,
+			Token:     "test-token",
+			Insecure:  true,
+		},
+	}); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	if err := srv.connSvc.SetActive("doctor-connectivity-test"); err != nil {
+		t.Fatalf("activate connection: %v", err)
+	}
+
+	return srv
+}
+
+func connectivityLabeledSecret() map[string]string {
+	return map[string]string{"sharko.dev/connectivity-check": "enabled"}
+}
+
+// TestDoctorCheckConnectivityApp_NotApplicable_ClusterNotInArgoCD is cause 1:
+// the cluster carries the connectivity-check label but ArgoCD's cluster
+// list has no entry for it at all — nothing has been created yet, so this
+// must NOT be diagnosed as a stale selector.
+func TestDoctorCheckConnectivityApp_NotApplicable_ClusterNotInArgoCD(t *testing.T) {
+	srv := newConnectivityDoctorServer(t, doctorConnectivityFixture{
+		clusterName:  "prod-eu",
+		secretLabels: connectivityLabeledSecret(),
+		argoClusters: nil, // prod-eu is absent from ArgoCD's cluster list
+		argoApps:     nil,
+	})
+
+	check := srv.doctorCheckConnectivityApp(context.Background(), "prod-eu")
+	if check.Status != doctorStatusNotApplicable {
+		t.Fatalf("Status = %q, want not-applicable (detail=%s)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Detail, "not registered in ArgoCD's cluster list") {
+		t.Errorf("Detail = %q, want it to say the cluster isn't registered in ArgoCD", check.Detail)
+	}
+	if check.Fix != "" {
+		t.Errorf("Fix = %q, want empty — not-applicable checks carry no fix", check.Fix)
+	}
+}
+
+// TestDoctorCheckConnectivityApp_NotApplicable_ConnectionNotConfirmed is
+// cause 2 (the "zero addons / untested" case): the cluster IS in ArgoCD's
+// cluster list but its connection state has not resolved to a confirmed
+// Successful/Connected — it's still settling. Also must not be diagnosed
+// as a stale selector.
+func TestDoctorCheckConnectivityApp_NotApplicable_ConnectionNotConfirmed(t *testing.T) {
+	srv := newConnectivityDoctorServer(t, doctorConnectivityFixture{
+		clusterName:  "prod-eu",
+		secretLabels: connectivityLabeledSecret(),
+		argoClusters: []map[string]interface{}{
+			{"name": "prod-eu", "server": "https://prod-eu.example.test"},
+			// no info.connectionState at all -> ConnectionState resolves to "".
+		},
+		argoApps: nil,
+	})
+
+	check := srv.doctorCheckConnectivityApp(context.Background(), "prod-eu")
+	if check.Status != doctorStatusNotApplicable {
+		t.Fatalf("Status = %q, want not-applicable (detail=%s)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Detail, "not a confirmed Successful/Connected") {
+		t.Errorf("Detail = %q, want it to explain the connection isn't confirmed yet", check.Detail)
+	}
+	if check.Fix != "" {
+		t.Errorf("Fix = %q, want empty — not-applicable checks carry no fix", check.Fix)
+	}
+}
+
+// TestDoctorCheckConnectivityApp_NotApplicable_RealAddonDeployed pins the
+// pre-existing "the placeholder check app correctly yielded" behavior for a
+// genuinely connected cluster with a real addon deployed — unchanged by
+// this fix, still not-applicable, still not a selector claim.
+func TestDoctorCheckConnectivityApp_NotApplicable_RealAddonDeployed(t *testing.T) {
+	srv := newConnectivityDoctorServer(t, doctorConnectivityFixture{
+		clusterName:  "prod-eu",
+		secretLabels: connectivityLabeledSecret(),
+		argoClusters: []map[string]interface{}{
+			{"name": "prod-eu", "server": "https://prod-eu.example.test", "info": map[string]interface{}{
+				"connectionState": map[string]interface{}{"status": "Successful"},
+			}},
+		},
+		argoApps: []map[string]interface{}{
+			{"metadata": map[string]interface{}{"name": "datadog-prod-eu"}},
+		},
+	})
+
+	check := srv.doctorCheckConnectivityApp(context.Background(), "prod-eu")
+	if check.Status != doctorStatusNotApplicable {
+		t.Fatalf("Status = %q, want not-applicable (detail=%s)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Detail, "correctly yielded") {
+		t.Errorf("Detail = %q, want it to explain the check app correctly yielded to a real addon", check.Detail)
+	}
+}
+
+// TestDoctorCheckConnectivityApp_Pass_AppExists: connected, labeled, and
+// the expected connectivity-check application exists — pass, no drift.
+func TestDoctorCheckConnectivityApp_Pass_AppExists(t *testing.T) {
+	srv := newConnectivityDoctorServer(t, doctorConnectivityFixture{
+		clusterName:  "prod-eu",
+		secretLabels: connectivityLabeledSecret(),
+		argoClusters: []map[string]interface{}{
+			{"name": "prod-eu", "server": "https://prod-eu.example.test", "info": map[string]interface{}{
+				"connectionState": map[string]interface{}{"status": "Successful"},
+			}},
+		},
+		argoApps: []map[string]interface{}{
+			{"metadata": map[string]interface{}{"name": "connectivity-check-prod-eu"}},
+		},
+	})
+
+	check := srv.doctorCheckConnectivityApp(context.Background(), "prod-eu")
+	if check.Status != doctorStatusPass {
+		t.Fatalf("Status = %q, want pass (detail=%s)", check.Status, check.Detail)
+	}
+}
+
+// TestDoctorCheckConnectivityApp_Warn_V3Layout is cause 3: genuinely
+// connected, labeled, no addons, no check app — the hedged selector
+// warning fires, with the v3 templates/bootstrap/ fix wording since this
+// repo has no engine pin (sharko-engine.yaml).
+func TestDoctorCheckConnectivityApp_Warn_V3Layout(t *testing.T) {
+	srv := newConnectivityDoctorServer(t, doctorConnectivityFixture{
+		clusterName:  "prod-eu",
+		secretLabels: connectivityLabeledSecret(),
+		v4Repo:       false,
+		argoClusters: []map[string]interface{}{
+			{"name": "prod-eu", "server": "https://prod-eu.example.test", "info": map[string]interface{}{
+				"connectionState": map[string]interface{}{"status": "Successful"},
+			}},
+		},
+		argoApps: nil,
+	})
+
+	check := srv.doctorCheckConnectivityApp(context.Background(), "prod-eu")
+	if check.Status != doctorStatusWarn {
+		t.Fatalf("Status = %q, want warn (detail=%s)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Detail, "one possible cause") {
+		t.Errorf("Detail = %q, want the hedged wording ('one possible cause'), not a flat declaration", check.Detail)
+	}
+	if !strings.Contains(check.Fix, "templates/bootstrap/") {
+		t.Errorf("Fix = %q, want the v3 bootstrap-templates wording for a repo with no engine pin", check.Fix)
+	}
+	if strings.Contains(check.Fix, "sharko-engine chart") {
+		t.Errorf("Fix = %q, must not use v4 engine-chart wording on a v3 repo", check.Fix)
+	}
+}
+
+// TestDoctorCheckConnectivityApp_Warn_V4Layout is the same cause-3 scenario
+// on a v4 repo (sharko-engine.yaml present) — the fix must point at the
+// engine chart, never at templates/bootstrap/ (a v4 repo has no scaffolded
+// templates at all).
+func TestDoctorCheckConnectivityApp_Warn_V4Layout(t *testing.T) {
+	srv := newConnectivityDoctorServer(t, doctorConnectivityFixture{
+		clusterName:  "prod-eu",
+		secretLabels: connectivityLabeledSecret(),
+		v4Repo:       true,
+		argoClusters: []map[string]interface{}{
+			{"name": "prod-eu", "server": "https://prod-eu.example.test", "info": map[string]interface{}{
+				"connectionState": map[string]interface{}{"status": "Successful"},
+			}},
+		},
+		argoApps: nil,
+	})
+
+	check := srv.doctorCheckConnectivityApp(context.Background(), "prod-eu")
+	if check.Status != doctorStatusWarn {
+		t.Fatalf("Status = %q, want warn (detail=%s)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Fix, "sharko-engine chart") {
+		t.Errorf("Fix = %q, want the v4 engine-chart wording", check.Fix)
+	}
+	if !strings.Contains(check.Fix, "0.3.0") {
+		t.Errorf("Fix = %q, want it to name the minimum chart version (0.3.0)", check.Fix)
+	}
+	if strings.Contains(check.Fix, "templates/bootstrap/") {
+		t.Errorf("Fix = %q, must not use v3 template wording on a v4 repo (v4 has no scaffolded templates)", check.Fix)
 	}
 }
 

@@ -402,12 +402,21 @@ spec:
 
 // ---------- InitRepo tests ----------
 
+// fakeChartProbeOK is the Story A1 preflight test seam (chartprobe.go) —
+// unit tests must never make a real network call, so every InitRepo test
+// that reaches the preflight (i.e. proceeds past the already-initialized
+// and v3-marker refusals) wires this via orch.SetChartProbe.
+func fakeChartProbeOK(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 func TestInitRepo_CommitsViaPR(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
 	cfg := autoMergeGitOps()
 	cfg.RepoURL = "https://github.com/example/addons"
 	orch := New(nil, defaultCreds(), argocd, git, cfg, defaultPaths(), testTemplateFS())
+	orch.SetChartProbe(fakeChartProbeOK)
 
 	result, err := orch.InitRepo(context.Background(), InitRepoRequest{BootstrapArgoCD: false})
 	if err != nil {
@@ -476,6 +485,7 @@ func TestInitRepo_SyncTimeout(t *testing.T) {
 	cfg := autoMergeGitOps()
 	cfg.RepoURL = "https://github.com/example/addons"
 	orch := New(nil, defaultCreds(), argocd, git, cfg, defaultPaths(), testTemplateFS())
+	orch.SetChartProbe(fakeChartProbeOK)
 
 	// Use a context with a short deadline to avoid waiting 2 minutes.
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -523,6 +533,7 @@ func TestInitRepo_WithBootstrapAndSync(t *testing.T) {
 	cfg := autoMergeGitOps()
 	cfg.RepoURL = "https://github.com/example/addons"
 	orch := New(nil, defaultCreds(), argocd, git, cfg, defaultPaths(), testTemplateFS())
+	orch.SetChartProbe(fakeChartProbeOK)
 
 	result, err := orch.InitRepo(context.Background(), InitRepoRequest{
 		BootstrapArgoCD: true,
@@ -557,6 +568,7 @@ func TestInitRepo_AddRepositoryFails_PartialSuccess(t *testing.T) {
 	cfg := autoMergeGitOps()
 	cfg.RepoURL = "https://github.com/example/addons"
 	orch := New(nil, defaultCreds(), argocd, git, cfg, defaultPaths(), testTemplateFS())
+	orch.SetChartProbe(fakeChartProbeOK)
 
 	result, err := orch.InitRepo(context.Background(), InitRepoRequest{
 		BootstrapArgoCD: true,
@@ -575,6 +587,37 @@ func TestInitRepo_AddRepositoryFails_PartialSuccess(t *testing.T) {
 	// PR should still have been created.
 	if result.Repo == nil || result.Repo.PRUrl == "" {
 		t.Error("expected PR URL in partial result")
+	}
+}
+
+// TestInitRepo_ChartProbeFails_RefusesBeforePR is the Story A1 regression:
+// when the sharko-engine chart pin can't be confirmed published, InitRepo
+// must return the probe's error and must NOT open (or even branch toward)
+// a seed PR — mirrors the shape of TestInitRepo_RefusesV3Repo.
+func TestInitRepo_ChartProbeFails_RefusesBeforePR(t *testing.T) {
+	git := newMockGitProvider()
+	cfg := autoMergeGitOps()
+	cfg.RepoURL = "https://github.com/example/addons"
+	orch := New(nil, defaultCreds(), newMockArgocd(), git, cfg, defaultPaths(), testTemplateFS())
+
+	probeErr := fmt.Errorf("version 0.2.0 of the sharko-engine chart is not published at ghcr.io/moranweissman/sharko — publish it or pin a published version")
+	orch.SetChartProbe(func(_ context.Context, _, _, _ string) error {
+		return probeErr
+	})
+
+	before := len(git.files)
+	_, err := orch.InitRepo(context.Background(), InitRepoRequest{})
+	if err == nil {
+		t.Fatal("InitRepo returned nil despite a failing chart probe")
+	}
+	if !strings.Contains(err.Error(), "not published") {
+		t.Errorf("error = %v, want the probe's plain-English refusal", err)
+	}
+	if len(git.files) != before {
+		t.Errorf("InitRepo wrote %d file(s) despite the probe refusing", len(git.files)-before)
+	}
+	if len(git.branches) != 0 || len(git.prs) != 0 {
+		t.Errorf("InitRepo created branches=%v prs=%d despite the probe refusing", git.branches, len(git.prs))
 	}
 }
 

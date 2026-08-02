@@ -48,6 +48,7 @@ func TestInitRepo_EmptyRepoStillProceeds(t *testing.T) {
 	gitops := defaultGitOps()
 	gitops.RepoURL = "https://example.com/org/addons.git"
 	orch := New(nil, nil, newMockArgocd(), git, gitops, defaultPaths(), nil)
+	orch.SetChartProbe(fakeChartProbeOK)
 
 	result, err := orch.InitRepo(context.Background(), InitRepoRequest{})
 	if err != nil {
