@@ -168,6 +168,30 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
     expect(within(legend).queryByText('not healthy')).not.toBeInTheDocument();
   });
 
+  it('carries the exact "waiting" palette class into the shared DistributionPie legend (#685 — no new colors introduced)', () => {
+    renderStrip({
+      clusters: { total: 3, connected: 1, pending: 0, untested: 2, missing: 0, failed: 0 },
+      appsTotal: 0,
+      appsHealthy: 0,
+      upgrades: noUpgradeData,
+    });
+
+    const segment = screen.getByTestId('fleet-strip-clusters');
+    const legend = within(segment).getByTestId('fleet-strip-legend');
+    const waitingLabel = within(legend).getByText('waiting for first addon');
+    expect(waitingLabel).toBeInTheDocument();
+
+    // The color dot next to the label still carries the exact muted
+    // blue-violet light+dark class pair that passed the color-blindness
+    // validator — the shared component must not invent a new color.
+    const dot = waitingLabel.previousSibling as HTMLElement;
+    expect(dot.className).toContain('text-[#7a3f9e]');
+    expect(dot.className).toContain('dark:text-[#7e4fb0]');
+
+    // Legend text is at least text-sm (visibility guardrail).
+    expect(waitingLabel.closest('li')?.className).toContain('text-sm');
+  });
+
   it('applications pie: shows both healthy and not-healthy legend rows with their own counts when mixed', () => {
     renderStrip({
       clusters: { total: 1, connected: 1, pending: 0, untested: 0, missing: 0, failed: 0 },

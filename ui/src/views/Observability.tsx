@@ -8,13 +8,11 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
-  PieChart,
-  Pie,
-  Cell,
   Legend,
   LineChart,
   Line,
 } from 'recharts';
+import { DistributionPie, type DistributionSlice } from '@/components/DistributionPie';
 import {
   Activity,
   Clock,
@@ -227,18 +225,18 @@ function HealthDistributionSection({
 }: {
   data: ObservabilityOverviewResponse['control_plane'];
 }) {
-  const healthData = useMemo(
+  const healthSlices: DistributionSlice[] = useMemo(
     () =>
-      Object.entries(data?.health_summary ?? {})
-        .map(([name, value]) => ({
-          name,
-          value,
-        }))
-        .filter((d) => d.value > 0),
+      Object.entries(data?.health_summary ?? {}).map(([name, value]) => ({
+        key: name,
+        label: name,
+        value,
+        color: HEALTH_COLORS[name] ?? '#9ca3af',
+      })),
     [data?.health_summary],
   );
 
-  const total = healthData.reduce((sum, d) => sum + d.value, 0);
+  const total = healthSlices.reduce((sum, d) => sum + d.value, 0);
 
   if (total === 0) {
     return (
@@ -258,40 +256,13 @@ function HealthDistributionSection({
       <h3 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
         Application Health Distribution
       </h3>
-      <div style={{ width: '100%', height: 240 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={healthData}
-              dataKey="value"
-              nameKey="name"
-              cx="50%"
-              cy="50%"
-              innerRadius={60}
-              outerRadius={90}
-              paddingAngle={2}
-            >
-              {healthData.map((entry) => (
-                <Cell
-                  key={entry.name}
-                  fill={HEALTH_COLORS[entry.name] ?? '#9ca3af'}
-                />
-              ))}
-            </Pie>
-            <Tooltip
-              contentStyle={{
-                backgroundColor: '#f0f7ff',
-                border: '2px solid #6aade0',
-                borderRadius: '8px',
-              }}
-            />
-            <Legend
-              wrapperStyle={{ fontSize: '14px' }}
-              iconType="circle"
-            />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
+      <DistributionPie
+        slices={healthSlices}
+        ariaPrefix="Application health"
+        legendOrientation="horizontal"
+        testId="health-distribution-pie"
+        legendTestId="health-distribution-legend"
+      />
       <div className="mt-2 text-center text-sm font-medium text-[#2a5a7a] dark:text-gray-400">
         Total: {total} application{total !== 1 ? 's' : ''}
       </div>
@@ -304,7 +275,7 @@ function SyncDistributionSection({
 }: {
   addonGroups: AddonGroupHealth[];
 }) {
-  const syncData = useMemo(() => {
+  const syncSlices: DistributionSlice[] = useMemo(() => {
     const counts: Record<string, number> = {
       Synced: 0,
       OutOfSync: 0,
@@ -324,12 +295,15 @@ function SyncDistributionSection({
       }
     }
 
-    return Object.entries(counts)
-      .map(([name, value]) => ({ name, value }))
-      .filter((d) => d.value > 0);
+    return Object.entries(counts).map(([name, value]) => ({
+      key: name,
+      label: name,
+      value,
+      color: SYNC_COLORS[name] ?? '#9ca3af',
+    }));
   }, [addonGroups]);
 
-  const total = syncData.reduce((sum, d) => sum + d.value, 0);
+  const total = syncSlices.reduce((sum, d) => sum + d.value, 0);
 
   if (total === 0) {
     return (
@@ -349,40 +323,13 @@ function SyncDistributionSection({
       <h3 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
         Application Sync Distribution
       </h3>
-      <div style={{ width: '100%', height: 240 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={syncData}
-              dataKey="value"
-              nameKey="name"
-              cx="50%"
-              cy="50%"
-              innerRadius={60}
-              outerRadius={90}
-              paddingAngle={2}
-            >
-              {syncData.map((entry) => (
-                <Cell
-                  key={entry.name}
-                  fill={SYNC_COLORS[entry.name] ?? '#9ca3af'}
-                />
-              ))}
-            </Pie>
-            <Tooltip
-              contentStyle={{
-                backgroundColor: '#f0f7ff',
-                border: '2px solid #6aade0',
-                borderRadius: '8px',
-              }}
-            />
-            <Legend
-              wrapperStyle={{ fontSize: '14px' }}
-              iconType="circle"
-            />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
+      <DistributionPie
+        slices={syncSlices}
+        ariaPrefix="Application sync"
+        legendOrientation="horizontal"
+        testId="sync-distribution-pie"
+        legendTestId="sync-distribution-legend"
+      />
       <div className="mt-2 text-center text-sm font-medium text-[#2a5a7a] dark:text-gray-400">
         Total: {total} application{total !== 1 ? 's' : ''}
       </div>
