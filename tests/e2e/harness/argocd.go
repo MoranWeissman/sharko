@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	defaultArgoCDNamespace = "argocd"
+	defaultArgoCDNamespace  = "argocd"
 	defaultArgoCDInstallURL = "https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
 	defaultArgoCDWait       = 3 * time.Minute
 )

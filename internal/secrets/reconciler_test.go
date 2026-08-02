@@ -153,7 +153,7 @@ func newReconciler(
 func standardGitReader(catalogYAML string) *mockGitReader {
 	return &mockGitReader{
 		files: map[string][]byte{
-			"configuration/addons-catalog.yaml": []byte(catalogYAML),
+			"configuration/addons-catalog.yaml":   []byte(catalogYAML),
 			"configuration/managed-clusters.yaml": []byte(clusterAddonsYAML),
 		},
 	}
@@ -421,7 +421,7 @@ func TestReconcile_AddonNotEnabled(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	gitReader := &mockGitReader{
 		files: map[string][]byte{
-			"configuration/addons-catalog.yaml": []byte(catalogWithSecrets),
+			"configuration/addons-catalog.yaml":   []byte(catalogWithSecrets),
 			"configuration/managed-clusters.yaml": []byte(clusterAddonsNoMatch),
 		},
 	}

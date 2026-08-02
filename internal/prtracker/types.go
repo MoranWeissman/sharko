@@ -37,7 +37,7 @@ const (
 	OpCatalogAddEnable = "catalog-add-enable"
 
 	// AI assistant write-tool bucket
-	OpAIToolEnable = "ai-tool-enable"
+	OpAIToolEnable  = "ai-tool-enable"
 	OpAIToolDisable = "ai-tool-disable"
 	OpAIToolUpdate  = "ai-tool-update"
 )

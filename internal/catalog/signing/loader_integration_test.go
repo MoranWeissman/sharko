@@ -11,7 +11,7 @@
 //   - signed entries with untrusted SAN → Verified=false, identity empty
 //   - unsigned entries              → Verified=false AND verifyFn never invoked
 //   - infra error from verifyFn     → Verified=false, LoadBytesWithVerifier
-//                                     does NOT return an error
+//     does NOT return an error
 //
 // We don't construct real Sigstore bundle JSON inside the loader test —
 // V123-2.5 already proved the orchestration around real signing using a

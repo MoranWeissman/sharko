@@ -165,8 +165,9 @@ var (
 )
 
 // AI annotate metrics. Outcome label is one of:
-//   "ok", "not_configured", "empty_input", "oversize", "secret_blocked",
-//   "timeout", "llm_error", "parse_error", "opted_out", "disabled".
+//
+//	"ok", "not_configured", "empty_input", "oversize", "secret_blocked",
+//	"timeout", "llm_error", "parse_error", "opted_out", "disabled".
 //
 // Operators use these to spot LLM cost runaway (high call rate),
 // LLM-provider degradation (rising "timeout" / "llm_error" rate), or

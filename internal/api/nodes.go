@@ -111,9 +111,9 @@ func (s *Server) handleGetNodeInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"nodes":       result,
-		"total":       len(result),
-		"ready":       readyCount,
-		"not_ready":   len(result) - readyCount,
+		"nodes":     result,
+		"total":     len(result),
+		"ready":     readyCount,
+		"not_ready": len(result) - readyCount,
 	})
 }

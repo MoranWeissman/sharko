@@ -43,7 +43,7 @@ type Session struct {
 	Type        string    `json:"type"` // e.g. "init"
 	Status      Status    `json:"status"`
 	Steps       []Step    `json:"steps"`
-	CurrentStep int       `json:"current_step"` // index into Steps
+	CurrentStep int       `json:"current_step"`           // index into Steps
 	WaitDetail  string    `json:"wait_detail,omitempty"`  // human-readable context when waiting
 	WaitPayload string    `json:"wait_payload,omitempty"` // machine-readable payload (e.g. PR URL)
 	Result      string    `json:"result,omitempty"`       // final result message on completion

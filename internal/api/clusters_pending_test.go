@@ -33,8 +33,8 @@ func (f *fakeGP) ListDirectory(_ context.Context, _, _ string) ([]string, error)
 func (f *fakeGP) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
 	return f.prs, f.prsErr
 }
-func (f *fakeGP) TestConnection(_ context.Context) error                          { return nil }
-func (f *fakeGP) CreateBranch(_ context.Context, _, _ string) error               { return nil }
+func (f *fakeGP) TestConnection(_ context.Context) error            { return nil }
+func (f *fakeGP) CreateBranch(_ context.Context, _, _ string) error { return nil }
 func (f *fakeGP) CreateOrUpdateFile(_ context.Context, _ string, _ []byte, _, _ string) error {
 	return nil
 }
@@ -45,9 +45,9 @@ func (f *fakeGP) DeleteFile(_ context.Context, _, _, _ string) error { return ni
 func (f *fakeGP) CreatePullRequest(_ context.Context, _, _, _, _ string) (*gitprovider.PullRequest, error) {
 	return nil, nil
 }
-func (f *fakeGP) MergePullRequest(_ context.Context, _ int) error                  { return nil }
-func (f *fakeGP) GetPullRequestStatus(_ context.Context, _ int) (string, error)    { return "", nil }
-func (f *fakeGP) DeleteBranch(_ context.Context, _ string) error                   { return nil }
+func (f *fakeGP) MergePullRequest(_ context.Context, _ int) error               { return nil }
+func (f *fakeGP) GetPullRequestStatus(_ context.Context, _ int) (string, error) { return "", nil }
+func (f *fakeGP) DeleteBranch(_ context.Context, _ string) error                { return nil }
 
 // Compile-time assertion the fake satisfies the full interface — if a future
 // gitprovider method is added, this test file fails to compile rather than
@@ -154,8 +154,8 @@ func TestResolvePendingRegistrations_RespectsCommitPrefix(t *testing.T) {
 	// different prefix must not be mis-matched.
 	gp := &fakeGP{
 		prs: []gitprovider.PullRequest{
-			{Title: "sharko: register cluster a"},      // matches "sharko:"
-			{Title: "[acme] register cluster b"},       // does not match "sharko:"
+			{Title: "sharko: register cluster a"}, // matches "sharko:"
+			{Title: "[acme] register cluster b"},  // does not match "sharko:"
 			{Title: "[acme] register cluster c (kubeconfig provider)"},
 		},
 	}

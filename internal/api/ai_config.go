@@ -138,7 +138,9 @@ type saveAIConfigRequest struct {
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /ai/config [post]
 func (s *Server) handleSaveAIConfig(w http.ResponseWriter, r *http.Request) {
-	if !authz.RequireWithResponse(w, r, "ai.config") { return }
+	if !authz.RequireWithResponse(w, r, "ai.config") {
+		return
+	}
 	var req saveAIConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -230,11 +232,11 @@ func (s *Server) handleTestAIConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Create temporary client with the provided config
 	testCfg := ai.Config{
-		Provider:   ai.Provider(req.Provider),
-		APIKey:     req.APIKey,
-		CloudModel: req.Model,
-		BaseURL:    req.BaseURL,
-		OllamaURL:  req.OllamaURL,
+		Provider:    ai.Provider(req.Provider),
+		APIKey:      req.APIKey,
+		CloudModel:  req.Model,
+		BaseURL:     req.BaseURL,
+		OllamaURL:   req.OllamaURL,
 		OllamaModel: req.Model,
 	}
 	if testCfg.Provider == ai.ProviderOllama && testCfg.OllamaURL == "" {

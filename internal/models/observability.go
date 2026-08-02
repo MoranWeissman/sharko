@@ -2,16 +2,16 @@ package models
 
 // ControlPlaneInfo contains ArgoCD control plane metadata and summary stats.
 type ControlPlaneInfo struct {
-	ArgocdVersion              string         `json:"argocd_version"`
-	HelmVersion                string         `json:"helm_version"`
-	KubectlVersion             string         `json:"kubectl_version"`
-	TotalApps                  int            `json:"total_apps"`
-	TotalClusters              int            `json:"total_clusters"` // ArgoCD-known clusters
-	ConfiguredClusters         int            `json:"configured_clusters"` // Sharko-configured (Git)
-	ConfiguredClustersAvailable bool          `json:"configured_clusters_available"` // false if git read failed
-	ConnectedClusters          int            `json:"connected_clusters"`
-	TotalAppSets               int            `json:"total_appsets"` // Addon-group count (1 per addon in catalog)
-	HealthSummary              map[string]int `json:"health_summary"`
+	ArgocdVersion               string         `json:"argocd_version"`
+	HelmVersion                 string         `json:"helm_version"`
+	KubectlVersion              string         `json:"kubectl_version"`
+	TotalApps                   int            `json:"total_apps"`
+	TotalClusters               int            `json:"total_clusters"`                // ArgoCD-known clusters
+	ConfiguredClusters          int            `json:"configured_clusters"`           // Sharko-configured (Git)
+	ConfiguredClustersAvailable bool           `json:"configured_clusters_available"` // false if git read failed
+	ConnectedClusters           int            `json:"connected_clusters"`
+	TotalAppSets                int            `json:"total_appsets"` // Addon-group count (1 per addon in catalog)
+	HealthSummary               map[string]int `json:"health_summary"`
 }
 
 // SyncActivityEntry represents a single sync/deploy event in the timeline.
@@ -29,7 +29,7 @@ type SyncActivityEntry struct {
 // SyncActivityResponse wraps sync activity entries.
 type SyncActivityResponse struct {
 	Entries    []SyncActivityEntry `json:"entries"`
-	TotalSyncs int                `json:"total_syncs"`
+	TotalSyncs int                 `json:"total_syncs"`
 }
 
 // AddonHealthDetail provides per-addon health aggregation across clusters.

@@ -41,10 +41,10 @@ const (
 )
 
 const (
-	configMapName                = "sharko-server-settings"
-	keyProbeMode                 = "probe_mode"
-	keyAllowInlineCredentials    = "allow_inline_credentials"
-	keyManagedClusterSelfHeal    = "managed_cluster_self_heal"
+	configMapName             = "sharko-server-settings"
+	keyProbeMode              = "probe_mode"
+	keyAllowInlineCredentials = "allow_inline_credentials"
+	keyManagedClusterSelfHeal = "managed_cluster_self_heal"
 )
 
 // Store persists server-wide settings in a ConfigMap via cmstore.

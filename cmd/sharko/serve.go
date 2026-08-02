@@ -769,6 +769,11 @@ var serveCmd = &cobra.Command{
 		// Secret reconciler — reconciles addon secrets on remote clusters.
 		// Consumes the canonical AddonSecretProviderConfig that the
 		// connection-parsing layer fanned out above; no translation.
+		//
+		// secretRecon is hoisted to this scope (mirrors clusterRecon below)
+		// so the prTracker.SetOnMergeFn fan-out further down can nudge it
+		// immediately after a merge — see the comment there for why.
+		var secretRecon *secrets.Reconciler
 		if credProvider != nil && addonCfgPtr != nil {
 			secretProvider, spErr := providers.NewAddonSecretProvider(*addonCfgPtr)
 			if spErr != nil {
@@ -806,6 +811,7 @@ var serveCmd = &cobra.Command{
 					dur,
 				)
 				srv.SetSecretReconciler(reconciler)
+				secretRecon = reconciler
 
 				// Wire audit callback so reconcile events appear in GET /api/v1/audit.
 				auditLog := srv.AuditLog()
@@ -1168,18 +1174,30 @@ var serveCmd = &cobra.Command{
 					auditLog.Add(e)
 				})
 
-				// Post-merge fan-out: PR merge triggers both the canonical
-				// cluster-Secret reconciler and the auto-remediator.
+				// Post-merge fan-out: PR merge triggers the canonical
+				// cluster-Secret reconciler, the addon-secrets reconciler,
+				// and the auto-remediator.
 				//   - clusterRecon.Trigger(): low-latency convergence (sub-5s)
 				//     after a managed-clusters.yaml PR merge. Idempotent +
 				//     lock-free Trigger() means it is safe to call even
 				//     when no reconciler is wired (the buffered-1 channel
 				//     drops the redundant nudge).
+				//   - secretRecon.Trigger(): same idea, for addon secrets.
+				//     Without this, a freshly-enabled addon's secret waits
+				//     up to SHARKO_SECRET_RECONCILE_INTERVAL (5m default)
+				//     for the next timer tick before it lands on the remote
+				//     cluster — the merge already told us the enable
+				//     happened, so there's no reason to wait. The 5-minute
+				//     timer stays as the drift-catching backstop; this is
+				//     only the fast path. Fired on every merge, same as
+				//     clusterRecon — the reconciler's own per-addon/per-
+				//     cluster hash check makes an unrelated-operation nudge
+				//     a no-op read, not a wasted write.
 				//   - remediator.OnMerge(): auto-terminates stale failing
 				//     ArgoCD sync ops caused by the merged change.
 				//
 				// The legacy argosecrets.Reconciler trigger was removed;
-				// clusterRecon is the sole writer.
+				// clusterRecon is the sole writer of ArgoCD cluster Secrets.
 
 				// Build the auto-remediator. It only acts when an active
 				// ArgoCD connection exists at merge time (lazy lookup via
@@ -1199,9 +1217,7 @@ var serveCmd = &cobra.Command{
 				}
 
 				prTracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
-					if clusterRecon != nil {
-						clusterRecon.Trigger()
-					}
+					triggerMergeReconcilers(clusterRecon, secretRecon)
 					// The second half of a v3 → v4 migration: retire the old
 					// ApplicationSets and start the engine in their place.
 					// Nothing else does this, so without it a merged
@@ -1303,6 +1319,31 @@ var serveCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// triggerMergeReconcilers fires the low-latency nudge on each reconciler
+// that was actually wired for this server run, right after a PR merges. A
+// nil reconciler (not wired — e.g. out-of-cluster mode, or the relevant
+// preconditions were missing at startup) is silently skipped.
+//
+// Extracted out of the SetOnMergeFn closure so the fan-out itself has a
+// direct unit test (serve_test.go) — the earlier shape had this logic
+// inline, so the "does the addon-secrets reconciler actually get nudged on
+// merge" question could only be answered by reading the closure.
+//
+// secretRecon joining clusterRecon here is the fix for "secrets push on
+// enable-merge": before this, an enable-PR merge only nudged the ArgoCD
+// cluster-Secret reconciler, and a freshly-enabled addon's secret waited
+// for the addon-secrets reconciler's own timer (SHARKO_SECRET_RECONCILE_INTERVAL,
+// 5m default) before it landed on the remote cluster. The timer stays as
+// the drift-catching backstop; this is only the fast path.
+func triggerMergeReconcilers(clusterRecon *clusterreconciler.Reconciler, secretRecon *secrets.Reconciler) {
+	if clusterRecon != nil {
+		clusterRecon.Trigger()
+	}
+	if secretRecon != nil {
+		secretRecon.Trigger()
+	}
 }
 
 func getEnvDefault(key, defaultVal string) string {

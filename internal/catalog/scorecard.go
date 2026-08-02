@@ -29,7 +29,7 @@ type ScorecardMetrics interface {
 // (tests, local dev without Prometheus). All methods are safe to call.
 type NoopScorecardMetrics struct{}
 
-func (NoopScorecardMetrics) IncRefreshTotal(string, int)      {}
+func (NoopScorecardMetrics) IncRefreshTotal(string, int)       {}
 func (NoopScorecardMetrics) SetLastRefreshTimestamp(time.Time) {}
 
 // Scheduler runs the daily Scorecard refresh. It calls api.scorecard.dev for

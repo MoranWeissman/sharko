@@ -68,8 +68,8 @@ func newTakeoverFakeGP() *takeoverFakeGP {
 		files: map[string][]byte{
 			// A non-empty engine pin is what makes this a v4 repo, for both
 			// the v3-write gate and the takeover's own format check.
-			orchestrator.BootstrapRootAppPath: []byte("kind: Application\n"),
-			orchestrator.V4ManagedClustersPath:    []byte("clusters:\n  - name: other-cluster\n"),
+			orchestrator.BootstrapRootAppPath:  []byte("kind: Application\n"),
+			orchestrator.V4ManagedClustersPath: []byte("clusters:\n  - name: other-cluster\n"),
 		},
 		readErr: map[string]error{},
 		written: map[string][]byte{},

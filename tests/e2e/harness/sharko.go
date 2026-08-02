@@ -398,4 +398,3 @@ func randHex(t *testing.T, n int) string {
 	}
 	return hex.EncodeToString(buf)
 }
-

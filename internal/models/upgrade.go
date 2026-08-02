@@ -27,7 +27,7 @@ type UpgradeCheckResponse struct {
 
 	// BaselineUnavailable is true when the current version is not available
 	// in the Helm repository and no suitable fallback was found.
-	BaselineUnavailable bool   `json:"baseline_unavailable,omitempty"`
+	BaselineUnavailable bool `json:"baseline_unavailable,omitempty"`
 	// BaselineNote describes which baseline version was used for comparison
 	// (e.g., when falling back to a nearby version or when no baseline is available).
 	BaselineNote string `json:"baseline_note,omitempty"`
@@ -89,7 +89,7 @@ type UpgradeRecommendations struct {
 
 // RecommendationCard is a single upgrade option with security and breaking-change metadata.
 type RecommendationCard struct {
-	Label           string `json:"label"`                      // e.g. "Patch", "Latest in 1.x", "Latest Stable"
+	Label           string `json:"label"` // e.g. "Patch", "Latest in 1.x", "Latest Stable"
 	Version         string `json:"version"`
 	HasSecurity     bool   `json:"has_security"`               // one or more versions along the path fix security issues
 	HasBreaking     bool   `json:"has_breaking"`               // crossing a major boundary or flagged as breaking

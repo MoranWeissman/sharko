@@ -169,6 +169,101 @@ func TestUpgradeAddons_Batch(t *testing.T) {
 	}
 }
 
+// upgradeGuardCase is one v3-shaped upgrade writer under test.
+type upgradeGuardCase struct {
+	name string
+	call func(ctx context.Context, o *Orchestrator) error
+}
+
+func upgradeGuardCases() []upgradeGuardCase {
+	return []upgradeGuardCase{
+		{"UpgradeAddonGlobal", func(ctx context.Context, o *Orchestrator) error {
+			_, err := o.UpgradeAddonGlobal(ctx, "cert-manager", "1.15.0", nil)
+			return err
+		}},
+		{"UpgradeAddonCluster", func(ctx context.Context, o *Orchestrator) error {
+			_, err := o.UpgradeAddonCluster(ctx, "cert-manager", "prod-eu", "1.15.0", nil)
+			return err
+		}},
+		{"UpgradeAddons", func(ctx context.Context, o *Orchestrator) error {
+			_, err := o.UpgradeAddons(ctx, map[string]string{"cert-manager": "1.15.0"}, nil)
+			return err
+		}},
+	}
+}
+
+// TestUpgradeWriters_RefuseOnV4Repo is the VERIFY-story-4 pin: "old v3
+// upgrade endpoints not v4-gated" (flagged from the PR #642-era review).
+// Before this fix, none of these three had a v4 check at all — they read
+// and rewrote configuration/addons-catalog.yaml or
+// configuration/addons-clusters-values/<cluster>.yaml (the v3 shape) even
+// on an already-v4 repo, whose real version pin lives in
+// cluster-addons/<cluster>.yaml. That write would land in a file nothing
+// v4-aware reads, so the caller would see a merged "successful" upgrade
+// that changed nothing the fleet runs — the same class of bug the sibling
+// write paths (EnableAddon, AddAddon, ...) were already gated against.
+func TestUpgradeWriters_RefuseOnV4Repo(t *testing.T) {
+	for _, tc := range upgradeGuardCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			git := newMockGitProvider()
+			git.files[EnginePinPath] = []byte(v4EnginePinYAML) // makes isV4Repo true
+			// Populate the v3 files too, so a bug that skips the gate would
+			// otherwise succeed and prove nothing.
+			git.files[catalogPath] = sampleCatalog()
+			git.files["configuration/addons-clusters-values/prod-eu.yaml"] = []byte(
+				"cert-manager:\n  enabled: true\n  version: 1.14.0\n")
+			orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
+
+			beforeFiles := len(git.files)
+			err := tc.call(context.Background(), orch)
+			if err == nil {
+				t.Fatalf("%s returned nil on a v4 repo — it would have written the v3 shape", tc.name)
+			}
+			if !IsV4RepoUnsupported(err) {
+				t.Fatalf("%s error = %v, want an ErrV4RepoUnsupported refusal", tc.name, err)
+			}
+			if !strings.Contains(err.Error(), "writes files this repo does not use") {
+				t.Errorf("%s message = %q, want the plain-words v4 refusal", tc.name, err.Error())
+			}
+
+			// Zero writes: no new/changed files, no branch, no PR. The two
+			// v3 fixture files must be byte-identical to what was seeded.
+			if len(git.files) != beforeFiles {
+				t.Errorf("%s changed the file count despite refusing", tc.name)
+			}
+			if string(git.files[catalogPath]) != string(sampleCatalog()) {
+				t.Errorf("%s mutated %s despite refusing", tc.name, catalogPath)
+			}
+			if len(git.branches) != 0 {
+				t.Errorf("%s created branches %v despite refusing", tc.name, git.branches)
+			}
+			if len(git.prs) != 0 {
+				t.Errorf("%s opened %d PR(s) despite refusing", tc.name, len(git.prs))
+			}
+		})
+	}
+}
+
+// TestUpgradeWriters_UnchangedOnV3Repo is the other half: with no engine pin
+// present the guard is inert, so all three upgrade writers behave exactly
+// as they did before this fix (proceeding to their ordinary success path).
+func TestUpgradeWriters_UnchangedOnV3Repo(t *testing.T) {
+	for _, tc := range upgradeGuardCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			git := newMockGitProvider() // no EnginePinPath => v3 repo
+			git.files[catalogPath] = sampleCatalog()
+			git.files["configuration/addons-clusters-values/prod-eu.yaml"] = []byte(
+				"cert-manager:\n  enabled: true\n  version: 1.14.0\n")
+			orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
+
+			err := tc.call(context.Background(), orch)
+			if IsV4RepoUnsupported(err) {
+				t.Fatalf("%s refused a v3 repo as if it were v4: %v", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestDefaultAddons_NilAddonsGetDefaults(t *testing.T) {
 	git := newMockGitProvider()
 	argocd := newMockArgocd()

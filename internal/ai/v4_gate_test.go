@@ -86,3 +86,55 @@ func TestValuesTools_UnchangedOnV3Repo(t *testing.T) {
 		t.Errorf("result = %q, want the pre-existing not-found wording", out)
 	}
 }
+
+// TestWriteTools_RefuseOnV4Repo — VERIFY step for the "do the AI catalog
+// write tools still emit v3-shaped writes on a v4 repo" flag: on a v4 repo
+// (engine pin present) all three legacy-shape write tools
+// (enable_addon/disable_addon/update_addon_version, which mutate
+// managed-clusters.yaml labels and addons-catalog.yaml directly — the v3
+// data shape) must refuse via refuseV4Write BEFORE any git write, the same
+// way TestWriteTools_RefuseOnV3RepoWithMarker proves the v3 gate does.
+// TestWriteTools_DoNotDoubleRefuseOnV4Repo above already proves the v3
+// message does not fire here; this test pins the positive half — that the
+// v4 refusal DOES fire, with the right message, and zero writes reach the
+// provider — for all three tools, not just enable_addon.
+func TestWriteTools_RefuseOnV4Repo(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(ctx context.Context, e *ToolExecutor) (string, error)
+	}{
+		{"enable_addon", func(ctx context.Context, e *ToolExecutor) (string, error) {
+			return e.enableAddon(ctx, "", "prod-eu", "keda")
+		}},
+		{"disable_addon", func(ctx context.Context, e *ToolExecutor) (string, error) {
+			return e.disableAddon(ctx, "", "prod-eu", "keda")
+		}},
+		{"update_addon_version", func(ctx context.Context, e *ToolExecutor) (string, error) {
+			return e.updateAddonVersion(ctx, "", "keda", "2.14.0")
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gp := &v3GateGP{files: map[string][]byte{
+				V4EnginePinPath:                       []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+				"configuration/managed-clusters.yaml": testManagedClustersYAML,
+				"configuration/addons-catalog.yaml":   testCatalogYAML,
+			}}
+			e := NewToolExecutor(gp, nil, nil, nil, "")
+
+			out, err := tc.call(context.Background(), e)
+			if err != nil {
+				t.Fatalf("unexpected hard error: %v", err)
+			}
+			if out != v4WriteUnsupportedMessage {
+				t.Errorf("result = %q, want the shared v4-unsupported refusal %q", out, v4WriteUnsupportedMessage)
+			}
+			if n := gp.writeCallCount(); n != 0 {
+				t.Errorf("gate refused but the provider still saw %d write call(s): branch=%v file=%v pr=%v — "+
+					"this tool would have written the v3 shape into a v4 repo",
+					n, gp.createBranchCalls, gp.createFileCalls, gp.createPRCalls)
+			}
+		})
+	}
+}

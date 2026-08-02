@@ -16,11 +16,15 @@
 // faithful proxy for "the PR was merged".
 //
 // Operations covered here (the gaps closed by V2-cleanup-23):
-//   upgrade-global, upgrade-cluster, upgrade-batch, set-global-values,
-//   set-cluster-values, configure-addon, unadopt-cluster, enable-addon,
-//   remove-addon.
+//
+//	upgrade-global, upgrade-cluster, upgrade-batch, set-global-values,
+//	set-cluster-values, configure-addon, unadopt-cluster, enable-addon,
+//	remove-addon.
+//
 // Plus a regression pass over the already-correct paths:
-//   register-cluster, add-addon, adopt-cluster, update-cluster.
+//
+//	register-cluster, add-addon, adopt-cluster, update-cluster.
+//
 // (remove-cluster + disable-addon are covered in
 // remove_disable_automerge_test.go and stay green as regression.)
 package orchestrator

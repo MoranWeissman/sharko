@@ -38,13 +38,13 @@ import (
 
 // catalogReadmeResponse is the trimmed payload returned to the browser.
 //
-//   readme: markdown content from ArtifactHub (may be empty when the upstream
-//           chart didn't ship a README — surfaced by the UI as an empty state)
-//   source: "artifacthub" today; reserved for "fallback" when we add a
-//           direct chart-tarball README extractor in v1.22
-//   ah_repo + ah_chart: the ArtifactHub coordinates we resolved to (handy
-//                       for the UI to deep-link "View on ArtifactHub")
-//   stale + cached_at: same semantics as the package-detail proxy
+//	readme: markdown content from ArtifactHub (may be empty when the upstream
+//	        chart didn't ship a README — surfaced by the UI as an empty state)
+//	source: "artifacthub" today; reserved for "fallback" when we add a
+//	        direct chart-tarball README extractor in v1.22
+//	ah_repo + ah_chart: the ArtifactHub coordinates we resolved to (handy
+//	                    for the UI to deep-link "View on ArtifactHub")
+//	stale + cached_at: same semantics as the package-detail proxy
 type catalogReadmeResponse struct {
 	Readme   string `json:"readme"`
 	Source   string `json:"source"`
@@ -177,10 +177,10 @@ func (s *Server) handleGetCatalogReadme(w http.ResponseWriter, r *http.Request) 
 // pickBestAHMatch returns the best matching ArtifactHub search hit for the
 // given chart name. Preference order:
 //
-//   1. Exact case-insensitive name match + verified publisher
-//   2. Exact case-insensitive name match
-//   3. Verified publisher (any name match)
-//   4. First hit in the list
+//  1. Exact case-insensitive name match + verified publisher
+//  2. Exact case-insensitive name match
+//  3. Verified publisher (any name match)
+//  4. First hit in the list
 //
 // Within each tier, ties break by stars descending. Returns nil when the
 // hit list is empty.

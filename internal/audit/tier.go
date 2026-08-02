@@ -24,11 +24,11 @@ package audit
 type Tier string
 
 const (
-	Tier1        Tier = "tier1"        // operational
-	Tier2        Tier = "tier2"        // configuration
-	TierPersonal Tier = "personal"     // self-service on own profile (no git write)
-	TierAuth     Tier = "auth"         // login/logout/hash (no git write)
-	TierWebhook  Tier = "webhook"      // inbound webhook (no user identity)
+	Tier1        Tier = "tier1"    // operational
+	Tier2        Tier = "tier2"    // configuration
+	TierPersonal Tier = "personal" // self-service on own profile (no git write)
+	TierAuth     Tier = "auth"     // login/logout/hash (no git write)
+	TierWebhook  Tier = "webhook"  // inbound webhook (no user identity)
 )
 
 // AttributionMode describes how a mutating action was attributed in the resulting

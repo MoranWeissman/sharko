@@ -171,6 +171,8 @@ The secrets reconciler runs continuously in the background:
 3. If a value changed, Sharko updates the Kubernetes Secret on the affected remote clusters
 4. ArgoCD is configured to ignore these secrets (resource exclusion), so it never deletes them
 
+The 5-minute timer is a backstop, not the only way in: merging a pull request that enables an addon also wakes the reconciler right away, so a newly-enabled addon's secret does not sit waiting for the next tick.
+
 All Sharko-managed secrets are labeled `app.kubernetes.io/managed-by: sharko`.
 
 ### Manual Trigger

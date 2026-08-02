@@ -327,9 +327,9 @@ connections:
 // so we want unit-level coverage independent of the API surface).
 func TestMissingRequiredConnectionFields(t *testing.T) {
 	tests := []struct {
-		name    string
-		conn    models.Connection
-		want    []string
+		name string
+		conn models.Connection
+		want []string
 	}{
 		{
 			name: "valid github with owner+repo",

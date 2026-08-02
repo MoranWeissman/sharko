@@ -30,9 +30,9 @@ func setArtifactHubBaseURL(u string) {
 
 // artifactHubSource queries ArtifactHub for Helm chart advisory data.
 type artifactHubSource struct {
-	client       *http.Client
-	repoCache    map[string]repoCacheEntry // repoURL → ArtifactHub repo name
-	repoCacheMu  sync.Mutex
+	client      *http.Client
+	repoCache   map[string]repoCacheEntry // repoURL → ArtifactHub repo name
+	repoCacheMu sync.Mutex
 }
 
 type repoCacheEntry struct {
@@ -42,15 +42,15 @@ type repoCacheEntry struct {
 
 // ahPackageSummary is the JSON shape returned by /packages/helm/{repo}/{chart}.
 type ahPackageSummary struct {
-	Name              string             `json:"name"`
-	AvailableVersions []ahVersionEntry   `json:"available_versions"`
+	Name              string           `json:"name"`
+	AvailableVersions []ahVersionEntry `json:"available_versions"`
 }
 
 type ahVersionEntry struct {
-	Version                string `json:"version"`
-	TS                     int64  `json:"ts"`
-	Prerelease             bool   `json:"prerelease"`
-	ContainsSecurityUpdates bool  `json:"contains_security_updates"`
+	Version                 string `json:"version"`
+	TS                      int64  `json:"ts"`
+	Prerelease              bool   `json:"prerelease"`
+	ContainsSecurityUpdates bool   `json:"contains_security_updates"`
 }
 
 // ahRepoSearchResult is returned by /repositories/search?url=...

@@ -5,8 +5,8 @@
 //
 // The parser reads two env vars:
 //
-//   SHARKO_CATALOG_URLS             — comma-separated list of HTTPS URLs
-//   SHARKO_CATALOG_REFRESH_INTERVAL — Go duration format, default 1h
+//	SHARKO_CATALOG_URLS             — comma-separated list of HTTPS URLs
+//	SHARKO_CATALOG_REFRESH_INTERVAL — Go duration format, default 1h
 //
 // Validation rules (rejections produce a startup error — operator must fix
 // the env and restart):

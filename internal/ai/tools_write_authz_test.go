@@ -43,7 +43,7 @@ func (failingProvider) DeleteFile(context.Context, string, string, string) error
 func (failingProvider) CreatePullRequest(context.Context, string, string, string, string) (*gitprovider.PullRequest, error) {
 	return nil, errFakeProvider
 }
-func (failingProvider) MergePullRequest(context.Context, int) error          { return errFakeProvider }
+func (failingProvider) MergePullRequest(context.Context, int) error { return errFakeProvider }
 func (failingProvider) GetPullRequestStatus(context.Context, int) (string, error) {
 	return "", errFakeProvider
 }

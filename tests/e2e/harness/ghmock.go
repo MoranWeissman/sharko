@@ -56,18 +56,18 @@ import (
 // Mirrors the public fields of gitprovider.PullRequest plus the source/
 // destination branch SHAs so tests can assert merge state precisely.
 type MockPR struct {
-	Number       int
-	Title        string
-	Body         string
-	HeadBranch   string
-	BaseBranch   string
-	State        string // "open" | "closed" | "merged"
-	URL          string
-	HeadSHA      string
-	MergeCommit  string // populated after MergePullRequest
-	CreatedAt    time.Time
-	ClosedAt     time.Time
-	MergedAt     time.Time
+	Number      int
+	Title       string
+	Body        string
+	HeadBranch  string
+	BaseBranch  string
+	State       string // "open" | "closed" | "merged"
+	URL         string
+	HeadSHA     string
+	MergeCommit string // populated after MergePullRequest
+	CreatedAt   time.Time
+	ClosedAt    time.Time
+	MergedAt    time.Time
 }
 
 // fileBlob is one branch's view of one path. SHA is a synthetic content

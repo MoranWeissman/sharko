@@ -36,9 +36,9 @@ func (a *attentionFakeArgocd) DeleteCluster(_ context.Context, _ string) error {
 func (a *attentionFakeArgocd) UpdateClusterLabels(_ context.Context, _ string, _ map[string]string) error {
 	return nil
 }
-func (a *attentionFakeArgocd) SyncApplication(_ context.Context, _ string) error  { return nil }
-func (a *attentionFakeArgocd) CreateProject(_ context.Context, _ []byte) error    { return nil }
-func (a *attentionFakeArgocd) CreateApplication(_ context.Context, _ []byte) error { return nil }
+func (a *attentionFakeArgocd) SyncApplication(_ context.Context, _ string) error     { return nil }
+func (a *attentionFakeArgocd) CreateProject(_ context.Context, _ []byte) error       { return nil }
+func (a *attentionFakeArgocd) CreateApplication(_ context.Context, _ []byte) error   { return nil }
 func (a *attentionFakeArgocd) AddRepository(_ context.Context, _, _, _ string) error { return nil }
 func (a *attentionFakeArgocd) GetApplication(_ context.Context, _ string) (*models.ArgocdApplication, error) {
 	return nil, nil

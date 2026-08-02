@@ -643,7 +643,7 @@ func TestClusterService_ListClusters_V3PathPresent_NeverTriesV4Fallback(t *testi
 	gp := &fakeGP{
 		files: map[string][]byte{
 			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-cluster\n"),
-			orchestrator.V4ManagedClustersPath:        []byte("clusters:\n  - name: v4-cluster-should-be-ignored\n"),
+			orchestrator.V4ManagedClustersPath:    []byte("clusters:\n  - name: v4-cluster-should-be-ignored\n"),
 		},
 	}
 

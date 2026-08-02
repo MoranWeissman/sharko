@@ -133,39 +133,39 @@ func TestFriendlyMessage_NoHintKeepsRawCause(t *testing.T) {
 
 func TestAssumeRoleHint(t *testing.T) {
 	tests := []struct {
-		name         string
-		err          error
-		wantContains []string
+		name            string
+		err             error
+		wantContains    []string
 		wantNotContains []string
 	}{
 		{
-			name:         "trust policy rejection - not authorized to assume",
-			err:          errors.New("User: arn:aws:sts::123456789012:assumed-role/sharko-role/session is not authorized to assume role arn:aws:iam::123456789012:role/target-role"),
-			wantContains: []string{"trust policy", "Sharko's identity"},
+			name:            "trust policy rejection - not authorized to assume",
+			err:             errors.New("User: arn:aws:sts::123456789012:assumed-role/sharko-role/session is not authorized to assume role arn:aws:iam::123456789012:role/target-role"),
+			wantContains:    []string{"trust policy", "Sharko's identity"},
 			wantNotContains: []string{"sts:AssumeRole permission", "sts:TagSession"},
 		},
 		{
-			name:         "trust policy rejection - AccessDenied on AssumeRole",
-			err:          errors.New("operation error STS: AssumeRole, https response error StatusCode: 403, api error AccessDenied: User is not authorized to perform: sts:AssumeRole on resource"),
-			wantContains: []string{"trust policy", "IAM principal"},
+			name:            "trust policy rejection - AccessDenied on AssumeRole",
+			err:             errors.New("operation error STS: AssumeRole, https response error StatusCode: 403, api error AccessDenied: User is not authorized to perform: sts:AssumeRole on resource"),
+			wantContains:    []string{"trust policy", "IAM principal"},
 			wantNotContains: []string{"sts:TagSession"},
 		},
 		{
-			name:         "missing sts:TagSession permission",
-			err:          errors.New("User is not authorized to perform: sts:TagSession on resource"),
-			wantContains: []string{"sts:TagSession", "EKS Pod Identity", "session tags"},
+			name:            "missing sts:TagSession permission",
+			err:             errors.New("User is not authorized to perform: sts:TagSession on resource"),
+			wantContains:    []string{"sts:TagSession", "EKS Pod Identity", "session tags"},
 			wantNotContains: []string{"trust policy"},
 		},
 		{
-			name:         "nil error returns empty string",
-			err:          nil,
-			wantContains: nil,
+			name:            "nil error returns empty string",
+			err:             nil,
+			wantContains:    nil,
 			wantNotContains: nil,
 		},
 		{
-			name:         "generic error falls back to combined hint",
-			err:          errors.New("timeout waiting for AssumeRole response"),
-			wantContains: []string{"assume-role", "trust policy", "sts:AssumeRole", "sts:TagSession"},
+			name:            "generic error falls back to combined hint",
+			err:             errors.New("timeout waiting for AssumeRole response"),
+			wantContains:    []string{"assume-role", "trust policy", "sts:AssumeRole", "sts:TagSession"},
 			wantNotContains: nil,
 		},
 	}

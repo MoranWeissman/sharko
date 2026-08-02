@@ -48,9 +48,9 @@ import (
 
 // unwrapGlobalsResult is the per-file outcome surfaced back to the caller.
 type unwrapGlobalsFile struct {
-	File    string `json:"file"`     // repo-relative path
-	Addon   string `json:"addon"`    // derived addon name (filename without .yaml)
-	Status  string `json:"status"`   // "migrated" | "skipped"
+	File    string `json:"file"`   // repo-relative path
+	Addon   string `json:"addon"`  // derived addon name (filename without .yaml)
+	Status  string `json:"status"` // "migrated" | "skipped"
 	Message string `json:"message,omitempty"`
 }
 
@@ -61,14 +61,14 @@ type unwrapGlobalsFile struct {
 // values-editor response shape so the UI can reuse the AttributionNudge
 // component.
 type unwrapGlobalsResponse struct {
-	Migrated int                  `json:"migrated"`
-	Skipped  int                  `json:"skipped"`
-	Files    []unwrapGlobalsFile  `json:"files"`
-	Message  string               `json:"message,omitempty"`
-	PRUrl    string               `json:"pr_url,omitempty"`
-	PRID     int                  `json:"pr_id,omitempty"`
-	Branch   string               `json:"branch,omitempty"`
-	Merged   bool                 `json:"merged,omitempty"`
+	Migrated int                 `json:"migrated"`
+	Skipped  int                 `json:"skipped"`
+	Files    []unwrapGlobalsFile `json:"files"`
+	Message  string              `json:"message,omitempty"`
+	PRUrl    string              `json:"pr_url,omitempty"`
+	PRID     int                 `json:"pr_id,omitempty"`
+	Branch   string              `json:"branch,omitempty"`
+	Merged   bool                `json:"merged,omitempty"`
 }
 
 // handleUnwrapGlobalValues godoc

@@ -177,8 +177,8 @@ func (a *initFakeArgocd) ListApplications(_ context.Context) ([]models.ArgocdApp
 //   - opsStore   (Create/Start/UpdateStep/Complete/Fail)
 //   - gitMu      (mutex passed to orchestrator.New)
 //   - auditLog   (always written from runInitOperation tail; we don't reach it
-//                 on the early-return path but it must be non-nil to avoid a
-//                 nil-deref if the test is later extended)
+//     on the early-return path but it must be non-nil to avoid a
+//     nil-deref if the test is later extended)
 func newInitTestServer() *Server {
 	return &Server{
 		opsStore: operations.NewStore(),

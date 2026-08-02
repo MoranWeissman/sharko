@@ -12,10 +12,10 @@ import (
 
 func TestParseGitHubURL(t *testing.T) {
 	cases := []struct {
-		in          string
-		wantOwner   string
-		wantRepo    string
-		wantOK      bool
+		in        string
+		wantOwner string
+		wantRepo  string
+		wantOK    bool
 	}{
 		{"https://github.com/cert-manager/cert-manager", "cert-manager", "cert-manager", true},
 		{"http://github.com/kyverno/kyverno.git", "kyverno", "kyverno", true},
@@ -36,8 +36,8 @@ func TestParseGitHubURL(t *testing.T) {
 // countingMetrics records the counter deltas so the refresh-job tests can
 // assert outcome counts without importing Prometheus.
 type countingMetrics struct {
-	success    int64
-	errors     int64
+	success     int64
+	errors      int64
 	lastRefresh atomic.Int64
 }
 

@@ -430,9 +430,9 @@ func TestDetectConnectivityCheckDrift(t *testing.T) {
 		secretLabels   map[string]string
 		apps           []models.ArgocdApplication
 		ac             connectivityAppSetGetter // nil = not reached / no client
-		wantReasonHas  string                    // substring the reason must contain (ignored if empty)
-		wantReasonLack string                    // substring the reason must NOT contain (ignored if empty)
-		wantDrift      bool                      // true = a non-empty reason is returned
+		wantReasonHas  string                   // substring the reason must contain (ignored if empty)
+		wantReasonLack string                   // substring the reason must NOT contain (ignored if empty)
+		wantDrift      bool                     // true = a non-empty reason is returned
 	}{
 		{
 			name:         "no connectivity-check label → not applicable",

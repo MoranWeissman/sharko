@@ -13,36 +13,36 @@ type ArgocdCluster struct {
 
 // ArgocdApplication represents an ArgoCD application.
 type ArgocdApplication struct {
-	Name                 string            `json:"name"`
-	Namespace            string            `json:"namespace"`
-	Project              string            `json:"project"`
-	SourceRepoURL        string            `json:"source_repo_url"`
-	SourcePath           string            `json:"source_path,omitempty"`
-	SourceTargetRevision string            `json:"source_target_revision"`
-	DestinationServer    string            `json:"destination_server"`
-	DestinationName      string            `json:"destination_name,omitempty"`
-	DestinationNamespace string            `json:"destination_namespace"`
-	SyncStatus           string            `json:"sync_status,omitempty"`
-	HealthStatus         string            `json:"health_status,omitempty"`
-	OperationState       string            `json:"operation_state,omitempty"`
-	CreatedAt            string            `json:"created_at,omitempty"`
-	SourceChart          string            `json:"source_chart,omitempty"`
-	SourceHelmParameters []HelmParameter   `json:"source_helm_parameters,omitempty"`
-	HealthLastTransition string            `json:"health_last_transition,omitempty"`
-	ReconciledAt         string            `json:"reconciled_at,omitempty"`
-	OperationPhase          string            `json:"operation_phase,omitempty"`
-	OperationStartedAt      string            `json:"operation_started_at,omitempty"`
-	OperationFinishedAt     string            `json:"operation_finished_at,omitempty"`
-	OperationMessage        string            `json:"operation_message,omitempty"`
+	Name                 string          `json:"name"`
+	Namespace            string          `json:"namespace"`
+	Project              string          `json:"project"`
+	SourceRepoURL        string          `json:"source_repo_url"`
+	SourcePath           string          `json:"source_path,omitempty"`
+	SourceTargetRevision string          `json:"source_target_revision"`
+	DestinationServer    string          `json:"destination_server"`
+	DestinationName      string          `json:"destination_name,omitempty"`
+	DestinationNamespace string          `json:"destination_namespace"`
+	SyncStatus           string          `json:"sync_status,omitempty"`
+	HealthStatus         string          `json:"health_status,omitempty"`
+	OperationState       string          `json:"operation_state,omitempty"`
+	CreatedAt            string          `json:"created_at,omitempty"`
+	SourceChart          string          `json:"source_chart,omitempty"`
+	SourceHelmParameters []HelmParameter `json:"source_helm_parameters,omitempty"`
+	HealthLastTransition string          `json:"health_last_transition,omitempty"`
+	ReconciledAt         string          `json:"reconciled_at,omitempty"`
+	OperationPhase       string          `json:"operation_phase,omitempty"`
+	OperationStartedAt   string          `json:"operation_started_at,omitempty"`
+	OperationFinishedAt  string          `json:"operation_finished_at,omitempty"`
+	OperationMessage     string          `json:"operation_message,omitempty"`
 	// HasSyncFailedResource is true when operationState.syncResult.resources[]
 	// contains at least one entry with status "SyncFailed". Combined with
 	// phase=Running and a "completed unsuccessfully" message, this identifies
 	// an ArgoCD application that is permanently failing to sync even though
 	// ArgoCD continues retrying (the keda CRD-too-long scenario).
-	HasSyncFailedResource bool `json:"has_sync_failed_resource,omitempty"`
-	History              []AppHistoryEntry `json:"history,omitempty"`
-	Resources            []AppResource     `json:"resources,omitempty"`
-	Conditions           []AppCondition    `json:"conditions,omitempty"`
+	HasSyncFailedResource bool              `json:"has_sync_failed_resource,omitempty"`
+	History               []AppHistoryEntry `json:"history,omitempty"`
+	Resources             []AppResource     `json:"resources,omitempty"`
+	Conditions            []AppCondition    `json:"conditions,omitempty"`
 }
 
 // AppCondition represents an ArgoCD application condition (error/warning).

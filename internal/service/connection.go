@@ -36,10 +36,10 @@ var ErrValidation = errors.New("validation failed")
 
 // ConnectionService manages connections and provides active provider instances.
 type ConnectionService struct {
-	store               config.Store
-	devMode             bool // when true, falls back to env vars for missing credentials
-	gitProviderOverride gitprovider.GitProvider     // when set, returned by GetActiveGitProvider (demo mode)
-	argocdClientOverride orchestrator.ArgocdClient  // when set, returned by GetActiveOrchestratorArgocdClient (test seam)
+	store                config.Store
+	devMode              bool                      // when true, falls back to env vars for missing credentials
+	gitProviderOverride  gitprovider.GitProvider   // when set, returned by GetActiveGitProvider (demo mode)
+	argocdClientOverride orchestrator.ArgocdClient // when set, returned by GetActiveOrchestratorArgocdClient (test seam)
 
 	// activeCache memoizes the resolved active connection plus the ArgoCD
 	// client / Git provider built from it (perf S1).
@@ -339,8 +339,8 @@ func deriveProviderFromURL(repoURL string) (string, error) {
 //   - git.provider must be one of the supported values
 //   - either git.repo_url is set (parsed downstream) OR the per-provider
 //     identifier fields are set:
-//       github      → owner + repo
-//       azuredevops → organization + project + repository
+//     github      → owner + repo
+//     azuredevops → organization + project + repository
 //
 // Token / PAT fields are NOT required at create time — the test-credentials
 // endpoint and the env-var fallback (SHARKO_DEV_MODE) cover those flows.

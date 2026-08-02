@@ -157,9 +157,12 @@ remoteclient → K8s Secret on remote cluster
   labeled: app.kubernetes.io/managed-by: sharko
 
 Trigger sources:
-  1. time.Ticker  — default every 5 minutes
-  2. Webhook      — POST /api/v1/webhooks/git (HMAC-SHA256)
-  3. Manual       — POST /api/v1/secrets/reconcile
+  1. time.Ticker  — default every 5 minutes (the backstop; catches everything else)
+  2. PR merge     — any tracked pull request merging nudges the reconciler
+                    right away, so an addon enabled through Sharko gets its
+                    secret without waiting for the next tick
+  3. Webhook      — POST /api/v1/webhooks/git (HMAC-SHA256)
+  4. Manual       — POST /api/v1/secrets/reconcile
 ```
 
 ArgoCD is configured with a resource exclusion to ignore these labeled secrets. This prevents ArgoCD from deleting secrets that are not in Git — the secrets are managed exclusively by the Sharko reconciler.

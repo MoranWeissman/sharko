@@ -120,16 +120,16 @@ var ActionRequirements = map[string]Role{
 	// v4 Wave 2 Epic 7 Story 7.2 — subset upgrade: bumps the version pin
 	// on a chosen set of clusters in one PR. Same tier as the existing
 	// global/per-cluster addon.update-catalog upgrade write.
-	"addon.upgrade-clusters":     RoleOperator,
-	"default-addons.update":      RoleOperator,
-	"engine.pin-upgrade":         RoleOperator,
-	"catalog.add":                RoleOperator,
-	"reconciler.trigger":         RoleOperator,
-	"catalog.freshness.refresh":  RoleOperator,
-	"token.create":               RoleOperator,
-	"token.renew-own":            RoleOperator,
-	"token.revoke-own":           RoleOperator,
-	"init":                       RoleOperator,
+	"addon.upgrade-clusters":    RoleOperator,
+	"default-addons.update":     RoleOperator,
+	"engine.pin-upgrade":        RoleOperator,
+	"catalog.add":               RoleOperator,
+	"reconciler.trigger":        RoleOperator,
+	"catalog.freshness.refresh": RoleOperator,
+	"token.create":              RoleOperator,
+	"token.renew-own":           RoleOperator,
+	"token.revoke-own":          RoleOperator,
+	"init":                      RoleOperator,
 
 	// Connectivity tests (v4-wave2 review B1). These endpoints reach out to
 	// a Git host, an ArgoCD server or a secret store with real credentials —

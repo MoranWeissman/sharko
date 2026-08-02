@@ -95,13 +95,13 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 	}
 
 	type AttentionItem struct {
-		AppName    string `json:"app_name"`
-		AddonName  string `json:"addon_name"`
-		Cluster    string `json:"cluster"`
-		Health     string `json:"health"`
-		Sync       string `json:"sync"`
-		Error      string `json:"error,omitempty"`
-		ErrorType  string `json:"error_type,omitempty"`
+		AppName   string `json:"app_name"`
+		AddonName string `json:"addon_name"`
+		Cluster   string `json:"cluster"`
+		Health    string `json:"health"`
+		Sync      string `json:"sync"`
+		Error     string `json:"error,omitempty"`
+		ErrorType string `json:"error_type,omitempty"`
 	}
 
 	var items []AttentionItem

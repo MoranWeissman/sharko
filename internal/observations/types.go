@@ -26,8 +26,8 @@ type Observation struct {
 
 // StatusResult holds the computed status and metadata for UI rendering.
 type StatusResult struct {
-	Status     ClusterStatus `json:"status"`
-	TestFailing bool         `json:"test_failing,omitempty"`
-	LastTestAt time.Time     `json:"last_test_at,omitempty"`
-	ErrorCode  string        `json:"error_code,omitempty"`
+	Status      ClusterStatus `json:"status"`
+	TestFailing bool          `json:"test_failing,omitempty"`
+	LastTestAt  time.Time     `json:"last_test_at,omitempty"`
+	ErrorCode   string        `json:"error_code,omitempty"`
 }

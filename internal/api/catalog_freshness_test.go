@@ -203,7 +203,7 @@ func TestHandleGetCatalogFreshness_Enabled(t *testing.T) {
 		t.Errorf("expected non-empty last_run/next_run, got %+v", body)
 	}
 	if body.IntervalSecs != int((6 * time.Hour).Seconds()) {
-		t.Errorf("interval_seconds = %d, want %d", body.IntervalSecs, int((6*time.Hour).Seconds()))
+		t.Errorf("interval_seconds = %d, want %d", body.IntervalSecs, int((6 * time.Hour).Seconds()))
 	}
 	if body.EnginePin == nil || !body.EnginePin.UpgradeAvailable {
 		t.Errorf("expected engine_pin.upgrade_available = true, got %+v", body.EnginePin)

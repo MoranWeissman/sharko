@@ -213,8 +213,8 @@ func withAttributionWarning(payload interface{}, res service.TokenResolution) in
 		return payload
 	}
 	return map[string]interface{}{
-		"result":               payload,
-		"attribution_warning":  AttributionWarning,
+		"result":              payload,
+		"attribution_warning": AttributionWarning,
 	}
 }
 

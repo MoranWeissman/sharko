@@ -43,8 +43,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 )
 

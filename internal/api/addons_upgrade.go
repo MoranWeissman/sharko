@@ -24,6 +24,7 @@ import (
 // @Success 200 {object} map[string]interface{} "Upgrade result"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 409 {object} map[string]interface{} "The connected repo uses the v4 format — use POST /addons/{name}/upgrade-clusters instead"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /addons/{name}/upgrade [post]
 // handleUpgradeAddon handles POST /api/v1/addons/{name}/upgrade — upgrade an addon version.
@@ -82,6 +83,12 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
+		// This endpoint writes the v3 catalog/values shape, which a v4 repo
+		// does not read — see orchestrator.refuseV3ShapedWriteOnV4Repo.
+		if orchestrator.IsV4RepoUnsupported(err) {
+			writeCodedError(w, http.StatusConflict, CodeRepoLayout, err.Error(), nil)
+			return
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -110,6 +117,7 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} map[string]interface{} "Batch upgrade result"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 409 {object} map[string]interface{} "The connected repo uses the v4 format — use POST /addons/{name}/upgrade-clusters instead"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /addons/upgrade-batch [post]
 // handleUpgradeAddonsBatch handles POST /api/v1/addons/upgrade-batch — upgrade multiple addons.
@@ -155,6 +163,12 @@ func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request
 
 	result, err := orch.UpgradeAddons(r.Context(), req.Upgrades, req.AutoMerge)
 	if err != nil {
+		// This endpoint writes the v3 catalog shape, which a v4 repo does
+		// not read — see orchestrator.refuseV3ShapedWriteOnV4Repo.
+		if orchestrator.IsV4RepoUnsupported(err) {
+			writeCodedError(w, http.StatusConflict, CodeRepoLayout, err.Error(), nil)
+			return
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}

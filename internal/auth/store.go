@@ -48,12 +48,13 @@ const EnvBootstrapAdminPassword = "SHARKO_BOOTSTRAP_ADMIN_PASSWORD"
 // off — see docs/site/operator/installation.md.
 //
 // Values:
-//   ""        — default, write the secret (recommended)
-//   "true"    — explicit opt-in, write the secret
-//   "false"   — explicit opt-out, do NOT write the secret. Operators who
-//               want the plaintext to live ONLY in transient pod logs
-//               should set this in Helm via
-//               `bootstrapAdmin.writeInitialSecret: false`.
+//
+//	""        — default, write the secret (recommended)
+//	"true"    — explicit opt-in, write the secret
+//	"false"   — explicit opt-out, do NOT write the secret. Operators who
+//	            want the plaintext to live ONLY in transient pod logs
+//	            should set this in Helm via
+//	            `bootstrapAdmin.writeInitialSecret: false`.
 //
 // The toggle has NO effect on the operator-supplied paths (Helm value
 // `password` set, or `existingSecret.name` set) — Sharko NEVER writes the
@@ -720,14 +721,14 @@ func writeInitialAdminSecretEnabled() bool {
 //
 // The created Secret carries:
 //
-//   metadata.labels:
-//     app.kubernetes.io/managed-by: sharko
-//     app.kubernetes.io/component:  bootstrap
-//   metadata.annotations:
-//     sharko.dev/initial-secret: "rotated-on-reset-admin"
-//   data:
-//     username: <base64('admin')>
-//     password: <base64(plaintext)>
+//	metadata.labels:
+//	  app.kubernetes.io/managed-by: sharko
+//	  app.kubernetes.io/component:  bootstrap
+//	metadata.annotations:
+//	  sharko.dev/initial-secret: "rotated-on-reset-admin"
+//	data:
+//	  username: <base64('admin')>
+//	  password: <base64(plaintext)>
 //
 // The annotation value "rotated-on-reset-admin" reflects the actual
 // lifecycle: the secret persists across `sharko reset-admin`

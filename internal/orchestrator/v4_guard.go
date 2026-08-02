@@ -106,21 +106,32 @@ const V4CatalogWriteDoor = `this repo keeps its approved addons in catalog.yaml,
 // V4EnableDoor is the same pointer for switching an addon on or off.
 const V4EnableDoor = "this repo switches addons on per cluster in cluster-addons/<cluster>.yaml — use POST /api/v1/v4/clusters/{cluster}/addons/{addon} (and the addon has to be in catalog.yaml first)"
 
+// V4UpgradeDoor is the same pointer for bumping an addon's pinned version.
+const V4UpgradeDoor = "this repo pins addon versions per cluster in cluster-addons/<cluster>.yaml — use POST /api/v1/addons/{name}/upgrade-clusters"
+
 // refuseV3ShapedWriteOnV4Repo is refuseOnV4Repo with a pointer at the door
 // that DOES work, for the operations that have a v4 replacement today.
 //
 // It exists because the three legacy catalog writers (POST /addons,
-// PATCH /addons/{name}, DELETE /addons/{name}) and the v3
-// EnableAddon/DisableAddon pair all write files a v4 repo does not have:
-// configuration/addons-catalog.yaml and the addon on/off labels in
-// configuration/managed-clusters.yaml. On a v4 repo those writes CREATE
-// those files. A second catalog nothing reads is merely confusing; a second
-// cluster registry is not — the reconciler prefers the v3 file whenever
-// both exist, so every v4-registered cluster loses its ArgoCD connection
-// Secret. Before this gate existed, EnableAddon/DisableAddon happened to
-// fail on a v4 repo only because the file they read was missing; that is an
-// accident, not a guarantee, and it stops holding the moment anything
-// recreates the file.
+// PATCH /addons/{name}, DELETE /addons/{name}), the v3
+// EnableAddon/DisableAddon pair, and the three legacy version-upgrade
+// writers (UpgradeAddonGlobal, UpgradeAddonCluster, UpgradeAddons) all write
+// files a v4 repo does not have: configuration/addons-catalog.yaml, the
+// addon on/off labels in configuration/managed-clusters.yaml, and (for the
+// upgrade trio) that same addons-catalog.yaml plus
+// configuration/addons-clusters-values/<cluster>.yaml. On a v4 repo those
+// writes CREATE those files. A second catalog nothing reads is merely
+// confusing; a second cluster registry is not — the reconciler prefers the
+// v3 file whenever both exist, so every v4-registered cluster loses its
+// ArgoCD connection Secret. Before this gate existed, EnableAddon/
+// DisableAddon happened to fail on a v4 repo only because the file they read
+// was missing; that is an accident, not a guarantee, and it stops holding
+// the moment anything recreates the file. The upgrade trio had no such
+// accidental protection at all — addons-catalog.yaml and the per-cluster
+// values file are BOTH still read/written by v3 tooling that may coexist
+// during a migration, so an upgrade call against an already-v4 repo would
+// silently write a version bump nothing v4 reads (v4-wave2 follow-up: "old
+// v3 upgrade endpoints not v4-gated").
 //
 // Fail closed on an unanswerable probe, for the same reason refuseOnV4Repo
 // does: refusing costs a retry, guessing costs the fleet.

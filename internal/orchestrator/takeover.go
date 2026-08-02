@@ -187,7 +187,7 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 
 	files := map[string][]byte{
 		V4ManagedClustersPath: updatedConnections,
-		clusterPath:       updatedClusterAddons,
+		clusterPath:           updatedClusterAddons,
 	}
 	result.FilesWritten = []string{V4ManagedClustersPath, clusterPath}
 

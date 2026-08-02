@@ -42,8 +42,8 @@ func (s *stubGitProvider) ListDirectory(context.Context, string, string) ([]stri
 func (s *stubGitProvider) ListPullRequests(context.Context, string) ([]gitprovider.PullRequest, error) {
 	return nil, nil
 }
-func (s *stubGitProvider) TestConnection(context.Context) error                       { return nil }
-func (s *stubGitProvider) CreateBranch(context.Context, string, string) error         { return nil }
+func (s *stubGitProvider) TestConnection(context.Context) error               { return nil }
+func (s *stubGitProvider) CreateBranch(context.Context, string, string) error { return nil }
 func (s *stubGitProvider) CreateOrUpdateFile(context.Context, string, []byte, string, string) error {
 	return nil
 }
@@ -54,7 +54,7 @@ func (s *stubGitProvider) DeleteFile(context.Context, string, string, string) er
 func (s *stubGitProvider) CreatePullRequest(context.Context, string, string, string, string) (*gitprovider.PullRequest, error) {
 	return nil, nil
 }
-func (s *stubGitProvider) MergePullRequest(context.Context, int) error          { return nil }
+func (s *stubGitProvider) MergePullRequest(context.Context, int) error { return nil }
 func (s *stubGitProvider) GetPullRequestStatus(context.Context, int) (string, error) {
 	return "", nil
 }
@@ -93,11 +93,11 @@ func TestProviderFromConnectionWithToken(t *testing.T) {
 	overrideStub := &stubGitProvider{}
 
 	cases := []struct {
-		name           string
+		name            string
 		installOverride bool
-		conn           *models.Connection
-		token          string
-		want           wantKind
+		conn            *models.Connection
+		token           string
+		want            wantKind
 	}{
 		// ----- Override NOT installed (production-shape) ------------------
 

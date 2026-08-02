@@ -160,7 +160,7 @@ func TestHandleReconcileCluster_202_TriggersReconciler(t *testing.T) {
 // reconciler wired never touches the Git provider or ArgoCD client at all
 // — even for a cluster that doesn't exist.
 func TestHandleReconcileCluster_503_NoReconcilerWired_SkipsGitAndArgoCDRoundTrips(t *testing.T) {
-	gp := &reconcileFakeGP{} // no managedYAML set — GetFileContent always errors if called
+	gp := &reconcileFakeGP{}                                      // no managedYAML set — GetFileContent always errors if called
 	_, router := reconcileTestServer(t, gp, "http://127.0.0.1:1") // unreachable ArgoCD URL
 	// Deliberately do NOT call SetReconcilerTrigger.
 

@@ -24,12 +24,12 @@ type MockArgocdServer struct {
 }
 
 type mockCluster struct {
-	Name              string            `json:"name"`
-	Server            string            `json:"server"`
-	ServerVersion     string            `json:"serverVersion,omitempty"`
-	Namespaces        []string          `json:"namespaces,omitempty"`
-	Labels            map[string]string `json:"labels,omitempty"`
-	Info              mockClusterInfo   `json:"info"`
+	Name          string            `json:"name"`
+	Server        string            `json:"server"`
+	ServerVersion string            `json:"serverVersion,omitempty"`
+	Namespaces    []string          `json:"namespaces,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	Info          mockClusterInfo   `json:"info"`
 }
 
 type mockClusterInfo struct {
@@ -72,9 +72,9 @@ type mockDestination struct {
 }
 
 type mockAppStatus struct {
-	Sync        mockSyncStatus   `json:"sync"`
-	Health      mockHealthStatus `json:"health"`
-	ReconciledAt string          `json:"reconciledAt"`
+	Sync         mockSyncStatus   `json:"sync"`
+	Health       mockHealthStatus `json:"health"`
+	ReconciledAt string           `json:"reconciledAt"`
 }
 
 type mockSyncStatus struct {

@@ -42,6 +42,7 @@ func (f *fakeGit) GetFileContent(_ context.Context, path, _ string) ([]byte, err
 	}
 	return nil, fmt.Errorf("fakeGit: %s: %w", path, gitprovider.ErrFileNotFound)
 }
+
 // ListDirectory is a real (if simple) implementation now that pollOnce
 // lists cluster-addons/ on a v4 repo to derive addon labels. It returns the
 // basenames of entries directly under dir, sorted so a tick's behaviour is
@@ -70,6 +71,7 @@ func (f *fakeGit) ListDirectory(_ context.Context, dir, _ string) ([]string, err
 	sort.Strings(names)
 	return names, nil
 }
+
 // ListPullRequests is a real (if trivial) implementation: MigrationStatus
 // (called via PreviewMigration in the v4-migration-labels tests) reads
 // open PRs to report an already-open migration PR, and that is a

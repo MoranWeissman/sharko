@@ -34,7 +34,7 @@ func newMinimalAgent(ollamaURL string) *Agent {
 	})
 	exec := &ToolExecutor{
 		parser: config.NewParser(),
-		gp: func() gitprovider.GitProvider { return failingProvider{} }(),
+		gp:     func() gitprovider.GitProvider { return failingProvider{} }(),
 	}
 	// Build agent without initContext (no git provider wired, so context
 	// loading would fail).  We set up the messages slice directly.

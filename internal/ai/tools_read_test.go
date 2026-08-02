@@ -85,8 +85,8 @@ func argocdAppJSON(name, health, sync, opMsg string) []byte {
 		Project string `json:"project"`
 	}
 	type app struct {
-		Metadata metaBlock  `json:"metadata"`
-		Spec     specBlock  `json:"spec"`
+		Metadata metaBlock   `json:"metadata"`
+		Spec     specBlock   `json:"spec"`
 		Status   statusBlock `json:"status"`
 	}
 

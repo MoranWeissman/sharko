@@ -14,8 +14,8 @@ import (
 // HomeClusterInfo holds basic information about the cluster where Sharko
 // and ArgoCD run (the "home cluster"). Only available when running in-cluster.
 type HomeClusterInfo struct {
-	Available        bool   `json:"available"`
-	Message          string `json:"message,omitempty"`
+	Available         bool   `json:"available"`
+	Message           string `json:"message,omitempty"`
 	KubernetesVersion string `json:"kubernetes_version,omitempty"`
 	NodeCount         int    `json:"node_count,omitempty"`
 	NodesReady        int    `json:"nodes_ready,omitempty"`

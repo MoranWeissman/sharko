@@ -468,4 +468,3 @@ func countLabeledSecrets(t *testing.T, cs kubernetes.Interface) int {
 	}
 	return len(list.Items)
 }
-

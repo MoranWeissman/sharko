@@ -154,10 +154,10 @@ type terminalIO interface {
 // package-level term.* function with the same signature.
 type realTerminalIO struct{}
 
-func (realTerminalIO) GetState(fd int) (*term.State, error)   { return term.GetState(fd) }
+func (realTerminalIO) GetState(fd int) (*term.State, error)    { return term.GetState(fd) }
 func (realTerminalIO) Restore(fd int, state *term.State) error { return term.Restore(fd, state) }
-func (realTerminalIO) ReadPassword(fd int) ([]byte, error)    { return term.ReadPassword(fd) }
-func (realTerminalIO) IsTerminal(fd int) bool                 { return term.IsTerminal(fd) }
+func (realTerminalIO) ReadPassword(fd int) ([]byte, error)     { return term.ReadPassword(fd) }
+func (realTerminalIO) IsTerminal(fd int) bool                  { return term.IsTerminal(fd) }
 
 // readPasswordSafe is the production entry point — wraps
 // readPasswordSafeWith with the real golang.org/x/term implementation.

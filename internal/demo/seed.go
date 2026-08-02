@@ -4,22 +4,22 @@ package demo
 
 // Cluster represents a demo cluster definition.
 type Cluster struct {
-	Name          string
-	Server        string
-	Region        string
-	Env           string
-	K8sVersion    string
-	ConnStatus    string // "Successful", "Failed"
-	Addons        map[string]string // addon name → chart version installed
+	Name       string
+	Server     string
+	Region     string
+	Env        string
+	K8sVersion string
+	ConnStatus string            // "Successful", "Failed"
+	Addons     map[string]string // addon name → chart version installed
 }
 
 // Addon represents a demo addon definition from the catalog.
 type Addon struct {
-	Name       string
-	ChartName  string
-	RepoURL    string
+	Name          string
+	ChartName     string
+	RepoURL       string
 	LatestVersion string
-	Description string
+	Description   string
 }
 
 // demoClusters is the seed data for the 5 registered clusters.
@@ -32,11 +32,11 @@ var demoClusters = []Cluster{
 		K8sVersion: "1.29.3",
 		ConnStatus: "Successful",
 		Addons: map[string]string{
-			"cert-manager":           "1.14.4",
-			"metrics-server":         "3.12.1",
-			"kube-prometheus-stack":  "58.1.3",
-			"external-dns":           "1.14.4",
-			"istio-base":             "1.21.0",
+			"cert-manager":          "1.14.4",
+			"metrics-server":        "3.12.1",
+			"kube-prometheus-stack": "58.1.3",
+			"external-dns":          "1.14.4",
+			"istio-base":            "1.21.0",
 		},
 	},
 	{
@@ -47,10 +47,10 @@ var demoClusters = []Cluster{
 		K8sVersion: "1.29.3",
 		ConnStatus: "Successful",
 		Addons: map[string]string{
-			"cert-manager":           "1.14.4",
-			"metrics-server":         "3.12.1",
-			"kube-prometheus-stack":  "58.1.3",
-			"external-dns":           "1.14.4",
+			"cert-manager":          "1.14.4",
+			"metrics-server":        "3.12.1",
+			"kube-prometheus-stack": "58.1.3",
+			"external-dns":          "1.14.4",
 		},
 	},
 	{
@@ -61,10 +61,10 @@ var demoClusters = []Cluster{
 		K8sVersion: "1.28.7",
 		ConnStatus: "Successful",
 		Addons: map[string]string{
-			"cert-manager":           "1.13.6", // older version — will show drift
-			"metrics-server":         "3.11.0",
-			"kube-prometheus-stack":  "57.2.0",
-			"datadog":                "3.68.0",
+			"cert-manager":          "1.13.6", // older version — will show drift
+			"metrics-server":        "3.11.0",
+			"kube-prometheus-stack": "57.2.0",
+			"datadog":               "3.68.0",
 		},
 	},
 	{
@@ -75,9 +75,9 @@ var demoClusters = []Cluster{
 		K8sVersion: "1.28.7",
 		ConnStatus: "Successful",
 		Addons: map[string]string{
-			"cert-manager":  "1.13.6",
+			"cert-manager":   "1.13.6",
 			"metrics-server": "3.12.1",
-			"vault":         "0.27.0",
+			"vault":          "0.27.0",
 		},
 	},
 	{
@@ -88,9 +88,9 @@ var demoClusters = []Cluster{
 		K8sVersion: "1.27.12",
 		ConnStatus: "Failed", // degraded cluster for demo
 		Addons: map[string]string{
-			"cert-manager":           "1.12.9",
-			"metrics-server":         "3.10.0",
-			"kube-prometheus-stack":  "55.5.0",
+			"cert-manager":          "1.12.9",
+			"metrics-server":        "3.10.0",
+			"kube-prometheus-stack": "55.5.0",
 		},
 	},
 }

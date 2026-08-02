@@ -1029,6 +1029,14 @@ export interface AddToCatalogResult {
   }
   warnings?: string[]
   dry_run?: DryRunResult
+  /**
+   * Maps each added addon name to the version that actually landed in
+   * catalog.yaml — the caller's own version, or the newest one Sharko
+   * filled in for a from_marketplace entry sent with no version. Absent on
+   * a dry-run response (nothing has been committed yet — see
+   * DryRunResult.files_to_write for the pin in the diff).
+   */
+  resolved_versions?: Record<string, string>
 }
 
 // Paste Helm URL validator. The handler returns 200 in both the happy and

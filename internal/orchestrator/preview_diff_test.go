@@ -162,7 +162,7 @@ func TestBuildFileDiff(t *testing.T) {
 			oldContent:  []byte("password: hunter2"),
 			newContent:  []byte("password: newsecret\nregion: eu-west-1"),
 			action:      "update",
-			mustContain: []string{"+region: eu-west-1"}, // non-secret key revealed
+			mustContain: []string{"+region: eu-west-1"},   // non-secret key revealed
 			mustNotFind: []string{"hunter2", "newsecret"}, // secret values redacted
 		},
 	}

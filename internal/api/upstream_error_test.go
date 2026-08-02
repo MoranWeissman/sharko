@@ -182,7 +182,7 @@ func TestWriteUpstreamError_TimeoutBecomes504(t *testing.T) {
 // so the test runs in microseconds and stays hermetic.
 type timeoutError struct{}
 
-func (timeoutError) Error() string                        { return "i/o timeout" }
-func (timeoutError) Timeout() bool                        { return true }
-func (timeoutError) Temporary() bool                      { return true }
-func (timeoutError) Deadline() (time.Time, bool)          { return time.Time{}, false }
+func (timeoutError) Error() string               { return "i/o timeout" }
+func (timeoutError) Timeout() bool               { return true }
+func (timeoutError) Temporary() bool             { return true }
+func (timeoutError) Deadline() (time.Time, bool) { return time.Time{}, false }

@@ -34,9 +34,9 @@ type managedClustersDoc struct {
 }
 
 type addonCatalogDoc struct {
-	APIVersion string                  `json:"apiVersion"`
-	Kind       string                  `json:"kind"`
-	Metadata   sharkoschema.Metadata   `json:"metadata"`
+	APIVersion string                    `json:"apiVersion"`
+	Kind       string                    `json:"kind"`
+	Metadata   sharkoschema.Metadata     `json:"metadata"`
 	Spec       config.AddonCatalogV3Spec `json:"spec"`
 }
 

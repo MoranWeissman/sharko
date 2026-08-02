@@ -38,7 +38,7 @@ func TestPollOnce_ProbeModeFn_APITest_SkipsConnectivityCheckLabel(t *testing.T) 
 		Vault:                    vault,
 		AuditFn:                  audits.Add,
 		TickInterval:             0,
-		DisableConnectivityCheck: false, // static escape hatch OFF — feature "on" by that knob alone
+		DisableConnectivityCheck: false,                                      // static escape hatch OFF — feature "on" by that knob alone
 		ProbeModeFn:              func(context.Context) bool { return true }, // probe_mode = api-test
 	})
 	r.pollOnce(ctx)

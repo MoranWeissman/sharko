@@ -16,19 +16,19 @@ import (
 type Entry struct {
 	ID              string          `json:"id"`
 	Timestamp       time.Time       `json:"timestamp"`
-	Level           string          `json:"level"`                       // info, warn, error
-	Event           string          `json:"event"`                       // cluster_registered, pr_created, etc.
-	User            string          `json:"user"`                        // username or "system"
-	Action          string          `json:"action"`                      // register, remove, update, test
-	Resource        string          `json:"resource"`                    // cluster:prod-eu, addon:cert-manager
-	Source          string          `json:"source"`                      // ui, cli, api, reconciler, webhook
-	Result          string          `json:"result"`                      // success, failure, partial
+	Level           string          `json:"level"`    // info, warn, error
+	Event           string          `json:"event"`    // cluster_registered, pr_created, etc.
+	User            string          `json:"user"`     // username or "system"
+	Action          string          `json:"action"`   // register, remove, update, test
+	Resource        string          `json:"resource"` // cluster:prod-eu, addon:cert-manager
+	Source          string          `json:"source"`   // ui, cli, api, reconciler, webhook
+	Result          string          `json:"result"`   // success, failure, partial
 	DurationMs      int64           `json:"duration_ms"`
 	Error           string          `json:"error,omitempty"`
 	RequestID       string          `json:"request_id,omitempty"`
-	Detail          string          `json:"detail,omitempty"`            // semantic detail set by handlers via Enrich
-	AttributionMode AttributionMode `json:"attribution_mode,omitempty"`  // how the resulting Git commit was attributed
-	Tier            Tier            `json:"tier,omitempty"`              // attribution tier of the endpoint
+	Detail          string          `json:"detail,omitempty"`           // semantic detail set by handlers via Enrich
+	AttributionMode AttributionMode `json:"attribution_mode,omitempty"` // how the resulting Git commit was attributed
+	Tier            Tier            `json:"tier,omitempty"`             // attribution tier of the endpoint
 }
 
 // Fields contains semantic enrichment that handlers attach to the in-flight audit entry.

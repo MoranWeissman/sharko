@@ -35,9 +35,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":                  "healthy",
-		"version":                 v,
-		"mode":                    deploymentMode,
-		"cluster_test_available":  s.credProvider() != nil,
+		"status":                 "healthy",
+		"version":                v,
+		"mode":                   deploymentMode,
+		"cluster_test_available": s.credProvider() != nil,
 	})
 }

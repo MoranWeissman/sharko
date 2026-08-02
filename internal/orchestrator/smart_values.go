@@ -315,10 +315,10 @@ func buildPath(stack []smartFrame, leaf string) string {
 
 // SmartValuesInput is the input to SplitUpstreamValues.
 type SmartValuesInput struct {
-	AddonName     string
-	Chart         string
-	Version       string
-	RepoURL       string
+	AddonName      string
+	Chart          string
+	Version        string
+	RepoURL        string
 	UpstreamValues []byte // raw chart values.yaml bytes (comments preserved)
 	AIAnnotated    bool   // true if an AI annotation pass also ran
 	AIOptOut       bool   // true if the user opted out per-addon

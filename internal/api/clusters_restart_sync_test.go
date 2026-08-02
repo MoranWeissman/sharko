@@ -218,7 +218,9 @@ func TestHandleRestartAddonSync_NoArgoConnection_502(t *testing.T) {
 
 // argocdRestartSyncServerEx builds a flexible stub ArgoCD server.
 // finishedAt: when non-empty, the app response includes operationState.finishedAt
-//   (simulating a finished operation).
+//
+//	(simulating a finished operation).
+//
 // terminateStatus: HTTP status ArgoCD returns for DELETE /operation.
 // terminateBody: body to return for the terminate call.
 func argocdRestartSyncServerEx(
@@ -272,65 +274,65 @@ func TestHandleRestartAddonSync_V2cleanup38(t *testing.T) {
 	appName := "keda-moran-test"
 
 	cases := []struct {
-		name              string
-		phase             string
-		finishedAt        string
-		terminateStatus   int
-		terminateBody     string
-		wantCode          int
-		wantTerminated    bool // did terminate call reach the stub
+		name                 string
+		phase                string
+		finishedAt           string
+		terminateStatus      int
+		terminateBody        string
+		wantCode             int
+		wantTerminated       bool // did terminate call reach the stub
 		wantResultTerminated bool // did result.Terminated == true
-		wantSynced        bool
+		wantSynced           bool
 	}{
 		{
 			// Finished op (phase=Failed, finishedAt set): must NOT call terminate,
 			// must still sync → 200 {terminated:false, synced:true}.
-			name:             "finished_op_no_terminate_sync_fires",
-			phase:            "Failed",
-			finishedAt:       "2026-06-10T11:51:00Z",
-			terminateStatus:  http.StatusOK,
-			terminateBody:    `{}`,
-			wantCode:         http.StatusOK,
-			wantTerminated:   false,
+			name:                 "finished_op_no_terminate_sync_fires",
+			phase:                "Failed",
+			finishedAt:           "2026-06-10T11:51:00Z",
+			terminateStatus:      http.StatusOK,
+			terminateBody:        `{}`,
+			wantCode:             http.StatusOK,
+			wantTerminated:       false,
 			wantResultTerminated: false,
-			wantSynced:       true,
+			wantSynced:           true,
 		},
 		{
 			// Running op → terminate + sync → 200 {terminated:true, synced:true}.
-			name:             "running_op_terminate_and_sync",
-			phase:            "Running",
-			finishedAt:       "",
-			terminateStatus:  http.StatusOK,
-			terminateBody:    `{}`,
-			wantCode:         http.StatusOK,
-			wantTerminated:   true,
+			name:                 "running_op_terminate_and_sync",
+			phase:                "Running",
+			finishedAt:           "",
+			terminateStatus:      http.StatusOK,
+			terminateBody:        `{}`,
+			wantCode:             http.StatusOK,
+			wantTerminated:       true,
 			wantResultTerminated: true,
-			wantSynced:       true,
+			wantSynced:           true,
 		},
 		{
 			// Running op + terminate returns benign 400 "No operation is in
 			// progress" → tolerated, sync fires, 200 {terminated:false}.
-			name:             "terminate_benign_400_tolerated",
-			phase:            "Running",
-			finishedAt:       "",
-			terminateStatus:  http.StatusBadRequest,
-			terminateBody:    `{"error":"Unable to terminate operation. No operation is in progress"}`,
-			wantCode:         http.StatusOK,
-			wantTerminated:   true, // stub was called
+			name:                 "terminate_benign_400_tolerated",
+			phase:                "Running",
+			finishedAt:           "",
+			terminateStatus:      http.StatusBadRequest,
+			terminateBody:        `{"error":"Unable to terminate operation. No operation is in progress"}`,
+			wantCode:             http.StatusOK,
+			wantTerminated:       true,  // stub was called
 			wantResultTerminated: false, // result.Terminated stays false (benign path)
-			wantSynced:       true,
+			wantSynced:           true,
 		},
 		{
 			// Running op + terminate returns non-benign 500 → 502.
-			name:             "terminate_error_502",
-			phase:            "Running",
-			finishedAt:       "",
-			terminateStatus:  http.StatusInternalServerError,
-			terminateBody:    `{"error":"internal server error"}`,
-			wantCode:         http.StatusBadGateway,
-			wantTerminated:   true, // stub was called
+			name:                 "terminate_error_502",
+			phase:                "Running",
+			finishedAt:           "",
+			terminateStatus:      http.StatusInternalServerError,
+			terminateBody:        `{"error":"internal server error"}`,
+			wantCode:             http.StatusBadGateway,
+			wantTerminated:       true, // stub was called
 			wantResultTerminated: false,
-			wantSynced:       false,
+			wantSynced:           false,
 		},
 	}
 

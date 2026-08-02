@@ -8,11 +8,11 @@ func TestApplyConnectivityCheckLabel(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		input        map[string]string
-		featureOn    bool
-		wantLabel    bool // true = canonical label present with value LabelEnabled
-		wantLegacy   bool // W4b: true = legacy label ALSO present (V3 RW1.8)
+		name       string
+		input      map[string]string
+		featureOn  bool
+		wantLabel  bool // true = canonical label present with value LabelEnabled
+		wantLegacy bool // W4b: true = legacy label ALSO present (V3 RW1.8)
 	}{
 		{
 			name:       "feature off, empty labels",

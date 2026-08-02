@@ -25,9 +25,9 @@ import (
 
 // meResponse is the shape returned from GET /api/v1/users/me.
 type meResponse struct {
-	Username        string `json:"username"`
-	Role            string `json:"role"`
-	HasGitHubToken  bool   `json:"has_github_token"`
+	Username       string `json:"username"`
+	Role           string `json:"role"`
+	HasGitHubToken bool   `json:"has_github_token"`
 }
 
 // handleGetMe godoc
@@ -256,4 +256,3 @@ func validateGitHubToken(ctx context.Context, token string) (string, error) {
 	}
 	return body.Login, nil
 }
-

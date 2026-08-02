@@ -170,8 +170,125 @@ func installArgoCD() error {
 		return fmt.Errorf("wait for argocd-server: %w", err)
 	}
 
+	// Grant the admin account's ArgoCD RBAC role explicitly (walk finding:
+	// recurring non-fatal 403 on app-refresh remediation). See
+	// grantArgoCDAdminRBAC's doc comment for why this is needed even for the
+	// built-in admin account on a stock install.
+	if err := grantArgoCDAdminRBAC(kubeconfigPath); err != nil {
+		return fmt.Errorf("grant argocd admin RBAC: %w", err)
+	}
+
 	fmt.Println("    ArgoCD installed")
 	return nil
+}
+
+// grantArgoCDAdminRBAC ensures argocd-rbac-cm's policy.csv contains
+// "g, admin, role:admin" — an explicit group-membership grant of ArgoCD's
+// built-in admin role to the admin account.
+//
+// Why a stock `kubectl apply -f install.yaml` (what installArgoCD does
+// above) is not enough on its own: mintArgoCDToken (cmd_up.go) mints the
+// token Sharko uses for its ArgoCD connection by logging in as admin via
+// POST /api/v1/session. sharko-dev.sh's `argocd-token` subcommand (used for
+// the equivalent problem in the non-playground local-dev flow) already
+// documents the underlying ArgoCD RBAC nuance in detail (see its "Account
+// RBAC grant" step, V2-cleanup-10 / PR #393): a fresh ArgoCD install ships
+// an EMPTY argocd-rbac-cm policy.csv, and depending on exactly which
+// identity/session shape a given ArgoCD version and token type resolves to,
+// a request against that empty policy can be denied with 403 even for the
+// admin account — the remediation flow's periodic RefreshApplication calls
+// are the ones that surface it, because they run automatically and keep
+// retrying (and logging) instead of failing once and being noticed.
+//
+// This mirrors the exact, already-proven fix from sharko-dev.sh: a single
+// "g, admin, role:admin" line in policy.csv. It is the narrowest known-good
+// grant — a group membership binding to ArgoCD's BUILT-IN role:admin
+// (compiled into the ArgoCD binary, not user-editable), not a
+// policy.default change that would affect anonymous/other accounts. Unlike
+// sharko-dev.sh's flow, this playground still uses a password-session token
+// (not an apiKey account token), so no argocd-cm capability patch or
+// argocd-server restart is needed — argocd-rbac-cm hot-reloads.
+//
+// Playground-only: this patches the ArgoCD instance THIS playground run
+// just installed via install.yaml, never any chart/values shipped to real
+// users.
+func grantArgoCDAdminRBAC(kubeconfigPath string) error {
+	fmt.Println("    Granting admin role:admin in argocd-rbac-cm...")
+
+	current, _, err := runCmd(15*time.Second, "kubectl",
+		"--kubeconfig", kubeconfigPath,
+		"--context", ContextHub,
+		"-n", ArgoCDNamespace,
+		"get", "configmap", "argocd-rbac-cm",
+		"-o", `jsonpath={.data.policy\.csv}`)
+	if err != nil {
+		// argocd-rbac-cm always ships with install.yaml, so a read failure
+		// here means something is genuinely wrong with the install, not an
+		// expected "not found yet" state — surface it rather than silently
+		// skipping the grant.
+		return fmt.Errorf("read argocd-rbac-cm: %w", err)
+	}
+
+	newPolicy, alreadyGranted := mergeAdminRoleGrant(current)
+	if alreadyGranted {
+		fmt.Println("    argocd-rbac-cm already grants admin role:admin")
+		return nil
+	}
+
+	patch := map[string]map[string]string{
+		"data": {"policy.csv": newPolicy},
+	}
+	patchJSON, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("marshal argocd-rbac-cm patch: %w", err)
+	}
+
+	if _, stderr, err := runCmd(15*time.Second, "kubectl",
+		"--kubeconfig", kubeconfigPath,
+		"--context", ContextHub,
+		"-n", ArgoCDNamespace,
+		"patch", "configmap", "argocd-rbac-cm",
+		"--type", "merge",
+		"-p", string(patchJSON)); err != nil {
+		return fmt.Errorf("patch argocd-rbac-cm: %w (stderr=%s)", err, stderr)
+	}
+
+	fmt.Println("    argocd-rbac-cm patched — admin granted role:admin")
+	return nil
+}
+
+// adminRoleGrantLine is the policy.csv line grantArgoCDAdminRBAC ensures is
+// present — a group-membership binding of the admin account to ArgoCD's
+// built-in role:admin. Exported as a constant (not inlined) so
+// mergeAdminRoleGrant's test can assert against the exact same string the
+// production path writes.
+const adminRoleGrantLine = "g, admin, role:admin"
+
+// mergeAdminRoleGrant is the pure decision half of grantArgoCDAdminRBAC:
+// given the CURRENT contents of argocd-rbac-cm's policy.csv field, it
+// reports the policy.csv value that should be written, and whether the
+// grant was already present (in which case newPolicy equals current
+// unchanged and the caller should skip the write entirely — argocd-rbac-cm
+// hot-reloads, but there is no reason to issue a no-op patch every run).
+//
+// Split out from grantArgoCDAdminRBAC (which does the kubectl read/patch)
+// so this line-matching/merge logic — the part most likely to have an
+// off-by-one bug (trailing newlines, blank lines, an existing rule that
+// differs only in whitespace) — has a direct unit test that needs no
+// cluster.
+func mergeAdminRoleGrant(currentPolicyCSV string) (newPolicy string, alreadyGranted bool) {
+	trimmed := strings.TrimSpace(currentPolicyCSV)
+
+	for _, line := range strings.Split(trimmed, "\n") {
+		if strings.TrimSpace(line) == adminRoleGrantLine {
+			return currentPolicyCSV, true
+		}
+	}
+
+	if trimmed == "" {
+		return adminRoleGrantLine, false
+	}
+	return trimmed + "\n" + adminRoleGrantLine, false
 }
 
 // buildAndLoadImages builds Sharko + GitFake Docker images and loads them onto the hub.
@@ -208,6 +325,28 @@ func buildAndLoadImages() error {
 
 // deployGitFake deploys an in-cluster GitFake Pod on the hub, seeded with
 // managed-clusters.yaml. Returns the in-cluster service URL.
+//
+// LEGACY / DORMANT PATH — read before touching this or the GitFake branch in
+// registerSpokes below. GitFake (tests/e2e/harness/gitfake) only speaks the
+// git smart-HTTP protocol (clone/push); it has no PR-open/PR-merge REST API.
+// So this function bakes managed-clusters.yaml directly into the Pod at
+// startup (SEED_CONTENT below) and registerSpokes' GitFake branch talks to
+// Sharko with the old direct addons-map call — NEITHER goes through Sharko's
+// real API doors (POST /api/v1/init, POST /api/v1/clusters, POST
+// /api/v1/catalog/addons, ...) the way the default Gitea backend's
+// runGiteaRealDoorsFlow (realdoors.go) does. A GitFake playground run does
+// NOT exercise the seed-bootstrap PR flow, the catalog approval gate, or any
+// PR merge/reconcile path Gitea's flow proves.
+//
+// Gitea is the supported local playground flow (PLAYGROUND_GIT_BACKEND is
+// "gitea" by default; see docs/site/developer-guide/playground.md's "GitFake
+// backend note"). This path is kept only because some of GitFake's own
+// existing test coverage (tests/e2e/harness) still exercises it in-process,
+// and because ripping it out is a bigger, separate call than a walk-finding
+// fix — it is not a second maintained way to run the playground. Do NOT
+// build GitFake a PR API to "fix" this; that is out of scope here (see
+// e2e-testing.md's own note on the same limitation) — either keep pointing
+// people at Gitea, or have a real conversation about deleting this path.
 func deployGitFake(spokeNames []string) (string, error) {
 	fmt.Println("==> Deploying in-cluster GitFake")
 

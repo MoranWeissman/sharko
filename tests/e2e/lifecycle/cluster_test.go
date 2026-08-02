@@ -22,10 +22,10 @@ import (
 //     destination for kubeconfig-provider register tests.
 //   - In-process sharko bound to a localhost httptest port, configured
 //     with:
-//       * MockGitProvider (in-memory, intercepts every git write so the
-//         orchestrator's PR + merge flow lands in deterministic state).
-//       * Connection seeded via POST /api/v1/connections/ pointing at
-//         the kubectl-port-forwarded ArgoCD URL with the admin JWT.
+//   - MockGitProvider (in-memory, intercepts every git write so the
+//     orchestrator's PR + merge flow lands in deterministic state).
+//   - Connection seeded via POST /api/v1/connections/ pointing at
+//     the kubectl-port-forwarded ArgoCD URL with the admin JWT.
 //
 // Each subtest is intentionally independent — they share the topology
 // + sharko + admin client, but no per-subtest state. Order does matter
@@ -520,4 +520,3 @@ func mapKeys(m map[string]any) []string {
 	}
 	return out
 }
-

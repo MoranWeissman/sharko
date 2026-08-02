@@ -114,7 +114,7 @@ func SetupDemoServer(srv *api.Server, _ int) (cleanup func(), err error) {
 
 	// 7. Default addons.
 	srv.SetDefaultAddons(map[string]bool{
-		"cert-manager":  true,
+		"cert-manager":   true,
 		"metrics-server": true,
 	})
 

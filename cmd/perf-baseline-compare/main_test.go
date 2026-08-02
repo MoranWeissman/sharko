@@ -29,7 +29,7 @@ func fakeBaselines() *baselinesFile {
 		Paths: map[string]baselinePath{
 			"addon_cycle": {
 				Phases: map[string]baselinePhase{
-					"enable_dry_run": {N: 30, P99Ms: 1.000},
+					"enable_dry_run":  {N: 30, P99Ms: 1.000},
 					"disable_dry_run": {N: 30, P99Ms: 2.000},
 					"upgrade_global":  {N: 30, P99Ms: 0.500},
 				},
@@ -201,10 +201,10 @@ func TestCompare_NEW_PhaseNotInBaselines(t *testing.T) {
 	// continue.
 	measured := map[string]map[string]measuredPhase{
 		"addon_cycle": {
-			"enable_dry_run":   {N: 5, P99Ms: 0.9},
-			"disable_dry_run":  {N: 5, P99Ms: 1.5},
-			"upgrade_global":   {N: 5, P99Ms: 0.4},
-			"brand_new_phase":  {N: 5, P99Ms: 3.0},
+			"enable_dry_run":  {N: 5, P99Ms: 0.9},
+			"disable_dry_run": {N: 5, P99Ms: 1.5},
+			"upgrade_global":  {N: 5, P99Ms: 0.4},
+			"brand_new_phase": {N: 5, P99Ms: 3.0},
 		},
 		"cluster_registration": {
 			"ui_submit": {N: 5, P99Ms: 95.0},
