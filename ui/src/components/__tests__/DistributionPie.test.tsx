@@ -77,6 +77,35 @@ describe('DistributionPie', () => {
     expect(dot.style.backgroundColor).toBe('rgb(34, 197, 94)'); // #22c55e
   });
 
+  it('does not render a total row by default (S4 — opt-in only)', () => {
+    render(<DistributionPie slices={colorClassSlices} ariaPrefix="Clusters" legendTestId="legend" />);
+
+    expect(screen.queryByText('total')).not.toBeInTheDocument();
+  });
+
+  it('showTotalRow appends one more legend row: a neutral gray dot, "total", and the raw total (S4)', () => {
+    render(
+      <DistributionPie
+        slices={colorClassSlices}
+        ariaPrefix="Clusters"
+        legendTestId="legend"
+        showTotalRow
+      />,
+    );
+
+    const legend = screen.getByTestId('legend');
+    const totalRow = within(legend).getByText('total').closest('li');
+    expect(totalRow).not.toBeNull();
+    // Raw total (8 + 1 + 0), not just the non-zero slices' sum re-derived —
+    // same number either way here, but the row must read the actual total.
+    expect(within(totalRow as HTMLElement).getByText('9')).toBeInTheDocument();
+
+    const dot = totalRow?.querySelector('span[aria-hidden="true"]');
+    expect(dot?.className).toContain('bg-muted-foreground');
+    // Never one of the per-slice status colors.
+    expect(dot?.className).not.toMatch(/text-\[#/);
+  });
+
   it('renders an empty ring and an empty legend when every slice is zero', () => {
     render(
       <DistributionPie

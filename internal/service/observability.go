@@ -469,6 +469,13 @@ func checkMissingResources(ctx context.Context, gp gitprovider.GitProvider, addo
 // extractAddonCluster's last-hyphen fallback and gets misread as addon
 // "sharko" running on a cluster named "engine", a cluster that doesn't
 // exist (walk finding).
+//
+// S3 (walk day 5 ride-along): every row used to read "deployed" regardless
+// of whether this was the app's first rollout or its tenth upgrade. Each
+// app's EARLIEST history entry (lowest ID — ArgoCD assigns history IDs
+// sequentially, so lower always means older) is now marked
+// models.SyncActionInstalled; every later entry is
+// models.SyncActionUpdated.
 func buildRecentSyncs(apps []models.ArgocdApplication, clusterNames map[string]bool) []models.SyncActivityEntry {
 	var allSyncs []models.SyncActivityEntry
 	for _, app := range apps {
@@ -476,7 +483,22 @@ func buildRecentSyncs(apps []models.ArgocdApplication, clusterNames map[string]b
 			continue
 		}
 		addonName, clusterName := ExtractAddonCluster(app.Name, clusterNames)
+
+		earliestID := 0
+		hasEarliest := false
 		for _, h := range app.History {
+			if !hasEarliest || h.ID < earliestID {
+				earliestID = h.ID
+				hasEarliest = true
+			}
+		}
+
+		for _, h := range app.History {
+			action := models.SyncActionUpdated
+			if hasEarliest && h.ID == earliestID {
+				action = models.SyncActionInstalled
+			}
+
 			entry := models.SyncActivityEntry{
 				Timestamp:   h.DeployedAt,
 				AppName:     app.Name,
@@ -484,6 +506,7 @@ func buildRecentSyncs(apps []models.ArgocdApplication, clusterNames map[string]b
 				ClusterName: clusterName,
 				Revision:    h.Revision,
 				Status:      "Succeeded", // history entries are completed deploys
+				Action:      action,
 			}
 
 			// Calculate duration if we have both start and end times

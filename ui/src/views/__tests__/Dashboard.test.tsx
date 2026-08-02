@@ -100,7 +100,7 @@ describe('Dashboard', () => {
     expect(screen.getByText('Loading dashboard...')).toBeInTheDocument();
   });
 
-  it('renders fleet status strip segments after data loads (dashboard-purpose decision, WQ-2: donuts + number)', async () => {
+  it('renders fleet status strip segments after data loads (dashboard-purpose decision, WQ-2: donuts + total legend row, S4)', async () => {
     renderDashboard();
 
     await waitFor(() => {
@@ -108,19 +108,24 @@ describe('Dashboard', () => {
     });
 
     // Fleet Status Strip v2 — the Clusters/Applications segments show a
-    // donut + the total number + one short word; the per-state breakdown
-    // moved to the segment's aria-label (and the donut's hover tooltip),
-    // not the visible text (WQ-2 — the v1 text list overflowed and named
-    // an addon nobody cared about).
-    expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('10');
-    expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('clusters');
+    // donut whose legend ends with a "total" row (S4 — same style as every
+    // other row, no detached bold number); the per-state breakdown moved
+    // to the segment's aria-label (and the donut's hover tooltip), not the
+    // visible text (WQ-2 — the v1 text list overflowed and named an addon
+    // nobody cared about).
+    const clustersLegend = within(screen.getByTestId('fleet-strip-clusters')).getByTestId('fleet-strip-legend');
+    const clustersTotalRow = within(clustersLegend).getByText('total').closest('li');
+    expect(clustersTotalRow).not.toBeNull();
+    expect(within(clustersTotalRow as HTMLElement).getByText('10')).toBeInTheDocument();
     const clustersLabel = screen.getByTestId('fleet-strip-clusters').getAttribute('aria-label');
     expect(clustersLabel).toContain('8 connected');
     expect(clustersLabel).toContain('1 not connected');
     expect(clustersLabel).toContain('1 disconnected');
 
-    expect(screen.getByTestId('fleet-strip-applications').textContent).toContain('50');
-    expect(screen.getByTestId('fleet-strip-applications').textContent).toContain('apps');
+    const appsLegend = within(screen.getByTestId('fleet-strip-applications')).getByTestId('fleet-strip-legend');
+    const appsTotalRow = within(appsLegend).getByText('total').closest('li');
+    expect(appsTotalRow).not.toBeNull();
+    expect(within(appsTotalRow as HTMLElement).getByText('50')).toBeInTheDocument();
     const appsLabel = screen.getByTestId('fleet-strip-applications').getAttribute('aria-label');
     expect(appsLabel).toContain('45 healthy');
     expect(appsLabel).toContain('5 not healthy');
@@ -827,7 +832,7 @@ describe('Dashboard page order (Package 2)', () => {
     expect(screen.queryByText('Check Upgrade Impact')).not.toBeInTheDocument();
   });
 
-  it('Recent Activity row reads "deployed <addon> on <cluster> · rev <sha> · <time>", no status dot', async () => {
+  it('Recent Activity row reads "deployed <addon> on <cluster> · rev <sha> · <time>" when the server sends no action (S3 fallback, pinned)', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
     // Isolate from any rejected/overridden mock left behind by earlier
     // tests in this file (mockResolvedValue/mockRejectedValue persist
@@ -844,6 +849,8 @@ describe('Dashboard page order (Package 2)', () => {
           cluster_name: 'prod-eu',
           revision: 'abcdef1234567890',
           status: 'Succeeded',
+          // action intentionally absent — an older cached response, or a
+          // server build that predates the field (S3 compatibility fallback).
         },
       ],
     });
@@ -857,6 +864,61 @@ describe('Dashboard page order (Package 2)', () => {
     // Revision is short (7 chars), not the full SHA.
     expect(screen.getByText(/rev abcdef1/)).toBeInTheDocument();
     expect(screen.queryByText(/abcdef1234567890/)).not.toBeInTheDocument();
+    expect(screen.getByText('deployed')).toBeInTheDocument();
+  });
+
+  it('Recent Activity row reads "installed" for an app\'s earliest history entry (S3)', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getObservability as ReturnType<typeof vi.fn>).mockResolvedValue({
+      recent_syncs: [
+        {
+          timestamp: new Date().toISOString(),
+          duration: '2s',
+          duration_secs: 2,
+          app_name: 'cert-manager-prod-eu',
+          addon_name: 'cert-manager',
+          cluster_name: 'prod-eu',
+          revision: 'abcdef1234567890',
+          status: 'Succeeded',
+          action: 'installed',
+        },
+      ],
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Recent Activity')).toBeInTheDocument();
+    });
+    expect(screen.getByText('installed')).toBeInTheDocument();
+    expect(screen.queryByText('deployed')).not.toBeInTheDocument();
+  });
+
+  it('Recent Activity row reads "updated" for a later history entry (S3)', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getObservability as ReturnType<typeof vi.fn>).mockResolvedValue({
+      recent_syncs: [
+        {
+          timestamp: new Date().toISOString(),
+          duration: '2s',
+          duration_secs: 2,
+          app_name: 'cert-manager-prod-eu',
+          addon_name: 'cert-manager',
+          cluster_name: 'prod-eu',
+          revision: 'abcdef1234567890',
+          status: 'Succeeded',
+          action: 'updated',
+        },
+      ],
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Recent Activity')).toBeInTheDocument();
+    });
+    expect(screen.getByText('updated')).toBeInTheDocument();
+    expect(screen.queryByText('deployed')).not.toBeInTheDocument();
   });
 
   it('Recent Activity empty state uses the compact recipe (no mascot image)', async () => {
@@ -922,9 +984,13 @@ describe('Dashboard progressive paint (perf S3)', () => {
     // The fleet strip lands from /dashboard/stats alone, with observability
     // still in flight.
     await waitFor(() => {
-      expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('10 clusters');
+      const legend = within(screen.getByTestId('fleet-strip-clusters')).getByTestId('fleet-strip-legend');
+      const totalRow = within(legend).getByText('total').closest('li');
+      expect(within(totalRow as HTMLElement).getByText('10')).toBeInTheDocument();
     });
-    expect(screen.getByTestId('fleet-strip-applications').textContent).toContain('50 apps');
+    const appsLegend = within(screen.getByTestId('fleet-strip-applications')).getByTestId('fleet-strip-legend');
+    const appsTotalRow = within(appsLegend).getByText('total').closest('li');
+    expect(within(appsTotalRow as HTMLElement).getByText('50')).toBeInTheDocument();
     // Recent Activity is still on its own empty/loading state — proof the
     // page rendered without it, not proof it never arrives.
     expect(screen.getByText('No recent sync activity')).toBeInTheDocument();
@@ -975,11 +1041,15 @@ describe('Dashboard stale-while-refresh (perf S2)', () => {
     // Instant paint from cache: no spinner, cached numbers visible without
     // waiting on any fetch.
     expect(screen.queryByText('Loading dashboard...')).not.toBeInTheDocument();
-    expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('3 clusters');
+    let legend = within(screen.getByTestId('fleet-strip-clusters')).getByTestId('fleet-strip-legend');
+    let totalRow = within(legend).getByText('total').closest('li');
+    expect(within(totalRow as HTMLElement).getByText('3')).toBeInTheDocument();
 
     // Background refresh lands and quietly replaces the stale number.
     await waitFor(() => {
-      expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('10 clusters');
+      legend = within(screen.getByTestId('fleet-strip-clusters')).getByTestId('fleet-strip-legend');
+      totalRow = within(legend).getByText('total').closest('li');
+      expect(within(totalRow as HTMLElement).getByText('10')).toBeInTheDocument();
     });
   });
 });

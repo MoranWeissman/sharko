@@ -237,6 +237,12 @@ export function ClusterDetail() {
   const [pendingPRsByAddon, setPendingPRsByAddon] = useState<Record<string, TrackedPR[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // S2 (walk day 5 ride-along): manual refresh in the page header, on top
+  // of the 30s auto-poll below. A separate flag from `loading` — fetchData
+  // runs in background mode here (no full-page loading state), so the
+  // button needs its own in-flight signal to show a spinner and disable
+  // itself while the request is out.
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [searchParams, setSearchParams] = useSearchParams();
   const activeSection = searchParams.get('section') || 'addons';
@@ -590,6 +596,20 @@ export function ClusterDetail() {
       setLoading(false);
     }
   }, [name]);
+
+  // S2 (walk day 5 ride-along): the page-header Refresh button. fetchData
+  // itself already fetches the cluster-scoped tracked PRs alongside the
+  // comparison (see the Promise.all above) — background=true keeps this a
+  // quiet refetch (no full-page loading flash), while isRefreshing gives
+  // the button its own spinner/disabled state.
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await fetchData(true);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [fetchData]);
 
   // Stable onSaved for the per-cluster overrides editor — passing a fresh
   // arrow function on every render would defeat the editor's React.memo
@@ -1254,12 +1274,25 @@ export function ClusterDetail() {
               Registered with pasted credentials — consider migrating to a secret-store pointer.
             </p>
           )}
-          {/* HD1 (V3): header redesign — dropped the bare refresh button (auto-poll
-            * + Sync-now's refetch cover it), moved Check permissions + Diagnose to
-            * the new Diagnostics section. Test connection stays light here.
+          {/* HD1 (V3) removed the bare refresh button, betting the 30s
+            * auto-poll + Sync-now's refetch were enough — the walk found
+            * that wasn't true: sometimes you want to check right now
+            * without waiting. S2 (walk day 5) brings back a plain manual
+            * refresh here, open to every role since it only reads data.
             * G4 (V3): Sync-related controls moved to dedicated GitOps area below. */}
         </div>
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Check git and ArgoCD again now"
+            data-testid="page-refresh"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+          >
+            {isRefreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Refresh page
+          </button>
           <RoleGuard roles={['admin', 'operator']}>
             {/* Test connection — light button */}
             <button

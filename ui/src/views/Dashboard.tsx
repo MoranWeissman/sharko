@@ -37,6 +37,17 @@ function timeAgo(timestamp: string): string {
   return `${Math.floor(secs / 86400)}d ago`;
 }
 
+// activityVerb picks the Recent Activity row's leading word from the
+// server's action field (S3, walk day 5 ride-along): "installed " for an
+// app's first recorded deploy, "updated " for every later one. Falls back
+// to "deployed " when action is absent — an older cached response, or a
+// server build that predates this field.
+function activityVerb(action?: string): string {
+  if (action === 'installed') return 'installed ';
+  if (action === 'updated') return 'updated ';
+  return 'deployed ';
+}
+
 // --- Bootstrap Health Banner ---
 
 // connhealth-2: the inline bootstrap banner now renders ONLY for bootstrap
@@ -499,10 +510,12 @@ export function Dashboard() {
       />
 
       {/* Recent Activity — moved up from the old bottom row (Package 2:
-          new page order). Rows read "deployed <addon> on <cluster> · rev
-          <sha> · <time>" (panel-lens finding) — no status dot, since the
-          server always reports Succeeded here and a permanently-green dot
-          says nothing. */}
+          new page order). Rows read "installed/updated <addon> on <cluster>
+          · rev <sha> · <time>" (S3, walk day 5 ride-along — every row used
+          to say "deployed" even for an app that has been upgrading for
+          months; falls back to "deployed" if the server hasn't sent
+          action yet) — no status dot, since the server always reports
+          Succeeded here and a permanently-green dot says nothing. */}
       <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -520,7 +533,7 @@ export function Dashboard() {
             {recentSyncs.map((sync, i) => (
               <div key={i} className="flex items-center gap-3 text-xs">
                 <div className="min-w-0 flex-1 truncate">
-                  <span className="text-muted-foreground">deployed </span>
+                  <span className="text-muted-foreground">{activityVerb(sync.action)}</span>
                   <span className="font-medium text-card-foreground">{sync.addon_name}</span>
                   <span className="text-muted-foreground"> on {sync.cluster_name}</span>
                   {sync.revision && (

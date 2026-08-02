@@ -595,6 +595,10 @@ export interface SyncActivityEntry {
   cluster_name: string
   revision?: string
   status: string
+  // "installed" for an app's earliest history entry, "updated" for every
+  // later one (S3, walk day 5 ride-along). Absent on entries from before
+  // this field existed — the UI falls back to "deployed" in that case.
+  action?: string
 }
 
 // ClusterChange — one entry in the durable per-cluster change log

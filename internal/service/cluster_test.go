@@ -1,17 +1,21 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
@@ -697,5 +701,333 @@ func TestClusterService_ListClusters_HonorsBaseBranch(t *testing.T) {
 	}
 	if !gp.refs[configuredBranch] {
 		t.Errorf("expected ListClusters to read from the configured base branch %q, refs seen: %v", configuredBranch, gp.refs)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// S1 (walk day 5 root cause) — ClusterService reads the v4 repo layout
+// (catalog.yaml + cluster-addons/<name>.yaml) instead of silently falling
+// back to an empty v3 catalog. Live evidence before this fix: a v4 repo's
+// GET /clusters/{name}/comparison returned git_total_addons:0 and empty
+// addon_comparisons FOREVER, and GET /clusters/{name} returned addons: [],
+// even though the cluster had a real, merged addon assignment. The
+// version-matrix endpoint (AddonService.GetVersionMatrix) already had this
+// v4 dispatch; ClusterService never did.
+// ---------------------------------------------------------------------------
+
+// buildV4Fixture returns the three files a v4 repo carries that
+// ClusterService must now read: the engine pin (routes every read here to
+// the v4 branch), the org's approved catalog.yaml (one addon,
+// cert-manager), and one cluster's cluster-addons/<name>.yaml assignment
+// (cert-manager enabled with a per-cluster version pin). Shared by the
+// GetClusterDetail, GetClusterComparison and ListClusters v4 tests below so
+// the fixture can't quietly drift between them.
+func buildV4Fixture(t *testing.T, clusterName string) map[string][]byte {
+	t.Helper()
+
+	catalogYAML, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
+			"cert-manager": {
+				RepoURL:   "https://charts.jetstack.io",
+				Chart:     "cert-manager",
+				Version:   "1.14.5",
+				Namespace: "cert-manager",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building catalog.yaml fixture: %v", err)
+	}
+
+	clusterAddonsYAML, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: clusterName,
+		Addons: map[string]models.ClusterAddonsAddon{
+			"cert-manager": {Enabled: true, Version: "1.12.0"}, // per-cluster pin
+		},
+	})
+	if err != nil {
+		t.Fatalf("building cluster-addons fixture: %v", err)
+	}
+
+	return map[string][]byte{
+		orchestrator.EnginePinPath: []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+		"configuration/managed-clusters.yaml": []byte(
+			"clusters:\n  - name: " + clusterName + "\n    labels: {}\n",
+		),
+		config.AddonCatalogPath:                   catalogYAML,
+		"cluster-addons/" + clusterName + ".yaml": clusterAddonsYAML,
+	}
+}
+
+// TestClusterService_GetClusterDetail_V4Repo is the S1 regression guard for
+// GetClusterDetail: on a v4 repo the addon list must be built from
+// catalog.yaml + cluster-addons/<name>.yaml, not the v3
+// configuration/addons-catalog.yaml (which a v4 repo never has — the old
+// code's silent isGitFileNotFound fallback to an empty catalog is exactly
+// what produced "addons: []" forever).
+func TestClusterService_GetClusterDetail_V4Repo(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/applications") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+
+	svc := NewClusterService("")
+	gp := &fakeGP{files: buildV4Fixture(t, "prod-eu")}
+
+	resp, err := svc.GetClusterDetail(context.Background(), "prod-eu", gp, ac)
+	if err != nil {
+		t.Fatalf("GetClusterDetail returned error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response for a v4-registered cluster")
+	}
+	if len(resp.Addons) != 1 {
+		t.Fatalf("expected 1 addon (cert-manager) from the v4 layout, got %d: %+v — the v3 fallback is still being read", len(resp.Addons), resp.Addons)
+	}
+	addon := resp.Addons[0]
+	if addon.AddonName != "cert-manager" {
+		t.Errorf("AddonName = %q, want cert-manager", addon.AddonName)
+	}
+	if addon.Chart != "cert-manager" || addon.RepoURL != "https://charts.jetstack.io" || addon.Namespace != "cert-manager" {
+		t.Errorf("addon deployment fields not carried from catalog.yaml: %+v", addon)
+	}
+	if addon.CurrentVersion != "1.12.0" {
+		t.Errorf("CurrentVersion = %q, want the per-cluster pin 1.12.0", addon.CurrentVersion)
+	}
+	if addon.EnvironmentVersion != "1.14.5" {
+		t.Errorf("EnvironmentVersion = %q, want the catalog default 1.14.5", addon.EnvironmentVersion)
+	}
+	if !addon.HasVersionOverride {
+		t.Error("expected HasVersionOverride=true — cert-manager has a per-cluster pin")
+	}
+	if resp.Cluster.Labels["cert-manager"] != "enabled" {
+		t.Errorf(`Cluster.Labels["cert-manager"] = %q, want "enabled" (S1: labels must be synthesized on a v4 cluster)`, resp.Cluster.Labels["cert-manager"])
+	}
+}
+
+// TestClusterService_GetClusterComparison_V4Repo is the S1 regression
+// guard for GetClusterComparison: this is the exact endpoint the walk-day
+// investigation found returning git_total_addons:0 permanently on a v4
+// repo.
+func TestClusterService_GetClusterComparison_V4Repo(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/applications") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+
+	svc := NewClusterService("")
+	gp := &fakeGP{files: buildV4Fixture(t, "prod-eu")}
+
+	resp, err := svc.GetClusterComparison(context.Background(), "prod-eu", gp, ac)
+	if err != nil {
+		t.Fatalf("GetClusterComparison returned error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response for a v4-registered cluster")
+	}
+	if resp.GitTotalAddons != 1 {
+		t.Fatalf("GitTotalAddons = %d, want 1 — this is the walk-day-5 bug: git_total_addons:0 forever on a v4 repo", resp.GitTotalAddons)
+	}
+	if len(resp.AddonComparisons) != 1 {
+		t.Fatalf("expected 1 addon comparison, got %d: %+v", len(resp.AddonComparisons), resp.AddonComparisons)
+	}
+	comp := resp.AddonComparisons[0]
+	if comp.AddonName != "cert-manager" {
+		t.Errorf("AddonName = %q, want cert-manager", comp.AddonName)
+	}
+	if comp.GitVersion != "1.12.0" {
+		t.Errorf("GitVersion = %q, want the per-cluster pin 1.12.0", comp.GitVersion)
+	}
+	if comp.GitChart != "cert-manager" || comp.GitRepoURL != "https://charts.jetstack.io" {
+		t.Errorf("Git deployment fields not carried from catalog.yaml: %+v", comp)
+	}
+	if comp.Status != "missing_in_argocd" {
+		t.Errorf("Status = %q, want missing_in_argocd (no matching ArgoCD app in this fixture)", comp.Status)
+	}
+}
+
+// TestClusterService_ListClusters_V4Repo_SynthesizesLabelsForAddonCount is
+// the S1 regression guard for the clusters list surface: the UI derives
+// each cluster's addon count client-side from
+// `Object.values(cluster.labels).filter(v => v === 'enabled').length`
+// (ui/src/views/ClustersOverview.tsx). A v4 cluster's managed-clusters.yaml
+// entry never carries addon labels (enablement lives in
+// cluster-addons/<name>.yaml instead), so before this fix every v4 cluster
+// showed labels: {} and a permanent 0-addon count.
+func TestClusterService_ListClusters_V4Repo_SynthesizesLabelsForAddonCount(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+
+	svc := NewClusterService("")
+	gp := newRefRecordingGitProvider(buildV4Fixture(t, "prod-eu"))
+
+	resp, err := svc.ListClusters(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("ListClusters returned error: %v", err)
+	}
+	if len(resp.Clusters) != 1 || resp.Clusters[0].Name != "prod-eu" {
+		t.Fatalf("expected [prod-eu], got %+v", resp.Clusters)
+	}
+	if resp.Clusters[0].Labels["cert-manager"] != "enabled" {
+		t.Errorf(`Labels["cert-manager"] = %q, want "enabled" — labels: {} is the walk-day-5 bug`, resp.Clusters[0].Labels["cert-manager"])
+	}
+}
+
+// TestClusterService_V3Repo_UnaffectedByV4Files proves the v3 code path is
+// untouched: even with a cluster-addons/<name>.yaml file sitting in the
+// repo (e.g. mid-migration leftovers), GetClusterDetail and
+// GetClusterComparison must ignore it entirely when the engine pin is
+// absent — the probe, not file presence, decides.
+func TestClusterService_V3Repo_UnaffectedByV4Files(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/applications") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+
+	svc := NewClusterService("")
+	v4Files := buildV4Fixture(t, "prod-eks")
+	delete(v4Files, orchestrator.EnginePinPath) // no engine pin: this is a v3 repo
+	v4Files["configuration/managed-clusters.yaml"] = []byte("clusters:\n  - name: prod-eks\n    labels:\n      cert-manager: enabled\n")
+	v4Files["configuration/addons-catalog.yaml"] = []byte(
+		"applicationsets:\n  - name: cert-manager\n    repoURL: https://charts.jetstack.io\n    chart: cert-manager\n    version: 1.9.0\n",
+	)
+
+	resp, err := svc.GetClusterDetail(context.Background(), "prod-eks", &fakeGP{files: v4Files}, ac)
+	if err != nil {
+		t.Fatalf("GetClusterDetail returned error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response")
+	}
+	if len(resp.Addons) != 1 || resp.Addons[0].CurrentVersion != "1.9.0" {
+		t.Fatalf("expected the v3 addons-catalog.yaml version (1.9.0), got %+v — the v4 cluster-addons file must be ignored without the engine pin", resp.Addons)
+	}
+}
+
+// TestClusterService_GetClusterDetail_WarnsOnMissingCatalog and
+// TestClusterService_GetClusterComparison_WarnsOnMissingCatalog lock down
+// the walk-day-5 "zero log lines in a 40-minute window" finding: the v3
+// silent isGitFileNotFound fallback to an empty catalog must now emit a
+// WARN log naming the missing file and the branch read, so the next
+// investigation isn't blind.
+func TestClusterService_GetClusterDetail_WarnsOnMissingCatalog(t *testing.T) {
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(originalLogger) })
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/applications") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+
+	svc := NewClusterService("")
+	gp := &fakeGP{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: prod-eks\n    labels: {}\n"),
+			// configuration/addons-catalog.yaml intentionally absent.
+		},
+	}
+
+	if _, err := svc.GetClusterDetail(context.Background(), "prod-eks", gp, ac); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	logOut := buf.String()
+	if !strings.Contains(logOut, "addons-catalog.yaml not found") {
+		t.Errorf("expected a WARN log naming the missing file, got:\n%s", logOut)
+	}
+	if !strings.Contains(logOut, `"path":"configuration/addons-catalog.yaml"`) {
+		t.Errorf("expected the WARN log to name the missing path, got:\n%s", logOut)
+	}
+	if !strings.Contains(logOut, `"branch":"main"`) {
+		t.Errorf("expected the WARN log to name the branch read, got:\n%s", logOut)
+	}
+}
+
+func TestClusterService_GetClusterComparison_WarnsOnMissingCatalog(t *testing.T) {
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(originalLogger) })
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/applications") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+
+	svc := NewClusterService("")
+	gp := &fakeGP{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: prod-eks\n    labels: {}\n"),
+			// configuration/addons-catalog.yaml intentionally absent.
+		},
+	}
+
+	if _, err := svc.GetClusterComparison(context.Background(), "prod-eks", gp, ac); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	logOut := buf.String()
+	if !strings.Contains(logOut, "addons-catalog.yaml not found") {
+		t.Errorf("expected a WARN log naming the missing file, got:\n%s", logOut)
+	}
+	if !strings.Contains(logOut, `"path":"configuration/addons-catalog.yaml"`) {
+		t.Errorf("expected the WARN log to name the missing path, got:\n%s", logOut)
+	}
+	if !strings.Contains(logOut, `"branch":"main"`) {
+		t.Errorf("expected the WARN log to name the branch read, got:\n%s", logOut)
 	}
 }
