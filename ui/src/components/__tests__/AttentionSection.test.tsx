@@ -11,7 +11,8 @@ import {
   buildUnknownAddonRows,
   buildClusterAttentionRows,
   buildDriftRows,
-  AttentionDetail,
+  hasOpenIssues,
+  OpenIssuesBlock,
 } from '@/components/AttentionSection';
 
 function makeState(overrides: Partial<AddonState>): AddonState {
@@ -111,12 +112,40 @@ describe('row builders', () => {
   });
 });
 
-describe('AttentionDetail (composite block, moved verbatim from Dashboard)', () => {
-  function renderDetail(props: Partial<React.ComponentProps<typeof AttentionDetail>> = {}) {
+describe('hasOpenIssues (shared OR-of-lengths, no re-count)', () => {
+  it('is false when every row list is empty and clusterProblemCount is 0', () => {
+    expect(
+      hasOpenIssues({
+        clusterAttentionRows: [],
+        confirmedAddonRows: [],
+        settlingAddonRows: [],
+        unknownAddonRows: [],
+        driftRows: [],
+        clusterProblemCount: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it('is true when only clusterProblemCount is non-zero', () => {
+    expect(
+      hasOpenIssues({
+        clusterAttentionRows: [],
+        confirmedAddonRows: [],
+        settlingAddonRows: [],
+        unknownAddonRows: [],
+        driftRows: [],
+        clusterProblemCount: 1,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe('OpenIssuesBlock (folded into Observability\'s Fleet Health section, walk day 3)', () => {
+  function renderBlock(props: Partial<React.ComponentProps<typeof OpenIssuesBlock>> = {}) {
     const onNavigate = props.onNavigate ?? (() => {});
     return render(
       <MemoryRouter>
-        <AttentionDetail
+        <OpenIssuesBlock
           onNavigate={onNavigate}
           clusterAttentionRows={[]}
           confirmedAddonRows={[]}
@@ -130,20 +159,24 @@ describe('AttentionDetail (composite block, moved verbatim from Dashboard)', () 
     );
   }
 
-  it('renders nothing when there are no issues at all', () => {
-    const { container } = renderDetail();
-    expect(container).toBeEmptyDOMElement();
+  it('renders a muted "No open issues." line when there are no issues at all (never nothing)', () => {
+    renderBlock();
+    expect(screen.getByText('No open issues.')).toBeInTheDocument();
+    expect(screen.queryByText('Open issues')).not.toBeInTheDocument();
+    expect(screen.queryByText('Needs Attention')).not.toBeInTheDocument();
   });
 
-  it('shows the cluster chip and expands to the named row on click', () => {
-    renderDetail({
+  it('shows the "Open issues" heading and the cluster chip, expanding to the named row on click', () => {
+    renderBlock({
       clusterProblemCount: 1,
       clusterAttentionRows: [
         { key: 'cluster-prod', severity: 'problem', title: 'prod', reason: 'ArgoCD tried to reach this cluster and failed.', link: '/clusters/prod' },
       ],
     });
 
-    expect(screen.getByText('Needs Attention')).toBeInTheDocument();
+    expect(screen.getByText('Open issues')).toBeInTheDocument();
+    expect(screen.queryByText('Needs Attention')).not.toBeInTheDocument();
+    expect(screen.queryByText('No open issues.')).not.toBeInTheDocument();
     const chip = screen.getByRole('button', { name: /1 disconnected cluster/i });
     fireEvent.click(chip);
     expect(screen.getByText('prod')).toBeInTheDocument();
@@ -151,7 +184,7 @@ describe('AttentionDetail (composite block, moved verbatim from Dashboard)', () 
 
   it('"View in Clusters" calls onNavigate with the deep link', () => {
     const onNavigate = vi.fn();
-    renderDetail({
+    renderBlock({
       onNavigate,
       clusterProblemCount: 1,
       clusterAttentionRows: [

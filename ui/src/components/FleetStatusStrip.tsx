@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowUpCircle } from 'lucide-react';
+import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { isNewerVersion } from '@/lib/utils';
 import type { DashboardStats, VersionMatrixResponse } from '@/services/models';
@@ -118,102 +119,110 @@ function breakdownSentence(prefix: string, total: number, slices: DonutSlice[]):
   return `${prefix}: ${total} total — ${parts}`;
 }
 
-// --- Donut ---
+// --- Pie (walk day 3 lock: real recharts labeled pies, half the height) ---
 //
-// Plain SVG, no chart library: one <circle> per non-zero state, drawn with
-// stroke-dasharray/-dashoffset arcs starting at 12 o'clock. A 2px gap sits
-// between slices when there's more than one; a single non-zero state draws
-// a full, gapless ring (e.g. an all-connected fleet is one solid green
-// ring). Decorative only — aria-hidden, since the button's own aria-label
-// already carries the breakdown in words.
-const DONUT_SIZE = 30;
-const DONUT_STROKE = 6;
+// Same library and visual style as Observability's HealthDistributionSection
+// / SyncDistributionSection (a donut via Pie's innerRadius/outerRadius),
+// but sized to roughly half those sections' 240px height for this compact
+// strip. Colors are the exact SLICE_COLORS values shipped in #676 — Cell
+// takes `fill="currentColor"` plus the existing light+dark Tailwind
+// text-color class, the same currentColor trick the old hand-drawn SVG
+// donut used, so nothing about the palette (including the muted
+// blue-violet "waiting" state) changes between modes.
+const PIE_CONTAINER_HEIGHT = 130;
+const PIE_SIZE = 92;
 
-function Donut({ slices }: { slices: DonutSlice[] }) {
-  const nonZero = slices.filter((s) => s.value > 0);
-  const total = nonZero.reduce((sum, s) => sum + s.value, 0);
-  const center = DONUT_SIZE / 2;
-  const radius = (DONUT_SIZE - DONUT_STROKE) / 2;
-  const circumference = 2 * Math.PI * radius;
-
-  if (total === 0) {
-    return (
-      <svg width={DONUT_SIZE} height={DONUT_SIZE} viewBox={`0 0 ${DONUT_SIZE} ${DONUT_SIZE}`} aria-hidden="true">
-        <circle
-          cx={center}
-          cy={center}
-          r={radius}
-          fill="none"
-          strokeWidth={DONUT_STROKE}
-          stroke="currentColor"
-          className="text-muted-foreground/25"
-        />
-      </svg>
-    );
-  }
-
-  const gap = nonZero.length > 1 ? 2 : 0;
-  let cumulative = 0;
-
+function EmptyRing() {
   return (
-    <svg width={DONUT_SIZE} height={DONUT_SIZE} viewBox={`0 0 ${DONUT_SIZE} ${DONUT_SIZE}`} aria-hidden="true">
-      <g transform={`rotate(-90 ${center} ${center})`}>
-        {nonZero.map((slice) => {
-          const length = (slice.value / total) * (circumference - gap * nonZero.length);
-          const dashoffset = -cumulative;
-          cumulative += length + gap;
-          return (
-            <circle
-              key={slice.key}
-              data-testid={`donut-slice-${slice.key}`}
-              cx={center}
-              cy={center}
-              r={radius}
-              fill="none"
-              strokeWidth={DONUT_STROKE}
-              strokeLinecap="butt"
-              strokeDasharray={`${length} ${circumference - length}`}
-              strokeDashoffset={dashoffset}
-              stroke="currentColor"
-              className={slice.colorClass}
-            />
-          );
-        })}
-      </g>
-    </svg>
+    <div
+      style={{ width: PIE_SIZE, height: PIE_SIZE }}
+      className="shrink-0 rounded-full border-[10px] border-muted-foreground/20"
+      aria-hidden="true"
+    />
   );
 }
 
-// Donut + hover tooltip. The tooltip repeats the breakdown visually (a
-// color dot next to each non-zero state's label and count) for sighted
-// hover users; the accessible copy of the same information lives on the
-// parent segment button's aria-label (see breakdownSentence above), not
-// here — a button's aria-label already replaces its subtree's accessible
-// name for assistive tech, so duplicating it on this inner node would just
-// be swallowed.
-function DonutWithTooltip({ slices }: { slices: DonutSlice[] }) {
+// The legend is always visible next to the pie (not tooltip-only) — state
+// name + count per segment, same color dot as the slice it names. This is
+// the accessible-adjacent copy of the breakdown; the segment button's own
+// aria-label (breakdownSentence, below) carries the same information as
+// one sentence for assistive tech.
+function PieLegend({ slices }: { slices: DonutSlice[] }) {
   const nonZero = slices.filter((s) => s.value > 0);
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="inline-flex shrink-0 cursor-help" data-testid="fleet-strip-donut">
-            <Donut slices={slices} />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>
-          <ul className="space-y-1">
-            {nonZero.map((s) => (
-              <li key={s.key} className="flex items-center gap-1.5 text-xs">
-                <span className={`inline-block h-2 w-2 shrink-0 rounded-full bg-current ${s.colorClass}`} />
-                <span>{s.label}</span>
-                <span className="font-mono">{s.value}</span>
-              </li>
-            ))}
-          </ul>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <ul className="space-y-1" data-testid="fleet-strip-legend" aria-hidden="true">
+      {nonZero.map((s) => (
+        <li key={s.key} className="flex items-center gap-1.5 text-xs">
+          <span className={`inline-block h-2 w-2 shrink-0 rounded-full bg-current ${s.colorClass}`} />
+          <span className="text-muted-foreground">{s.label}</span>
+          <span className="font-mono font-medium text-foreground">{s.value}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Pie + always-visible legend + hover tooltip. The tooltip repeats the
+// breakdown visually (a color dot next to each non-zero state's label and
+// count) for sighted hover users; the accessible copy of the same
+// information lives on the parent segment button's aria-label (see
+// breakdownSentence below), not here — a button's aria-label already
+// replaces its subtree's accessible name for assistive tech, so
+// duplicating it on this inner node would just be swallowed.
+function PieWithLegend({ slices, testId }: { slices: DonutSlice[]; testId: string }) {
+  const nonZero = slices.filter((s) => s.value > 0);
+  const total = nonZero.reduce((sum, s) => sum + s.value, 0);
+
+  return (
+    <div className="flex shrink-0 items-center gap-3" data-testid={testId}>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              className="inline-flex shrink-0 cursor-help"
+              style={{ width: PIE_SIZE, height: PIE_SIZE }}
+              aria-hidden="true"
+            >
+              {total === 0 ? (
+                <EmptyRing />
+              ) : (
+                <ResponsiveContainer width={PIE_SIZE} height={PIE_SIZE}>
+                  <PieChart>
+                    <Pie
+                      data={nonZero}
+                      dataKey="value"
+                      nameKey="label"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius="58%"
+                      outerRadius="100%"
+                      paddingAngle={nonZero.length > 1 ? 2 : 0}
+                      isAnimationActive={false}
+                    >
+                      {nonZero.map((slice) => (
+                        <Cell key={slice.key} fill="currentColor" className={slice.colorClass} />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <ul className="space-y-1">
+              {nonZero.map((s) => (
+                <li key={s.key} className="flex items-center gap-1.5 text-xs">
+                  <span className={`inline-block h-2 w-2 shrink-0 rounded-full bg-current ${s.colorClass}`} />
+                  <span>{s.label}</span>
+                  <span className="font-mono">{s.value}</span>
+                </li>
+              ))}
+            </ul>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      <PieLegend slices={slices} />
+    </div>
   );
 }
 
@@ -248,7 +257,8 @@ function Segment({ onClick, testId, ariaLabel, children }: SegmentProps) {
       onClick={onClick}
       data-testid={testId}
       aria-label={ariaLabel}
-      className="flex flex-1 min-w-[220px] items-center gap-3 border-b border-border px-5 py-3 text-left transition-colors hover:bg-muted/60 sm:border-b-0 sm:border-r sm:last:border-r-0"
+      style={{ minHeight: PIE_CONTAINER_HEIGHT }}
+      className="flex flex-1 min-w-[260px] items-center gap-3 border-b border-border px-5 py-3 text-left transition-colors hover:bg-muted/60 sm:border-b-0 sm:border-r sm:last:border-r-0"
     >
       {children}
     </button>
@@ -295,7 +305,7 @@ export function FleetStatusStrip({ clusters, appsTotal, appsHealthy, upgrades }:
         testId="fleet-strip-clusters"
         ariaLabel={breakdownSentence('Clusters', clusters.total, clusterData)}
       >
-        <DonutWithTooltip slices={clusterData} />
+        <PieWithLegend slices={clusterData} testId="fleet-strip-pie" />
         <NumberWord total={clusters.total} word="cluster" />
       </Segment>
       <Segment
@@ -303,7 +313,7 @@ export function FleetStatusStrip({ clusters, appsTotal, appsHealthy, upgrades }:
         testId="fleet-strip-applications"
         ariaLabel={breakdownSentence('Applications', appsTotal, appData)}
       >
-        <DonutWithTooltip slices={appData} />
+        <PieWithLegend slices={appData} testId="fleet-strip-pie" />
         <NumberWord total={appsTotal} word="app" />
       </Segment>
       <Segment

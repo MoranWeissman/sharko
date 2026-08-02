@@ -45,13 +45,15 @@ import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { PaginationControls, PageSizeSelector, type PageSize } from '@/components/PaginationControls';
 import {
-  AttentionDetail,
+  OpenIssuesBlock,
+  hasOpenIssues,
   splitAddonStates,
   buildConfirmedAddonRows,
   buildSettlingAddonRows,
   buildUnknownAddonRows,
   buildClusterAttentionRows,
   buildDriftRows,
+  type AttentionRow,
 } from '@/components/AttentionSection';
 import { useAddonStates } from '@/hooks/useAddonStates';
 import { isClusterNeedsAttention } from '@/lib/clusterStatus';
@@ -462,7 +464,27 @@ interface ClusterGroup {
   health_counts: Record<string, number>;
 }
 
-function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
+interface AddonGroupsSectionProps {
+  groups: AddonGroupHealth[];
+  onNavigate: (path: string) => void;
+  clusterAttentionRows: AttentionRow[];
+  confirmedAddonRows: AttentionRow[];
+  settlingAddonRows: AttentionRow[];
+  unknownAddonRows: AttentionRow[];
+  driftRows: AttentionRow[];
+  clusterProblemCount: number;
+}
+
+function AddonGroupsSection({
+  groups,
+  onNavigate,
+  clusterAttentionRows,
+  confirmedAddonRows,
+  settlingAddonRows,
+  unknownAddonRows,
+  driftRows,
+  clusterProblemCount,
+}: AddonGroupsSectionProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sortMode, setSortMode] = useState<'issues' | 'alpha'>('issues');
   const [groupBy, setGroupBy] = useState<GroupBy>('addon');
@@ -580,20 +602,32 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
     return sortedClusterGroups.slice(start, start + pageSize);
   }, [sortedClusterGroups, page, pageSize]);
 
-  if (!groups || groups.length === 0) {
+  const hasGroups = !!groups && groups.length > 0;
+  const hasIssues = hasOpenIssues({
+    clusterAttentionRows,
+    confirmedAddonRows,
+    settlingAddonRows,
+    unknownAddonRows,
+    driftRows,
+    clusterProblemCount,
+  });
+
+  if (!hasGroups && !hasIssues) {
     return null;
   }
 
   return (
-    // id="addon-health" — the Dashboard's Applications card deep-links here
-    // (walk finding #2: "which apps are unhealthy" is answered by this
-    // section, which already sorts by issue count first and lists
-    // per-app-per-cluster health, not just a per-addon aggregate).
+    // id="addon-health" — the Dashboard's Applications card (and its thin
+    // attention line) deep-link here (walk finding #2: "which apps are
+    // unhealthy" is answered by this section, which already sorts by issue
+    // count first and lists per-app-per-cluster health, not just a
+    // per-addon aggregate). Fleet Health (walk day 3 lock) — one surface:
+    // open issues at top, per-addon health groups below.
     <section id="addon-health">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           <Server className="h-5 w-5 text-teal-500" />
-          Addon Health
+          Fleet Health
         </h2>
         <div className="flex flex-wrap items-center gap-3">
           {/* Search */}
@@ -680,6 +714,22 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
         </div>
       </div>
 
+      {/* Open issues (walk day 3 lock, folded from the old standalone
+          "Needs Attention" card) — always the first thing in Fleet Health,
+          "No open issues." when the fleet is clean. */}
+      <div className="mb-6">
+        <OpenIssuesBlock
+          onNavigate={onNavigate}
+          clusterAttentionRows={clusterAttentionRows}
+          confirmedAddonRows={confirmedAddonRows}
+          settlingAddonRows={settlingAddonRows}
+          unknownAddonRows={unknownAddonRows}
+          driftRows={driftRows}
+          clusterProblemCount={clusterProblemCount}
+        />
+      </div>
+
+      {!hasGroups ? null : (
       <div className={viewMode === 'grid' ? 'grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3' : 'space-y-3'}>
         {groupBy === 'addon' ? (
           /* ---- Group by Addon ---- */
@@ -921,9 +971,10 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
           )
         )}
       </div>
+      )}
 
       {/* Pagination controls */}
-      {totalPages > 1 && (
+      {hasGroups && totalPages > 1 && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-3 dark:ring-gray-700 dark:bg-gray-900">
           <div className="text-sm text-[#2a5a7a] dark:text-gray-400">
             Showing{' '}
@@ -1349,24 +1400,20 @@ export function Observability() {
   if (error) return <ErrorState message={error} onRetry={fetchData} />;
   if (!data) return null;
 
-  // Attention-detail rows (WQ-3) — same severity honesty, same settling
-  // window, same per-row deep links the Dashboard used to render. Cluster
+  // Open-issues rows (walk day 3 lock, formerly WQ-3's standalone
+  // "Needs Attention" block) — same severity honesty, same settling window,
+  // same per-row deep links, now folded into the Fleet Health section
+  // (AddonGroupsSection) instead of rendered as its own surface. Cluster
   // problem count reads stats.clusters (the server's single classification,
   // same source the old Dashboard banner and the nav badge both use) rather
   // than re-deriving it from the named row list above.
   const { confirmed, settling, unknown } = splitAddonStates(addonStateMap);
   const clusterAttentionRows = buildClusterAttentionRows(attentionClusters);
-  const attentionSection = (
-    <AttentionDetail
-      onNavigate={navigate}
-      clusterAttentionRows={clusterAttentionRows}
-      confirmedAddonRows={buildConfirmedAddonRows(confirmed)}
-      settlingAddonRows={buildSettlingAddonRows(settling)}
-      unknownAddonRows={buildUnknownAddonRows(unknown)}
-      driftRows={buildDriftRows(versionDrifts)}
-      clusterProblemCount={(stats?.clusters?.failed ?? 0) + (stats?.clusters?.missing ?? 0)}
-    />
-  );
+  const confirmedAddonRows = buildConfirmedAddonRows(confirmed);
+  const settlingAddonRows = buildSettlingAddonRows(settling);
+  const unknownAddonRows = buildUnknownAddonRows(unknown);
+  const driftRows = buildDriftRows(versionDrifts);
+  const clusterProblemCount = (stats?.clusters?.failed ?? 0) + (stats?.clusters?.missing ?? 0);
 
   // Check if there's any meaningful data to display
   const hasControlPlane = data.control_plane && (data.control_plane.total_apps > 0 || data.control_plane.total_clusters > 0);
@@ -1384,7 +1431,16 @@ export function Observability() {
             ArgoCD control plane health, addon health per cluster, resource alerts, and sync activity timeline.
           </p>
         </div>
-        {attentionSection}
+        <AddonGroupsSection
+          groups={data.addon_groups ?? []}
+          onNavigate={navigate}
+          clusterAttentionRows={clusterAttentionRows}
+          confirmedAddonRows={confirmedAddonRows}
+          settlingAddonRows={settlingAddonRows}
+          unknownAddonRows={unknownAddonRows}
+          driftRows={driftRows}
+          clusterProblemCount={clusterProblemCount}
+        />
         <ControlPlaneSection data={data.control_plane} stats={stats} argoCDUrl={argoCDUrl} />
         <EmptyState
           title="No observability data available yet"
@@ -1402,14 +1458,22 @@ export function Observability() {
           ArgoCD control plane health, addon health per cluster, resource alerts, and sync activity timeline.
         </p>
       </div>
-      {attentionSection}
       <ControlPlaneSection data={data.control_plane} stats={stats} argoCDUrl={argoCDUrl} />
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <HealthDistributionSection data={data.control_plane} />
         <SyncDistributionSection addonGroups={data.addon_groups ?? []} />
       </div>
       <ResourceAlertsSection alerts={data.resource_alerts ?? []} />
-      <AddonGroupsSection groups={data.addon_groups ?? []} />
+      <AddonGroupsSection
+        groups={data.addon_groups ?? []}
+        onNavigate={navigate}
+        clusterAttentionRows={clusterAttentionRows}
+        confirmedAddonRows={confirmedAddonRows}
+        settlingAddonRows={settlingAddonRows}
+        unknownAddonRows={unknownAddonRows}
+        driftRows={driftRows}
+        clusterProblemCount={clusterProblemCount}
+      />
       <SyncActivitySection syncs={data.recent_syncs ?? []} />
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <DeploymentFrequencySection syncs={data.recent_syncs ?? []} />

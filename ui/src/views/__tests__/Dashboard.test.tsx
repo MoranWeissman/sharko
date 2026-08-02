@@ -132,23 +132,24 @@ describe('Dashboard', () => {
 
 });
 
-// WQ-3 (attention-move-badges): the detailed "Needs Attention" rows moved
-// to Observability. Named cluster/addon rows + their deep links are tested
-// there now (Observability.test.tsx) — the Dashboard keeps only the thin
-// count line, tested below.
-describe('Dashboard thin attention line (WQ-3)', () => {
+// Walk day 3 lock (formerly WQ-3 attention-move-badges): the detailed
+// "Open issues" rows live inside Observability's Fleet Health section.
+// Named cluster/addon rows + their deep links are tested there now
+// (Observability.test.tsx) — the Dashboard keeps only the thin count line,
+// tested below.
+describe('Dashboard thin issues line (walk day 3)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('shows the confirmed-problem count and navigates to /observability on click', async () => {
+  it('shows the confirmed-problem count and navigates to /observability#addon-health on click', async () => {
     // baseStats default mock already has 1 failed + 1 missing = 2 cluster
     // problems; no addon problems in this fixture, so the line reads "2".
     renderDashboard();
 
-    const line = await screen.findByText(/2 things need attention/i);
+    const line = await screen.findByText(/2 open issues/i);
     fireEvent.click(line);
-    expect(mockNavigate).toHaveBeenCalledWith('/observability');
+    expect(mockNavigate).toHaveBeenCalledWith('/observability#addon-health');
   });
 
   // A freshly-observed degraded addon starts inside the 10-minute settling
@@ -165,7 +166,18 @@ describe('Dashboard thin attention line (WQ-3)', () => {
 
     // Still just the 2 cluster problems from baseStats — the addon is
     // settling, not confirmed, so it isn't counted yet.
-    expect(await screen.findByText(/2 things need attention/i)).toBeInTheDocument();
+    expect(await screen.findByText(/2 open issues/i)).toBeInTheDocument();
+  });
+
+  it('shows the singular form for a count of one', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: { total: 5, connected: 4, pending: 0, untested: 0, missing: 0, failed: 1 },
+    });
+    renderDashboard();
+
+    expect(await screen.findByText(/1 open issue\b/i)).toBeInTheDocument();
+    expect(screen.queryByText(/1 open issues/i)).not.toBeInTheDocument();
   });
 
   it('renders nothing when there are no confirmed problems (quiet work-queue page)', async () => {
@@ -178,7 +190,7 @@ describe('Dashboard thin attention line (WQ-3)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('fleet-strip-clusters')).toBeInTheDocument();
     });
-    expect(screen.queryByText(/things? need attention/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/open issues?/i)).not.toBeInTheDocument();
     expect(screen.queryByText('All systems operational')).not.toBeInTheDocument();
   });
 
@@ -289,7 +301,7 @@ describe('Dashboard — empty install (B1, no false-green)', () => {
     });
     expect(screen.queryByText('All systems operational')).not.toBeInTheDocument();
     expect(screen.queryByText('Nothing connected yet')).not.toBeInTheDocument();
-    expect(screen.queryByText(/things? need attention/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/open issues?/i)).not.toBeInTheDocument();
   });
 });
 
@@ -512,18 +524,17 @@ describe('Fleet Status Strip navigation (WQ-1)', () => {
 });
 
 // Fleet Status Strip exception emphasis (dashboard-purpose decision, WQ-1
-// → WQ-2): the strip states facts, never color alone. WQ-2 replaced the
-// per-state text (and its red/amber tone) with donut slices — a
-// "disconnected" count now shows up as a slice in the donut (queryable by
-// its data-testid) plus the plain-English breakdown in the aria-label,
-// not as red-toned inline text. Only the Upgrades segment (no donut, WQ-2)
-// still uses a text tone.
-describe('Fleet Status Strip exception styling (WQ-1 / WQ-2)', () => {
+// → WQ-2, pies real-labeled per walk day 3): the strip states facts, never
+// color alone. A "disconnected" count shows up as a legend row (label +
+// count, queryable by text — not tooltip-only, walk day 3) plus the
+// plain-English breakdown in the aria-label, not as red-toned inline text.
+// Only the Upgrades segment (no pie) still uses a text tone.
+describe('Fleet Status Strip exception styling (WQ-1 / WQ-2 / walk day 3)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('clusters segment: a healthy fleet (no missing/failed) draws no failed/not-connected slice', async () => {
+  it('clusters segment: a healthy fleet (no missing/failed) draws no failed/not-connected legend row', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...baseStats,
       clusters: { total: 5, connected: 5, pending: 0, untested: 0, missing: 0, failed: 0 },
@@ -533,12 +544,13 @@ describe('Fleet Status Strip exception styling (WQ-1 / WQ-2)', () => {
 
     const segment = await screen.findByTestId('fleet-strip-clusters');
     await waitFor(() => expect(segment.textContent).toContain('5'));
-    expect(within(segment).getByTestId('donut-slice-connected')).toBeInTheDocument();
-    expect(within(segment).queryByTestId('donut-slice-not-connected')).not.toBeInTheDocument();
-    expect(within(segment).queryByTestId('donut-slice-disconnected')).not.toBeInTheDocument();
+    const legend = within(segment).getByTestId('fleet-strip-legend');
+    expect(within(legend).getByText('connected')).toBeInTheDocument();
+    expect(within(legend).queryByText('not connected')).not.toBeInTheDocument();
+    expect(within(legend).queryByText('disconnected')).not.toBeInTheDocument();
   });
 
-  it('clusters segment: missing/failed clusters each draw their own donut slice, named in the aria-label', async () => {
+  it('clusters segment: missing/failed clusters each get their own legend row, named in the aria-label', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...baseStats,
       clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
@@ -546,23 +558,25 @@ describe('Fleet Status Strip exception styling (WQ-1 / WQ-2)', () => {
     renderDashboard();
 
     const segment = await screen.findByTestId('fleet-strip-clusters');
-    await waitFor(() => expect(within(segment).getByTestId('donut-slice-disconnected')).toBeInTheDocument());
-    expect(within(segment).getByTestId('donut-slice-not-connected')).toBeInTheDocument();
+    const legend = await waitFor(() => within(segment).getByTestId('fleet-strip-legend'));
+    expect(within(legend).getByText('not connected')).toBeInTheDocument();
+    expect(within(legend).getByText('disconnected')).toBeInTheDocument();
     expect(segment.getAttribute('aria-label')).toContain('1 not connected');
     expect(segment.getAttribute('aria-label')).toContain('1 disconnected');
   });
 
-  it('applications segment: not-healthy > 0 draws a not-healthy slice, named in the aria-label', async () => {
+  it('applications segment: not-healthy > 0 gets its own legend row, named in the aria-label', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
     (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
     renderDashboard();
 
     const segment = await screen.findByTestId('fleet-strip-applications');
-    await waitFor(() => expect(within(segment).getByTestId('donut-slice-not-healthy')).toBeInTheDocument());
+    const legend = await waitFor(() => within(segment).getByTestId('fleet-strip-legend'));
+    expect(within(legend).getByText('not healthy')).toBeInTheDocument();
     expect(segment.getAttribute('aria-label')).toContain('5 not healthy');
   });
 
-  it('applications segment: zero not-healthy draws no not-healthy slice', async () => {
+  it('applications segment: zero not-healthy draws no not-healthy legend row', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...baseStats,
       applications: {
@@ -575,8 +589,9 @@ describe('Fleet Status Strip exception styling (WQ-1 / WQ-2)', () => {
     renderDashboard();
 
     const segment = await screen.findByTestId('fleet-strip-applications');
-    await waitFor(() => expect(within(segment).getByTestId('donut-slice-healthy')).toBeInTheDocument());
-    expect(within(segment).queryByTestId('donut-slice-not-healthy')).not.toBeInTheDocument();
+    const legend = await waitFor(() => within(segment).getByTestId('fleet-strip-legend'));
+    expect(within(legend).getByText('healthy')).toBeInTheDocument();
+    expect(within(legend).queryByText('not healthy')).not.toBeInTheDocument();
   });
 
   it('upgrades segment: outdated > 0 gets amber-toned text', async () => {

@@ -52,7 +52,6 @@ import {
   ARGOCD_CONN_TOOLTIP,
   SHARKO_CONN_TOOLTIP,
 } from '@/components/WhoseConnectionLabel';
-import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
 import { ClusterStatusLegend } from '@/components/ClusterStatusLegend';
 import { InfoHint } from '@/components/InfoHint';
 import {
@@ -2089,8 +2088,6 @@ export function ClustersOverview() {
                         <span className="inline-flex items-center gap-1.5">
                           {cluster.name}
                           {isInCluster && <Info className="h-4 w-4 text-blue-400" />}
-                          {/* Cosmetic type pill derived from server hostname. */}
-                          <ClusterTypeBadge server={cluster.server_url} compact />
                         </span>
                       </td>
                       <td className="px-6 py-3">
@@ -2188,8 +2185,6 @@ export function ClustersOverview() {
                       <span className="inline-flex flex-wrap items-center gap-1.5">
                         {cluster.name}
                         {isInCluster && <Info className="h-4 w-4 text-blue-400" />}
-                        {/* Cosmetic type pill derived from server hostname. */}
-                        <ClusterTypeBadge server={cluster.server_url} compact />
                       </span>
                     </h3>
                     <div className="flex items-center gap-1">

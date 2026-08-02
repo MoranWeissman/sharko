@@ -407,20 +407,20 @@ export function Dashboard() {
         />
       )}
 
-      {/* Thin attention line (WQ-3, maintainer's "middle option") — the
-          detailed rows moved to Observability; the Dashboard keeps just
-          this one line, and only when there's something confirmed to look
-          at. Same count as the Observability nav badge (one truth, two
-          mirrors — components/AttentionSection.tsx's
+      {/* Thin issues line (walk day 3 lock, maintainer's "middle option") —
+          the detailed rows live on Observability's Fleet Health section;
+          the Dashboard keeps just this one line, and only when there's
+          something confirmed to look at. Same count as the Observability
+          nav badge (one truth, two mirrors — components/AttentionSection.tsx's
           getConfirmedProblemCount). Renders nothing at zero — a quiet
           work-queue page has nothing to announce. */}
       {confirmedProblemCount > 0 && (
         <button
-          onClick={() => navigate('/observability')}
+          onClick={() => navigate('/observability#addon-health')}
           className="flex w-full items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-left text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/30"
         >
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          {confirmedProblemCount} thing{confirmedProblemCount !== 1 ? 's' : ''} need{confirmedProblemCount === 1 ? 's' : ''} attention
+          {confirmedProblemCount} open issue{confirmedProblemCount !== 1 ? 's' : ''}
           <ChevronRight className="ml-auto h-4 w-4 shrink-0" />
         </button>
       )}
