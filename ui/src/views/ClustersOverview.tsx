@@ -45,6 +45,7 @@ import { StatCard } from '@/components/StatCard';
 import { ClusterStatusSummary } from '@/components/ClusterStatusSummary';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
+import { ErrorDetail } from '@/components/ErrorDetail';
 import { getCached, setCached } from '@/lib/viewCache';
 import { RoleGuard } from '@/components/RoleGuard';
 import {
@@ -285,7 +286,11 @@ export function ClustersOverview() {
   // Kubeconfig YAML pasted by the user when provider === 'kubeconfig'.
   const [addClusterKubeconfig, setAddClusterKubeconfig] = useState('');
   const [addClusterSubmitting, setAddClusterSubmitting] = useState(false);
-  const [addClusterError, setAddClusterError] = useState<string | null>(null);
+  // Holds whatever the register/dry-run catch received (an ApiError from
+  // api.ts, a bare Error, or null) so ErrorDetail can render the server's
+  // cause/hint alongside the headline instead of a flattened string
+  // (error review package 2).
+  const [addClusterError, setAddClusterError] = useState<unknown>(null);
   const [addClusterResult, setAddClusterResult] = useState<RegisterClusterResult | null>(null);
   const [addClusterResultMsg, setAddClusterResultMsg] = useState<string | null>(null);
 
@@ -613,7 +618,7 @@ export function ClustersOverview() {
         setDryRunResult(result.dry_run);
       }
     } catch (e: unknown) {
-      setAddClusterError(e instanceof Error ? e.message : 'Preview failed');
+      setAddClusterError(e);
     } finally {
       setDryRunLoading(false);
     }
@@ -679,7 +684,7 @@ export function ClustersOverview() {
         void fetchData();
       }
     } catch (e: unknown) {
-      setAddClusterError(e instanceof Error ? e.message : 'Failed to register cluster');
+      setAddClusterError(e);
     } finally {
       setAddClusterSubmitting(false);
     }
@@ -1563,8 +1568,8 @@ export function ClustersOverview() {
 
             {dryRunResult && <DryRunPreview result={dryRunResult} />}
 
-            {addClusterError && (
-              <p className="text-sm text-red-600 dark:text-red-400">{addClusterError}</p>
+            {addClusterError != null && (
+              <ErrorDetail error={addClusterError} fallbackMessage="Failed to register cluster" />
             )}
           </div>
           {/* Footer buttons. Plain `title=` tooltips (not shadcn

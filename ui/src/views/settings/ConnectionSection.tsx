@@ -18,6 +18,7 @@ import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
+import { ErrorDetail } from '@/components/ErrorDetail'
 
 interface ConnectionFormData {
   git_url: string
@@ -60,7 +61,11 @@ export function ConnectionSection() {
   })
 
   const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
+  // Holds whatever handleSubmit's catch received (an ApiError from
+  // api.ts's shared throw path, a bare Error, or null) so ErrorDetail can
+  // render the server's cause/hint alongside the headline instead of a
+  // flattened string (error review package 2).
+  const [saveError, setSaveError] = useState<unknown>(null)
   const [testStatus, setTestStatus] = useState<TestStatus>({ git: 'idle', argocd: 'idle' })
   const [liveStatus, setLiveStatus] = useState<LiveStatus>({ git: 'idle', argocd: 'idle' })
   const [justSaved, setJustSaved] = useState(false)
@@ -225,7 +230,7 @@ export function ConnectionSection() {
       setJustSaved(true)
       fetchLiveStatus()
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Save failed')
+      setSaveError(err)
     } finally {
       setSaving(false)
     }
@@ -504,8 +509,8 @@ export function ConnectionSection() {
           </div>
         </div>
 
-        {saveError && (
-          <p className="mt-3 text-sm text-red-600 dark:text-red-400">{saveError}</p>
+        {saveError != null && (
+          <ErrorDetail className="mt-3" error={saveError} fallbackMessage="Save failed" />
         )}
 
         <div className="mt-6 flex items-center gap-3">

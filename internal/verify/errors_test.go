@@ -108,9 +108,11 @@ func TestFriendlyMessage_AuthIncludesHintAndRawCause(t *testing.T) {
 	if !strings.Contains(msg, raw) {
 		t.Errorf("friendly message dropped the raw cause %q: got %q", raw, msg)
 	}
-	// Error code is still surfaced.
-	if !strings.Contains(msg, "[ERR_AUTH]") {
-		t.Errorf("friendly message missing error code: %q", msg)
+	// error review package 2: the bracketed machine token no longer leads
+	// the sentence — a code has no business in front of a plain-English
+	// message. Callers that need the code read r.ErrorCode directly.
+	if strings.Contains(msg, "[ERR_AUTH]") || strings.HasPrefix(msg, "[") {
+		t.Errorf("friendly message must not carry a bracketed code prefix: %q", msg)
 	}
 }
 
@@ -128,6 +130,54 @@ func TestFriendlyMessage_NoHintKeepsRawCause(t *testing.T) {
 	}
 	if strings.Contains(msg, " — ") {
 		t.Errorf("did not expect a hint suffix for ERR_NETWORK: %q", msg)
+	}
+}
+
+// TestClassifyError_NamespaceTightened — error review package 2, step 0.
+// A bare "namespace" substring used to be enough to classify ERR_NAMESPACE,
+// which misfired on almost any Kubernetes error that happens to mention a
+// namespace in passing. This locks the tightened contract: the phrase alone
+// isn't enough — it needs a genuine not-found/already-exists/terminating
+// signal (or the admission-webhook phrase) alongside it.
+func TestClassifyError_NamespaceTightened(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want ErrorCode
+	}{
+		{
+			name: "namespace + not found -> ERR_NAMESPACE",
+			err:  errors.New(`namespaces "sharko-test" not found`),
+			want: ERR_NAMESPACE,
+		},
+		{
+			name: "namespace + already exists -> ERR_NAMESPACE",
+			err:  errors.New(`namespaces "sharko-test" already exists`),
+			want: ERR_NAMESPACE,
+		},
+		{
+			name: "admission webhook alone -> ERR_NAMESPACE",
+			err:  errors.New("admission webhook denied the request"),
+			want: ERR_NAMESPACE,
+		},
+		{
+			name: "unrelated error mentioning namespace does NOT misfire",
+			err:  errors.New("listing pods in namespace sharko-system: unexpected server response"),
+			want: ERR_UNKNOWN,
+		},
+		{
+			name: "namespace mention with an unrelated failure reason does NOT misfire",
+			err:  errors.New("watching namespace sharko-system: connection reset by peer"),
+			want: ERR_UNKNOWN,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ClassifyError(tt.err); got != tt.want {
+				t.Errorf("ClassifyError(%q) = %s, want %s", tt.err, got, tt.want)
+			}
+		})
 	}
 }
 

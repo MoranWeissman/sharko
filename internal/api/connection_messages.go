@@ -19,6 +19,34 @@ import (
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
 
+// connectionErrorFields builds the JSON body for a failed connection test —
+// the plain sentence from plainConnectionError as "message" (unchanged, so
+// existing UI reads of `.message` keep working), plus the same cause/hint/
+// code fields the top-level error boundary uses (error review package 2).
+// Omitted (not sent as "") when there's nothing to say, matching shapeError.
+//
+// err is nil here only means "nothing failed" is unreachable — callers only
+// invoke this once they already know the test failed, but it's still
+// defensive: nil in means a plain "ok" body out.
+func connectionErrorFields(kind string, err error) map[string]interface{} {
+	if err == nil {
+		return map[string]interface{}{"status": "ok"}
+	}
+	msg := plainConnectionError(kind, err)
+	body := map[string]interface{}{"status": "error", "message": msg}
+	_, cause, hint, code := shapeError(err, msg)
+	if cause != "" {
+		body["cause"] = cause
+	}
+	if hint != "" {
+		body["hint"] = hint
+	}
+	if code != "" {
+		body["code"] = code
+	}
+	return body
+}
+
 // plainConnectionError returns a plain-English, non-technical description
 // of why a connection test failed. kind identifies which connection was
 // being tested ("git", "argocd", or "vault" — the secrets/cluster-creds

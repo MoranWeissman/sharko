@@ -130,10 +130,7 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 			Region: req.Region,
 		})
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"status":  "error",
-				"message": plainConnectionError("vault", err),
-			})
+			writeJSON(w, http.StatusOK, connectionErrorFields("vault", err))
 			return
 		}
 		provider = prov
@@ -153,10 +150,7 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 
 	clusters, err := provider.ListClusters()
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status":  "error",
-			"message": plainConnectionError("vault", err),
-		})
+		writeJSON(w, http.StatusOK, connectionErrorFields("vault", err))
 		return
 	}
 
@@ -215,19 +209,13 @@ func (s *Server) handleTestProviderConfig(w http.ResponseWriter, r *http.Request
 		Namespace:       req.Namespace,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status":  "error",
-			"message": plainConnectionError("vault", err),
-		})
+		writeJSON(w, http.StatusOK, connectionErrorFields("vault", err))
 		return
 	}
 
 	clusters, err := prov.ListClusters()
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status":  "error",
-			"message": plainConnectionError("vault", err),
-		})
+		writeJSON(w, http.StatusOK, connectionErrorFields("vault", err))
 		return
 	}
 
