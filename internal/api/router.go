@@ -1177,17 +1177,54 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	})
 
 	// Static files (SPA)
+	//
+	// Cache honesty (sprint-backlog-burndown-r1 Lane B): after a live image
+	// roll, an already-open tab may still hold the OLD index.html, which
+	// references hashed chunk files the NEW image no longer ships. If we
+	// let the shell get cached and the server quietly answers a missing
+	// chunk with index.html (the old SPA-fallback-for-everything behavior),
+	// the browser gets HTML where it expected JS/CSS — a MIME-type error
+	// that leaves the tab dead until a hard refresh. Three rules fix that:
+	//   1. index.html always carries Cache-Control: no-cache, so the
+	//      browser revalidates the shell on every load instead of trusting
+	//      a stale copy.
+	//   2. /assets/* files carry a content hash in their name (Vite's
+	//      build output) — a HIT is safe to cache forever (immutable).
+	//   3. /assets/* MISSES return an honest 404, never the index.html
+	//      fallback. The SPA fallback stays for route paths like /clusters.
 	if staticFS != nil {
 		fileServer := http.FileServer(http.FS(staticFS))
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			// Try to serve the file; if not found, serve index.html for SPA routing
-			path := r.URL.Path
-			if path == "/" {
-				path = "index.html"
+			reqPath := r.URL.Path
+
+			if strings.HasPrefix(reqPath, "/assets/") {
+				if _, err := fs.Stat(staticFS, strings.TrimPrefix(reqPath, "/")); err != nil {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				fileServer.ServeHTTP(w, r)
+				return
 			}
-			if _, err := fs.Stat(staticFS, path[1:]); err != nil {
-				// File not found — serve index.html for client-side routing
-				r.URL.Path = "/"
+
+			// Everything else: serve the matching static file if it exists
+			// (e.g. favicon, robots.txt), otherwise fall back to
+			// index.html for client-side routing (e.g. /clusters,
+			// /observability). Any path that resolves to the shell —
+			// "/", "/index.html", or the SPA fallback — gets no-cache.
+			servingIndex := false
+			switch {
+			case reqPath == "/", reqPath == "/index.html":
+				servingIndex = true
+			default:
+				if _, err := fs.Stat(staticFS, reqPath[1:]); err != nil {
+					// File not found — serve index.html for client-side routing
+					r.URL.Path = "/"
+					servingIndex = true
+				}
+			}
+			if servingIndex {
+				w.Header().Set("Cache-Control", "no-cache")
 			}
 			fileServer.ServeHTTP(w, r)
 		})
