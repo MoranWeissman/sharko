@@ -6,6 +6,11 @@ import { NotificationBell } from '@/components/NotificationBell';
 // connhealth-2: the bell renders connection-health alerts (NotificationType
 // `connection`, written by the Story 1 backend poller) and, when clicked,
 // navigates to Settings → Connection.
+//
+// S4 (maintainer's live finding, 2026-08-02): opening the bell now marks
+// everything read by itself — the red counter clears the moment the popover
+// opens, and the old "Mark all as read" button is gone because it's
+// redundant.
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -70,7 +75,7 @@ describe('NotificationBell — connection-health alerts', () => {
     expect(screen.getByText('🔌')).toBeInTheDocument();
   });
 
-  it('navigates to Settings → Connection AND marks it read when a connection alert is clicked (S3)', async () => {
+  it('navigates to Settings → Connection when a connection alert is clicked', async () => {
     getNotifications.mockResolvedValue({ notifications: [connectionNotification] });
     renderBell();
 
@@ -83,10 +88,9 @@ describe('NotificationBell — connection-health alerts', () => {
     fireEvent.click(item);
 
     expect(mockNavigate).toHaveBeenCalledWith('/settings?section=connections');
-    expect(markNotificationRead).toHaveBeenCalledWith('conn-1');
   });
 
-  it('does not navigate for non-connection notifications, but still marks them read (S3)', async () => {
+  it('does not navigate for non-connection notifications', async () => {
     getNotifications.mockResolvedValue({
       notifications: [
         {
@@ -107,20 +111,19 @@ describe('NotificationBell — connection-health alerts', () => {
     fireEvent.click(item);
 
     expect(mockNavigate).not.toHaveBeenCalled();
-    expect(markNotificationRead).toHaveBeenCalledWith('up-1');
   });
 });
 
-// S3 (walk day 4): every notification item is now clickable and marks
-// itself read on click, in addition to any type-specific navigation.
-describe('NotificationBell — click marks a single item read (S3)', () => {
+// S4: opening the bell with unread notifications marks everything read by
+// itself — no per-item or "mark all" button click required.
+describe('NotificationBell — opening the bell marks everything read (S4)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     markAllNotificationsRead.mockResolvedValue({});
     markNotificationRead.mockResolvedValue({});
   });
 
-  it('clears the unread dot on the clicked item only, and calls the mark-read endpoint', async () => {
+  it('clears the badge and calls the read-all endpoint exactly once when there is unread', async () => {
     getNotifications.mockResolvedValue({
       notifications: [
         {
@@ -143,23 +146,50 @@ describe('NotificationBell — click marks a single item read (S3)', () => {
     });
     renderBell();
 
-    fireEvent.click(screen.getByLabelText('Notifications'));
-    const item = await screen.findByText('New addon version available');
-    expect(item.closest('[role="button"]')).not.toBeNull();
-
-    fireEvent.click(item);
-
+    // Badge shows 2 unread before the bell is opened.
     await waitFor(() => {
-      expect(markNotificationRead).toHaveBeenCalledWith('up-1');
+      expect(screen.getByText('2')).toBeInTheDocument();
     });
 
-    // The unread count badge drops from 2 to 1 (optimistic local update).
+    fireEvent.click(screen.getByLabelText('Notifications'));
+
+    // The badge disappears — the popover header no longer shows a count —
+    // and every row loses its unread styling/dot.
     await waitFor(() => {
-      expect(screen.getByText(/Notifications \(1\)/)).toBeInTheDocument();
+      expect(screen.getByText('Notifications')).toBeInTheDocument();
+      expect(screen.queryByText(/Notifications \(/)).not.toBeInTheDocument();
+    });
+    expect(screen.queryByText('2')).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(markAllNotificationsRead).toHaveBeenCalledTimes(1);
     });
   });
 
-  it('"Mark all as read" still clears every item', async () => {
+  it('does not call the read-all endpoint when everything is already read', async () => {
+    getNotifications.mockResolvedValue({
+      notifications: [
+        {
+          id: 'up-1',
+          type: 'upgrade',
+          title: 'New addon version available',
+          description: 'argo-cd 2.10.0 is available.',
+          timestamp: new Date().toISOString(),
+          read: true,
+        },
+      ],
+    });
+    renderBell();
+
+    await screen.findByLabelText('Notifications');
+    fireEvent.click(screen.getByLabelText('Notifications'));
+
+    await screen.findByText('New addon version available');
+
+    expect(markAllNotificationsRead).not.toHaveBeenCalled();
+  });
+
+  it('no longer renders a "Mark all as read" button', async () => {
     getNotifications.mockResolvedValue({
       notifications: [
         {
@@ -177,15 +207,7 @@ describe('NotificationBell — click marks a single item read (S3)', () => {
     fireEvent.click(screen.getByLabelText('Notifications'));
     await screen.findByText('New addon version available');
 
-    fireEvent.click(screen.getByText('Mark all as read'));
-
-    await waitFor(() => {
-      expect(markAllNotificationsRead).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect(screen.getByText('Notifications')).toBeInTheDocument();
-      expect(screen.queryByText(/Notifications \(/)).not.toBeInTheDocument();
-    });
+    expect(screen.queryByText('Mark all as read')).not.toBeInTheDocument();
   });
 });
 

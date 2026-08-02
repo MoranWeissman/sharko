@@ -6,11 +6,12 @@
 // act (read-only contract).
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import SystemView, {
   GIT_CONN_ALERT_TITLE,
   aggregateStatuses,
+  clusterStatusParts,
   deriveArgoClusterStatus,
   deriveArgoRepoArrow,
   deriveSharkoClusterLabel,
@@ -108,6 +109,17 @@ function renderPage() {
     <MemoryRouter>
       <SystemView />
     </MemoryRouter>,
+  )
+}
+
+// The cluster status line's bucket phrases ("2 healthy", "1 with issues")
+// are each colored in their own nested <span>, so the full sentence is no
+// longer one text node — screen.getByText's default matcher only looks at
+// an element's own direct text, not its descendants'. Match on the link's
+// full textContent instead, which does read through the nested spans.
+function getClusterStatusLines(fullText: string) {
+  return screen.getAllByText(
+    (_, element) => element?.tagName === 'A' && element.textContent === fullText,
   )
 }
 
@@ -302,6 +314,30 @@ describe('summarizeClusterStatuses', () => {
   })
 })
 
+// The structured version behind the on-screen colored line: same buckets,
+// tagged with a tone so the UI can color healthy/degraded/unknown
+// differently while the sentence stays plain text.
+describe('clusterStatusParts', () => {
+  it('tags each non-zero bucket with its tone, in order', () => {
+    expect(clusterStatusParts(['healthy', 'degraded', 'unknown'])).toEqual({
+      total: 3,
+      clusterWord: 'managed clusters',
+      parts: [
+        { text: '1 healthy', tone: 'healthy' },
+        { text: '1 with issues', tone: 'degraded' },
+        { text: '1 unknown', tone: 'unknown' },
+      ],
+    })
+  })
+  it('omits zero buckets', () => {
+    expect(clusterStatusParts(['healthy', 'healthy'])).toEqual({
+      total: 2,
+      clusterWord: 'managed clusters',
+      parts: [{ text: '2 healthy', tone: 'healthy' }],
+    })
+  })
+})
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Version badge logic — dumb and safe, minor-version comparison only
 // ─────────────────────────────────────────────────────────────────────────────
@@ -370,8 +406,15 @@ describe('SystemView', () => {
     expect(
       screen.getByText('ArgoCD is syncing the repo — the engine app is healthy.'),
     ).toBeInTheDocument()
-    // Cluster arrows aggregate
-    expect(screen.getAllByText('2 of 2 healthy')).toHaveLength(2)
+    // Cluster arrow pills say a plain "Healthy" — the count itself is said
+    // once, by the summary line below, not duplicated in the pill too
+    // (maintainer's live finding: the card used to say the same count twice).
+    expect(screen.queryByText('2 of 2 healthy')).not.toBeInTheDocument()
+    const clusterLines = getClusterStatusLines('2 managed clusters — 2 healthy')
+    expect(clusterLines).toHaveLength(2)
+    clusterLines.forEach((line) => {
+      expect(within(line).getByText('2 healthy').className).toContain('text-green-700')
+    })
     // Detected version shown, no warning badge (v3.2 is in range)
     expect(screen.getByText('ArgoCD v3.2.2 detected')).toBeInTheDocument()
     expect(screen.queryByTestId('argocd-version-badge')).not.toBeInTheDocument()
@@ -407,8 +450,14 @@ describe('SystemView', () => {
     expect(
       screen.getByText("Can't assess until the repo is set up — ArgoCD has nothing to sync yet."),
     ).toBeInTheDocument()
-    // Both cluster arrows aggregate to 0 of 1 healthy
-    expect(screen.getAllByText('0 of 1 healthy')).toHaveLength(2)
+    // The pill no longer says "0 of 1 healthy" — the summary line below
+    // says the count once, with the "with issues" bucket colored red.
+    expect(screen.queryByText('0 of 1 healthy')).not.toBeInTheDocument()
+    const clusterLines = getClusterStatusLines('1 managed cluster — 1 with issues')
+    expect(clusterLines).toHaveLength(2)
+    clusterLines.forEach((line) => {
+      expect(within(line).getByText('1 with issues').className).toContain('text-red-700')
+    })
   })
 
   it('renders unknown states calmly (no clusters, unreported statuses)', async () => {
@@ -461,12 +510,38 @@ describe('SystemView', () => {
     renderPage()
 
     await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
-    expect(screen.getAllByText('2 of 2 healthy')).toHaveLength(2)
+    expect(screen.queryByText('2 of 2 healthy')).not.toBeInTheDocument()
 
     // S2 (walk day 4): the per-cluster expandable list is gone — both
     // cluster arrows now show one honest summary line each, computed with
-    // the same derive function the arrow's own aggregate uses.
-    expect(screen.getAllByText('2 managed clusters — 2 healthy')).toHaveLength(2)
+    // the same derive function the arrow's own aggregate uses. It's the
+    // only place the count appears (the pill above just says "Healthy").
+    const clusterLines = getClusterStatusLines('2 managed clusters — 2 healthy')
+    expect(clusterLines).toHaveLength(2)
+    clusterLines.forEach((line) => {
+      expect(within(line).getByText('2 healthy').className).toContain('text-green-700')
+    })
+  })
+
+  it('colors all three buckets on the summary line when a card has healthy, degraded, and unknown clusters at once', async () => {
+    mockAll({
+      clusters: [
+        { name: 'prod-1', labels: {}, connection_status: 'Successful', sharko_status: 'Connected' },
+        { name: 'prod-2', labels: {}, connection_status: 'Failed', sharko_status: 'Unreachable', test_failing: true },
+        { name: 'prod-3', labels: {} },
+      ],
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
+
+    const clusterLines = getClusterStatusLines('3 managed clusters — 1 healthy, 1 with issues, 1 unknown')
+    expect(clusterLines).toHaveLength(2)
+    clusterLines.forEach((line) => {
+      expect(within(line).getByText('1 healthy').className).toContain('text-green-700')
+      expect(within(line).getByText('1 with issues').className).toContain('text-red-700')
+      expect(within(line).getByText('1 unknown').className).toContain('text-gray-700')
+    })
   })
 
   it('links every arrow to the page where you would act (read-only page)', async () => {
@@ -491,7 +566,7 @@ describe('SystemView', () => {
     // Managed Clusters page instead of expanding a list here). This
     // cluster is healthy on both the Sharko and ArgoCD arrows, so the
     // identical summary line renders twice.
-    const summaryLines = screen.getAllByText('1 managed cluster — 1 healthy')
+    const summaryLines = getClusterStatusLines('1 managed cluster — 1 healthy')
     expect(summaryLines).toHaveLength(2)
     summaryLines.forEach((el) => expect(el.closest('a')).toHaveAttribute('href', '/clusters'))
   })

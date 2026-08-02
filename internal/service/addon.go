@@ -564,11 +564,27 @@ func (s *AddonService) getCatalogV4(ctx context.Context, gp gitprovider.GitProvi
 }
 
 // GetAddonDetail returns detailed information about a specific addon.
+//
+// ApplicationSet naming (walk-day finding): a v4 engine chart names every
+// addon's ApplicationSet `sharko-<addon>`
+// (charts/sharko-engine/templates/appset.yaml), not the bare addon name — a
+// v3 repo's bootstrap-generated ApplicationSet IS the bare name (see
+// v3ScaffoldAppSet in internal/orchestrator/migration_handoff_test.go). This
+// used the bare name unconditionally, so on a v4 repo the lookup 404'd into
+// the "best-effort" branch below and the tab quietly showed nothing. Uses
+// the same engine-pin probe as ListAddons/GetCatalog elsewhere in this file
+// to pick the right name deterministically — no dual-attempt fallback,
+// matching that existing v3/v4 branching convention.
 func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp gitprovider.GitProvider, ac *argocd.Client) (*models.AddonDetailResponse, error) {
 	log := logging.LoggerFromContext(ctx)
 	catalog, err := s.GetCatalog(ctx, gp, ac)
 	if err != nil {
 		return nil, err
+	}
+
+	appSetName := addonName
+	if pinContent, pinErr := gp.GetFileContent(ctx, orchestrator.EnginePinPath, s.branch()); pinErr == nil && len(pinContent) > 0 {
+		appSetName = "sharko-" + addonName
 	}
 
 	for _, item := range catalog.Addons {
@@ -578,7 +594,7 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 			}
 
 			// Enrich with ApplicationSet status from ArgoCD (best-effort).
-			if appSetStatus, err := ac.GetApplicationSet(ctx, addonName); err == nil {
+			if appSetStatus, err := ac.GetApplicationSet(ctx, appSetName); err == nil {
 				info := &models.ApplicationSetStatusInfo{
 					Name:          appSetStatus.Name,
 					GeneratedApps: appSetStatus.GeneratedApps,
@@ -592,7 +608,7 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 				}
 				resp.ApplicationSet = info
 			} else {
-				log.Warn("could not fetch applicationset status", "addon", addonName, "error", err)
+				log.Warn("could not fetch applicationset status", "addon", addonName, "appset", appSetName, "error", err)
 			}
 
 			return resp, nil

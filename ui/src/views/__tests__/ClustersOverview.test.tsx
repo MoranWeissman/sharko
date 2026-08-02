@@ -214,10 +214,11 @@ describe('ClustersOverview', () => {
   });
 
   // Walk day 3 lock: the hostname-guess cluster type badge (EKS/AKS/GKE/
-  // kind/Self-hosted/Unknown) leaves list surfaces — it stays only on the
-  // cluster detail header (ClusterDetail.tsx). ClusterTypeBadge always
-  // renders an aria-label of "Cluster type: <type>", so its absence here
-  // proves the badge isn't mounted, not just that one variant is hidden.
+  // kind/Self-hosted/Unknown) left list surfaces first, then the cluster
+  // detail header too (maintainer's later live finding — same no-benefit
+  // verdict). The ClusterTypeBadge component itself is gone from the
+  // codebase now; this test just pins that the clusters list has never
+  // rendered anything with a "Cluster type: <type>" aria-label.
   it('does not render the cluster type badge on the clusters list (list surface, walk day 3 lock)', async () => {
     mockGetClusters.mockResolvedValue(clustersResponseAtThreshold);
     renderView();

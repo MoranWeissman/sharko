@@ -271,6 +271,35 @@ function ArrowCard({
   )
 }
 
+export interface ClusterStatusPart {
+  text: string
+  tone: 'healthy' | 'degraded' | 'unknown'
+}
+
+/**
+ * Same three buckets as the summary sentence, kept apart (instead of
+ * pre-joined into one string) so the on-screen line can color each bucket —
+ * healthy green, with-issues red, unknown gray — while the sentence itself
+ * stays plain text. `summarizeClusterStatuses` below is the plain-string
+ * version built from these same parts.
+ */
+export function clusterStatusParts(
+  statuses: ArrowStatus[],
+): { total: number; clusterWord: string; parts: ClusterStatusPart[] } {
+  const total = statuses.length
+  const clusterWord = total === 1 ? 'managed cluster' : 'managed clusters'
+  const healthy = statuses.filter((s) => s === 'healthy').length
+  const degraded = statuses.filter((s) => s === 'degraded').length
+  const unknown = statuses.filter((s) => s === 'unknown').length
+
+  const parts: ClusterStatusPart[] = []
+  if (healthy > 0) parts.push({ text: `${healthy} healthy`, tone: 'healthy' })
+  if (degraded > 0) parts.push({ text: `${degraded} with issues`, tone: 'degraded' })
+  if (unknown > 0) parts.push({ text: `${unknown} unknown`, tone: 'unknown' })
+
+  return { total, clusterWord, parts }
+}
+
 /**
  * One honest line per cluster arrow — "N managed clusters — X healthy, Y
  * with issues" — instead of the old expandable per-cluster list (walk-day
@@ -279,22 +308,25 @@ function ArrowCard({
  * clusters — 7 healthy, 1 with issues" reads clean instead of "0 unknown".
  */
 export function summarizeClusterStatuses(statuses: ArrowStatus[]): string {
-  const total = statuses.length
-  const clusterWord = total === 1 ? 'managed cluster' : 'managed clusters'
-  const healthy = statuses.filter((s) => s === 'healthy').length
-  const degraded = statuses.filter((s) => s === 'degraded').length
-  const unknown = statuses.filter((s) => s === 'unknown').length
-
-  const parts: string[] = []
-  if (healthy > 0) parts.push(`${healthy} healthy`)
-  if (degraded > 0) parts.push(`${degraded} with issues`)
-  if (unknown > 0) parts.push(`${unknown} unknown`)
-
+  const { total, clusterWord, parts } = clusterStatusParts(statuses)
   if (parts.length === 0) return `${total} ${clusterWord}`
-  return `${total} ${clusterWord} — ${parts.join(', ')}`
+  return `${total} ${clusterWord} — ${parts.map((p) => p.text).join(', ')}`
 }
 
-/** One-line cluster status summary under a cluster arrow, linking to /clusters. */
+// Tone → text color, reusing the same healthy/degraded/unknown palette as
+// StatusPill above, so a bucket phrase and the pill icon agree on color.
+const CLUSTER_STATUS_TONE_CLASSES: Record<ClusterStatusPart['tone'], string> = {
+  healthy: 'text-green-700 dark:text-green-400',
+  degraded: 'text-red-700 dark:text-red-400',
+  unknown: 'text-gray-700 dark:text-gray-400',
+}
+
+/**
+ * One-line cluster status summary under a cluster arrow, linking to
+ * /clusters. This is the ONLY count summary on the card — the StatusPill
+ * next to the arrow shows a plain Healthy/Problem/Unknown word instead of
+ * its own count, so the two don't say the same thing twice.
+ */
 function ClusterStatusLine({
   clusters,
   derive,
@@ -303,12 +335,20 @@ function ClusterStatusLine({
   derive: (c: Cluster) => ArrowStatus
 }) {
   if (clusters.length === 0) return null
+  const { total, clusterWord, parts } = clusterStatusParts(clusters.map(derive))
   return (
     <Link
       to="/clusters"
       className="inline-flex w-fit text-sm text-[#1a4a6a] underline-offset-2 hover:underline dark:text-blue-300"
     >
-      {summarizeClusterStatuses(clusters.map(derive))}
+      {`${total} ${clusterWord}`}
+      {parts.length > 0 && ' — '}
+      {parts.map((part, i) => (
+        <span key={part.tone}>
+          {i > 0 ? ', ' : ''}
+          <span className={CLUSTER_STATUS_TONE_CLASSES[part.tone]}>{part.text}</span>
+        </span>
+      ))}
     </Link>
   )
 }
@@ -493,7 +533,10 @@ export function SystemView() {
             to="Managed Clusters"
             caption={<span className="text-xs font-medium text-[#5a8aaa] dark:text-gray-500">{SHARKO_CONN_LABEL}</span>}
             status={sharkoClusterAgg.status}
-            statusLabel={sharkoClusterAgg.label}
+            // The count ("N of M healthy") only lives on the pill when
+            // there are no clusters to show a ClusterStatusLine for —
+            // otherwise that line is the one place the count is said.
+            statusLabel={managedClusters.length === 0 ? sharkoClusterAgg.label : undefined}
             detail={SHARKO_CONN_TOOLTIP}
             actionTo="/clusters"
             actionLabel="Open the Managed Clusters page"
@@ -505,7 +548,7 @@ export function SystemView() {
             to="Managed Clusters"
             caption={<span className="text-xs font-medium text-[#5a8aaa] dark:text-gray-500">{ARGOCD_CONN_LABEL}</span>}
             status={argoClusterAgg.status}
-            statusLabel={argoClusterAgg.label}
+            statusLabel={managedClusters.length === 0 ? argoClusterAgg.label : undefined}
             detail={ARGOCD_CONN_TOOLTIP}
             actionTo="/clusters"
             actionLabel="Open the Managed Clusters page"
