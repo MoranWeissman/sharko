@@ -729,7 +729,7 @@ function StepInit({
         <div className="space-y-3">
           <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-5 dark:bg-amber-900/20">
             <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-              This repo's ArgoCD bootstrap application already exists but is
+              This repo's Sharko engine application already exists but is
               not healthy{probeDetail ? `: ${probeDetail}` : '.'}
             </p>
             <p className="mt-1 text-sm text-amber-700 dark:text-amber-400">

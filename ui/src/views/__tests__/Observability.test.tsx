@@ -150,7 +150,7 @@ describe('Observability', () => {
     expect(screen.getByText('Loading observability data...')).toBeInTheDocument();
   });
 
-  it('renders control plane section after data loads', async () => {
+  it('renders the control plane panel with version chips and engine health after data loads', async () => {
     renderObservability();
 
     await waitFor(() => {
@@ -161,18 +161,33 @@ describe('Observability', () => {
     expect(screen.queryByText('Control Plane')).not.toBeInTheDocument();
     expect(screen.getByText('ArgoCD v3.2.2')).toBeInTheDocument();
     expect(screen.getByText('Helm v3.14.0')).toBeInTheDocument();
-    expect(screen.getByText('120')).toBeInTheDocument();
+    expect(screen.getByText('kubectl v1.29.0')).toBeInTheDocument();
+    // Engine health/sync folded into the same panel (v4 slim lock).
+    expect(screen.getByText('Sharko Engine')).toBeInTheDocument();
+    expect(screen.getByText('Healthy')).toBeInTheDocument();
+    expect(screen.getByText('Synced')).toBeInTheDocument();
   });
 
-  it('renders cluster inventory stat with new label', async () => {
+  // Maintainer's slim lock: "go with the slim version" — the four v3 tiles
+  // mislabeled addon data as control-plane data (Applications/ApplicationSets
+  // were addon apps/groups, not real ArgoCD resources) or duplicated the
+  // fleet 5-state model (Clusters configured / In ArgoCD). All four die.
+  it('does not render the old v3 grab-bag tiles', async () => {
     renderObservability();
 
     await waitFor(() => {
-      expect(screen.getByText('In ArgoCD')).toBeInTheDocument();
+      expect(screen.getByText('ArgoCD Control Plane')).toBeInTheDocument();
     });
 
+    expect(screen.queryByText('Applications')).not.toBeInTheDocument();
+    expect(screen.queryByText('ApplicationSets')).not.toBeInTheDocument();
+    expect(screen.queryByText('Clusters configured')).not.toBeInTheDocument();
+    expect(screen.queryByText('In ArgoCD')).not.toBeInTheDocument();
     expect(screen.queryByText('Known to ArgoCD')).not.toBeInTheDocument();
-    expect(screen.getByText('15')).toBeInTheDocument();
+    // The panel's own health-summary bar is gone too — the donut chart
+    // below (Application Health Distribution) is the only health-summary
+    // surface left, and that section is unaffected.
+    expect(screen.queryByText('Health Summary')).not.toBeInTheDocument();
   });
 
   it('renders sync activity section', async () => {
@@ -450,13 +465,25 @@ describe('Observability — attention detail (WQ-3)', () => {
 // Bootstrap-app surfaces renamed to Sharko Engine (v4 truth) — the tracked
 // ArgoCD app IS the engine app; wire field names (bootstrap_app_health
 // etc.) are unchanged, only the user-facing copy moved.
+//
+// v4 slim (maintainer's lock): the old standalone "Sharko Engine" section
+// is gone — its health/sync content now lives INSIDE the control-plane
+// panel, so the page has one machinery surface, not two. Engine health
+// must still show up, but exactly once.
 describe('Observability — Sharko Engine surface rename', () => {
-  it('renders "Sharko Engine" (not "Bootstrap Application")', async () => {
+  it('renders "Sharko Engine" exactly once, folded into the control-plane panel (not a separate section)', async () => {
     renderObservability();
 
     await waitFor(() => {
       expect(screen.getByText('Sharko Engine')).toBeInTheDocument();
     });
     expect(screen.queryByText('Bootstrap Application')).not.toBeInTheDocument();
+
+    // One machinery surface: "Sharko Engine" appears once, and it lives
+    // inside the same <section> as "ArgoCD Control Plane", not its own.
+    expect(screen.getAllByText('Sharko Engine')).toHaveLength(1);
+    const engineLabel = screen.getByText('Sharko Engine');
+    const controlPlaneHeading = screen.getByText('ArgoCD Control Plane');
+    expect(engineLabel.closest('section')).toBe(controlPlaneHeading.closest('section'));
   });
 });

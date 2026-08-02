@@ -1244,7 +1244,7 @@ describe('FirstRunWizard — Step 4 conditional render by repo state (V2-cleanup
 
     expect(
       await screen.findByText(
-        /ArgoCD bootstrap application already exists but is not healthy/i,
+        /Sharko engine application already exists but is not healthy/i,
       ),
     ).toBeInTheDocument()
     // The backend detail is surfaced verbatim.
@@ -1395,7 +1395,7 @@ describe('FirstRunWizard — Step 4 unreachable state (V2-cleanup-51)', () => {
 
     expect(
       await screen.findByText(
-        /ArgoCD bootstrap application already exists but is not healthy/i,
+        /Sharko engine application already exists but is not healthy/i,
       ),
     ).toBeInTheDocument()
     expect(
