@@ -408,7 +408,7 @@ export function Dashboard() {
       )}
 
       {/* Thin issues line (walk day 3 lock, maintainer's "middle option") —
-          the detailed rows live on Observability's Fleet Health section;
+          the detailed rows live on Observability's Health section;
           the Dashboard keeps just this one line, and only when there's
           something confirmed to look at. Same count as the Observability
           nav badge (one truth, two mirrors — components/AttentionSection.tsx's

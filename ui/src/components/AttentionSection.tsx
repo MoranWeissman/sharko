@@ -1,6 +1,4 @@
-import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ChevronRight } from 'lucide-react';
 import type { AddonState } from '@/hooks/useAddonStates';
 import { isSettling, deepLinkToAddonOnCluster } from '@/hooks/useAddonStates';
 import { getClusterConnectionState } from '@/lib/clusterStatus';
@@ -16,6 +14,17 @@ import { getClusterConnectionState } from '@/lib/clusterStatus';
 // still settling, an app ArgoCD isn't reporting on, an addon with version
 // drift — appears here exactly once, with a name, a plain reason, and a
 // link straight to where you'd go to look at it.
+//
+// Maintainer's walk-day findings on the Observability "Health" section
+// (formerly "Fleet Health") retired the chip-click-to-reveal panel this
+// module used to export as OpenIssuesBlock, and retired the double-listing
+// where a problem addon showed up both as a flat row here AND as its own
+// addon-group card below. The per-addon health groups in Observability.tsx
+// are now the ONLY place addon problems render; this module still owns the
+// row model (AttentionRow, AttentionRowView) for the two problem kinds that
+// have no addon group to live in — cluster connection problems and version
+// drift — plus the classification helpers Observability uses to compose a
+// problem addon group's inline reason line.
 
 export interface AttentionRow {
   key: string;
@@ -55,7 +64,7 @@ export function AttentionRowView({ row }: { row: AttentionRow }) {
   );
 }
 
-function minutesAgo(ms: number): number {
+export function minutesAgo(ms: number): number {
   return Math.max(0, Math.floor((Date.now() - ms) / 60_000));
 }
 
@@ -64,6 +73,14 @@ function addonLink(item: { addonName: string; cluster: string }): string {
     ? deepLinkToAddonOnCluster(item.addonName, item.cluster)
     : `/addons/${encodeURIComponent(item.addonName)}`;
 }
+
+// Plain-words vocabulary (maintainer's walk-day lock): a freshly-bad addon
+// isn't "settling" and it isn't "needs attention" — it's new, and Sharko is
+// still confirming it's a real problem. Shared here so the row builder
+// below and describeAddonProblem (used for the addon-group header line)
+// say the exact same sentence.
+export const GRACE_PERIOD_TOOLTIP =
+  'Seen less than 10 minutes ago. Sharko gives new problems a short grace period before counting them as confirmed issues.';
 
 // --- Splitting the addon-state map into severity buckets --------------
 
@@ -131,7 +148,7 @@ export function buildSettlingAddonRows(items: AddonState[]): AttentionRow[] {
     key: `settling-${item.addonName}@${item.cluster}`,
     severity: 'attention',
     title: item.appName || item.addonName,
-    reason: `Settling — degraded for ${minutesAgo(item.badSince ?? Date.now())}m. Given a grace window before counting as a confirmed problem.`,
+    reason: `New — confirming. Seen ${minutesAgo(item.badSince ?? Date.now())}m ago; addons get a short grace period before counting as a confirmed issue.`,
     link: addonLink(item),
     badge: item.healthStatus,
   }));
@@ -142,7 +159,7 @@ export function buildUnknownAddonRows(items: AddonState[]): AttentionRow[] {
     key: `unknown-${item.addonName}@${item.cluster}`,
     severity: 'attention',
     title: item.appName || item.addonName,
-    reason: `ArgoCD is not reporting a health status for this app${item.cluster ? ` on ${item.cluster}` : ''}.`,
+    reason: `No status reported${item.cluster ? ` on ${item.cluster}` : ''}. ArgoCD isn't reporting a health status for this app.`,
     link: addonLink(item),
     badge: item.healthStatus,
   }));
@@ -172,13 +189,9 @@ export function buildDriftRows(versionDrifts: { addon: string; count: number }[]
   }));
 }
 
-// --- The open-issues block (folded into Observability's Fleet Health
-// section — the maintainer's "one surface" lock replaces the old
-// standalone amber-bordered card with a plain block that sits inside the
-// Fleet Health panel's own chrome) ---
+// --- Whether there's anything open at all --------------------------------
 
-export interface OpenIssuesBlockProps {
-  onNavigate: (path: string) => void;
+export interface OpenIssuesCounts {
   clusterAttentionRows: AttentionRow[];
   confirmedAddonRows: AttentionRow[];
   settlingAddonRows: AttentionRow[];
@@ -190,11 +203,11 @@ export interface OpenIssuesBlockProps {
 }
 
 /**
- * hasOpenIssues — same OR-of-lengths every caller of OpenIssuesBlock needs
- * before it can decide whether to render the block or the zero-state line.
- * Exported so Observability doesn't re-derive it a second way.
+ * hasOpenIssues — same OR-of-lengths every caller needs before deciding
+ * whether to render the "Open issues (N)" line or the "No open issues."
+ * zero-state. Exported so Observability doesn't re-derive it a second way.
  */
-export function hasOpenIssues(props: Omit<OpenIssuesBlockProps, 'onNavigate'>): boolean {
+export function hasOpenIssues(props: OpenIssuesCounts): boolean {
   return (
     props.clusterProblemCount > 0 ||
     props.confirmedAddonRows.length > 0 ||
@@ -205,155 +218,123 @@ export function hasOpenIssues(props: Omit<OpenIssuesBlockProps, 'onNavigate'>): 
 }
 
 /**
- * OpenIssuesBlock — the "Needs Attention" row model (severity dots, deep
- * links, settling-window honesty), unchanged, hosted directly inside
- * Observability's Fleet Health section instead of its own bordered card.
- * Professional terminology: "issues", not "attention" — see UI Voice rules.
- * Renders a muted "No open issues." line at zero, never nothing, so the
- * section always has something to say about fleet issues.
+ * countOpenIssues — the total N behind the "Open issues (N)" line at the
+ * top of Observability's Health section. Sums every problem kind the
+ * section can show: cluster connection problems (server-classified count,
+ * not a re-derivation of the named rows), confirmed/new/no-status addon
+ * problems, and version drift. This is a display total for that one line —
+ * it is NOT the same number as getConfirmedProblemCount (which the
+ * Dashboard's thin line and the nav badges read, and which deliberately
+ * excludes new/no-status/drift). Keeping the two separate is intentional:
+ * this file still owns both, so neither can drift out of sync by accident.
  */
-export function OpenIssuesBlock({
-  onNavigate,
-  clusterAttentionRows,
-  confirmedAddonRows,
-  settlingAddonRows,
-  unknownAddonRows,
-  driftRows,
-  clusterProblemCount,
-}: OpenIssuesBlockProps) {
-  const [showIssues, setShowIssues] = useState(false);
+export function countOpenIssues(props: OpenIssuesCounts): number {
+  return (
+    props.clusterProblemCount +
+    props.confirmedAddonRows.length +
+    props.settlingAddonRows.length +
+    props.unknownAddonRows.length +
+    props.driftRows.length
+  );
+}
 
-  const redAppCount = confirmedAddonRows.length;
-  const settlingCount = settlingAddonRows.length;
-  const unknownCount = unknownAddonRows.length;
-  const driftCount = driftRows.length;
-  const hasIssues = hasOpenIssues({
-    clusterAttentionRows,
-    confirmedAddonRows,
-    settlingAddonRows,
-    unknownAddonRows,
-    driftRows,
-    clusterProblemCount,
-  });
+// --- Composing a problem addon group's inline reason line ---------------
+//
+// Walk-day lock: the per-addon health groups in Observability.tsx are the
+// ONLY place addon problems render (no more flat row + full-width group
+// duplicating the same information). These two helpers turn a group's
+// child apps plus the live AddonState map into "which tier is this group
+// in" and "what does the header line say", built from the same fields
+// (healthStatus, advisoryMessage, errorType, badSince) the row builders
+// above use — just composed into one inline sentence instead of a row.
 
-  if (!hasIssues) {
-    return <p className="text-sm text-muted-foreground">No open issues.</p>;
+export type AddonGroupProblemTier = 'confirmed' | 'grace' | 'unknown' | 'none';
+
+export interface AddonGroupProblem {
+  tier: AddonGroupProblemTier;
+  /** The worst child app driving this group's tier, or null when tier is 'none'. */
+  state: AddonState | null;
+  /** Other child apps (any cluster, any problem tier) beyond the one named in `state`. */
+  extraCount: number;
+}
+
+const TIER_RANK: Record<Exclude<AddonGroupProblemTier, 'none'>, number> = {
+  confirmed: 3,
+  grace: 2,
+  unknown: 1,
+};
+
+/**
+ * classifyAddonGroupProblem — walks one addon group's child apps, looks
+ * each one up in the live AddonState map by `<addon>@<cluster>`, and picks
+ * the worst tier present. Only apps the map actually knows about (i.e.
+ * ones the /dashboard/attention feed currently lists as degraded/missing/
+ * unknown) count — healthy and progressing-advisory apps never do.
+ */
+export function classifyAddonGroupProblem(
+  group: { addon_name: string; child_apps: { cluster_name: string }[] },
+  byApp: Map<string, AddonState>,
+): AddonGroupProblem {
+  let best: { tier: Exclude<AddonGroupProblemTier, 'none'>; state: AddonState } | null = null;
+  let count = 0;
+
+  for (const child of group.child_apps ?? []) {
+    const state = byApp.get(`${group.addon_name}@${child.cluster_name}`);
+    if (!state) continue;
+
+    let tier: Exclude<AddonGroupProblemTier, 'none'> | null = null;
+    if (state.displayState === 'degraded' || state.displayState === 'missing') {
+      tier = isSettling(state) ? 'grace' : 'confirmed';
+    } else if (state.displayState === 'unknown') {
+      tier = 'unknown';
+    }
+    if (!tier) continue;
+
+    count++;
+    if (!best || TIER_RANK[tier] > TIER_RANK[best.tier]) {
+      best = { tier, state };
+    }
   }
 
-  return (
-    <div>
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-3">
-        <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
-          <AlertTriangle className="h-4 w-4" />
-          <h3 className="text-sm font-semibold">Open issues</h3>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {redAppCount > 0 && (
-            <button
-              onClick={() => setShowIssues(!showIssues)}
-              aria-expanded={showIssues}
-              className="flex items-center gap-2 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
-            >
-              <div className="h-2 w-2 rounded-full bg-red-500" />
-              {redAppCount} app{redAppCount !== 1 ? 's' : ''} with issues
-              <ChevronRight className={`h-3 w-3 transition-transform ${showIssues ? 'rotate-90' : ''}`} />
-            </button>
-          )}
-          {clusterProblemCount > 0 && (
-            <button
-              onClick={() => setShowIssues(!showIssues)}
-              aria-expanded={showIssues}
-              className="flex items-center gap-2 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
-            >
-              <div className="h-2 w-2 rounded-full bg-red-500" />
-              {clusterProblemCount} disconnected cluster{clusterProblemCount !== 1 ? 's' : ''}
-              <ChevronRight className={`h-3 w-3 transition-transform ${showIssues ? 'rotate-90' : ''}`} />
-            </button>
-          )}
-          {settlingCount > 0 && (
-            <button
-              onClick={() => setShowIssues(!showIssues)}
-              aria-expanded={showIssues}
-              className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400"
-            >
-              <div className="h-2 w-2 rounded-full bg-amber-500" />
-              {settlingCount} settling
-            </button>
-          )}
-          {unknownCount > 0 && (
-            <button
-              onClick={() => setShowIssues(!showIssues)}
-              aria-expanded={showIssues}
-              className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400"
-            >
-              <div className="h-2 w-2 rounded-full bg-amber-500" />
-              {unknownCount} app{unknownCount !== 1 ? 's' : ''} not reporting
-            </button>
-          )}
-          {driftCount > 0 && (
-            <button
-              onClick={() => setShowIssues(!showIssues)}
-              aria-expanded={showIssues}
-              className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#f0f7ff] px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400"
-            >
-              <div className="h-2 w-2 rounded-full bg-amber-500" />
-              {driftCount} addon{driftCount !== 1 ? 's' : ''} with drift
-            </button>
-          )}
-        </div>
-      </div>
-      {/* Expanded detail — cluster/addon names route to their own detail
-          pages for quick debug + AI-assisted investigation. */}
-      {showIssues && (
-        <div className="border-t border-[#6aade0] pt-4 dark:border-gray-700 space-y-4">
-          {clusterAttentionRows.length > 0 && (
-            <div>
-              <div className="mb-1.5 flex items-center justify-between">
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">Clusters</h4>
-                <button
-                  onClick={() => onNavigate('/clusters?status=disconnected')}
-                  className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400"
-                >
-                  View in Clusters
-                </button>
-              </div>
-              <div className="space-y-1.5">
-                {clusterAttentionRows.map((row) => (
-                  <AttentionRowView key={row.key} row={row} />
-                ))}
-              </div>
-            </div>
-          )}
-          {(confirmedAddonRows.length > 0 || settlingAddonRows.length > 0 || unknownAddonRows.length > 0) && (
-            <div>
-              <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">Apps</h4>
-              <div className="max-h-64 overflow-y-auto space-y-1.5">
-                {[...confirmedAddonRows, ...settlingAddonRows, ...unknownAddonRows].map((row) => (
-                  <AttentionRowView key={row.key} row={row} />
-                ))}
-              </div>
-            </div>
-          )}
-          {driftRows.length > 0 && (
-            <div>
-              <div className="mb-1.5 flex items-center justify-between">
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">Version drift</h4>
-                <button
-                  onClick={() => onNavigate('/version-matrix?drift=true')}
-                  className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400"
-                >
-                  View matrix
-                </button>
-              </div>
-              <div className="space-y-1.5">
-                {driftRows.map((row) => (
-                  <AttentionRowView key={row.key} row={row} />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  if (!best) return { tier: 'none', state: null, extraCount: 0 };
+  return { tier: best.tier, state: best.state, extraCount: Math.max(0, count - 1) };
+}
+
+export interface AddonProblemDescription {
+  /** Plain-words inline sentence, e.g. "degraded on spoke-eu — pod not ready · seen 4m ago". */
+  text: string;
+  /** Present only for the grace tier — the full grace-period explanation, for a title/tooltip. */
+  tooltip?: string;
+}
+
+/**
+ * describeAddonProblem — turns one AddonState + its tier into the plain
+ * sentence a problem addon group's header shows. Vocabulary lock: the
+ * unknown tier says "no status reported" (never "not reporting" jargon in
+ * the headline), the grace tier says "new — confirming" and carries the
+ * grace-period explanation as a tooltip rather than inline prose. Neither
+ * "settling" nor "needs attention" appears anywhere in this output.
+ */
+export function describeAddonProblem(
+  state: AddonState,
+  tier: Exclude<AddonGroupProblemTier, 'none'>,
+): AddonProblemDescription {
+  const clusterPart = state.cluster ? ` on ${state.cluster}` : '';
+
+  if (tier === 'unknown') {
+    return { text: `no status reported${clusterPart}` };
+  }
+
+  const badge = (state.healthStatus || 'unknown').toLowerCase();
+  const detail = state.advisoryMessage
+    ? `${state.errorType ? state.errorType + ': ' : ''}${state.advisoryMessage}`
+    : null;
+  const mins = state.badSince !== undefined ? minutesAgo(state.badSince) : null;
+  const seenPart = mins !== null ? ` · seen ${mins}m ago` : '';
+  const base = `${badge}${clusterPart}${detail ? ` — ${detail}` : ''}${seenPart}`;
+
+  if (tier === 'grace') {
+    return { text: `${base} · new — confirming`, tooltip: GRACE_PERIOD_TOOLTIP };
+  }
+  return { text: base };
 }

@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect } from 'vitest';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { AddonState } from '@/hooks/useAddonStates';
 import {
@@ -12,7 +12,11 @@ import {
   buildClusterAttentionRows,
   buildDriftRows,
   hasOpenIssues,
-  OpenIssuesBlock,
+  countOpenIssues,
+  classifyAddonGroupProblem,
+  describeAddonProblem,
+  AttentionRowView,
+  GRACE_PERIOD_TOOLTIP,
 } from '@/components/AttentionSection';
 
 function makeState(overrides: Partial<AddonState>): AddonState {
@@ -61,7 +65,7 @@ describe('splitAddonStates (settling-window honesty)', () => {
   });
 });
 
-describe('getConfirmedProblemCount (one truth, two mirrors)', () => {
+describe('getConfirmedProblemCount (one truth, two mirrors — Dashboard thin line + nav badges)', () => {
   it('adds confirmed addon problems to the cluster problem count', () => {
     const elevenMinutesAgo = Date.now() - 11 * 60 * 1000;
     const byApp = new Map([
@@ -87,16 +91,18 @@ describe('row builders', () => {
     expect(rows[0].link).toContain('/clusters/prod');
   });
 
-  it('buildSettlingAddonRows mentions the grace window', () => {
+  it('buildSettlingAddonRows uses the "new — confirming" vocabulary, never "settling" or "grace window"', () => {
     const rows = buildSettlingAddonRows([makeState({ badSince: Date.now() })]);
     expect(rows[0].severity).toBe('attention');
-    expect(rows[0].reason).toMatch(/settling/i);
-    expect(rows[0].reason).toMatch(/grace window/i);
+    expect(rows[0].reason).toMatch(/new — confirming/i);
+    expect(rows[0].reason).toMatch(/grace period/i);
+    expect(rows[0].reason).not.toMatch(/settling/i);
+    expect(rows[0].reason).not.toMatch(/grace window/i);
   });
 
-  it('buildUnknownAddonRows explains ArgoCD is not reporting', () => {
+  it('buildUnknownAddonRows leads with "no status reported"', () => {
     const rows = buildUnknownAddonRows([makeState({ displayState: 'unknown' })]);
-    expect(rows[0].reason).toMatch(/not reporting a health status/i);
+    expect(rows[0].reason).toMatch(/^no status reported/i);
   });
 
   it('buildClusterAttentionRows uses clusterStatus.ts vocabulary', () => {
@@ -112,87 +118,136 @@ describe('row builders', () => {
   });
 });
 
-describe('hasOpenIssues (shared OR-of-lengths, no re-count)', () => {
-  it('is false when every row list is empty and clusterProblemCount is 0', () => {
-    expect(
-      hasOpenIssues({
-        clusterAttentionRows: [],
-        confirmedAddonRows: [],
-        settlingAddonRows: [],
-        unknownAddonRows: [],
-        driftRows: [],
-        clusterProblemCount: 0,
-      }),
-    ).toBe(false);
+describe('hasOpenIssues / countOpenIssues (shared, no re-derivation)', () => {
+  const empty = {
+    clusterAttentionRows: [],
+    confirmedAddonRows: [],
+    settlingAddonRows: [],
+    unknownAddonRows: [],
+    driftRows: [],
+    clusterProblemCount: 0,
+  };
+
+  it('hasOpenIssues is false when every row list is empty and clusterProblemCount is 0', () => {
+    expect(hasOpenIssues(empty)).toBe(false);
+    expect(countOpenIssues(empty)).toBe(0);
   });
 
-  it('is true when only clusterProblemCount is non-zero', () => {
-    expect(
-      hasOpenIssues({
-        clusterAttentionRows: [],
-        confirmedAddonRows: [],
-        settlingAddonRows: [],
-        unknownAddonRows: [],
-        driftRows: [],
-        clusterProblemCount: 1,
-      }),
-    ).toBe(true);
+  it('hasOpenIssues is true when only clusterProblemCount is non-zero', () => {
+    expect(hasOpenIssues({ ...empty, clusterProblemCount: 1 })).toBe(true);
+  });
+
+  it('countOpenIssues sums every problem kind (cluster + confirmed + settling + unknown + drift)', () => {
+    const rows = buildConfirmedAddonRows([makeState({})]);
+    const total = countOpenIssues({
+      ...empty,
+      clusterProblemCount: 2,
+      confirmedAddonRows: rows,
+      settlingAddonRows: buildSettlingAddonRows([makeState({ addonName: 'b', cluster: 'c2', badSince: Date.now() })]),
+      driftRows: buildDriftRows([{ addon: 'x', count: 2 }]),
+    });
+    expect(total).toBe(2 + 1 + 1 + 0 + 1);
   });
 });
 
-describe('OpenIssuesBlock (folded into Observability\'s Fleet Health section, walk day 3)', () => {
-  function renderBlock(props: Partial<React.ComponentProps<typeof OpenIssuesBlock>> = {}) {
-    const onNavigate = props.onNavigate ?? (() => {});
-    return render(
+describe('classifyAddonGroupProblem (drives problem-tier-first sorting + the group header)', () => {
+  const group = {
+    addon_name: 'cert-manager',
+    child_apps: [{ cluster_name: 'prod' }, { cluster_name: 'staging' }],
+  };
+
+  it('is "none" when no child app is in the state map', () => {
+    const result = classifyAddonGroupProblem(group, new Map());
+    expect(result.tier).toBe('none');
+    expect(result.state).toBeNull();
+    expect(result.extraCount).toBe(0);
+  });
+
+  it('is "confirmed" when a child is degraded past the settling window', () => {
+    const elevenMinutesAgo = Date.now() - 11 * 60 * 1000;
+    const byApp = new Map([
+      ['cert-manager@prod', makeState({ cluster: 'prod', badSince: elevenMinutesAgo })],
+    ]);
+    const result = classifyAddonGroupProblem(group, byApp);
+    expect(result.tier).toBe('confirmed');
+    expect(result.state?.cluster).toBe('prod');
+    expect(result.extraCount).toBe(0);
+  });
+
+  it('is "grace" (not confirmed) when a child is freshly degraded', () => {
+    const byApp = new Map([
+      ['cert-manager@prod', makeState({ cluster: 'prod', badSince: Date.now() })],
+    ]);
+    const result = classifyAddonGroupProblem(group, byApp);
+    expect(result.tier).toBe('grace');
+  });
+
+  it('is "unknown" when a child has no status', () => {
+    const byApp = new Map([
+      ['cert-manager@prod', makeState({ cluster: 'prod', displayState: 'unknown', badSince: undefined })],
+    ]);
+    const result = classifyAddonGroupProblem(group, byApp);
+    expect(result.tier).toBe('unknown');
+  });
+
+  it('picks the worst tier across children and counts the rest as extraCount', () => {
+    const elevenMinutesAgo = Date.now() - 11 * 60 * 1000;
+    const byApp = new Map([
+      ['cert-manager@prod', makeState({ cluster: 'prod', badSince: elevenMinutesAgo })],
+      ['cert-manager@staging', makeState({ cluster: 'staging', displayState: 'unknown', badSince: undefined })],
+    ]);
+    const result = classifyAddonGroupProblem(group, byApp);
+    expect(result.tier).toBe('confirmed');
+    expect(result.extraCount).toBe(1);
+  });
+
+  it('never counts healthy or progressing-advisory children as a problem', () => {
+    const byApp = new Map([
+      ['cert-manager@prod', makeState({ cluster: 'prod', displayState: 'healthy', badSince: undefined })],
+      ['cert-manager@staging', makeState({ cluster: 'staging', displayState: 'progressing-advisory', badSince: undefined })],
+    ]);
+    const result = classifyAddonGroupProblem(group, byApp);
+    expect(result.tier).toBe('none');
+  });
+});
+
+describe('describeAddonProblem (plain-words inline reason for a problem addon group)', () => {
+  it('confirmed: names the cluster and detail, no "confirming" suffix', () => {
+    const state = makeState({ cluster: 'spoke-eu', advisoryMessage: 'pod not ready', badSince: Date.now() - 20 * 60 * 1000 });
+    const { text, tooltip } = describeAddonProblem(state, 'confirmed');
+    expect(text).toMatch(/^degraded on spoke-eu — pod not ready/i);
+    expect(text).not.toMatch(/confirming/i);
+    expect(tooltip).toBeUndefined();
+  });
+
+  it('grace: says "new — confirming" and carries the grace-period tooltip', () => {
+    const state = makeState({ cluster: 'spoke-eu', advisoryMessage: 'pod not ready', badSince: Date.now() - 4 * 60 * 1000 });
+    const { text, tooltip } = describeAddonProblem(state, 'grace');
+    expect(text).toMatch(/pod not ready/);
+    expect(text).toMatch(/new — confirming/);
+    expect(text).not.toMatch(/settling/i);
+    expect(tooltip).toBe(GRACE_PERIOD_TOOLTIP);
+  });
+
+  it('unknown: says "no status reported" and nothing else', () => {
+    const state = makeState({ cluster: 'spoke-eu', displayState: 'unknown', badSince: undefined });
+    const { text, tooltip } = describeAddonProblem(state, 'unknown');
+    expect(text).toBe('no status reported on spoke-eu');
+    expect(tooltip).toBeUndefined();
+  });
+});
+
+describe('AttentionRowView (compact rows for cluster problems, drift, and orphan addon problems)', () => {
+  it('renders the title as a link to the row\'s deep link, plus the reason', () => {
+    render(
       <MemoryRouter>
-        <OpenIssuesBlock
-          onNavigate={onNavigate}
-          clusterAttentionRows={[]}
-          confirmedAddonRows={[]}
-          settlingAddonRows={[]}
-          unknownAddonRows={[]}
-          driftRows={[]}
-          clusterProblemCount={0}
-          {...props}
+        <AttentionRowView
+          row={{ key: 'cluster-prod', severity: 'problem', title: 'prod', reason: 'ArgoCD tried to reach this cluster and failed.', link: '/clusters/prod' }}
         />
       </MemoryRouter>,
     );
-  }
-
-  it('renders a muted "No open issues." line when there are no issues at all (never nothing)', () => {
-    renderBlock();
-    expect(screen.getByText('No open issues.')).toBeInTheDocument();
-    expect(screen.queryByText('Open issues')).not.toBeInTheDocument();
-    expect(screen.queryByText('Needs Attention')).not.toBeInTheDocument();
-  });
-
-  it('shows the "Open issues" heading and the cluster chip, expanding to the named row on click', () => {
-    renderBlock({
-      clusterProblemCount: 1,
-      clusterAttentionRows: [
-        { key: 'cluster-prod', severity: 'problem', title: 'prod', reason: 'ArgoCD tried to reach this cluster and failed.', link: '/clusters/prod' },
-      ],
-    });
-
-    expect(screen.getByText('Open issues')).toBeInTheDocument();
-    expect(screen.queryByText('Needs Attention')).not.toBeInTheDocument();
-    expect(screen.queryByText('No open issues.')).not.toBeInTheDocument();
-    const chip = screen.getByRole('button', { name: /1 disconnected cluster/i });
-    fireEvent.click(chip);
-    expect(screen.getByText('prod')).toBeInTheDocument();
-  });
-
-  it('"View in Clusters" calls onNavigate with the deep link', () => {
-    const onNavigate = vi.fn();
-    renderBlock({
-      onNavigate,
-      clusterProblemCount: 1,
-      clusterAttentionRows: [
-        { key: 'cluster-prod', severity: 'problem', title: 'prod', reason: 'x', link: '/clusters/prod' },
-      ],
-    });
-    fireEvent.click(screen.getByRole('button', { name: /1 disconnected cluster/i }));
-    fireEvent.click(screen.getByRole('button', { name: /view in clusters/i }));
-    expect(onNavigate).toHaveBeenCalledWith('/clusters?status=disconnected');
+    const link = screen.getByText('prod');
+    expect(link.closest('a')).toHaveAttribute('href', '/clusters/prod');
+    expect(screen.getByText('ArgoCD tried to reach this cluster and failed.')).toBeInTheDocument();
   });
 });
