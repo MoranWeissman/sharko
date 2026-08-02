@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -351,6 +352,51 @@ func TestHandleRepoStatus_Initialized_ArgocdUnavailable(t *testing.T) {
 	if body["bootstrap_synced"] != false {
 		t.Errorf("expected bootstrap_synced=false (no ArgoCD client), got %v",
 			body["bootstrap_synced"])
+	}
+	// Error review package 1: no ArgoCD client at all is a "couldn't check"
+	// state — reason must be non-empty and honest, not silently blank.
+	if body["reason"] != "argocd_unreachable" {
+		t.Errorf("expected reason=argocd_unreachable, got %v", body["reason"])
+	}
+}
+
+// Error review package 1 — repo initialized + ArgoCD rejects the bootstrap
+// probe with a 401 (invalid/expired token) → bootstrap_synced=false AND
+// reason="argocd_auth_failed". This is the root-cause bug reproducer: before
+// argocd.ErrTokenInvalid existed, a 401 fell into the same generic bucket as
+// a genuinely degraded app and the wizard claimed the engine app "already
+// exists but is not healthy" — a fact Sharko never verified because it never
+// got past the token check.
+func TestHandleRepoStatus_Initialized_ArgocdAuthFailed(t *testing.T) {
+	ac := &initFakeArgocd{
+		listErr: fmt.Errorf("listing applications: %w", argocd.ErrTokenInvalid),
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (auth failed), got %v",
+			body["bootstrap_synced"])
+	}
+	if body["reason"] != "argocd_auth_failed" {
+		t.Errorf("expected reason=argocd_auth_failed, got %v", body["reason"])
+	}
+}
+
+// Error review package 1 — repo initialized + the ArgoCD LIST call fails for
+// an uncategorized reason (neither a 403 permission problem nor a 401
+// invalid token) → bootstrap_synced=false AND reason="argocd_unreachable".
+// This must NOT be "bootstrap_degraded" — Sharko never got app data back, so
+// it cannot honestly claim the engine app is degraded.
+func TestHandleRepoStatus_Initialized_ArgocdListFailsGeneric(t *testing.T) {
+	ac := &initFakeArgocd{
+		listErr: errors.New("dial tcp: i/o timeout"),
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (list failed), got %v",
+			body["bootstrap_synced"])
+	}
+	if body["reason"] != "argocd_unreachable" {
+		t.Errorf("expected reason=argocd_unreachable, got %v", body["reason"])
 	}
 }
 

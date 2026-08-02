@@ -66,11 +66,21 @@ export function isConnectionErrorReason(reason?: string): boolean {
 }
 
 /**
- * Pure helper for the wizard gate. Returns true when the wizard should auto-
- * open at Step 4 because either the GitOps repo isn't initialized yet, OR it
- * is initialized but the cluster-side ArgoCD bootstrap application
- * (`sharko-engine` as of v4; formerly `cluster-addons-bootstrap`) is
- * missing/degraded.
+ * Pure helper for the wizard gate. Returns true ONLY when the GitOps repo is
+ * genuinely not set up yet (day zero) — the wizard's real job.
+ *
+ * Locked decision (scope extension, 2026-08-02 — supersedes the narrower
+ * V2-cleanup-51/error-review-package-1 rule below): once the repo is
+ * initialized, the wizard must NEVER auto-open again, for ANY reason —
+ * including a genuinely missing or degraded engine app (`bootstrap_degraded`
+ * / "partial" / "absent" on the backend), not just a broken connection. An
+ * uninvited wizard takeover on a working install is exactly the bug this
+ * review package exists to fix; auto-opening it for more (even honest)
+ * reasons would recreate the same hijack with better wording. Every
+ * initialized-but-unhealthy state is surfaced by the banner instead
+ * (`shouldShowConnectionErrorBanner`), with a button the user clicks to open
+ * the repair screen themselves — a user-invited wizard is fine, an
+ * uninvited one is not.
  *
  * V2-cleanup-50: when the repo is NOT initialized BUT the reason is a broken
  * connection (TLS/transport/auth failure — `connection_error`/`no_connection`/
@@ -78,19 +88,11 @@ export function isConnectionErrorReason(reason?: string): boolean {
  * instead of being forced to re-bootstrap. A non-blocking banner surfaces the
  * connection problem and points at Settings → Connections.
  *
- * The #435 connection-error exclusion applies ONLY to the not-initialized
- * branch. The genuine wizard states still fire:
- *   - `reason === "not_bootstrapped"` (repo reachable, files genuinely absent).
- *   - `initialized === true && !bootstrap_synced` (repo seeded but the
- *     cluster-side ArgoCD bootstrap is genuinely missing/degraded — the
- *     recovery surface).
- *
- * V2-cleanup-51: the initialized-but-unhealthy branch gets ONE new exception.
- * When `reason === "bootstrap_unreachable"` the bootstrap is unhealthy only
- * because ArgoCD can't reach/compare the repo (a connection problem), so we
- * return false — re-init can't fix a connection problem. Any other reason
- * (including "bootstrap_degraded" or no reason) still fires the recovery
- * wizard.
+ * The only case that still fires is `initialized === false` for a genuine
+ * "not set up yet" reason (e.g. "not_bootstrapped", or no reason at all on
+ * first load) — a Git/ArgoCD connection was saved but Initialize was never
+ * run. That is still day zero, just resumed past steps 1-3, so the wizard's
+ * Step 4 auto-opens for it — this is the ONLY auto path left.
  *
  * `dismissed` is the session-scoped escape hatch (sessionStorage
  * `sharko:dismiss-wizard=1`). When true, the user can explore the (degraded)
@@ -106,21 +108,10 @@ export function shouldShowSetupWizard(
   if (dismissed) return false
   if (!repoStatus) return false
 
-  // Initialized-but-unhealthy bootstrap. There are two sub-cases:
-  //
-  //   - reason === "bootstrap_unreachable" — ArgoCD simply can't reach/compare
-  //     the repo right now (a connection/network problem, e.g. a corporate
-  //     Zscaler proxy). Re-initializing CAN'T fix a connection problem, so we
-  //     must NOT trap the user in the re-init wizard. Keep them in their working
-  //     app — the connection-health bell alert + the Dashboard banner already
-  //     surface this honestly. (V2-cleanup-51)
-  //   - any OTHER reason (incl. "bootstrap_degraded" or no reason) — the
-  //     bootstrap is genuinely missing/degraded and re-init may repair it, so
-  //     the recovery wizard still fires (unchanged V124-22 behaviour).
-  if (repoStatus.initialized) {
-    if (repoStatus.reason === 'bootstrap_unreachable') return false
-    return !repoStatus.bootstrap_synced
-  }
+  // Initialized, for ANY reason (healthy, degraded, absent, unreachable,
+  // auth-failed, or anything else) — never auto-open. See the decision note
+  // above.
+  if (repoStatus.initialized) return false
 
   // Not initialized: a broken connection is an environment problem, not a setup
   // problem. Suppress the wizard and let the banner surface it instead.
@@ -133,16 +124,23 @@ export function shouldShowSetupWizard(
 }
 
 /**
- * Whether the connection-error banner should be shown: the wizard is suppressed
- * BECAUSE of a broken connection (not a fresh install — that path is handled by
- * the upstream <FirstRunWizard/>). Mirrors the suppression branch in
- * shouldShowSetupWizard so the two stay in lockstep.
+ * Whether the connection-error banner should be shown. Two cases:
+ *
+ *   - Not initialized because of a broken connection — the wizard is
+ *     suppressed for exactly this reason (see shouldShowSetupWizard), so the
+ *     banner is the only surface for it.
+ *   - Initialized but NOT confirmed healthy, for ANY reason — a broken Git
+ *     connection, a rejected/unreachable ArgoCD credential, or a missing/
+ *     degraded engine app. Since the wizard never auto-opens post-setup
+ *     (scope extension, 2026-08-02), the banner is the ONLY place any of
+ *     these problems get surfaced; it names the actual problem and, for the
+ *     engine-app case, offers a button to open the repair screen on request.
  */
 export function shouldShowConnectionErrorBanner(
   repoStatus: { initialized: boolean; bootstrap_synced?: boolean; reason?: string } | null,
 ): boolean {
   if (!repoStatus) return false
-  if (repoStatus.initialized) return false
+  if (repoStatus.initialized) return !repoStatus.bootstrap_synced
   return isConnectionErrorReason(repoStatus.reason)
 }
 
@@ -150,6 +148,13 @@ export function ConnectedApp() {
   const { connections, loading } = useConnections()
   const [repoStatus, setRepoStatus] = useState<{ initialized: boolean; bootstrap_synced?: boolean; reason?: string } | null>(null)
   const [checkingRepo, setCheckingRepo] = useState(true)
+  // User-invited repair screen: set only by clicking the banner's repair
+  // button (never by the gate itself — see shouldShowSetupWizard). Reusing
+  // FirstRunWizard's Step 4 here means the same honest per-state copy
+  // (missing/degraded/unreachable/auth-failed/couldn't-check) that Step 4
+  // already renders during day-zero resume also serves the invited-repair
+  // case, with no new UI to build.
+  const [repairWizardOpen, setRepairWizardOpen] = useState(false)
 
   useEffect(() => {
     if (!loading) {
@@ -193,14 +198,30 @@ export function ConnectedApp() {
     return <FirstRunWizard initialStep={4} />
   }
 
-  // V2-cleanup-50: when the wizard is suppressed because the Git connection is
-  // broken (not a fresh install — that's handled above), surface it as a
-  // non-blocking banner above the app instead of hard-blocking the user.
+  // The user clicked "repair" on the banner below — open the SAME Step 4
+  // screen the day-zero resume path uses, but only because they asked for
+  // it. onExit resets this flag so closing/finishing the wizard returns to
+  // the normal app instead of leaving this overlay stuck open.
+  if (repairWizardOpen) {
+    return (
+      <FirstRunWizard initialStep={4} onExit={() => setRepairWizardOpen(false)} />
+    )
+  }
+
+  // V2-cleanup-50 / scope extension 2026-08-02: the wizard never auto-opens
+  // for a broken connection OR an initialized-but-unhealthy bootstrap — both
+  // surface here as a non-blocking banner above the app instead of
+  // hard-blocking the user.
   const showConnError = shouldShowConnectionErrorBanner(repoStatus)
 
   return (
     <Suspense fallback={<PageLoader />}>
-      {showConnError && <ConnectionErrorBanner reason={repoStatus?.reason} />}
+      {showConnError && (
+        <ConnectionErrorBanner
+          reason={repoStatus?.reason}
+          onOpenRepair={() => setRepairWizardOpen(true)}
+        />
+      )}
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />

@@ -7027,15 +7027,22 @@ paths:
         present on the base branch, "initialized" when it is present and the ArgoCD
         bootstrap application is Synced + Healthy, "forbidden" when the file is present
         but ArgoCD rejected the read with a 403 because the token lacks RBAC permission
-        (detail carries an actionable permission message), "unreachable" when the
-        file is present but the ArgoCD bootstrap reports Sync=Unknown because ArgoCD
-        cannot reach/evaluate the Git repo (a connection problem re-init cannot fix),
-        and "partial" when the file is present but the ArgoCD bootstrap is missing
-        or genuinely degraded (detail carries the ArgoCD diagnostic). When state is
-        "partial", repairable is true only if the bootstrap application was simply
-        never created (POST /init can repair it with no PR) and false if it already
-        exists but is degraded (re-init cannot fix a live app). Performs no writes
-        and creates no operation session. Requires an active Git connection.
+        (detail carries an actionable permission message), "auth_failed" when the
+        file is present but ArgoCD rejected the read with a 401 because the token
+        is invalid or expired (detail carries an actionable token message), "unreachable"
+        when the file is present but the ArgoCD bootstrap reports Sync=Unknown because
+        ArgoCD cannot reach/evaluate the Git repo (a connection problem re-init cannot
+        fix), "partial" when the file is present but the ArgoCD bootstrap is missing
+        or genuinely degraded (detail carries the ArgoCD diagnostic), and "unknown"
+        when the file is present but Sharko could not determine the bootstrap application's
+        health at all (the ArgoCD read failed for a reason that is neither a permission
+        problem nor an invalid token, or no ArgoCD connection is configured) — this
+        state never claims the bootstrap is missing or degraded, only that Sharko
+        could not check. When state is "partial", repairable is true only if the bootstrap
+        application was simply never created (POST /init can repair it with no PR)
+        and false if it already exists but is degraded (re-init cannot fix a live
+        app). Performs no writes and creates no operation session. Requires an active
+        Git connection.
       produces:
       - application/json
       responses:
@@ -8078,7 +8085,11 @@ paths:
         engine pin at sharko-engine.yaml exists on the base branch) AND whether the
         ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI
         uses bootstrap_synced to auto-open the recovery wizard when the cluster-side
-        bootstrap is missing or degraded even though the repo files are present.
+        bootstrap is missing or degraded even though the repo files are present —
+        except for reason "argocd_auth_failed" (ArgoCD rejected Sharko's token) or
+        "argocd_unreachable" (Sharko could not get a usable answer from ArgoCD), which
+        are credential/connectivity problems the wizard cannot fix, so the UI surfaces
+        those as a banner instead of re-opening setup.
       produces:
       - application/json
       responses:

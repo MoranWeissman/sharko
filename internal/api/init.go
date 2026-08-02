@@ -261,6 +261,22 @@ func (s *Server) runInitOperation(
 		s.opsStore.Fail(sessionID, fmt.Sprintf(
 			"repo initialized but ArgoCD cannot reach or evaluate the repository: %s", detail))
 		return
+	case RepoStateAuthFailed:
+		// ArgoCD rejected Sharko's token outright (401) when probing the
+		// bootstrap app. This is a credential problem, not a broken
+		// bootstrap — refuse with the actionable token message rather than
+		// asserting anything about the app's health, which Sharko never
+		// got to check.
+		s.opsStore.Fail(sessionID, detail)
+		return
+	case RepoStateUnknown:
+		// Sharko could not determine the bootstrap app's health at all —
+		// the LIST call itself failed for a reason that is neither a
+		// permission problem nor a bad credential. Refuse honestly instead
+		// of guessing "missing or unhealthy": we genuinely don't know.
+		s.opsStore.Fail(sessionID, fmt.Sprintf(
+			"repo initialized, but Sharko could not check whether the ArgoCD bootstrap application is healthy: %s", detail))
+		return
 	}
 	// RepoStateEmpty falls through to the normal bootstrap flow below.
 
@@ -545,6 +561,24 @@ const (
 	// bootstrapForbidden — ArgoCD rejected the LIST itself with a 403; the
 	// token genuinely lacks permission to read applications (V2-cleanup-10).
 	bootstrapForbidden = "forbidden"
+	// bootstrapAuthFailed — ArgoCD rejected the LIST itself with a 401; the
+	// token Sharko is using is invalid or expired. This is the root cause of
+	// the bug this const set was extended to fix: before this status existed,
+	// a 401 fell through to bootstrapUnknown's predecessor (bootstrapUnhealthy)
+	// and the wizard told the user their fully-working bootstrap app "already
+	// exists but is not healthy" — a claim Sharko never actually verified,
+	// because it never got past the token check. Distinct from
+	// bootstrapForbidden (403 — the token IS valid but lacks RBAC permission):
+	// here the credential itself is bad.
+	bootstrapAuthFailed = "auth_failed"
+	// bootstrapUnknown — Sharko could not determine the bootstrap app's health
+	// at all: either no ArgoCD client is configured, or the LIST call failed
+	// for a reason that is neither a permission problem (403) nor a bad
+	// credential (401) — e.g. a network blip or a malformed response. This is
+	// honestly "we don't know", NOT "it's broken" — callers must not treat it
+	// as a repairable/degraded bootstrap (that would assert a fact Sharko
+	// never observed).
+	bootstrapUnknown = "unknown"
 )
 
 // ProbeBootstrapApp checks whether the canonical ArgoCD root application
@@ -563,7 +597,18 @@ const (
 //   - LIST ok, app present, otherwise not S+H       → ("unhealthy",   <detail>)
 //   - LIST ok, app absent (not in results)          → ("absent",      <detail>)
 //   - LIST itself 403 (ErrPermissionDenied)         → ("forbidden",   <permMsg>)
-//   - LIST fails for any other reason               → ("unhealthy",   <detail>)
+//   - LIST itself 401 (ErrTokenInvalid)             → ("auth_failed", <detail>)
+//   - LIST fails for any other reason,
+//     or no ArgoCD client is configured             → ("unknown",     <detail>)
+//
+// The "unknown" status matters as much as any other branch: it is the honest
+// "Sharko could not check" answer, distinct from every other status which
+// asserts something Sharko DID observe. Before this status existed, both the
+// no-client case and "LIST failed for an unrecognized reason" (which is
+// exactly what a 401 looked like before ErrTokenInvalid existed) fell into
+// bootstrapUnhealthy — so an expired ArgoCD token made a fully-working
+// install show the first-run wizard claiming the bootstrap app "already
+// exists but is not healthy", a fact Sharko never actually verified.
 //
 // The unreachable vs unhealthy split (V2-cleanup-51) keys off the bootstrap
 // app's Sync status: ArgoCD reports Sync=Unknown exactly when its repo-server
@@ -576,11 +621,14 @@ const (
 // partial-state on first-run init retry. Exported so the /repo/status handler
 // can reuse the same probe semantics — the wizard gate reads `bootstrap_synced`
 // from /repo/status to auto-open the wizard when the bootstrap is
-// absent/degraded. ("forbidden", "unhealthy", "unreachable", and "absent" are
-// all non-healthy, so that gate keeps treating them as not-synced.)
+// absent/degraded. ("forbidden", "unhealthy", "unreachable", "absent",
+// "auth_failed", and "unknown" are all non-healthy, so that gate keeps
+// treating them as not-synced.)
 func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (status, detail string) {
 	if ac == nil {
-		return bootstrapUnhealthy, "no ArgoCD client configured"
+		// No ArgoCD client at all — Sharko has nothing to ask, so this is
+		// "couldn't check", not "broken" (see bootstrapUnknown doc).
+		return bootstrapUnknown, "no ArgoCD client configured"
 	}
 	apps, err := ac.ListApplications(ctx)
 	if err != nil {
@@ -590,7 +638,18 @@ func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (statu
 		if errors.Is(err, argocd.ErrPermissionDenied) {
 			return bootstrapForbidden, permissionDeniedDetail
 		}
-		return bootstrapUnhealthy, fmt.Sprintf("listing argocd applications failed: %v", err)
+		// A 401 on the LIST means the token itself is invalid/expired — this
+		// is the root-cause bug this status was added for: without it, a
+		// dead token fell through to the catch-all below and got mislabeled
+		// as a broken (but existing) bootstrap app. err already carries the
+		// full actionable message (argocd.ErrTokenInvalid).
+		if errors.Is(err, argocd.ErrTokenInvalid) {
+			return bootstrapAuthFailed, err.Error()
+		}
+		// Any other LIST failure (network blip, malformed response, etc.) —
+		// Sharko genuinely does not know whether the bootstrap app is
+		// healthy. Report that honestly instead of guessing "unhealthy".
+		return bootstrapUnknown, fmt.Sprintf("listing argocd applications failed: %v", err)
 	}
 
 	// Look for the current bootstrap app name first, then the v3 one. A

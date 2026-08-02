@@ -523,21 +523,38 @@ var serveCmd = &cobra.Command{
 		}
 
 		// argoHealthFn: ArgoCD→repo. A client error means no active connection —
-		// undetermined. Otherwise probe the bootstrap app; any non-"healthy"
-		// status is a break, with the probe's detail as the reason.
+		// undetermined. Otherwise probe the bootstrap app and raise an alert
+		// that names the ACTUAL problem: a rejected/expired token and an
+		// uncategorized probe failure are credential/connectivity problems,
+		// not "ArgoCD can't sync the repo" — conflating them made an expired
+		// token read as a broken repo sync (error review package 1).
 		argoHealthFn := func(ctx context.Context) notifications.HealthResult {
 			ac, acErr := connSvc.GetActiveOrchestratorArgocdClient()
 			if acErr != nil || ac == nil {
 				return notifications.UndeterminedResult()
 			}
 			status, detail := api.ProbeBootstrapApp(ctx, ac)
-			if status != "healthy" {
+			switch status {
+			case "healthy":
+				return notifications.HealthyResult()
+			case "auth_failed":
+				return notifications.UnhealthyResultWithTitle(
+					notifications.TitleArgoAuthFailed,
+					"ArgoCD rejected the token Sharko uses to check on the bootstrap app, so Sharko can't confirm the cluster is in sync.",
+					detail,
+				)
+			case "unknown":
+				return notifications.UnhealthyResultWithTitle(
+					notifications.TitleArgoUnreachable,
+					"Sharko couldn't get an answer from ArgoCD, so it can't confirm whether the cluster is in sync.",
+					detail,
+				)
+			default:
 				if detail == "" {
 					detail = "argocd repo sync status: " + status
 				}
 				return notifications.UnhealthyResult(detail)
 			}
-			return notifications.HealthyResult()
 		}
 
 		connPoller := notifications.NewConnectionPoller(srv.NotificationStore(), connDur, gitHealthFn, argoHealthFn)

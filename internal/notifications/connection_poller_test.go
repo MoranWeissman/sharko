@@ -157,3 +157,67 @@ func TestPoller_UndeterminedDoesNotResolveExistingBreak(t *testing.T) {
 		t.Fatalf("undetermined tick must not resolve a standing break, got %d", got)
 	}
 }
+
+// --- Error review package 1 — per-result title override -------------------
+//
+// argoHealthFn can now distinguish "ArgoCD rejected our token" and "Sharko
+// can't reach ArgoCD" from the generic "ArgoCD can't sync the repo" via
+// UnhealthyResultWithTitle. These tests pin that override end to end.
+
+func TestPoller_ArgoAuthFailed_RaisesDistinctTitle(t *testing.T) {
+	p, _, argo, store := newTestPoller()
+	argo.result = UnhealthyResultWithTitle(
+		TitleArgoAuthFailed,
+		"ArgoCD rejected the token Sharko uses to check on the bootstrap app.",
+		"invalid ArgoCD token — check that the token is correct and not expired",
+	)
+	p.check()
+
+	counts := titlesInStore(store)
+	if counts[TitleArgoAuthFailed] != 1 {
+		t.Fatalf("expected exactly one %q alert, got %d", TitleArgoAuthFailed, counts[TitleArgoAuthFailed])
+	}
+	if counts[TitleArgoRepoBroken] != 0 {
+		t.Fatalf("an auth failure must NOT also raise the generic repo-broken title")
+	}
+	n := store.List()[0]
+	if !strings.Contains(n.Description, "invalid ArgoCD token") {
+		t.Errorf("expected the token detail in the description, got %q", n.Description)
+	}
+}
+
+func TestPoller_ArgoUnreachable_RaisesDistinctTitle(t *testing.T) {
+	p, _, argo, store := newTestPoller()
+	argo.result = UnhealthyResultWithTitle(
+		TitleArgoUnreachable,
+		"Sharko couldn't get an answer from ArgoCD.",
+		"dial tcp: i/o timeout",
+	)
+	p.check()
+
+	counts := titlesInStore(store)
+	if counts[TitleArgoUnreachable] != 1 {
+		t.Fatalf("expected exactly one %q alert, got %d", TitleArgoUnreachable, counts[TitleArgoUnreachable])
+	}
+	if counts[TitleArgoRepoBroken] != 0 {
+		t.Fatalf("an unreachable ArgoCD must NOT also raise the generic repo-broken title")
+	}
+}
+
+// A recovered override-titled alert must resolve the SAME title it was
+// raised under, not the caller's default title.
+func TestPoller_ArgoAuthFailedThenHealthy_ResolvesTheOverrideTitle(t *testing.T) {
+	p, _, argo, store := newTestPoller()
+	argo.result = UnhealthyResultWithTitle(TitleArgoAuthFailed, "token rejected", "401")
+	p.check()
+	if got := titlesInStore(store)[TitleArgoAuthFailed]; got != 1 {
+		t.Fatalf("setup: expected the auth-failed alert raised, got %d", got)
+	}
+
+	argo.result = HealthyResult()
+	p.check()
+
+	if got := titlesInStore(store)[TitleArgoAuthFailed]; got != 0 {
+		t.Fatalf("expected the auth-failed alert resolved after recovery, got %d", got)
+	}
+}

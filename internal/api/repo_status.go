@@ -47,8 +47,23 @@ import (
 //   - "bootstrap_degraded"    — the bootstrap app is genuinely degraded
 //     (OutOfSync/Degraded/absent); ArgoCD read the repo and found a fixable
 //     problem, so offering a repair (re-run Initialize) is appropriate.
+//   - "argocd_auth_failed"    — ArgoCD rejected Sharko's own token with a 401
+//     when probing the bootstrap app. This is a credential problem, not a
+//     repo/app problem — distinct from both reasons above, neither of which
+//     applies when Sharko never got past the token check (error review
+//     package 1).
+//   - "argocd_unreachable"    — Sharko could not get a usable answer from
+//     ArgoCD at all: either no ArgoCD connection is configured, or the probe
+//     itself failed for a reason that is neither a permission problem nor an
+//     invalid token. Distinct from "bootstrap_unreachable" (which means
+//     ArgoCD reached the comparison stage and reported Sync=Unknown) —
+//     "argocd_unreachable" means Sharko never got a reliable answer from
+//     ArgoCD in the first place, so the UI must not assert anything about
+//     the bootstrap app's health for this reason.
 //
-// If no ArgoCD client is available, Reason is left empty (we can't classify).
+// If no ArgoCD client is available, Reason is "argocd_unreachable" — Sharko
+// genuinely cannot classify the bootstrap app without one, so this is the
+// same honest "couldn't check" signal as a failed probe.
 // `Format` (additive) names the repo layout the probe recognised: "v4" when
 // the engine pin is present, "v3" when it is not but a v3 marker is
 // (orchestrator.HasV3Markers). Empty when neither is present, i.e. the repo
@@ -67,7 +82,7 @@ type RepoStatusResponse struct {
 // handleRepoStatus godoc
 //
 // @Summary Get repo initialization status
-// @Description Checks whether the GitOps repository has been bootstrapped (the engine pin at sharko-engine.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present.
+// @Description Checks whether the GitOps repository has been bootstrapped (the engine pin at sharko-engine.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present — except for reason "argocd_auth_failed" (ArgoCD rejected Sharko's token) or "argocd_unreachable" (Sharko could not get a usable answer from ArgoCD), which are credential/connectivity problems the wizard cannot fix, so the UI surfaces those as a banner instead of re-opening setup.
 // @Tags system
 // @Produce json
 // @Security BearerAuth
@@ -139,30 +154,42 @@ func (s *Server) handleRepoStatus(w http.ResponseWriter, r *http.Request) {
 // probeBootstrapSynced asks ArgoCD whether the bootstrap application is
 // Synced + Healthy, and classifies the not-ready cases. Extracted so the v3
 // and v4 branches of handleRepoStatus give the same answer to the same
-// question — a v3 repo's bootstrap health is just as real as a v4 repo's,
-// and reporting it as "unknown" would send the wizard the wrong signal.
+// question — a v3 repo's bootstrap health is just as real as a v4 repo's.
 //
-// Any error path (no ArgoCD client, app missing, OutOfSync, Degraded)
-// reports false — the UI then opens the wizard so the user has a recovery
-// surface instead of a dashboard full of errors. The
-// GetActiveOrchestratorArgocdClient error is deliberately swallowed: "the
-// connection has Git but no usable ArgoCD" is exactly the degraded state
-// the wizard exists to repair.
+// synced=false covers every not-ready case (no ArgoCD client, auth failure,
+// app missing, OutOfSync, Degraded, or an uncategorized probe failure) — the
+// UI then knows the bootstrap is not confirmed healthy. reason distinguishes
+// WHY: only "bootstrap_degraded" (and its "partial" sibling handled upstream)
+// asserts that ArgoCD actually looked at the app and found a problem. The
+// "argocd_auth_failed" and "argocd_unreachable" reasons mean Sharko never got
+// a usable answer from ArgoCD at all, so the UI must not treat those as a
+// setup problem the wizard can repair — see the reason vocabulary doc on
+// RepoStatusResponse above (error review package 1).
 func (s *Server) probeBootstrapSynced(ctx context.Context) (synced bool, reason string) {
 	ac, acErr := s.connSvc.GetActiveOrchestratorArgocdClient()
 	if acErr != nil {
-		return false, ""
+		// No active ArgoCD connection at all — Sharko has nothing to ask.
+		// Same honest "couldn't check" signal as a failed probe below.
+		return false, "argocd_unreachable"
 	}
 	status, _ := ProbeBootstrapApp(ctx, ac)
-	if status == bootstrapHealthy {
+	switch status {
+	case bootstrapHealthy:
 		return true, ""
-	}
-	// Distinguish "ArgoCD can't reach the repo" (re-init won't help) from a
-	// genuinely degraded bootstrap (re-init may repair it), so the wizard
-	// gate in App.tsx can avoid trapping the user when the problem is a
-	// connection one (V2-cleanup-51).
-	if status == bootstrapUnreachable {
+	case bootstrapUnreachable:
+		// ArgoCD reached the comparison stage and reported Sync=Unknown — a
+		// connection problem re-init won't help (V2-cleanup-51).
 		return false, "bootstrap_unreachable"
+	case bootstrapAuthFailed:
+		// ArgoCD rejected Sharko's own token (401) — a credential problem,
+		// not a repo/app problem (error review package 1).
+		return false, "argocd_auth_failed"
+	case bootstrapUnknown:
+		// The probe failed for a reason that is neither a permission
+		// problem nor an invalid token — Sharko genuinely does not know
+		// the bootstrap app's health (error review package 1).
+		return false, "argocd_unreachable"
+	default:
+		return false, "bootstrap_degraded"
 	}
-	return false, "bootstrap_degraded"
 }

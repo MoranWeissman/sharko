@@ -41,14 +41,35 @@ const (
 	// than chasing a phantom bootstrap failure (V2-cleanup-10). Detail carries
 	// the actionable permission-denied message.
 	RepoStateForbidden = "forbidden"
+	// RepoStateAuthFailed — the bootstrap file is present but ArgoCD rejected
+	// the application read with a 401: the token itself is invalid or
+	// expired. Distinct from "forbidden" (403 — a valid token without RBAC
+	// permission): here the credential is bad outright. This is the state
+	// that closes the bug where an expired token made a fully set-up install
+	// show the wizard claiming the bootstrap app "already exists but is not
+	// healthy" — a fact Sharko never actually verified, because it never got
+	// past the token check. Detail carries the actionable token message.
+	RepoStateAuthFailed = "auth_failed"
+	// RepoStateUnknown — the bootstrap file is present but Sharko could not
+	// determine the ArgoCD bootstrap application's health at all (the LIST
+	// call failed for a reason that is neither a permission problem nor a
+	// bad credential — e.g. a network blip). This is the honest "couldn't
+	// check" state: unlike "partial", it does NOT assert the bootstrap is
+	// missing or degraded, because Sharko never got a usable answer from
+	// ArgoCD to make that call.
+	RepoStateUnknown = "unknown"
 )
 
 // InitStatusResponse is the body returned by GET /api/v1/init/status.
 //
 // State is one of "empty" | "initialized" | "partial" | "unreachable" |
-// "forbidden". Detail carries a human-readable explanation — empty for the
-// clean "empty"/"initialized" cases, and ArgoCD's diagnostic string for
-// "partial"/"unreachable"/"forbidden".
+// "forbidden" | "auth_failed" | "unknown". Detail carries a human-readable
+// explanation — empty for the clean "empty"/"initialized" cases, and
+// ArgoCD's diagnostic string for every other state. "auth_failed" carries
+// the actionable invalid-token message; "unknown" carries whatever detail
+// the failed LIST call produced — Sharko genuinely could not determine the
+// bootstrap app's health, so the UI must not claim it is missing or
+// degraded for this state.
 // Format (additive) names the repo layout the probe recognised — "v4" when
 // the engine pin is present, "v3" when it is not but a v3 marker is, empty
 // when the repo really is un-bootstrapped.
@@ -81,9 +102,12 @@ type InitStatusResponse struct {
 //	file missing                                   -> ("empty",       "")
 //	file present + ProbeBootstrapApp "healthy"      -> ("initialized", "")
 //	file present + LIST 403 / permission-denied     -> ("forbidden",   <detail>)
+//	file present + LIST 401 / invalid token         -> ("auth_failed", <detail>)
 //	file present + app Sync=Unknown (unreachable)   -> ("unreachable", <detail>)
 //	file present + app absent (LIST ok, not found)  -> ("partial",     <detail>)
 //	file present + app present but degraded         -> ("partial",     <detail>)
+//	file present + LIST failed, uncategorized       -> ("unknown",     <detail>)
+//	file present + no ArgoCD client configured      -> ("unknown",     <detail>)
 //
 // Note (V2-cleanup-11.2): the "app absent" case maps to "partial", NOT
 // "forbidden". A populated repo pointed at a fresh ArgoCD (the bootstrap app
@@ -95,6 +119,16 @@ type InitStatusResponse struct {
 // NOT "partial". Re-running Initialize cannot fix a connection problem, so the
 // wizard must treat it differently (Story 2). A genuinely degraded bootstrap
 // (OutOfSync/Degraded) and an absent app stay "partial".
+//
+// Note (error review package 1): "auth_failed" and "unknown" must NEVER be
+// folded into "partial". "partial" asserts something Sharko actually
+// observed about the bootstrap app (it's absent, or it's degraded);
+// "auth_failed" and "unknown" mean Sharko never got a usable answer from
+// ArgoCD in the first place. Before these states existed, a dead/expired
+// token (which surfaced as an uncategorized LIST failure) fell into the
+// same "unhealthy" bucket as a genuinely degraded app, so the wizard told
+// the user their fully-working bootstrap "already exists but is not
+// healthy" — a claim Sharko had no basis for.
 //
 // Note (v4 review R1, H3): "no engine pin" is NOT the same as "empty". A v3
 // repo has no engine pin either, so an engine-pin-only probe reports a
@@ -165,6 +199,19 @@ func classifyBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (st
 		// /init runner treats this the same as "partial" (a Fail), so this
 		// distinction only affects the read path that feeds the wizard.
 		return RepoStateUnreachable, argoDetail, status
+	case bootstrapAuthFailed:
+		// A 401 on the LIST means the token itself is invalid/expired — a
+		// credential problem, not a broken bootstrap. Report it distinctly
+		// so the wizard never claims to know anything about the app's
+		// health, which it never got to check (error review package 1).
+		return RepoStateAuthFailed, argoDetail, status
+	case bootstrapUnknown:
+		// Sharko could not determine the bootstrap app's health at all —
+		// the LIST call failed for a reason that is neither a permission
+		// problem nor a bad credential (or no ArgoCD client is configured).
+		// This must NOT fold into "partial": "partial" asserts the app is
+		// absent or degraded, a fact Sharko never established here.
+		return RepoStateUnknown, argoDetail, status
 	default:
 		// "absent" and "unhealthy" both mean: the repo has bootstrap files but
 		// ArgoCD is not (yet) running a healthy bootstrap. The wizard offers
@@ -178,7 +225,7 @@ func classifyBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (st
 // handleInitStatus godoc
 //
 // @Summary Probe GitOps repo initialization state
-// @Description Read-only probe used by the first-run wizard before it offers to initialize the repo. Returns "empty" when the bootstrap root-app YAML is not present on the base branch, "initialized" when it is present and the ArgoCD bootstrap application is Synced + Healthy, "forbidden" when the file is present but ArgoCD rejected the read with a 403 because the token lacks RBAC permission (detail carries an actionable permission message), "unreachable" when the file is present but the ArgoCD bootstrap reports Sync=Unknown because ArgoCD cannot reach/evaluate the Git repo (a connection problem re-init cannot fix), and "partial" when the file is present but the ArgoCD bootstrap is missing or genuinely degraded (detail carries the ArgoCD diagnostic). When state is "partial", repairable is true only if the bootstrap application was simply never created (POST /init can repair it with no PR) and false if it already exists but is degraded (re-init cannot fix a live app). Performs no writes and creates no operation session. Requires an active Git connection.
+// @Description Read-only probe used by the first-run wizard before it offers to initialize the repo. Returns "empty" when the bootstrap root-app YAML is not present on the base branch, "initialized" when it is present and the ArgoCD bootstrap application is Synced + Healthy, "forbidden" when the file is present but ArgoCD rejected the read with a 403 because the token lacks RBAC permission (detail carries an actionable permission message), "auth_failed" when the file is present but ArgoCD rejected the read with a 401 because the token is invalid or expired (detail carries an actionable token message), "unreachable" when the file is present but the ArgoCD bootstrap reports Sync=Unknown because ArgoCD cannot reach/evaluate the Git repo (a connection problem re-init cannot fix), "partial" when the file is present but the ArgoCD bootstrap is missing or genuinely degraded (detail carries the ArgoCD diagnostic), and "unknown" when the file is present but Sharko could not determine the bootstrap application's health at all (the ArgoCD read failed for a reason that is neither a permission problem nor an invalid token, or no ArgoCD connection is configured) — this state never claims the bootstrap is missing or degraded, only that Sharko could not check. When state is "partial", repairable is true only if the bootstrap application was simply never created (POST /init can repair it with no PR) and false if it already exists but is degraded (re-init cannot fix a live app). Performs no writes and creates no operation session. Requires an active Git connection.
 // @Tags init
 // @Produce json
 // @Security BearerAuth

@@ -158,6 +158,20 @@ describe('deriveArgoRepoArrow', () => {
       deriveArgoRepoArrow({ initialized: true, bootstrap_synced: false, reason: 'bootstrap_degraded' }).status,
     ).toBe('degraded')
   })
+  // Error review package 1 — these two reasons mean Sharko never got a
+  // usable answer from ArgoCD at all, distinct from a genuinely degraded
+  // engine app. The System page must not assert the engine app is broken
+  // when it never got that far.
+  it('is degraded (credential problem) when ArgoCD rejected Sharko\'s token', () => {
+    const v = deriveArgoRepoArrow({ initialized: true, bootstrap_synced: false, reason: 'argocd_auth_failed' })
+    expect(v.status).toBe('degraded')
+    expect(v.detail).toMatch(/rejected Sharko's token/)
+  })
+  it('is unknown when Sharko could not reach ArgoCD at all', () => {
+    const v = deriveArgoRepoArrow({ initialized: true, bootstrap_synced: false, reason: 'argocd_unreachable' })
+    expect(v.status).toBe('unknown')
+    expect(v.detail).toMatch(/couldn't reach ArgoCD/)
+  })
 })
 
 describe('deriveSharkoClusterStatus', () => {
