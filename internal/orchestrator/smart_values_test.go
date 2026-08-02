@@ -788,8 +788,8 @@ other: value
 // guarantee that no emitted global file ever contains a nil-valued key.
 func TestSplitUpstreamValues_AllExistingFixturesNoNil(t *testing.T) {
 	fixtures := []struct {
-		name   string
-		input  SmartValuesInput
+		name  string
+		input SmartValuesInput
 	}{
 		{
 			name: "cert-manager global shape fixture",
@@ -856,8 +856,8 @@ func TestCommentHollowMapKeys_Unit(t *testing.T) {
 	cases := []struct {
 		name     string
 		in       []string
-		wantLive []string   // lines that MUST still be live (exact substring match)
-		wantGone []string   // trimmed forms that must NOT appear as live (uncommented) lines
+		wantLive []string // lines that MUST still be live (exact substring match)
+		wantGone []string // trimmed forms that must NOT appear as live (uncommented) lines
 	}{
 		{
 			name: "fully hollow limits key",

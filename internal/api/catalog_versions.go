@@ -67,8 +67,8 @@ type catalogVersionsCacheEntry struct {
 
 // catalogVersionsCache is process-global. The fetcher itself caches the parsed
 // index per repo URL — we layer a second cache here so we can:
-//   • answer with a single map lookup (no parsing) on warm hits, and
-//   • TTL-evict the parsed index without rebuilding the helm.Fetcher.
+//   - answer with a single map lookup (no parsing) on warm hits, and
+//   - TTL-evict the parsed index without rebuilding the helm.Fetcher.
 //
 // Capped at 200 entries to bound memory; oldest-first eviction.
 var (

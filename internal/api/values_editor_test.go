@@ -122,4 +122,3 @@ func TestUnwrapGlobalValues_NoConnection(t *testing.T) {
 		t.Fatalf("expected 502 (no connection), got %d. body=%s", w.Code, w.Body.String())
 	}
 }
-

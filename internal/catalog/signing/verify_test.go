@@ -169,12 +169,12 @@ func TestVerify_HappyPath(t *testing.T) {
 	}
 }
 
-// 2. Signature-mismatch — valid bundle but payload differs.
-//    Per the SidecarVerifier contract this is (false, "", nil), NOT an error.
+//  2. Signature-mismatch — valid bundle but payload differs.
+//     Per the SidecarVerifier contract this is (false, "", nil), NOT an error.
 //
-//    V123-2.6 addition: assert the WARN log's `reason` substring so the
-//    test proves the mismatch branch was actually taken (vs. the
-//    untrusted-identity branch, which surfaces the same public return).
+//     V123-2.6 addition: assert the WARN log's `reason` substring so the
+//     test proves the mismatch branch was actually taken (vs. the
+//     untrusted-identity branch, which surfaces the same public return).
 func TestVerify_SignatureMismatch(t *testing.T) {
 	vs, err := ca.NewVirtualSigstore()
 	if err != nil {
@@ -204,12 +204,12 @@ func TestVerify_SignatureMismatch(t *testing.T) {
 	}
 }
 
-// 3. Untrusted-identity — valid bundle, signer SAN doesn't match any
-//    TrustPolicy regex. (false, "", nil).
+//  3. Untrusted-identity — valid bundle, signer SAN doesn't match any
+//     TrustPolicy regex. (false, "", nil).
 //
-//    V123-2.6 addition: assert the WARN log's `reason` substring so the
-//    test proves the untrusted-identity branch was actually taken (the
-//    public return is identical to the sig-mismatch branch).
+//     V123-2.6 addition: assert the WARN log's `reason` substring so the
+//     test proves the untrusted-identity branch was actually taken (the
+//     public return is identical to the sig-mismatch branch).
 func TestVerify_UntrustedIdentity(t *testing.T) {
 	vs, err := ca.NewVirtualSigstore()
 	if err != nil {
@@ -241,12 +241,12 @@ func TestVerify_UntrustedIdentity(t *testing.T) {
 	}
 }
 
-// 4. Empty trust policy — valid bundle but Identities is empty.
-//    Fail-closed: (false, "", nil) without ever even verifying the bundle.
+//  4. Empty trust policy — valid bundle but Identities is empty.
+//     Fail-closed: (false, "", nil) without ever even verifying the bundle.
 //
-//    V123-2.6 addition: assert the WARN log's `reason` substring so the
-//    test proves the fail-closed branch ran (vs. accidentally falling
-//    through to the verification branch and rejecting later).
+//     V123-2.6 addition: assert the WARN log's `reason` substring so the
+//     test proves the fail-closed branch ran (vs. accidentally falling
+//     through to the verification branch and rejecting later).
 func TestVerify_EmptyTrustPolicy(t *testing.T) {
 	vs, err := ca.NewVirtualSigstore()
 	if err != nil {
@@ -276,9 +276,9 @@ func TestVerify_EmptyTrustPolicy(t *testing.T) {
 	}
 }
 
-// 5. Malformed bundle bytes — verifyBundleBytes returns (false, "", err)
-//    because the parse step itself fails. This is the "infrastructure error"
-//    branch.
+//  5. Malformed bundle bytes — verifyBundleBytes returns (false, "", err)
+//     because the parse step itself fails. This is the "infrastructure error"
+//     branch.
 func TestVerify_MalformedBundle(t *testing.T) {
 	vs, err := ca.NewVirtualSigstore()
 	if err != nil {
@@ -302,8 +302,8 @@ func TestVerify_MalformedBundle(t *testing.T) {
 	}
 }
 
-// 6. HTTP fetch fails — Verify returns (false, "", err) when the bundle
-//    URL returns 404. Infra error branch.
+//  6. HTTP fetch fails — Verify returns (false, "", err) when the bundle
+//     URL returns 404. Infra error branch.
 func TestVerify_HTTPFetchFails(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
@@ -334,8 +334,8 @@ func TestVerify_HTTPFetchFails(t *testing.T) {
 	}
 }
 
-// 7. Context cancelled mid-fetch — the in-flight HTTP request returns
-//    a context.Canceled-shaped error.
+//  7. Context cancelled mid-fetch — the in-flight HTTP request returns
+//     a context.Canceled-shaped error.
 func TestVerify_ContextCancelled(t *testing.T) {
 	// Start a server that blocks until the test finishes — the cancel
 	// will unblock the client side.
@@ -368,13 +368,13 @@ func TestVerify_ContextCancelled(t *testing.T) {
 	}
 }
 
-// 8. Per-entry happy path — VerifyEntry against a real bundle served
-//    over httptest. Exercises the full per-entry HTTP-fetch + parse +
-//    verify path that the loader uses in production.
+//  8. Per-entry happy path — VerifyEntry against a real bundle served
+//     over httptest. Exercises the full per-entry HTTP-fetch + parse +
+//     verify path that the loader uses in production.
 //
-//    This is the most important integration of the suite. We mint a
-//    bundle in VirtualSigstore, serialize it to JSON, serve it from
-//    httptest, and have the verifier fetch + verify it.
+//     This is the most important integration of the suite. We mint a
+//     bundle in VirtualSigstore, serialize it to JSON, serve it from
+//     httptest, and have the verifier fetch + verify it.
 func TestVerifyEntry_HappyPath(t *testing.T) {
 	vs, err := ca.NewVirtualSigstore()
 	if err != nil {
@@ -405,8 +405,8 @@ func TestVerifyEntry_HappyPath(t *testing.T) {
 	}
 }
 
-// 9. Per-entry payload-mismatch — same entity, different canonical
-//    bytes. (false, "", nil).
+//  9. Per-entry payload-mismatch — same entity, different canonical
+//     bytes. (false, "", nil).
 func TestVerifyEntry_PayloadMismatch(t *testing.T) {
 	vs, err := ca.NewVirtualSigstore()
 	if err != nil {
@@ -459,7 +459,7 @@ func TestCanonicalEntryBytes_StripsSignature(t *testing.T) {
 	}
 }
 
-// 11. CanonicalEntryBytes strips runtime fields (Verified,
+//  11. CanonicalEntryBytes strips runtime fields (Verified,
 //     SignatureIdentity, Source, SecurityTier) so they never end up in
 //     the signed payload (which would be a forgery vector + a churn
 //     vector — verification would break the moment the loader started
@@ -491,7 +491,7 @@ func TestCanonicalEntryBytes_StripsRuntimeFields(t *testing.T) {
 	}
 }
 
-// 12. Determinism — two calls with identical input produce byte-identical
+//  12. Determinism — two calls with identical input produce byte-identical
 //     output. yaml.v3 marshals struct fields in declaration order, so as
 //     long as CatalogEntry's field order is stable, this holds. Failing
 //     this test means a future field reorder broke the canonical-bytes

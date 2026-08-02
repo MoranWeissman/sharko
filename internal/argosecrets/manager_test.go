@@ -446,8 +446,8 @@ func TestEnsure_AdoptPath(t *testing.T) {
 			Name:      "my-cluster",
 			Namespace: testNamespace,
 			Labels: map[string]string{
-				LabelSecretType:  "cluster",
-				"foreign-label":  "kept",
+				LabelSecretType: "cluster",
+				"foreign-label": "kept",
 				// No LabelManagedBy — simulating pre-Sharko secret.
 			},
 		},
@@ -1134,8 +1134,8 @@ func TestEnsure_AdoptedSteadyState_ConnectivityCheckLabelStripped(t *testing.T) 
 		Name:   "adopted2",
 		Server: "https://adopted2.example.com",
 		Labels: map[string]string{
-			"addon-foo":  "enabled",
-			checkLabel: "enabled",
+			"addon-foo": "enabled",
+			checkLabel:  "enabled",
 		},
 	}
 

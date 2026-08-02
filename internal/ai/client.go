@@ -14,9 +14,9 @@ import (
 type Provider string
 
 const (
-	ProviderOllama Provider = "ollama"
-	ProviderClaude Provider = "claude"
-	ProviderOpenAI Provider = "openai"
+	ProviderOllama       Provider = "ollama"
+	ProviderClaude       Provider = "claude"
+	ProviderOpenAI       Provider = "openai"
 	ProviderGemini       Provider = "gemini"
 	ProviderCustomOpenAI Provider = "custom-openai"
 	ProviderNone         Provider = "none"
@@ -24,17 +24,17 @@ const (
 
 // Config holds AI provider settings.
 type Config struct {
-	Provider    Provider `yaml:"provider"`
-	OllamaURL   string   `yaml:"ollama_url"`
-	OllamaModel string   `yaml:"ollama_model"`
-	AgentModel  string   `yaml:"agent_model"`  // Separate model for agent (tool calling needs larger model)
-	APIKey        string   `yaml:"api_key"`         // API key for Claude/OpenAI
-	CloudModel    string   `yaml:"cloud_model"`     // Model name for cloud providers (e.g., "claude-sonnet-4-20250514", "gpt-4o")
-	BaseURL       string   `yaml:"base_url"`        // Base URL for custom OpenAI-compatible providers
-	AuthHeader    string   `yaml:"auth_header"`     // Custom auth header name (default: "Authorization")
-	AuthPrefix    string   `yaml:"auth_prefix"`     // Custom auth value prefix (default: "Bearer " when using Authorization header)
-	MaxIterations int      `yaml:"max_iterations"`  // Max agent tool-calling iterations (default: 8)
-	GitOpsEnabled bool     `yaml:"gitops_enabled"`  // Enable write tools (enable_addon, disable_addon, etc.)
+	Provider      Provider `yaml:"provider"`
+	OllamaURL     string   `yaml:"ollama_url"`
+	OllamaModel   string   `yaml:"ollama_model"`
+	AgentModel    string   `yaml:"agent_model"`    // Separate model for agent (tool calling needs larger model)
+	APIKey        string   `yaml:"api_key"`        // API key for Claude/OpenAI
+	CloudModel    string   `yaml:"cloud_model"`    // Model name for cloud providers (e.g., "claude-sonnet-4-20250514", "gpt-4o")
+	BaseURL       string   `yaml:"base_url"`       // Base URL for custom OpenAI-compatible providers
+	AuthHeader    string   `yaml:"auth_header"`    // Custom auth header name (default: "Authorization")
+	AuthPrefix    string   `yaml:"auth_prefix"`    // Custom auth value prefix (default: "Bearer " when using Authorization header)
+	MaxIterations int      `yaml:"max_iterations"` // Max agent tool-calling iterations (default: 8)
+	GitOpsEnabled bool     `yaml:"gitops_enabled"` // Enable write tools (enable_addon, disable_addon, etc.)
 
 	// AnnotateOnSeed controls the v1.21 AI annotation pass on addon-add
 	// and refresh-from-upstream. Wire path: Settings → AI → "Annotate
@@ -290,7 +290,7 @@ func (c *Client) geminiSummarize(ctx context.Context, prompt string) (string, er
 			{"parts": []map[string]string{{"text": prompt}}},
 		},
 		"generationConfig": map[string]interface{}{
-			"temperature":    0.3,
+			"temperature":     0.3,
 			"maxOutputTokens": 4096,
 		},
 	})

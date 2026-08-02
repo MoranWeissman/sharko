@@ -328,10 +328,10 @@ func TestTokensCRUD(t *testing.T) {
 // of writing (V2 Epic 7-1.10). When this drifts, the test fails loudly
 // — that is the entire point of the RBAC enforcement layer.
 //
-//   addon.add-to-catalog  → operator (POST /api/v1/addons)
-//   connection.create     → operator (POST /api/v1/connections/)
-//   token.create          → operator (POST /api/v1/tokens)
-//   cluster.remove        → admin    (DELETE /api/v1/clusters/{name})
+//	addon.add-to-catalog  → operator (POST /api/v1/addons)
+//	connection.create     → operator (POST /api/v1/connections/)
+//	token.create          → operator (POST /api/v1/tokens)
+//	cluster.remove        → admin    (DELETE /api/v1/clusters/{name})
 //
 // "Allowed" here means "NOT 403". The handler is free to return 200,
 // 201, 400, 404, 502 etc. once authz waves the request through — that

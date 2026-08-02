@@ -18,6 +18,12 @@ func (o *Orchestrator) UpgradeAddonGlobal(ctx context.Context, addonName, newVer
 	if newVersion == "" {
 		return nil, fmt.Errorf("new version is required")
 	}
+	// This writes the v3 addons-catalog.yaml — see refuseV3ShapedWriteOnV4Repo.
+	// Refuse before any read on a v4 repo, whose real version pin lives in
+	// cluster-addons/<cluster>.yaml instead.
+	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "upgrading an addon's global version through this endpoint", V4UpgradeDoor); err != nil {
+		return nil, err
+	}
 
 	catalogPath := o.paths.Catalog
 	content, err := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
@@ -55,6 +61,11 @@ func (o *Orchestrator) UpgradeAddonCluster(ctx context.Context, addonName, clust
 	if newVersion == "" {
 		return nil, fmt.Errorf("new version is required")
 	}
+	// This writes the v3 per-cluster values file — see
+	// refuseV3ShapedWriteOnV4Repo. Refuse before any read on a v4 repo.
+	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "upgrading an addon's version on a cluster through this endpoint", V4UpgradeDoor); err != nil {
+		return nil, err
+	}
 
 	valuesPath := path.Join(o.paths.ClusterValues, clusterName+".yaml")
 	content, err := o.git.GetFileContent(ctx, valuesPath, o.gitops.BaseBranch)
@@ -81,6 +92,11 @@ func (o *Orchestrator) UpgradeAddonCluster(ctx context.Context, addonName, clust
 func (o *Orchestrator) UpgradeAddons(ctx context.Context, upgrades map[string]string, autoMerge *bool) (*GitResult, error) {
 	if len(upgrades) == 0 {
 		return nil, fmt.Errorf("at least one addon upgrade is required")
+	}
+	// This writes the v3 addons-catalog.yaml — see refuseV3ShapedWriteOnV4Repo.
+	// Refuse before any read on a v4 repo.
+	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "batch-upgrading addons through this endpoint", V4UpgradeDoor); err != nil {
+		return nil, err
 	}
 
 	// Read the catalog once, apply all version changes, commit as single PR.

@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -122,6 +124,63 @@ func (o *Orchestrator) prMeta(autoMerge *bool, opCode, title, cluster, addon str
 	}
 }
 
+// buildPRBody writes the plain-English pull-request description every
+// commitChangesWithMeta call opens: a one-line summary of what the
+// operation string already says, followed by the exact list of files this
+// PR touches, so a reviewer sees what changed without opening the diff
+// first.
+//
+// Before this (PR #657 follow-up), the body was just the raw lowercase
+// operation string repeated verbatim ("add addon cert-manager", "enable
+// addon keda on cluster prod-eu") with no file list and no structure — the
+// same string that was already the commit message, read a second time.
+//
+// This is prose for a human, not a machine-read format: nothing in
+// Sharko parses a PR body back (confirmed — the only field any code reads
+// off a PullRequest after creation is the dashboard's plain display of
+// Description/pr.Body; nothing greps it for a marker), so there is nothing
+// here that has to stay byte-for-byte.
+func buildPRBody(operation string, files map[string][]byte, deletePaths []string) string {
+	var sb strings.Builder
+	sb.WriteString(capitalizeFirst(operation))
+	sb.WriteString(".\n")
+
+	if len(files) > 0 || len(deletePaths) > 0 {
+		sb.WriteString("\nFiles changed:\n")
+
+		changed := make([]string, 0, len(files))
+		for p := range files {
+			changed = append(changed, p)
+		}
+		sort.Strings(changed)
+		for _, p := range changed {
+			sb.WriteString("- " + p + "\n")
+		}
+
+		removed := append([]string(nil), deletePaths...)
+		sort.Strings(removed)
+		for _, p := range removed {
+			sb.WriteString("- " + p + " (removed)\n")
+		}
+	}
+
+	sb.WriteString("\nOpened automatically by Sharko.\n")
+	return sb.String()
+}
+
+// capitalizeFirst upper-cases the first rune of s and leaves the rest
+// untouched — every operation string passed to commitChangesWithMeta is
+// already a short, well-formed English phrase ("add addon cert-manager"),
+// so this is the entire job: turn it into a sentence.
+func capitalizeFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
+}
+
 // commitChanges creates a PR for the given file changes WITHOUT tracking it
 // in the prtracker. Use commitChangesWithMeta when the call site has the
 // canonical operation code, cluster, and addon (the default). Kept as a
@@ -179,7 +238,7 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 		}
 	}
 
-	pr, err := o.git.CreatePullRequest(ctx, commitMsg, operation, branchName, o.gitops.BaseBranch)
+	pr, err := o.git.CreatePullRequest(ctx, commitMsg, buildPRBody(operation, files, deletePaths), branchName, o.gitops.BaseBranch)
 	if err != nil {
 		// V3 E1: surface the PR-open failure as a k8s Warning event so
 		// operators see it via `kubectl get events`. Message is a plain-English

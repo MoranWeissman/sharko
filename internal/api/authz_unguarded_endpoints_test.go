@@ -26,7 +26,7 @@ import (
 // handler can reach its 202 success path under an allowed role.
 type fakeSecretReconciler struct{ triggered int }
 
-func (f *fakeSecretReconciler) Trigger()            { f.triggered++ }
+func (f *fakeSecretReconciler) Trigger()              { f.triggered++ }
 func (f *fakeSecretReconciler) GetStats() interface{} { return map[string]int{} }
 
 // assert403 decodes the body and asserts a clean JSON 403.

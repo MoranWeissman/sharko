@@ -198,11 +198,17 @@ func (s *Server) handleGetClusterAddonValuesRecentPRs(w http.ResponseWriter, r *
 // Matching heuristic: Sharko's orchestrator generates PRs with deterministic
 // titles and branches (see internal/orchestrator/git_helpers.go). The PR that
 // edits `<addon>.yaml` under global-values has operation
-//   "update global values for <addon>"
+//
+//	"update global values for <addon>"
+//
 // and pull-upstream has
-//   "pull upstream defaults for <addon>"
+//
+//	"pull upstream defaults for <addon>"
+//
 // The per-cluster overrides file uses
-//   "update <addon> overrides on cluster <cluster>"
+//
+//	"update <addon> overrides on cluster <cluster>"
+//
 // Branches are the sanitized/hex variant of the same. So presence of the
 // addon name plus a "values"/"overrides"/"upstream" keyword catches Sharko-
 // authored PRs while rejecting unrelated repo activity.
@@ -345,4 +351,3 @@ func urlQueryEscape(s string) string {
 	}
 	return b.String()
 }
-

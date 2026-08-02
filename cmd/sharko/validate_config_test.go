@@ -149,11 +149,11 @@ func TestValidateConfig_SingleInvalidFile_Exit1(t *testing.T) {
 
 	out := buf.String()
 	for _, want := range []string{
-		"✘ " + path + ":",                                  // file failure header
-		"schema violations (kind: ManagedClusters)",        // kind callout
-		"   ✘ ",                                            // at least one violation, indented + prefixed
+		"✘ " + path + ":",                           // file failure header
+		"schema violations (kind: ManagedClusters)", // kind callout
+		"   ✘ ", // at least one violation, indented + prefixed
 		"→ for details: https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json", // remediation pointer
-		"1 file(s) failed validation",                      // summary footer
+		"1 file(s) failed validation", // summary footer
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)

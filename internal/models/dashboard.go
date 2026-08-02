@@ -83,17 +83,17 @@ type DashboardStatisticsResponse struct {
 
 // PullRequest represents a PR from the Git provider.
 type PullRequest struct {
-	ID          int    `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description,omitempty"`
-	Author      string `json:"author"`
-	Status      string `json:"status"`
+	ID           int    `json:"id"`
+	Title        string `json:"title"`
+	Description  string `json:"description,omitempty"`
+	Author       string `json:"author"`
+	Status       string `json:"status"`
 	SourceBranch string `json:"source_branch"`
 	TargetBranch string `json:"target_branch"`
-	URL         string `json:"url"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at,omitempty"`
-	ClosedAt    string `json:"closed_at,omitempty"`
+	URL          string `json:"url"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at,omitempty"`
+	ClosedAt     string `json:"closed_at,omitempty"`
 }
 
 // DashboardPullRequestsResponse is the API response for PR listing.

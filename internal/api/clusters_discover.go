@@ -341,4 +341,3 @@ func writeStructuredError(w http.ResponseWriter, status int, code, message strin
 		"error_code": code,
 	})
 }
-

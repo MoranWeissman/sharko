@@ -158,12 +158,12 @@ type ProviderConfig struct {
 // GitOpsSettings holds product-level GitOps preferences stored in a connection.
 // These override env vars (which remain as a fallback for migration).
 type GitOpsSettings struct {
-	BaseBranch      string `json:"base_branch,omitempty" yaml:"base_branch,omitempty"`           // default: "main"
-	BranchPrefix    string `json:"branch_prefix,omitempty" yaml:"branch_prefix,omitempty"`       // default: "sharko/"
-	CommitPrefix    string `json:"commit_prefix,omitempty" yaml:"commit_prefix,omitempty"`       // default: "sharko:"
-	PRAutoMerge     *bool  `json:"pr_auto_merge,omitempty" yaml:"pr_auto_merge,omitempty"`       // default: false
+	BaseBranch      string `json:"base_branch,omitempty" yaml:"base_branch,omitempty"`             // default: "main"
+	BranchPrefix    string `json:"branch_prefix,omitempty" yaml:"branch_prefix,omitempty"`         // default: "sharko/"
+	CommitPrefix    string `json:"commit_prefix,omitempty" yaml:"commit_prefix,omitempty"`         // default: "sharko:"
+	PRAutoMerge     *bool  `json:"pr_auto_merge,omitempty" yaml:"pr_auto_merge,omitempty"`         // default: false
 	HostClusterName string `json:"host_cluster_name,omitempty" yaml:"host_cluster_name,omitempty"` // cluster running ArgoCD (in-cluster)
-	DefaultAddons   string `json:"default_addons,omitempty" yaml:"default_addons,omitempty"`     // comma-separated addon names
+	DefaultAddons   string `json:"default_addons,omitempty" yaml:"default_addons,omitempty"`       // comma-separated addon names
 }
 
 // Connection combines Git repo, ArgoCD, provider, and GitOps settings.

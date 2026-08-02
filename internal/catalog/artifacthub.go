@@ -120,16 +120,16 @@ func NewArtifactHubClient(client *http.Client) *ArtifactHubClient {
 // We pick the fields the UI actually renders; anything else is dropped to keep
 // the payload small.
 type AHSearchPackage struct {
-	PackageID         string  `json:"package_id"`
-	Name              string  `json:"name"`
-	NormalizedName    string  `json:"normalized_name,omitempty"`
-	DisplayName       string  `json:"display_name,omitempty"`
-	Description       string  `json:"description,omitempty"`
-	LogoImageID       string  `json:"logo_image_id,omitempty"`
-	Version           string  `json:"version,omitempty"`
-	AppVersion        string  `json:"app_version,omitempty"`
-	Stars             int     `json:"stars,omitempty"`
-	Repository        AHRepo  `json:"repository"`
+	PackageID      string `json:"package_id"`
+	Name           string `json:"name"`
+	NormalizedName string `json:"normalized_name,omitempty"`
+	DisplayName    string `json:"display_name,omitempty"`
+	Description    string `json:"description,omitempty"`
+	LogoImageID    string `json:"logo_image_id,omitempty"`
+	Version        string `json:"version,omitempty"`
+	AppVersion     string `json:"app_version,omitempty"`
+	Stars          int    `json:"stars,omitempty"`
+	Repository     AHRepo `json:"repository"`
 }
 
 // AHRepo is the trimmed repository shape ArtifactHub embeds in each search hit
@@ -199,22 +199,22 @@ func (c *ArtifactHubClient) SearchHelm(ctx context.Context, q string, limit int)
 // AHPackage is the slimmed-down package detail shape returned by
 // /packages/helm/{repo}/{chart}. We expose only the fields the UI consumes.
 type AHPackage struct {
-	PackageID         string             `json:"package_id"`
-	Name              string             `json:"name"`
-	NormalizedName    string             `json:"normalized_name,omitempty"`
-	DisplayName       string             `json:"display_name,omitempty"`
-	Description       string             `json:"description,omitempty"`
-	HomeURL           string             `json:"home_url,omitempty"`
-	Readme            string             `json:"readme,omitempty"`
-	Version           string             `json:"version,omitempty"`
-	AppVersion        string             `json:"app_version,omitempty"`
-	License           string             `json:"license,omitempty"`
-	Stars             int                `json:"stars,omitempty"`
-	Maintainers       []AHMaintainer     `json:"maintainers,omitempty"`
-	Repository        AHRepo             `json:"repository"`
-	AvailableVersions []AHVersionMeta    `json:"available_versions,omitempty"`
-	Links             []AHLink           `json:"links,omitempty"`
-	Keywords          []string           `json:"keywords,omitempty"`
+	PackageID         string          `json:"package_id"`
+	Name              string          `json:"name"`
+	NormalizedName    string          `json:"normalized_name,omitempty"`
+	DisplayName       string          `json:"display_name,omitempty"`
+	Description       string          `json:"description,omitempty"`
+	HomeURL           string          `json:"home_url,omitempty"`
+	Readme            string          `json:"readme,omitempty"`
+	Version           string          `json:"version,omitempty"`
+	AppVersion        string          `json:"app_version,omitempty"`
+	License           string          `json:"license,omitempty"`
+	Stars             int             `json:"stars,omitempty"`
+	Maintainers       []AHMaintainer  `json:"maintainers,omitempty"`
+	Repository        AHRepo          `json:"repository"`
+	AvailableVersions []AHVersionMeta `json:"available_versions,omitempty"`
+	Links             []AHLink        `json:"links,omitempty"`
+	Keywords          []string        `json:"keywords,omitempty"`
 }
 
 // AHMaintainer is the maintainer entry in a package detail response.

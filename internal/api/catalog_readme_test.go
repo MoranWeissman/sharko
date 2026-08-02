@@ -25,8 +25,10 @@ import (
 )
 
 // readmeTestServer wires a stub ArtifactHub that responds to two paths:
-//   GET /packages/search       → returns one or more matches
-//   GET /packages/helm/{r}/{n} → returns a package detail with README
+//
+//	GET /packages/search       → returns one or more matches
+//	GET /packages/helm/{r}/{n} → returns a package detail with README
+//
 // The caller passes a single dispatching handler so each test can shape
 // both responses inline.
 func readmeTestServer(t *testing.T, ahHandler http.HandlerFunc) (*Server, *int64, func()) {

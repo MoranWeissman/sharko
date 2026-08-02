@@ -93,6 +93,18 @@ type AddToCatalogResult struct {
 	// Empty when the request was catalog-only.
 	Enabled []string `json:"enabled,omitempty"`
 	Cluster string   `json:"cluster,omitempty"`
+	// ResolvedVersions maps each added addon name to the version that
+	// actually landed in catalog.yaml — the caller's own version when one
+	// was sent, or the version Sharko filled in when a from_marketplace
+	// entry arrived with none (buildCatalogEntry's newest-known-version
+	// fallback). Before this field existed, a Marketplace add with no
+	// version sent had no way to tell the caller which pin it committed —
+	// the diff had it, but the response only ever named the addon (PR #658
+	// follow-up: "add response carries names not the resolved version pin").
+	// Empty on a dry run's preview branch — nothing has been resolved into
+	// a durable result at that point, and DryRunResult.FilesToWrite already
+	// shows the pin in the diff.
+	ResolvedVersions map[string]string `json:"resolved_versions,omitempty"`
 }
 
 // The error sentinels below are the machine-readable half of the
@@ -436,11 +448,17 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 	}
 	gitResult.Warnings = append(gitResult.Warnings, warnings...)
 
+	resolvedVersions := make(map[string]string, len(names))
+	for _, name := range names {
+		resolvedVersions[name] = entries[name].Version
+	}
+
 	return &AddToCatalogResult{
-		GitResult: gitResult,
-		Added:     names,
-		Enabled:   enabledNames(names, req.EnableOnCluster),
-		Cluster:   req.EnableOnCluster,
+		GitResult:        gitResult,
+		Added:            names,
+		Enabled:          enabledNames(names, req.EnableOnCluster),
+		Cluster:          req.EnableOnCluster,
+		ResolvedVersions: resolvedVersions,
 	}, nil
 }
 

@@ -180,7 +180,7 @@ func TestRegisterCluster_SelfManaged_BrokenInlineKubeconfig_StillErrors(t *testi
 // and let every OTHER InvalidCredsSourceError surface — here, a secret_path
 // set alongside an inline creds source, which is contradictory (secret_path
 // is a backend-only lookup key) and was previously swallowed by the old
-// broad "any error when selfManaged && inline && Kubeconfig==''" condition.
+// broad "any error when selfManaged && inline && Kubeconfig==”" condition.
 func TestRegisterCluster_SelfManaged_ContradictorySecretPath_Rejected(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()

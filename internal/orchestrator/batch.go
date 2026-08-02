@@ -7,10 +7,10 @@ const MaxBatchSize = 10
 
 // BatchResult holds the aggregate result of a batch cluster registration.
 type BatchResult struct {
-	Total     int                      `json:"total"`
-	Succeeded int                      `json:"succeeded"`
-	Failed    int                      `json:"failed"`
-	Results   []RegisterClusterResult  `json:"results"`
+	Total     int                     `json:"total"`
+	Succeeded int                     `json:"succeeded"`
+	Failed    int                     `json:"failed"`
+	Results   []RegisterClusterResult `json:"results"`
 }
 
 // RegisterClusterBatch registers multiple clusters sequentially.

@@ -24,37 +24,37 @@ import (
 //
 // What this test would catch pre-V125-1-10.8:
 //
-//   Before the fix, ArgoCDProvider inherited cfg.Namespace from the
-//   ProviderConfig the user had previously set for the k8s-secrets backend.
-//   When the operator switched the Type dropdown to "argocd" — but did NOT
-//   manually clear the Namespace field — ArgoCDProvider would receive
-//   cfg.Namespace="sharko" from ReinitializeFromConnection (router.go:332-343)
-//   and look for cluster Secrets in the "sharko" namespace instead of
-//   "argocd". The cluster Secret lives in "argocd" (that's where ArgoCD
-//   itself writes it on the kubeconfig register flow), so GetCredentials
-//   would return "secret not found" and POST /clusters/{name}/test would
-//   surface a 503 with error_code=ERR_AUTH or a "Fetch credentials" step
-//   in status=fail.
+//	Before the fix, ArgoCDProvider inherited cfg.Namespace from the
+//	ProviderConfig the user had previously set for the k8s-secrets backend.
+//	When the operator switched the Type dropdown to "argocd" — but did NOT
+//	manually clear the Namespace field — ArgoCDProvider would receive
+//	cfg.Namespace="sharko" from ReinitializeFromConnection (router.go:332-343)
+//	and look for cluster Secrets in the "sharko" namespace instead of
+//	"argocd". The cluster Secret lives in "argocd" (that's where ArgoCD
+//	itself writes it on the kubeconfig register flow), so GetCredentials
+//	would return "secret not found" and POST /clusters/{name}/test would
+//	surface a 503 with error_code=ERR_AUTH or a "Fetch credentials" step
+//	in status=fail.
 //
-//   The V125-1-10.8 fix (resolveArgoCDNamespace in
-//   internal/providers/argocd_provider.go:112-126) hardcodes the resolved
-//   namespace to SHARKO_ARGOCD_NAMESPACE env or "argocd" regardless of what
-//   cfg.Namespace says, and emits a one-shot WARN log when the cross-
-//   contamination is detected. With the fix in place, this test passes
-//   green; without it, the cluster test 503s.
+//	The V125-1-10.8 fix (resolveArgoCDNamespace in
+//	internal/providers/argocd_provider.go:112-126) hardcodes the resolved
+//	namespace to SHARKO_ARGOCD_NAMESPACE env or "argocd" regardless of what
+//	cfg.Namespace says, and emits a one-shot WARN log when the cross-
+//	contamination is detected. With the fix in place, this test passes
+//	green; without it, the cluster test 503s.
 //
 // Why SharkoModeHelm is required:
 //
-//   This test exercises the full ReinitializeFromConnection → providers.New
-//   → NewArgoCDProvider → resolveArgoCDNamespace path against a real
-//   in-cluster K8s API. SharkoModeInProcess can't satisfy this surface
-//   because (a) the in-process boot path doesn't wire a credentials provider
-//   at all (sharko.go:236-275 — no providers.New call) and (b) the
-//   ArgoCDProvider's K8s client construction goes through
-//   rest.InClusterConfig which only succeeds inside a pod. Helm mode boots
-//   Sharko as a real pod with a real ServiceAccount so the provider can
-//   list/get Secrets in the argocd namespace via its bound ClusterRole +
-//   argocd-secrets Role (charts/sharko/templates/rbac.yaml).
+//	This test exercises the full ReinitializeFromConnection → providers.New
+//	→ NewArgoCDProvider → resolveArgoCDNamespace path against a real
+//	in-cluster K8s API. SharkoModeInProcess can't satisfy this surface
+//	because (a) the in-process boot path doesn't wire a credentials provider
+//	at all (sharko.go:236-275 — no providers.New call) and (b) the
+//	ArgoCDProvider's K8s client construction goes through
+//	rest.InClusterConfig which only succeeds inside a pod. Helm mode boots
+//	Sharko as a real pod with a real ServiceAccount so the provider can
+//	list/get Secrets in the argocd namespace via its bound ClusterRole +
+//	argocd-secrets Role (charts/sharko/templates/rbac.yaml).
 //
 // Skip-graceful behaviour mirrors cluster_test_argocd_provider_test.go:
 //   - Missing kind/kubectl/docker/helm → t.Skip with the standard diagnostic

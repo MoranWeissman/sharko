@@ -123,4 +123,3 @@ func randPassword() string {
 	}
 	return hex.EncodeToString(buf)
 }
-

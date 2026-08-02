@@ -21,16 +21,16 @@ import (
 // TestAddonAdmin covers the 10 custom-addon admin endpoints (12 minus
 // the two addon-secrets ones that get their own top-level test below):
 //
-//   POST   /api/v1/addons                       (write — needs ArgoCD)
-//   GET    /api/v1/addons/{name}                (read — needs ArgoCD)
-//   PATCH  /api/v1/addons/{name}                (write — needs ArgoCD)
-//   DELETE /api/v1/addons/{name}                (write — needs ArgoCD)
-//   GET    /api/v1/addons/list                  (read — git-only, happy path)
-//   GET    /api/v1/addons/catalog               (read — needs ArgoCD)
-//   GET    /api/v1/addons/{name}/changelog      (read — git + helm registry)
-//   GET    /api/v1/addons/version-matrix        (read — needs ArgoCD)
-//   POST   /api/v1/addons/unwrap-globals        (write — needs ArgoCD)
-//   POST   /api/v1/addons/upgrade-batch         (write — needs ArgoCD)
+//	POST   /api/v1/addons                       (write — needs ArgoCD)
+//	GET    /api/v1/addons/{name}                (read — needs ArgoCD)
+//	PATCH  /api/v1/addons/{name}                (write — needs ArgoCD)
+//	DELETE /api/v1/addons/{name}                (write — needs ArgoCD)
+//	GET    /api/v1/addons/list                  (read — git-only, happy path)
+//	GET    /api/v1/addons/catalog               (read — needs ArgoCD)
+//	GET    /api/v1/addons/{name}/changelog      (read — git + helm registry)
+//	GET    /api/v1/addons/version-matrix        (read — needs ArgoCD)
+//	POST   /api/v1/addons/unwrap-globals        (write — needs ArgoCD)
+//	POST   /api/v1/addons/upgrade-batch         (write — needs ArgoCD)
 //
 // IMPORTANT: the in-process harness (StartSharko + SetDemoGitProvider)
 // does NOT seed an active ArgoCD connection. Eight of the ten endpoints
@@ -257,9 +257,10 @@ func TestAddonAdmin(t *testing.T) {
 // duplicate-name semantics and the 404-on-missing path.
 //
 // Endpoints:
-//   GET    /api/v1/addon-secrets                — list
-//   POST   /api/v1/addon-secrets                — create / overwrite
-//   DELETE /api/v1/addon-secrets/{addon}        — remove
+//
+//	GET    /api/v1/addon-secrets                — list
+//	POST   /api/v1/addon-secrets                — create / overwrite
+//	DELETE /api/v1/addon-secrets/{addon}        — remove
 //
 // RBAC: addon-secret.list = viewer+; addon-secret.create/delete = admin.
 // The bootstrap admin from StartSharko has the admin role, so all three

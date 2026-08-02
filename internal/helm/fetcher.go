@@ -57,8 +57,8 @@ type chartMetadata struct {
 // Includes in-memory caching to avoid redundant downloads.
 type Fetcher struct {
 	client      *http.Client
-	indexCache  map[string]*repoIndex  // key: repoURL
-	valuesCache map[string]string      // key: repoURL/chart/version
+	indexCache  map[string]*repoIndex     // key: repoURL
+	valuesCache map[string]string         // key: repoURL/chart/version
 	chartCache  map[string]*chartMetadata // key: repoURL/chart/version
 }
 

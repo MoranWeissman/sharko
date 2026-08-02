@@ -12,9 +12,9 @@ import (
 // pattern families. If you add a new pattern, add a case here.
 func TestScanForSecrets_HitsEachPattern(t *testing.T) {
 	cases := []struct {
-		name    string
-		input   string
-		want    string // expected SecretMatch.Pattern
+		name  string
+		input string
+		want  string // expected SecretMatch.Pattern
 	}{
 		{name: "AWS access key", input: "awsKey: AKIAIOSFODNN7EXAMPLE", want: "AWS access key"},
 		{name: "AWS session key", input: "awsSession: ASIA0123456789ABCDEF", want: "AWS access key"},

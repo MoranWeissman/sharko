@@ -60,8 +60,8 @@ func (f *orphanFakeGP) ListDirectory(_ context.Context, _, _ string) ([]string, 
 func (f *orphanFakeGP) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
 	return f.prs, nil
 }
-func (f *orphanFakeGP) TestConnection(_ context.Context) error                  { return nil }
-func (f *orphanFakeGP) CreateBranch(_ context.Context, _, _ string) error       { return nil }
+func (f *orphanFakeGP) TestConnection(_ context.Context) error            { return nil }
+func (f *orphanFakeGP) CreateBranch(_ context.Context, _, _ string) error { return nil }
 func (f *orphanFakeGP) CreateOrUpdateFile(_ context.Context, _ string, _ []byte, _, _ string) error {
 	return nil
 }
@@ -72,9 +72,9 @@ func (f *orphanFakeGP) DeleteFile(_ context.Context, _, _, _ string) error { ret
 func (f *orphanFakeGP) CreatePullRequest(_ context.Context, _, _, _, _ string) (*gitprovider.PullRequest, error) {
 	return nil, nil
 }
-func (f *orphanFakeGP) MergePullRequest(_ context.Context, _ int) error            { return nil }
+func (f *orphanFakeGP) MergePullRequest(_ context.Context, _ int) error               { return nil }
 func (f *orphanFakeGP) GetPullRequestStatus(_ context.Context, _ int) (string, error) { return "", nil }
-func (f *orphanFakeGP) DeleteBranch(_ context.Context, _ string) error             { return nil }
+func (f *orphanFakeGP) DeleteBranch(_ context.Context, _ string) error                { return nil }
 
 var _ gitprovider.GitProvider = (*orphanFakeGP)(nil)
 
@@ -87,9 +87,9 @@ var _ gitprovider.GitProvider = (*orphanFakeGP)(nil)
 // deleteCalls counts DELETE requests so tests can assert "delete fired".
 type stubArgoSrv struct {
 	*httptest.Server
-	deleteCalls    *int32
-	deleteStatus   int
-	deleteCallURL  *atomic.Value // last DELETE path
+	deleteCalls   *int32
+	deleteStatus  int
+	deleteCallURL *atomic.Value // last DELETE path
 }
 
 func newStubArgoSrv(t *testing.T, clusters []map[string]interface{}, deleteStatus int) *stubArgoSrv {

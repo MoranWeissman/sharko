@@ -18,10 +18,10 @@ func TestGiteaProviderInterfaceAssertion(t *testing.T) {
 // TestGiteaProviderGetFileContent tests the GetFileContent method.
 func TestGiteaProviderGetFileContent(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		body       []byte
-		wantErr    bool
+		name         string
+		statusCode   int
+		body         []byte
+		wantErr      bool
 		wantNotFound bool
 	}{
 		{
@@ -31,17 +31,17 @@ func TestGiteaProviderGetFileContent(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name:       "404_not_found",
-			statusCode: 404,
-			body:       []byte(`{"message":"Not Found"}`),
-			wantErr:    true,
+			name:         "404_not_found",
+			statusCode:   404,
+			body:         []byte(`{"message":"Not Found"}`),
+			wantErr:      true,
 			wantNotFound: true,
 		},
 		{
-			name:       "500_server_error",
-			statusCode: 500,
-			body:       []byte(`{"message":"Internal Server Error"}`),
-			wantErr:    true,
+			name:         "500_server_error",
+			statusCode:   500,
+			body:         []byte(`{"message":"Internal Server Error"}`),
+			wantErr:      true,
 			wantNotFound: false,
 		},
 	}
@@ -322,12 +322,12 @@ func TestGiteaProviderListPullRequestsMergedStatus(t *testing.T) {
 		mergedAt := "2026-07-30T12:00:00Z"
 		response := []map[string]interface{}{
 			{
-				"number":     1,
-				"title":      "Closed and merged PR",
-				"state":      "closed",
-				"merged":     true,
-				"merged_at":  mergedAt,
-				"html_url":   "https://gitea.example.com/testowner/testrepo/pulls/1",
+				"number":    1,
+				"title":     "Closed and merged PR",
+				"state":     "closed",
+				"merged":    true,
+				"merged_at": mergedAt,
+				"html_url":  "https://gitea.example.com/testowner/testrepo/pulls/1",
 			},
 			{
 				"number":   2,
@@ -507,13 +507,13 @@ func TestGiteaProviderWritePath(t *testing.T) {
 		// GetPullRequest: GET /api/v1/repos/{owner}/{repo}/pulls/{index}
 		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42" {
 			pr := map[string]interface{}{
-				"id":          1,
-				"number":      42,
-				"title":       "Test PR",
-				"state":       "open",
-				"merged":      false,
-				"has_merged":  false,
-				"mergeable":   true,
+				"id":         1,
+				"number":     42,
+				"title":      "Test PR",
+				"state":      "open",
+				"merged":     false,
+				"has_merged": false,
+				"mergeable":  true,
 			}
 			w.WriteHeader(200)
 			json.NewEncoder(w).Encode(pr)

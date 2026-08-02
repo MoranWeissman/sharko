@@ -652,9 +652,19 @@ export function MarketplaceAddonDetail({
       // `merged` (load-bearing — 61.3's "not really in git" fix):
       //   - merged  → the addon really landed in git.
       //   - opened  → a PR is awaiting review; don't imply it's applied yet.
+      // resolved_versions names the pin that actually landed in
+      // catalog.yaml — the version the caller sent, or the newest one
+      // Sharko filled in when the request left it blank. Echo it in the
+      // success toast so "added" always says what was added (PR #658
+      // follow-up).
+      const resolvedVersion = res.resolved_versions?.[entry.name]
+      const addedLabel = resolvedVersion
+        ? `${entry.name} ${resolvedVersion}`
+        : entry.name
+
       if (wasMerged) {
         setSubmitPhase('merged')
-        showToast(`${entry.name} added to your catalog`, 'success')
+        showToast(`${addedLabel} added to your catalog`, 'success')
       } else if (url) {
         setSubmitPhase('opened')
         showToast(`${label} opened — merge to apply`, 'success')

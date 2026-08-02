@@ -89,8 +89,12 @@ direct-seed path (a `managed-clusters.yaml` baked into the GitFake Pod at
 startup) instead of the real-doors flow above, because GitFake
 (`tests/e2e/harness/gitfake`) only implements the git smart-HTTP protocol —
 it has no PR/merge REST API for the playground to drive the way it drives
-Gitea. Gitea is the default backend specifically because it's a real git
-server that supports the honest flow end-to-end.
+Gitea. **Gitea is the supported local playground flow.** GitFake mode does
+not exercise the seed-bootstrap PR, the catalog approval gate, or any
+PR-merge/reconcile path — it is a leftover from before the real-doors flow
+existed, kept only because it is still cheap to run, not as a second
+maintained way to demo the playground. If you are not intentionally testing
+against GitFake, don't set `PLAYGROUND_GIT_BACKEND=gitfake`.
 
 **Override spoke count:** `PLAYGROUND_SPOKES=3 make playground-up` to add
 more spokes.

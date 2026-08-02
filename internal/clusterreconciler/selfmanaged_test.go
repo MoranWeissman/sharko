@@ -34,9 +34,9 @@ import (
 // envelopedManagedClustersWithModes renders an envelope where each entry
 // may carry connectionManagedBy + addon labels.
 type testClusterEntry struct {
-	Name    string
-	Mode    string // "" = omit (sharko default)
-	Labels  map[string]string
+	Name   string
+	Mode   string // "" = omit (sharko default)
+	Labels map[string]string
 }
 
 func envelopedWithModes(entries ...testClusterEntry) []byte {

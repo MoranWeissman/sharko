@@ -97,12 +97,12 @@ func TestEmitWarning_NilEmitter(t *testing.T) {
 func assertNoSecretMaterial(t *testing.T, message string) {
 	t.Helper()
 	banned := []string{
-		"sharko_",        // API key prefix
-		"BEGIN ",         // PEM blocks
-		"eyJ",            // JWT / base64 header
-		"AKIA",           // AWS access key id prefix
-		"kubeconfig",     // kubeconfig material
-		"704909879244",   // the forbidden real account id
+		"sharko_",      // API key prefix
+		"BEGIN ",       // PEM blocks
+		"eyJ",          // JWT / base64 header
+		"AKIA",         // AWS access key id prefix
+		"kubeconfig",   // kubeconfig material
+		"704909879244", // the forbidden real account id
 	}
 	for _, b := range banned {
 		if strings.Contains(message, b) {

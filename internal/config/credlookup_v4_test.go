@@ -63,7 +63,7 @@ func TestResolveCredentialRouting_V4Fallback(t *testing.T) {
 func TestResolveCredentialRouting_V3Unchanged(t *testing.T) {
 	reader := &pathRoutedReader{files: map[string][]byte{
 		DefaultManagedClustersPath: []byte(credLookupTestYAML),
-		V4ManagedClustersPath:          []byte(v4ConnectionsYAML),
+		V4ManagedClustersPath:      []byte(v4ConnectionsYAML),
 	}}
 
 	key, _, _ := ResolveCredentialRouting(context.Background(), reader, "", "main", "moran")

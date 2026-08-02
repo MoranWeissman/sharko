@@ -174,7 +174,7 @@ func TestParseRepoURL_ExplicitFieldsOverride(t *testing.T) {
 				Repo:    "sharko-addons",
 			},
 			wantErr:   false,
-			wantOwner: "sharko-e2e",  // explicit field preserved
+			wantOwner: "sharko-e2e",    // explicit field preserved
 			wantRepo:  "sharko-addons", // explicit field preserved
 		},
 		{

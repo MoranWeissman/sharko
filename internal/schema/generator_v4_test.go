@@ -19,16 +19,16 @@ import (
 // imported, so each test file that needs to reflect an envelope
 // declares its own structurally-identical wrapper.
 type clusterAddonsDoc struct {
-	APIVersion string                       `json:"apiVersion"`
-	Kind       string                       `json:"kind"`
-	Metadata   sharkoschema.Metadata        `json:"metadata"`
+	APIVersion string                   `json:"apiVersion"`
+	Kind       string                   `json:"kind"`
+	Metadata   sharkoschema.Metadata    `json:"metadata"`
 	Spec       models.ClusterAddonsSpec `json:"spec"`
 }
 
 type addonCatalogDeltaDoc struct {
-	APIVersion string                       `json:"apiVersion"`
-	Kind       string                       `json:"kind"`
-	Metadata   sharkoschema.Metadata        `json:"metadata"`
+	APIVersion string                  `json:"apiVersion"`
+	Kind       string                  `json:"kind"`
+	Metadata   sharkoschema.Metadata   `json:"metadata"`
 	Spec       config.AddonCatalogSpec `json:"spec"`
 }
 

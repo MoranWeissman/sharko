@@ -27,8 +27,8 @@ import (
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/operations"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
-	"github.com/MoranWeissman/sharko/tests/e2e/harness"
 	"github.com/MoranWeissman/sharko/templates"
+	"github.com/MoranWeissman/sharko/tests/e2e/harness"
 )
 
 // ---------------------------------------------------------------------------

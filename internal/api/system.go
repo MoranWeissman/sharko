@@ -311,9 +311,10 @@ func (s *Server) providerDisplay() (typ, region, prefix string) {
 
 // addonSecretBackendStatus returns (status, message) indicating whether the
 // addon-secret backend is properly configured (V3-P1.1). Valid statuses:
-//   "ok"              — addon-secret backend Type is valid (not empty, not "argocd")
-//   "missing"         — no addon-secret backend configured (Type is empty)
-//   "invalid_argocd"  — Type is "argocd" (rejected by NewAddonSecretProvider)
+//
+//	"ok"              — addon-secret backend Type is valid (not empty, not "argocd")
+//	"missing"         — no addon-secret backend configured (Type is empty)
+//	"invalid_argocd"  — Type is "argocd" (rejected by NewAddonSecretProvider)
 //
 // The UI (story 1.2) uses this to require an explicit addon-secret provider
 // choice when the user picks "argocd" for cluster-credentials.

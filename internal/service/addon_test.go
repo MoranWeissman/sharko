@@ -638,10 +638,10 @@ func TestGetVersionMatrix_V4Repo(t *testing.T) {
 
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
-			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-			"cluster-addons/prod-eu.yaml":      prodEU,
-			"cluster-addons/staging-us.yaml":   stagingUS,
-			config.AddonCatalogPath: delta,
+			orchestrator.EnginePinPath:       []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			"cluster-addons/prod-eu.yaml":    prodEU,
+			"cluster-addons/staging-us.yaml": stagingUS,
+			config.AddonCatalogPath:          delta,
 			// v3 files are ALSO present, to prove they are ignored once the
 			// engine pin routes this to the v4 branch.
 			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-only-cluster\n    labels: {}\n"),
@@ -788,9 +788,9 @@ func TestGetVersionMatrix_V4Repo_HonorsBaseBranch(t *testing.T) {
 	defer ts.Close()
 
 	gp := newRefRecordingGitProvider(map[string][]byte{
-		orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-		"cluster-addons/prod-eu.yaml":      prodEU,
-		config.AddonCatalogPath: delta,
+		orchestrator.EnginePinPath:    []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+		"cluster-addons/prod-eu.yaml": prodEU,
+		config.AddonCatalogPath:       delta,
 	})
 	ac := argocd.NewClient(ts.URL, "fake-token", false)
 	svc := NewAddonService("")
@@ -894,10 +894,10 @@ func TestGetCatalog_V4Repo(t *testing.T) {
 
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
-			orchestrator.EnginePinPath:   []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-			"cluster-addons/prod-eu.yaml":      prodEU,
-			"cluster-addons/staging-us.yaml":   stagingUS,
-			config.AddonCatalogPath: delta,
+			orchestrator.EnginePinPath:       []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			"cluster-addons/prod-eu.yaml":    prodEU,
+			"cluster-addons/staging-us.yaml": stagingUS,
+			config.AddonCatalogPath:          delta,
 			// v3 files are ALSO present, to prove they are ignored once the
 			// engine pin routes this to the v4 branch.
 			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-only-cluster\n    labels: {}\n"),
@@ -1021,7 +1021,7 @@ func TestListAddons_V4Repo(t *testing.T) {
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
 			orchestrator.EnginePinPath:          []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
-			config.AddonCatalogPath:        delta,
+			config.AddonCatalogPath:             delta,
 			"configuration/addons-catalog.yaml": []byte("applicationsets:\n  - name: v3-only-addon\n"),
 		},
 	}

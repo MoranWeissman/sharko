@@ -85,9 +85,9 @@ func DiscoverServerURL(namespace string) string {
 // commonArgoServiceNames lists well-known ArgoCD server service names in priority order.
 // Different Helm releases produce different names depending on the release name used.
 var commonArgoServiceNames = []string{
-	"argocd-server",           // default Helm chart (release name: argocd)
-	"argo-cd-argocd-server",   // release name: argo-cd
-	"argocd-argocd-server",    // release name: argocd (some versions)
+	"argocd-server",         // default Helm chart (release name: argocd)
+	"argo-cd-argocd-server", // release name: argo-cd
+	"argocd-argocd-server",  // release name: argocd (some versions)
 }
 
 // discoverArgocdServer tries to find the ArgoCD server service in the given namespace.
@@ -442,11 +442,11 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 // argocdClusterItem mirrors the nested JSON structure returned by the ArgoCD
 // clusters API.
 type argocdClusterItem struct {
-	Name       string `json:"name"`
-	Server     string `json:"server"`
-	ServerVersion string `json:"serverVersion"`
-	Namespaces []string `json:"namespaces"`
-	Info       struct {
+	Name          string   `json:"name"`
+	Server        string   `json:"server"`
+	ServerVersion string   `json:"serverVersion"`
+	Namespaces    []string `json:"namespaces"`
+	Info          struct {
 		ConnectionState struct {
 			Status  string `json:"status"`
 			Message string `json:"message"`
@@ -482,7 +482,7 @@ type argocdApplicationItem struct {
 	Metadata struct {
 		Name              string `json:"name"`
 		Namespace         string `json:"namespace"`
-		CreationTimestamp  string `json:"creationTimestamp"`
+		CreationTimestamp string `json:"creationTimestamp"`
 	} `json:"metadata"`
 	Spec struct {
 		Project string `json:"project"`
@@ -534,10 +534,10 @@ type argocdApplicationItem struct {
 			} `json:"syncResult"`
 		} `json:"operationState"`
 		History []struct {
-			ID              int    `json:"id"`
-			DeployedAt      string `json:"deployedAt"`
-			DeployStartedAt string `json:"deployStartedAt"`
-			Revision        string `json:"revision"`
+			ID              int      `json:"id"`
+			DeployedAt      string   `json:"deployedAt"`
+			DeployStartedAt string   `json:"deployStartedAt"`
+			Revision        string   `json:"revision"`
 			Revisions       []string `json:"revisions"`
 			Source          *struct {
 				RepoURL        string `json:"repoURL"`

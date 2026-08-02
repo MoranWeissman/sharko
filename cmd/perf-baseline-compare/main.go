@@ -3,37 +3,37 @@
 //
 // MODES (selected via -mode flag, default "compare"):
 //
-//  - compare (DEFAULT): reads captured timings + canonical baselines
-//    YAML, computes p50/p95/p99 per (path, phase), and exits non-zero
-//    if any phase's measured p99 regresses by more than the configured
-//    threshold (default 20%) over the recorded baseline p99. This is
-//    the per-PR gate invoked by .github/workflows/perf-regression.yml.
+//   - compare (DEFAULT): reads captured timings + canonical baselines
+//     YAML, computes p50/p95/p99 per (path, phase), and exits non-zero
+//     if any phase's measured p99 regresses by more than the configured
+//     threshold (default 20%) over the recorded baseline p99. This is
+//     the per-PR gate invoked by .github/workflows/perf-regression.yml.
 //
-//  - refresh: reads captured timings, computes p50/p95/p99 per
-//    (path, phase), and REWRITES the canonical
-//    docs/site/operator/perf-baselines.yaml in place. The companion
-//    Markdown file (perf-baselines.md) is human-curated prose; by
-//    default the refresh mode does NOT touch it. When the caller
-//    opts in via -markdown <path>, the refresh ALSO rewrites the
-//    per-path tables and the measurement-environment block in the
-//    markdown so the two files don't drift. All prose between tables
-//    (skip notes, per-path commentary, refreshing instructions,
-//    downstream-consumer guidance) is preserved verbatim. Invoked by
-//    .github/workflows/perf-baseline-refresh.yml (workflow_dispatch
-//    only — NEVER auto on merge: drift would be invisible).
+//   - refresh: reads captured timings, computes p50/p95/p99 per
+//     (path, phase), and REWRITES the canonical
+//     docs/site/operator/perf-baselines.yaml in place. The companion
+//     Markdown file (perf-baselines.md) is human-curated prose; by
+//     default the refresh mode does NOT touch it. When the caller
+//     opts in via -markdown <path>, the refresh ALSO rewrites the
+//     per-path tables and the measurement-environment block in the
+//     markdown so the two files don't drift. All prose between tables
+//     (skip notes, per-path commentary, refreshing instructions,
+//     downstream-consumer guidance) is preserved verbatim. Invoked by
+//     .github/workflows/perf-baseline-refresh.yml (workflow_dispatch
+//     only — NEVER auto on merge: drift would be invisible).
 //
-//    When -delta-out <path> is also set, refresh writes a tiny
-//    Markdown summary file with one row per (path, phase) showing
-//    old p99 → new p99 → delta %. The refresh workflow embeds this
-//    file in the PR body so a reviewer can see what changed at a
-//    glance without diffing the full YAML/MD.
+//     When -delta-out <path> is also set, refresh writes a tiny
+//     Markdown summary file with one row per (path, phase) showing
+//     old p99 → new p99 → delta %. The refresh workflow embeds this
+//     file in the PR body so a reviewer can see what changed at a
+//     glance without diffing the full YAML/MD.
 //
 // COMPARE-MODE input (file paths via flags):
 //
 //  1. A captured timing JSON-Lines file (produced by the perf harness
 //     emitting PhaseTimer lines — see tests/e2e/harness/timing.go).
 //     Each line shape:
-//       {"path":"...", "phase":"...", "duration_ms": <float>, "iteration": <int>, "ts_ms": <int>}
+//     {"path":"...", "phase":"...", "duration_ms": <float>, "iteration": <int>, "ts_ms": <int>}
 //
 //  2. The canonical baselines YAML file (docs/site/operator/perf-baselines.yaml)
 //     produced by the V2-1.2 baselines run + maintained via the
@@ -135,8 +135,8 @@ type timingLine struct {
 // in go.mod (used by every internal/models/*.go), so this introduces
 // zero new module deps.
 type baselinesFile struct {
-	Environment baselineEnv               `yaml:"environment"`
-	Paths       map[string]baselinePath   `yaml:"paths"`
+	Environment baselineEnv             `yaml:"environment"`
+	Paths       map[string]baselinePath `yaml:"paths"`
 }
 
 type baselineEnv struct {
@@ -375,13 +375,13 @@ func quantile(sorted []float64, q float64) float64 {
 // Status rules:
 //   - SKIP    — phase in baselines but no samples captured (kind absent etc.)
 //   - MISSING — phase in baselines but path entirely absent from captures
-//                (functionally same as SKIP but flagged distinctly so
-//                the operator can spot a workflow misconfig vs an
-//                expected skip-graceful)
+//     (functionally same as SKIP but flagged distinctly so
+//     the operator can spot a workflow misconfig vs an
+//     expected skip-graceful)
 //   - OK      — measured p99 within threshold of baseline p99
 //   - REGRESS — measured p99 exceeds baseline p99 by more than threshold
 //   - NEW     — phase present in captures but missing from baselines
-//                (does NOT fail the gate; needs baseline refresh)
+//     (does NOT fail the gate; needs baseline refresh)
 func compare(bf *baselinesFile, measured map[string]map[string]measuredPhase, threshold float64) []verdict {
 	var verdicts []verdict
 
@@ -550,38 +550,38 @@ var _ = io.EOF
 //
 // Behaviour:
 //
-//  - The existing baselines YAML is loaded first to preserve the
-//    runner label + sharko version when the corresponding flags are
-//    blank (so a local dry-run produces a sensible file). The leading
-//    comment block in the YAML is preserved verbatim.
+//   - The existing baselines YAML is loaded first to preserve the
+//     runner label + sharko version when the corresponding flags are
+//     blank (so a local dry-run produces a sensible file). The leading
+//     comment block in the YAML is preserved verbatim.
 //
-//  - The phase set in the YAML is the LOCKED canonical list (per
-//    tests/e2e/harness/phases.go). Phases captured but not present in
-//    the YAML are dropped silently — a NEW phase needs a code change
-//    in phases.go and a corresponding initial entry in the YAML BEFORE
-//    the refresh picks it up. This guards against a perf run on a
-//    branch that added a phase silently introducing it.
+//   - The phase set in the YAML is the LOCKED canonical list (per
+//     tests/e2e/harness/phases.go). Phases captured but not present in
+//     the YAML are dropped silently — a NEW phase needs a code change
+//     in phases.go and a corresponding initial entry in the YAML BEFORE
+//     the refresh picks it up. This guards against a perf run on a
+//     branch that added a phase silently introducing it.
 //
-//  - When a phase from the YAML has zero captures (e.g. the kind-backed
-//    cluster_registration path skipped because the runner didn't have
-//    docker), the EXISTING baseline numbers are preserved — refresh
-//    must never wipe a baseline due to a skip-graceful condition.
+//   - When a phase from the YAML has zero captures (e.g. the kind-backed
+//     cluster_registration path skipped because the runner didn't have
+//     docker), the EXISTING baseline numbers are preserved — refresh
+//     must never wipe a baseline due to a skip-graceful condition.
 //
-//  - When markdownPath is non-empty, the human-facing Markdown sibling
-//    is ALSO rewritten: per-path tables get the new numbers, and the
-//    measurement-environment table block gets the new date + sharko
-//    version + runner. All prose AROUND the tables (skip notes,
-//    per-path commentary, refreshing instructions, downstream-consumer
-//    guidance) is preserved verbatim. The refresh workflow opts in;
-//    a bare `perf-baseline-compare -mode refresh` invocation still
-//    only touches the YAML (preserving the Part A invariant that the
-//    Markdown is human-curated unless the caller explicitly asks).
+//   - When markdownPath is non-empty, the human-facing Markdown sibling
+//     is ALSO rewritten: per-path tables get the new numbers, and the
+//     measurement-environment table block gets the new date + sharko
+//     version + runner. All prose AROUND the tables (skip notes,
+//     per-path commentary, refreshing instructions, downstream-consumer
+//     guidance) is preserved verbatim. The refresh workflow opts in;
+//     a bare `perf-baseline-compare -mode refresh` invocation still
+//     only touches the YAML (preserving the Part A invariant that the
+//     Markdown is human-curated unless the caller explicitly asks).
 //
-//  - When deltaOutPath is non-empty, a tiny Markdown summary is
-//    written with one row per (path, phase): old p99 → new p99 →
-//    delta %. The refresh workflow embeds this in the chore-PR body
-//    so a reviewer can see what changed without diffing the full
-//    YAML/MD.
+//   - When deltaOutPath is non-empty, a tiny Markdown summary is
+//     written with one row per (path, phase): old p99 → new p99 →
+//     delta %. The refresh workflow embeds this in the chore-PR body
+//     so a reviewer can see what changed without diffing the full
+//     YAML/MD.
 func refresh(timingsPath, baselinesPath, markdownPath, sharkoVersion, runnerLabel, deltaOutPath string) error {
 	measured, err := loadMeasured(timingsPath)
 	if err != nil {
@@ -781,7 +781,7 @@ func writeBaselinesMarkdown(path string, oldBaselines, fresh *baselinesFile) err
 }
 
 // markdownPathRE matches a `###` heading that contains a backtick-
-// wrapped path id, e.g. `### 1. \`cluster_registration\``. The capture
+// wrapped path id, e.g. `### 1. \`cluster_registration\“. The capture
 // group returns the path id (without backticks).
 var markdownPathRE = regexp.MustCompile("`([a-z][a-z0-9_]+)`")
 
@@ -1091,4 +1091,3 @@ func writeDeltaSummary(path string, oldBaselines, fresh *baselinesFile) error {
 
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
-

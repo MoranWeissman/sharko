@@ -399,6 +399,13 @@
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "The connected repo uses the v4 format — use POST /addons/{name}/upgrade-clusters instead",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Gateway error",
                         "schema": {
@@ -801,6 +808,13 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "The connected repo uses the v4 format — use POST /addons/{name}/upgrade-clusters instead",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -9935,6 +9949,13 @@
                 },
                 "pr_url": {
                     "type": "string"
+                },
+                "resolved_versions": {
+                    "description": "ResolvedVersions maps each added addon name to the version that\nactually landed in catalog.yaml — the caller's own version when one\nwas sent, or the version Sharko filled in when a from_marketplace\nentry arrived with none (buildCatalogEntry's newest-known-version\nfallback). Before this field existed, a Marketplace add with no\nversion sent had no way to tell the caller which pin it committed —\nthe diff had it, but the response only ever named the addon (PR #658\nfollow-up: \"add response carries names not the resolved version pin\").\nEmpty on a dry run's preview branch — nothing has been resolved into\na durable result at that point, and DryRunResult.FilesToWrite already\nshows the pin in the diff.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 },
                 "values_file": {
                     "type": "string"

@@ -1143,4 +1143,3 @@ func copySnapshot(in *SourceSnapshot) *SourceSnapshot {
 	}
 	return &out
 }
-

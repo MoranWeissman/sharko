@@ -321,10 +321,10 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"error": "destructive operation requires ?confirm=true",
 			"impact": map[string]interface{}{
-				"addon":                        name,
-				"affected_clusters":            affectedClusters,
-				"total_deployments_to_remove":  len(affectedClusters),
-				"warning":                      "ArgoCD will cascade-delete " + name + " from all affected clusters when the ApplicationSet entry is removed.",
+				"addon":                       name,
+				"affected_clusters":           affectedClusters,
+				"total_deployments_to_remove": len(affectedClusters),
+				"warning":                     "ArgoCD will cascade-delete " + name + " from all affected clusters when the ApplicationSet entry is removed.",
 			},
 		})
 		return

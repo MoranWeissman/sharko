@@ -26,10 +26,10 @@ import (
 func TestParseForwardingPort(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name    string
-		line    string
-		want    int
-		wantOK  bool
+		name   string
+		line   string
+		want   int
+		wantOK bool
 	}{
 		{
 			name:   "ipv4 forwarding line",

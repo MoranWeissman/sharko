@@ -63,9 +63,9 @@ type annotateAddonValuesResponse struct {
 // hard-blocks the annotate call. The matches are redacted via
 // orchestrator.SecretMatch.Field — no real secret values appear.
 type aiAnnotateBlockedResponse struct {
-	Code    string                       `json:"code"`
-	Message string                       `json:"message"`
-	Matches []orchestrator.SecretMatch   `json:"matches"`
+	Code    string                     `json:"code"`
+	Message string                     `json:"message"`
+	Matches []orchestrator.SecretMatch `json:"matches"`
 }
 
 // handleAnnotateAddonValues godoc
@@ -319,10 +319,10 @@ func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) 
 	if header.AIOptOut == req.OptOut {
 		// Idempotent — same target state. Return 200 with a no-op marker.
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status":   "noop",
-			"opt_out":  req.OptOut,
-			"addon":    name,
-			"message":  fmt.Sprintf("addon already %s of AI annotation", optOutLabel(req.OptOut)),
+			"status":  "noop",
+			"opt_out": req.OptOut,
+			"addon":   name,
+			"message": fmt.Sprintf("addon already %s of AI annotation", optOutLabel(req.OptOut)),
 		})
 		return
 	}
@@ -363,12 +363,12 @@ func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) 
 		Detail:   fmt.Sprintf("opt_out=%v", req.OptOut),
 	})
 	writeJSON(w, http.StatusOK, withAttributionWarning(map[string]interface{}{
-		"status":   "ok",
-		"opt_out":  req.OptOut,
-		"addon":    name,
-		"pr_url":   safePRURL(result),
-		"pr_id":    safePRID(result),
-		"merged":   safeMerged(result),
+		"status":  "ok",
+		"opt_out": req.OptOut,
+		"addon":   name,
+		"pr_url":  safePRURL(result),
+		"pr_id":   safePRID(result),
+		"merged":  safeMerged(result),
 	}, tokRes))
 }
 

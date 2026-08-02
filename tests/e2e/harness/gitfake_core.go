@@ -68,13 +68,13 @@ type GitFake struct {
 	// caller knows its own listen address).
 	RepoURL string
 
-	storage *memory.Storage      // in-memory git storage
-	repo    *git.Repository      // helper handle backed by storage
-	server  *httptest.Server     // HTTP wrapper (in-process mode only)
-	mu      sync.Mutex           // serialises HTTP smart-protocol requests
-	loader  server.MapLoader     // single-repo loader for transport server
-	upx     transport.Transport  // upload-pack server (clone/fetch)
-	rcv     transport.Transport  // receive-pack server (push)
+	storage *memory.Storage     // in-memory git storage
+	repo    *git.Repository     // helper handle backed by storage
+	server  *httptest.Server    // HTTP wrapper (in-process mode only)
+	mu      sync.Mutex          // serialises HTTP smart-protocol requests
+	loader  server.MapLoader    // single-repo loader for transport server
+	upx     transport.Transport // upload-pack server (clone/fetch)
+	rcv     transport.Transport // receive-pack server (push)
 	closed  bool
 }
 

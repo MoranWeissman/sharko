@@ -32,7 +32,7 @@ subjects:
 roleRef:
   kind: ClusterRole
   name: sharko-namespace-list
-  apiGroup: rbac.authorization.k8s.io`, ),
+  apiGroup: rbac.authorization.k8s.io`),
 		}
 
 	case strings.HasPrefix(permission, "get namespace"):
@@ -59,7 +59,7 @@ subjects:
 roleRef:
   kind: ClusterRole
   name: sharko-namespace-get
-  apiGroup: rbac.authorization.k8s.io`, ),
+  apiGroup: rbac.authorization.k8s.io`),
 		}
 
 	case strings.HasPrefix(permission, "create secret"),

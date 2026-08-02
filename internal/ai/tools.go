@@ -55,7 +55,7 @@ type ToolTrackedPR struct {
 type ToolExecutor struct {
 	parser              *config.Parser
 	fetcher             *helm.Fetcher
-	gp                  gitprovider.GitProvider           // default/active connection
+	gp                  gitprovider.GitProvider // default/active connection
 	ac                  *argocd.Client
 	memory              *MemoryStore
 	connections         map[string]gitprovider.GitProvider // named connections for multi-repo operations
@@ -363,8 +363,12 @@ func (e *ToolExecutor) ExecuteTool(ctx context.Context, name string, args json.R
 	case "get_cluster_addons":
 		// Accept both cluster_name and name as parameter (LLMs sometimes use wrong key)
 		cn := params["cluster_name"]
-		if cn == "" { cn = params["name"] }
-		if cn == "" { cn = params["cluster"] }
+		if cn == "" {
+			cn = params["name"]
+		}
+		if cn == "" {
+			cn = params["cluster"]
+		}
 		return e.getClusterAddons(ctx, cn)
 	case "list_addons":
 		return e.listAddons(ctx)
@@ -374,8 +378,12 @@ func (e *ToolExecutor) ExecuteTool(ctx context.Context, name string, args json.R
 		return e.getClusterValues(ctx, params["cluster_name"])
 	case "find_addon_deployments":
 		an := params["addon_name"]
-		if an == "" { an = params["name"] }
-		if an == "" { an = params["addon"] }
+		if an == "" {
+			an = params["name"]
+		}
+		if an == "" {
+			an = params["addon"]
+		}
 		return e.findAddonDeployments(ctx, an)
 	case "get_argocd_app_health":
 		return e.getArgocdHealth(ctx, params["cluster_name"])
@@ -405,23 +413,33 @@ func (e *ToolExecutor) ExecuteTool(ctx context.Context, name string, args json.R
 		return e.getReleaseNotes(ctx, params["addon_name"], params["version"])
 	case "get_app_resources":
 		an := params["app_name"]
-		if an == "" { an = params["name"] }
+		if an == "" {
+			an = params["name"]
+		}
 		return e.getAppResources(ctx, an, params["resource_kind"])
 	case "get_app_events":
 		an := params["app_name"]
-		if an == "" { an = params["name"] }
+		if an == "" {
+			an = params["name"]
+		}
 		return e.getAppEvents(ctx, an)
 	case "get_app_details":
 		an := params["app_name"]
-		if an == "" { an = params["name"] }
+		if an == "" {
+			an = params["name"]
+		}
 		return e.getAppDetails(ctx, an)
 	case "web_search":
 		q := params["query"]
-		if q == "" { q = params["q"] }
+		if q == "" {
+			q = params["q"]
+		}
 		return e.webSearch(ctx, q)
 	case "get_pod_logs":
 		an := params["app_name"]
-		if an == "" { an = params["name"] }
+		if an == "" {
+			an = params["name"]
+		}
 		tailLines := 50
 		if t, ok := params["tail_lines"]; ok && t != "" {
 			fmt.Sscanf(t, "%d", &tailLines)
@@ -440,8 +458,12 @@ func (e *ToolExecutor) ExecuteTool(ctx context.Context, name string, args json.R
 		return "Memory system not available.", nil
 	case "get_argocd_cluster_connection":
 		cn := params["cluster_name"]
-		if cn == "" { cn = params["name"] }
-		if cn == "" { cn = params["cluster"] }
+		if cn == "" {
+			cn = params["name"]
+		}
+		if cn == "" {
+			cn = params["cluster"]
+		}
 		return e.getArgoCDClusterConnection(ctx, cn)
 	case "enable_addon":
 		return e.enableAddon(ctx, params["connection"], params["cluster_name"], params["addon_name"])
@@ -451,11 +473,15 @@ func (e *ToolExecutor) ExecuteTool(ctx context.Context, name string, args json.R
 		return e.updateAddonVersion(ctx, params["connection"], params["addon_name"], params["version"])
 	case "sync_argocd_app":
 		an := params["app_name"]
-		if an == "" { an = params["name"] }
+		if an == "" {
+			an = params["name"]
+		}
 		return e.syncArgocdApp(ctx, an)
 	case "refresh_argocd_app":
 		an := params["app_name"]
-		if an == "" { an = params["name"] }
+		if an == "" {
+			an = params["name"]
+		}
 		hard := strings.EqualFold(params["hard"], "true")
 		return e.refreshArgocdApp(ctx, an, hard)
 	default:

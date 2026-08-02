@@ -16,9 +16,9 @@ func TestMergeConnectionFromEnv_NonSecretFieldWins(t *testing.T) {
 	t.Setenv(envConnProviderRegion, "eu-west-1")
 
 	conn := &models.Connection{
-		Name: "active",
-		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "runtime-owner", Token: "ghp_secret"},
-		Argocd: models.ArgocdConfig{ServerURL: "https://old.example.com", Token: "argo_secret"},
+		Name:     "active",
+		Git:      models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "runtime-owner", Token: "ghp_secret"},
+		Argocd:   models.ArgocdConfig{ServerURL: "https://old.example.com", Token: "argo_secret"},
 		Provider: &models.ProviderConfig{Type: "aws-sm", Region: "us-east-1"},
 	}
 

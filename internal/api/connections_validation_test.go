@@ -124,5 +124,5 @@ func joinErr(a, b error) error {
 
 type errorJoin struct{ a, b error }
 
-func (e errorJoin) Error() string { return e.a.Error() + ": " + e.b.Error() }
+func (e errorJoin) Error() string   { return e.a.Error() + ": " + e.b.Error() }
 func (e errorJoin) Unwrap() []error { return []error{e.a, e.b} }

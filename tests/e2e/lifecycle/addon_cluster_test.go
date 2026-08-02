@@ -7,9 +7,9 @@
 // Story 7-1.7 covers the three argocd-touching per-cluster addon
 // endpoints:
 //
-//   POST   /api/v1/clusters/{name}/addons/{addon}   — enable
-//   DELETE /api/v1/clusters/{name}/addons/{addon}   — disable
-//   POST   /api/v1/addons/{name}/upgrade            — global upgrade
+//	POST   /api/v1/clusters/{name}/addons/{addon}   — enable
+//	DELETE /api/v1/clusters/{name}/addons/{addon}   — disable
+//	POST   /api/v1/addons/{name}/upgrade            — global upgrade
 //
 // The per-cluster values-override endpoint
 // (PUT /clusters/{cluster}/addons/{name}/values) is story 7-1.8 and is
@@ -118,19 +118,19 @@ clusters:
 // instance for speed):
 //
 //  1. EnableAddonOnTarget1     — POST .../target-1/addons/metrics-server
-//                                with dry_run=true. Asserts response
-//                                names target-1 (NOT target-2) and
-//                                previews the right files.
+//     with dry_run=true. Asserts response
+//     names target-1 (NOT target-2) and
+//     previews the right files.
 //  2. DisableAddonOnTarget1    — DELETE same path with dry_run=true.
-//                                Asserts dry-run preview shape.
+//     Asserts dry-run preview shape.
 //  3. UpgradeAddonGlobally     — POST /addons/metrics-server/upgrade
-//                                (live). Asserts the catalog version
-//                                advances AND the other addon is
-//                                untouched.
+//     (live). Asserts the catalog version
+//     advances AND the other addon is
+//     untouched.
 //  4. MultiClusterIsolation    — Drives enable on (target-1, addon X)
-//                                and (target-2, addon Y) and asserts
-//                                each response carries the right cluster
-//                                + addon, never crossed wires.
+//     and (target-2, addon Y) and asserts
+//     each response carries the right cluster
+//     + addon, never crossed wires.
 //
 // Skips when kind / docker are not on PATH. Skips with a clear
 // diagnostic when ProvisionTopology or InstallArgoCD fails (kind/docker
@@ -453,8 +453,8 @@ func registerConnection(t *testing.T, sharko *harness.Sharko, admin *harness.Cli
 func seedMockGit(t *testing.T, mock *harness.MockGitProvider) {
 	t.Helper()
 	files := map[string][]byte{
-		pathCatalog:         []byte(addonsCatalogYAML),
-		pathManagedClusters: []byte(managedClustersYAML),
+		pathCatalog:                          []byte(addonsCatalogYAML),
+		pathManagedClusters:                  []byte(managedClustersYAML),
 		pathClusterValues + "/target-1.yaml": []byte(target1ValuesYAML),
 		pathClusterValues + "/target-2.yaml": []byte(target2ValuesYAML),
 	}
@@ -490,4 +490,3 @@ func expectPathContains(t *testing.T, previews []orchestrator.FilePreview, expec
 		t.Errorf("expectPathContains: no preview path contains %q (got %s)", expectSubstr, strings.Join(paths, ", "))
 	}
 }
-

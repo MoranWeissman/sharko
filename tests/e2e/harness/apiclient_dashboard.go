@@ -369,4 +369,3 @@ func (c *Client) Config(t *testing.T) *ServerConfigResponse {
 	c.GetJSON(t, "/api/v1/config", &out)
 	return &out
 }
-

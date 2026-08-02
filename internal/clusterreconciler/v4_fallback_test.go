@@ -63,7 +63,7 @@ func TestPollOnce_V3PathPresent_NeverTriesV4Fallback(t *testing.T) {
 	v4Body := envelopedManagedClusters("v4-cluster-should-be-ignored")
 	gp := &fakeGit{files: map[string][]byte{
 		DefaultManagedClustersPath: v3Body,
-		V4ManagedClustersPath:          v4Body,
+		V4ManagedClustersPath:      v4Body,
 	}}
 	vault := &fakeVault{
 		creds: map[string]*providers.Kubeconfig{

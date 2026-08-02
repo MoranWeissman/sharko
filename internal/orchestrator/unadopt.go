@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"path"
 
-	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/logging"
 )
 
 // UnadoptCluster reverses a cluster adoption:

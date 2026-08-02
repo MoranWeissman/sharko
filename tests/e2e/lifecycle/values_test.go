@@ -5,19 +5,19 @@
 // Two top-level tests cover the 10 values-editor endpoints end-to-end
 // against an in-process Sharko + the harness MockGitProvider:
 //
-//   TestGlobalValuesEditor:
-//     - GET  /api/v1/addons/{name}/values-schema           (current + AI flags)
-//     - PUT  /api/v1/addons/{name}/values                  (commits via mock)
-//     - GET  /api/v1/addons/{name}/values/recent-prs       (lists merged PRs)
-//     - PUT  /api/v1/addons/{name}/values/ai-opt-out       (toggles directive)
-//     - POST /api/v1/addons/{name}/values/preview-merge    (additive diff)
-//     - POST /api/v1/addons/{name}/values/annotate         (AI; gated)
+//	TestGlobalValuesEditor:
+//	  - GET  /api/v1/addons/{name}/values-schema           (current + AI flags)
+//	  - PUT  /api/v1/addons/{name}/values                  (commits via mock)
+//	  - GET  /api/v1/addons/{name}/values/recent-prs       (lists merged PRs)
+//	  - PUT  /api/v1/addons/{name}/values/ai-opt-out       (toggles directive)
+//	  - POST /api/v1/addons/{name}/values/preview-merge    (additive diff)
+//	  - POST /api/v1/addons/{name}/values/annotate         (AI; gated)
 //
-//   TestPerClusterValuesOverride:
-//     - GET  /api/v1/clusters/{c}/addons/{n}/values        (empty inherit)
-//     - PUT  /api/v1/clusters/{c}/addons/{n}/values        (refused — see below)
-//     - GET  /api/v1/clusters/{c}/addons/{n}/values        (skipped, no PR)
-//     - GET  /api/v1/clusters/{c}/addons/{n}/values/recent-prs (skipped, no PR)
+//	TestPerClusterValuesOverride:
+//	  - GET  /api/v1/clusters/{c}/addons/{n}/values        (empty inherit)
+//	  - PUT  /api/v1/clusters/{c}/addons/{n}/values        (refused — see below)
+//	  - GET  /api/v1/clusters/{c}/addons/{n}/values        (skipped, no PR)
+//	  - GET  /api/v1/clusters/{c}/addons/{n}/values/recent-prs (skipped, no PR)
 //
 // TestPerClusterValuesOverride registers a real cluster in
 // managed-clusters.yaml before the PUT — which is exactly the content the

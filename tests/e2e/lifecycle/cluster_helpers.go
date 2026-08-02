@@ -222,7 +222,7 @@ func argoLogin(t *testing.T, baseURL, user, pwd string) string {
 		"password": pwd,
 	})
 	httpClient := &http.Client{
-		Timeout: 15 * time.Second,
+		Timeout:   15 * time.Second,
 		Transport: insecureTransport(),
 	}
 	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/v1/session", strings.NewReader(string(body)))

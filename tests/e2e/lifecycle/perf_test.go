@@ -96,11 +96,11 @@ func TestPerf(t *testing.T) {
 // on perfAddonCycle for the same pattern).
 //
 // Each iteration:
-//   1. ui_submit          — POST /api/v1/clusters round-trip
-//   2. argocd_secret_created — direct-register helper (mirrors what the
-//      production reconciler would do post-merge)
-//   3. argocd_application_reachable — Eventually loop until ListClusters
-//      shows the cluster as Managed=true
+//  1. ui_submit          — POST /api/v1/clusters round-trip
+//  2. argocd_secret_created — direct-register helper (mirrors what the
+//     production reconciler would do post-merge)
+//  3. argocd_application_reachable — Eventually loop until ListClusters
+//     shows the cluster as Managed=true
 //
 // SKIP-GRACEFUL when kind / docker / kubectl are not on PATH — this is
 // developer-laptop friendly. CI's e2e job (which provisions kind) is
@@ -453,4 +453,3 @@ func logBaselines(t *testing.T, path string, buf *bytes.Buffer) {
 	}
 	t.Log(sb.String())
 }
-
