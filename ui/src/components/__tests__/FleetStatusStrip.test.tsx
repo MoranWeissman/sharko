@@ -3,8 +3,8 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import {
   FleetStatusStrip,
-  summarizeUpgrades,
-  type UpgradesSummary,
+  summarizeBehindCatalog,
+  type BehindCatalogSummary,
 } from '@/components/FleetStatusStrip';
 import type { DashboardStats, VersionMatrixResponse } from '@/services/models';
 
@@ -36,7 +36,7 @@ function renderStrip(props: {
   clusters: DashboardStats['clusters'];
   appsTotal: number;
   appsHealthy: number;
-  upgrades: UpgradesSummary;
+  behindCatalog: BehindCatalogSummary;
 }) {
   return render(
     <MemoryRouter>
@@ -45,7 +45,7 @@ function renderStrip(props: {
   );
 }
 
-const noUpgradeData: UpgradesSummary = { withUpgrade: 0, checked: 0, namesWithUpgrade: [] };
+const noBehindCatalogData: BehindCatalogSummary = { behindCount: 0 };
 
 describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
   it('renders the pie + a visible legend row (label + count) per non-zero cluster state', () => {
@@ -53,7 +53,7 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
       clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
       appsTotal: 0,
       appsHealthy: 0,
-      upgrades: noUpgradeData,
+      behindCatalog: noBehindCatalogData,
     });
 
     const segment = screen.getByTestId('fleet-strip-clusters');
@@ -78,7 +78,7 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
       clusters: { total: 5, connected: 5, pending: 0, untested: 0, missing: 0, failed: 0 },
       appsTotal: 0,
       appsHealthy: 0,
-      upgrades: noUpgradeData,
+      behindCatalog: noBehindCatalogData,
     });
 
     const segment = screen.getByTestId('fleet-strip-clusters');
@@ -94,7 +94,7 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
       clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
       appsTotal: 50,
       appsHealthy: 45,
-      upgrades: noUpgradeData,
+      behindCatalog: noBehindCatalogData,
     });
 
     const clustersSegment = screen.getByTestId('fleet-strip-clusters');
@@ -111,7 +111,7 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
       clusters: { total: 1, connected: 1, pending: 0, untested: 0, missing: 0, failed: 0 },
       appsTotal: 1,
       appsHealthy: 1,
-      upgrades: noUpgradeData,
+      behindCatalog: noBehindCatalogData,
     });
 
     expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('1 cluster');
@@ -125,7 +125,7 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
       clusters: { total: 2, connected: 2, pending: 0, untested: 0, missing: 0, failed: 0 },
       appsTotal: 0,
       appsHealthy: 0,
-      upgrades: noUpgradeData,
+      behindCatalog: noBehindCatalogData,
     });
 
     expect(screen.getByTestId('fleet-strip-clusters').textContent).toContain('2 clusters');
@@ -137,7 +137,7 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
       clusters: { total: 10, connected: 8, pending: 1, untested: 0, missing: 0, failed: 1 },
       appsTotal: 50,
       appsHealthy: 45,
-      upgrades: noUpgradeData,
+      behindCatalog: noBehindCatalogData,
     });
 
     const clustersLabel = screen.getByTestId('fleet-strip-clusters').getAttribute('aria-label');
@@ -158,7 +158,7 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
       clusters: { total: 1, connected: 1, pending: 0, untested: 0, missing: 0, failed: 0 },
       appsTotal: 20,
       appsHealthy: 20,
-      upgrades: noUpgradeData,
+      behindCatalog: noBehindCatalogData,
     });
 
     const segment = screen.getByTestId('fleet-strip-applications');
@@ -173,7 +173,7 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
       clusters: { total: 3, connected: 1, pending: 0, untested: 2, missing: 0, failed: 0 },
       appsTotal: 0,
       appsHealthy: 0,
-      upgrades: noUpgradeData,
+      behindCatalog: noBehindCatalogData,
     });
 
     const segment = screen.getByTestId('fleet-strip-clusters');
@@ -197,7 +197,7 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
       clusters: { total: 1, connected: 1, pending: 0, untested: 0, missing: 0, failed: 0 },
       appsTotal: 20,
       appsHealthy: 15,
-      upgrades: noUpgradeData,
+      behindCatalog: noBehindCatalogData,
     });
 
     const segment = screen.getByTestId('fleet-strip-applications');
@@ -209,7 +209,7 @@ describe('FleetStatusStrip — labeled pie segments (walk day 3)', () => {
   });
 });
 
-describe('FleetStatusStrip — Upgrades segment is a number, not a chart (unchanged)', () => {
+describe('FleetStatusStrip — behind-catalog segment is a number, not a chart (walk day 5)', () => {
   const baseClusters: DashboardStats['clusters'] = {
     total: 1,
     connected: 1,
@@ -219,55 +219,96 @@ describe('FleetStatusStrip — Upgrades segment is a number, not a chart (unchan
     failed: 0,
   };
 
-  it('shows "N outdated" and never renders an addon name, even when the summary carries names', () => {
+  it('shows "N behind" and never renders an addon name', () => {
     renderStrip({
       clusters: baseClusters,
       appsTotal: 0,
       appsHealthy: 0,
-      upgrades: { withUpgrade: 3, checked: 5, namesWithUpgrade: ['cert-manager', 'metrics-server', 'external-dns'] },
+      behindCatalog: { behindCount: 3 },
     });
 
     const segment = screen.getByTestId('fleet-strip-upgrades');
-    expect(segment.textContent).toContain('3 outdated');
+    expect(segment.textContent).toContain('3 behind');
     expect(segment.textContent).not.toContain('cert-manager');
-    expect(segment.textContent).not.toContain('metrics-server');
-    expect(segment.textContent).not.toContain('and');
     // No pie in this segment.
     expect(within(segment).queryByTestId('fleet-strip-pie')).not.toBeInTheDocument();
   });
 
-  it('shows "up to date" when checked but nothing is outdated', () => {
+  it('shows a calm "all on version" message at zero, not a bare 0', () => {
     renderStrip({
       clusters: baseClusters,
       appsTotal: 0,
       appsHealthy: 0,
-      upgrades: { withUpgrade: 0, checked: 4, namesWithUpgrade: [] },
+      behindCatalog: noBehindCatalogData,
     });
 
-    expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('up to date');
+    expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('all on version');
   });
 
-  it('shows "no version data" when nothing has been checked', () => {
+  it('carries the fuller sentence on the hover title, not just the short strip text', () => {
     renderStrip({
       clusters: baseClusters,
       appsTotal: 0,
       appsHealthy: 0,
-      upgrades: noUpgradeData,
+      behindCatalog: { behindCount: 2 },
     });
 
-    expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('no version data');
+    const segment = screen.getByTestId('fleet-strip-upgrades');
+    expect(within(segment).getByText('2 behind')).toHaveAttribute(
+      'title',
+      "2 applications behind their addon's version.",
+    );
   });
 
-  it('clicking the Upgrades segment navigates to the matrix pre-filtered to outdated rows', () => {
+  it('never says "drift" or "outdated" — plain "behind" wording only', () => {
     renderStrip({
       clusters: baseClusters,
       appsTotal: 0,
       appsHealthy: 0,
-      upgrades: { withUpgrade: 2, checked: 2, namesWithUpgrade: ['cert-manager'] },
+      behindCatalog: { behindCount: 1 },
+    });
+
+    const segment = screen.getByTestId('fleet-strip-upgrades');
+    expect(segment.textContent?.toLowerCase()).not.toContain('drift');
+    expect(segment.textContent?.toLowerCase()).not.toContain('outdated');
+  });
+
+  it('clicking the segment navigates to the matrix pre-filtered to behind-catalog rows', () => {
+    renderStrip({
+      clusters: baseClusters,
+      appsTotal: 0,
+      appsHealthy: 0,
+      behindCatalog: { behindCount: 2 },
     });
 
     fireEvent.click(screen.getByTestId('fleet-strip-upgrades'));
-    expect(mockNavigate).toHaveBeenCalledWith('/version-matrix?view=matrix&filter=outdated');
+    expect(mockNavigate).toHaveBeenCalledWith('/version-matrix?view=matrix&filter=behind-catalog');
+  });
+});
+
+describe('FleetStatusStrip — honest segment titles (walk day 5 finding)', () => {
+  const clusters: DashboardStats['clusters'] = {
+    total: 3,
+    connected: 3,
+    pending: 0,
+    untested: 0,
+    missing: 0,
+    failed: 0,
+  };
+
+  it('names the clusters segment "Managed clusters"', () => {
+    renderStrip({ clusters, appsTotal: 5, appsHealthy: 5, behindCatalog: noBehindCatalogData });
+    expect(screen.getByTestId('fleet-strip-clusters-title').textContent).toBe('Managed clusters');
+  });
+
+  it('names the applications segment as an addon concern, not a bare "Applications"', () => {
+    renderStrip({ clusters, appsTotal: 5, appsHealthy: 5, behindCatalog: noBehindCatalogData });
+    expect(screen.getByTestId('fleet-strip-applications-title').textContent).toContain('Addon');
+  });
+
+  it('names the behind-catalog segment as an addon concern too', () => {
+    renderStrip({ clusters, appsTotal: 5, appsHealthy: 5, behindCatalog: noBehindCatalogData });
+    expect(screen.getByTestId('fleet-strip-upgrades-title').textContent).toContain('Addon');
   });
 });
 
@@ -282,20 +323,52 @@ describe('FleetStatusStrip — navigation doors are preserved (do not regress)',
   };
 
   it('clicking Clusters navigates to /clusters', () => {
-    renderStrip({ clusters, appsTotal: 5, appsHealthy: 5, upgrades: noUpgradeData });
+    renderStrip({ clusters, appsTotal: 5, appsHealthy: 5, behindCatalog: noBehindCatalogData });
     fireEvent.click(screen.getByTestId('fleet-strip-clusters'));
     expect(mockNavigate).toHaveBeenCalledWith('/clusters');
   });
 
   it('clicking Applications navigates to /observability#addon-health', () => {
-    renderStrip({ clusters, appsTotal: 5, appsHealthy: 5, upgrades: noUpgradeData });
+    renderStrip({ clusters, appsTotal: 5, appsHealthy: 5, behindCatalog: noBehindCatalogData });
     fireEvent.click(screen.getByTestId('fleet-strip-applications'));
     expect(mockNavigate).toHaveBeenCalledWith('/observability#addon-health');
   });
 });
 
-describe('summarizeUpgrades (unchanged)', () => {
-  it('counts deployments behind the row\'s newest_available', () => {
+describe('summarizeBehindCatalog (walk day 5)', () => {
+  it('counts cells whose drift_from_catalog is true, ignoring newest_available entirely', () => {
+    const matrix: VersionMatrixResponse = {
+      clusters: ['prod-eu', 'staging-us'],
+      addons: [
+        {
+          addon_name: 'cert-manager',
+          catalog_version: '1.12.0',
+          chart: 'cert-manager',
+          // newest_available says there's something newer upstream, but
+          // that's no longer what this stat counts — drift_from_catalog
+          // is false here, so this cell must NOT be counted.
+          newest_available: '1.14.0',
+          cells: { 'prod-eu': { version: '1.12.0', health: 'Healthy', drift_from_catalog: false } },
+        },
+        {
+          addon_name: 'metrics-server',
+          catalog_version: '0.7.0',
+          chart: 'metrics-server',
+          cells: {
+            'prod-eu': { version: '0.6.0', health: 'Healthy', drift_from_catalog: true },
+            'staging-us': { version: '0.7.0', health: 'Healthy', drift_from_catalog: false },
+          },
+        },
+      ],
+    };
+    expect(summarizeBehindCatalog(matrix)).toEqual({ behindCount: 1 });
+  });
+
+  it('returns zero for a null matrix', () => {
+    expect(summarizeBehindCatalog(null)).toEqual({ behindCount: 0 });
+  });
+
+  it('returns zero when no cell has drifted', () => {
     const matrix: VersionMatrixResponse = {
       clusters: ['prod-eu'],
       addons: [
@@ -303,18 +376,10 @@ describe('summarizeUpgrades (unchanged)', () => {
           addon_name: 'cert-manager',
           catalog_version: '1.12.0',
           chart: 'cert-manager',
-          newest_available: '1.14.0',
           cells: { 'prod-eu': { version: '1.12.0', health: 'Healthy', drift_from_catalog: false } },
         },
       ],
     };
-    const result = summarizeUpgrades(matrix);
-    expect(result.withUpgrade).toBe(1);
-    expect(result.checked).toBe(1);
-    expect(result.namesWithUpgrade).toEqual(['cert-manager']);
-  });
-
-  it('returns zeros for null matrix', () => {
-    expect(summarizeUpgrades(null)).toEqual({ withUpgrade: 0, checked: 0, namesWithUpgrade: [] });
+    expect(summarizeBehindCatalog(matrix)).toEqual({ behindCount: 0 });
   });
 });

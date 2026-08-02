@@ -665,15 +665,29 @@ export function AddonCatalog() {
   const [filterType, setFilterType] = useState<FilterType>(
     searchParams.get('drift') === 'true' ? 'drifted' : 'all',
   )
-  // Fleet Status Strip v2 (WQ-2) — the Upgrades segment is now a bare
-  // clickable number that deep-links here with `?view=matrix&filter=outdated`
-  // (same pattern as ?drift=true above) so it lands pre-filtered to just the
-  // outdated rows in the version matrix, not the plain catalog grid.
+  // Fleet Status Strip v2 (WQ-2) — the version-matrix page's own
+  // "outdated" filter (upstream newest_available), still reachable by a
+  // direct `?view=matrix&filter=outdated` link even though the dashboard
+  // no longer deep-links to it (walk day 5 — that number was trivia).
   const [matrixOutdatedOnly, setMatrixOutdatedOnly] = useState(
     searchParams.get('filter') === 'outdated',
   )
   const clearMatrixOutdatedFilter = useCallback(() => {
     setMatrixOutdatedOnly(false)
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('filter')
+    setSearchParams(params, { replace: true })
+  }, [searchParams, setSearchParams])
+  // Walk day 5 finding — the Fleet Status Strip's third segment now deep-
+  // links here with `?view=matrix&filter=behind-catalog` so it lands
+  // pre-filtered to just the applications behind their addon's catalog
+  // version (drift_from_catalog), not the upstream-freshness "outdated"
+  // filter above.
+  const [matrixBehindCatalogOnly, setMatrixBehindCatalogOnly] = useState(
+    searchParams.get('filter') === 'behind-catalog',
+  )
+  const clearMatrixBehindCatalogFilter = useCallback(() => {
+    setMatrixBehindCatalogOnly(false)
     const params = new URLSearchParams(searchParams.toString())
     params.delete('filter')
     setSearchParams(params, { replace: true })
@@ -1856,6 +1870,8 @@ export function AddonCatalog() {
         <VersionMatrixTable
           outdatedOnly={matrixOutdatedOnly}
           onClearOutdatedFilter={clearMatrixOutdatedFilter}
+          behindCatalogOnly={matrixBehindCatalogOnly}
+          onClearBehindCatalogFilter={clearMatrixBehindCatalogFilter}
         />
       )}
 

@@ -19,8 +19,8 @@ import { EmptyState } from '@/components/EmptyState';
 import { showToast } from '@/components/ToastNotification';
 import {
   FleetStatusStrip,
-  summarizeUpgrades,
-  type UpgradesSummary,
+  summarizeBehindCatalog,
+  type BehindCatalogSummary,
 } from '@/components/FleetStatusStrip';
 import { splitAddonStates } from '@/components/AttentionSection';
 import { prettyOperation } from '@/lib/utils';
@@ -135,7 +135,7 @@ interface DashboardSnapshot {
   stats: DashboardStats;
   recentSyncs: SyncActivityEntry[];
   argoCDUnreachable: boolean;
-  upgrades: UpgradesSummary;
+  behindCatalog: BehindCatalogSummary;
 }
 
 // Exported so tests can prime/inspect the same key the component uses.
@@ -157,8 +157,10 @@ export function Dashboard() {
   // ArgoCD-unreachable is the ONLY signal the machinery banner needs — the
   // detailed cluster attention rows live on Observability now (WQ-3).
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
-  // Upgrades stat (Package 2 #1) — derived from the version matrix.
-  const [upgrades, setUpgrades] = useState<UpgradesSummary>({ withUpgrade: 0, checked: 0, namesWithUpgrade: [] });
+  // Behind-catalog stat (walk day 5 finding) — derived from the version
+  // matrix's per-cell drift_from_catalog flag, not the upstream
+  // newest_available comparison the old "N outdated" stat used.
+  const [behindCatalog, setBehindCatalog] = useState<BehindCatalogSummary>({ behindCount: 0 });
 
   // S3 — progressive paint: every read still fires at once (unchanged
   // parallelism), but the page no longer waits for Promise.all on all reads
@@ -202,7 +204,7 @@ export function Dashboard() {
     // NEXT visit this session can paint the whole page instantly.
     let snapRecentSyncs: SyncActivityEntry[] = [];
     let snapArgoCDUnreachable = false;
-    let snapUpgrades: UpgradesSummary = { withUpgrade: 0, checked: 0, namesWithUpgrade: [] };
+    let snapBehindCatalog: BehindCatalogSummary = { behindCount: 0 };
 
     obsPromise.then((obsData) => {
       // Recent syncs (last 5)
@@ -213,8 +215,8 @@ export function Dashboard() {
     });
 
     matrixPromise.then((matrixData) => {
-      snapUpgrades = summarizeUpgrades(matrixData);
-      setUpgrades(snapUpgrades);
+      snapBehindCatalog = summarizeBehindCatalog(matrixData);
+      setBehindCatalog(snapBehindCatalog);
     });
 
     clustersPromise.then((clustersData) => {
@@ -241,7 +243,7 @@ export function Dashboard() {
       stats: statsData,
       recentSyncs: snapRecentSyncs,
       argoCDUnreachable: snapArgoCDUnreachable,
-      upgrades: snapUpgrades,
+      behindCatalog: snapBehindCatalog,
     });
   }, [refreshAddonStates]);
 
@@ -264,7 +266,7 @@ export function Dashboard() {
       setStats(cached.data.stats);
       setRecentSyncs(cached.data.recentSyncs);
       setArgoCDUnreachable(cached.data.argoCDUnreachable);
-      setUpgrades(cached.data.upgrades);
+      setBehindCatalog(cached.data.behindCatalog);
       setLoading(false);
       void fetchData(true);
     } else {
@@ -486,12 +488,14 @@ export function Dashboard() {
           old cards: "small fonts, boring looks"; 16-product research says
           nobody lands on a stats poster. One slim row, numbers are doors:
           clicking a segment goes straight to Clusters, Observability's
-          Addon Health section, or the version matrix. */}
+          Addon Health section, or the version matrix. Each segment now
+          carries a short title saying what it's counting — managed
+          clusters vs. addon applications/versions (walk day 5 finding). */}
       <FleetStatusStrip
         clusters={stats.clusters}
         appsTotal={appTotal}
         appsHealthy={healthyCount}
-        upgrades={upgrades}
+        behindCatalog={behindCatalog}
       />
 
       {/* Recent Activity — moved up from the old bottom row (Package 2:

@@ -16,18 +16,31 @@ import { isNewerVersion } from '@/lib/utils'
 // (cluster-addons/*.yaml + catalog/addons.yaml) for a v4 repo, same endpoint,
 // same response shape, no separate v3/v4 UI branch needed here.
 //
-// outdatedOnly (WQ-2) — the Fleet Status Strip's Upgrades segment is now a
-// bare clickable number that deep-links here with
-// ?view=matrix&filter=outdated (AddonCatalog reads the param and passes
-// this down). When true, only rows with at least one cell behind the row's
-// newest_available are shown — the same isNewerVersion check that already
-// sorts outdated rows first. A dismissible chip above the table clears it.
+// outdatedOnly (WQ-2) — kept for the version matrix's own upstream-freshness
+// view: a dismissible filter to rows with at least one cell behind the
+// row's newest_available (the highest version the freshness scheduler has
+// seen upstream). Nothing on the dashboard links here anymore (walk day 5 —
+// that number was trivia), but the filter itself is still useful reading
+// the matrix directly, so it stays.
+//
+// behindCatalogOnly (walk day 5 finding) — the Fleet Status Strip's third
+// segment now deep-links here with ?view=matrix&filter=behind-catalog
+// (AddonCatalog reads the param and passes this down). When true, only
+// rows with at least one cell whose drift_from_catalog is true are shown —
+// this install's own catalog version, not an upstream opinion.
 interface VersionMatrixTableProps {
   outdatedOnly?: boolean
   onClearOutdatedFilter?: () => void
+  behindCatalogOnly?: boolean
+  onClearBehindCatalogFilter?: () => void
 }
 
-export function VersionMatrixTable({ outdatedOnly = false, onClearOutdatedFilter }: VersionMatrixTableProps) {
+export function VersionMatrixTable({
+  outdatedOnly = false,
+  onClearOutdatedFilter,
+  behindCatalogOnly = false,
+  onClearBehindCatalogFilter,
+}: VersionMatrixTableProps) {
   const [data, setData] = useState<VersionMatrixResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -60,8 +73,13 @@ export function VersionMatrixTable({ outdatedOnly = false, onClearOutdatedFilter
         (cell) => cell?.version && isNewerVersion(cell.version, row.newest_available!),
       )
     }
+    // Walk day 5 finding: a row is "behind catalog" if any of its cells
+    // carry the server's own drift_from_catalog flag — this install's
+    // catalog version, not an upstream opinion. Independent of hasUpgrade.
+    const hasBehindCatalog = (row: VersionMatrixResponse['addons'][number]) =>
+      Object.values(row.cells || {}).some((cell) => cell?.drift_from_catalog)
     return rows
-      .map((row, index) => ({ row, index, hasUpgrade: hasUpgrade(row) }))
+      .map((row, index) => ({ row, index, hasUpgrade: hasUpgrade(row), hasBehindCatalog: hasBehindCatalog(row) }))
       .sort((a, b) => {
         if (a.hasUpgrade !== b.hasUpgrade) return a.hasUpgrade ? -1 : 1
         return a.index - b.index
@@ -69,13 +87,16 @@ export function VersionMatrixTable({ outdatedOnly = false, onClearOutdatedFilter
       .map((entry) => entry)
   }, [data])
 
-  // outdatedOnly (WQ-2) — narrow to rows that already carry the
-  // "newer version available" marker. Sort order (outdated-first) is
-  // untouched either way.
-  const displayedAddons = useMemo(
-    () => (outdatedOnly ? sortedAddons.filter((entry) => entry.hasUpgrade) : sortedAddons),
-    [sortedAddons, outdatedOnly],
-  )
+  // outdatedOnly (WQ-2) / behindCatalogOnly (walk day 5) — narrow to rows
+  // carrying the relevant marker. Sort order (outdated-first) is untouched
+  // either way. The two filters are independent — only one is normally
+  // active at a time (driven by which URL a click landed from).
+  const displayedAddons = useMemo(() => {
+    let result = sortedAddons
+    if (outdatedOnly) result = result.filter((entry) => entry.hasUpgrade)
+    if (behindCatalogOnly) result = result.filter((entry) => entry.hasBehindCatalog)
+    return result
+  }, [sortedAddons, outdatedOnly, behindCatalogOnly])
 
   if (loading) return <LoadingState message="Loading version matrix..." />
   if (error) return <ErrorState message={error} onRetry={load} />
@@ -108,6 +129,25 @@ export function VersionMatrixTable({ outdatedOnly = false, onClearOutdatedFilter
         </div>
       )}
 
+      {behindCatalogOnly && (
+        <div className="flex items-center gap-2">
+          <span
+            data-testid="matrix-behind-catalog-chip"
+            className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:ring-amber-800"
+          >
+            behind catalog version only
+            <button
+              type="button"
+              onClick={onClearBehindCatalogFilter}
+              aria-label="Clear the behind-catalog filter"
+              className="rounded-full hover:text-amber-900 dark:hover:text-amber-200"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
           {displayedAddons.length} addon{displayedAddons.length === 1 ? '' : 's'} across {data.clusters.length} cluster
@@ -125,7 +165,9 @@ export function VersionMatrixTable({ outdatedOnly = false, onClearOutdatedFilter
 
       {displayedAddons.length === 0 ? (
         <div className="rounded-lg border border-teal-200 bg-teal-50 p-6 text-center text-sm text-teal-700 dark:border-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
-          Nothing outdated — every addon is on its newest known version.
+          {behindCatalogOnly
+            ? "Nothing behind — every application is on its addon's catalog version."
+            : 'Nothing outdated — every addon is on its newest known version.'}
         </div>
       ) : (
       <>

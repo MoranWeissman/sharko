@@ -125,9 +125,9 @@ describe('Dashboard', () => {
     expect(appsLabel).toContain('45 healthy');
     expect(appsLabel).toContain('5 not healthy');
 
-    // Upgrades segment — no version-matrix data in this test's default
-    // mocks, so it degrades to "no version data" rather than a fake 0.
-    expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('no version data');
+    // Behind-catalog segment — no version-matrix data in this test's
+    // default mocks, so it reads the calm zero-state, not a bare "0".
+    expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('all on version');
   });
 
 });
@@ -512,14 +512,14 @@ describe('Fleet Status Strip navigation (WQ-1)', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/observability#addon-health');
   });
 
-  it('clicking the Upgrades segment navigates to /version-matrix?view=matrix&filter=outdated (WQ-2: bare number opens the filtered matrix)', async () => {
+  it('clicking the behind-catalog segment navigates to /version-matrix?view=matrix&filter=behind-catalog (walk day 5: bare number opens the filtered matrix)', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
     (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
     renderDashboard();
 
     const segment = await screen.findByTestId('fleet-strip-upgrades');
     fireEvent.click(segment);
-    expect(mockNavigate).toHaveBeenCalledWith('/version-matrix?view=matrix&filter=outdated');
+    expect(mockNavigate).toHaveBeenCalledWith('/version-matrix?view=matrix&filter=behind-catalog');
   });
 });
 
@@ -594,7 +594,7 @@ describe('Fleet Status Strip exception styling (WQ-1 / WQ-2 / walk day 3)', () =
     expect(within(legend).queryByText('not healthy')).not.toBeInTheDocument();
   });
 
-  it('upgrades segment: outdated > 0 gets amber-toned text', async () => {
+  it('behind-catalog segment: count > 0 gets amber-toned text', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
     (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
     (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -602,16 +602,16 @@ describe('Fleet Status Strip exception styling (WQ-1 / WQ-2 / walk day 3)', () =
         {
           addon_name: 'cert-manager',
           newest_available: '1.14.0',
-          cells: { 'prod-eu': { version: '1.12.0', health: 'Healthy' } },
+          cells: { 'prod-eu': { version: '1.12.0', health: 'Healthy', drift_from_catalog: true } },
         },
       ],
     });
     renderDashboard();
 
     const segment = await screen.findByTestId('fleet-strip-upgrades');
-    await waitFor(() => expect(segment.textContent).toContain('1 outdated'));
-    const outdatedText = within(segment).getByText('1 outdated');
-    expect(outdatedText.className).toMatch(/text-amber-700/);
+    await waitFor(() => expect(segment.textContent).toContain('1 behind'));
+    const behindText = within(segment).getByText('1 behind');
+    expect(behindText.className).toMatch(/text-amber-700/);
   });
 });
 
@@ -679,20 +679,22 @@ describe('ArgoCD unreachable banner (Package 1 rewire)', () => {
   });
 });
 
-// Upgrades stat (Package 2 #1, walk finding #1 → WQ-2 rebuild) — a bare
-// "N outdated" count, derived from the version matrix's per-row
-// newest_available vs. each cell's deployed version. WQ-2 dropped the
-// addon-name subtitle (the maintainer's call: naming one outdated addon
-// out of fifty told you nothing) — the segment is now just the number,
-// and clicking it opens the version matrix already filtered to outdated
-// rows. No explicit per-cell flag exists on the wire, so the Dashboard
-// compares itself (see summarizeUpgrades/isNewerVersion).
-describe('Upgrades stat card (Package 2 #1, walk finding #1, WQ-2 rebuild)', () => {
+// Behind-catalog stat (walk day 5 finding — replaces the old "N outdated"
+// stat from Package 2 #1 / WQ-2). The maintainer's verdict on the old
+// stat: it counted deployments behind the newest version seen upstream,
+// which is trivia — the admin picked their version on purpose and already
+// knows something newer exists. What matters is whether a running
+// application has fallen behind THIS install's own catalog version
+// (drift_from_catalog, already computed server-side per cell) — that's a
+// drift the admin can actually act on. newest_available/isNewerVersion
+// still power the version-matrix page's own "outdated" filter — they just
+// no longer feed this dashboard number.
+describe('Behind-catalog stat (walk day 5 finding, replaces Package 2 #1 / WQ-2 "N outdated")', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('counts deployments whose version is behind the row\'s newest_available — number only, no addon name', async () => {
+  it('counts cells whose drift_from_catalog is true — number only, no addon name', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
     // Isolate from any rejected/overridden mock left behind by earlier
     // tests in this file (mockResolvedValue/mockRejectedValue persist
@@ -702,18 +704,17 @@ describe('Upgrades stat card (Package 2 #1, walk finding #1, WQ-2 rebuild)', () 
       addons: [
         {
           addon_name: 'cert-manager',
+          // newest_available says something's newer upstream — irrelevant
+          // to this stat now. Only drift_from_catalog counts.
           newest_available: '1.14.0',
           cells: {
-            'prod-eu': { version: '1.12.0', health: 'Healthy' },
-            'staging-us': { version: '1.14.0', health: 'Healthy' },
+            'prod-eu': { version: '1.12.0', health: 'Healthy', drift_from_catalog: true },
+            'staging-us': { version: '1.14.0', health: 'Healthy', drift_from_catalog: false },
           },
         },
         {
-          // No freshness data yet for this addon — excluded from both the
-          // numerator and the denominator (we don't know, so we don't
-          // guess "up to date").
           addon_name: 'external-dns',
-          cells: { 'prod-eu': { version: '6.20.0', health: 'Healthy' } },
+          cells: { 'prod-eu': { version: '6.20.0', health: 'Healthy', drift_from_catalog: false } },
         },
       ],
     });
@@ -722,40 +723,37 @@ describe('Upgrades stat card (Package 2 #1, walk finding #1, WQ-2 rebuild)', () 
     await waitFor(() => {
       expect(screen.getByTestId('fleet-strip-upgrades')).toBeInTheDocument();
     });
-    // 1 of 2 checked deployments (cert-manager on prod-eu) is behind.
-    expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('1 outdated');
-    // WQ-2: no addon name anywhere in the segment, even though the summary
-    // computed one (namesWithUpgrade still exists on the shape for the
-    // view cache, it's just not rendered).
+    // Only cert-manager/prod-eu carries drift_from_catalog: true.
+    expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('1 behind');
+    // No addon name anywhere in the segment.
     expect(screen.queryByText('cert-manager')).not.toBeInTheDocument();
   });
 
-  it('does not name any outdated addons even with several outstanding (WQ-2: bare count only)', async () => {
+  it('does not name any addons even with several behind (bare count only)', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
     (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
-    const rowWithUpgrade = (name: string) => ({
+    const rowBehindCatalog = (name: string) => ({
       addon_name: name,
-      newest_available: '2.0.0',
-      cells: { 'prod-eu': { version: '1.0.0', health: 'Healthy' } },
+      cells: { 'prod-eu': { version: '1.0.0', health: 'Healthy', drift_from_catalog: true } },
     });
     (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
       addons: [
-        rowWithUpgrade('metrics-server'),
-        rowWithUpgrade('cert-manager'),
-        rowWithUpgrade('external-dns'),
-        rowWithUpgrade('ingress-nginx'),
+        rowBehindCatalog('metrics-server'),
+        rowBehindCatalog('cert-manager'),
+        rowBehindCatalog('external-dns'),
+        rowBehindCatalog('ingress-nginx'),
       ],
     });
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('4 outdated');
+      expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('4 behind');
     });
     expect(screen.queryByText('metrics-server')).not.toBeInTheDocument();
     expect(screen.queryByText(/and 3 more/)).not.toBeInTheDocument();
   });
 
-  it('shows a muted "up to date" message, not a celebratory one, at zero', async () => {
+  it('shows a calm "all on version" message, not a bare 0, when nothing has drifted', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
     // Isolate from any rejected/overridden mock left behind by earlier
     // tests in this file (mockResolvedValue/mockRejectedValue persist
@@ -766,19 +764,43 @@ describe('Upgrades stat card (Package 2 #1, walk finding #1, WQ-2 rebuild)', () 
         {
           addon_name: 'cert-manager',
           newest_available: '1.14.0',
-          cells: { 'prod-eu': { version: '1.14.0', health: 'Healthy' } },
+          cells: { 'prod-eu': { version: '1.14.0', health: 'Healthy', drift_from_catalog: false } },
         },
       ],
     });
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('up to date');
+      expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('all on version');
     });
   });
 
+  it('reads calmly at zero even when an addon has a newer version upstream (the old trivia case)', async () => {
+    // The exact case the maintainer called out: an addon has a newer
+    // version available upstream, but nothing running is behind THIS
+    // install's catalog version — the stat must not resurrect the old
+    // "N outdated" reading here.
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getVersionMatrix as ReturnType<typeof vi.fn>).mockResolvedValue({
+      addons: [
+        {
+          addon_name: 'cert-manager',
+          newest_available: '1.99.0',
+          cells: { 'prod-eu': { version: '1.12.0', health: 'Healthy', drift_from_catalog: false } },
+        },
+      ],
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fleet-strip-upgrades').textContent).toContain('all on version');
+    });
+    expect(screen.queryByTestId('fleet-strip-upgrades')?.textContent).not.toContain('behind');
+  });
+
   // Navigation itself is covered by 'Fleet Status Strip navigation (WQ-1)'
-  // above (walk finding #1: matrix, not the plain catalog).
+  // above (walk day 5: matrix, not the plain catalog).
 });
 
 // Page reorganization (Package 2): Quick Actions and Available Addons are
@@ -940,7 +962,7 @@ describe('Dashboard stale-while-refresh (perf S2)', () => {
       },
       recentSyncs: [],
       argoCDUnreachable: false,
-      upgrades: { withUpgrade: 0, checked: 0, namesWithUpgrade: [] },
+      behindCatalog: { behindCount: 0 },
     });
 
     // The background refetch resolves with fresh (different) data — the

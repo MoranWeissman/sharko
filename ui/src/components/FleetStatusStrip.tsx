@@ -7,7 +7,6 @@ import {
   breakdownSentence,
   type DistributionSlice,
 } from '@/components/DistributionPie';
-import { isNewerVersion } from '@/lib/utils';
 import type { DashboardStats, VersionMatrixResponse } from '@/services/models';
 
 // --- Fleet Status Strip v2 (dashboard-purpose decision, WQ-1 → WQ-2) ---
@@ -19,48 +18,38 @@ import type { DashboardStats, VersionMatrixResponse } from '@/services/models';
 // fit, and naming one outdated addon ("metrics-server and 49 more") told
 // you nothing useful. WQ-2's fix: the Clusters and Applications segments
 // become a compact donut chart (breakdown on hover/aria, not in text) plus
-// the total as a plain number; Upgrades becomes a bare clickable count that
-// opens the version matrix already filtered to outdated rows. It still
-// states facts — no severity logic, no settling window. That stays exactly
-// where it lives today (the Needs Attention layer).
+// the total as a plain number; the third segment becomes a bare clickable
+// count that opens the version matrix already filtered. It still states
+// facts — no severity logic, no settling window. That stays exactly where
+// it lives today (the Needs Attention layer). Walk day 5: that third
+// segment's count changed meaning from "behind the newest version seen
+// upstream" to "behind this install's own catalog version" — see the
+// summarizeBehindCatalog comment below for why.
 
-// --- Upgrades summary (moved here from Dashboard.tsx — this is now the
-//     strip's data, computed once by Dashboard.fetchData and passed in) ---
+// --- Behind-catalog summary (walk day 5 finding) ---
 //
-// "X of Y have a newer version", computed from the already-fetched version
-// matrix. The matrix doesn't carry a per-cell "has an upgrade" flag — only
-// a per-row `newest_available` (the highest chart version the freshness
-// scheduler has last seen for that addon) — so we compare each deployed
-// cell's version against its row's newest_available ourselves.
-export interface UpgradesSummary {
-  /** Deployments (addon@cluster cells) with a newer version available. */
-  withUpgrade: number;
-  /** Deployments the freshness scheduler has an opinion on (row has newest_available). */
-  checked: number;
-  /** Addon names (deduped) with at least one cell behind newest_available. No longer
-   *  rendered in the strip (WQ-2 — the segment is a bare number now), kept on the
-   *  summary shape because the perf-S2 view cache persists this object verbatim. */
-  namesWithUpgrade: string[];
+// The dashboard used to count deployments behind the newest version SEEN
+// UPSTREAM (`row.newest_available`, the freshness scheduler's opinion).
+// The maintainer's verdict: that number is trivia — the admin chose their
+// version on purpose and already knows something newer exists somewhere.
+// What's actually useful is whether a running application has fallen
+// behind the version THIS Sharko install's catalog says it should be on —
+// that's a real drift the admin owns and can fix with one click. The wire
+// already computes this per cell (`drift_from_catalog`), so the FE just
+// counts it instead of re-deriving anything.
+export interface BehindCatalogSummary {
+  /** Deployments (addon@cluster cells) whose deployed version differs from the addon's catalog version. */
+  behindCount: number;
 }
 
-export function summarizeUpgrades(matrix: VersionMatrixResponse | null): UpgradesSummary {
-  let withUpgrade = 0;
-  let checked = 0;
-  const namesWithUpgrade: string[] = [];
+export function summarizeBehindCatalog(matrix: VersionMatrixResponse | null): BehindCatalogSummary {
+  let behindCount = 0;
   for (const row of matrix?.addons ?? []) {
-    if (!row.newest_available) continue; // no freshness data for this addon yet
-    let rowHasUpgrade = false;
     for (const cell of Object.values(row.cells || {})) {
-      if (!cell?.version) continue;
-      checked++;
-      if (isNewerVersion(cell.version, row.newest_available)) {
-        withUpgrade++;
-        rowHasUpgrade = true;
-      }
+      if (cell?.drift_from_catalog) behindCount++;
     }
-    if (rowHasUpgrade) namesWithUpgrade.push(row.addon_name);
   }
-  return { withUpgrade, checked, namesWithUpgrade };
+  return { behindCount };
 }
 
 // --- Slice colors — single source of truth for every donut in the strip ---
@@ -137,10 +126,17 @@ interface SegmentProps {
   onClick: () => void;
   testId: string;
   ariaLabel: string;
+  // Honest-titles fix (walk day 5 finding): the maintainer's verdict on
+  // the old strip was "not clear they are for addons at all" — a segment
+  // with just a number and a pie doesn't say what it's counting. Every
+  // segment now carries a short, plain caption above its content saying
+  // what it measures — which ones are about managed CLUSTERS and which
+  // are about ADDON applications/versions.
+  title: string;
   children: ReactNode;
 }
 
-function Segment({ onClick, testId, ariaLabel, children }: SegmentProps) {
+function Segment({ onClick, testId, ariaLabel, title, children }: SegmentProps) {
   return (
     <button
       type="button"
@@ -148,26 +144,42 @@ function Segment({ onClick, testId, ariaLabel, children }: SegmentProps) {
       data-testid={testId}
       aria-label={ariaLabel}
       style={{ minHeight: PIE_CONTAINER_HEIGHT }}
-      className="flex flex-1 min-w-[300px] items-center gap-3 border-b border-border px-5 py-3 text-left transition-colors hover:bg-muted/60 sm:border-b-0 sm:border-r sm:last:border-r-0"
+      className="flex flex-1 min-w-[300px] flex-col justify-center gap-1.5 border-b border-border px-5 py-3 text-left transition-colors hover:bg-muted/60 sm:border-b-0 sm:border-r sm:last:border-r-0"
     >
-      {children}
+      <span
+        data-testid={`${testId}-title`}
+        className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+      >
+        {title}
+      </span>
+      <div className="flex items-center gap-3">{children}</div>
     </button>
   );
 }
 
-// Upgrades segment — a number, not a chart (walk finding: naming one
+// Behind-catalog segment — a number, not a chart (walk finding: naming one
 // outdated addon told you nothing useful; the fix is a bare count that
-// opens the already-filtered matrix, not a longer sentence).
-function UpgradesSegmentContent({ upgrades }: { upgrades: UpgradesSummary }) {
-  if (upgrades.checked === 0) {
-    return <span className="text-base font-medium text-muted-foreground">no version data</span>;
-  }
-  if (upgrades.withUpgrade === 0) {
-    return <span className="text-base font-medium text-muted-foreground">up to date</span>;
+// opens the already-filtered matrix, not a longer sentence). Short form
+// here; the full sentence is the title attribute (hover) so the segment
+// stays a one-line read.
+function BehindCatalogSegmentContent({ behindCatalog }: { behindCatalog: BehindCatalogSummary }) {
+  const { behindCount } = behindCatalog;
+  if (behindCount === 0) {
+    return (
+      <span
+        className="text-base font-medium text-muted-foreground"
+        title="All applications are on their addon's version."
+      >
+        all on version
+      </span>
+    );
   }
   return (
-    <span className="text-base font-semibold text-amber-700 dark:text-amber-400">
-      {upgrades.withUpgrade} outdated
+    <span
+      className="text-base font-semibold text-amber-700 dark:text-amber-400"
+      title={`${behindCount} application${behindCount === 1 ? '' : 's'} behind their addon's version.`}
+    >
+      {behindCount} behind
     </span>
   );
 }
@@ -176,10 +188,10 @@ export interface FleetStatusStripProps {
   clusters: DashboardStats['clusters'];
   appsTotal: number;
   appsHealthy: number;
-  upgrades: UpgradesSummary;
+  behindCatalog: BehindCatalogSummary;
 }
 
-export function FleetStatusStrip({ clusters, appsTotal, appsHealthy, upgrades }: FleetStatusStripProps) {
+export function FleetStatusStrip({ clusters, appsTotal, appsHealthy, behindCatalog }: FleetStatusStripProps) {
   const navigate = useNavigate();
   const clusterData = clusterSlices(clusters);
   const appData = appSlices(appsTotal, appsHealthy);
@@ -193,6 +205,7 @@ export function FleetStatusStrip({ clusters, appsTotal, appsHealthy, upgrades }:
       <Segment
         onClick={() => navigate('/clusters')}
         testId="fleet-strip-clusters"
+        title="Managed clusters"
         ariaLabel={breakdownSentence('Clusters', clusters.total, clusterData)}
       >
         <DistributionPie
@@ -208,6 +221,7 @@ export function FleetStatusStrip({ clusters, appsTotal, appsHealthy, upgrades }:
       <Segment
         onClick={() => navigate('/observability#addon-health')}
         testId="fleet-strip-applications"
+        title="Addon applications"
         ariaLabel={breakdownSentence('Applications', appsTotal, appData)}
       >
         <DistributionPie
@@ -221,14 +235,15 @@ export function FleetStatusStrip({ clusters, appsTotal, appsHealthy, upgrades }:
         <NumberWord total={appsTotal} word="app" />
       </Segment>
       <Segment
-        onClick={() => navigate('/version-matrix?view=matrix&filter=outdated')}
+        onClick={() => navigate('/version-matrix?view=matrix&filter=behind-catalog')}
         testId="fleet-strip-upgrades"
-        ariaLabel="Upgrades"
+        title="Addon versions"
+        ariaLabel="Addon versions behind the catalog"
       >
         <span className="text-muted-foreground [&_svg]:h-4 [&_svg]:w-4">
           <ArrowUpCircle />
         </span>
-        <UpgradesSegmentContent upgrades={upgrades} />
+        <BehindCatalogSegmentContent behindCatalog={behindCatalog} />
       </Segment>
     </div>
   );

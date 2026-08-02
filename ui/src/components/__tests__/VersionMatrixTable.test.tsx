@@ -212,3 +212,104 @@ describe('VersionMatrixTable — outdatedOnly filter (WQ-2)', () => {
     expect(screen.queryByText('up-to-date-addon')).not.toBeInTheDocument()
   })
 })
+
+// behindCatalogOnly (walk day 5 finding) — the Fleet Status Strip's third
+// segment now deep-links to the matrix with
+// ?view=matrix&filter=behind-catalog. AddonCatalog reads that param and
+// passes behindCatalogOnly down; the table hides rows with no drifted cell
+// and shows a dismissible "behind catalog version only ×" chip. This is
+// independent of outdatedOnly, which stays keyed off newest_available.
+describe('VersionMatrixTable — behindCatalogOnly filter (walk day 5)', () => {
+  const twoRowFixture = {
+    clusters: ['prod-eu'],
+    addons: [
+      {
+        addon_name: 'on-catalog-version-addon',
+        catalog_version: '1.0.0',
+        chart: 'on-catalog-version-addon',
+        cells: { 'prod-eu': { version: '1.0.0', health: 'healthy', drift_from_catalog: false } },
+        newest_available: '2.0.0',
+        last_checked: '2026-07-29T12:00:00Z',
+      },
+      {
+        addon_name: 'behind-catalog-addon',
+        catalog_version: '1.0.0',
+        chart: 'behind-catalog-addon',
+        cells: { 'prod-eu': { version: '0.9.0', health: 'healthy', drift_from_catalog: true } },
+        // Deliberately no newest_available — proves this filter doesn't
+        // key off the upstream-freshness field at all.
+        last_checked: '2026-07-29T12:00:00Z',
+      },
+    ],
+  }
+
+  it('shows only rows with a drifted cell when behindCatalogOnly is true', async () => {
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(twoRowFixture)
+
+    render(<VersionMatrixTable behindCatalogOnly />)
+
+    await waitFor(() => {
+      expect(screen.getByText('behind-catalog-addon')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('on-catalog-version-addon')).not.toBeInTheDocument()
+  })
+
+  it('shows every row when behindCatalogOnly is false (default)', async () => {
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(twoRowFixture)
+
+    render(<VersionMatrixTable />)
+
+    await waitFor(() => {
+      expect(screen.getByText('behind-catalog-addon')).toBeInTheDocument()
+    })
+    expect(screen.getByText('on-catalog-version-addon')).toBeInTheDocument()
+  })
+
+  it('renders a dismissible "behind catalog version only" chip that clears the filter on click', async () => {
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(twoRowFixture)
+    const onClear = vi.fn()
+
+    render(<VersionMatrixTable behindCatalogOnly onClearBehindCatalogFilter={onClear} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('matrix-behind-catalog-chip')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('matrix-behind-catalog-chip').textContent).toContain('behind catalog version only')
+
+    fireEvent.click(screen.getByRole('button', { name: /clear the behind-catalog filter/i }))
+    expect(onClear).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not render the chip when behindCatalogOnly is false', async () => {
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(twoRowFixture)
+
+    render(<VersionMatrixTable />)
+
+    await waitFor(() => {
+      expect(screen.getByText('behind-catalog-addon')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('matrix-behind-catalog-chip')).not.toBeInTheDocument()
+  })
+
+  it('shows a "nothing behind" message when the filter excludes every row', async () => {
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce({
+      clusters: ['prod-eu'],
+      addons: [
+        {
+          addon_name: 'on-catalog-version-addon',
+          catalog_version: '1.0.0',
+          chart: 'on-catalog-version-addon',
+          cells: { 'prod-eu': { version: '1.0.0', health: 'healthy', drift_from_catalog: false } },
+          last_checked: '2026-07-29T12:00:00Z',
+        },
+      ],
+    })
+
+    render(<VersionMatrixTable behindCatalogOnly />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/Nothing behind/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText('on-catalog-version-addon')).not.toBeInTheDocument()
+  })
+})

@@ -625,6 +625,157 @@ describe('ClusterDetail', () => {
     });
   });
 
+  // Walk day 5 finding: an addon whose enable PR hasn't merged yet has no
+  // comparison row at all (git doesn't know about it until the PR lands),
+  // so right after the operator clicks "Done" in the enable dialog they
+  // saw nothing pending. Fix: render a pending row for any open PR whose
+  // addon has no matching comparison entry.
+  describe('walk day 5: pending-addon rows for addons with no comparison row yet', () => {
+    it('renders a pending row for an open enable-PR whose addon has no comparison row', async () => {
+      mockFetchTrackedPRs.mockResolvedValueOnce({
+        prs: [
+          {
+            pr_id: 5001,
+            pr_url: 'https://github.com/example/repo/pull/5001',
+            pr_branch: 'sharko/addon-add-metrics-server-prod-eu',
+            pr_title: 'Enable metrics-server on prod-eu',
+            cluster: 'prod-eu',
+            addon: 'metrics-server',
+            operation: 'addon-add',
+            user: 'admin',
+            source: 'sharko',
+            created_at: '2026-05-20T10:00:00Z',
+            last_status: 'open',
+            last_polled_at: '2026-05-20T10:01:00Z',
+          },
+        ],
+      });
+
+      renderView('addons');
+
+      await waitFor(() => {
+        expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThan(0);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('pending-addon-row')).toBeInTheDocument();
+      });
+
+      const row = screen.getByTestId('pending-addon-row');
+      expect(row.textContent).toContain('metrics-server');
+      expect(row.textContent).toContain('Pending');
+      expect(row.textContent).toContain('PR #5001');
+      expect(row.textContent).toMatch(/merge to approve/i);
+
+      // No fake health/version data — the addon isn't deployed yet.
+      expect(row.textContent).not.toMatch(/healthy/i);
+
+      // The pending badge inside the row links to the PR in a new tab.
+      const badge = within(row).getByTestId('addon-pending-pr-badge');
+      expect(badge).toHaveAttribute('href', 'https://github.com/example/repo/pull/5001');
+      expect(badge).toHaveAttribute('target', '_blank');
+    });
+
+    it('does not render a pending row for an addon that already has a comparison row (badge only)', async () => {
+      mockFetchTrackedPRs.mockResolvedValueOnce({
+        prs: [
+          {
+            pr_id: 5002,
+            pr_url: 'https://github.com/example/repo/pull/5002',
+            pr_branch: 'sharko/addon-upgrade-ingress-nginx-prod-eu',
+            pr_title: 'Upgrade ingress-nginx to 4.8.0 on prod-eu',
+            cluster: 'prod-eu',
+            addon: 'ingress-nginx',
+            operation: 'addon-upgrade',
+            user: 'admin',
+            source: 'sharko',
+            created_at: '2026-05-20T10:00:00Z',
+            last_status: 'open',
+            last_polled_at: '2026-05-20T10:01:00Z',
+          },
+        ],
+      });
+
+      renderView('addons');
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('addon-pending-pr-badge').length).toBeGreaterThan(0);
+      });
+
+      // ingress-nginx already has a comparison row, so no separate
+      // ghost/pending row is rendered for it — just the inline badge.
+      expect(screen.queryByTestId('pending-addon-row')).not.toBeInTheDocument();
+    });
+
+    it('the pending row disappears once the comparison contains the addon (PR merged)', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        mockFetchTrackedPRs.mockResolvedValueOnce({
+          prs: [
+            {
+              pr_id: 5003,
+              pr_url: 'https://github.com/example/repo/pull/5003',
+              pr_branch: 'sharko/addon-add-metrics-server-prod-eu',
+              pr_title: 'Enable metrics-server on prod-eu',
+              cluster: 'prod-eu',
+              addon: 'metrics-server',
+              operation: 'addon-add',
+              user: 'admin',
+              source: 'sharko',
+              created_at: '2026-05-20T10:00:00Z',
+              last_status: 'open',
+              last_polled_at: '2026-05-20T10:01:00Z',
+            },
+          ],
+        });
+
+        renderView('addons');
+
+        await waitFor(() => {
+          expect(screen.getByTestId('pending-addon-row')).toBeInTheDocument();
+        });
+
+        // The PR merges: the next background refetch returns
+        // metrics-server as a real comparison row and no more open PRs.
+        mockGetClusterComparison.mockResolvedValue({
+          ...comparisonResponse,
+          addon_comparisons: [
+            ...comparisonResponse.addon_comparisons,
+            {
+              addon_name: 'metrics-server',
+              git_configured: true,
+              git_version: '0.6.0',
+              git_enabled: true,
+              environment_version: '0.6.0',
+              has_version_override: false,
+              argocd_deployed: true,
+              argocd_deployed_version: '0.6.0',
+              argocd_namespace: 'kube-system',
+              argocd_health_status: 'Healthy',
+              status: 'healthy',
+              issues: [],
+            },
+          ],
+        });
+        mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
+
+        // No active (deploying/sync_failing) addons in the fixture, so the
+        // background poll runs every 30s.
+        await act(async () => {
+          vi.advanceTimersByTime(30_000);
+          await Promise.resolve();
+        });
+
+        await waitFor(() => {
+          expect(screen.getAllByText('metrics-server').length).toBeGreaterThan(0);
+        });
+        expect(screen.queryByTestId('pending-addon-row')).not.toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 15_000);
+  });
+
   // BUG-034: the connection-status banner copy must distinguish "Unknown"
   // (no observation yet) from an actual failure. Previously the banner
   // showed "ArgoCD Connection Failed" whenever connection_status was
@@ -1519,6 +1670,43 @@ describe('ClusterDetail', () => {
         'cert-manager': false,
         'ingress-nginx': true,
       }]);
+    });
+
+    // Walk day 5 finding: a v3 Apply Changes that opens an enable PR has
+    // the exact same "no comparison row yet" gap as the v4 dialog — the
+    // fix has to refetch the tracked-PR list right away (not wait for the
+    // 10-30s background poll) so the new pending row shows up instantly.
+    it('Open PR (v3 Apply Changes) refetches tracked PRs immediately, same as the v4 dialog', async () => {
+      const user = userEvent.setup();
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      const callsBeforeApply = mockFetchTrackedPRs.mock.calls.length;
+
+      const certManagerKebab = screen.getAllByLabelText(/actions for cert-manager/i)[0];
+      await user.click(certManagerKebab);
+      const removeItem = await screen.findByRole('menuitem', { name: /remove/i });
+      await user.click(removeItem);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /review & open pr/i })).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole('button', { name: /review & open pr/i }));
+      const applyBtn = await screen.findByRole('button', { name: /^open pr$/i });
+      fireEvent.click(applyBtn);
+
+      await waitFor(() => {
+        expect(mockUpdateClusterAddons.mock.calls.filter((c) => c[2] !== true)).toHaveLength(1);
+      });
+
+      // The apply's own follow-up refetch (not the next background poll)
+      // calls fetchTrackedPRs again for this cluster.
+      await waitFor(() => {
+        expect(mockFetchTrackedPRs.mock.calls.length).toBeGreaterThan(callsBeforeApply);
+      });
+      expect(mockFetchTrackedPRs).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cluster: 'prod-eu', status: 'open' }),
+      );
     });
 
     it('Apply Changes after staging a new enable emits true for the staged addon', async () => {
