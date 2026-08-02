@@ -505,8 +505,11 @@ function StepInit({
   onDone,
   onInitDone,
   onEscape,
+  onGoToSettings,
   resumed,
+  isRepair,
   onBack,
+  onExitAvailabilityChange,
 }: {
   onDone: () => void
   // Called instead of onDone when initialize actually succeeds — takes the
@@ -520,10 +523,28 @@ function StepInit({
   // the repo is still un-initialized after an error. Falls back to onDone
   // if a caller doesn't pass it, so this stays backward compatible.
   onEscape?: () => void
+  // Closes the wizard WITHOUT navigating to the dashboard, then navigates to
+  // Settings → Connections — used by every credential/permission repoState
+  // below (unreachable/auth_failed/forbidden/unknown). Review findings r1,
+  // H2: these branches used to call `navigate('/settings?...')` followed
+  // immediately by `onDone()`, and onDone's own `navigate('/dashboard')`
+  // always won the race, so the button silently landed on the Dashboard
+  // instead of Settings.
+  onGoToSettings?: () => void
   resumed?: boolean
+  // True only when the parent opened this screen as a user-invited repair
+  // on an already-initialized install (the banner's "Review and repair"
+  // button) — as opposed to a genuine day-zero resume (connection saved,
+  // Initialize never run). Both cases pass resumed=true and land straight
+  // on this step, so isRepair is the only way to tell them apart and avoid
+  // calling a fully set-up install "Resuming setup" (review findings r1, M7).
+  isRepair?: boolean
   onBack?: () => void
+  // Reports whether the generic resumed-mode Back button below is actually
+  // being rendered, so the parent's footer copy can stop claiming "or go
+  // back" when there is no Back control on screen (review findings r1, M5).
+  onExitAvailabilityChange?: (canGoBack: boolean) => void
 }) {
-  const navigate = useNavigate()
   const [state, setState] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [operationId, setOperationId] = useState<string | null>(null)
@@ -538,9 +559,16 @@ function StepInit({
 
   // Repo-state probe (V2-cleanup-9). On mount we ask the backend whether the
   // repo is empty / already initialized / partial so Step 4 can render honest,
-  // probe-backed copy instead of the old hardcoded "appears to be empty". On a
-  // network/probe failure we fall back to the Initialize offer ('empty') so a
-  // flaky probe never blocks the user.
+  // probe-backed copy instead of the old hardcoded "appears to be empty".
+  //
+  // Review findings r1, M11: a network/probe failure used to fall back to
+  // the Initialize offer ('empty') "so a flaky probe never blocks the
+  // user" — but that fallback lies. Sharko never actually checked the repo
+  // in this case, so offering "Set Up" risks writing the v4 folder tree on
+  // top of a live, already-set-up repo the probe just couldn't reach. The
+  // honest fallback is the same "couldn't check" surface the server's own
+  // 'unknown' state renders — never claim the repo is empty when Sharko
+  // doesn't know that.
   const [repoState, setRepoState] = useState<
     | 'loading'
     | 'empty'
@@ -552,7 +580,6 @@ function StepInit({
     | 'unknown'
   >('loading')
   const [probeDetail, setProbeDetail] = useState<string>('')
-  const [probeFailed, setProbeFailed] = useState(false)
   // w2-q2: only meaningful when repoState === 'partial'. true — the
   // bootstrap app was simply never created, POST /init can repair it with
   // no PR, so the "Re-run initialize to repair it" promise is honest. false
@@ -563,7 +590,6 @@ function StepInit({
   useEffect(() => {
     let cancelled = false
     setRepoState('loading')
-    setProbeFailed(false)
     getInitStatus()
       .then((res: InitStatus) => {
         if (cancelled) return
@@ -573,9 +599,10 @@ function StepInit({
       })
       .catch(() => {
         if (cancelled) return
-        // Graceful fallback — never block the user on a probe failure.
-        setRepoState('empty')
-        setProbeFailed(true)
+        // The probe itself failed (network/5xx) — Sharko couldn't check
+        // anything. Never fall back to the Set Up offer here.
+        setRepoState('unknown')
+        setProbeDetail("Sharko couldn't reach the server to check the repository.")
       })
     return () => {
       cancelled = true
@@ -657,23 +684,43 @@ function StepInit({
     }
   }, [operationId])
 
-  // repoState branches that already render their own "Back to Dashboard" /
-  // "Go to Settings → Connections" button — the generic resumed-mode Back
-  // button (below) must not ALSO render for these, or the wizard shows two
-  // differently-worded ways out at once (wizard copy pass, error review
-  // package 1).
+  // repoState branches that already render their own "Go to Dashboard" /
+  // "Back to Dashboard" / "Go to Settings → Connections" button — the
+  // generic resumed-mode Back button (below) must not ALSO render for
+  // these, or the wizard shows two differently-worded ways out at once
+  // (wizard copy pass, error review package 1). "initialized" was missing
+  // here (review findings r1, L16) — its own "Go to Dashboard" button was
+  // rendering right next to the generic Back button, showing two exits.
   const hasOwnExitAction =
+    repoState === 'initialized' ||
     repoState === 'unreachable' ||
     repoState === 'forbidden' ||
     repoState === 'auth_failed' ||
     repoState === 'unknown' ||
     (repoState === 'partial' && !probeRepairable)
 
+  // Whether the generic resumed-mode Back button (below) is actually being
+  // rendered right now — mirrors that JSX condition exactly. Reported to
+  // the parent so its footer copy can stop promising "or go back" when
+  // there's no Back control on screen (review findings r1, M5).
+  const canGoBack = Boolean(resumed && onBack && state === 'idle' && !hasOwnExitAction)
+  useEffect(() => {
+    onExitAvailabilityChange?.(canGoBack)
+  }, [canGoBack, onExitAvailabilityChange])
+
   return (
     <div className="space-y-5">
       {resumed && (
         <div className="rounded-lg bg-[#e8f4ff] p-3 text-sm text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300 mb-4">
-          <strong>Resuming setup</strong> — your connection is set up. Pick up the repository below.
+          {isRepair ? (
+            <>
+              <strong>Repair</strong> — Sharko will check the engine app below and offer a repair if something's wrong.
+            </>
+          ) : (
+            <>
+              <strong>Resuming setup</strong> — your connection is already saved. Continue setting up the repository below.
+            </>
+          )}
         </div>
       )}
       <div className="flex items-center gap-2">
@@ -822,10 +869,7 @@ function StepInit({
           <div className="flex flex-col gap-3 sm:flex-row">
             <button
               type="button"
-              onClick={() => {
-                navigate('/settings?section=connections')
-                onDone()
-              }}
+              onClick={onGoToSettings}
               className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#6aade0]"
             >
               <SettingsIcon className="h-4 w-4" />
@@ -867,10 +911,7 @@ function StepInit({
           <div className="flex flex-col gap-3 sm:flex-row">
             <button
               type="button"
-              onClick={() => {
-                navigate('/settings?section=connections')
-                onDone()
-              }}
+              onClick={onGoToSettings}
               className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#6aade0]"
             >
               <SettingsIcon className="h-4 w-4" />
@@ -897,7 +938,7 @@ function StepInit({
           <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-5 dark:bg-amber-900/20">
             <p className="flex items-start gap-2 text-sm font-medium text-amber-800 dark:text-amber-300">
               <KeyRound className="h-4 w-4 mt-0.5 shrink-0" />
-              <span>ArgoCD's token doesn&apos;t have permission to check the engine app.</span>
+              <span>ArgoCD refused Sharko's token permission to read applications.</span>
             </p>
             {probeDetail && (
               <p className="mt-2 pl-6 text-sm text-amber-700 dark:text-amber-400">
@@ -908,10 +949,7 @@ function StepInit({
           <div className="flex flex-col gap-3 sm:flex-row">
             <button
               type="button"
-              onClick={() => {
-                navigate('/settings?section=connections')
-                onDone()
-              }}
+              onClick={onGoToSettings}
               className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#6aade0]"
             >
               <SettingsIcon className="h-4 w-4" />
@@ -949,10 +987,7 @@ function StepInit({
           <div className="flex flex-col gap-3 sm:flex-row">
             <button
               type="button"
-              onClick={() => {
-                navigate('/settings?section=connections')
-                onDone()
-              }}
+              onClick={onGoToSettings}
               className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#6aade0]"
             >
               <SettingsIcon className="h-4 w-4" />
@@ -969,20 +1004,16 @@ function StepInit({
         </div>
       )}
 
-      {/* Empty repo — the honest, probe-backed Set Up offer. Also the
-          graceful-fallback surface when the probe itself failed. */}
+      {/* Empty repo — the honest, probe-backed Set Up offer. Only rendered
+          when the probe genuinely confirmed the repo is empty — a failed
+          probe now renders the 'unknown' couldn't-check state above instead
+          (review findings r1, M11). */}
       {repoState === 'empty' && state === 'idle' && (
         <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:bg-gray-800">
           <p className="text-sm text-[#0a2a4a] dark:text-gray-200 font-medium mb-1">
             This repository is empty — Sharko will set up the GitOps structure
             and open a PR for your review.
           </p>
-          {probeFailed && (
-            <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">
-              (Couldn't confirm the repository state — you can still set it up
-              safely; Sharko skips files that already exist.)
-            </p>
-          )}
         </div>
       )}
 
@@ -999,7 +1030,7 @@ function StepInit({
             className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#6aade0]"
           >
             <Sparkles className="h-4 w-4" />
-            Set Up &amp; Auto-merge
+            Set Up &amp; Auto-Merge
           </button>
           <button
             type="button"
@@ -1152,7 +1183,7 @@ function StepInit({
           showing a second, differently-worded Back button next to that one
           read as a duplicated control (wizard copy pass, error review
           package 1). */}
-      {resumed && onBack && state === 'idle' && !hasOwnExitAction && (
+      {canGoBack && (
         <div className="pt-2 border-t border-[#bee0ff] dark:border-gray-700">
           <button
             type="button"
@@ -1624,6 +1655,7 @@ export function detectGitProvider(repoURL: string): 'github' | 'azuredevops' | u
 export function FirstRunWizard({
   initialStep = 1,
   onExit,
+  isRepair = false,
 }: {
   initialStep?: number
   // Called (in addition to the usual navigate-to-dashboard) when the wizard
@@ -1632,6 +1664,14 @@ export function FirstRunWizard({
   // day-zero auto-open path — it resets the parent's "repair wizard open"
   // flag so the overlay doesn't get stuck open after the user is done.
   onExit?: () => void
+  // True only for the user-invited repair screen (App.tsx passes this
+  // alongside onExit). Both the repair screen and a genuine day-zero resume
+  // land on initialStep=4, so this is the only signal that distinguishes
+  // "repairing an already-set-up install" from "still finishing first-time
+  // setup" — the copy differs (review findings r1, M7), and a successful
+  // repair must return to the app instead of routing through the day-zero
+  // catalog-seeding step (ride-along).
+  isRepair?: boolean
 } = {}) {
   const navigate = useNavigate()
   const { connections, refreshConnections } = useConnections()
@@ -1640,6 +1680,12 @@ export function FirstRunWizard({
   const [testStatus, setTestStatus] = useState<TestStatus>({ git: 'idle', argocd: 'idle' })
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  // Whether StepInit's own generic Back button is actually rendered right
+  // now — reported up via onExitAvailabilityChange so the footer copy below
+  // can stop mentioning "or go back" when there's no Back control on screen
+  // (review findings r1, M5). Defaults true so the very first render (before
+  // StepInit has reported in) doesn't flash the wrong copy for the common case.
+  const [canGoBackInStep4, setCanGoBackInStep4] = useState(true)
 
   // In resume mode, pre-populate the form with the existing connection so
   // the user can navigate back through step 3 → step 2 and see/edit the
@@ -1804,6 +1850,20 @@ export function FirstRunWizard({
     navigate('/dashboard')
   }, [navigate, refreshConnections, onExit])
 
+  // Used by the credential/permission repoState branches in StepInit ("Go to
+  // Settings → Connections" — unreachable/auth_failed/forbidden/unknown).
+  // Does the same close-out as handleDone (refresh connections, notify the
+  // parent) but navigates to Settings instead of the Dashboard. Review
+  // findings r1, H2: those buttons used to call `navigate('/settings?...')`
+  // immediately followed by `onDone()`, and handleDone's own
+  // `navigate('/dashboard')` always won the race, so the button silently
+  // landed on the Dashboard instead of Settings.
+  const handleGoToSettings = useCallback(() => {
+    refreshConnections()
+    onExit?.()
+    navigate('/settings?section=connections')
+  }, [navigate, refreshConnections, onExit])
+
   // The X button can't just navigate('/dashboard') — App.tsx's wizard gate
   // would immediately re-render FirstRunWizard whenever a connection exists
   // with an un-initialized repo. Set a session-scoped flag that App.tsx
@@ -1901,13 +1961,17 @@ export function FirstRunWizard({
               exists but repo not yet initialized), drop the "Step N of M"
               counter — it makes no sense for "you skipped 1-3 because they
               already happened in a prior session". Show "Resuming setup —
-              Initialize" instead. */}
+              Initialize" instead — or "Repair — Repository" when this is a
+              user-invited repair on an already-initialized install rather
+              than a genuine day-zero resume (review findings r1, M7). */}
           <div className="border-b border-[#bee0ff] dark:border-gray-800 bg-[#e8f4ff] dark:bg-gray-800/50 px-6 py-2">
             <p
               className="text-xs font-semibold uppercase tracking-wider text-[#3a6a8a] dark:text-gray-400"
               data-testid="wizard-step-label"
             >
-              {initialStep === 4
+              {isRepair
+                ? 'Repair — Repository'
+                : initialStep === 4
                 ? `Resuming setup — ${stepLabels[step - 1]}`
                 : `Step ${step} of ${stepLabels.length} — ${stepLabels[step - 1]}`}
             </p>
@@ -1961,10 +2025,19 @@ export function FirstRunWizard({
             {step === 4 && (
               <StepInit
                 onDone={handleDone}
-                onInitDone={() => setStep(5)}
+                // Ride-along fix (error-review findings r1): a successful
+                // repair on an already-initialized install used to hand off
+                // to the day-zero catalog-seeding step (Step 5) exactly like
+                // a fresh setup would. A repair isn't a fresh setup — send it
+                // straight back to the app instead. Day-zero setup (isRepair
+                // false) still moves on to catalog seeding.
+                onInitDone={isRepair ? undefined : () => setStep(5)}
                 onEscape={handleEscape}
+                onGoToSettings={handleGoToSettings}
                 resumed={initialStep === 4}
+                isRepair={isRepair}
                 onBack={initialStep === 4 ? () => setStep(3) : undefined}
+                onExitAvailabilityChange={setCanGoBackInStep4}
               />
             )}
             {step === 5 && <StepCatalog onDone={handleDone} />}
@@ -1975,10 +2048,21 @@ export function FirstRunWizard({
             in Settings" is misleading. The old copy also claimed "controls
             above to edit or reset" — but no edit/reset control is actually
             visible on this screen, only Back (wizard copy pass, error
-            review package 1). Point at what's really there instead. */}
+            review package 1). Point at what's really there instead.
+            Review findings r1: the "or go back" mention is now conditional
+            on `canGoBackInStep4` (M5) — several repoState branches on step 4
+            (unreachable/auth_failed/forbidden/unknown/initialized/a
+            non-repairable partial) render their own exit button and never
+            show the generic Back control, so claiming one exists there was
+            false. A repair also gets its own sentence instead of "resuming"
+            language (M7). */}
         <p className="mt-4 text-center text-xs text-[#3a6a8a] dark:text-gray-600">
-          {initialStep === 4
-            ? 'Finish setting up the repository, or go back to change your connection details.'
+          {isRepair
+            ? "Sharko will check the engine app and offer a repair below."
+            : initialStep === 4
+            ? step !== 4 || canGoBackInStep4
+              ? 'Finish setting up the repository, or go back to change your connection details.'
+              : 'Finish setting up the repository below.'
             : 'You can always update connections later in Settings.'}
         </p>
       </div>

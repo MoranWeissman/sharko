@@ -35,6 +35,16 @@ func connectionErrorFields(kind string, err error) map[string]interface{} {
 	msg := plainConnectionError(kind, err)
 	body := map[string]interface{}{"status": "error", "message": msg}
 	_, cause, hint, code := shapeError(err, msg)
+	// Review findings r1, M9: shapeError's hint for ERR_AUTH comes from
+	// verify.Hint, which is written for cluster-registration credentials
+	// ("regenerate the kubeconfig/token") — correct for that flow, wrong for
+	// a Git or secrets-provider connection test. Override with a kind-aware
+	// hint for exactly those two kinds; every other kind (including
+	// "argocd", which has its own sentinel-based hints above) keeps
+	// shapeError's answer untouched.
+	if hint != "" && code == string(verify.ERR_AUTH) && (kind == "git" || kind == "vault" || kind == "secrets") {
+		hint = kindAwareAuthHint(kind)
+	}
 	if cause != "" {
 		body["cause"] = cause
 	}
@@ -45,6 +55,22 @@ func connectionErrorFields(kind string, err error) map[string]interface{} {
 		body["code"] = code
 	}
 	return body
+}
+
+// kindAwareAuthHint returns the ERR_AUTH hint text for a Git or
+// secrets-provider ("vault"/"secrets") connection kind — see
+// connectionErrorFields and plainConnectionError, the two places verify.Hint's
+// cluster-credential wording would otherwise leak into a non-cluster
+// connection kind (review findings r1, M9).
+func kindAwareAuthHint(kind string) string {
+	switch kind {
+	case "git":
+		return "the Git host rejected the credentials (HTTP 401) — the token may be expired or invalid; regenerate the Git token/PAT in Settings → Connections and try again."
+	case "vault", "secrets":
+		return "the secrets store rejected the credentials (HTTP 401) — check the secrets-provider credentials and try again."
+	default:
+		return verify.Hint(verify.ERR_AUTH)
+	}
 }
 
 // plainConnectionError returns a plain-English, non-technical description
@@ -69,6 +95,11 @@ func plainConnectionError(kind string, err error) string {
 	}
 
 	code := verify.ClassifyError(err)
+	// M9: kind-aware for ERR_AUTH (git/vault get their own wording, every
+	// other kind falls through to verify.Hint's existing text below).
+	if code == verify.ERR_AUTH && (kind == "git" || kind == "vault" || kind == "secrets") {
+		return what + " — " + kindAwareAuthHint(kind)
+	}
 	if hint := verify.Hint(code); hint != "" {
 		return what + " — " + hint
 	}

@@ -167,8 +167,9 @@ describe('shouldShowConnectionErrorBanner', () => {
     'bootstrap_unreachable',
     'argocd_auth_failed',
     'argocd_unreachable',
+    'argocd_forbidden',
     undefined,
-  ])('fires for initialized-but-unhealthy reason=%s', (reason) => {
+  ] as const)('fires for initialized-but-unhealthy reason=%s', (reason) => {
     expect(
       shouldShowConnectionErrorBanner({ initialized: true, bootstrap_synced: false, reason }),
     ).toBe(true)

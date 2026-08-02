@@ -5,12 +5,14 @@
 // imports) into the always-mounted Layout bundle. SystemView.tsx re-exports
 // these so existing imports (`from '@/views/SystemView'`) keep working.
 
+import type { RepoStatusReason } from '@/services/api'
+
 export type ArrowStatus = 'healthy' | 'degraded' | 'unknown'
 
 export interface RepoStatus {
   initialized: boolean
   bootstrap_synced?: boolean
-  reason?: string
+  reason?: RepoStatusReason
 }
 
 export interface ArrowVerdict {
@@ -72,10 +74,13 @@ export function deriveArgoRepoArrow(repo: RepoStatus | null): ArrowVerdict {
   // usable answer from ArgoCD at all — distinct from the fallthrough below,
   // which asserts ArgoCD actually looked at the engine app and found it
   // degraded or missing. Asserting that here would be a claim Sharko never
-  // verified.
+  // verified. Review findings r1, L13: both are "couldn't check", so both
+  // map to the SAME status ('unknown') — a rejected token is not evidence
+  // the repo is degraded, any more than an unreachable ArgoCD is. Only the
+  // detail text differs, since the two failures are honestly different.
   if (repo.reason === 'argocd_auth_failed') {
     return {
-      status: 'degraded',
+      status: 'unknown',
       detail: "ArgoCD rejected Sharko's token, so Sharko can't confirm whether the repo is synced.",
     }
   }
@@ -83,6 +88,16 @@ export function deriveArgoRepoArrow(repo: RepoStatus | null): ArrowVerdict {
     return {
       status: 'unknown',
       detail: "Sharko couldn't reach ArgoCD to check the repo's sync status.",
+    }
+  }
+  // H1 (review findings r1): a 403 means ArgoCD rejected Sharko's token for
+  // lacking permission — Sharko never got to look at the engine app, so
+  // this is the same "couldn't check" bucket as the two reasons above, not
+  // a claim the engine app is actually degraded.
+  if (repo.reason === 'argocd_forbidden') {
+    return {
+      status: 'unknown',
+      detail: "ArgoCD refused Sharko's token permission, so Sharko can't confirm whether the repo is synced.",
     }
   }
   return {

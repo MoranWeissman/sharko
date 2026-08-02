@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, ExternalLink, Wrench, X } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Wrench, X } from 'lucide-react'
+import type { RepoStatusReason } from '@/services/api'
 
 /**
  * Non-blocking, dismissible banner shown at the top of the app whenever
@@ -32,7 +33,7 @@ interface BannerContent {
 }
 
 /** Maps the machine reason tag to the heading/body/action the banner shows. */
-function bannerContent(reason?: string): BannerContent {
+function bannerContent(reason?: RepoStatusReason): BannerContent {
   switch (reason) {
     case 'connection_error':
       return {
@@ -41,8 +42,12 @@ function bannerContent(reason?: string): BannerContent {
         action: 'settings',
       }
     case 'no_connection':
+      // Review findings r1, L17: the old heading ("can't reach your Git
+      // connection") implies Sharko tried and failed to connect — but this
+      // reason means no connection is configured at all, so there was
+      // nothing to try. Match the heading to what the body already says.
       return {
-        heading: "Sharko can't reach your Git connection right now.",
+        heading: 'No Git connection is set up.',
         body: 'There is no usable Git connection configured right now.',
         action: 'settings',
       }
@@ -50,6 +55,17 @@ function bannerContent(reason?: string): BannerContent {
       return {
         heading: "Sharko's ArgoCD credential is no longer valid.",
         body: "ArgoCD rejected the token Sharko uses to check on the cluster (401) — the token is likely expired or was revoked.",
+        action: 'settings',
+      }
+    case 'argocd_forbidden':
+      // Review findings r1, H1: a 403 means the token is valid but lacks
+      // permission — Sharko never got to look at the engine app, so this is
+      // a couldn't-check state, not a broken-app state. No repair button:
+      // repairing the engine app is not the fix for a permissions problem,
+      // and offering one would wrongly imply Sharko found something broken.
+      return {
+        heading: "ArgoCD refused Sharko's token permission to read applications.",
+        body: "The token is valid but lacks permission to check the engine app, so Sharko can't confirm whether it's healthy. Grant the token permission, or replace it, in Settings → Connections.",
         action: 'settings',
       }
     case 'argocd_unreachable':
@@ -75,7 +91,7 @@ function bannerContent(reason?: string): BannerContent {
     // problem the repair screen can act on.
     default:
       return {
-        heading: "Sharko's engine app needs attention.",
+        heading: "There's an issue with Sharko's engine app.",
         body: 'The ArgoCD application Sharko uses to manage addons is missing or not healthy.',
         action: 'repair',
       }
@@ -86,7 +102,7 @@ export function ConnectionErrorBanner({
   reason,
   onOpenRepair,
 }: {
-  reason?: string
+  reason?: RepoStatusReason
   /** Called when the user clicks the repair action (only shown for engine-app problems). */
   onOpenRepair?: () => void
 }) {
@@ -119,7 +135,7 @@ export function ConnectionErrorBanner({
             className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-400 bg-amber-100 px-3 py-1 text-xs font-medium hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900 dark:hover:bg-amber-800"
           >
             Open Settings → Connections
-            <ExternalLink className="h-3 w-3" />
+            <ArrowRight className="h-3 w-3" />
           </Link>
         )}
       </div>

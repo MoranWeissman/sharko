@@ -400,6 +400,26 @@ func TestHandleRepoStatus_Initialized_ArgocdListFailsGeneric(t *testing.T) {
 	}
 }
 
+// Review findings r1, H1 — repo initialized + ArgoCD rejects the bootstrap
+// probe with a 403 (valid token, no RBAC permission) → bootstrap_synced=false
+// AND reason="argocd_forbidden". Before this fix, probeBootstrapSynced
+// dropped bootstrapForbidden into the `default:` arm and reported
+// "bootstrap_degraded" — falsely claiming Sharko had looked at the engine
+// app and found it broken, when it never got past the permission check.
+func TestHandleRepoStatus_Initialized_ArgocdForbidden(t *testing.T) {
+	ac := &initFakeArgocd{
+		listErr: fmt.Errorf("listing applications: %w", argocd.ErrPermissionDenied),
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (forbidden), got %v",
+			body["bootstrap_synced"])
+	}
+	if body["reason"] != "argocd_forbidden" {
+		t.Errorf("expected reason=argocd_forbidden, got %v", body["reason"])
+	}
+}
+
 // ---------------------------------------------------------------------------
 // handleTriggerReconcile
 // ---------------------------------------------------------------------------

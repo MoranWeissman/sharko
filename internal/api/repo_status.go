@@ -52,6 +52,11 @@ import (
 //     repo/app problem — distinct from both reasons above, neither of which
 //     applies when Sharko never got past the token check (error review
 //     package 1).
+//   - "argocd_forbidden"      — ArgoCD rejected Sharko's own token with a 403
+//     when probing the bootstrap app: the token is valid but lacks RBAC
+//     permission to read applications. Sharko never got to check the app's
+//     health, so this is a couldn't-check state, not a broken-app state
+//     (review findings r1, H1).
 //   - "argocd_unreachable"    — Sharko could not get a usable answer from
 //     ArgoCD at all: either no ArgoCD connection is configured, or the probe
 //     itself failed for a reason that is neither a permission problem nor an
@@ -82,7 +87,7 @@ type RepoStatusResponse struct {
 // handleRepoStatus godoc
 //
 // @Summary Get repo initialization status
-// @Description Checks whether the GitOps repository has been bootstrapped (the engine pin at sharko-engine.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present — except for reason "argocd_auth_failed" (ArgoCD rejected Sharko's token) or "argocd_unreachable" (Sharko could not get a usable answer from ArgoCD), which are credential/connectivity problems the wizard cannot fix, so the UI surfaces those as a banner instead of re-opening setup.
+// @Description Checks whether the GitOps repository has been bootstrapped (the engine pin at sharko-engine.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present — except for reason "argocd_auth_failed" (ArgoCD rejected Sharko's token), "argocd_forbidden" (ArgoCD rejected Sharko's token with a 403 — the token is valid but lacks permission to read applications), or "argocd_unreachable" (Sharko could not get a usable answer from ArgoCD), which are credential/permission/connectivity problems the wizard cannot fix, so the UI surfaces those as a banner instead of re-opening setup.
 // @Tags system
 // @Produce json
 // @Security BearerAuth
@@ -180,6 +185,13 @@ func (s *Server) probeBootstrapSynced(ctx context.Context) (synced bool, reason 
 		// ArgoCD reached the comparison stage and reported Sync=Unknown — a
 		// connection problem re-init won't help (V2-cleanup-51).
 		return false, "bootstrap_unreachable"
+	case bootstrapForbidden:
+		// ArgoCD rejected the LIST with a 403 — the token is valid but lacks
+		// RBAC permission to read applications. This is a credential/permission
+		// problem, not a repo/app problem — Sharko never got to look at the
+		// bootstrap app's health, so this must not be folded into
+		// "bootstrap_degraded" (review findings r1, H1).
+		return false, "argocd_forbidden"
 	case bootstrapAuthFailed:
 		// ArgoCD rejected Sharko's own token (401) — a credential problem,
 		// not a repo/app problem (error review package 1).

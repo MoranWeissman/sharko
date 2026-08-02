@@ -30,6 +30,12 @@ const (
 	// Sharko never established that anything is actually broken, only that
 	// it could not check.
 	TitleArgoUnreachable = "Sharko can't reach ArgoCD"
+	// TitleArgoForbidden is raised when ArgoCD rejects the LIST with a 403:
+	// the token is valid but lacks permission to read applications. This is
+	// a permission problem, not a repo-sync problem — distinct from
+	// TitleArgoRepoBroken, which implies ArgoCD looked at the repo and found
+	// it broken (review findings r1, H1).
+	TitleArgoForbidden = "ArgoCD refused Sharko's token permission"
 )
 
 // DefaultConnectionCheckInterval is how often the poller probes both
@@ -185,11 +191,22 @@ func (p *ConnectionPoller) check() {
 }
 
 // evaluate probes one connection and reconciles the bell against the
-// transition. It acts only on edges:
-//   - healthy → unhealthy : Add the titled alert
-//   - unhealthy → healthy : Resolve the titled alert
-//   - no change           : do nothing (no re-nag, survives mark-read)
-//   - can't determine      : no-op, last-known state untouched
+// transition. It acts on edges, PLUS one more case (review findings r1,
+// L12):
+//   - healthy → unhealthy         : Add the titled alert
+//   - unhealthy → healthy         : Resolve the titled alert
+//   - unhealthy → unhealthy,
+//     title changed               : Resolve the stale alert, Add the new one
+//   - no change (same health AND
+//     same title)                 : do nothing (no re-nag, survives mark-read)
+//   - can't determine             : no-op, last-known state untouched
+//
+// The middle case used to fall through the "no change" no-op: a health
+// closure that reclassifies WHY a connection is unhealthy without it ever
+// recovering in between (e.g. argoHealthFn moving from "ArgoCD can't sync
+// the repo" to "ArgoCD rejected Sharko's token") never updated the bell —
+// the title from the first classification sat there, actively wrong, until
+// the connection either recovered or the process restarted.
 //
 // defaultTitle/defaultLead are used unless the probe's HealthResult supplies
 // its own (via UnhealthyResultWithTitle) — a health closure that can
@@ -197,8 +214,7 @@ func (p *ConnectionPoller) check() {
 // "ArgoCD rejected our token" from "ArgoCD can't sync the repo") overrides
 // per-result so the alert names the right problem. lastTitle records which
 // title is currently open for this connection so a later healthy transition
-// resolves that SAME alert, even if the unhealthy classification changed
-// across checks without ever going healthy in between.
+// (or a reclassification) resolves that SAME alert.
 func (p *ConnectionPoller) evaluate(
 	ctx context.Context,
 	probe func(ctx context.Context) HealthResult,
@@ -224,9 +240,14 @@ func (p *ConnectionPoller) evaluate(
 	}
 
 	prev := *last
-	if prev != nil && *prev == res.healthy {
-		// No transition — nothing to do. This is what prevents re-adding on
-		// every tick and re-adding after the user marks the alert read.
+	sameHealthState := prev != nil && *prev == res.healthy
+	// Healthy has no title to compare — only an unhealthy→unhealthy
+	// reclassification needs the title check to detect a real change.
+	titleUnchanged := res.healthy || title == *lastTitle
+	if sameHealthState && titleUnchanged {
+		// No transition, and (if unhealthy) no reclassification either —
+		// nothing to do. This is what prevents re-adding on every tick and
+		// re-adding after the user marks the alert read.
 		return
 	}
 
@@ -236,6 +257,12 @@ func (p *ConnectionPoller) evaluate(
 		}
 		*lastTitle = ""
 	} else {
+		// Unhealthy while already unhealthy, but under a different title —
+		// resolve the stale alert first so the bell never shows two open
+		// alerts for the same connection.
+		if sameHealthState && *lastTitle != "" && *lastTitle != title {
+			p.store.Resolve(*lastTitle)
+		}
 		desc := lead
 		if res.detail != "" {
 			desc = lead + " Reason: " + res.detail

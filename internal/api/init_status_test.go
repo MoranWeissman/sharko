@@ -199,6 +199,24 @@ func TestHandleInitStatus_Forbidden(t *testing.T) {
 	}
 }
 
+// TestHandleInitStatus_ArgocdUnavailable_MapsToUnknown — review findings r1,
+// M11. Before this fix, a missing/broken ArgoCD connection short-circuited
+// with a 502 BEFORE the probe ever ran — the documented "unknown" state
+// (ProbeBootstrapApp's own nil-client branch) was unreachable through this
+// handler in practice, forcing the wizard's catch handler to invent an
+// "empty" fallback that wrongly offered to set up a repo Sharko never
+// actually checked. A Git-only probe must still succeed (200) and report the
+// honest "couldn't check" state instead of failing the whole request.
+func TestHandleInitStatus_ArgocdUnavailable_MapsToUnknown(t *testing.T) {
+	body := initStatusBody(t, initializedRepoGit(), nil)
+	if body.State != RepoStateUnknown {
+		t.Errorf("expected state=%q, got %q", RepoStateUnknown, body.State)
+	}
+	if body.Detail == "" {
+		t.Error("expected a non-empty detail for the unknown state")
+	}
+}
+
 // No active Git connection — no override installed and the test config has no
 // connection — must surface a clear error (502) the wizard can fall back on,
 // not a panic or a misleading "empty".

@@ -23,6 +23,7 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger"
 	"golang.org/x/crypto/bcrypt"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
@@ -2075,7 +2076,15 @@ func writeErrorWithCause(w http.ResponseWriter, status int, headline string, err
 //     ErrPullRequestNotFound) — fixed sentence.
 //   - Kubernetes API errors (apierrors.StatusError) — Status().Message is a
 //     controlled, structured surface (e.g. `namespaces "x" not found`), not
-//     free-form file/user content.
+//     free-form file/user content, but ONLY for a bounded allowlist of
+//     Reason kinds (NotFound, Forbidden, Unauthorized, AlreadyExists,
+//     Conflict, Timeout). Review findings r1, M3: Invalid (NewInvalid,
+//     admission-webhook denials) and any message that mentions "admission
+//     webhook" can embed arbitrary third-party text — a denying webhook or a
+//     rejected field value gets echoed into Message verbatim by client-go.
+//     Those get a safe summary naming only the (bounded) Reason instead of
+//     the message text; so does every Reason not on the allowlist, since the
+//     allowlist is opt-in, not opt-out.
 //   - Sharko input-validation errors (service.ErrValidation) — already a
 //     clean, Sharko-authored sentence (see internal/service/connection.go's
 //     validationError), so it's used as-is.
@@ -2121,7 +2130,7 @@ func classifyBoundaryError(err error) (cause, hint, code string) {
 
 	var statusErr *apierrors.StatusError
 	if errors.As(err, &statusErr) {
-		cause = statusErr.Status().Message
+		cause = safeStatusErrorCause(statusErr)
 	}
 
 	if ec := verify.ClassifyError(err); ec != verify.ERR_UNKNOWN {
@@ -2129,6 +2138,38 @@ func classifyBoundaryError(err error) (cause, hint, code string) {
 		hint = verify.Hint(ec)
 	}
 	return cause, hint, code
+}
+
+// statusErrorBoundedReasons is the allowlist of apierrors.StatusError Reason
+// kinds whose Message is safe to echo verbatim into the error envelope's
+// `cause` field. These are controlled, structured surfaces (e.g. `namespaces
+// "x" not found`) — never free-form file/user content (review findings r1,
+// M3).
+var statusErrorBoundedReasons = map[metav1.StatusReason]bool{
+	metav1.StatusReasonNotFound:      true,
+	metav1.StatusReasonForbidden:     true,
+	metav1.StatusReasonUnauthorized:  true,
+	metav1.StatusReasonAlreadyExists: true,
+	metav1.StatusReasonConflict:      true,
+	metav1.StatusReasonTimeout:       true,
+}
+
+// safeStatusErrorCause returns a cause string for a Kubernetes StatusError
+// that is safe to expose to the caller. Review findings r1, M3: the naive
+// "always copy Status().Message" approach leaked arbitrary third-party text
+// on every 5xx — an admission-webhook denial or a NewInvalid error can embed
+// the rejected field value, or an operator-authored denial message,
+// verbatim into Message. Only the bounded Reason kinds in
+// statusErrorBoundedReasons get their Message echoed; everything else
+// (Invalid, any message mentioning "admission webhook" regardless of
+// Reason, and any Reason not on the allowlist) gets a safe summary naming
+// only the Reason.
+func safeStatusErrorCause(statusErr *apierrors.StatusError) string {
+	status := statusErr.Status()
+	if statusErrorBoundedReasons[status.Reason] && !strings.Contains(status.Message, "admission webhook") {
+		return status.Message
+	}
+	return fmt.Sprintf("kubernetes rejected the request (reason: %s)", status.Reason)
 }
 
 // writeServerError writes a sanitized 5xx response while logging the full

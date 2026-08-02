@@ -1104,6 +1104,42 @@ export interface InitStatus {
 }
 
 /**
+ * Machine-readable `reason` tags on GET /api/v1/repo/status — mirrors the Go
+ * doc comment on RepoStatusResponse (internal/api/repo_status.go). Typed as
+ * a union (review findings r1, L15) instead of a bare string so
+ * ConnectionErrorBanner's switch and repoHealth.ts's arrow derivations get
+ * compile-time checking against the server's actual vocabulary.
+ *
+ *   - "no_connection"       — no active Git connection is configured.
+ *   - "not_bootstrapped"    — the repo is reachable but genuinely not set up.
+ *   - "connection_error"    — the Git repo could not be reached/verified.
+ *   - "error"               — the HTTP probe itself failed client-side.
+ *   - "bootstrap_unreachable" — ArgoCD can't reach/evaluate the Git repo.
+ *   - "bootstrap_degraded"  — the engine app is missing or genuinely degraded.
+ *   - "argocd_auth_failed"  — ArgoCD rejected Sharko's token (401).
+ *   - "argocd_unreachable"  — Sharko never got a usable answer from ArgoCD.
+ *   - "argocd_forbidden"    — ArgoCD rejected Sharko's token with a 403 (the
+ *     token is valid but lacks permission to read applications).
+ */
+export type RepoStatusReason =
+  | 'no_connection'
+  | 'not_bootstrapped'
+  | 'connection_error'
+  | 'error'
+  | 'bootstrap_unreachable'
+  | 'bootstrap_degraded'
+  | 'argocd_auth_failed'
+  | 'argocd_unreachable'
+  | 'argocd_forbidden'
+
+export interface RepoStatusResponse {
+  initialized: boolean
+  bootstrap_synced?: boolean
+  reason?: RepoStatusReason
+  format?: string
+}
+
+/**
  * Read-only probe used by the first-run wizard's Step 4 before it offers to
  * initialize the repo. Unlike most helpers here it does NOT auto-reload on
  * 401 — the wizard owns that flow — and on any failure the caller falls back
@@ -1681,7 +1717,7 @@ export const api = {
   // auto-opens the wizard. Backend returns `bootstrap_synced=false`
   // defensively whenever the ArgoCD client is unavailable or the probe
   // fails — the wizard exists to recover that state.
-  getRepoStatus: () => fetchJSON<{ initialized: boolean; bootstrap_synced: boolean; reason?: string }>('/repo/status'),
+  getRepoStatus: () => fetchJSON<RepoStatusResponse>('/repo/status'),
 
   // Cluster addons
   enableAddonOnCluster: (clusterName: string, addonName: string): Promise<DeployAddonResult> =>
