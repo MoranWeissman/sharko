@@ -79,7 +79,7 @@ A good answer:
 ```json
 {
   "status": "healthy",
-  "version": "2.0.2",
+  "version": "<your running Sharko version>",
   "mode": "Kubernetes",
   "cluster_test_available": true
 }
@@ -135,7 +135,9 @@ the optional `creds_source` field:
 
 Required field in every case: `name` (alphanumeric, may contain hyphens, must
 start with a letter or digit). The `addons` field is a map of addon name to
-on/off.
+on/off — **on a v4 (migrated) repo this field is silently ignored**;
+registration is addon-free there, and you enable each addon afterward via
+`POST /v4/clusters/{name}/addons/{addon}` (section 3 below).
 
 #### Paste a kubeconfig (`inline-kubeconfig`)
 
@@ -297,25 +299,62 @@ Add `"dry_run": true` to preview the removal first.
 ## 3. Addons on a cluster — the core loop
 
 This is the heart of day-to-day work: turning addons on and off for a given
-cluster. Each of these opens a PR (and may auto-merge per your global setting).
-Once the PR is merged, ArgoCD creates or removes an Application named
+cluster. Two words matter here, and Sharko uses them consistently everywhere:
+the **Marketplace** is the read-only list of addons you *could* run; the
+**Catalog** (`catalog.yaml` in your GitOps repo) is the list your org has
+*approved*. A cluster can only run an addon that is already in the Catalog —
+so the flow below is always: get it into the Catalog first (section 4), then
+enable it on a cluster (this section). Every write here runs the same three
+steps — Sharko validates the request, you can preview it with `dry_run`, and
+a real call opens a pull request — so nothing lands outside a reviewable PR.
+
+Each call opens a PR (and may auto-merge per your global setting). Once the
+PR is merged, ArgoCD creates or removes an Application named
 `<addon>-<cluster>` and syncs it.
+
+!!! note "These are the v4 routes"
+    The endpoints below (`/v4/clusters/...`) are for a repo that has gone
+    through the [one-pull-request migration](../operator/migrating-to-the-new-format.md).
+    The older `POST /clusters/{name}/addons/{addon}` and
+    `DELETE /clusters/{name}/addons/{addon}` routes still exist for a repo
+    that has not migrated yet, but on a migrated (v4) repo they refuse with
+    HTTP 409 and a `repo_layout` code — they write files a v4 repo does not
+    use. Same for `PATCH /clusters/{name}` (the old bulk on/off toggle):
+    it is not yet available on v4 repos, so call the endpoint below once per
+    addon instead.
 
 ### Enable an addon
 
-Turns one addon on for one cluster. Sharko flips the addon to `true` in the
-cluster's values file and to "enabled" in `managed-clusters.yaml`, via a PR. If
-the cluster has a credential provider, the addon's secrets are also created on
-the remote cluster. **Confirmation is required — set `"yes": true`.**
+Turns one addon on for one cluster by writing `cluster-addons/my-cluster.yaml`
+(and, if you send `values`, `values/clusters/my-cluster/keda.yaml`).
+**Validation runs first, before anything is written**: the addon must
+already be in your Catalog, and every value or secret its catalog entry
+requires must be present. A validation failure comes back as HTTP 422 naming
+exactly what's missing — nothing is written, not even a branch.
+**Confirmation is required — set `"yes": true`** (or use `dry_run` to preview,
+which also runs validation).
 
 ```bash
-curl -s "${auth[@]}" -X POST "$SH/clusters/my-cluster/addons/keda" \
+curl -s "${auth[@]}" -X POST "$SH/v4/clusters/my-cluster/addons/keda" \
   -H "Content-Type: application/json" \
   -d '{ "yes": true }' | jq
 ```
 
-A good answer is HTTP 200 with `"status": "success"` and a `git` block with the
-`pr_url`. Use `"dry_run": true` to preview without writing anything.
+A good answer is HTTP 200 with a `git` block carrying the `pr_url`. Use
+`"dry_run": true` to see the same validation and a file-by-file preview with
+no side effects.
+
+A few things that go wrong, and how you'll know:
+
+| What happened | Status | Body |
+|---|---|---|
+| Addon isn't in your Catalog yet | 422 | `code: "not_in_catalog"` — add it first, `POST $SH/catalog/addons` |
+| Catalog entry is missing chart/repo/version | 422 | `code: "incomplete_entry"`, `problems` names each missing piece |
+| Cluster is missing a required value or secret | 422 | `code: "validation_failed"`, `problems` names each one |
+| Cluster isn't registered | 404 | `code: "cluster_not_found"` |
+| Repo hasn't migrated, or has both layouts at once | 409 | `code: "repo_layout"` |
+
+Branch on `code`, never on the message text — the wording can change.
 
 **Watch ArgoCD react.** Once the PR merges, an Application appears and syncs:
 
@@ -335,18 +374,15 @@ curl -s "${auth[@]}" "$SH/clusters/my-cluster" | jq '.addons // .'
 
 ### Disable an addon
 
-Turns one addon off for one cluster, with a configurable cleanup scope.
-**Confirmation is required — set `"yes": true`.**
-
-- `"cleanup": "all"` (default) — update values + labels and delete remote
-  secrets.
-- `"cleanup": "labels"` — update values + labels only.
-- `"cleanup": "none"` — update values only.
+Turns one addon off for one cluster. By default the addon's entry in
+`cluster-addons/my-cluster.yaml` is kept with `enabled: false` set (a
+one-word change to turn it back on later); send `"remove": true` to delete
+the entry outright instead. **Confirmation is required — set `"yes": true`.**
 
 ```bash
-curl -s "${auth[@]}" -X DELETE "$SH/clusters/my-cluster/addons/keda" \
+curl -s "${auth[@]}" -X DELETE "$SH/v4/clusters/my-cluster/addons/keda" \
   -H "Content-Type: application/json" \
-  -d '{ "yes": true, "cleanup": "all" }' | jq
+  -d '{ "yes": true }' | jq
 ```
 
 After the PR merges, the `keda-my-cluster` Application is removed from ArgoCD.
@@ -358,26 +394,12 @@ kubectl --context kind-sharko-e2e get applications -n argocd | grep keda-my-clus
 
 Add `"dry_run": true` to preview.
 
-### Toggle several addons at once
-
-Updates the on/off state of multiple addons for a cluster in a single PR. The
-body's `addons` field is a map of addon name to the desired on/off value.
-
-```bash
-curl -s "${auth[@]}" -X PATCH "$SH/clusters/my-cluster" \
-  -H "Content-Type: application/json" \
-  -d '{ "addons": { "keda": true, "metrics-server": false } }' | jq
-```
-
-You can also use this same call to change the cluster's `secret_path` by adding a
-`"secret_path": "..."` field. A request that names an addon not in your catalog
-comes back as HTTP 422.
-
 ### Restart a stuck sync
 
 If an addon's ArgoCD sync is wedged (stale or permanently failing), this
 terminates any in-flight sync operation and immediately re-triggers a fresh one —
-without you having to open the ArgoCD UI. No request body.
+without you having to open the ArgoCD UI. No request body. Unchanged by the v4
+data-file format — it talks to ArgoCD, not to your Git repo.
 
 ```bash
 curl -s "${auth[@]}" -X POST "$SH/clusters/my-cluster/addons/keda/restart-sync" | jq
@@ -389,98 +411,150 @@ Application doesn't exist in ArgoCD, you get a 404.
 
 ---
 
-## 4. Catalog
+## 4. Catalog and Marketplace
 
-The catalog is the set of addons Sharko knows how to deploy. These calls let you
-browse it and change what's in it.
+**Marketplace** is what you could run — the curated list Sharko ships (plus
+any third-party feeds an operator configured), read-only, discovery only.
+Nothing here is deployed and nothing here is approved.
 
-### List catalog addons
+**Catalog** is what your org allows — your own `catalog.yaml`, read straight
+from your GitOps repo. A brand-new repo has an **empty Catalog on purpose**:
+nothing runs in your org that nobody in your org chose. The only door from
+Marketplace into Catalog is the pull request `POST /catalog/addons` opens —
+that's the approval, and it's the only way in, for every source, forever. See
+[Marketplace Architecture](../operator/marketplace-architecture.md) for the
+full model.
 
-The curated, embedded marketplace list (read-only).
+### Browse the Marketplace
+
+The curated, discovery-only list Sharko ships. Read-only — nothing here
+writes to your repo.
+
+```bash
+curl -s "${auth[@]}" "$SH/marketplace/addons" | jq
+```
+
+The feeds behind that list (the embedded one plus any third-party URLs) with
+per-source fetch status:
+
+```bash
+curl -s "${auth[@]}" "$SH/marketplace/sources" | jq
+```
+
+### List your org's Catalog
+
+What your org has actually approved — read straight from `catalog.yaml`. A
+repo with no `catalog.yaml` yet returns an empty list, not an error.
 
 ```bash
 curl -s "${auth[@]}" "$SH/catalog/addons" | jq
 ```
 
-### List catalog sources
+Each entry carries `origin: "curated"` when the Marketplace also knows this
+addon by name, or `"internal"` when only your own entry describes it. An
+entry with a piece missing (say, no chart repo yet) comes back with
+`"deployable": false` and a `missing_fields` list instead of failing the
+whole read.
 
-The configured catalog sources (the embedded one plus any third-party URLs) with
-per-source fetch status.
+### Add an addon to the Catalog
+
+This is the approval step — the pull request it opens is the only way
+anything enters your org. One endpoint, three shapes:
+
+**Pick one from the Marketplace.** Set `from_marketplace: true` and Sharko
+fills in the chart location, default namespace, and needed-secrets list from
+the curated entry. Leave `version` empty and Sharko resolves it to the
+newest version it knows for the chart — that resolved pin is what actually
+lands in `catalog.yaml`, and the response tells you which one it picked:
 
 ```bash
-curl -s "${auth[@]}" "$SH/catalog/sources" | jq
-```
-
-### Add an addon to the catalog
-
-Adds a new addon by creating its configuration in your GitOps repo via a PR.
-**Required fields: `name`, `chart`, `repo_url`, `version`.** A common optional
-field is `namespace`.
-
-```bash
-curl -s "${auth[@]}" -X POST "$SH/addons" \
+curl -s "${auth[@]}" -X POST "$SH/catalog/addons" \
   -H "Content-Type: application/json" \
   -d '{
-        "name": "keda",
-        "chart": "keda",
-        "repo_url": "https://kedacore.github.io/charts",
-        "version": "2.14.0",
-        "namespace": "keda"
+        "addons": [
+          { "name": "keda", "from_marketplace": true }
+        ]
       }' | jq
 ```
 
-A good answer is HTTP 201. An addon that already exists comes back as 409. There
-are several more optional fields (sync options, extra Helm values, dependencies,
-and a `dry_run` preview flag) — see `docs/swagger/swagger.json` for the full
-`AddAddonRequest` body.
-
-### Configure an addon
-
-Updates an existing catalog addon's settings (for example its pinned `version`
-or `self_heal`), opening a PR. All fields except the path name are
-optional — send only what you want to change.
-
-```bash
-curl -s "${auth[@]}" -X PATCH "$SH/addons/keda" \
-  -H "Content-Type: application/json" \
-  -d '{ "self_heal": true }' | jq
+```json
+{
+  "added": ["keda"],
+  "resolved_versions": { "keda": "2.17.2" },
+  "git": { "pr_url": "https://github.com/example-org/sharko-addons/pull/42" }
+}
 ```
 
-An unknown addon name comes back as 404. See swagger for the full
-`ConfigureAddonRequest` field list.
-
-### Upgrade an addon
-
-Bumps an addon to a new chart version. Send `version` for a global upgrade, or
-add `cluster` to upgrade just one cluster's pin. **`version` is required.**
+**Type in your own chart.** No `from_marketplace` — give the chart location
+and version yourself. Required: `repo_url`, `chart`, `version`.
 
 ```bash
-# Global upgrade
-curl -s "${auth[@]}" -X POST "$SH/addons/keda/upgrade" \
+curl -s "${auth[@]}" -X POST "$SH/catalog/addons" \
   -H "Content-Type: application/json" \
-  -d '{ "version": "2.15.0" }' | jq
-
-# Per-cluster upgrade
-curl -s "${auth[@]}" -X POST "$SH/addons/keda/upgrade" \
-  -H "Content-Type: application/json" \
-  -d '{ "version": "2.15.0", "cluster": "my-cluster" }' | jq
+  -d '{
+        "addons": [
+          {
+            "name": "keda",
+            "repo_url": "https://kedacore.github.io/charts",
+            "chart": "keda",
+            "version": "2.17.2",
+            "namespace": "keda"
+          }
+        ]
+      }' | jq
 ```
 
-### Remove an addon from the catalog
-
-This is destructive, so it has a two-step shape. **Without** `?confirm=true` it
-returns a dry-run impact report telling you what would be affected. **With**
-`?confirm=true` it actually removes the addon via a PR.
+**Add and enable in one pull request.** Set `enable_on_cluster` to also
+switch every addon in the request on for that cluster — one PR touching
+`catalog.yaml` and `cluster-addons/<cluster>.yaml` together, so a reviewer
+sees both halves in one diff. This half changes what runs on a real cluster,
+so it needs `"yes": true` (or `dry_run` to preview first):
 
 ```bash
-# Step 1 — see the impact (safe, no changes)
-curl -s "${auth[@]}" -X DELETE "$SH/addons/keda" | jq
-
-# Step 2 — actually remove it
-curl -s "${auth[@]}" -X DELETE "$SH/addons/keda?confirm=true" | jq
+curl -s "${auth[@]}" -X POST "$SH/catalog/addons" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "addons": [ { "name": "keda", "from_marketplace": true } ],
+        "enable_on_cluster": "my-cluster",
+        "yes": true
+      }' | jq
 ```
 
-An unknown addon name comes back as 404.
+A good answer is HTTP 201 with `added` (and `enabled` + `cluster` for the
+combined form). Several addons in one `addons` list still produce exactly
+one pull request — what the first-run wizard needs when someone ticks five
+boxes at once. Every 4xx body carries a machine-readable `code` next to the
+message, the same branch-on-`code`-not-text rule as enabling an addon:
+`invalid_request` (400); `cluster_not_found` (404); `repo_layout` (409); and
+on 422, one of `confirmation_required`, `empty_catalog_file`,
+`not_in_marketplace`, `version_required`, `incomplete_entry` (with
+`problems`), or `validation_failed` (with `problems`).
+
+### Get one approved addon
+
+```bash
+curl -s "${auth[@]}" "$SH/catalog/addons/keda" | jq
+```
+
+A 404 means it isn't in your Catalog — add it first.
+
+### Upgrade an addon's pinned version
+
+Bumps a cluster's chart-version pin for an addon already enabled there.
+
+```bash
+curl -s "${auth[@]}" -X POST "$SH/addons/keda/upgrade-clusters" \
+  -H "Content-Type: application/json" \
+  -d '{ "clusters": ["my-cluster"], "version": "2.18.0", "yes": true }' | jq
+```
+
+!!! note "Older global-upgrade routes are v3-only"
+    `POST /addons/{name}/upgrade` and `POST /addons/upgrade-batch` (a
+    catalog-wide version bump, plus its multi-addon batch form) both write
+    the pre-v4 `addons-catalog.yaml` and refuse with 409 `repo_layout` on a
+    migrated repo. On v4 there is no fleet-wide version — each cluster pins
+    its own version (or follows the Catalog's default) via
+    `upgrade-clusters` above.
 
 ---
 
@@ -489,6 +563,16 @@ An unknown addon name comes back as 404.
 Values are the Helm values YAML that configure an addon. There are two layers:
 the **global** defaults for an addon, and **per-cluster** overrides for one addon
 on one cluster. Both write through a PR.
+
+!!! note "Not yet on v4 repos"
+    The values-editor endpoints below all refuse with HTTP 409 on a
+    migrated (v4) repo today — "this editor doesn't support the v4 layout
+    yet". On a v4 repo, edit `values/global/<addon>.yaml` or
+    `values/clusters/<cluster>/<addon>.yaml` directly in Git instead (`sharko
+    validate-config` checks them before you commit), or set a per-cluster
+    override at enable time via the `values` field on
+    `POST /v4/clusters/{cluster}/addons/{addon}` (section 3 above). A
+    dedicated v4 values editor is planned, not shipped yet.
 
 ### Get global addon values
 
@@ -577,9 +661,9 @@ curl -s "${auth[@]}" "$SH/audit" | jq
 
 ## A full cycle in one block
 
-This ties it all together: log in, enable an addon on a cluster, watch the
-ArgoCD Application go healthy, then read the status back from Sharko and confirm
-the two agree.
+This ties it all together: log in, approve an addon into the Catalog, enable
+it on a cluster, watch the ArgoCD Application go healthy, then read the
+status back from Sharko and confirm the two agree.
 
 ```bash
 # 0. Shortcuts + token
@@ -590,20 +674,33 @@ auth=(-H "Authorization: Bearer $TOKEN")
 # 1. Confirm we're talking to Sharko
 curl -s "$SH/health" | jq -r '.status'        # -> healthy
 
-# 2. Enable keda on my-cluster (opens a PR; may auto-merge)
-curl -s "${auth[@]}" -X POST "$SH/clusters/my-cluster/addons/keda" \
+# 2. Approve keda into the Catalog (opens a PR against catalog.yaml; may auto-merge)
+#    Skip this step if keda is already in your Catalog — GET $SH/catalog/addons/keda
+#    tells you (404 means not yet approved).
+curl -s "${auth[@]}" -X POST "$SH/catalog/addons" \
   -H "Content-Type: application/json" \
-  -d '{ "yes": true }' | jq '{status, pr: .git.pr_url}'
+  -d '{ "addons": [ { "name": "keda", "from_marketplace": true } ] }' \
+  | jq '{added, resolved_versions, pr: .git.pr_url}'
 
-# 3. Watch ArgoCD create + sync the Application
+# 3. Enable keda on my-cluster (opens a second PR; may auto-merge)
+curl -s "${auth[@]}" -X POST "$SH/v4/clusters/my-cluster/addons/keda" \
+  -H "Content-Type: application/json" \
+  -d '{ "yes": true }' | jq '{pr: .git.pr_url}'
+
+# 4. Watch ArgoCD create + sync the Application
 #    (re-run until SYNC STATUS = Synced and HEALTH STATUS = Healthy)
 kubectl --context kind-sharko-e2e get application keda-my-cluster -n argocd \
   -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status'
 
-# 4. Read the status back from Sharko and confirm it matches ArgoCD
+# 5. Read the status back from Sharko and confirm it matches ArgoCD
 curl -s "${auth[@]}" "$SH/clusters/my-cluster" | jq '.addons // .'
 ```
 
-When step 3 shows `Synced` / `Healthy` and step 4 shows `keda` enabled and
+Steps 2 and 3 can be combined into one pull request — send
+`"enable_on_cluster": "my-cluster", "yes": true` on the step-2 call instead
+of making a separate step-3 call (see [Add and enable in one pull
+request](#add-an-addon-to-the-catalog) above).
+
+When step 4 shows `Synced` / `Healthy` and step 5 shows `keda` enabled and
 healthy for `my-cluster`, the loop is closed: you fired the call, ArgoCD
 reacted, and Sharko's view agrees.

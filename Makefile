@@ -184,7 +184,7 @@ test-e2e: ## Run the full E2E suite (kind + real argocd; ~10-15 min). Requires d
 #   - TestFleetStatusWithArgocd     (dashboard fleet status)
 test-e2e-fast: ## Run only the in-process E2E tests (~30s, no kind needed).
 	@echo "==> Running fast in-process E2E tests..."
-	GOTMPDIR=/tmp go test -tags=e2e -timeout=2m -v -run '^(TestHarnessGitFakeStandalone|TestHarnessSharkoInProcess|TestFoundationStack|TestAuthFlow|TestAuthUpdatePassword|TestRBACEnforcement|TestTokensCRUD|TestCatalogReads|TestMarketplaceAddFlow|TestAddonAdmin|TestAddonSecretsLifecycle|TestAIConfig|TestAIInvocation|TestGlobalValuesEditor|TestPerClusterValuesOverride|TestPRTracking|TestNotificationsLifecycle|TestConnectionsCRUDAndInit|TestDashboardAndReadsInProcess)$$' ./tests/e2e/...
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=2m -v -run '^(TestHarnessGitFakeStandalone|TestHarnessSharkoInProcess|TestFoundationStack|TestAuthFlow|TestAuthUpdatePassword|TestRBACEnforcement|TestTokensCRUD|TestCatalogReads|TestMarketplaceAddFlow|TestAddonAdmin|TestAddonSecretsLifecycle|TestAIConfig|TestAIInvocation|TestGlobalValuesEditor|TestPerClusterValuesOverride|TestPRTracking|TestNotificationsLifecycle|TestConnectionsCRUDAndInit|TestDashboardAndReadsInProcess|TestBuildTLSClientConfig_InsecureAndCAData|TestBuildTLSClientConfig_NeverBothFields)$$' ./tests/e2e/...
 
 test-e2e-domain: ## Run a single domain (e.g. make test-e2e-domain DOMAIN=Cluster).
 	@if [ -z "$(DOMAIN)" ]; then \
