@@ -498,10 +498,21 @@ function AddonGroupsSection({
   // last — this is the primary sort key regardless of which sort mode
   // below is selected; "Most Issues"/"A-Z" only order groups WITHIN the
   // same tier, they never let a healthy group outrank a problem one).
+  //
+  // byAppName (live-bug fix): a fallback index of the feed's states keyed
+  // by their real ArgoCD app name, alongside the primary addon@cluster map.
+  // /dashboard/attention currently ships the full app name in its
+  // addon_name field (internal/api/dashboard.go), so the primary key alone
+  // can miss a child whose app name matches exactly — see isOrphan below
+  // for the same divergence.
   const groupProblems = useMemo(() => {
+    const byAppName = new Map<string, AddonState>();
+    for (const s of addonStateMap.values()) {
+      if (s.appName) byAppName.set(s.appName, s);
+    }
     const map = new Map<string, ReturnType<typeof classifyAddonGroupProblem>>();
     for (const g of groups ?? []) {
-      map.set(g.addon_name, classifyAddonGroupProblem(g, addonStateMap));
+      map.set(g.addon_name, classifyAddonGroupProblem(g, addonStateMap, byAppName));
     }
     return map;
   }, [groups, addonStateMap]);
@@ -1453,14 +1464,39 @@ export function Observability() {
   // attention feed flags that the observability snapshot doesn't have a
   // matching group+child for — still needs to be seen, so it renders as a
   // compact row above the list instead of silently disappearing.
+  //
+  // Live-bug fix (maintainer's finding): /dashboard/attention currently
+  // ships the full ArgoCD app name (e.g. "metrics-server-spoke-eu") in its
+  // addon_name field instead of the catalog addon name (internal/api/
+  // dashboard.go sets `addonName := app.Name` directly — a Go-side fix is
+  // tracked separately; this lane only fixes the UI-side matching). That
+  // mismatch made a genuine group member fail the addon@cluster check and
+  // fall through to this fallback row, doubling it up with the group's own
+  // inline reason line. Match on three signals so a real group member never
+  // falls through:
+  //   1. addon@cluster — the intended primary key.
+  //   2. the feed item's real app name equals a child's app_name directly —
+  //      catches the case above, since the app name itself still lines up
+  //      with the group's child even when addon_name doesn't.
+  //   3. an empty-cluster feed item whose addon name matches a group at
+  //      all — an item with nowhere to report its cluster shouldn't
+  //      auto-orphan just because cluster is blank.
   const groupChildKeys = new Set<string>();
+  const groupChildAppNames = new Set<string>();
+  const groupAddonNames = new Set<string>();
   for (const g of data.addon_groups ?? []) {
+    groupAddonNames.add(g.addon_name);
     for (const c of g.child_apps ?? []) {
       groupChildKeys.add(`${g.addon_name}@${c.cluster_name}`);
+      if (c.app_name) groupChildAppNames.add(c.app_name);
     }
   }
-  const isOrphan = (s: { addonName: string; cluster: string }) =>
-    !groupChildKeys.has(`${s.addonName}@${s.cluster}`);
+  const isOrphan = (s: { addonName: string; cluster: string; appName?: string }) => {
+    if (groupChildKeys.has(`${s.addonName}@${s.cluster}`)) return false;
+    if (s.appName && groupChildAppNames.has(s.appName)) return false;
+    if (!s.cluster && groupAddonNames.has(s.addonName)) return false;
+    return true;
+  };
   const orphanAddonRows = [
     ...buildConfirmedAddonRows(confirmed.filter(isOrphan)),
     ...buildSettlingAddonRows(settling.filter(isOrphan)),
