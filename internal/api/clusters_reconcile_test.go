@@ -298,3 +298,64 @@ func TestHandleGetCluster_LastReconcile_ProjectedOntoReadModel(t *testing.T) {
 		t.Error("expected last_reconcile.time to be set")
 	}
 }
+
+// TestHandleGetCluster_ManagedSecretFields_ProjectedOntoReadModel — walk day
+// 4 locks, S1 + S2. Same real-reconciler wiring as the LastReconcile test
+// above: after a tick that creates prod-eu's ArgoCD cluster Secret,
+// GET /clusters/prod-eu must report the real secret's "namespace/name" and
+// that it is already Sharko-managed — applyManagedSecretFields
+// (clusters_reconcile.go) wired via handleGetCluster in clusters.go.
+func TestHandleGetCluster_ManagedSecretFields_ProjectedOntoReadModel(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
+	}, http.StatusOK)
+	gp := &reconcileFakeGP{managedYAML: []byte("clusters:\n- name: prod-eu\n  labels: {}\n")}
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	recon := clusterreconciler.New(clusterreconciler.Deps{
+		GitProvider:  func() gitprovider.GitProvider { return gp },
+		ArgoClient:   fake.NewSimpleClientset(),
+		Vault:        reconcileFakeVault{},
+		AuditFn:      func(audit.Entry) {},
+		TickInterval: time.Hour, // never auto-fires; the test drives it via Trigger
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	recon.Start(ctx)
+	defer recon.Stop()
+	recon.Trigger()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := recon.LastReconcile("prod-eu"); ok {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, ok := recon.LastReconcile("prod-eu"); !ok {
+		t.Fatal("timed out waiting for the reconciler to record an outcome for prod-eu")
+	}
+
+	srv.SetClusterReconciler(recon)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters/prod-eu", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Cluster models.Cluster `json:"cluster"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Cluster.ManagedSecretName != "argocd/prod-eu" {
+		t.Errorf("managed_secret_name = %q, want %q", resp.Cluster.ManagedSecretName, "argocd/prod-eu")
+	}
+	if !resp.Cluster.AlreadyManagedBySharko {
+		t.Error("expected already_managed_by_sharko to be true once the reconciler has created and labelled the Secret")
+	}
+}

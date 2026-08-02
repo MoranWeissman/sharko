@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -55,6 +56,38 @@ func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) 
 		}
 	}
 	c.LastReconcile = lastRec
+}
+
+// applyManagedSecretFields sets the two fields the "Managed cluster secret"
+// panel needs (walk day 4 locks, S1 + S2):
+//
+//   - ManagedSecretName: the real "namespace/name" of the ArgoCD cluster
+//     Secret this cluster's page is about — the same Secret argosecrets and
+//     the reconciler manage. The Secret's Name always equals c.Name (see
+//     argosecrets.Manager.Ensure) and its Namespace is whatever the
+//     reconciler is configured to write to, so this is a deterministic fact
+//     about the live Secret, not a display guess.
+//   - AlreadyManagedBySharko: true when that Secret already carries the
+//     app.kubernetes.io/managed-by=sharko label. This mirrors the exact
+//     check clusters_takeover.go's preflight uses for its "secret-owner"
+//     finding (in.ManagedBy == argosecrets.ManagedByValue) — a cluster
+//     already owned by Sharko has nothing left for "Take ownership" to do,
+//     so the UI hides that button instead of showing a no-op action.
+//
+// Both are a no-op when s.clusterRecon is not wired (out-of-cluster, or no
+// credentials provider) or the Secret cannot be read — the fields simply
+// stay at their zero values (omitted from JSON), which is the safe
+// direction: the title falls back to its generic form and the takeover
+// button stays visible rather than being hidden on a guess.
+func (s *Server) applyManagedSecretFields(ctx context.Context, c *models.Cluster) {
+	_, ns, ok := s.k8sClientAndNamespace()
+	if ok && ns != "" {
+		c.ManagedSecretName = ns + "/" + c.Name
+	}
+	secret, err := s.getSecretIfPresent(ctx, c.Name)
+	if err == nil && secret != nil {
+		c.AlreadyManagedBySharko = clusterreconciler.IsManagedBySharko(secret)
+	}
 }
 
 // handleReconcileCluster godoc

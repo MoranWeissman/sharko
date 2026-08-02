@@ -340,11 +340,20 @@ func argoCDResourceNotFound(err error) bool {
 // applyObsFields fills the Sharko observability fields on cluster from obs.
 // obs may be nil (obsStore unavailable); in that case the fields are left
 // at their zero values (all omitempty, so they are absent from JSON).
-func applyObsFields(cluster *models.Cluster, obs *observations.Observation) {
+//
+// hasHealthyAddon must be the SAME verdict the caller already computed via
+// clusterHasHealthyAddon for this cluster (V2-cleanup-85.4's derived-health
+// pass) — every call site in clusters.go computes it right above this call
+// for DerivedHealthStatus. Before this fix the call below hardcoded `false`,
+// which made observations.StatusOperational unreachable from this path: a
+// cluster with a genuinely healthy addon could never see its Sharko status
+// badge report "Operational", no matter how healthy ArgoCD said it was
+// (walk day 4 lock, S4 known quirk).
+func applyObsFields(cluster *models.Cluster, obs *observations.Observation, hasHealthyAddon bool) {
 	if obs == nil {
 		return
 	}
-	result := observations.ComputeStatus(obs, false)
+	result := observations.ComputeStatus(obs, hasHealthyAddon)
 	cluster.SharkoStatus = string(result.Status)
 	if !result.LastTestAt.IsZero() {
 		cluster.LastTestAt = result.LastTestAt.UTC().Format(time.RFC3339)

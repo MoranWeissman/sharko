@@ -179,6 +179,11 @@ const SYNC_POLL_INTERVAL_MS = 2000;
 // Map GitOps sync states to severity levels and colors from clusterStatus.ts contract.
 // Synced → good (green), OutOfSync → attention (amber), Sync failed → problem (red),
 // Reconciling → pending (blue), Not synced yet → unknown (neutral/gray).
+//
+// Soft-tint colors (walk day 4 / S1 ride-along) — matches the existing
+// StatusBadge pattern (light background + matching-hue text) instead of a
+// solid fill with white text, so this pill reads consistently with every
+// other status pill in the app.
 function getSyncStatusStyle(state: 'synced' | 'out_of_sync' | 'failed' | 'reconciling' | 'unknown'): {
   severity: StatusSeverity;
   bgClass: string;
@@ -188,33 +193,33 @@ function getSyncStatusStyle(state: 'synced' | 'out_of_sync' | 'failed' | 'reconc
     case 'synced':
       return {
         severity: 'good',
-        bgClass: 'bg-green-600 dark:bg-green-700',
-        textClass: 'text-white',
+        bgClass: 'bg-green-50 dark:bg-green-900/30',
+        textClass: 'text-green-700 dark:text-green-400',
       };
     case 'out_of_sync':
       return {
         severity: 'attention',
-        bgClass: 'bg-amber-500 dark:bg-amber-600',
-        textClass: 'text-white',
+        bgClass: 'bg-amber-50 dark:bg-amber-900/30',
+        textClass: 'text-amber-700 dark:text-amber-400',
       };
     case 'failed':
       return {
         severity: 'problem',
-        bgClass: 'bg-red-600 dark:bg-red-700',
-        textClass: 'text-white',
+        bgClass: 'bg-red-50 dark:bg-red-900/30',
+        textClass: 'text-red-700 dark:text-red-400',
       };
     case 'reconciling':
       return {
         severity: 'pending',
-        bgClass: 'bg-[#3a6a8a] dark:bg-gray-500',
-        textClass: 'text-white',
+        bgClass: 'bg-[#d6eeff] dark:bg-blue-900/30',
+        textClass: 'text-[#1a4a6a] dark:text-blue-300',
       };
     case 'unknown':
     default:
       return {
         severity: 'unknown',
-        bgClass: 'bg-[#5a8aaa] dark:bg-gray-600',
-        textClass: 'text-white',
+        bgClass: 'bg-[#d6eeff] dark:bg-gray-700',
+        textClass: 'text-[#1a4a6a] dark:text-gray-400',
       };
   }
 }
@@ -346,11 +351,16 @@ export function ClusterDetail() {
     };
   }, []);
 
-  // One-time "Re-sync now" from the drift view (v4-8-5). State declared
-  // here; the handler itself is declared below (after fetchData) next to
-  // handleSyncNow.
+  // One-time "Sync" (the panel's apply-git-to-secret action, v4-8-5;
+  // renamed from "Re-sync now" — walk day 4 / S1) from the Managed cluster
+  // secret panel. State declared here; the handler itself is declared below
+  // (after fetchData) next to handleSyncNow.
   const [resyncModalOpen, setResyncModalOpen] = useState(false);
   const [resyncing, setResyncing] = useState(false);
+  // Diff toggle for the Managed cluster secret panel's toolbar (walk day 4
+  // / S1) — click-to-show, same pattern as the codebase's other
+  // click-to-toggle help panels, rather than always rendering the diff.
+  const [diffOpen, setDiffOpen] = useState(false);
 
   // Secret path editing
   const [editingSecretPath, setEditingSecretPath] = useState(false);
@@ -433,7 +443,26 @@ export function ClusterDetail() {
   // MissingClusterCredentialsError text, rendered verbatim.
   const [addonSecretWarnings, setAddonSecretWarnings] = useState<Record<string, string>>({});
 
-  // Compute display status from test result + server state
+  // Compute display status from test result + server state.
+  //
+  // Priority order (walk day 4 / S4 — "the connected→unknown flip" fix):
+  //
+  //  1. testResult — a test the user ran THIS session, for instant feedback
+  //     right after clicking Test connection. Lives in tab-local React
+  //     state, so it dies on remount (leaving the page and coming back).
+  //  2. data.cluster.sharko_status — Sharko's OWN persisted test result
+  //     (internal/observations, via GET .../comparison). This is the fix:
+  //     before it existed here, losing testResult on remount fell straight
+  //     through to ArgoCD's OWN connection report (cluster_connection_state
+  //     below) with nothing of Sharko's own in between — so a connectivity
+  //     test that had genuinely passed could read "Unknown" the moment the
+  //     user navigated away and back, even though Sharko still remembered
+  //     it. sharko_status already speaks the same 5-state ladder StatusBadge
+  //     renders (Unknown/Connected/Verified/Operational/Unreachable — see
+  //     internal/observations.ClusterStatus), so it maps straight across.
+  //  3. cluster_connection_state — ArgoCD's OWN live signal, kept as a
+  //     fallback for installs without an observation store wired.
+  //  4. total_healthy > 0 — last-resort inference from ArgoCD's addon health.
   const computedStatus = useMemo((): string => {
     if (testResult && testResult !== 'testing') {
       // A "test unavailable" result (no secrets backend on the active
@@ -444,6 +473,10 @@ export function ClusterDetail() {
         if (testResult.reachable || testResult.success) return 'connected';
         return 'unreachable';
       }
+    }
+    const persisted = (data?.cluster?.sharko_status ?? '').toLowerCase();
+    if (persisted === 'connected' || persisted === 'verified' || persisted === 'operational' || persisted === 'unreachable') {
+      return persisted;
     }
     if (data?.cluster_connection_state) {
       const state = data.cluster_connection_state.toLowerCase();
@@ -707,7 +740,7 @@ export function ClusterDetail() {
     const preClickTime = data?.cluster?.last_reconcile?.time;
     try {
       await reconcileCluster(name);
-      showToast(`Sync triggered for cluster "${name}".`, 'success');
+      showToast(`Refresh triggered for cluster "${name}".`, 'success');
 
       let attempt = 0;
       const pollOnce = async () => {
@@ -734,7 +767,7 @@ export function ClusterDetail() {
         void pollOnce();
       }, SYNC_POLL_INTERVAL_MS);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to trigger sync', 'error');
+      showToast(err instanceof Error ? err.message : 'Failed to trigger refresh', 'error');
       setSyncingNow(false);
     }
   }, [name, fetchData, data]);
@@ -1175,22 +1208,10 @@ export function ClusterDetail() {
           <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
             Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
           </p>
-          {/* Last sync (V2-cleanup-89.4) — Sharko's own reconcile result for
-            * this cluster's ArgoCD secret. ArgoCD shows a failed apply;
-            * before this, a failed reconcile here was server-log-only. */}
-          {data?.cluster?.last_reconcile && (
-            <p className="mt-1 text-sm text-[#5a8aaa] dark:text-gray-500">
-              Last sync check: {relativeTime(data.cluster.last_reconcile.time)}
-              {data.cluster.last_reconcile.outcome === 'succeeded' && ' — succeeded'}
-              {data.cluster.last_reconcile.outcome === 'skipped' && ' — skipped'}
-              {data.cluster.last_reconcile.outcome === 'failed' && (
-                <span className="text-red-600 dark:text-red-400"> — failed</span>
-              )}
-              {data.cluster.last_reconcile.message && (
-                <span className="block text-[#5a8aaa] dark:text-gray-500">{data.cluster.last_reconcile.message}</span>
-              )}
-            </p>
-          )}
+          {/* The old "Last sync check" line that used to live here was a
+            * duplicate of the "Managed cluster secret" panel's own Last sync
+            * row below (walk day 4 locks, S1 ride-along) — removed rather
+            * than kept in sync in two places. */}
           {/* Migrate nudge (V2-cleanup-89.6) — this cluster was registered
             * via the "Paste a kubeconfig" path, whose availability an admin
             * can now turn off install-wide. A light nudge toward the
@@ -1221,19 +1242,32 @@ export function ClusterDetail() {
           {/* Brownfield takeover (v4 Wave 2, Epic 6). Admin-only, because
             * both of these change who owns a live cluster connection. Both
             * open on a read — nothing happens until the dialog's own
-            * confirm. */}
+            * confirm.
+            *
+            * "Take ownership" is hidden once the cluster's live ArgoCD
+            * Secret already carries the app.kubernetes.io/managed-by=sharko
+            * label (walk day 4 locks, S2) — the server's own preflight would
+            * just report "nothing to do" for a cluster like that, so the UI
+            * does not offer a no-op action. The server side of that
+            * preflight is unchanged: it stays a safe, idempotent green
+            * check for anyone who reaches it another way (the API, or a
+            * stale bookmark). */}
           <RoleGuard roles={['admin']}>
-            <button
-              type="button"
-              onClick={() => setTakeoverOpen(true)}
-              title={TAKEOVER_HINT}
-              data-testid="open-takeover"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-            >
-              <Shield className="h-3.5 w-3.5" />
-              {TAKEOVER_LABEL}
-            </button>
-            <InfoHint text={TAKEOVER_HINT} label="What does taking over a cluster do?" />
+            {!data?.cluster?.already_managed_by_sharko && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setTakeoverOpen(true)}
+                  title={TAKEOVER_HINT}
+                  data-testid="open-takeover"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                >
+                  <Shield className="h-3.5 w-3.5" />
+                  {TAKEOVER_LABEL}
+                </button>
+                <InfoHint text={TAKEOVER_HINT} label="What does taking ownership of a cluster do?" />
+              </>
+            )}
             <button
               type="button"
               onClick={() => setDropLabelsOpen(true)}
@@ -1364,7 +1398,7 @@ export function ClusterDetail() {
         <div className="flex items-center gap-2">
           {/* Status badge is suppressed in the "not connected yet" state —
             * same reason as the type badge above (V2-cleanup-85.1). */}
-          {!notConnected && <StatusBadge status={computedStatus} size="sm" />}
+          {!notConnected && <StatusBadge status={computedStatus} size="sm" lastTestAt={data.cluster.last_test_at} />}
           <ConnectivityBadge
             connectivityStatus={data.cluster.connectivity_status}
             connectivityDetail={data.cluster.connectivity_detail}
@@ -1446,8 +1480,8 @@ export function ClusterDetail() {
         *     the type + status badges are hidden here too and this banner
         *     is now the one place that says so.
         *   - argocd_connection_status missing / "Unknown", but the cluster
-        *     otherwise has a server URL → neutral "Status unknown" banner
-        *     (rare: e.g. server URL known from Git but ArgoCD hasn't
+        *     otherwise has a server URL → neutral "ArgoCD status unknown"
+        *     banner (rare: e.g. server URL known from Git but ArgoCD hasn't
         *     reported back yet)
         *   - argocd_connection_status === "Successful"    → no banner (happy path)
         *   - anything else                                 → red "Connection Failed" banner
@@ -1474,15 +1508,24 @@ export function ClusterDetail() {
         if (argoStatus === 'Successful') return null;
         const lowered = argoStatus.toLowerCase();
         // "Unknown" is not a failure — it's the absence of an
-        // observation. Render a neutral "status unknown" banner
-        // instead of the red Connection Failed copy.
+        // observation. Render a neutral banner instead of the red
+        // Connection Failed copy.
+        //
+        // Title + body name ArgoCD specifically (walk day 4 / S4): this
+        // banner is ArgoCD's OWN connection report, a different signal from
+        // Sharko's own connectivity test (the StatusBadge in the vitals
+        // ribbon above, and the ConnectivityBadge next to it). Before this
+        // fix the generic "Status unknown" title could sit right below a
+        // StatusBadge reading "Connected" — Sharko's persisted test result —
+        // which read as a contradiction when it was really just two
+        // different questions with two different answers.
         if (lowered === 'unknown' || lowered === '') {
           return (
             <div className="flex items-start gap-3 rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] px-5 py-3 dark:ring-gray-700 dark:bg-gray-800">
               <AlertTriangle className="h-5 w-5 shrink-0 text-[#3a6a8a] dark:text-gray-300 mt-0.5" />
               <div>
-                <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Status unknown</p>
-                <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">Sharko has not yet observed an ArgoCD response for this cluster.</p>
+                <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">ArgoCD status unknown</p>
+                <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">ArgoCD hasn't reported a connection status for this cluster — a separate thing from Sharko's own connectivity test above.</p>
               </div>
             </div>
           );
@@ -1512,163 +1555,190 @@ export function ClusterDetail() {
         );
       })()}
 
-      {/* GitOps Sync Area (V3 G4 + GF5) — dedicated section consolidating sync status,
-        * sync action, and live drift diff. Uses ArgoCD-familiar vocabulary:
-        * Synced / OutOfSync / Sync failed / Reconciling. Colors from clusterStatus.ts contract. */}
-      <div className="space-y-3 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-5 py-4 dark:ring-gray-700 dark:bg-gray-800">
-        <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-            Cluster secret sync
-          </h3>
-          {/* Sync status pill (ArgoCD-familiar words, colors from clusterStatus severity contract) */}
-          {(() => {
-            const lastRec = data?.cluster?.last_reconcile;
-            const drift = lastRec?.label_drift;
-            const hasDrift = drift && (drift.added?.length || drift.removed?.length || drift.changed?.length);
-            let label = 'Not synced yet';
-            let state: 'synced' | 'out_of_sync' | 'failed' | 'reconciling' | 'unknown' = 'unknown';
-            if (syncingNow) {
-              label = 'Syncing';
-              state = 'reconciling';
-            } else if (lastRec?.outcome === 'succeeded') {
-              label = hasDrift ? 'OutOfSync' : 'Synced';
-              state = hasDrift ? 'out_of_sync' : 'synced';
-            } else if (lastRec?.outcome === 'failed') {
-              label = 'Sync failed';
-              state = 'failed';
-            } else if (lastRec?.outcome === 'skipped') {
-              label = 'Synced';
-              state = 'synced';
-            }
-            const { bgClass, textClass } = getSyncStatusStyle(state);
-            return (
-              <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${bgClass} ${textClass}`}>
-                {label}
-              </span>
-            );
-          })()}
-        </div>
+      {/* Managed cluster secret panel (walk day 4 locks, S1) — rebuilt from
+        * the old "Cluster secret sync" / GitOps Sync Area (V3 G4 + GF5). The
+        * title now names the real ArgoCD Secret this page is about, the same
+        * way ArgoCD names an app's real resource instead of a generic label.
+        * Toolbar uses ArgoCD's own vocabulary — Refresh / Sync / Diff — and
+        * nothing else; those names are locked, do not invent alternates. */}
+      {(() => {
+        const lastRec = data?.cluster?.last_reconcile;
+        const drift = lastRec?.label_drift;
+        const added = drift?.added ?? [];
+        const removed = drift?.removed ?? [];
+        const changed = drift?.changed ?? [];
+        const diffCount = added.length + removed.length + changed.length;
+        const hasDrift = diffCount > 0;
 
-        {/* Sync-now action (write-gated for admin/operator only) */}
-        <RoleGuard roles={['admin', 'operator']}>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleSyncNow}
-              disabled={syncingNow}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-            >
-              {syncingNow ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              Sync now
-            </button>
-            <InfoHint
-              text="Keeps each cluster's ArgoCD Secret matching Git. The addon labels on that Secret tell ArgoCD's ApplicationSet which addons to install or remove on this cluster."
-              label="What does Sync now do?"
-            />
-          </div>
-        </RoleGuard>
+        let syncStatusLabel = 'Not synced yet';
+        let syncState: 'synced' | 'out_of_sync' | 'failed' | 'reconciling' | 'unknown' = 'unknown';
+        if (syncingNow) {
+          syncStatusLabel = 'Syncing';
+          syncState = 'reconciling';
+        } else if (lastRec?.outcome === 'succeeded') {
+          syncStatusLabel = hasDrift ? `Out of sync — ${diffCount} addon difference${diffCount === 1 ? '' : 's'}` : 'Synced';
+          syncState = hasDrift ? 'out_of_sync' : 'synced';
+        } else if (lastRec?.outcome === 'failed') {
+          syncStatusLabel = 'Sync failed';
+          syncState = 'failed';
+        } else if (lastRec?.outcome === 'skipped') {
+          syncStatusLabel = 'Synced';
+          syncState = 'synced';
+        }
+        const { bgClass, textClass } = getSyncStatusStyle(syncState);
 
-          {/* Drift diff — integrated into the GitOps area (V3 G2 + G4) */}
-          {(() => {
-            const lastRec = data?.cluster?.last_reconcile;
-            const drift = lastRec?.label_drift;
-            const hasDrift = drift && (drift.added?.length || drift.removed?.length || drift.changed?.length);
-
-            if (!lastRec) return null; // No reconcile data yet
-
-            if (!hasDrift) {
-              // Synced — show brief confirmation
-              return (
-                <div className="flex items-center gap-2 rounded-md bg-green-50 px-3 py-2 dark:bg-green-950/20">
-                  <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
-                  <p className="text-sm font-medium text-green-700 dark:text-green-400">
-                    Labels in sync — Git matches live cluster state
-                  </p>
-                </div>
-              );
-            }
-
-            // OutOfSync — show the drift diff
-            return (
-              <div className="space-y-2 rounded-md bg-amber-50 px-3 py-2.5 dark:bg-amber-950/20">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">
-                      Label Drift Detected
-                    </p>
-                    <p className="mt-0.5 text-sm text-amber-600 dark:text-amber-400">
-                      This cluster's addon labels drifted from Git. The diff below shows what changed.
-                    </p>
-                  </div>
-                </div>
-                <div className="rounded-md bg-white ring-2 ring-[#6aade0] p-3 dark:bg-gray-900 dark:ring-gray-700">
-                  <h4 className="mb-2 text-xs font-semibold text-[#0a2a4a] dark:text-gray-200">
-                    Git vs Live Label Diff
-                  </h4>
-                  <div className="space-y-1 text-xs font-mono text-[#2a5a7a] dark:text-gray-400">
-                    {drift.added && drift.added.length > 0 && (
-                      <div>
-                        <span className="font-semibold text-green-600 dark:text-green-400">Added in Git (missing on cluster):</span>
-                        {drift.added.map((key) => (
-                          <div key={key} className="ml-4 text-green-600 dark:text-green-400">
-                            + {key}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {drift.removed && drift.removed.length > 0 && (
-                      <div>
-                        <span className="font-semibold text-red-600 dark:text-red-400">Removed in Git (present on cluster):</span>
-                        {drift.removed.map((key) => (
-                          <div key={key} className="ml-4 text-red-600 dark:text-red-400">
-                            - {key}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {drift.changed && drift.changed.length > 0 && (
-                      <div>
-                        <span className="font-semibold text-amber-600 dark:text-amber-400">Changed (values differ):</span>
-                        {drift.changed.map((key) => (
-                          <div key={key} className="ml-4 text-amber-600 dark:text-amber-400">
-                            ~ {key}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                {/* Re-sync now (v4-8-5) — a bounded, one-time correction of
-                  * THIS cluster's addon labels, independent of the
-                  * managed_cluster_self_heal setting (works even with it OFF,
-                  * which is the whole point). */}
-                <RoleGuard roles={['admin', 'operator']}>
-                  <div className="flex items-center gap-2 pt-1">
-                    <button
-                      onClick={() => setResyncModalOpen(true)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-600 dark:bg-gray-900 dark:text-amber-400 dark:hover:bg-amber-950/30"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      Re-sync now
-                    </button>
-                    <InfoHint
-                      text="Re-applies Sharko's addon labels for this cluster to match Git, one time. It does not turn on automatic self-heal — that setting stays exactly as it is."
-                      label="What does Re-sync now do?"
-                    />
-                  </div>
-                </RoleGuard>
+        return (
+          <div className="space-y-3 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-5 py-4 dark:ring-gray-700 dark:bg-gray-800">
+            <div className="flex items-start gap-1.5">
+              <div>
+                <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+                  Managed cluster secret
+                  {data?.cluster?.managed_secret_name && (
+                    <span className="font-normal text-[#5a8aaa] dark:text-gray-500"> — {data.cluster.managed_secret_name}</span>
+                  )}
+                </h3>
+                <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">
+                  This secret is how ArgoCD connects to the cluster, and its labels choose which addons run here. Sharko keeps it matching git.
+                </p>
               </div>
-            );
-          })()}
-      </div>
+              <InfoHint
+                text="The addon labels on this secret are read by the engine's ApplicationSet cluster generator — that's what installs and removes addons on this cluster."
+                label="What reads this secret's labels?"
+              />
+            </div>
+
+            {/* Toolbar — left-aligned, ArgoCD vocabulary only (locked): Refresh, Sync, Diff. */}
+            <div className="flex items-center gap-2">
+              <RoleGuard roles={['admin', 'operator']}>
+                <button
+                  onClick={handleSyncNow}
+                  disabled={syncingNow}
+                  data-testid="secret-sync-refresh"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                >
+                  {syncingNow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  Refresh
+                </button>
+                <InfoHint
+                  text="Checks this cluster's ArgoCD secret against git right now, instead of waiting for the reconciler's regular check."
+                  label="What does Refresh do?"
+                />
+              </RoleGuard>
+              <RoleGuard roles={['admin', 'operator']}>
+                <button
+                  onClick={() => setResyncModalOpen(true)}
+                  disabled={!hasDrift}
+                  data-testid="secret-sync-sync"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Sync
+                </button>
+                <InfoHint
+                  text={hasDrift ? "Applies git's addon labels to this cluster's secret now." : 'Nothing to apply — this secret already matches git.'}
+                  label="What does Sync do?"
+                />
+              </RoleGuard>
+              <button
+                onClick={() => setDiffOpen((open) => !open)}
+                data-testid="secret-sync-diff"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                Diff
+              </button>
+            </div>
+
+            {/* Status row — Sync status, Last sync, Connection (ArgoCD's own report). */}
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-[#3a6a8a] dark:text-gray-400">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Sync status</span>
+                <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${bgClass} ${textClass}`}>
+                  {syncStatusLabel}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Last sync</span>
+                {lastRec ? (
+                  <span title={new Date(lastRec.time).toLocaleString()}>
+                    {relativeTime(lastRec.time)}
+                    {lastRec.outcome === 'failed'
+                      ? ` — ${lastRec.message || 'failed'}`
+                      : ' — OK'}
+                  </span>
+                ) : (
+                  <span>Not checked yet</span>
+                )}
+              </div>
+              {/* Suppressed in the "not connected yet" case (V2-cleanup-85.1
+                * convention, walk day 4 / S1) — that single collapsed banner
+                * is already the one place that says Sharko has no ArgoCD
+                * signal at all for this cluster; repeating "Unknown" here
+                * would just be the same fact stated a second time. */}
+              {!notConnected && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Connection</span>
+                  <span>{data?.argocd_connection_status || 'Unknown'}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Diff — a plain-words list of what differs between git and the
+              * live secret (walk day 4 / S1). Click-to-show, same pattern as
+              * the codebase's other click-to-toggle help panels. */}
+            {diffOpen && (
+              <div className="rounded-md ring-2 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900" data-testid="secret-sync-diff-panel">
+                {!lastRec ? (
+                  <p className="text-sm text-[#3a6a8a] dark:text-gray-400">Sharko hasn't checked this secret against git yet — click Refresh to check now.</p>
+                ) : !hasDrift ? (
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+                    <p className="text-sm font-medium text-green-700 dark:text-green-400">No differences — this secret's addon labels match git.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {added.length > 0 && (
+                      <div>
+                        <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
+                          This secret is missing {added.length} addon label{added.length === 1 ? '' : 's'} that git expects.
+                        </p>
+                        <p className="mt-0.5 font-mono text-xs text-[#5a8aaa] dark:text-gray-500">{added.join(', ')}</p>
+                      </div>
+                    )}
+                    {removed.length > 0 && (
+                      <div>
+                        <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
+                          This secret has {removed.length} addon label{removed.length === 1 ? '' : 's'} that git doesn't expect.
+                        </p>
+                        <p className="mt-0.5 font-mono text-xs text-[#5a8aaa] dark:text-gray-500">{removed.join(', ')}</p>
+                      </div>
+                    )}
+                    {changed.length > 0 && (
+                      <div>
+                        <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
+                          {changed.length} addon label{changed.length === 1 ? '' : 's'} {changed.length === 1 ? 'has' : 'have'} a different value than git.
+                        </p>
+                        <p className="mt-0.5 font-mono text-xs text-[#5a8aaa] dark:text-gray-500">{changed.join(', ')}</p>
+                      </div>
+                    )}
+                    <RoleGuard roles={['admin', 'operator']}>
+                      <p className="text-xs text-[#5a8aaa] dark:text-gray-500">Click Sync above to apply git's version to this secret.</p>
+                    </RoleGuard>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       <ConfirmationModal
         open={resyncModalOpen}
         onClose={() => setResyncModalOpen(false)}
         onConfirm={handleResyncNow}
-        title={`Re-sync cluster "${name}"?`}
-        description="re-applies Sharko's addon labels for this cluster to match git — one time; the self-heal setting is not changed"
-        confirmText="Re-sync now"
+        title={`Sync cluster "${name}"?`}
+        description="Applies git's addon labels to this cluster's ArgoCD secret — one time; the self-heal setting is not changed"
+        confirmText="Sync"
         loading={resyncing}
       />
 

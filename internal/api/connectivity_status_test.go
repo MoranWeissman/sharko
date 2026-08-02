@@ -9,6 +9,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/observations"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
@@ -554,4 +555,45 @@ func TestDetectConnectivityCheckDrift(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestApplyObsFields_HasHealthyAddonReachesOperational pins the walk day 4
+// / S4 "known quirk" fix: applyObsFields used to hardcode
+// observations.ComputeStatus(obs, false), which made StatusOperational
+// unreachable through this path no matter how healthy the cluster's addons
+// actually were. Every clusters.go call site already computes
+// hasHealthyAddon (for DerivedHealthStatus) right before calling
+// applyObsFields — this test pins that the same verdict now actually
+// reaches ComputeStatus.
+func TestApplyObsFields_HasHealthyAddonReachesOperational(t *testing.T) {
+	t.Parallel()
+
+	obs := &observations.Observation{
+		LastTestStage:   "stage1",
+		LastTestOutcome: "success",
+	}
+
+	t.Run("hasHealthyAddon=true reaches Operational", func(t *testing.T) {
+		c := &models.Cluster{Name: "prod-eu"}
+		applyObsFields(c, obs, true)
+		if c.SharkoStatus != string(observations.StatusOperational) {
+			t.Errorf("sharko_status = %q, want %q", c.SharkoStatus, observations.StatusOperational)
+		}
+	})
+
+	t.Run("hasHealthyAddon=false falls back to the test-stage ladder", func(t *testing.T) {
+		c := &models.Cluster{Name: "prod-eu"}
+		applyObsFields(c, obs, false)
+		if c.SharkoStatus != string(observations.StatusConnected) {
+			t.Errorf("sharko_status = %q, want %q", c.SharkoStatus, observations.StatusConnected)
+		}
+	})
+
+	t.Run("nil obs is a no-op regardless of hasHealthyAddon", func(t *testing.T) {
+		c := &models.Cluster{Name: "prod-eu"}
+		applyObsFields(c, nil, true)
+		if c.SharkoStatus != "" {
+			t.Errorf("sharko_status = %q, want empty (nil obs must be a no-op)", c.SharkoStatus)
+		}
+	})
 }
