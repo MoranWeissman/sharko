@@ -1716,3 +1716,25 @@ export interface MigrateResult {
    * request is open and correct, but auto-merge could not merge it". */
   warnings?: string[]
 }
+
+// One Kubernetes node, from GET /cluster/nodes (internal/api/nodes.go).
+// S4 (walk day 4) only needs name + status, but the wire shape carries more.
+export interface NodeInfo {
+  name: string
+  status: string // "Ready" or "NotReady"
+  instance_type?: string
+  architecture?: string
+  os?: string
+  capacity_cpu?: string
+  capacity_memory?: string
+  allocatable_cpu?: string
+  allocatable_memory?: string
+}
+
+export interface NodeInfoResponse {
+  nodes: NodeInfo[]
+  total: number
+  ready: number
+  not_ready: number
+  message?: string
+}

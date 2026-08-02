@@ -38,8 +38,9 @@ var auditAllowlist = map[string]string{
 	// Heartbeat — system noise (client keep-alive pings on long-running operations).
 	"handleOperationHeartbeat": "system noise; no semantic audit value",
 
-	// Mark-all-read — UI state update, not an operator action.
+	// Mark-all-read / mark-one-read — UI state update, not an operator action.
 	"handleMarkAllNotificationsRead": "UI state update, not an operator action",
+	"handleMarkNotificationRead":     "UI state update, not an operator action",
 
 	// Agent chat — potentially high-frequency; skipped per design decision.
 	"handleAgentChat": "potentially high-frequency; skip per design decision",

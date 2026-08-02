@@ -58,3 +58,29 @@ func (s *Server) handleMarkAllNotificationsRead(w http.ResponseWriter, r *http.R
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok"})
 }
+
+// handleMarkNotificationRead godoc
+// @Summary Mark a single notification as read
+// @Description Marks one notification as read by id
+// @Tags notifications
+// @Produce json
+// @Param id path string true "Notification ID"
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Notification not found"
+// @Router /notifications/{id}/read [post]
+func (s *Server) handleMarkNotificationRead(w http.ResponseWriter, r *http.Request) {
+	// Same authz stance as mark-all-read (S3, walk day 4): mutates shared,
+	// platform-wide notification state, no dedicated notification.* action
+	// exists, so it's gated at the closest existing operational action.
+	if !authz.RequireWithResponse(w, r, "reconciler.trigger") {
+		return
+	}
+	id := r.PathValue("id")
+	if s.notificationStore == nil || !s.notificationStore.MarkRead(id) {
+		writeError(w, http.StatusNotFound, "notification not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok"})
+}

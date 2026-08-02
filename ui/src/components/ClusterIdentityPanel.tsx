@@ -71,19 +71,29 @@ export function ClusterIdentityPanel({ capabilities, loading }: ClusterIdentityP
       )}
 
       {showNotDetected && (
-        <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="identity-not-detected">
-          No AWS identity detected — for EKS clusters, paste a kubeconfig or point at a secret. To
-          enable identity-based access,{' '}
-          <a
-            href={IDENTITY_DOCS_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium text-teal-600 underline hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
-          >
-            see the setup guide
-          </a>
-          .
-        </p>
+        // S5 (walk day 4): detection is of CREDENTIALS, not cluster type —
+        // never claim the cluster IS or ISN'T EKS. The old copy led with
+        // "for EKS clusters", which read as an EKS assumption to anyone
+        // not on AWS (e.g. the kind playground). Neutral-first main line,
+        // then a smaller secondary line for the EKS case specifically.
+        <div className="mt-1 space-y-1" data-testid="identity-not-detected">
+          <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
+            Sharko isn't using a cloud identity — it connects to clusters with the credentials you
+            gave it.
+          </p>
+          <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
+            Running on EKS? You can give Sharko an AWS identity instead —{' '}
+            <a
+              href={IDENTITY_DOCS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-teal-600 underline hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
+            >
+              see the setup guide
+            </a>
+            .
+          </p>
+        </div>
       )}
 
       <button

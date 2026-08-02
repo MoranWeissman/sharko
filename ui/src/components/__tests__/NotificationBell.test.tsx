@@ -20,10 +20,12 @@ vi.mock('react-router-dom', async () => {
 
 const getNotifications = vi.fn();
 const markAllNotificationsRead = vi.fn();
+const markNotificationRead = vi.fn();
 vi.mock('@/services/api', () => ({
   api: {
     getNotifications: () => getNotifications(),
     markAllNotificationsRead: () => markAllNotificationsRead(),
+    markNotificationRead: (id: string) => markNotificationRead(id),
   },
 }));
 
@@ -48,6 +50,7 @@ describe('NotificationBell — connection-health alerts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     markAllNotificationsRead.mockResolvedValue({});
+    markNotificationRead.mockResolvedValue({});
   });
 
   it('renders a connection-type notification with its icon and title', async () => {
@@ -67,7 +70,7 @@ describe('NotificationBell — connection-health alerts', () => {
     expect(screen.getByText('🔌')).toBeInTheDocument();
   });
 
-  it('navigates to Settings → Connection when a connection alert is clicked', async () => {
+  it('navigates to Settings → Connection AND marks it read when a connection alert is clicked (S3)', async () => {
     getNotifications.mockResolvedValue({ notifications: [connectionNotification] });
     renderBell();
 
@@ -80,9 +83,10 @@ describe('NotificationBell — connection-health alerts', () => {
     fireEvent.click(item);
 
     expect(mockNavigate).toHaveBeenCalledWith('/settings?section=connections');
+    expect(markNotificationRead).toHaveBeenCalledWith('conn-1');
   });
 
-  it('does not navigate for non-connection notifications', async () => {
+  it('does not navigate for non-connection notifications, but still marks them read (S3)', async () => {
     getNotifications.mockResolvedValue({
       notifications: [
         {
@@ -103,6 +107,85 @@ describe('NotificationBell — connection-health alerts', () => {
     fireEvent.click(item);
 
     expect(mockNavigate).not.toHaveBeenCalled();
+    expect(markNotificationRead).toHaveBeenCalledWith('up-1');
+  });
+});
+
+// S3 (walk day 4): every notification item is now clickable and marks
+// itself read on click, in addition to any type-specific navigation.
+describe('NotificationBell — click marks a single item read (S3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    markAllNotificationsRead.mockResolvedValue({});
+    markNotificationRead.mockResolvedValue({});
+  });
+
+  it('clears the unread dot on the clicked item only, and calls the mark-read endpoint', async () => {
+    getNotifications.mockResolvedValue({
+      notifications: [
+        {
+          id: 'up-1',
+          type: 'upgrade',
+          title: 'New addon version available',
+          description: 'argo-cd 2.10.0 is available.',
+          timestamp: new Date().toISOString(),
+          read: false,
+        },
+        {
+          id: 'drift-1',
+          type: 'drift',
+          title: 'Version drift detected',
+          description: 'prometheus differs across clusters.',
+          timestamp: new Date().toISOString(),
+          read: false,
+        },
+      ],
+    });
+    renderBell();
+
+    fireEvent.click(screen.getByLabelText('Notifications'));
+    const item = await screen.findByText('New addon version available');
+    expect(item.closest('[role="button"]')).not.toBeNull();
+
+    fireEvent.click(item);
+
+    await waitFor(() => {
+      expect(markNotificationRead).toHaveBeenCalledWith('up-1');
+    });
+
+    // The unread count badge drops from 2 to 1 (optimistic local update).
+    await waitFor(() => {
+      expect(screen.getByText(/Notifications \(1\)/)).toBeInTheDocument();
+    });
+  });
+
+  it('"Mark all as read" still clears every item', async () => {
+    getNotifications.mockResolvedValue({
+      notifications: [
+        {
+          id: 'up-1',
+          type: 'upgrade',
+          title: 'New addon version available',
+          description: 'argo-cd 2.10.0 is available.',
+          timestamp: new Date().toISOString(),
+          read: false,
+        },
+      ],
+    });
+    renderBell();
+
+    fireEvent.click(screen.getByLabelText('Notifications'));
+    await screen.findByText('New addon version available');
+
+    fireEvent.click(screen.getByText('Mark all as read'));
+
+    await waitFor(() => {
+      expect(markAllNotificationsRead).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Notifications')).toBeInTheDocument();
+      expect(screen.queryByText(/Notifications \(/)).not.toBeInTheDocument();
+    });
   });
 });
 

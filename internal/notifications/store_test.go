@@ -78,6 +78,87 @@ func TestStore_MarkAllRead(t *testing.T) {
 	}
 }
 
+// TestStore_MarkRead is S3's (walk day 4) new single-item mark-read: only
+// the matching id flips to read, everything else is untouched.
+func TestStore_MarkRead(t *testing.T) {
+	s := NewStore(10, nil)
+
+	s.Add(Notification{ID: "1", Title: "A", Type: TypeUpgrade, Timestamp: time.Now()})
+	s.Add(Notification{ID: "2", Title: "B", Type: TypeDrift, Timestamp: time.Now()})
+
+	if !s.MarkRead("2") {
+		t.Fatalf("expected MarkRead(\"2\") to return true for an existing id")
+	}
+	if s.UnreadCount() != 1 {
+		t.Fatalf("expected 1 unread after marking one of two read, got %d", s.UnreadCount())
+	}
+
+	items := s.List()
+	for _, n := range items {
+		if n.ID == "2" && !n.Read {
+			t.Errorf("expected notification %q to be Read == true", n.ID)
+		}
+		if n.ID == "1" && n.Read {
+			t.Errorf("expected notification %q to remain Read == false", n.ID)
+		}
+	}
+}
+
+// TestStore_MarkRead_UnknownIDReturnsFalse — a 404 at the store layer.
+func TestStore_MarkRead_UnknownIDReturnsFalse(t *testing.T) {
+	s := NewStore(10, nil)
+	s.Add(Notification{ID: "1", Title: "A", Type: TypeUpgrade, Timestamp: time.Now()})
+
+	if s.MarkRead("does-not-exist") {
+		t.Errorf("expected MarkRead of an unknown id to return false")
+	}
+	if s.UnreadCount() != 1 {
+		t.Errorf("expected the existing notification to stay unaffected, got %d unread", s.UnreadCount())
+	}
+}
+
+// TestStore_MarkRead_AlreadyReadIsNoOpButStillTrue — marking an
+// already-read notification again is harmless and still reports found.
+func TestStore_MarkRead_AlreadyReadIsNoOpButStillTrue(t *testing.T) {
+	s := NewStore(10, nil)
+	s.Add(Notification{ID: "1", Title: "A", Type: TypeUpgrade, Timestamp: time.Now()})
+
+	if !s.MarkRead("1") {
+		t.Fatalf("expected first MarkRead to return true")
+	}
+	if !s.MarkRead("1") {
+		t.Errorf("expected re-marking an already-read id to still return true")
+	}
+	if s.UnreadCount() != 0 {
+		t.Errorf("expected 0 unread, got %d", s.UnreadCount())
+	}
+}
+
+// TestStore_CMStore_MarkReadPersists confirms MarkRead's flag flip survives
+// a restart, not just an in-memory effect (mirrors TestStore_CMStore_ResolvePersists).
+func TestStore_CMStore_MarkReadPersists(t *testing.T) {
+	cm := newTestCMStore()
+
+	s1 := NewStore(10, cm)
+	s1.Add(Notification{ID: "1", Title: "A", Type: TypeUpgrade, Timestamp: time.Now()})
+	s1.Add(Notification{ID: "2", Title: "B", Type: TypeDrift, Timestamp: time.Now()})
+	s1.MarkRead("1")
+
+	s2 := NewStore(10, cm)
+	items := s2.List()
+	if len(items) != 2 {
+		t.Fatalf("expected 2 notifications to survive restart, got %d", len(items))
+	}
+	for _, n := range items {
+		if n.ID == "1" && !n.Read {
+			t.Errorf("expected notification 1 to remain Read == true after restart")
+		}
+		if n.ID == "2" && n.Read {
+			t.Errorf("expected notification 2 to remain Read == false after restart")
+		}
+	}
+}
+
 func TestStore_DedupBlocksReAddAfterRead(t *testing.T) {
 	s := NewStore(10, nil)
 

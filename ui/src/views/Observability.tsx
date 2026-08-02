@@ -223,30 +223,82 @@ function ControlPlaneSection({
 // Section 2: Health and Sync Distribution Donuts
 // ---------------------------------------------------------------------------
 
+// Both pies below read the SAME source — addon_groups[].child_apps[] — so
+// "All addons" and any single-addon filter are computed the same way, and
+// the "All addons" total always matches control_plane.health_summary (both
+// come from the same server-side app list; see Observability.test.tsx for
+// the parity check). Walk-day finding: the old titles just said
+// "Application ..." with no hint of WHICH applications — these are the
+// addon applications running on managed clusters, not ArgoCD itself.
+
+function computeHealthSlices(addonGroups: AddonGroupHealth[]): DistributionSlice[] {
+  const counts: Record<string, number> = {};
+  for (const group of addonGroups ?? []) {
+    for (const child of group.child_apps ?? []) {
+      const health = child.health || 'Unknown';
+      counts[health] = (counts[health] ?? 0) + 1;
+    }
+  }
+  return Object.entries(counts).map(([name, value]) => ({
+    key: name,
+    label: name,
+    value,
+    color: HEALTH_COLORS[name] ?? '#9ca3af',
+  }));
+}
+
+function computeSyncSlices(addonGroups: AddonGroupHealth[]): DistributionSlice[] {
+  const counts: Record<string, number> = {
+    Synced: 0,
+    OutOfSync: 0,
+    Unknown: 0,
+  };
+
+  for (const group of addonGroups ?? []) {
+    for (const child of group.child_apps ?? []) {
+      const status = (child.sync_status ?? '').toLowerCase();
+      if (status === 'synced') {
+        counts.Synced++;
+      } else if (status === 'outofsync' || status === 'out_of_sync') {
+        counts.OutOfSync++;
+      } else {
+        counts.Unknown++;
+      }
+    }
+  }
+
+  return Object.entries(counts).map(([name, value]) => ({
+    key: name,
+    label: name,
+    value,
+    color: SYNC_COLORS[name] ?? '#9ca3af',
+  }));
+}
+
 function HealthDistributionSection({
-  data,
+  addonGroups,
+  subtitle,
 }: {
-  data: ObservabilityOverviewResponse['control_plane'];
+  addonGroups: AddonGroupHealth[];
+  subtitle: string;
 }) {
   const healthSlices: DistributionSlice[] = useMemo(
-    () =>
-      Object.entries(data?.health_summary ?? {}).map(([name, value]) => ({
-        key: name,
-        label: name,
-        value,
-        color: HEALTH_COLORS[name] ?? '#9ca3af',
-      })),
-    [data?.health_summary],
+    () => computeHealthSlices(addonGroups),
+    [addonGroups],
   );
 
   const total = healthSlices.reduce((sum, d) => sum + d.value, 0);
 
   if (total === 0) {
     return (
-      <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 dark:ring-gray-700 dark:bg-gray-800">
-        <h3 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
-          Application Health Distribution
+      <div
+        data-testid="health-distribution-card"
+        className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 dark:ring-gray-700 dark:bg-gray-800"
+      >
+        <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+          Addon Application Health
         </h3>
+        <p className="mb-2 text-xs text-[#5a8aaa] dark:text-gray-500">{subtitle}</p>
         <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
           No applications yet
         </p>
@@ -255,13 +307,17 @@ function HealthDistributionSection({
   }
 
   return (
-    <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
-      <h3 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
-        Application Health Distribution
+    <div
+      data-testid="health-distribution-card"
+      className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800"
+    >
+      <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+        Addon Application Health
       </h3>
+      <p className="mb-3 text-xs text-[#5a8aaa] dark:text-gray-500">{subtitle}</p>
       <DistributionPie
         slices={healthSlices}
-        ariaPrefix="Application health"
+        ariaPrefix="Addon application health"
         legendOrientation="horizontal"
         testId="health-distribution-pie"
         legendTestId="health-distribution-legend"
@@ -275,45 +331,28 @@ function HealthDistributionSection({
 
 function SyncDistributionSection({
   addonGroups,
+  subtitle,
 }: {
   addonGroups: AddonGroupHealth[];
+  subtitle: string;
 }) {
-  const syncSlices: DistributionSlice[] = useMemo(() => {
-    const counts: Record<string, number> = {
-      Synced: 0,
-      OutOfSync: 0,
-      Unknown: 0,
-    };
-
-    for (const group of addonGroups ?? []) {
-      for (const child of group.child_apps ?? []) {
-        const status = (child.sync_status ?? '').toLowerCase();
-        if (status === 'synced') {
-          counts.Synced++;
-        } else if (status === 'outofsync' || status === 'out_of_sync') {
-          counts.OutOfSync++;
-        } else {
-          counts.Unknown++;
-        }
-      }
-    }
-
-    return Object.entries(counts).map(([name, value]) => ({
-      key: name,
-      label: name,
-      value,
-      color: SYNC_COLORS[name] ?? '#9ca3af',
-    }));
-  }, [addonGroups]);
+  const syncSlices: DistributionSlice[] = useMemo(
+    () => computeSyncSlices(addonGroups),
+    [addonGroups],
+  );
 
   const total = syncSlices.reduce((sum, d) => sum + d.value, 0);
 
   if (total === 0) {
     return (
-      <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 dark:ring-gray-700 dark:bg-gray-800">
-        <h3 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
-          Application Sync Distribution
+      <div
+        data-testid="sync-distribution-card"
+        className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 dark:ring-gray-700 dark:bg-gray-800"
+      >
+        <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+          Addon Application Sync
         </h3>
+        <p className="mb-2 text-xs text-[#5a8aaa] dark:text-gray-500">{subtitle}</p>
         <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
           No applications yet
         </p>
@@ -322,19 +361,77 @@ function SyncDistributionSection({
   }
 
   return (
-    <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
-      <h3 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
-        Application Sync Distribution
+    <div
+      data-testid="sync-distribution-card"
+      className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800"
+    >
+      <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+        Addon Application Sync
       </h3>
+      <p className="mb-3 text-xs text-[#5a8aaa] dark:text-gray-500">{subtitle}</p>
       <DistributionPie
         slices={syncSlices}
-        ariaPrefix="Application sync"
+        ariaPrefix="Addon application sync"
         legendOrientation="horizontal"
         testId="sync-distribution-pie"
         legendTestId="sync-distribution-legend"
       />
       <div className="mt-2 text-center text-sm font-medium text-[#2a5a7a] dark:text-gray-400">
         Total: {total} application{total !== 1 ? 's' : ''}
+      </div>
+    </div>
+  );
+}
+
+// Shared per-addon filter for both distribution pies (walk-day finding: the
+// maintainer wants to answer "health/sync FOR WHICH addon", not just the
+// aggregate). appProject filtering is explicitly out of scope — the project
+// name isn't in this wire response.
+function AddonDistributionSection({ addonGroups }: { addonGroups: AddonGroupHealth[] }) {
+  const [selectedAddon, setSelectedAddon] = useState('all');
+
+  const addonNames = useMemo(
+    () => [...new Set((addonGroups ?? []).map((g) => g.addon_name))].sort(),
+    [addonGroups],
+  );
+
+  const filteredGroups = useMemo(() => {
+    if (selectedAddon === 'all') return addonGroups ?? [];
+    return (addonGroups ?? []).filter((g) => g.addon_name === selectedAddon);
+  }, [addonGroups, selectedAddon]);
+
+  const subtitle =
+    selectedAddon === 'all'
+      ? 'All addon applications across your managed clusters'
+      : `${selectedAddon} applications across your managed clusters`;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <label
+          htmlFor="addon-distribution-filter"
+          className="text-sm font-medium text-[#2a5a7a] dark:text-gray-400"
+        >
+          Addon
+        </label>
+        <select
+          id="addon-distribution-filter"
+          value={selectedAddon}
+          onChange={(e) => setSelectedAddon(e.target.value)}
+          aria-label="Filter distribution charts by addon"
+          className="rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] px-2 py-1 text-xs text-[#0a3a5a] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+        >
+          <option value="all">All addons</option>
+          {addonNames.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        <HealthDistributionSection addonGroups={filteredGroups} subtitle={subtitle} />
+        <SyncDistributionSection addonGroups={filteredGroups} subtitle={subtitle} />
       </div>
     </div>
   );
@@ -1557,10 +1654,7 @@ export function Observability() {
         </p>
       </div>
       <ControlPlaneSection data={data.control_plane} stats={stats} argoCDUrl={argoCDUrl} />
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <HealthDistributionSection data={data.control_plane} />
-        <SyncDistributionSection addonGroups={data.addon_groups ?? []} />
-      </div>
+      <AddonDistributionSection addonGroups={data.addon_groups ?? []} />
       <ResourceAlertsSection alerts={data.resource_alerts ?? []} />
       <AddonGroupsSection
         groups={data.addon_groups ?? []}

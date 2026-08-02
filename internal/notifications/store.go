@@ -175,6 +175,25 @@ func (s *Store) MarkAllRead() {
 	}
 }
 
+// MarkRead marks the single notification with the given id as read. Returns
+// true if a notification with that id was found (and marked read — marking
+// an already-read notification again is a no-op that still returns true),
+// false if no notification with that id exists.
+func (s *Store) MarkRead(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.notifications {
+		if s.notifications[i].ID == id {
+			s.notifications[i].Read = true
+			if err := s.persistLocked(context.Background()); err != nil {
+				slog.Warn("could not persist after mark read", "error", err, "component", "notifications")
+			}
+			return true
+		}
+	}
+	return false
+}
+
 // Resolve removes every notification whose Title matches the given title,
 // regardless of read/unread state. It is how a previously-reported problem
 // clears itself once the underlying condition recovers (e.g. a broken
