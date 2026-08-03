@@ -240,7 +240,7 @@ describe('ClustersOverview', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    const searchInput = screen.getByPlaceholderText('Filter by name...');
+    const searchInput = screen.getByPlaceholderText('Search clusters by name...');
     fireEvent.change(searchInput, { target: { value: 'prod' } });
 
     expect(screen.getByText('prod-eu')).toBeInTheDocument();

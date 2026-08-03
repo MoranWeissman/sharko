@@ -1,7 +1,7 @@
 // Shared pagination controls extracted from AddonCatalog.tsx
 // Used by: AddonCatalog, ClustersOverview, Observability
 
-export type PageSize = 10 | 20 | 50 | 100;
+export type PageSize = 5 | 10 | 20 | 50 | 100;
 
 /**
  * Pagination controls with ellipsis support.
@@ -80,20 +80,27 @@ export function PaginationControls({
 export function PageSizeSelector({
   pageSize,
   onChange,
+  sizes,
 }: {
   pageSize: PageSize;
   onChange: (size: PageSize) => void;
+  // Optional override for the offered sizes — defaults to the original
+  // 10/20/50/100 set so existing call sites (AddonCatalog, Observability)
+  // keep their current look. Callers that need a smaller option (e.g. the
+  // Clusters page's 5/10/20/50/100 list) pass their own array.
+  sizes?: PageSize[];
 }) {
-  const sizes: PageSize[] = [10, 20, 50, 100];
+  const offered: PageSize[] = sizes ?? [10, 20, 50, 100];
   return (
     <div className="flex items-center gap-2">
       <span className="text-xs text-[#2a5a7a] dark:text-gray-400">Show:</span>
       <div className="flex gap-1">
-        {sizes.map((size) => (
+        {offered.map((size) => (
           <button
             key={size}
             type="button"
             onClick={() => onChange(size)}
+            aria-label={`Show ${size} per page`}
             className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
               pageSize === size
                 ? 'bg-teal-600 text-white'
