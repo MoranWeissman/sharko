@@ -553,6 +553,111 @@ applicationsets:
 	}
 }
 
+// TestGetCatalog_DeployingAppNotCountedAsMissingOrDegraded is a S3
+// verification (maintainer's 50-cluster walk): an addon-family health
+// counter must never mislabel an app that's mid-rollout as broken.
+// classifyAddonApp returns "deploying" for an Application whose op phase is
+// Running (or whose health is Progressing) with no error signal yet — that
+// status has no case in the healthyCount/degradedCount switch in
+// GetCatalog, and since the Application DOES exist in appMap the `else`
+// branch that increments missingCount never runs either. This test pins
+// that: a cluster mid-rollout must read as neither healthy, degraded, nor
+// missing — not the dashboard's honest 518/660 turned into a false
+// "broken" by a rollout in progress.
+func TestGetCatalog_DeployingAppNotCountedAsMissingOrDegraded(t *testing.T) {
+	clustersYAML := []byte(`
+clusters:
+  - name: cluster-a
+    labels:
+      rolling-addon: enabled
+  - name: cluster-b
+    labels:
+      rolling-addon: enabled
+`)
+
+	catalogYAML := []byte(`
+applicationsets:
+  - name: rolling-addon
+    repoURL: https://example.com/charts
+    chart: chart-rolling
+    version: "1.0.0"
+    namespace: ns-rolling
+`)
+
+	argoApps := map[string]interface{}{
+		"items": []map[string]interface{}{
+			{
+				// cluster-a: mid-rollout — op phase Running, no failure
+				// signal. classifyAddonApp → "deploying".
+				"metadata": map[string]interface{}{"name": "rolling-addon-cluster-a", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":           map[string]interface{}{"status": "OutOfSync"},
+					"health":         map[string]interface{}{"status": "Progressing"},
+					"operationState": map[string]interface{}{"phase": "Running"},
+				},
+			},
+			{
+				// cluster-b: a normal healthy app, so this test also
+				// proves "deploying" doesn't silently inflate healthyCount.
+				"metadata": map[string]interface{}{"name": "rolling-addon-cluster-b", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+		},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(argoApps)
+	}))
+	defer ts.Close()
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": clustersYAML,
+			"configuration/addons-catalog.yaml":   catalogYAML,
+		},
+	}
+	ac := argocd.NewClient(ts.URL, "fake-token", false)
+	svc := NewAddonService("")
+
+	resp, err := svc.GetCatalog(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetCatalog returned err: %v", err)
+	}
+
+	var got *models.AddonCatalogItem
+	for i := range resp.Addons {
+		if resp.Addons[i].AddonName == "rolling-addon" {
+			got = &resp.Addons[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("expected addon %q in response, got %+v", "rolling-addon", resp.Addons)
+	}
+
+	// EnabledClusters counts both clusters (the addon is enabled on both) —
+	// but only cluster-b's healthy app should land in HealthyApplications.
+	// cluster-a's mid-rollout app must not count as healthy, degraded, OR
+	// missing.
+	if got.EnabledClusters != 2 {
+		t.Errorf("EnabledClusters = %d, want 2", got.EnabledClusters)
+	}
+	if got.HealthyApplications != 1 {
+		t.Errorf("HealthyApplications = %d, want 1 (only cluster-b)", got.HealthyApplications)
+	}
+	if got.DegradedApplications != 0 {
+		t.Errorf("DegradedApplications = %d, want 0 — a mid-rollout app is not degraded", got.DegradedApplications)
+	}
+	if got.MissingApplications != 0 {
+		t.Errorf("MissingApplications = %d, want 0 — a mid-rollout app has a real Application, it isn't missing", got.MissingApplications)
+	}
+}
+
 // TestGetVersionMatrix_V4Repo is the v4 Wave 1 Story 4.2 counterpart to
 // TestGetVersionMatrix: the presence of the engine pin
 // (orchestrator.EnginePinPath) routes GetVersionMatrix through

@@ -14,6 +14,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/api"
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/capabilities"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
@@ -40,6 +41,20 @@ import (
 //   - admin / admin    (admin role)
 //   - qa    / sharko   (viewer role)
 func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err error) {
+	// AWS identity — demo mode must NEVER run real AWS identity detection.
+	// Without this, GET /api/v1/system/capabilities falls through to the
+	// server's lazy real AWSDetector (internal/capabilities), which calls
+	// sts:GetCallerIdentity against the host's ambient AWS credential
+	// chain — a local demo instance ended up displaying the maintainer's
+	// own real work identity in the UI. Inject a static, obviously-fake
+	// detector first, before anything else, so it's in place no matter
+	// what happens later in this function.
+	srv.SetAWSDetector(capabilities.NewStaticAWSDetector(capabilities.AWSIdentity{
+		Detected:    true,
+		Method:      "demo",
+		IdentityARN: "arn:aws:iam::000000000000:role/sharko-demo",
+	}))
+
 	// 0. Generate the estate once (nil for the default size — every
 	// mock-* constructor below falls back to the hand-written fixture in
 	// that case) so every mock backend agrees on the same data.

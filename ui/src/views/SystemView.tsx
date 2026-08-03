@@ -21,6 +21,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  AlertTriangle,
   ArrowRight,
   CheckCircle2,
   ExternalLink,
@@ -429,7 +430,6 @@ export function SystemView() {
   const sharkoClusterAgg = aggregateStatuses(managedClusters.map(deriveSharkoClusterStatus))
   const argoClusterAgg = aggregateStatuses(managedClusters.map(deriveArgoClusterStatus))
 
-  const detectedMM = parseMajorMinor(argocdVersion)
   const outsideRange = versionOutsideTestedRange(argocdVersion)
 
   if (loading) {
@@ -451,24 +451,28 @@ export function SystemView() {
         </p>
       </div>
 
-      {/* Detected ArgoCD version + tested-range badge */}
+      {/* Detected ArgoCD version — said once, with an honest warning when it's
+          outside the tested range instead of a second, near-duplicate line
+          (walk finding: both used to render together). */}
       <div className="flex flex-wrap items-center gap-3 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
         <Waves className="h-5 w-5 text-[#3a6a8a] dark:text-gray-400" aria-hidden="true" />
-        <span className="text-sm font-medium text-[#0a2a4a] dark:text-white">
+        <span
+          data-testid="argocd-version-line"
+          className={`inline-flex items-center gap-1.5 text-sm font-medium ${
+            outsideRange ? 'text-amber-700 dark:text-amber-400' : 'text-[#0a2a4a] dark:text-white'
+          }`}
+        >
+          {outsideRange && <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />}
           {argocdVersion ? `ArgoCD ${argocdVersion} detected` : 'ArgoCD version unknown'}
         </span>
-        {argocdVersion && !outsideRange && (
-          <span className="text-xs text-[#3a6a8a] dark:text-gray-400">
-            Sharko is tested with {testedRangeLabel()}
-          </span>
-        )}
-        {outsideRange && detectedMM && (
+        {argocdVersion && (
           <span
-            data-testid="argocd-version-badge"
-            className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+            className={`text-xs ${
+              outsideRange ? 'text-amber-700 dark:text-amber-400' : 'text-[#3a6a8a] dark:text-gray-400'
+            }`}
           >
-            ArgoCD v{detectedMM.major}.{detectedMM.minor} detected — Sharko is tested with{' '}
-            {testedRangeLabel()}
+            {`Sharko is tested with ${testedRangeLabel()}`}
+            {outsideRange ? ' — outside the tested range' : ''}
           </span>
         )}
       </div>

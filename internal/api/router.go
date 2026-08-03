@@ -866,6 +866,18 @@ func (s *Server) AddDemoUser(username, password, role string) error {
 	return s.authStore.AddUser(username, password, role)
 }
 
+// SetAWSDetector overrides the AWS identity detector GET
+// /system/capabilities serves, bypassing the lazy real-detector build in
+// getAWSDetector (capabilities.go) entirely. Exists for demo/test
+// injection: demo mode calls this with capabilities.NewStaticAWSDetector so
+// the demo instance never runs a real sts:GetCallerIdentity against
+// whatever AWS identity happens to be ambient on the host it's running on.
+// Call this after NewServer, before the first request reaches the
+// capabilities endpoint.
+func (s *Server) SetAWSDetector(d *capabilities.AWSDetector) {
+	s.awsDetector = d
+}
+
 // NewRouter builds the HTTP router with all API routes and static file serving.
 // staticFS can be nil if no static files are available (e.g., dev mode).
 func NewRouter(srv *Server, staticFS fs.FS) http.Handler {

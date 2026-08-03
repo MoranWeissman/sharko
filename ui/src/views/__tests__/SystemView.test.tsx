@@ -415,9 +415,10 @@ describe('SystemView', () => {
     clusterLines.forEach((line) => {
       expect(within(line).getByText('2 healthy').className).toContain('text-green-700')
     })
-    // Detected version shown, no warning badge (v3.2 is in range)
+    // Detected version shown once, no "outside the tested range" warning
+    // (v3.2 is in range)
     expect(screen.getByText('ArgoCD v3.2.2 detected')).toBeInTheDocument()
-    expect(screen.queryByTestId('argocd-version-badge')).not.toBeInTheDocument()
+    expect(screen.queryByText(/outside the tested range/)).not.toBeInTheDocument()
   })
 
   it('shows where it is broken — degraded arrows + bell alert detail', async () => {
@@ -473,16 +474,20 @@ describe('SystemView', () => {
     expect(screen.getByText(/ArgoCD can't reach the repo/)).toBeInTheDocument()
   })
 
-  it('shows the calm warning badge when the detected minor is outside the tested range', async () => {
+  it('says the ArgoCD version once, with an amber warning, when it is outside the tested range', async () => {
     mockAll({ argocdVersion: 'v9.9.1' })
     renderPage()
 
+    // The full detected version, said exactly once — no separate near-duplicate line.
     await waitFor(() => expect(screen.getByText('ArgoCD v9.9.1 detected')).toBeInTheDocument())
-    const badge = screen.getByTestId('argocd-version-badge')
-    expect(badge.textContent).toContain('ArgoCD v9.9 detected — Sharko is tested with')
+    expect(screen.getAllByText('ArgoCD v9.9.1 detected')).toHaveLength(1)
+
+    const versionLine = screen.getByTestId('argocd-version-line')
+    expect(versionLine.className).toContain('text-amber-700')
+    expect(screen.getByText(/Sharko is tested with .* — outside the tested range/)).toBeInTheDocument()
   })
 
-  it('shows no badge when the ArgoCD version is unknown', async () => {
+  it('shows no warning when the ArgoCD version is unknown', async () => {
     mockedApi.getRepoStatus.mockResolvedValue({ initialized: true, bootstrap_synced: true })
     mockedApi.getClusters.mockResolvedValue({ clusters: [] })
     mockedApi.getNotifications.mockResolvedValue({ notifications: [], unread_count: 0 })
@@ -494,7 +499,7 @@ describe('SystemView', () => {
     renderPage()
 
     await waitFor(() => expect(screen.getByText('ArgoCD version unknown')).toBeInTheDocument())
-    expect(screen.queryByTestId('argocd-version-badge')).not.toBeInTheDocument()
+    expect(screen.queryByText(/outside the tested range/)).not.toBeInTheDocument()
   })
 
   it('counts a cluster as healthy via derived_health_status alone — no Test click required (V2-cleanup-85.4)', async () => {

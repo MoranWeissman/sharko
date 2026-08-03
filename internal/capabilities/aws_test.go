@@ -185,3 +185,41 @@ func TestNewAWSDetector_DefaultsWired(t *testing.T) {
 		t.Errorf("timeout = %v, want %v", d.timeout, defaultSTSTimeout)
 	}
 }
+
+// TestNewStaticAWSDetector_ReturnsExactIdentity is S1 of the maintainer's
+// 50-cluster walk: demo mode must never run real AWS identity detection.
+// NewStaticAWSDetector is the seam it uses instead — Detect must return
+// exactly the identity handed to the constructor, with no env lookups and
+// no network call along the way.
+func TestNewStaticAWSDetector_ReturnsExactIdentity(t *testing.T) {
+	want := AWSIdentity{
+		Detected:    true,
+		Method:      "demo",
+		IdentityARN: "arn:aws:iam::000000000000:role/sharko-demo",
+	}
+	d := NewStaticAWSDetector(want)
+
+	got := d.Detect(context.Background())
+	if got != want {
+		t.Errorf("Detect() = %+v, want %+v", got, want)
+	}
+
+	// Calling Detect again (or from another goroutine's perspective, via
+	// sync.Once) must keep returning the same static identity — never
+	// fall through to lookupEnv/callerIdentityFn, which are left nil.
+	got2 := d.Detect(context.Background())
+	if got2 != want {
+		t.Errorf("second Detect() = %+v, want %+v", got2, want)
+	}
+}
+
+// TestNewStaticAWSDetector_NeverDetected verifies the constructor is not
+// hardcoded to Detected:true — a static "no identity" result must also
+// round-trip untouched, since not every fake scenario is "identity found".
+func TestNewStaticAWSDetector_NeverDetected(t *testing.T) {
+	want := AWSIdentity{Detected: false, Method: MethodNone}
+	d := NewStaticAWSDetector(want)
+	if got := d.Detect(context.Background()); got != want {
+		t.Errorf("Detect() = %+v, want %+v", got, want)
+	}
+}
