@@ -500,6 +500,91 @@ describe('Observability — #addon-health deep-link (walk finding #2)', () => {
   });
 });
 
+// S5 (scale-walk) — the dashboard's addon-applications donut deep-links its
+// "not healthy" row here as /observability?health=issues#addon-health. The
+// Health section should pre-filter to problem apps only, with a visible
+// dismissible chip to clear it.
+describe('Observability — ?health=issues filter (S5, scale-walk)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function renderWithHealthIssues() {
+    return render(
+      <MemoryRouter initialEntries={['/observability?health=issues']}>
+        <AddonStatesProvider>
+          <Observability />
+        </AddonStatesProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it('narrows the addon groups to problem apps only, and shows a dismissible chip', async () => {
+    // The default fixture's addon_groups has two groups: "istio" (a
+    // Degraded child on staging) and "prometheus" (an Unknown child on
+    // staging). Only a group whose live addon state (from
+    // getAttentionItems, via useAddonStates) actually classifies as a
+    // problem gets filtered in — 'unknown' doesn't need the 10-minute
+    // settling window 'degraded'/'missing' do, so it's the simplest
+    // deterministic fixture here. No attention item names istio, so it
+    // stays classified as tier 'none' and must NOT show.
+    const { api } = await import('@/services/api');
+    // mockResolvedValueOnce — NOT mockResolvedValue: the plain form
+    // persists past vi.clearAllMocks() (it only clears call history) and
+    // would leak this Unknown fixture into every later test in the file
+    // that relies on the factory's empty-array default.
+    vi.mocked(api.getAttentionItems).mockResolvedValueOnce([
+      { app_name: 'prometheus-staging', addon_name: 'prometheus', cluster: 'staging', health: 'Unknown', sync: 'Unknown' },
+    ]);
+
+    renderWithHealthIssues();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('health-issues-chip')).toBeInTheDocument();
+    });
+
+    const section = document.getElementById('addon-health') as HTMLElement;
+    expect(within(section).getByText('prometheus')).toBeInTheDocument();
+    expect(within(section).queryByText('istio')).not.toBeInTheDocument();
+  });
+
+  it('dismissing the chip clears the filter and restores the full addon-groups list', async () => {
+    const { api } = await import('@/services/api');
+    // mockResolvedValueOnce — NOT mockResolvedValue: the plain form
+    // persists past vi.clearAllMocks() (it only clears call history) and
+    // would leak this Unknown fixture into every later test in the file
+    // that relies on the factory's empty-array default.
+    vi.mocked(api.getAttentionItems).mockResolvedValueOnce([
+      { app_name: 'prometheus-staging', addon_name: 'prometheus', cluster: 'staging', health: 'Unknown', sync: 'Unknown' },
+    ]);
+
+    renderWithHealthIssues();
+
+    const chip = await screen.findByTestId('health-issues-chip');
+    const clearBtn = within(chip).getByRole('button', { name: /clear the problem-apps filter/i });
+    await userEvent.click(clearBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('health-issues-chip')).not.toBeInTheDocument();
+    });
+    const section = document.getElementById('addon-health') as HTMLElement;
+    expect(within(section).getByText('istio')).toBeInTheDocument();
+    expect(within(section).getByText('prometheus')).toBeInTheDocument();
+  });
+
+  it('does not show the chip or narrow anything when the param is absent', async () => {
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Health')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('health-issues-chip')).not.toBeInTheDocument();
+    const section = document.getElementById('addon-health') as HTMLElement;
+    expect(within(section).getByText('istio')).toBeInTheDocument();
+    expect(within(section).getByText('prometheus')).toBeInTheDocument();
+  });
+});
+
 // Walk-day lock — the maintainer's three findings on the old "Fleet
 // Health" section: (1) "fleet" is a banned display word — the section is
 // now just "Health"; (2) the chip-click-to-reveal issues panel is gone —

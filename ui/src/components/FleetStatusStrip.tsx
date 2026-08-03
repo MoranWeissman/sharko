@@ -79,21 +79,30 @@ const SLICE_COLORS = {
   notHealthy: 'text-[#b91c1c] dark:text-[#b91c1c]',
 } as const;
 
+// Row hrefs (S5, scale-walk) — the legend rows click through to a
+// pre-filtered view instead of just sitting there as a static breakdown.
+// "connecting" and "waiting" have no matching Clusters-page filter, so
+// they stay plain, non-interactive rows (DistributionPie only links a row
+// when its slice carries an `href`). ?status= values match ClustersOverview's
+// existing StatusFilter — do not rename them.
 function clusterSlices(c: DashboardStats['clusters']): DistributionSlice[] {
   return [
-    { key: 'connected', value: c.connected, label: 'connected', colorClass: SLICE_COLORS.connected },
+    { key: 'connected', value: c.connected, label: 'connected', colorClass: SLICE_COLORS.connected, href: '/clusters?status=connected' },
     { key: 'connecting', value: c.pending, label: 'connecting', colorClass: SLICE_COLORS.connecting },
     { key: 'waiting', value: c.untested, label: 'waiting for first addon', colorClass: SLICE_COLORS.waiting },
-    { key: 'not-connected', value: c.missing, label: 'not connected', colorClass: SLICE_COLORS.notConnected },
-    { key: 'disconnected', value: c.failed, label: 'disconnected', colorClass: SLICE_COLORS.disconnected },
+    { key: 'not-connected', value: c.missing, label: 'not connected', colorClass: SLICE_COLORS.notConnected, href: '/clusters?status=disconnected' },
+    { key: 'disconnected', value: c.failed, label: 'disconnected', colorClass: SLICE_COLORS.disconnected, href: '/clusters?status=disconnected' },
   ];
 }
 
+// "not healthy" deep-links with ?health=issues (query BEFORE the #hash —
+// see Observability.tsx's useSearchParams comment for why the reverse
+// order doesn't work) so the Health section pre-filters to problem apps.
 function appSlices(total: number, healthy: number): DistributionSlice[] {
   const notHealthy = Math.max(0, total - healthy);
   return [
-    { key: 'healthy', value: healthy, label: 'healthy', colorClass: SLICE_COLORS.healthy },
-    { key: 'not-healthy', value: notHealthy, label: 'not healthy', colorClass: SLICE_COLORS.notHealthy },
+    { key: 'healthy', value: healthy, label: 'healthy', colorClass: SLICE_COLORS.healthy, href: '/observability#addon-health' },
+    { key: 'not-healthy', value: notHealthy, label: 'not healthy', colorClass: SLICE_COLORS.notHealthy, href: '/observability?health=issues#addon-health' },
   ];
 }
 
@@ -123,15 +132,29 @@ interface SegmentProps {
   children: ReactNode;
 }
 
+// S5 (scale-walk): the clusters and applications segments now nest real
+// legend-row <Link>s (DistributionPie's opt-in href), and a <button> may
+// not contain other interactive content (invalid HTML, and confusing for
+// screen readers) — so Segment is a div with role="button" instead of a
+// native button, with the same click + Enter/Space activation. Row links
+// stop propagation on their own click (DistributionPie), so they navigate
+// on their own without also firing this whole-segment handler.
 function Segment({ onClick, testId, ariaLabel, title, children }: SegmentProps) {
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onClick()
+        }
+      }}
       data-testid={testId}
       aria-label={ariaLabel}
       style={{ minHeight: PIE_CONTAINER_HEIGHT }}
-      className="flex flex-1 min-w-[300px] flex-col justify-center gap-1.5 border-b border-border px-5 py-3 text-left transition-colors hover:bg-muted/60 sm:border-b-0 sm:border-r sm:last:border-r-0"
+      className="flex flex-1 min-w-[300px] cursor-pointer flex-col justify-center gap-1.5 border-b border-border px-5 py-3 text-left transition-colors hover:bg-muted/60 sm:border-b-0 sm:border-r sm:last:border-r-0"
     >
       <span
         data-testid={`${testId}-title`}
@@ -140,7 +163,7 @@ function Segment({ onClick, testId, ariaLabel, title, children }: SegmentProps) 
         {title}
       </span>
       <div className="flex items-center gap-3">{children}</div>
-    </button>
+    </div>
   );
 }
 
@@ -199,8 +222,8 @@ export function FleetStatusStrip({ clusters, appsTotal, appsHealthy, behindCatal
           slices={clusterData}
           ariaPrefix="Clusters"
           size={PIE_SIZE}
-          legendAriaHidden
           showTotalRow
+          totalHref="/clusters"
           testId="fleet-strip-pie"
           legendTestId="fleet-strip-legend"
         />
@@ -215,8 +238,8 @@ export function FleetStatusStrip({ clusters, appsTotal, appsHealthy, behindCatal
           slices={appData}
           ariaPrefix="Applications"
           size={PIE_SIZE}
-          legendAriaHidden
           showTotalRow
+          totalHref="/observability#addon-health"
           testId="fleet-strip-pie"
           legendTestId="fleet-strip-legend"
         />

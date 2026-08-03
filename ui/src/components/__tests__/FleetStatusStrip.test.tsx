@@ -356,6 +356,107 @@ describe('FleetStatusStrip — navigation doors are preserved (do not regress)',
   });
 });
 
+describe('FleetStatusStrip — legend rows click through to filtered views (S5, scale-walk)', () => {
+  it('clusters pie: connected/not-connected/disconnected/total rows link to the right ?status= views', () => {
+    renderStrip({
+      clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
+      appsTotal: 0,
+      appsHealthy: 0,
+      behindCatalog: noBehindCatalogData,
+    });
+
+    const legend = within(screen.getByTestId('fleet-strip-clusters')).getByTestId('fleet-strip-legend');
+    expect(within(legend).getByRole('link', { name: /connected\s*8/ })).toHaveAttribute(
+      'href',
+      '/clusters?status=connected',
+    );
+    expect(within(legend).getByRole('link', { name: /not connected\s*1/ })).toHaveAttribute(
+      'href',
+      '/clusters?status=disconnected',
+    );
+    expect(within(legend).getByRole('link', { name: /^disconnected\s*1/ })).toHaveAttribute(
+      'href',
+      '/clusters?status=disconnected',
+    );
+    expect(within(legend).getByRole('link', { name: /total\s*10/ })).toHaveAttribute('href', '/clusters');
+  });
+
+  it('applications pie: "not healthy" links with ?health=issues, "healthy" and total link plain', () => {
+    renderStrip({
+      clusters: { total: 1, connected: 1, pending: 0, untested: 0, missing: 0, failed: 0 },
+      appsTotal: 20,
+      appsHealthy: 15,
+      behindCatalog: noBehindCatalogData,
+    });
+
+    const legend = within(screen.getByTestId('fleet-strip-applications')).getByTestId('fleet-strip-legend');
+    expect(within(legend).getByRole('link', { name: /healthy\s*15/ })).toHaveAttribute(
+      'href',
+      '/observability#addon-health',
+    );
+    expect(within(legend).getByRole('link', { name: /not healthy\s*5/ })).toHaveAttribute(
+      'href',
+      '/observability?health=issues#addon-health',
+    );
+    expect(within(legend).getByRole('link', { name: /total\s*20/ })).toHaveAttribute(
+      'href',
+      '/observability#addon-health',
+    );
+  });
+
+  it('clicking a legend row link does not also fire the whole-segment click (no double navigation)', () => {
+    // This file has no global beforeEach mock reset — other tests' navigate
+    // calls accumulate on the same module-level mock. Clear it so this
+    // test's "not called" assertion reflects only its own click.
+    mockNavigate.mockClear();
+    renderStrip({
+      clusters: { total: 10, connected: 8, pending: 0, untested: 0, missing: 1, failed: 1 },
+      appsTotal: 0,
+      appsHealthy: 0,
+      behindCatalog: noBehindCatalogData,
+    });
+
+    const legend = within(screen.getByTestId('fleet-strip-clusters')).getByTestId('fleet-strip-legend');
+    fireEvent.click(within(legend).getByRole('link', { name: /connected\s*8/ }));
+
+    // The segment's own onClick (navigate('/clusters')) must not ALSO have
+    // fired — only one navigation, and it's the row's own <Link>, not a
+    // duplicate imperative call from the wrapping segment.
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('the segment itself stays keyboard-activatable (Enter) even though it is no longer a native <button>', () => {
+    renderStrip({
+      clusters: { total: 3, connected: 3, pending: 0, untested: 0, missing: 0, failed: 0 },
+      appsTotal: 5,
+      appsHealthy: 5,
+      behindCatalog: noBehindCatalogData,
+    });
+
+    const segment = screen.getByTestId('fleet-strip-clusters');
+    expect(segment).toHaveAttribute('role', 'button');
+    expect(segment).toHaveAttribute('tabIndex', '0');
+    fireEvent.keyDown(segment, { key: 'Enter' });
+    expect(mockNavigate).toHaveBeenCalledWith('/clusters');
+  });
+
+  it('legend rows are reachable to screen readers (legendAriaHidden no longer set on the interactive pies)', () => {
+    renderStrip({
+      clusters: { total: 3, connected: 3, pending: 0, untested: 0, missing: 0, failed: 0 },
+      appsTotal: 5,
+      appsHealthy: 5,
+      behindCatalog: noBehindCatalogData,
+    });
+
+    expect(within(screen.getByTestId('fleet-strip-clusters')).getByTestId('fleet-strip-legend')).not.toHaveAttribute(
+      'aria-hidden',
+    );
+    expect(
+      within(screen.getByTestId('fleet-strip-applications')).getByTestId('fleet-strip-legend'),
+    ).not.toHaveAttribute('aria-hidden');
+  });
+});
+
 describe('summarizeBehindCatalog (walk day 5)', () => {
   it('counts cells whose drift_from_catalog is true, ignoring newest_available entirely', () => {
     const matrix: VersionMatrixResponse = {

@@ -5,6 +5,7 @@ import { AddonCatalog, ADDON_CATALOG_CACHE_KEY } from '@/views/AddonCatalog'
 import { AuthProvider } from '@/hooks/useAuth'
 import { api } from '@/services/api'
 import { setCached } from '@/lib/viewCache'
+import type { VersionMatrixResponse } from '@/services/models'
 
 const mockNavigate = vi.fn()
 vi.mock('react-router-dom', async () => {
@@ -772,6 +773,131 @@ describe('AddonCatalog — ?filter=outdated deep-link (WQ-2)', () => {
     })
     expect(screen.getByText('outdated-addon')).toBeInTheDocument()
     expect(screen.queryByTestId('matrix-outdated-chip')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * S6 (scale-walk) — ?filter=behind-catalog used to render the full
+ * 50-column VersionMatrixTable filtered by row (maintainer's screenshot
+ * verdict on a real 50-cluster estate: "a big mess", cut off). It now
+ * renders BehindCatalogList instead: a flat list, one row per behind cell,
+ * grouped by addon. The matrix itself (outdatedOnly) is untouched.
+ */
+describe('AddonCatalog — ?filter=behind-catalog renders the flat list (S6)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const driftMatrix: VersionMatrixResponse = {
+    clusters: ['prod-eu', 'prod-us', 'staging-eu'],
+    addons: [
+      {
+        addon_name: 'cert-manager',
+        catalog_version: '1.14.0',
+        chart: 'cert-manager',
+        cells: {
+          'prod-eu': { version: '1.12.0', health: 'Healthy', drift_from_catalog: true },
+          'prod-us': { version: '1.14.0', health: 'Healthy', drift_from_catalog: false },
+          'staging-eu': { version: '1.10.0', health: 'Degraded', drift_from_catalog: true },
+        },
+      },
+      {
+        addon_name: 'metrics-server',
+        catalog_version: '0.7.0',
+        chart: 'metrics-server',
+        cells: {
+          'prod-eu': { version: '0.7.0', health: 'Healthy', drift_from_catalog: false },
+        },
+      },
+      {
+        addon_name: 'external-dns',
+        catalog_version: '6.20.0',
+        chart: 'external-dns',
+        cells: {
+          'prod-us': { version: '6.18.0', health: 'Healthy', drift_from_catalog: true },
+        },
+      },
+    ],
+  }
+
+  it('renders a flat, addon-grouped list instead of the matrix, with a correct counts line', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(driftMatrix)
+
+    render(
+      <MemoryRouter initialEntries={['/addons?view=matrix&filter=behind-catalog']}>
+        <AddonCatalog />
+      </MemoryRouter>,
+    )
+
+    // 3 behind cells across 2 addons (cert-manager: prod-eu + staging-eu;
+    // external-dns: prod-us). metrics-server has no drifted cell, so it
+    // doesn't appear as a group at all.
+    await waitFor(() => {
+      expect(screen.getByText('3 applications behind, across 2 addons')).toBeInTheDocument()
+    })
+    expect(screen.getByText('cert-manager')).toBeInTheDocument()
+    expect(screen.getByText('external-dns')).toBeInTheDocument()
+    expect(screen.queryByText('metrics-server')).not.toBeInTheDocument()
+
+    // Grouped rows: cluster name, deployed version → catalog version.
+    expect(screen.getByText('prod-eu')).toBeInTheDocument()
+    expect(screen.getByText('staging-eu')).toBeInTheDocument()
+    expect(screen.getAllByText('1.12.0').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1.14.0').length).toBeGreaterThan(0) // catalog version, shown per row
+
+    // The 50-column matrix table itself must NOT be on screen (no per-
+    // cluster header row for every cluster the way the grid would).
+    expect(screen.queryByText(/Newest available/)).not.toBeInTheDocument()
+  })
+
+  it('keeps the dismissible "behind catalog version only" chip; dismissing restores the full matrix', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getVersionMatrix).mockResolvedValue(driftMatrix)
+
+    render(
+      <MemoryRouter initialEntries={['/addons?view=matrix&filter=behind-catalog']}>
+        <AddonCatalog />
+      </MemoryRouter>,
+    )
+
+    const chip = await screen.findByTestId('matrix-behind-catalog-chip')
+    expect(within(chip).getByText('behind catalog version only')).toBeInTheDocument()
+
+    fireEvent.click(within(chip).getByRole('button', { name: /clear the behind-catalog filter/i }))
+
+    // Back to the full matrix view — metrics-server (no drift) shows up
+    // again, and the matrix's own "Newest available" column header is back.
+    await waitFor(() => {
+      expect(screen.getByText('metrics-server')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/Newest available/)).toBeInTheDocument()
+    expect(screen.queryByTestId('matrix-behind-catalog-chip')).not.toBeInTheDocument()
+  })
+
+  it('shows the "nothing behind" message when the filter is active but nothing has drifted', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce({
+      clusters: ['prod-eu'],
+      addons: [
+        {
+          addon_name: 'cert-manager',
+          catalog_version: '1.14.0',
+          chart: 'cert-manager',
+          cells: { 'prod-eu': { version: '1.14.0', health: 'Healthy', drift_from_catalog: false } },
+        },
+      ],
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/addons?view=matrix&filter=behind-catalog']}>
+        <AddonCatalog />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/Nothing behind/)).toBeInTheDocument()
+    })
   })
 })
 

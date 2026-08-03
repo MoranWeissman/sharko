@@ -36,6 +36,7 @@ import {
 import { useConnectionsOptional } from '@/hooks/useConnections'
 import type { TrackedPR } from '@/services/models'
 import { EmptyState } from '@/components/EmptyState'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 const POLL_INTERVAL = 30_000
 
@@ -44,6 +45,13 @@ const POLL_INTERVAL = 30_000
 // the hard cap accidentally — the cap is a safety net, the default is
 // the actual UX contract.
 const PR_FETCH_LIMIT = 100
+
+// S3 (scale-walk) — both tabs page their already-fetched list 10 rows at a
+// time behind a "Show more" control, rather than dumping up to 100 rows on
+// screen at once. This is purely a display slice over the list that's
+// already in memory — it does NOT change PR_FETCH_LIMIT or the merged
+// fetch's own limit (still 100 either way).
+const PAGE_SIZE = 10
 
 type TabKey = 'pending' | 'merged'
 type CategoryKey = 'all' | 'clusters' | 'addons' | 'init' | 'ai'
@@ -90,6 +98,66 @@ const CATEGORY_BUCKETS: CategoryBucket[] = [
   { key: 'init', label: 'Init', operations: ['init-repo'] },
   { key: 'ai', label: 'AI', operations: ['ai-tool-enable', 'ai-tool-disable', 'ai-tool-update'] },
 ]
+
+// categoryForOperation — exact bucket lookup for a PENDING PR's canonical
+// `operation` code (e.g. "addon-add"). TrackedPR carries the real code, so
+// this is a plain membership check against CATEGORY_BUCKETS.
+function categoryForOperation(operation: string): CategoryKey | null {
+  for (const bucket of CATEGORY_BUCKETS) {
+    if (bucket.key === 'all') continue
+    if (bucket.operations.includes(operation)) return bucket.key
+  }
+  return null
+}
+
+// categorizeMergedTitle — best-effort category classifier for a MERGED PR,
+// mirroring the same CATEGORY_BUCKETS groups. The merged-PRs endpoint
+// (GET /prs/merged, internal/api/prs.go) does return an `operation` field,
+// but the backend fills it via inferOperation() — literally the title's
+// FIRST WORD. Every Sharko-authored PR title is prefixed with the git
+// connection's commit prefix (default "sharko:" — internal/models/connection.go),
+// so that first word is "sharko:" for nearly every operation, which makes
+// the field useless for bucketing here. Matching on phrases actually
+// present in the title is the same best-effort trick the backend already
+// plays for inferCluster/inferAddon in that file — substring matching, not
+// an exact field, same honesty tradeoff, just done client-side since the
+// wire doesn't carry anything more precise. A title matching nothing falls
+// through to null — it only ever shows up under "All", same as an unknown
+// operation code does on the Pending tab's gray badge.
+function categorizeMergedTitle(title: string): CategoryKey | null {
+  const t = (title || '').toLowerCase()
+
+  // AI assistant tool ops (internal/ai/tools_write.go) use a distinct
+  // "[Sharko] <Verb> ..." title shape that no other operation produces —
+  // a reliable signal, checked first.
+  if (t.startsWith('[sharko]')) return 'ai'
+
+  if (t.includes('initialize repository')) return 'init'
+
+  // Cluster ops. Check "unadopt" before "adopt" — "unadopt cluster x"
+  // contains "adopt cluster" as a substring.
+  if (t.includes('unadopt cluster')) return 'clusters'
+  if (t.includes('adopt cluster')) return 'clusters'
+  if (t.includes('register cluster')) return 'clusters'
+  if (t.includes('remove cluster')) return 'clusters'
+  if (t.includes('update addons for cluster')) return 'clusters'
+
+  // Addon ops — includes values-edit, ai-annotate, and catalog adds, all
+  // bucketed under "Addons" per CATEGORY_BUCKETS above.
+  if (t.includes('add addon')) return 'addons'
+  if (t.includes('remove addon')) return 'addons'
+  if (t.includes('enable addon')) return 'addons'
+  if (t.includes('disable addon')) return 'addons'
+  if (t.includes('configure addon')) return 'addons'
+  if (t.includes('upgrade addon')) return 'addons'
+  if (t.includes('overrides on cluster')) return 'addons'
+  if (t.includes('global values for')) return 'addons'
+  if (t.includes('ai annotate')) return 'addons'
+  if (t.includes('ai opt-out')) return 'addons'
+  if (t.includes('to the catalog')) return 'addons'
+
+  return null
+}
 
 interface OperationBadgeMeta {
   label: string
@@ -211,51 +279,66 @@ function EscapeHatchLink({
 // chips stay visually identical across tabs (a small but real source
 // of UX friction otherwise).
 //
-// Two panel-lens findings shape when/what this renders:
-//   - The whole control row is clutter on a short list — it only renders
-//     once the tab's (unfiltered) row count is above 10. Callers gate
-//     this with `showFilterControls` in <PullRequestsPanel>.
-//   - Merged-tab category chips filter by guessing at the PR title (the
-//     merge endpoint doesn't carry the original operation), which
-//     silently drops PRs that don't match the guess. `showCategoryChips`
-//     lets the Merged tab keep the search box while dropping the chips.
+// The whole control row is clutter on a short list — it only renders once
+// the tab's (unfiltered/baseline) row count is above 10. Callers gate this
+// with `showPendingFilters` / `showMergedFilters` in <PullRequestsPanel>.
+//
+// Both tabs show the same category chips now (S2, scale-walk): Pending
+// filters server-side via the real operation code; Merged filters
+// client-side via categorizeMergedTitle's best-effort title match (see that
+// function's comment for why the merge endpoint's own `operation` field
+// isn't usable here). `hideAiChip` drops just the AI chip when nothing in
+// the current tab's fetched list matches it (S4) — the other chips always
+// show, same as before.
 function FilterControls({
   category,
   onCategoryChange,
   search,
   onSearchChange,
-  showCategoryChips = true,
+  hideAiChip = false,
 }: {
   category: CategoryKey
   onCategoryChange: (next: CategoryKey) => void
   search: string
   onSearchChange: (next: string) => void
-  showCategoryChips?: boolean
+  hideAiChip?: boolean
 }) {
+  const visibleBuckets = CATEGORY_BUCKETS.filter((b) => !(hideAiChip && b.key === 'ai'))
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">
-      {showCategoryChips && (
-        <div role="group" aria-label="Filter by category" className="inline-flex flex-wrap gap-1">
-          {CATEGORY_BUCKETS.map((b) => {
-            const active = category === b.key
-            return (
-              <button
-                key={b.key}
-                type="button"
-                onClick={() => onCategoryChange(b.key)}
-                aria-pressed={active}
-                className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
-                  active
-                    ? 'bg-teal-600 text-white shadow-sm'
-                    : 'bg-muted text-card-foreground hover:bg-muted/70'
-                }`}
-              >
-                {b.label}
-              </button>
-            )
-          })}
-        </div>
-      )}
+      <div role="group" aria-label="Filter by category" className="inline-flex flex-wrap gap-1">
+        {visibleBuckets.map((b) => {
+          const active = category === b.key
+          const chip = (
+            <button
+              key={b.key}
+              type="button"
+              onClick={() => onCategoryChange(b.key)}
+              aria-pressed={active}
+              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                active
+                  ? 'bg-teal-600 text-white shadow-sm'
+                  : 'bg-muted text-card-foreground hover:bg-muted/70'
+              }`}
+            >
+              {b.label}
+            </button>
+          )
+          if (b.key !== 'ai') return chip
+          // AI chip carries a plain tooltip explaining what it filters to
+          // (S4) — the label alone ("AI") doesn't say whose PRs these are.
+          return (
+            <TooltipProvider key={b.key}>
+              <Tooltip>
+                <TooltipTrigger asChild>{chip}</TooltipTrigger>
+                <TooltipContent>
+                  <p>Pull requests opened by the AI assistant</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )
+        })}
+      </div>
       <div className="ml-auto flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-xs">
         <Search className="h-3 w-3 text-muted-foreground" />
         <input
@@ -278,8 +361,8 @@ function PendingTabBody({
   repoIdentifier,
   gitProvider,
   onMergeDetected,
-  onPendingCountChange,
-  onBaselineCountChange,
+  onBaselineChange,
+  onCurrentCountChange,
 }: {
   cluster?: string
   category: CategoryKey
@@ -287,15 +370,27 @@ function PendingTabBody({
   repoIdentifier: string | undefined
   gitProvider: string | undefined
   onMergeDetected?: (pr: TrackedPR) => void
-  onPendingCountChange?: (count: number) => void
   /**
-   * Fires only when `category === 'all'`, i.e. the true unfiltered row
-   * count for this tab. Used to decide whether the filter controls are
-   * worth showing at all — gating on the currently-filtered count would
-   * let a narrow category selection hide the very controls needed to
-   * get back to "all" (findings, panel lens).
+   * Fires only when `category === 'all'`, i.e. the true unfiltered fetch for
+   * this tab — the full list, not just its count. Used to decide whether
+   * the filter controls are worth showing at all (gating on the
+   * currently-filtered count would let a narrow category selection hide the
+   * very controls needed to get back to "all" — findings, panel lens) and
+   * to know whether a category NOT currently selected has any match at all
+   * (S4's AI-chip visibility when AI isn't the active category).
    */
-  onBaselineCountChange?: (count: number) => void
+  onBaselineChange?: (prs: TrackedPR[]) => void
+  /**
+   * Fires on every fetch with the CURRENTLY selected category's real count
+   * (the server already filtered by operation, so this IS the live count
+   * for whatever category is active — no baseline staleness). Used
+   * specifically for S4's fallback: when the ACTIVE category is 'ai' and
+   * its own live count drops to 0 (its last PR merged away), the baseline
+   * won't refresh on its own (it only updates while category === 'all'),
+   * so the fallback can't rely on it — this callback is what actually
+   * detects the disappearance in time.
+   */
+  onCurrentCountChange?: (count: number) => void
 }) {
   const [prs, setPrs] = useState<TrackedPR[]>([])
   const [serverLimit, setServerLimit] = useState<number>(0)
@@ -303,6 +398,13 @@ function PendingTabBody({
   const [error, setError] = useState<string | null>(null)
   const [refreshingId, setRefreshingId] = useState<number | null>(null)
   const previousStatusRef = useRef<Record<number, string>>({})
+  // S3 — paginate the already-fetched list 10 at a time. Resets whenever
+  // the active filters change so a stale "revealed 40" doesn't carry over
+  // into a different, smaller filtered set.
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+  }, [category, search, cluster])
 
   const operationCSV = useMemo(() => {
     const bucket = CATEGORY_BUCKETS.find((b) => b.key === category)
@@ -336,15 +438,15 @@ function PendingTabBody({
         previousStatusRef.current = next
 
         setPrs(newPrs)
-        onPendingCountChange?.(newPrs.length)
-        if (category === 'all') onBaselineCountChange?.(newPrs.length)
+        if (category === 'all') onBaselineChange?.(newPrs)
+        onCurrentCountChange?.(newPrs.length)
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Failed to load tracked PRs')
       } finally {
         setLoading(false)
       }
     },
-    [cluster, onMergeDetected, onPendingCountChange, onBaselineCountChange, operationCSV, category],
+    [cluster, onMergeDetected, onBaselineChange, onCurrentCountChange, operationCSV, category],
   )
 
   useEffect(() => {
@@ -408,6 +510,9 @@ function PendingTabBody({
   // cap; surface the escape hatch so the user can pivot to the GitHub
   // PR page for the full list.
   const atCap = serverLimit > 0 && prs.length >= serverLimit
+  // S3 — page the (already category+search filtered) list 10 at a time.
+  const pagedPrs = visiblePrs.slice(0, visibleCount)
+  const remaining = visiblePrs.length - pagedPrs.length
 
   return (
     <div className="space-y-2">
@@ -433,7 +538,7 @@ function PendingTabBody({
             </tr>
           </thead>
           <tbody>
-            {visiblePrs.map((pr) => (
+            {pagedPrs.map((pr) => (
               <tr
                 key={pr.pr_id}
                 className="border-b border-border/60 last:border-0"
@@ -494,26 +599,42 @@ function PendingTabBody({
           </tbody>
         </table>
       </div>
+      {remaining > 0 && (
+        <button
+          type="button"
+          onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+          className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-card-foreground hover:bg-muted"
+        >
+          Show {Math.min(PAGE_SIZE, remaining)} more
+        </button>
+      )}
     </div>
   )
 }
 
 function MergedTabBody({
   cluster,
+  category,
   search,
   repoIdentifier,
   gitProvider,
-  onCountChange,
+  onDataChange,
 }: {
   cluster?: string
+  category: CategoryKey
   search: string
   repoIdentifier: string | undefined
   gitProvider: string | undefined
-  onCountChange?: (count: number) => void
+  onDataChange?: (prs: MergedPRItem[]) => void
 }) {
   const [prs, setPrs] = useState<MergedPRItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // S3 — same paging as the Pending tab; resets on filter change.
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+  }, [category, search, cluster])
 
   const fetchMerged = useCallback(
     async (showLoading = false) => {
@@ -525,14 +646,14 @@ function MergedTabBody({
         const res = await fetchMergedPRs(filters)
         const newPrs = res.prs || []
         setPrs(newPrs)
-        onCountChange?.(newPrs.length)
+        onDataChange?.(newPrs)
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Failed to load merged PRs')
       } finally {
         setLoading(false)
       }
     },
-    [cluster, onCountChange],
+    [cluster, onDataChange],
   )
 
   useEffect(() => {
@@ -543,22 +664,25 @@ function MergedTabBody({
     return () => clearInterval(id)
   }, [fetchMerged])
 
-  // Merged PRs don't have a stored Operation field (the prtracker dropped
-  // it on merge — see /api/v1/prs/merged), so there is no reliable way to
-  // group them by category here. An earlier version of this tab guessed
-  // the category from a title/branch substring match, but that silently
-  // dropped merged PRs whose title didn't happen to contain the guessed
-  // words. The Merged tab no longer offers a category filter at all
-  // (panel-lens finding) — only the free-text search below, which never
-  // drops a row it can't classify.
+  // S2 — category filter, best-effort (see categorizeMergedTitle's comment
+  // for why: the merge endpoint's own `operation` field is a near-useless
+  // guess, so this classifies off the title text instead, same as
+  // inferCluster/inferAddon already do server-side). Applied before the
+  // free-text search, which stays unconditional — it never drops a row it
+  // can't classify.
+  const categoryFiltered = useMemo(() => {
+    if (category === 'all') return prs
+    return prs.filter((pr) => categorizeMergedTitle(pr.pr_title) === category)
+  }, [prs, category])
+
   const visiblePrs = useMemo(() => {
-    if (!search.trim()) return prs
+    if (!search.trim()) return categoryFiltered
     const needle = search.trim().toLowerCase()
-    return prs.filter((pr) => {
+    return categoryFiltered.filter((pr) => {
       const haystack = `${pr.pr_title ?? ''} ${pr.cluster ?? ''} ${pr.addon ?? ''} ${pr.pr_branch ?? ''}`.toLowerCase()
       return haystack.includes(needle)
     })
-  }, [prs, search])
+  }, [categoryFiltered, search])
 
   if (loading) {
     return (
@@ -580,6 +704,19 @@ function MergedTabBody({
       />
     )
   }
+  if (categoryFiltered.length === 0) {
+    return (
+      <EmptyState
+        compact
+        title="No merged PRs"
+        description="No merged PRs in the selected category."
+      />
+    )
+  }
+
+  // S3 — page the (already category+search filtered) list 10 at a time.
+  const pagedPrs = visiblePrs.slice(0, visibleCount)
+  const remaining = visiblePrs.length - pagedPrs.length
 
   return (
     <div className="space-y-2">
@@ -601,7 +738,7 @@ function MergedTabBody({
             </tr>
           </thead>
           <tbody>
-            {visiblePrs.map((pr) => (
+            {pagedPrs.map((pr) => (
               <tr
                 key={pr.pr_id}
                 className="border-b border-border/60 last:border-0"
@@ -644,6 +781,15 @@ function MergedTabBody({
           </tbody>
         </table>
       </div>
+      {remaining > 0 && (
+        <button
+          type="button"
+          onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+          className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-card-foreground hover:bg-muted"
+        >
+          Show {Math.min(PAGE_SIZE, remaining)} more
+        </button>
+      )}
     </div>
   )
 }
@@ -665,12 +811,28 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
   const [search, setSearch] = useState('')
   // Track whether we've applied the auto-default logic (to avoid loops)
   const [autoDefaultApplied, setAutoDefaultApplied] = useState(false)
-  // Unfiltered row counts per tab — used only to decide whether the
-  // filter controls (chips + search) are worth showing at all (panel-lens
-  // finding: a 3-row list doesn't need a filter bar). null = not loaded
-  // yet, so the controls stay hidden until we actually know the count.
-  const [pendingBaseline, setPendingBaseline] = useState<number | null>(null)
-  const [mergedCount, setMergedCount] = useState<number | null>(null)
+  // Baseline (category==='all') fetches per tab — the FULL list, not just
+  // a count. null = not loaded yet, so anything gated on these stays
+  // hidden/inactive until we actually know. Two things read off these:
+  //   - showPendingFilters / showMergedFilters (panel-lens finding: a
+  //     short list doesn't need a filter bar) — gating on the baseline
+  //     count, never the currently-filtered count, so picking a narrow
+  //     category can't hide the controls needed to get back to "all"
+  //     (S2 fix #3).
+  //   - whether the AI chip has anything to show (S4) — computed from
+  //     whichever tab is active below.
+  // Pending's baseline only updates while category === 'all' (see
+  // PendingTabBody's onBaselineChange); Merged's list IS always the
+  // baseline (the merge endpoint has no server-side operation filter).
+  const [pendingBaselinePRs, setPendingBaselinePRs] = useState<TrackedPR[] | null>(null)
+  const [mergedPRs, setMergedPRs] = useState<MergedPRItem[] | null>(null)
+  // The Pending tab's CURRENTLY selected category's live count (S4
+  // fallback) — see PendingTabBody's onCurrentCountChange doc comment for
+  // why this exists separately from pendingBaselinePRs: while category is
+  // 'ai', the baseline (category==='all' only) goes stale and can't tell
+  // us the AI PR count dropped to zero; this always reflects the live,
+  // currently-active-category count instead.
+  const [pendingCurrentCount, setPendingCurrentCount] = useState<number | null>(null)
   // Optional context — the panel renders fine without a connection
   // provider (e.g. in unit tests that mount it under MemoryRouter only).
   const connCtx = useConnectionsOptional()
@@ -685,23 +847,53 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
   const repoIdentifier = activeConn?.git_repo_identifier
   const gitProvider = activeConn?.git_provider
 
+  const pendingBaseline = pendingBaselinePRs?.length ?? null
+  const mergedCount = mergedPRs?.length ?? null
   const showPendingFilters = (pendingBaseline ?? 0) > 10
   const showMergedFilters = (mergedCount ?? 0) > 10
 
-  // Auto-default to Merged when pending=0 and no explicit selection
-  const handlePendingCountChange = useCallback(
-    (count: number) => {
-      // Only apply auto-default once, when:
-      // - pending count is 0
-      // - user hasn't explicitly selected a tab via URL or click
-      // - we haven't already applied the auto-default
-      if (count === 0 && !explicitUrlSelection && !autoDefaultApplied && tab === 'pending') {
-        setTab('merged')
-        setAutoDefaultApplied(true)
-      }
-    },
-    [explicitUrlSelection, autoDefaultApplied, tab],
-  )
+  // S4 — whether the AI chip has anything to show. Merged is always
+  // computed off its baseline (categorizeMergedTitle's best-effort title
+  // match) since that list is never category-filtered server-side, so it's
+  // always live regardless of which category is selected. Pending splits
+  // in two:
+  //   - category === 'ai' already active: use the LIVE current-category
+  //     count (onCurrentCountChange) — the server already filtered to
+  //     exactly the AI bucket, so this is the real-time answer, and it's
+  //     the one that matters for detecting "the last AI PR just merged
+  //     away" (the whole point of the S4 fallback below).
+  //   - any other category active: use the baseline (real operation codes)
+  //     to decide whether the chip is even worth showing in the first
+  //     place — the current fetch is filtered to a DIFFERENT category, so
+  //     it can't answer "does AI have anything" at all.
+  const activeHasAI = useMemo(() => {
+    if (tab === 'pending') {
+      if (category === 'ai') return (pendingCurrentCount ?? 0) > 0
+      return (pendingBaselinePRs ?? []).some((pr) => categoryForOperation(pr.operation) === 'ai')
+    }
+    return (mergedPRs ?? []).some((pr) => categorizeMergedTitle(pr.pr_title) === 'ai')
+  }, [tab, category, pendingCurrentCount, pendingBaselinePRs, mergedPRs])
+
+  // S4 — if the selected category is AI and it's no longer real for the
+  // active tab (its last matching PR merged/disappeared), fall back to
+  // "all" gracefully rather than showing a hidden chip as "selected".
+  useEffect(() => {
+    if (category === 'ai' && !activeHasAI) {
+      setCategory('all')
+    }
+  }, [category, activeHasAI])
+
+  // Auto-default to Merged when pending=0 and no explicit selection. Keys
+  // ONLY on the baseline (category === 'all') pending count — S2 fix #1.
+  // A category-filtered zero (e.g. "AI" selected with nothing pending in
+  // that bucket) must never flip the tab; only "there is truly nothing
+  // pending" should.
+  useEffect(() => {
+    if (pendingBaseline === 0 && !explicitUrlSelection && !autoDefaultApplied && tab === 'pending') {
+      setTab('merged')
+      setAutoDefaultApplied(true)
+    }
+  }, [pendingBaseline, explicitUrlSelection, autoDefaultApplied, tab])
 
   // Keep ?prs_state= in sync when the user clicks. We use replace so back
   // navigation goes to the previous page rather than the previous tab.
@@ -782,6 +974,7 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
           onCategoryChange={setCategory}
           search={search}
           onSearchChange={setSearch}
+          hideAiChip={!activeHasAI}
         />
       )}
       {tab === 'merged' && showMergedFilters && (
@@ -790,7 +983,7 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
           onCategoryChange={setCategory}
           search={search}
           onSearchChange={setSearch}
-          showCategoryChips={false}
+          hideAiChip={!activeHasAI}
         />
       )}
 
@@ -803,16 +996,17 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
             repoIdentifier={repoIdentifier}
             gitProvider={gitProvider}
             onMergeDetected={onMergeDetected}
-            onPendingCountChange={handlePendingCountChange}
-            onBaselineCountChange={setPendingBaseline}
+            onBaselineChange={setPendingBaselinePRs}
+            onCurrentCountChange={setPendingCurrentCount}
           />
         ) : (
           <MergedTabBody
             cluster={cluster}
+            category={category}
             search={showMergedFilters ? search : ''}
             repoIdentifier={repoIdentifier}
             gitProvider={gitProvider}
-            onCountChange={setMergedCount}
+            onDataChange={setMergedPRs}
           />
         )}
       </div>

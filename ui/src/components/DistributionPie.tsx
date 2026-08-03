@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -40,6 +41,16 @@ export interface DistributionSlice {
    * one of `colorClass` / `color` should be set per slice.
    */
   color?: string;
+  /**
+   * Opt-in per-row link (S5, scale-walk). When set, this slice's legend
+   * row renders as a real, keyboard-reachable link to `href` instead of a
+   * plain `<span>` row — e.g. the dashboard's "connected" row linking to
+   * `/clusters?status=connected`. Slices without an `href` render exactly
+   * as before (plain, non-interactive). The row's own click stops
+   * propagation so it doesn't also fire a wrapping interactive control's
+   * (e.g. FleetStatusStrip's Segment) whole-area click.
+   */
+  href?: string;
 }
 
 /** Default pie diameter in px — the maintainer's "middle size" lock. */
@@ -113,6 +124,13 @@ export interface DistributionPieProps {
    * never one of the status colors the other rows use.
    */
   showTotalRow?: boolean;
+  /**
+   * Opt-in link for the `showTotalRow` row (S5) — the total row is
+   * synthesized here, not part of `slices`, so it can't carry its own
+   * `href` the way a per-slice row does. Only meaningful when
+   * `showTotalRow` is true.
+   */
+  totalHref?: string;
 }
 
 /** Pie chart + one shared legend style + hover tooltip + accessible breakdown text. */
@@ -125,6 +143,7 @@ export function DistributionPie({
   testId,
   legendTestId,
   showTotalRow,
+  totalHref,
 }: DistributionPieProps) {
   const nonZero = useMemo(() => slices.filter((s) => s.value > 0), [slices]);
   const rawTotal = useMemo(() => slices.reduce((sum, s) => sum + s.value, 0), [slices]);
@@ -188,19 +207,57 @@ export function DistributionPie({
         aria-hidden={legendAriaHidden ? 'true' : undefined}
         className={horizontal ? 'flex flex-wrap justify-center gap-x-4 gap-y-1' : 'space-y-1'}
       >
-        {nonZero.map((s) => (
-          <li key={s.key} className="flex items-center gap-1.5 text-sm">
-            <SliceDot slice={s} className="h-2.5 w-2.5" />
-            <span className="text-muted-foreground">{s.label}</span>
-            <span className="font-mono font-medium text-foreground">{s.value}</span>
-          </li>
-        ))}
+        {nonZero.map((s) => {
+          const rowContent = (
+            <>
+              <SliceDot slice={s} className="h-2.5 w-2.5" />
+              <span className="text-muted-foreground">{s.label}</span>
+              <span className="font-mono font-medium text-foreground">{s.value}</span>
+            </>
+          );
+          // Opt-in per-row link (S5) — a real <Link>, keyboard-reachable,
+          // not a div with onClick. stopPropagation so a click on the row
+          // doesn't ALSO fire a wrapping interactive control's own
+          // whole-area click (e.g. FleetStatusStrip's Segment button).
+          if (s.href) {
+            return (
+              <li key={s.key}>
+                <Link
+                  to={s.href}
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center gap-1.5 rounded text-sm hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-500"
+                >
+                  {rowContent}
+                </Link>
+              </li>
+            );
+          }
+          return (
+            <li key={s.key} className="flex items-center gap-1.5 text-sm">
+              {rowContent}
+            </li>
+          );
+        })}
         {showTotalRow && (
+          totalHref ? (
+            <li>
+              <Link
+                to={totalHref}
+                onClick={(e) => e.stopPropagation()}
+                className="flex items-center gap-1.5 rounded text-sm hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-500"
+              >
+                <span aria-hidden="true" className="inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-muted-foreground/50" />
+                <span className="text-muted-foreground">total</span>
+                <span className="font-mono font-medium text-foreground">{rawTotal}</span>
+              </Link>
+            </li>
+          ) : (
           <li className="flex items-center gap-1.5 text-sm">
             <span aria-hidden="true" className="inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-muted-foreground/50" />
             <span className="text-muted-foreground">total</span>
             <span className="font-mono font-medium text-foreground">{rawTotal}</span>
           </li>
+          )
         )}
       </ul>
     </div>
