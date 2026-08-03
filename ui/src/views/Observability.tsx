@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   BarChart,
@@ -507,6 +507,153 @@ const TIER_ORDER: Record<AddonGroupProblemTier, number> = {
   none: 3,
 };
 
+// S2 (scale-walk round 2) — an expanded group card's child-apps table shows
+// this many rows before a "Show more" control reveals the next batch.
+const GROUP_TABLE_PAGE_SIZE = 10;
+
+// ---------------------------------------------------------------------------
+// S1 (scale-walk round 2) — the merged, paginated, kind-filtered issues list
+// ---------------------------------------------------------------------------
+
+const ISSUES_PAGE_SIZE = 10;
+
+interface IssueChip {
+  key: string;
+  label: string;
+  count: number;
+  /** Tailwind color classes; empty for a health-value chip, which colors
+   * itself with a dot using HEALTH_COLORS instead (real ArgoCD health
+   * values, not a fixed severity palette). */
+  colorClasses: string;
+}
+
+// buildIssueChips — grounded in what the merged rows can actually carry:
+// every row has a severity ('problem' red / 'attention' amber), so that
+// split is always offered when there's at least one row of that severity.
+// On top of that, rows that carry a `badge` matching a real HEALTH_COLORS
+// value (only the addon-problem rows do — cluster-connection and
+// version-drift rows have no badge) get their own health-value chip, so a
+// user can drill into "just the Degraded ones" across both severities. No
+// chip is invented for a kind the current rows don't have.
+function buildIssueChips(rows: AttentionRow[]): IssueChip[] {
+  const chips: IssueChip[] = [];
+  const problemCount = rows.filter((r) => r.severity === 'problem').length;
+  const attentionCount = rows.filter((r) => r.severity === 'attention').length;
+
+  if (problemCount > 0) {
+    chips.push({
+      key: 'severity:problem',
+      label: 'Problems',
+      count: problemCount,
+      colorClasses: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+    });
+  }
+  if (attentionCount > 0) {
+    chips.push({
+      key: 'severity:attention',
+      label: 'Attention',
+      count: attentionCount,
+      colorClasses: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    });
+  }
+
+  const healthCounts = new Map<string, number>();
+  for (const row of rows) {
+    if (row.badge && HEALTH_COLORS[row.badge] !== undefined) {
+      healthCounts.set(row.badge, (healthCounts.get(row.badge) ?? 0) + 1);
+    }
+  }
+  for (const [health, count] of healthCounts) {
+    chips.push({ key: `health:${health}`, label: health, count, colorClasses: '' });
+  }
+
+  return chips;
+}
+
+function filterIssueRows(rows: AttentionRow[], activeChip: string | null): AttentionRow[] {
+  if (!activeChip) return rows;
+  if (activeChip.startsWith('severity:')) {
+    const severity = activeChip.slice('severity:'.length);
+    return rows.filter((r) => r.severity === severity);
+  }
+  if (activeChip.startsWith('health:')) {
+    const health = activeChip.slice('health:'.length);
+    return rows.filter((r) => r.badge === health);
+  }
+  return rows;
+}
+
+// IssuesList — the cluster-connection, version-drift, and orphan-addon rows
+// merged into one list (S1). Paginated 10 at a time (shared
+// PaginationControls) with kind chips above it; clicking a chip toggles it
+// on/off as the active filter (one active chip at a time).
+function IssuesList({ rows }: { rows: AttentionRow[] }) {
+  const [activeChip, setActiveChip] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+
+  const chips = useMemo(() => buildIssueChips(rows), [rows]);
+  const filteredRows = useMemo(() => filterIssueRows(rows, activeChip), [rows, activeChip]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [activeChip, rows]);
+
+  if (rows.length === 0) return null;
+
+  const totalPages = Math.ceil(filteredRows.length / ISSUES_PAGE_SIZE);
+  const start = (page - 1) * ISSUES_PAGE_SIZE;
+  const pagedRows = filteredRows.slice(start, start + ISSUES_PAGE_SIZE);
+
+  const toggleChip = (key: string) => {
+    setActiveChip((prev) => (prev === key ? null : key));
+  };
+
+  return (
+    <div className="mb-6">
+      {chips.length > 1 && (
+        <div role="group" aria-label="Filter issues by kind" className="mb-3 flex flex-wrap items-center gap-1.5">
+          {chips.map((chip) => {
+            const active = activeChip === chip.key;
+            const isHealthChip = chip.key.startsWith('health:');
+            const baseClasses =
+              chip.colorClasses || 'bg-[#d6eeff] text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-300';
+            return (
+              <button
+                key={chip.key}
+                type="button"
+                onClick={() => toggleChip(chip.key)}
+                aria-pressed={active}
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${baseClasses} ${
+                  active ? 'ring-2 ring-teal-500' : 'opacity-80 hover:opacity-100'
+                }`}
+              >
+                {isHealthChip && (
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: HEALTH_COLORS[chip.label] }}
+                    aria-hidden="true"
+                  />
+                )}
+                {chip.label} ({chip.count})
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <div className="space-y-1.5">
+        {pagedRows.map((row) => (
+          <AttentionRowView key={row.key} row={row} />
+        ))}
+      </div>
+      {totalPages > 1 && (
+        <div className="mt-3 flex justify-center">
+          <PaginationControls page={page} totalPages={totalPages} onPageChange={setPage} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface ClusterGroup {
   cluster_name: string;
   addons: Array<{
@@ -561,8 +708,21 @@ function AddonGroupsSection({
   const [groupBy, setGroupBy] = useState<GroupBy>('addon');
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [searchTerm, setSearchTerm] = useState('');
-  const [pageSize, setPageSize] = useState<PageSize>(20);
+  // S2 (scale-walk round 2): show little first — group cards on this page
+  // default to 10 per page, not 20 (other pages using the shared
+  // PageSizeSelector keep their own defaults).
+  const [pageSize, setPageSize] = useState<PageSize>(10);
   const [page, setPage] = useState(1);
+  // S1 (scale-walk round 2): the addon-health section collapses/expands as
+  // a whole, default expanded. Collapsed hides everything below the
+  // header + issue count; the header (with the count) stays visible.
+  const [sectionExpanded, setSectionExpanded] = useState(true);
+  // S2 — an expanded group card's child-apps table shows 10 rows + "Show
+  // more" (10 at a time) instead of the whole table at once, mirroring
+  // PullRequestsPanel's PAGE_SIZE pattern. Keyed by group name (addon_name
+  // or cluster_name); reset to the 10-row default when a card collapses so
+  // re-expanding it starts fresh, not wherever "Show more" left off.
+  const [tableVisibleCounts, setTableVisibleCounts] = useState<Map<string, number>>(new Map());
 
   // Pivot data: group by cluster instead of addon
   const clusterGroups = useMemo((): ClusterGroup[] => {
@@ -682,6 +842,14 @@ function AddonGroupsSection({
       const next = new Set(prev);
       if (next.has(name)) {
         next.delete(name);
+        // S2 — collapsing resets this card's "Show more" progress, so
+        // re-expanding it starts back at the first 10 rows.
+        setTableVisibleCounts((counts) => {
+          if (!counts.has(name)) return counts;
+          const nextCounts = new Map(counts);
+          nextCounts.delete(name);
+          return nextCounts;
+        });
       } else {
         next.add(name);
       }
@@ -689,10 +857,21 @@ function AddonGroupsSection({
     });
   };
 
+  const showMoreRows = (name: string) => {
+    setTableVisibleCounts((prev) => {
+      const next = new Map(prev);
+      next.set(name, (next.get(name) ?? GROUP_TABLE_PAGE_SIZE) + GROUP_TABLE_PAGE_SIZE);
+      return next;
+    });
+  };
+
+  const visibleRowCount = (name: string) => tableVisibleCounts.get(name) ?? GROUP_TABLE_PAGE_SIZE;
+
   // Reset expanded state when switching group mode
   const handleGroupByChange = (mode: GroupBy) => {
     setGroupBy(mode);
     setExpanded(new Set());
+    setTableVisibleCounts(new Map());
     setPage(1);
   };
 
@@ -717,6 +896,14 @@ function AddonGroupsSection({
   const hasGroups = !!groups && groups.length > 0;
   const hasIssues = totalOpenIssues > 0;
 
+  // S1 (scale-walk round 2) — the three ungrouped row lists (cluster
+  // connection problems, version drift, orphan addon problems) merge into
+  // one paginated, chip-filterable list instead of each rendering in full.
+  const mergedIssueRows = useMemo(
+    () => [...clusterAttentionRows, ...driftRows, ...orphanAddonRows],
+    [clusterAttentionRows, driftRows, orphanAddonRows],
+  );
+
   if (!hasGroups && !hasIssues) {
     return null;
   }
@@ -732,112 +919,127 @@ function AddonGroupsSection({
     // ONLY place addon problems render (no separate expandable issue list,
     // no chips); a problem group's header carries its reason inline.
     <section id="addon-health">
+      {/* S1 (scale-walk round 2): the whole section collapses/expands from
+          this header, default EXPANDED. Collapsed hides everything below
+          — the header itself, including the "Open issues (N)" count,
+          always stays visible so a glance at the collapsed page still
+          answers "is anything wrong". */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
-          <Server className="h-5 w-5 text-teal-500" />
-          Health
-        </h2>
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#3a6a8a]" />
-            <input
-              type="text"
-              placeholder={groupBy === 'addon' ? 'Search addons...' : 'Search clusters...'}
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-48 rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] py-1 pl-8 pr-8 text-sm text-[#0a3a5a] placeholder:text-[#5a8aaa] focus:outline-none focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
-            />
-            {searchTerm && (
+        <button
+          type="button"
+          onClick={() => setSectionExpanded((v) => !v)}
+          aria-expanded={sectionExpanded}
+          aria-controls="addon-health-body"
+          className="flex flex-wrap items-center gap-3 text-left"
+        >
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
+            <Server className="h-5 w-5 text-teal-500" />
+            Health
+          </h2>
+          {hasIssues ? (
+            <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+              Open issues ({totalOpenIssues})
+            </span>
+          ) : (
+            <span className="text-sm text-[#2a5a7a] dark:text-gray-400">No open issues.</span>
+          )}
+          {sectionExpanded ? (
+            <ChevronUp className="h-4 w-4 text-[#3a6a8a] dark:text-gray-400" />
+          ) : (
+            <ChevronDown className="h-4 w-4 text-[#3a6a8a] dark:text-gray-400" />
+          )}
+        </button>
+        {sectionExpanded && (
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#3a6a8a]" />
+              <input
+                type="text"
+                placeholder={groupBy === 'addon' ? 'Search addons...' : 'Search clusters...'}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-48 rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] py-1 pl-8 pr-8 text-sm text-[#0a3a5a] placeholder:text-[#5a8aaa] focus:outline-none focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#3a6a8a] hover:text-[#0a2a4a]"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            {/* View mode toggle */}
+            <div className="flex gap-1 rounded-md border border-[#5a9dd0] dark:border-gray-600">
               <button
                 type="button"
-                onClick={() => setSearchTerm('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-[#3a6a8a] hover:text-[#0a2a4a]"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-          {/* View mode toggle */}
-          <div className="flex gap-1 rounded-md border border-[#5a9dd0] dark:border-gray-600">
-            <button
-              type="button"
-              onClick={() => setViewMode('list')}
-              className={`rounded-l-md p-1.5 transition-colors ${
-                viewMode === 'list'
-                  ? 'bg-teal-600 text-white'
-                  : 'text-[#2a5a7a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800'
-              }`}
-              aria-label="List view"
-            >
-              <LayoutList className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('grid')}
-              className={`rounded-r-md p-1.5 transition-colors ${
-                viewMode === 'grid'
-                  ? 'bg-teal-600 text-white'
-                  : 'text-[#2a5a7a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800'
-              }`}
-              aria-label="Grid view"
-            >
-              <LayoutGrid className="h-4 w-4" />
-            </button>
-          </div>
-          {/* Group by toggle */}
-          <div className="flex rounded-md border border-[#5a9dd0] dark:border-gray-600">
-            {(['addon', 'cluster'] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => handleGroupByChange(m)}
-                className={`px-2.5 py-1 text-xs font-medium transition-colors ${
-                  groupBy === m
+                onClick={() => setViewMode('list')}
+                className={`rounded-l-md p-1.5 transition-colors ${
+                  viewMode === 'list'
                     ? 'bg-teal-600 text-white'
                     : 'text-[#2a5a7a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800'
-                } ${m === 'addon' ? 'rounded-l-md' : 'rounded-r-md'}`}
+                }`}
+                aria-label="List view"
               >
-                By {m === 'addon' ? 'Addon' : 'Cluster'}
+                <LayoutList className="h-4 w-4" />
               </button>
-            ))}
-          </div>
-          {/* Sort toggle */}
-          <div className="flex gap-1">
-            {(['issues', 'alpha'] as const).map((m) => (
               <button
-                key={m}
-                onClick={() => setSortMode(m)}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                  sortMode === m
-                    ? 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300'
+                type="button"
+                onClick={() => setViewMode('grid')}
+                className={`rounded-r-md p-1.5 transition-colors ${
+                  viewMode === 'grid'
+                    ? 'bg-teal-600 text-white'
                     : 'text-[#2a5a7a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800'
                 }`}
+                aria-label="Grid view"
               >
-                {m === 'issues' ? 'Most Issues' : 'A-Z'}
+                <LayoutGrid className="h-4 w-4" />
               </button>
-            ))}
+            </div>
+            {/* Group by toggle */}
+            <div className="flex rounded-md border border-[#5a9dd0] dark:border-gray-600">
+              {(['addon', 'cluster'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => handleGroupByChange(m)}
+                  className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                    groupBy === m
+                      ? 'bg-teal-600 text-white'
+                      : 'text-[#2a5a7a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800'
+                  } ${m === 'addon' ? 'rounded-l-md' : 'rounded-r-md'}`}
+                >
+                  By {m === 'addon' ? 'Addon' : 'Cluster'}
+                </button>
+              ))}
+            </div>
+            {/* Sort toggle */}
+            <div className="flex gap-1">
+              {(['issues', 'alpha'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setSortMode(m)}
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                    sortMode === m
+                      ? 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300'
+                      : 'text-[#2a5a7a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800'
+                  }`}
+                >
+                  {m === 'issues' ? 'Most Issues' : 'A-Z'}
+                </button>
+              ))}
+            </div>
+            {/* Page size selector */}
+            <PageSizeSelector pageSize={pageSize} onChange={setPageSize} />
           </div>
-          {/* Page size selector */}
-          <PageSizeSelector pageSize={pageSize} onChange={setPageSize} />
-        </div>
+        )}
       </div>
 
-      {/* Open issues — a plain one-line count, always the first thing in
-          this section (walk-day lock: no chips, no separate expandable
-          list — the per-addon groups below already show every problem).
-          The one exception (S5, scale-walk): the dashboard's "not healthy"
-          donut row deep-links here with ?health=issues — when that's
-          active, a dismissible chip says so and clears back to the full
-          list, same pattern as the version matrix's filter chips. */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        {hasIssues ? (
-          <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400">
-            Open issues ({totalOpenIssues})
-          </h3>
-        ) : (
-          <p className="text-sm text-[#2a5a7a] dark:text-gray-400">No open issues.</p>
-        )}
-        {issuesOnly && (
+      {sectionExpanded && (
+      <div id="addon-health-body">
+      {issuesOnly && (
+        <div className="mb-4">
           <span
             data-testid="health-issues-chip"
             className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:ring-amber-800"
@@ -852,27 +1054,15 @@ function AddonGroupsSection({
               <X className="h-3 w-3" />
             </button>
           </span>
-        )}
-      </div>
-
-      {/* Cluster connection problems and version drift have no addon group
-          to live inside, so they render as compact rows here — modest
-          height, not full-width one-item containers. Orphan addon rows
-          (an addon the attention feed flags that isn't in the groups below
-          at all) render here too, so a problem never silently disappears. */}
-      {(clusterAttentionRows.length > 0 || driftRows.length > 0 || orphanAddonRows.length > 0) && (
-        <div className="mb-6 space-y-1.5">
-          {clusterAttentionRows.map((row) => (
-            <AttentionRowView key={row.key} row={row} />
-          ))}
-          {driftRows.map((row) => (
-            <AttentionRowView key={row.key} row={row} />
-          ))}
-          {orphanAddonRows.map((row) => (
-            <AttentionRowView key={row.key} row={row} />
-          ))}
         </div>
       )}
+
+      {/* Cluster connection problems, version drift, and orphan addon
+          problems have no addon group to live inside (or aren't matched to
+          one) — S1 (scale-walk round 2) merges the three into one paginated
+          list with kind chips instead of dumping all of them, uncapped,
+          above the groups below. */}
+      <IssuesList rows={mergedIssueRows} />
 
       {!hasGroups ? null : (
       <div className={viewMode === 'grid' ? 'grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3' : 'space-y-3'}>
@@ -989,7 +1179,7 @@ function AddonGroupsSection({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#d6eeff] dark:divide-gray-800">
-                        {group.child_apps.map((child) => {
+                        {group.child_apps.slice(0, visibleRowCount(group.addon_name)).map((child) => {
                           return (
                             <tr
                               key={child.app_name}
@@ -1027,6 +1217,15 @@ function AddonGroupsSection({
                         })}
                       </tbody>
                     </table>
+                    {group.child_apps.length > visibleRowCount(group.addon_name) && (
+                      <button
+                        type="button"
+                        onClick={() => showMoreRows(group.addon_name)}
+                        className="mt-3 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                      >
+                        Show {Math.min(GROUP_TABLE_PAGE_SIZE, group.child_apps.length - visibleRowCount(group.addon_name))} more
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -1110,7 +1309,7 @@ function AddonGroupsSection({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#d6eeff] dark:divide-gray-800">
-                          {cg.addons.map((addon) => {
+                          {cg.addons.slice(0, visibleRowCount(cg.cluster_name)).map((addon) => {
                             return (
                               <tr
                                 key={addon.app_name}
@@ -1148,6 +1347,15 @@ function AddonGroupsSection({
                           })}
                         </tbody>
                       </table>
+                      {cg.addons.length > visibleRowCount(cg.cluster_name) && (
+                        <button
+                          type="button"
+                          onClick={() => showMoreRows(cg.cluster_name)}
+                          className="mt-3 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                        >
+                          Show {Math.min(GROUP_TABLE_PAGE_SIZE, cg.addons.length - visibleRowCount(cg.cluster_name))} more
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1174,6 +1382,8 @@ function AddonGroupsSection({
           <PaginationControls page={page} totalPages={totalPages} onPageChange={setPage} />
         </div>
       )}
+      </div>
+      )}
     </section>
   );
 }
@@ -1181,6 +1391,26 @@ function AddonGroupsSection({
 // ---------------------------------------------------------------------------
 // Section 5: Sync Activity Timeline
 // ---------------------------------------------------------------------------
+
+// S4 (scale-walk round 2) — chart aggregation helpers pulled out as plain
+// functions (not inline in a useMemo) so the filtering behavior is directly
+// unit-testable: call with a filtered subset of syncs and assert the
+// buckets reflect only that subset, without needing to render recharts.
+export function buildHourlySyncBuckets(syncs: SyncActivityEntry[]): { label: string; count: number }[] {
+  const now = Date.now();
+  const buckets: Record<number, number> = {};
+  for (let i = 0; i < 24; i++) buckets[i] = 0;
+  for (const s of syncs ?? []) {
+    const hoursAgo = Math.floor((now - new Date(s.timestamp).getTime()) / 3600000);
+    if (hoursAgo >= 0 && hoursAgo < 24) {
+      buckets[hoursAgo]++;
+    }
+  }
+  return Array.from({ length: 24 }, (_, i) => ({
+    label: i === 0 ? 'now' : `${i}h`,
+    count: buckets[i],
+  })).reverse();
+}
 
 function SyncActivitySection({
   syncs,
@@ -1209,22 +1439,12 @@ function SyncActivitySection({
     [syncs, addonFilter, clusterFilter],
   );
 
-  // Bar chart: syncs per hour over the last 24h
-  const hourlyData = useMemo(() => {
-    const now = Date.now();
-    const buckets: Record<number, number> = {};
-    for (let i = 0; i < 24; i++) buckets[i] = 0;
-    for (const s of syncs ?? []) {
-      const hoursAgo = Math.floor((now - new Date(s.timestamp).getTime()) / 3600000);
-      if (hoursAgo >= 0 && hoursAgo < 24) {
-        buckets[hoursAgo]++;
-      }
-    }
-    return Array.from({ length: 24 }, (_, i) => ({
-      label: i === 0 ? 'now' : `${i}h`,
-      count: buckets[i],
-    })).reverse();
-  }, [syncs]);
+  // Bar chart: syncs per hour over the last 24h. Bonus bug fix (S4c,
+  // scale-walk round 2): this used to bucket the UNFILTERED `syncs` prop
+  // even though the section has addon/cluster dropdowns right above it —
+  // picking an addon narrowed the feed below but left the chart showing
+  // every addon's activity. Buckets off `filtered` now, same as the feed.
+  const hourlyData = useMemo(() => buildHourlySyncBuckets(filtered), [filtered]);
 
   return (
     <section className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:ring-gray-700 dark:bg-gray-900">
@@ -1263,8 +1483,10 @@ function SyncActivitySection({
         </div>
       </div>
 
-      {/* Sync frequency chart */}
-      {(syncs ?? []).length > 0 && (
+      {/* Sync frequency chart — gated on the FILTERED count (S4c) so an
+          addon/cluster selection with nothing in it shows the empty state
+          below instead of an all-zero chart. */}
+      {filtered.length > 0 && (
         <div className="mb-5 h-32" style={{ minWidth: 0, minHeight: 0 }}>
           <ResponsiveContainer width="100%" height={128} minWidth={100}>
             <BarChart data={hourlyData}>
@@ -1282,7 +1504,9 @@ function SyncActivitySection({
       <div className="max-h-80 space-y-1 overflow-y-auto">
         {filtered.length === 0 && (
           <p className="py-4 text-center text-sm text-[#2a5a7a]">
-            No sync activity found.
+            {(syncs ?? []).length > 0
+              ? 'No syncs recorded for this selection.'
+              : 'No sync activity found.'}
           </p>
         )}
         {filtered.map((s, idx) => (
@@ -1315,36 +1539,42 @@ function SyncActivitySection({
 // Section 6: Deployment Frequency (stacked bar: Succeeded/Failed over time)
 // ---------------------------------------------------------------------------
 
+// S4 — see buildHourlySyncBuckets' doc comment for why this is a plain,
+// directly-testable function rather than an inline useMemo body.
+export function buildFrequencyBuckets(
+  syncs: SyncActivityEntry[],
+): { label: string; succeeded: number; failed: number }[] {
+  if (!syncs || syncs.length === 0) return [];
+
+  const now = Date.now();
+  const buckets: Record<number, { succeeded: number; failed: number }> = {};
+  for (let i = 0; i < 24; i++) buckets[i] = { succeeded: 0, failed: 0 };
+
+  for (const s of syncs) {
+    const hoursAgo = Math.floor((now - new Date(s.timestamp).getTime()) / 3600000);
+    if (hoursAgo >= 0 && hoursAgo < 24) {
+      const status = (s.status ?? '').toLowerCase();
+      if (status === 'succeeded') {
+        buckets[hoursAgo].succeeded++;
+      } else if (status === 'failed') {
+        buckets[hoursAgo].failed++;
+      }
+    }
+  }
+
+  return Array.from({ length: 24 }, (_, i) => ({
+    label: i === 0 ? 'now' : `${i}h`,
+    succeeded: buckets[i].succeeded,
+    failed: buckets[i].failed,
+  })).reverse();
+}
+
 function DeploymentFrequencySection({
   syncs,
 }: {
   syncs: SyncActivityEntry[];
 }) {
-  const frequencyData = useMemo(() => {
-    if (!syncs || syncs.length === 0) return [];
-
-    const now = Date.now();
-    const buckets: Record<number, { succeeded: number; failed: number }> = {};
-    for (let i = 0; i < 24; i++) buckets[i] = { succeeded: 0, failed: 0 };
-
-    for (const s of syncs) {
-      const hoursAgo = Math.floor((now - new Date(s.timestamp).getTime()) / 3600000);
-      if (hoursAgo >= 0 && hoursAgo < 24) {
-        const status = (s.status ?? '').toLowerCase();
-        if (status === 'succeeded') {
-          buckets[hoursAgo].succeeded++;
-        } else if (status === 'failed') {
-          buckets[hoursAgo].failed++;
-        }
-      }
-    }
-
-    return Array.from({ length: 24 }, (_, i) => ({
-      label: i === 0 ? 'now' : `${i}h`,
-      succeeded: buckets[i].succeeded,
-      failed: buckets[i].failed,
-    })).reverse();
-  }, [syncs]);
+  const frequencyData = useMemo(() => buildFrequencyBuckets(syncs), [syncs]);
 
   const hasSyncs = syncs && syncs.length > 0;
 
@@ -1385,26 +1615,32 @@ function DeploymentFrequencySection({
 // Section 7: Sync Duration (line chart over time)
 // ---------------------------------------------------------------------------
 
+// S4 — see buildHourlySyncBuckets' doc comment for why this is a plain,
+// directly-testable function rather than an inline useMemo body.
+export function buildDurationSeries(
+  syncs: SyncActivityEntry[],
+): { index: number; duration_secs: number; duration: string; timestamp: string }[] {
+  if (!syncs || syncs.length === 0) return [];
+
+  // Sort by timestamp ascending (oldest first) for a proper timeline
+  const sorted = [...syncs].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+
+  return sorted.map((s, idx) => ({
+    index: idx + 1,
+    duration_secs: s.duration_secs,
+    duration: s.duration,
+    timestamp: s.timestamp,
+  }));
+}
+
 function SyncDurationSection({
   syncs,
 }: {
   syncs: SyncActivityEntry[];
 }) {
-  const durationData = useMemo(() => {
-    if (!syncs || syncs.length === 0) return [];
-
-    // Sort by timestamp ascending (oldest first) for a proper timeline
-    const sorted = [...syncs].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-
-    return sorted.map((s, idx) => ({
-      index: idx + 1,
-      duration_secs: s.duration_secs,
-      duration: s.duration,
-      timestamp: s.timestamp,
-    }));
-  }, [syncs]);
+  const durationData = useMemo(() => buildDurationSeries(syncs), [syncs]);
 
   const hasSyncs = syncs && syncs.length > 0;
 
@@ -1456,6 +1692,85 @@ function SyncDurationSection({
         </ResponsiveContainer>
       )}
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// S4 (scale-walk round 2) — real statistics for the charts. Deployment
+// frequency and sync duration sit side by side and share one pair of
+// addon/cluster dropdowns (same dropdown style as SyncActivitySection)
+// rather than each section growing its own filter row.
+// ---------------------------------------------------------------------------
+
+function SyncStatsSection({ syncs }: { syncs: SyncActivityEntry[] }) {
+  const [addonFilter, setAddonFilter] = useState('');
+  const [clusterFilter, setClusterFilter] = useState('');
+
+  const addonNames = useMemo(
+    () => [...new Set((syncs ?? []).map((s) => s.addon_name))].sort(),
+    [syncs],
+  );
+  const clusterNames = useMemo(
+    () => [...new Set((syncs ?? []).map((s) => s.cluster_name))].sort(),
+    [syncs],
+  );
+
+  const filtered = useMemo(
+    () =>
+      (syncs ?? []).filter(
+        (s) =>
+          (!addonFilter || s.addon_name === addonFilter) &&
+          (!clusterFilter || s.cluster_name === clusterFilter),
+      ),
+    [syncs, addonFilter, clusterFilter],
+  );
+
+  const hasSelection = !!addonFilter || !!clusterFilter;
+  // Honest empty state — distinct from each chart's own "no data at all"
+  // state (which still applies below when there's truly nothing to plot).
+  const noMatchForSelection = hasSelection && filtered.length === 0 && (syncs ?? []).length > 0;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <select
+          value={addonFilter}
+          onChange={(e) => setAddonFilter(e.target.value)}
+          className="rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] px-2 py-1 text-xs text-[#0a3a5a] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+          aria-label="Filter sync statistics by addon"
+        >
+          <option value="">All Addons</option>
+          {addonNames.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+        <select
+          value={clusterFilter}
+          onChange={(e) => setClusterFilter(e.target.value)}
+          className="rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] px-2 py-1 text-xs text-[#0a3a5a] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+          aria-label="Filter sync statistics by cluster"
+        >
+          <option value="">All Clusters</option>
+          {clusterNames.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </div>
+      {noMatchForSelection ? (
+        <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-400">
+          No syncs recorded for this selection.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+          <DeploymentFrequencySection syncs={filtered} />
+          <SyncDurationSection syncs={filtered} />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1518,6 +1833,10 @@ export function Observability() {
   const [attentionClusters, setAttentionClusters] = useState<{ name: string; connectionStatus: string }[]>([]);
   const [versionDrifts, setVersionDrifts] = useState<{ addon: string; count: number }[]>([]);
   const { byApp: addonStateMap } = useAddonStates();
+  // S3 (scale-walk round 2) — guards the hash-scroll effect below so it
+  // fires at most once per page arrival, not once per poll tick (see that
+  // effect's comment for the bug this fixes).
+  const scrolledToHashRef = useRef(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -1586,11 +1905,26 @@ export function Observability() {
   // to /observability#addon-health. A client-side route change doesn't
   // auto-scroll to a hash the way a full page load does, so once the
   // section has real content to scroll to, do it ourselves.
+  //
+  // S3 (scale-walk round 2) — grounded root cause of the scroll-yank bug:
+  // this effect depended on [loading, data], and the page polls every 30s,
+  // so `data` gets a new object identity on every poll — re-running the
+  // effect and, since the hash never cleared, scrolling the viewport back
+  // to this section again and again (the maintainer hit it as "clicking
+  // page 2 throws me down the page"). Fixed two ways, belt and suspenders:
+  // a ref guard so the scroll fires at most once per arrival regardless of
+  // how many times this effect re-runs, AND clearing the hash right after
+  // scrolling so no later render — from this effect or anything else
+  // reading window.location.hash — can mistake a stale hash for a fresh
+  // arrival.
   useEffect(() => {
     if (loading || !data) return;
+    if (scrolledToHashRef.current) return;
     if (window.location.hash !== '#addon-health') return;
+    scrolledToHashRef.current = true;
     const el = document.getElementById('addon-health');
     el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
   }, [loading, data]);
 
   if (loading) return <LoadingState message="Loading observability data..." />;
@@ -1723,10 +2057,7 @@ export function Observability() {
         onClearIssuesOnly={clearIssuesOnly}
       />
       <SyncActivitySection syncs={data.recent_syncs ?? []} />
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <DeploymentFrequencySection syncs={data.recent_syncs ?? []} />
-        <SyncDurationSection syncs={data.recent_syncs ?? []} />
-      </div>
+      <SyncStatsSection syncs={data.recent_syncs ?? []} />
     </div>
   );
 }

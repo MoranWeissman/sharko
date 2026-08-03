@@ -2,12 +2,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { Observability } from '@/views/Observability';
+import {
+  Observability,
+  buildHourlySyncBuckets,
+  buildFrequencyBuckets,
+  buildDurationSeries,
+} from '@/views/Observability';
 // WQ-3 (attention-move-badges): Observability now renders the attention
 // detail rows via useAddonStates() — has to be mounted inside the provider
 // or the hook throws.
 import { AddonStatesProvider } from '@/hooks/useAddonStates';
 import { GRACE_PERIOD_TOOLTIP } from '@/components/AttentionSection';
+import type { SyncActivityEntry } from '@/services/models';
 
 vi.mock('recharts', () => {
   const C = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
@@ -1027,5 +1033,609 @@ describe('Observability — Sharko Engine surface rename', () => {
     const engineLabel = screen.getByText('Sharko Engine');
     const controlPlaneHeading = screen.getByText('ArgoCD Control Plane');
     expect(engineLabel.closest('section')).toBe(controlPlaneHeading.closest('section'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S1 (scale-walk round 2, maintainer's 50-cluster walk) — the three
+// ungrouped row lists merge into one paginated, chip-filterable issues
+// list, and the whole Health section collapses/expands.
+// ---------------------------------------------------------------------------
+
+describe('Observability — merged issues list: pagination and kind chips (S1, scale-walk round 2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function manyClustersFixture() {
+    return Array.from({ length: 12 }, (_, i) => ({
+      name: `cluster-${String(i + 1).padStart(2, '0')}`,
+      connection_status: 'Failed',
+    }));
+  }
+
+  async function mockManyIssueRows() {
+    const { api } = await import('@/services/api');
+    // mockResolvedValueOnce — NOT mockResolvedValue: the plain form
+    // persists past vi.clearAllMocks() (it only clears call history) and
+    // would leak this fixture into every later test in the file.
+    vi.mocked(api.getClusters).mockResolvedValueOnce({ clusters: manyClustersFixture() } as never);
+    vi.mocked(api.getDashboardStats).mockResolvedValueOnce({
+      total_clusters: 12,
+      connected_clusters: 0,
+      bootstrap_app_health: 'Healthy',
+      bootstrap_app_sync: 'Synced',
+      clusters: { total: 12, connected: 0, pending: 0, untested: 0, missing: 0, failed: 12 },
+    } as never);
+    vi.mocked(api.getVersionMatrix).mockResolvedValueOnce({
+      addons: [
+        {
+          addon_name: 'cert-manager',
+          cells: {
+            'prod-eu': { version: '1.12.0', drift_from_catalog: true },
+            'prod-us': { version: '1.14.0', drift_from_catalog: true },
+          },
+        },
+        {
+          addon_name: 'ingress-nginx',
+          cells: {
+            'prod-eu': { version: '4.1.0', drift_from_catalog: true },
+            'prod-us': { version: '4.2.0', drift_from_catalog: true },
+          },
+        },
+      ],
+    } as never);
+    // 'Unknown' addon problems don't need the 10-minute settling window
+    // 'degraded'/'missing' do, so this is the simplest deterministic way
+    // to get a real health-value ('Unknown') badge onto an orphan row.
+    vi.mocked(api.getAttentionItems).mockResolvedValueOnce([
+      { app_name: 'ghost-addon-spoke-eu', addon_name: 'ghost-addon', cluster: 'spoke-eu', health: 'Unknown', sync: 'Unknown' },
+    ] as never);
+  }
+
+  it('merges cluster, drift, and orphan-addon rows into one list, 10 rows per page', async () => {
+    await mockManyIssueRows();
+    renderObservability();
+
+    // 12 cluster problems + 2 drift rows + 1 orphan row = 15.
+    await waitFor(() => {
+      expect(screen.getByText('Open issues (15)')).toBeInTheDocument();
+    });
+
+    const section = document.getElementById('addon-health') as HTMLElement;
+    // Page 1: the first 10 of the 12 cluster rows (they're listed first).
+    expect(within(section).getByText('cluster-01')).toBeInTheDocument();
+    expect(within(section).getByText('cluster-10')).toBeInTheDocument();
+    expect(within(section).queryByText('cluster-11')).not.toBeInTheDocument();
+    expect(within(section).queryByText('cert-manager')).not.toBeInTheDocument();
+
+    const nextBtn = within(section).getAllByRole('button', { name: 'Next' })[0];
+    await userEvent.click(nextBtn);
+
+    // Page 2: the remaining 2 cluster rows, both drift rows, the orphan row.
+    expect(within(section).getByText('cluster-11')).toBeInTheDocument();
+    expect(within(section).getByText('cluster-12')).toBeInTheDocument();
+    expect(within(section).getByText('cert-manager')).toBeInTheDocument();
+    expect(within(section).getByText('ghost-addon-spoke-eu')).toBeInTheDocument();
+    expect(within(section).queryByText('cluster-01')).not.toBeInTheDocument();
+  });
+
+  it('kind chips carry honest counts, and clicking one filters the list to just that kind', async () => {
+    await mockManyIssueRows();
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Open issues (15)')).toBeInTheDocument();
+    });
+
+    const section = document.getElementById('addon-health') as HTMLElement;
+    // Scoped to the chip row itself — a group card's own toggle button's
+    // accessible name also concatenates its health-breakdown text (e.g.
+    // "istio 10 Applications Healthy: 8 Degraded: 2"), which would
+    // otherwise false-match a broader /Degraded/ query.
+    const chipRow = within(section).getByRole('group', { name: 'Filter issues by kind' });
+    // Severity split: 12 problem (cluster) rows, 3 attention rows (2 drift
+    // + 1 unknown-health orphan). Plus the one health-value kind the rows
+    // actually carry: 'Unknown' (the orphan row's badge) — no chip is
+    // invented for a kind (e.g. 'Degraded') nothing in this fixture has.
+    const problemsChip = within(chipRow).getByRole('button', { name: /Problems \(12\)/ });
+    const attentionChip = within(chipRow).getByRole('button', { name: /Attention \(3\)/ });
+    const unknownChip = within(chipRow).getByRole('button', { name: /Unknown \(1\)/ });
+    expect(problemsChip).toBeInTheDocument();
+    expect(attentionChip).toBeInTheDocument();
+    expect(unknownChip).toBeInTheDocument();
+    expect(within(chipRow).queryByRole('button', { name: /Degraded/ })).not.toBeInTheDocument();
+
+    await userEvent.click(attentionChip);
+
+    // Filtered to attention only: the two drift rows and the orphan row,
+    // no cluster-connection rows at all.
+    expect(within(section).getByText('cert-manager')).toBeInTheDocument();
+    expect(within(section).getByText('ingress-nginx')).toBeInTheDocument();
+    expect(within(section).getByText('ghost-addon-spoke-eu')).toBeInTheDocument();
+    expect(within(section).queryByText('cluster-01')).not.toBeInTheDocument();
+    expect(attentionChip).toHaveAttribute('aria-pressed', 'true');
+
+    // Clicking the same chip again clears the filter.
+    await userEvent.click(attentionChip);
+    expect(within(section).getByText('cluster-01')).toBeInTheDocument();
+  });
+});
+
+describe('Observability — Health section collapse/expand (S1, scale-walk round 2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('defaults expanded; collapsing hides the body but keeps the header and issue count visible', async () => {
+    const { api } = await import('@/services/api');
+    vi.mocked(api.getClusters).mockResolvedValue({
+      clusters: [{ name: 'spoke-us', connection_status: 'Failed' }],
+    } as never);
+    vi.mocked(api.getDashboardStats).mockResolvedValue({
+      total_clusters: 1,
+      connected_clusters: 0,
+      bootstrap_app_health: 'Healthy',
+      bootstrap_app_sync: 'Synced',
+      clusters: { total: 1, connected: 0, pending: 0, untested: 0, missing: 0, failed: 1 },
+    } as never);
+    // Isolate from an earlier test's overrides — mockResolvedValue persists
+    // across vi.clearAllMocks() (it only clears call history). An earlier
+    // test in this file (the "genuine orphan" case) leaves getObservability
+    // pinned to an addon_groups: [] fixture the same way, so this test
+    // supplies its own group too instead of trusting the factory default.
+    vi.mocked(api.getVersionMatrix).mockResolvedValue({ addons: [] } as never);
+    vi.mocked(api.getAttentionItems).mockResolvedValue([]);
+    vi.mocked(api.getObservability).mockResolvedValueOnce({
+      control_plane: {
+        argocd_version: 'v3.2.2',
+        helm_version: 'v3.14.0',
+        kubectl_version: 'v1.29.0',
+        total_apps: 10,
+        total_clusters: 1,
+        connected_clusters: 1,
+        health_summary: { Healthy: 10 },
+      },
+      recent_syncs: [],
+      addon_health: [],
+      addon_groups: [
+        { addon_name: 'istio', total_apps: 10, health_counts: { Healthy: 10 }, child_apps: [] },
+      ],
+      resource_alerts: [],
+    } as never);
+
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Open issues (1)')).toBeInTheDocument();
+    });
+
+    // Expanded by default: both the merged issues row and the addon group
+    // cards are visible without clicking anything.
+    expect(screen.getByText('spoke-us')).toBeInTheDocument();
+    expect(screen.getByText('10 Applications')).toBeInTheDocument();
+
+    const toggle = screen.getByText('Health').closest('button') as HTMLButtonElement;
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    await userEvent.click(toggle);
+
+    // Collapsed: header + issue count stay put, everything else is gone.
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('Health')).toBeInTheDocument();
+    expect(screen.getByText('Open issues (1)')).toBeInTheDocument();
+    expect(screen.queryByText('spoke-us')).not.toBeInTheDocument();
+    expect(screen.queryByText('10 Applications')).not.toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('10 Applications')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S2 (scale-walk round 2) — group cards show little first: 10 per page by
+// default, and an expanded card's table shows 10 rows + "Show more".
+// ---------------------------------------------------------------------------
+
+describe('Observability — group cards show little first (S2, scale-walk round 2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function manyGroupsFixture() {
+    const groups = [];
+    for (let i = 1; i <= 12; i++) {
+      const addonName = `addon-${String(i).padStart(2, '0')}`;
+      if (i === 1) {
+        // addon-01 alone carries 15 child apps, to exercise the inner
+        // table's "Show more" behavior.
+        groups.push({
+          addon_name: addonName,
+          total_apps: 15,
+          health_counts: { Healthy: 15 },
+          child_apps: Array.from({ length: 15 }, (_, j) => ({
+            app_name: `${addonName}-cluster-${j + 1}`,
+            cluster_name: `cluster-${j + 1}`,
+            health: 'Healthy',
+            sync_status: 'Synced',
+            reconciled_at: new Date().toISOString(),
+            resource_summary: { total_pods: 1, running_pods: 1, total_containers: 1, has_missing_limits: false },
+          })),
+        });
+      } else {
+        groups.push({
+          addon_name: addonName,
+          total_apps: 1,
+          health_counts: { Healthy: 1 },
+          child_apps: [
+            {
+              app_name: `${addonName}-cluster-1`,
+              cluster_name: 'cluster-1',
+              health: 'Healthy',
+              sync_status: 'Synced',
+              reconciled_at: new Date().toISOString(),
+              resource_summary: { total_pods: 1, running_pods: 1, total_containers: 1, has_missing_limits: false },
+            },
+          ],
+        });
+      }
+    }
+    return groups;
+  }
+
+  function mockManyGroupsResponse() {
+    return {
+      control_plane: {
+        argocd_version: 'v3.2.2',
+        helm_version: 'v3.14.0',
+        kubectl_version: 'v1.29.0',
+        total_apps: 26,
+        total_clusters: 15,
+        connected_clusters: 15,
+        health_summary: { Healthy: 26 },
+      },
+      recent_syncs: [],
+      addon_health: [],
+      addon_groups: manyGroupsFixture(),
+      resource_alerts: [],
+    };
+  }
+
+  it('shows only the first 10 addon groups by default (not 20)', async () => {
+    const { api } = await import('@/services/api');
+    vi.mocked(api.getObservability).mockResolvedValueOnce(mockManyGroupsResponse() as never);
+
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Health')).toBeInTheDocument();
+    });
+
+    // Scoped to the Health section (S1, walk day 4 precedent): the
+    // per-addon distribution filter above it also lists every addon name
+    // as a <select><option>, so an unscoped query is ambiguous.
+    const section = screen.getByText('Health').closest('section') as HTMLElement;
+    await waitFor(() => {
+      expect(within(section).getByText('addon-01')).toBeInTheDocument();
+    });
+
+    expect(within(section).getByText('addon-10')).toBeInTheDocument();
+    expect(within(section).queryByText('addon-11')).not.toBeInTheDocument();
+
+    const nextBtn = within(section).getAllByRole('button', { name: 'Next' })[0];
+    await userEvent.click(nextBtn);
+
+    expect(within(section).getByText('addon-11')).toBeInTheDocument();
+    expect(within(section).getByText('addon-12')).toBeInTheDocument();
+    expect(within(section).queryByText('addon-01')).not.toBeInTheDocument();
+  });
+
+  it('an expanded card shows 10 rows plus "Show more", and collapsing resets it back to 10', async () => {
+    const { api } = await import('@/services/api');
+    vi.mocked(api.getObservability).mockResolvedValueOnce(mockManyGroupsResponse() as never);
+
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Health')).toBeInTheDocument();
+    });
+
+    const section = screen.getByText('Health').closest('section') as HTMLElement;
+    await waitFor(() => {
+      expect(within(section).getByText('addon-01')).toBeInTheDocument();
+    });
+
+    const cardToggle = within(section).getByText('addon-01').closest('button') as HTMLButtonElement;
+    await userEvent.click(cardToggle);
+
+    expect(within(section).getByText('cluster-1')).toBeInTheDocument();
+    expect(within(section).getByText('cluster-10')).toBeInTheDocument();
+    expect(within(section).queryByText('cluster-11')).not.toBeInTheDocument();
+
+    const showMoreBtn = within(section).getByRole('button', { name: /Show 5 more/i });
+    await userEvent.click(showMoreBtn);
+
+    expect(within(section).getByText('cluster-11')).toBeInTheDocument();
+    expect(within(section).getByText('cluster-15')).toBeInTheDocument();
+    expect(within(section).queryByRole('button', { name: /Show \d+ more/i })).not.toBeInTheDocument();
+
+    // Collapse, then re-expand — "Show more" progress reset to the first 10.
+    await userEvent.click(cardToggle);
+    await userEvent.click(cardToggle);
+    expect(within(section).getByText('cluster-1')).toBeInTheDocument();
+    expect(within(section).queryByText('cluster-11')).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S3 (scale-walk round 2) — the scroll-yank fix: fire once, clear the hash.
+// ---------------------------------------------------------------------------
+
+describe('Observability — scroll fires once and clears the hash (S3, scale-walk round 2)', () => {
+  const originalHash = window.location.hash;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  afterEach(() => {
+    window.location.hash = originalHash;
+  });
+
+  it('scrolls exactly once on arrival, then clears the hash', async () => {
+    window.location.hash = '#addon-health';
+
+    renderObservability();
+
+    await waitFor(() => {
+      expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    });
+
+    // The fix's second half: clear the hash (same path+search, no hash)
+    // right after scrolling, so nothing reading window.location.hash later
+    // — from a re-render, a poll elsewhere in the tree, anything — can
+    // mistake a stale hash for a fresh arrival and scroll again.
+    expect(window.location.hash).toBe('');
+  });
+
+  it('the ?health=issues + #addon-health combination still lands on the section with the problem view active', async () => {
+    window.location.hash = '#addon-health';
+    render(
+      <MemoryRouter initialEntries={['/observability?health=issues']}>
+        <AddonStatesProvider>
+          <Observability />
+        </AddonStatesProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('health-issues-chip')).toBeInTheDocument();
+    });
+    // Default-expanded, so the scroll target actually exists in the DOM.
+    const toggle = screen.getByText('Health').closest('button') as HTMLButtonElement;
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('a later mount finds the hash already cleared and does not scroll again — the durable half of the fix', async () => {
+    window.location.hash = '#addon-health';
+    const { unmount } = renderObservability();
+
+    await waitFor(() => {
+      expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    });
+    expect(window.location.hash).toBe('');
+    unmount();
+
+    // A fresh mount — a brand-new ref guard, defaulting to false — still
+    // must not scroll again, because the hash itself is gone now.
+    renderObservability();
+    await waitFor(() => {
+      expect(screen.getByText('Health')).toBeInTheDocument();
+    });
+    expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S4 (scale-walk round 2) — real statistics for the charts: the server cap
+// is covered on the Go side (internal/service/observability_test.go); this
+// covers the UI's addon/cluster filters and the aggregation helpers they
+// drive.
+// ---------------------------------------------------------------------------
+
+function syncAt(hoursAgo: number, overrides: Partial<SyncActivityEntry> = {}): SyncActivityEntry {
+  return {
+    timestamp: new Date(Date.now() - hoursAgo * 3600000).toISOString(),
+    duration: '1.0s',
+    duration_secs: 1,
+    app_name: 'app',
+    addon_name: 'addon-a',
+    cluster_name: 'cluster-a',
+    status: 'Succeeded',
+    ...overrides,
+  };
+}
+
+describe('buildHourlySyncBuckets (S4c bonus bug, scale-walk round 2)', () => {
+  it('only counts entries within the last 24h, and a caller-filtered subset changes the total', () => {
+    const syncs = [
+      syncAt(0, { addon_name: 'istio', cluster_name: 'prod' }),
+      syncAt(2, { addon_name: 'istio', cluster_name: 'prod' }),
+      syncAt(2, { addon_name: 'prometheus', cluster_name: 'staging' }),
+      syncAt(30, { addon_name: 'istio', cluster_name: 'prod' }), // outside the 24h window either way
+    ];
+
+    const all = buildHourlySyncBuckets(syncs);
+    expect(all.reduce((sum, b) => sum + b.count, 0)).toBe(3);
+
+    // The bonus bug fix: the chart must bucket whatever it's handed, not
+    // silently fall back to the unfiltered feed.
+    const filtered = syncs.filter((s) => s.addon_name === 'istio' && s.cluster_name === 'prod');
+    const filteredBuckets = buildHourlySyncBuckets(filtered);
+    expect(filteredBuckets.reduce((sum, b) => sum + b.count, 0)).toBe(2);
+  });
+
+  it('returns 24 zero buckets for an empty feed', () => {
+    const buckets = buildHourlySyncBuckets([]);
+    expect(buckets).toHaveLength(24);
+    expect(buckets.every((b) => b.count === 0)).toBe(true);
+  });
+});
+
+describe('buildFrequencyBuckets (S4, scale-walk round 2)', () => {
+  it('splits succeeded/failed per hour, and a filtered input produces a smaller total', () => {
+    const syncs = [
+      syncAt(1, { addon_name: 'istio', status: 'Succeeded' }),
+      syncAt(1, { addon_name: 'prometheus', status: 'Failed' }),
+      syncAt(3, { addon_name: 'istio', status: 'Succeeded' }),
+    ];
+    const all = buildFrequencyBuckets(syncs);
+    expect(all.reduce((sum, b) => sum + b.succeeded, 0)).toBe(2);
+    expect(all.reduce((sum, b) => sum + b.failed, 0)).toBe(1);
+
+    const filtered = syncs.filter((s) => s.addon_name === 'istio');
+    const filteredBuckets = buildFrequencyBuckets(filtered);
+    expect(filteredBuckets.reduce((sum, b) => sum + b.succeeded, 0)).toBe(2);
+    expect(filteredBuckets.reduce((sum, b) => sum + b.failed, 0)).toBe(0);
+  });
+
+  it('returns an empty array for no syncs', () => {
+    expect(buildFrequencyBuckets([])).toEqual([]);
+  });
+});
+
+describe('buildDurationSeries (S4, scale-walk round 2)', () => {
+  it('orders entries oldest-first, and a filtered input produces a shorter series', () => {
+    const syncs = [
+      syncAt(1, { addon_name: 'istio', duration_secs: 5 }),
+      syncAt(3, { addon_name: 'istio', duration_secs: 9 }),
+      syncAt(2, { addon_name: 'prometheus', duration_secs: 2 }),
+    ];
+    const all = buildDurationSeries(syncs);
+    expect(all.map((d) => d.duration_secs)).toEqual([9, 2, 5]);
+
+    const filtered = syncs.filter((s) => s.addon_name === 'istio');
+    expect(buildDurationSeries(filtered).map((d) => d.duration_secs)).toEqual([9, 5]);
+  });
+
+  it('returns an empty array for no syncs', () => {
+    expect(buildDurationSeries([])).toEqual([]);
+  });
+});
+
+// A couple of earlier tests in this file pin getObservability to a
+// mockResolvedValue (persistent, not Once) fixture with empty recent_syncs
+// — that leaks forward past vi.clearAllMocks() (it only clears call
+// history). Every test below that needs the istio/prod-cluster1 +
+// prometheus/staging shape supplies it explicitly instead of trusting
+// whatever the last test left behind.
+async function mockTwoAddonSyncsFixture() {
+  const { api } = await import('@/services/api');
+  vi.mocked(api.getObservability).mockResolvedValueOnce({
+    control_plane: {
+      argocd_version: 'v3.2.2',
+      helm_version: 'v3.14.0',
+      kubectl_version: 'v1.29.0',
+      total_apps: 2,
+      total_clusters: 2,
+      connected_clusters: 2,
+      health_summary: { Healthy: 2 },
+    },
+    recent_syncs: [
+      {
+        timestamp: new Date(Date.now() - 3600000).toISOString(),
+        duration: '1.2s',
+        duration_secs: 1.2,
+        app_name: 'istio-prod-cluster1',
+        addon_name: 'istio',
+        cluster_name: 'prod-cluster1',
+        status: 'Succeeded',
+      },
+      {
+        timestamp: new Date(Date.now() - 7200000).toISOString(),
+        duration: '3.5s',
+        duration_secs: 3.5,
+        app_name: 'prometheus-staging',
+        addon_name: 'prometheus',
+        cluster_name: 'staging',
+        status: 'Failed',
+      },
+    ],
+    addon_health: [],
+    addon_groups: [],
+    resource_alerts: [],
+  } as never);
+}
+
+describe('Observability — sync statistics filters and honest empty states (S4, scale-walk round 2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('a mismatched addon/cluster selection shows an honest empty state instead of the charts', async () => {
+    await mockTwoAddonSyncsFixture();
+    const user = userEvent.setup();
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Deployment frequency')).toBeInTheDocument();
+    });
+
+    const addonSelect = screen.getByLabelText('Filter sync statistics by addon') as HTMLSelectElement;
+    const clusterSelect = screen.getByLabelText('Filter sync statistics by cluster') as HTMLSelectElement;
+
+    // Fixture: istio only ever ran on prod-cluster1, never on staging.
+    await user.selectOptions(addonSelect, 'istio');
+    await user.selectOptions(clusterSelect, 'staging');
+
+    await waitFor(() => {
+      expect(screen.getByText('No syncs recorded for this selection.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Deployment frequency')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sync duration')).not.toBeInTheDocument();
+  });
+
+  it('a matching selection keeps both charts rendered', async () => {
+    await mockTwoAddonSyncsFixture();
+    const user = userEvent.setup();
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Deployment frequency')).toBeInTheDocument();
+    });
+
+    const addonSelect = screen.getByLabelText('Filter sync statistics by addon') as HTMLSelectElement;
+    await user.selectOptions(addonSelect, 'istio');
+
+    expect(screen.getByText('Deployment frequency')).toBeInTheDocument();
+    expect(screen.getByText('Sync duration')).toBeInTheDocument();
+    expect(screen.queryByText('No syncs recorded for this selection.')).not.toBeInTheDocument();
+  });
+});
+
+describe('Observability — Sync Activity hourly chart respects its own filters (S4c bonus bug, scale-walk round 2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('a mismatched selection shows the selection-specific empty message', async () => {
+    await mockTwoAddonSyncsFixture();
+    const user = userEvent.setup();
+    renderObservability();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sync Activity')).toBeInTheDocument();
+    });
+
+    const section = screen.getByText('Sync Activity').closest('section') as HTMLElement;
+    const addonSelect = within(section).getByLabelText('Filter by addon') as HTMLSelectElement;
+    const clusterSelect = within(section).getByLabelText('Filter by cluster') as HTMLSelectElement;
+
+    await user.selectOptions(addonSelect, 'istio');
+    await user.selectOptions(clusterSelect, 'staging');
+
+    expect(within(section).getByText('No syncs recorded for this selection.')).toBeInTheDocument();
   });
 });

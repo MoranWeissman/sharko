@@ -147,16 +147,12 @@ func (s *ObservabilityService) getOverviewUncached(ctx context.Context, ac *argo
 	// 6. Build sync activity timeline from history entries (exclude infra apps)
 	allSyncs := buildRecentSyncs(fullApps, clusterNames)
 
-	// Sort by timestamp descending (most recent first)
-	sort.Slice(allSyncs, func(i, j int) bool {
-		return allSyncs[i].Timestamp > allSyncs[j].Timestamp
-	})
-
-	// Take last 20 for recent syncs
-	recentSyncs := allSyncs
-	if len(recentSyncs) > 20 {
-		recentSyncs = recentSyncs[:20]
-	}
+	// S4 (scale-walk round 2): the old 20-entry global cap made any
+	// per-addon/per-cluster sync chart nearly empty once the estate grew
+	// past a handful of clusters. recentSyncsCap (300) keeps the response
+	// bounded while giving the charts enough real data to be useful at
+	// scale. Same flat shape, same newest-first sort — see capRecentSyncs.
+	recentSyncs := capRecentSyncs(allSyncs, recentSyncsCap)
 
 	// 7. Group by addon and build per-addon health detail
 	addonMap := make(map[string]*models.AddonHealthDetail)
@@ -520,6 +516,26 @@ func buildRecentSyncs(apps []models.ArgocdApplication, clusterNames map[string]b
 		}
 	}
 	return allSyncs
+}
+
+// recentSyncsCap bounds how many entries GetOverview's recent_syncs carries
+// (S4, scale-walk round 2). Raised from 20 to 300 — a 50-cluster estate
+// produces far more than 20 sync events, and the old cap left any
+// per-addon/per-cluster chart nearly empty.
+const recentSyncsCap = 300
+
+// capRecentSyncs sorts syncs newest-first and truncates to at most capN
+// entries, same flat shape either way. Pulled out of getOverviewUncached so
+// the sort+cap behavior is directly unit-testable without a full ArgoCD
+// mock server.
+func capRecentSyncs(syncs []models.SyncActivityEntry, capN int) []models.SyncActivityEntry {
+	sort.Slice(syncs, func(i, j int) bool {
+		return syncs[i].Timestamp > syncs[j].Timestamp
+	})
+	if len(syncs) > capN {
+		return syncs[:capN]
+	}
+	return syncs
 }
 
 // ExtractAddonCluster extracts addon name and cluster name from an ArgoCD app name.
