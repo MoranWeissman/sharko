@@ -151,6 +151,15 @@ interface ClustersSnapshot {
 // Exported so tests can prime/inspect the same key the component uses.
 export const CLUSTERS_CACHE_KEY = 'clusters';
 
+// S4: mirrors services/api.ts's CLUSTERS_PAGE_SIZE. Kept as a local
+// constant (rather than importing the one in api.ts) so this component
+// doesn't depend on a named export existing on every test file's
+// `vi.mock('@/services/api', ...)` factory — those factories return a
+// plain object literal with only the functions each test needs, and an
+// unmocked named export reads as undefined at call time, not a helpful
+// type error.
+const CLUSTERS_PAGE_SIZE = 100;
+
 export function ClustersOverview() {
   const [allClusters, setAllClusters] = useState<Cluster[]>([]);
   // Mirror the latest allClusters in a ref so fetchData's catch block can read
@@ -158,6 +167,14 @@ export function ClustersOverview() {
   // allClusters in fetchData's dep array (which would cause the fetch effect
   // to re-fire on every state update).
   const allClustersRef = useRef<Cluster[]>([]);
+  // S4: server-side pagination — api.getClusters() already requests
+  // CLUSTERS_PAGE_SIZE (100), which covers any realistic estate in one
+  // call. clusterTotal stays null until a page-aware call
+  // (api.getClustersPage) has actually read X-Total-Count; loadingMore
+  // guards the "Load more clusters" button below against double-clicks.
+  const [clusterTotal, setClusterTotal] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   // Cluster-registration PRs that have NOT yet merged. The BE returns
   // these via /api/v1/clusters.pending_registrations. Surfaced as a
   // dedicated "Pending Registrations" section AND filtered out of the
@@ -361,6 +378,9 @@ export function ClustersOverview() {
       // with no error chrome.
       setError(null);
       setAllClusters(response.clusters);
+      // A fresh load — any earlier "Load more" progress no longer applies.
+      setClusterTotal(null);
+      setLoadMoreError(null);
       const healthStatsValue = response.health_stats ?? null;
       setHealthStats(healthStatsValue);
       // Default to [] so a server that omits these fields doesn't crash
@@ -416,6 +436,30 @@ export function ClustersOverview() {
   const handleRefresh = useCallback(() => {
     void fetchData(true);
   }, [fetchData]);
+
+  // S4: fetch the next page beyond what api.getClusters() already loaded.
+  // Only reachable once allClusters.length has hit a full CLUSTERS_PAGE_SIZE
+  // page — see mayHaveMoreClusters below — so this never fires for any
+  // estate that fits in one request (every demo size up to 100 clusters).
+  const handleLoadMoreClusters = useCallback(async () => {
+    setLoadingMore(true);
+    setLoadMoreError(null);
+    try {
+      const loadedSoFar = allClustersRef.current.length;
+      const nextPage = Math.floor(loadedSoFar / CLUSTERS_PAGE_SIZE) + 1;
+      const { data, total } = await api.getClustersPage(nextPage, CLUSTERS_PAGE_SIZE);
+      setAllClusters((prev) => [...prev, ...data.clusters]);
+      // total == null means the server didn't send X-Total-Count (should
+      // never happen against the real API, but degrade safely): treat
+      // "loaded everything this call returned" as the total so the button
+      // disappears rather than risking an unbounded fetch loop.
+      setClusterTotal(total ?? loadedSoFar + data.clusters.length);
+    } catch (e: unknown) {
+      setLoadMoreError(e instanceof Error ? e.message : 'Failed to load more clusters');
+    } finally {
+      setLoadingMore(false);
+    }
+  }, []);
 
   // Keep allClustersRef in sync with allClusters so fetchData's catch
   // block can check "did we have prior data on screen?" without depending
@@ -1029,6 +1073,17 @@ export function ClustersOverview() {
   const totalClusters = healthStats
     ? healthStats.total_in_git + healthStats.not_in_git
     : allClusters.length;
+
+  // S4: show "Load more" once we've confirmed (via clusterTotal, read from
+  // X-Total-Count on a page-aware call) that more clusters exist than are
+  // loaded, OR — before that first confirmation — once the initial
+  // api.getClusters() call came back completely full (a strong hint there
+  // may be more beyond CLUSTERS_PAGE_SIZE). Never true for any estate that
+  // fits in one page, so this stays hidden for every size up to 100
+  // clusters (covers every demo size, including the 50-cluster preset).
+  const mayHaveMoreClusters = clusterTotal !== null
+    ? allClusters.length < clusterTotal
+    : allClusters.length > 0 && allClusters.length % CLUSTERS_PAGE_SIZE === 0;
 
   // V2-cleanup-61.3 (B3): at n=1 (or any small fleet) the 5 stat cards + the
   // full filter bar + view toggle are ~5 rows of controls for 1 row of data.
@@ -2259,6 +2314,30 @@ export function ClustersOverview() {
               <div className="col-span-full rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center text-[#3a6a8a] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-500">
                 No managed clusters match the current filters.
               </div>
+            )}
+          </div>
+        )}
+
+        {mayHaveMoreClusters && (
+          <div className="flex flex-col items-center gap-2 pt-2">
+            <button
+              type="button"
+              data-testid="clusters-load-more"
+              onClick={() => void handleLoadMoreClusters()}
+              disabled={loadingMore}
+              className="inline-flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-60 dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              {loadingMore ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading more clusters...
+                </>
+              ) : (
+                <>Load more clusters ({allClusters.length}{clusterTotal !== null ? ` of ${clusterTotal}` : '+'} loaded)</>
+              )}
+            </button>
+            {loadMoreError && (
+              <p className="text-xs text-red-600 dark:text-red-400">{loadMoreError}</p>
             )}
           </div>
         )}

@@ -56,6 +56,16 @@ func init() {
 	serveCmd.Flags().String("config", "config.yaml", "Path to config file (local mode)")
 	serveCmd.Flags().String("static", "", "Path to static files directory (UI)")
 	serveCmd.Flags().Bool("demo", false, "Run with mock backends for QA testing (no external dependencies)")
+	// Demo estate sizing (S2): unset flags reproduce today's small,
+	// hand-written estate (demo.DefaultScaleConfig — 5 clusters, 8 addons).
+	// --demo-scale=big is a shorthand preset (demo.BigScaleConfig — 50
+	// clusters, 30 addons, a fixed seed); any explicit --demo-clusters/
+	// --demo-addons/--demo-seed flag overrides the preset's value for that
+	// one field. All four flags are no-ops unless --demo is also set.
+	serveCmd.Flags().Int("demo-clusters", 0, "Demo mode: number of clusters to generate (0 = default/preset size)")
+	serveCmd.Flags().Int("demo-addons", 0, "Demo mode: number of addons to generate (0 = default/preset size)")
+	serveCmd.Flags().Int64("demo-seed", 0, "Demo mode: RNG seed for the generated estate (0 = default/preset seed)")
+	serveCmd.Flags().String("demo-scale", "", "Demo mode: size preset (\"big\" = 50 clusters / 30 addons / a fixed seed with messy production-like data)")
 	rootCmd.AddCommand(serveCmd)
 }
 
@@ -98,6 +108,30 @@ var serveCmd = &cobra.Command{
 		configPath, _ := cmd.Flags().GetString("config")
 		staticDir, _ := cmd.Flags().GetString("static")
 		demoMode, _ := cmd.Flags().GetBool("demo")
+
+		// Demo estate size (S2). Start from the preset named by --demo-scale
+		// (default: today's small hand-written estate), then let any
+		// explicitly-set --demo-clusters/--demo-addons/--demo-seed flag
+		// override just that one field. No effect unless --demo is set.
+		demoScaleConfig := demo.DefaultScaleConfig
+		if demoScaleFlag, _ := cmd.Flags().GetString("demo-scale"); demoScaleFlag != "" {
+			switch strings.ToLower(demoScaleFlag) {
+			case "big":
+				demoScaleConfig = demo.BigScaleConfig
+			default:
+				slog.Warn("unrecognized --demo-scale value, using the default estate size",
+					"value", demoScaleFlag, "known_values", "big")
+			}
+		}
+		if cmd.Flags().Changed("demo-clusters") {
+			demoScaleConfig.Clusters, _ = cmd.Flags().GetInt("demo-clusters")
+		}
+		if cmd.Flags().Changed("demo-addons") {
+			demoScaleConfig.Addons, _ = cmd.Flags().GetInt("demo-addons")
+		}
+		if cmd.Flags().Changed("demo-seed") {
+			demoScaleConfig.Seed, _ = cmd.Flags().GetInt64("demo-seed")
+		}
 
 		// Override from env
 		if envPort := os.Getenv("SHARKO_PORT"); envPort != "" {
@@ -489,8 +523,35 @@ var serveCmd = &cobra.Command{
 			slog.Info("catalog sources fetcher started", "count", len(catSources.Sources))
 		}
 
+		// Demo mode: wire up mock backends BEFORE the notification checker and
+		// connection poller below are constructed and started (S3 demo wiring
+		// fix). Both fire an immediate check from inside Start() on their own
+		// goroutine, so they must be built from the POST-swap connection
+		// service, not before it — otherwise the checker/poller silently keep
+		// talking to the real (empty, disconnected) connection service and
+		// the demo's notification feed never has anything to say. Everything
+		// else in demo mode (skipping the real provider setup, serving static
+		// files) still happens further down, unchanged — only the mock
+		// backend swap itself moved earlier.
+		if demoMode {
+			slog.Info("demo mode: running with mock backends", "users", "admin/admin, qa/sharko")
+			demoCleanup, err := demo.SetupDemoServer(srv, demoScaleConfig)
+			if err != nil {
+				return fmt.Errorf("setting up demo server: %w", err)
+			}
+			defer demoCleanup()
+		}
+
 		// Start notification checker (background goroutine, checks every 30 min).
-		notifProvider := notifications.NewServiceProvider(connSvc, addonSvc)
+		//
+		// Reads the connection service through srv.ConnectionService() rather
+		// than closing over the local connSvc variable: in demo mode the swap
+		// above reassigns srv's OWN connSvc field (SetDemoConnectionService),
+		// which never touches this local variable. Resolving through the
+		// getter picks up the demo connection service when demoMode is true,
+		// and is byte-for-byte the same object as the local variable
+		// otherwise — no behavior change outside demo mode.
+		notifProvider := notifications.NewServiceProvider(srv.ConnectionService(), addonSvc)
 		notifChecker := notifications.NewChecker(srv.NotificationStore(), notifProvider, 30*time.Minute)
 		notifChecker.Start()
 		defer notifChecker.Stop()
@@ -511,8 +572,11 @@ var serveCmd = &cobra.Command{
 
 		// gitHealthFn: Sharko→Git. An error from GetActiveGitProvider (or a nil
 		// provider) means no active connection — undetermined, not broken.
+		// Resolves srv.ConnectionService() fresh on every call (not just once
+		// at closure-construction time) for the same demo-swap reason as
+		// notifProvider above.
 		gitHealthFn := func(ctx context.Context) notifications.HealthResult {
-			gp, gpErr := connSvc.GetActiveGitProvider()
+			gp, gpErr := srv.ConnectionService().GetActiveGitProvider()
 			if gpErr != nil || gp == nil {
 				return notifications.UndeterminedResult()
 			}
@@ -529,7 +593,7 @@ var serveCmd = &cobra.Command{
 		// not "ArgoCD can't sync the repo" — conflating them made an expired
 		// token read as a broken repo sync (error review package 1).
 		argoHealthFn := func(ctx context.Context) notifications.HealthResult {
-			ac, acErr := connSvc.GetActiveOrchestratorArgocdClient()
+			ac, acErr := srv.ConnectionService().GetActiveOrchestratorArgocdClient()
 			if acErr != nil || ac == nil {
 				return notifications.UndeterminedResult()
 			}
@@ -572,16 +636,10 @@ var serveCmd = &cobra.Command{
 		connPoller.Start()
 		defer connPoller.Stop()
 
-		// Demo mode: wire up mock backends and skip all real provider setup.
+		// Demo mode: mock backends are already wired up above (before the
+		// notification checker + connection poller); skip all real provider
+		// setup and go straight to static files + listen.
 		if demoMode {
-			slog.Info("demo mode: running with mock backends", "users", "admin/admin, qa/sharko")
-			demoCleanup, err := demo.SetupDemoServer(srv, port)
-			if err != nil {
-				return fmt.Errorf("setting up demo server: %w", err)
-			}
-			defer demoCleanup()
-
-			// Skip the normal provider/connection setup; go straight to static files + listen.
 			var staticFS fs.FS
 			if staticDir != "" {
 				if info, err := os.Stat(staticDir); err == nil && info.IsDir() {

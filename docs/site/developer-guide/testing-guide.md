@@ -521,6 +521,28 @@ docker run --rm -d \
 
 Port 18080 on the host so it doesn't collide with anything you have running on 8080.
 
+#### A big demo estate
+
+The default demo estate is small on purpose — 5 clusters, 8 addons, 2 pull requests — good for a quick smoke test but too tidy to see how the UI holds up at real scale (a version matrix with 50 columns, a clusters page with more rows than fit on one screen, dozens of open pull requests).
+
+Three flags size the estate, and a preset covers the common "just make it big" case:
+
+```bash
+sharko serve --demo --demo-scale big --port 8080
+```
+
+`--demo-scale big` is shorthand for 50 clusters, 30 addons, and a fixed seed, with a realistic messy mix baked in: some clusters disconnected, some addons behind the catalog version, a handful of clusters with a foreign or missing ArgoCD connection Secret, dozens of open and recently-merged pull requests. The seed is fixed, so the same preset always renders the same estate — nothing here is random from run to run.
+
+To size it yourself instead of using the preset:
+
+```bash
+sharko serve --demo --demo-clusters 20 --demo-addons 15 --demo-seed 7 --port 8080
+```
+
+Any of `--demo-clusters`, `--demo-addons`, or `--demo-seed` you pass overrides just that one value on top of `--demo-scale`'s preset (or the small default, if no preset is given). Leaving all three unset reproduces today's small estate exactly — nothing about the default demo changes.
+
+From a local checkout, `make demo-big` builds the UI and starts this as a **second**, separate instance on port 8090 (`DEMO_BIG_PORT` to override) — it does not replace or interfere with a `make demo` or real playground you already have running. Demo mode still requires signing in (`admin/admin` or `qa/sharko`, same as the small estate) — the flags only change the size of the mock ArgoCD/Git backends, not authentication.
+
 ### Step 3 — wait for ready
 
 ```bash

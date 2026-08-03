@@ -81,6 +81,20 @@ func (s *DashboardService) SetCache(c *readcache.Cache) {
 	s.cache = c
 }
 
+// SetConnectionService repoints this service at a different
+// *ConnectionService. NewDashboardService bakes connSvc in at construction
+// time, and api.Server.SetDemoConnectionService only reassigns its OWN
+// s.connSvc field — that reassignment does not reach a DashboardService
+// built earlier from the pre-swap pointer, so GetStats's connection-totals
+// read (s.connSvc.List()) kept reporting the real store's connections even
+// after demo mode swapped in the in-memory one. Call this right after the
+// swap (mirroring SetCuratedCatalog/SetBaseBranchFn's setter pattern) so
+// the two stay in sync. No-op for the normal (non-demo) path, which never
+// calls it.
+func (s *DashboardService) SetConnectionService(connSvc *ConnectionService) {
+	s.connSvc = connSvc
+}
+
 // SetCuratedCatalog wires in the Marketplace's curated list so gitStatsV4
 // can fill in the display fields for an approved addon it recognises, the
 // same way AddonService.SetCuratedCatalog does for the version matrix and

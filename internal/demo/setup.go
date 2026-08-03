@@ -1,27 +1,65 @@
 package demo
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	"github.com/MoranWeissman/sharko/internal/api"
+	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
+	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/observations"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
+	"github.com/MoranWeissman/sharko/internal/prtracker"
+	"github.com/MoranWeissman/sharko/internal/verify"
 )
 
 // SetupDemoServer wires up full mock backends and configures the API server
 // for QA testing without any external dependencies. It returns a cleanup
 // function that should be called on shutdown.
 //
+// cfg sizes the estate (S1/S2) — cfg.IsDefault() reproduces today's small,
+// hand-written estate exactly; any other size generates a fresh one
+// (GenerateEstate) shared across the mock Git provider, the mock ArgoCD
+// server, the mock credentials provider, and the PR tracker below, so all
+// four present the SAME clusters/addons/PRs.
+//
 // Users created:
 //   - admin / admin    (admin role)
 //   - qa    / sharko   (viewer role)
-func SetupDemoServer(srv *api.Server, _ int) (cleanup func(), err error) {
+func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err error) {
+	// 0. Generate the estate once (nil for the default size — every
+	// mock-* constructor below falls back to the hand-written fixture in
+	// that case) so every mock backend agrees on the same data.
+	var estate *GeneratedEstate
+	if !cfg.IsDefault() {
+		estate, err = GenerateEstate(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("generating demo estate: %w", err)
+		}
+		slog.Info("demo: generated estate", "clusters", len(estate.Clusters),
+			"addons", len(estate.Addons), "seed", cfg.Seed, "component", "demo")
+	}
+
 	// 1. Start the mock ArgoCD HTTP server.
-	mockArgocd, err := NewMockArgocdServer()
+	var mockArgocd *MockArgocdServer
+	if estate != nil {
+		mockArgocd, err = NewMockArgocdServerFromEstate(estate)
+	} else {
+		mockArgocd, err = NewMockArgocdServer()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("starting mock argocd server: %w", err)
 	}
@@ -56,7 +94,16 @@ func SetupDemoServer(srv *api.Server, _ int) (cleanup func(), err error) {
 	srv.SetDemoConnectionService(store)
 
 	// 4. Set the mock Git provider so write operations work without real GitHub calls.
-	mockGit := NewMockGitProvider()
+	var mockGit *MockGitProvider
+	if estate != nil {
+		mockGit, err = NewMockGitProviderFromEstate(estate)
+		if err != nil {
+			mockArgocd.Close()
+			return nil, fmt.Errorf("building mock git provider: %w", err)
+		}
+	} else {
+		mockGit = NewMockGitProvider()
+	}
 	srv.SetDemoGitProvider(mockGit)
 
 	// 5. Configure the secrets provider for cluster registration.
@@ -66,7 +113,12 @@ func SetupDemoServer(srv *api.Server, _ int) (cleanup func(), err error) {
 	// demo Type so /providers + /config surface a recognizable
 	// placeholder. addonSecretCfg.RoleARN stays empty — demo
 	// orchestrator paths handle that via nil-guards in handlers.
-	credProvider := &MockClusterCredentialsProvider{}
+	var credProvider *MockClusterCredentialsProvider
+	if estate != nil {
+		credProvider = NewMockClusterCredentialsProviderFromEstate(estate)
+	} else {
+		credProvider = &MockClusterCredentialsProvider{}
+	}
 	addonCfg := &providers.AddonSecretProviderConfig{
 		Type:   "demo",
 		Region: "demo",
@@ -127,10 +179,172 @@ func SetupDemoServer(srv *api.Server, _ int) (cleanup func(), err error) {
 		slog.Warn("demo: could not create qa user", "error", err, "component", "demo")
 	}
 
+	// 9. PR tracker — /api/v1/prs reads from srv.prTracker, which is nil
+	// unless something wires it up. The real (non-demo) path only does
+	// that deep inside the Kubernetes-mode provider setup, which demo mode
+	// never reaches, so without this GET /api/v1/prs silently returned an
+	// empty list forever. Backed by an in-memory fake Kubernetes clientset
+	// (cmstore.Store just needs SOMETHING implementing kubernetes.Interface;
+	// nothing here ever talks to a real cluster) and seeded directly via
+	// TrackPR — no polling goroutine is started, since a static demo
+	// estate never changes and the mock Git provider has no matching
+	// branches for the tracker's poll loop to reconcile against anyway.
+	prCMStore := cmstore.NewStore(k8sfake.NewSimpleClientset(), "sharko", "sharko-demo-pr-tracker")
+	prTracker := prtracker.NewTracker(prCMStore, func() prtracker.GitProvider { return mockGit }, func(audit.Entry) {})
+	for _, pr := range demoTrackedPRs(estate) {
+		if trackErr := prTracker.TrackPR(context.Background(), pr); trackErr != nil {
+			slog.Warn("demo: could not seed tracked PR", "pr_id", pr.PRID, "error", trackErr, "component", "demo")
+		}
+	}
+	srv.SetPRTracker(prTracker)
+
+	// 10. State-coverage wiring (maintainer scope addition, folded into
+	// S1) — ONLY for a generated (non-default) estate, so the small
+	// hand-written estate's behavior is completely unchanged. Two more
+	// consumers read live state through a k8s client the demo previously
+	// never provided at all:
+	//
+	//   - The cluster-secret reconciler (internal/clusterreconciler) is
+	//     the sole holder of "is this cluster's ArgoCD-connection Secret
+	//     labeled app.kubernetes.io/managed-by=sharko" — the signal
+	//     behind models.Cluster.AlreadyManagedBySharko (owned vs
+	//     "takeover-eligible") and the orphan-registration ownership
+	//     gate. Constructed but never Started — no background reconcile
+	//     loop runs; only ClientAndNamespace() is ever called, giving
+	//     read access to the fake Secrets seeded below.
+	//   - The observations store (internal/observations) persists the
+	//     SharkoStatus 5-state model (Unknown/Connected/Verified/
+	//     Operational/Unreachable), normally only reachable by manually
+	//     clicking "Test connection" per cluster.
+	//
+	// Both are backed by ONE shared fake Kubernetes clientset, pre-seeded
+	// with a Secret per cluster (labeled by default; see
+	// estate.ForeignSecretClusterNames / MissingClusterNames /
+	// ArgoOnlyClusters for the exceptions) — nothing here ever talks to a
+	// real cluster.
+	if estate != nil {
+		demoK8s := k8sfake.NewSimpleClientset(buildDemoClusterSecrets(estate)...)
+
+		clusterRecon := clusterreconciler.New(clusterreconciler.Deps{
+			CMStore:     cmstore.NewStore(demoK8s, "sharko", "sharko-demo-cluster-reconciler"),
+			GitProvider: func() gitprovider.GitProvider { return mockGit },
+			ArgoClient:  demoK8s,
+			Vault:       credProvider,
+			AuditFn:     func(audit.Entry) {},
+		})
+		srv.SetClusterReconciler(clusterRecon)
+
+		obsStore := observations.NewStore(demoK8s, "argocd")
+		for _, seed := range estate.ObservationSeeds {
+			result := verify.Result{Stage: seed.Stage, Success: seed.Success, DurationMs: 1200}
+			if !seed.Success {
+				result.ErrorCode = verify.ERR_NETWORK
+				result.ErrorMessage = "dial tcp: connect: connection refused"
+			}
+			if seedErr := obsStore.RecordTestResult(context.Background(), seed.ClusterName, result); seedErr != nil {
+				slog.Warn("demo: could not seed observation", "cluster", seed.ClusterName, "error", seedErr, "component", "demo")
+			}
+		}
+		srv.SetObservationsStore(obsStore)
+	}
+
 	cleanup = func() {
 		mockArgocd.Close()
 	}
 	return cleanup, nil
+}
+
+// buildDemoClusterSecrets renders one corev1.Secret per cluster the fake
+// Kubernetes clientset needs for the cluster-reconciler's ownership checks
+// (step 10 above) — named after the cluster in the "argocd" namespace,
+// exactly like the real argosecrets-managed ArgoCD cluster Secret.
+// Labeled app.kubernetes.io/managed-by=sharko by default; unlabeled
+// ("foreign") for estate.ForeignSecretClusterNames and the
+// not-SharkoOwned half of estate.ArgoOnlyClusters (the takeover-eligible
+// and plain-not_in_git exemplars); omitted entirely for
+// estate.MissingClusterNames (the "missing ArgoCD secret" exemplar).
+func buildDemoClusterSecrets(estate *GeneratedEstate) []runtime.Object {
+	missing := make(map[string]bool, len(estate.MissingClusterNames))
+	for _, name := range estate.MissingClusterNames {
+		missing[name] = true
+	}
+	foreign := make(map[string]bool, len(estate.ForeignSecretClusterNames))
+	for _, name := range estate.ForeignSecretClusterNames {
+		foreign[name] = true
+	}
+
+	newSecret := func(name string, owned bool) *corev1.Secret {
+		labels := map[string]string{}
+		if owned {
+			labels[clusterreconciler.LabelManagedBy] = clusterreconciler.LabelValueSharko
+		}
+		return &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: "argocd",
+				Labels:    labels,
+			},
+			Data: map[string][]byte{
+				"name":   []byte(name),
+				"server": []byte("https://k8s." + name + ".demo.internal"),
+			},
+		}
+	}
+
+	objs := make([]runtime.Object, 0, len(estate.Clusters)+len(estate.ArgoOnlyClusters))
+	for _, c := range estate.Clusters {
+		if missing[c.Name] {
+			continue
+		}
+		objs = append(objs, newSecret(c.Name, !foreign[c.Name]))
+	}
+	for _, ao := range estate.ArgoOnlyClusters {
+		objs = append(objs, newSecret(ao.Cluster.Name, ao.SharkoOwned))
+	}
+	return objs
+}
+
+// demoTrackedPRs returns the PR-tracker feed for /api/v1/prs. For a
+// generated estate it's estate.TrackedPRs (S1's dozens-of-PRs feature). For
+// the default (nil estate) size it mirrors the 2 PRs mock_git.go seeds
+// directly into the mock Git provider (PR 41 the staging-eu cert-manager
+// upgrade, PR 42 the dr-eu registration) so the small estate's PR panel
+// isn't empty either — a fix, not a change to the fixture's shape.
+func demoTrackedPRs(estate *GeneratedEstate) []prtracker.PRInfo {
+	if estate != nil {
+		return estate.TrackedPRs
+	}
+	return []prtracker.PRInfo{
+		{
+			PRID:       41,
+			PRUrl:      "https://github.com/demo/sharko-addons/pull/41",
+			PRBranch:   "sharko/upgrade-cert-manager-staging-eu",
+			PRTitle:    "sharko: upgrade cert-manager 1.13.6 → 1.14.4 on staging-eu",
+			PRBase:     "main",
+			Cluster:    "staging-eu",
+			Addon:      "cert-manager",
+			Operation:  prtracker.OpAddonUpgrade,
+			User:       "sharko-bot",
+			Source:     "ui",
+			CreatedAt:  time.Date(2025, 1, 18, 9, 0, 0, 0, time.UTC),
+			LastStatus: "open",
+			LastPolled: time.Date(2025, 1, 18, 9, 0, 0, 0, time.UTC),
+		},
+		{
+			PRID:       42,
+			PRUrl:      "https://github.com/demo/sharko-addons/pull/42",
+			PRBranch:   "sharko/register-dr-eu",
+			PRTitle:    "sharko: register cluster dr-eu",
+			PRBase:     "main",
+			Cluster:    "dr-eu",
+			Operation:  prtracker.OpRegisterCluster,
+			User:       "sharko-bot",
+			Source:     "ui",
+			CreatedAt:  time.Date(2025, 1, 19, 14, 22, 0, 0, time.UTC),
+			LastStatus: "open",
+			LastPolled: time.Date(2025, 1, 19, 14, 22, 0, 0, time.UTC),
+		},
+	}
 }
 
 // --- In-memory config.Store implementation ---
