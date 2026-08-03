@@ -90,6 +90,17 @@ type StatusFilter =
   | 'missing_from_argocd'
   | 'not_in_git';
 
+// Every real StatusFilter value — used to validate a `?status=` deep-link
+// param before trusting it as the initial filter (see the useState below).
+const VALID_STATUS_FILTERS: readonly StatusFilter[] = [
+  'all',
+  'connected',
+  'disconnected',
+  'failed',
+  'missing_from_argocd',
+  'not_in_git',
+];
+
 interface Filters {
   name: string;
   versions: string[];
@@ -215,7 +226,19 @@ export function ClustersOverview() {
     // aliases to the existing `disconnected` problem-subset filter
     // (connection failures), the closest real filter this page has,
     // rather than silently ignoring the param.
-    initialStatus === 'disconnected' || initialStatus === 'issues' ? 'disconnected' : 'all'
+    //
+    // Bug fix (S5, scale-walk grounding): every other StatusFilter value
+    // (`connected`, `failed`, `missing_from_argocd`, `not_in_git`) is a
+    // real filter the row-list switch below already understands, but this
+    // initial-state mapping only ever recognized `disconnected`/`issues` —
+    // a deep link like `?status=connected` (the dashboard donut's
+    // "connected" row, S5) silently fell through to `all` instead of
+    // actually filtering. Recognize any valid StatusFilter value directly.
+    initialStatus === 'disconnected' || initialStatus === 'issues'
+      ? 'disconnected'
+      : (VALID_STATUS_FILTERS as readonly string[]).includes(initialStatus ?? '')
+        ? (initialStatus as StatusFilter)
+        : 'all'
   );
   const [filters, setFilters] = useState<Filters>({
     name: '',

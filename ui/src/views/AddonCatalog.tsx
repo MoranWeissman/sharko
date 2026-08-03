@@ -50,6 +50,7 @@ import {
 } from '@/components/AddAddonFlow'
 import { PRModelExplainer } from '@/components/PRFeedback'
 import { VersionMatrixTable } from '@/components/VersionMatrixTable'
+import { BehindCatalogList } from '@/components/BehindCatalogList'
 import {
   Dialog,
   DialogContent,
@@ -1867,12 +1868,19 @@ export function AddonCatalog() {
       </div>
 
       {viewMode === 'matrix' && (
-        <VersionMatrixTable
-          outdatedOnly={matrixOutdatedOnly}
-          onClearOutdatedFilter={clearMatrixOutdatedFilter}
-          behindCatalogOnly={matrixBehindCatalogOnly}
-          onClearBehindCatalogFilter={clearMatrixBehindCatalogFilter}
-        />
+        matrixBehindCatalogOnly ? (
+          // S6 (scale-walk) — behind-catalog used to render the full
+          // 50-column matrix filtered by row (maintainer's screenshot
+          // verdict: "a big mess", cut off). A flat, addon-grouped list
+          // reads instead; the matrix itself is untouched and still used
+          // for the "outdated" filter below.
+          <BehindCatalogList onClear={clearMatrixBehindCatalogFilter} />
+        ) : (
+          <VersionMatrixTable
+            outdatedOnly={matrixOutdatedOnly}
+            onClearOutdatedFilter={clearMatrixOutdatedFilter}
+          />
+        )
       )}
 
       {viewMode !== 'matrix' && (

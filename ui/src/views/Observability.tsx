@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   BarChart,
   Bar,
@@ -539,6 +539,11 @@ interface AddonGroupsSectionProps {
    * in AttentionSection.tsx. Already includes cluster connection problems,
    * so this component doesn't need the raw cluster count separately. */
   totalOpenIssues: number;
+  /** S5 (scale-walk) — the dashboard's "not healthy" donut row deep-links
+   * here with `?health=issues`. When true, the addon/cluster lists below
+   * narrow to problem entries only, with a dismissible chip to clear it. */
+  issuesOnly?: boolean;
+  onClearIssuesOnly?: () => void;
 }
 
 function AddonGroupsSection({
@@ -548,6 +553,8 @@ function AddonGroupsSection({
   driftRows,
   orphanAddonRows,
   totalOpenIssues,
+  issuesOnly = false,
+  onClearIssuesOnly,
 }: AddonGroupsSectionProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sortMode, setSortMode] = useState<'issues' | 'alpha'>('issues');
@@ -656,6 +663,20 @@ function AddonGroupsSection({
     return copy;
   }, [filteredClusterGroups, sortMode]);
 
+  // S5 — health=issues narrows to problem entries only, applied after sort
+  // so relative order is unaffected. Addon view reuses the same tier
+  // classification as the sort key above (groupProblems); cluster view
+  // reuses the same non-healthy count already used for its own sorting.
+  const visibleAddonGroups = useMemo(() => {
+    if (!issuesOnly) return sortedAddonGroups;
+    return sortedAddonGroups.filter((g) => (groupProblems.get(g.addon_name)?.tier ?? 'none') !== 'none');
+  }, [sortedAddonGroups, issuesOnly, groupProblems]);
+
+  const visibleClusterGroups = useMemo(() => {
+    if (!issuesOnly) return sortedClusterGroups;
+    return sortedClusterGroups.filter((cg) => cg.addons.some((a) => a.health.toLowerCase() !== 'healthy'));
+  }, [sortedClusterGroups, issuesOnly]);
+
   const toggle = (name: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -675,23 +696,23 @@ function AddonGroupsSection({
     setPage(1);
   };
 
-  // Reset page when search/sort/pageSize changes
+  // Reset page when search/sort/pageSize/issues-filter changes
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, sortMode, pageSize, groupBy]);
+  }, [searchTerm, sortMode, pageSize, groupBy, issuesOnly]);
 
-  // Paginate the sorted groups
+  // Paginate the sorted (and, when active, issues-only-filtered) groups
   const totalPages = Math.ceil(
-    (groupBy === 'addon' ? sortedAddonGroups.length : sortedClusterGroups.length) / pageSize
+    (groupBy === 'addon' ? visibleAddonGroups.length : visibleClusterGroups.length) / pageSize
   );
   const paginatedAddonGroups = useMemo(() => {
     const start = (page - 1) * pageSize;
-    return sortedAddonGroups.slice(start, start + pageSize);
-  }, [sortedAddonGroups, page, pageSize]);
+    return visibleAddonGroups.slice(start, start + pageSize);
+  }, [visibleAddonGroups, page, pageSize]);
   const paginatedClusterGroups = useMemo(() => {
     const start = (page - 1) * pageSize;
-    return sortedClusterGroups.slice(start, start + pageSize);
-  }, [sortedClusterGroups, page, pageSize]);
+    return visibleClusterGroups.slice(start, start + pageSize);
+  }, [visibleClusterGroups, page, pageSize]);
 
   const hasGroups = !!groups && groups.length > 0;
   const hasIssues = totalOpenIssues > 0;
@@ -803,14 +824,34 @@ function AddonGroupsSection({
 
       {/* Open issues — a plain one-line count, always the first thing in
           this section (walk-day lock: no chips, no separate expandable
-          list — the per-addon groups below already show every problem). */}
-      <div className="mb-4">
+          list — the per-addon groups below already show every problem).
+          The one exception (S5, scale-walk): the dashboard's "not healthy"
+          donut row deep-links here with ?health=issues — when that's
+          active, a dismissible chip says so and clears back to the full
+          list, same pattern as the version matrix's filter chips. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         {hasIssues ? (
           <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400">
             Open issues ({totalOpenIssues})
           </h3>
         ) : (
           <p className="text-sm text-[#2a5a7a] dark:text-gray-400">No open issues.</p>
+        )}
+        {issuesOnly && (
+          <span
+            data-testid="health-issues-chip"
+            className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:ring-amber-800"
+          >
+            problem apps only
+            <button
+              type="button"
+              onClick={onClearIssuesOnly}
+              aria-label="Clear the problem-apps filter"
+              className="rounded-full hover:text-amber-900 dark:hover:text-amber-200"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
         )}
       </div>
 
@@ -1450,6 +1491,19 @@ function bootstrapHealthColor(health: string): { dot: string; badge: string } {
 // ---------------------------------------------------------------------------
 
 export function Observability() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  // S5 (scale-walk) — the dashboard's addon-applications donut deep-links
+  // its "not healthy" row here as ?health=issues (kept before the #hash so
+  // it actually lands in location.search — a hash-then-query URL would put
+  // it inside the fragment instead, invisible to useSearchParams). Narrows
+  // the Health section below to problem apps/clusters only.
+  const [issuesOnly, setIssuesOnly] = useState(searchParams.get('health') === 'issues');
+  const clearIssuesOnly = useCallback(() => {
+    setIssuesOnly(false);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('health');
+    setSearchParams(params, { replace: true });
+  }, [searchParams, setSearchParams]);
   const [data, setData] = useState<ObservabilityOverviewResponse | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [argoCDUrl, setArgoCDUrl] = useState<string | null>(null);
@@ -1635,6 +1689,8 @@ export function Observability() {
           driftRows={driftRows}
           orphanAddonRows={orphanAddonRows}
           totalOpenIssues={totalOpenIssues}
+          issuesOnly={issuesOnly}
+          onClearIssuesOnly={clearIssuesOnly}
         />
         <ControlPlaneSection data={data.control_plane} stats={stats} argoCDUrl={argoCDUrl} />
         <EmptyState
@@ -1663,6 +1719,8 @@ export function Observability() {
         driftRows={driftRows}
         orphanAddonRows={orphanAddonRows}
         totalOpenIssues={totalOpenIssues}
+        issuesOnly={issuesOnly}
+        onClearIssuesOnly={clearIssuesOnly}
       />
       <SyncActivitySection syncs={data.recent_syncs ?? []} />
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">

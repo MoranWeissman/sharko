@@ -137,30 +137,32 @@ describe('Dashboard', () => {
 
 });
 
-// Walk day 3 lock (formerly WQ-3 attention-move-badges): the detailed
-// "Open issues" rows live inside Observability's Fleet Health section.
-// Named cluster/addon rows + their deep links are tested there now
-// (Observability.test.tsx) — the Dashboard keeps only the thin count line,
-// tested below.
-describe('Dashboard thin issues line (walk day 3)', () => {
+// Walk day 3 lock (formerly WQ-3 attention-move-badges), split into plain
+// buckets by the scale-walk (S1): the detailed "Open issues" rows live
+// inside Observability's Fleet Health section. Named cluster/addon rows +
+// their deep links are tested there now (Observability.test.tsx) — the
+// Dashboard keeps two small cards, one per bucket, tested below.
+describe('Dashboard thin issues line (walk day 3, split into buckets S1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('shows the confirmed-problem count and navigates to /observability#addon-health on click', async () => {
+  it('shows the cluster-problem count and navigates to /clusters?status=disconnected on click (no addon problems in this fixture)', async () => {
     // baseStats default mock already has 1 failed + 1 missing = 2 cluster
-    // problems; no addon problems in this fixture, so the line reads "2".
+    // problems; no addon problems in this fixture, so only the clusters
+    // card renders.
     renderDashboard();
 
-    const line = await screen.findByText(/2 open issues/i);
+    const line = await screen.findByText(/2 clusters unreachable/i);
+    expect(screen.queryByText(/app.*unhealthy/i)).not.toBeInTheDocument();
     fireEvent.click(line);
-    expect(mockNavigate).toHaveBeenCalledWith('/observability#addon-health');
+    expect(mockNavigate).toHaveBeenCalledWith('/clusters?status=disconnected');
   });
 
   // A freshly-observed degraded addon starts inside the 10-minute settling
   // window (see useAddonStates.tsx SETTLING_WINDOW_MS) — it must NOT bump
-  // the thin line's count while settling. The confirmed-vs-settling split
-  // itself (badSince timing) is unit-tested directly against
+  // the apps-unhealthy count while settling. The confirmed-vs-settling
+  // split itself (badSince timing) is unit-tested directly against
   // splitAddonStates in AttentionSection.test.tsx, where a fabricated
   // badSince can be placed outside the window without fighting real timers.
   it('a freshly-degraded addon (still settling) does NOT bump the count', async () => {
@@ -170,8 +172,10 @@ describe('Dashboard thin issues line (walk day 3)', () => {
     renderDashboard();
 
     // Still just the 2 cluster problems from baseStats — the addon is
-    // settling, not confirmed, so it isn't counted yet.
-    expect(await screen.findByText(/2 open issues/i)).toBeInTheDocument();
+    // settling, not confirmed, so it isn't counted yet, and no apps card
+    // renders at all.
+    expect(await screen.findByText(/2 clusters unreachable/i)).toBeInTheDocument();
+    expect(screen.queryByText(/app.*unhealthy/i)).not.toBeInTheDocument();
   });
 
   it('shows the singular form for a count of one', async () => {
@@ -181,8 +185,47 @@ describe('Dashboard thin issues line (walk day 3)', () => {
     });
     renderDashboard();
 
-    expect(await screen.findByText(/1 open issue\b/i)).toBeInTheDocument();
-    expect(screen.queryByText(/1 open issues/i)).not.toBeInTheDocument();
+    expect(await screen.findByText(/1 cluster unreachable\b/i)).toBeInTheDocument();
+    expect(screen.queryByText(/1 clusters unreachable/i)).not.toBeInTheDocument();
+  });
+
+  // The confirmed-vs-settling badSince clock lives client-side in
+  // useAddonStates (started the moment a bad app is first observed — see
+  // that file's honesty note), so getting a genuinely CONFIRMED (not
+  // settling) app problem through a full render means moving the clock
+  // forward past the 10-minute window, then forcing a re-render so
+  // splitAddonStates re-evaluates against the later "now". The manual
+  // refresh button does that (it re-polls addon state too — the item is
+  // still degraded, so its badSince anchor is untouched, only its age is).
+  it('shows both cards, each with its own link, once an addon problem clears the settling window', async () => {
+    const startTime = Date.now();
+    const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(startTime);
+    // Isolate from the previous test's mockResolvedValue override, which
+    // persists past vi.clearAllMocks() (that only clears call history) —
+    // this test needs baseStats's 2-cluster-problem fixture back.
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    (api.getAttentionItems as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { app_name: 'cert-manager-prod', addon_name: 'cert-manager', cluster: 'prod', health: 'Degraded', sync: 'Synced' },
+    ]);
+    renderDashboard();
+
+    // Still settling at mount — only the clusters card shows.
+    await screen.findByText(/2 clusters unreachable/i);
+    expect(screen.queryByText(/app.*unhealthy/i)).not.toBeInTheDocument();
+
+    dateSpy.mockReturnValue(startTime + 11 * 60 * 1000);
+    fireEvent.click(screen.getByTitle('Refresh'));
+
+    const appsLine = await screen.findByText(/1 app unhealthy/i);
+    const clustersLine = await screen.findByText(/2 clusters unreachable/i);
+
+    fireEvent.click(appsLine);
+    expect(mockNavigate).toHaveBeenCalledWith('/observability#addon-health');
+    fireEvent.click(clustersLine);
+    expect(mockNavigate).toHaveBeenCalledWith('/clusters?status=disconnected');
+
+    dateSpy.mockRestore();
   });
 
   it('renders nothing when there are no confirmed problems (quiet work-queue page)', async () => {

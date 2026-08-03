@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   Server, AlertTriangle,
   Clock, ChevronRight, ShieldAlert, RefreshCw,
-  Hourglass, Store, PlusCircle
+  Store, PlusCircle
 } from 'lucide-react';
 import { api } from '@/services/api';
 import type { DashboardStats, SyncActivityEntry, ClustersResponse } from '@/services/models';
@@ -25,7 +25,7 @@ import {
 import { splitAddonStates } from '@/components/AttentionSection';
 import { prettyOperation } from '@/lib/utils';
 import type { TrackedPR } from '@/services/models';
-import { useAddonStates, deepLinkToAddonOnCluster } from '@/hooks/useAddonStates';
+import { useAddonStates } from '@/hooks/useAddonStates';
 
 // --- Time ago helpers ---
 
@@ -164,7 +164,6 @@ export function Dashboard() {
   // / ClusterDetail. The provider polls /dashboard/attention once for the
   // whole app.
   const { byApp: addonStateMap, refresh: refreshAddonStates } = useAddonStates();
-  const [showProgressing, setShowProgressing] = useState(false);
   // ArgoCD-unreachable is the ONLY signal the machinery banner needs — the
   // detailed cluster attention rows live on Observability now (WQ-3).
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
@@ -302,12 +301,14 @@ export function Dashboard() {
   const appTotal = stats.applications.total;
   const healthyCount = stats.applications.by_health_status.healthy;
 
-  // Confirmed (non-settling) addon problems + Progressing items — the same
-  // split Observability's detail rows use (components/AttentionSection.tsx),
-  // so the Dashboard's thin line agrees with the detail page byte-for-byte.
-  // Settling/unknown/drift rows and their names+links are Observability's
-  // job now (WQ-3) — Dashboard only needs the confirmed COUNT.
-  const { confirmed: confirmedAddonItems, progressing: progressingItems } = splitAddonStates(addonStateMap);
+  // Confirmed (non-settling) addon problems — the same split Observability's
+  // detail rows use (components/AttentionSection.tsx), so the Dashboard's
+  // issues line agrees with the detail page byte-for-byte. Settling/unknown/
+  // drift rows and their names+links are Observability's job now (WQ-3) —
+  // Dashboard only needs the confirmed COUNT. Progressing apps are not an
+  // issue (walk finding) — they no longer appear on this page at all; see
+  // Observability for that state.
+  const { confirmed: confirmedAddonItems } = splitAddonStates(addonStateMap);
   const redAppCount = confirmedAddonItems.length;
   // The Dashboard's own "how many clusters are actually disconnected"
   // number comes from the server's single classification (Package 1), not
@@ -420,69 +421,41 @@ export function Dashboard() {
         />
       )}
 
-      {/* Thin issues line (walk day 3 lock, maintainer's "middle option") —
-          the detailed rows live on Observability's Health section;
-          the Dashboard keeps just this one line, and only when there's
-          something confirmed to look at. Same count as the Observability
-          nav badge (one truth, two mirrors — components/AttentionSection.tsx's
-          getConfirmedProblemCount). Renders nothing at zero — a quiet
-          work-queue page has nothing to announce. */}
-      {confirmedProblemCount > 0 && (
-        <button
-          onClick={() => navigate('/observability#addon-health')}
-          className="flex w-full items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-left text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/30"
-        >
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          {confirmedProblemCount} open issue{confirmedProblemCount !== 1 ? 's' : ''}
-          <ChevronRight className="ml-auto h-4 w-4 shrink-0" />
-        </button>
-      )}
+      {/* Issues line, split into plain buckets (walk finding: a glued-
+          together total like "120 open issues" reads scary and says
+          nothing about what's actually wrong). Two separate counts —
+          unhealthy apps and unreachable clusters — each its own small
+          card, each with its own deep link, each rendered only when its
+          count is above zero. Same underlying numbers as before
+          (confirmedProblemCount == redAppCount + clusterProblemCount,
+          components/AttentionSection.tsx's getConfirmedProblemCount) —
+          only the presentation changed. Renders nothing at zero — a quiet
+          work-queue page has nothing to announce.
 
-      {/* Progressing widget — apps can still be healthy while progressing;
-          subtle blue styling so it doesn't read as a hard error. Click an
-          addon name to land on the cluster's addon row for debugging. */}
-      {progressingItems.length > 0 && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50/60 dark:border-blue-800 dark:bg-blue-900/10">
-          <div className="flex items-center justify-between p-4 pb-2">
-            <div className="flex items-center gap-2 text-blue-700 dark:text-blue-300">
-              <Hourglass className="h-4 w-4" />
-              <h3 className="text-sm font-semibold">Progressing — usually temporary</h3>
-            </div>
+          Progressing is not an issue (maintainer's verdict) — it no
+          longer renders on this page at all. It's still visible on
+          Observability. */}
+      {confirmedProblemCount > 0 && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {redAppCount > 0 && (
             <button
-              onClick={() => setShowProgressing(!showProgressing)}
-              aria-expanded={showProgressing}
-              className="flex items-center gap-2 rounded-lg border border-blue-200 bg-white/70 px-3 py-1.5 text-sm text-blue-700 hover:bg-white dark:border-blue-700 dark:bg-gray-800 dark:text-blue-300"
+              onClick={() => navigate('/observability#addon-health')}
+              className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-left text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/30"
             >
-              <div className="h-2 w-2 rounded-full bg-blue-500" />
-              {progressingItems.length} app{progressingItems.length !== 1 ? 's' : ''} progressing
-              <ChevronRight className={`h-3 w-3 transition-transform ${showProgressing ? 'rotate-90' : ''}`} />
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {redAppCount} app{redAppCount !== 1 ? 's' : ''} unhealthy
+              <ChevronRight className="ml-auto h-4 w-4 shrink-0" />
             </button>
-          </div>
-          {showProgressing && (
-            <div className="border-t border-blue-200/70 p-3 dark:border-blue-800/60">
-              <p className="mb-2 text-sm text-blue-700/80 dark:text-blue-300/80">
-                Apps in this state are still considered healthy. ArgoCD is rolling out a change or waiting on a workload.
-                Click an addon to investigate on its cluster page.
-              </p>
-              <div className="max-h-64 overflow-y-auto space-y-1.5">
-                {progressingItems.map((item, i) => (
-                  <div key={`prog-${item.addonName}@${item.cluster}-${i}`} className="flex items-center gap-3 rounded-lg bg-white/70 px-3 py-2 text-xs dark:bg-gray-800">
-                    <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-blue-500" />
-                    <Link
-                      to={item.cluster ? deepLinkToAddonOnCluster(item.addonName, item.cluster) : `/addons/${encodeURIComponent(item.addonName)}`}
-                      className="flex-1 truncate font-medium text-card-foreground hover:text-teal-600 hover:underline dark:hover:text-teal-400"
-                      title="Investigate on cluster page"
-                    >
-                      {item.appName || item.addonName}
-                      {item.cluster && <span className="ml-1 text-muted-foreground font-normal">on {item.cluster}</span>}
-                    </Link>
-                    <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
-                      Progressing
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
+          )}
+          {clusterProblemCount > 0 && (
+            <button
+              onClick={() => navigate('/clusters?status=disconnected')}
+              className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-left text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/30"
+            >
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {clusterProblemCount} cluster{clusterProblemCount !== 1 ? 's' : ''} unreachable
+              <ChevronRight className="ml-auto h-4 w-4 shrink-0" />
+            </button>
           )}
         </div>
       )}

@@ -429,6 +429,62 @@ describe('ClustersOverview', () => {
     expect(screen.queryByText('discovered-cluster')).not.toBeInTheDocument();
   });
 
+  // S5 (scale-walk) — the dashboard donut's "connected" legend row now
+  // deep-links here as ?status=connected. Bug found during grounding: the
+  // initial-state mapping only ever special-cased `disconnected`/`issues`,
+  // so `?status=connected` silently fell through to `all` even though the
+  // row-filter switch below has always understood the `connected` case
+  // (reachable by clicking the equivalent legend/segment button by hand).
+  it('?status=connected filter resolves to connected managed clusters only', async () => {
+    const mixedDisconnected = {
+      clusters: [
+        {
+          name: 'prod-eu',
+          labels: { env: 'prod' },
+          server_version: '1.28',
+          connection_status: 'connected',
+          managed: true,
+        },
+        {
+          name: 'failing-cluster',
+          labels: { env: 'staging' },
+          server_version: '1.27',
+          connection_status: 'failed',
+          managed: true,
+        },
+        {
+          name: 'unknown-cluster',
+          labels: { env: 'lab' },
+          server_version: '1.28',
+          connection_status: 'unknown',
+          managed: true,
+        },
+      ],
+      health_stats: {
+        total_in_git: 3,
+        connected: 1,
+        failed: 1,
+        missing_from_argocd: 0,
+        not_in_git: 0,
+      },
+    };
+    mockGetClusters.mockResolvedValue(mixedDisconnected);
+
+    render(
+      <MemoryRouter initialEntries={["/clusters?status=connected"]}>
+        <ClustersOverview />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    expect(screen.queryByText('failing-cluster')).not.toBeInTheDocument();
+    expect(screen.queryByText('unknown-cluster')).not.toBeInTheDocument();
+  });
+
   // BUG-041: Test button on each cluster row must be disabled (with a
   // tooltip pointing at Settings → Connections) when /api/v1/health
   // reports cluster_test_available=false. That happens whenever no

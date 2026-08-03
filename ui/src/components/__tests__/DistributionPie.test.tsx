@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { DistributionPie, breakdownSentence, DISTRIBUTION_PIE_SIZE, type DistributionSlice } from '@/components/DistributionPie';
 
 // The shared middle-size distribution pie (maintainer's lock, #685) — one
@@ -104,6 +105,72 @@ describe('DistributionPie', () => {
     expect(dot?.className).toContain('bg-muted-foreground');
     // Never one of the per-slice status colors.
     expect(dot?.className).not.toMatch(/text-\[#/);
+  });
+
+  // S5 (scale-walk) — opt-in per-row link capability.
+  describe('per-row links (S5)', () => {
+    const linkableSlices: DistributionSlice[] = [
+      { key: 'connected', label: 'connected', value: 8, colorClass: 'text-[#16a34a]', href: '/clusters?status=connected' },
+      { key: 'connecting', label: 'connecting', value: 2, colorClass: 'text-[#3b82f6]' },
+    ];
+
+    it('renders a real, keyboard-reachable link for a slice with an href, and a plain row for one without', () => {
+      render(
+        <MemoryRouter>
+          <DistributionPie slices={linkableSlices} ariaPrefix="Clusters" legendTestId="legend" />
+        </MemoryRouter>,
+      );
+
+      const legend = screen.getByTestId('legend');
+      const connectedLink = within(legend).getByRole('link', { name: /connected\s*8/ });
+      expect(connectedLink).toHaveAttribute('href', '/clusters?status=connected');
+
+      // "connecting" has no href — no link role for it, plain text only.
+      expect(within(legend).getByText('connecting')).toBeInTheDocument();
+      expect(within(legend).queryByRole('link', { name: /connecting/ })).not.toBeInTheDocument();
+    });
+
+    it('a row link does not double-fire a wrapping click handler (stopPropagation)', () => {
+      const outerClick = vi.fn();
+      render(
+        <MemoryRouter>
+          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+          <div onClick={outerClick}>
+            <DistributionPie slices={linkableSlices} ariaPrefix="Clusters" legendTestId="legend" />
+          </div>
+        </MemoryRouter>,
+      );
+
+      const legend = screen.getByTestId('legend');
+      const connectedLink = within(legend).getByRole('link', { name: /connected\s*8/ });
+      fireEvent.click(connectedLink);
+
+      // The row's own click stopped propagation — the wrapping handler
+      // (standing in for FleetStatusStrip's whole-segment click) never fires.
+      expect(outerClick).not.toHaveBeenCalled();
+    });
+
+    it('showTotalRow + totalHref renders the total row as a link too', () => {
+      render(
+        <MemoryRouter>
+          <DistributionPie slices={linkableSlices} ariaPrefix="Clusters" legendTestId="legend" showTotalRow totalHref="/clusters" />
+        </MemoryRouter>,
+      );
+
+      const legend = screen.getByTestId('legend');
+      const totalLink = within(legend).getByRole('link', { name: /total\s*10/ });
+      expect(totalLink).toHaveAttribute('href', '/clusters');
+    });
+
+    it('the legend is reachable to screen readers when rows are interactive (legendAriaHidden left unset)', () => {
+      render(
+        <MemoryRouter>
+          <DistributionPie slices={linkableSlices} ariaPrefix="Clusters" legendTestId="legend" />
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByTestId('legend')).not.toHaveAttribute('aria-hidden');
+    });
   });
 
   it('renders an empty ring and an empty legend when every slice is zero', () => {

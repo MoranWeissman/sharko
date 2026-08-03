@@ -228,19 +228,29 @@ describe('PullRequestsPanel V125-1-6', () => {
     expect(screen.queryByText('Open')).not.toBeInTheDocument()
   })
 
-  // Merged-tab category chips filtered by title-substring guessing and
-  // silently dropped PRs that didn't match — removed entirely, even when
-  // the list is long enough that the search box (which doesn't drop rows)
-  // shows.
-  it('Merged tab never shows category chips, even with a long list', async () => {
+  // S2 (scale-walk) fix: the Merged tab now honors category chips too,
+  // filtering client-side via categorizeMergedTitle's best-effort title
+  // match (the merge endpoint's own `operation` field is a near-useless
+  // guess — see that function's comment). Previously the chips were
+  // removed entirely on this tab; now they render just like Pending's.
+  it('Merged tab shows category chips too, and clicking one narrows the list (S2 fix)', async () => {
     vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: [] })
-    const merged = []
-    for (let i = 0; i < 12; i++) {
+    const merged = [
+      {
+        pr_id: 300,
+        pr_url: 'https://github.com/test/repo/pull/300',
+        pr_branch: 'sharko/register-prod',
+        pr_title: 'sharko: register cluster prod',
+        merged_at: new Date().toISOString(),
+        author: 'admin',
+      },
+    ]
+    for (let i = 0; i < 11; i++) {
       merged.push({
         pr_id: 200 + i,
         pr_url: `https://github.com/test/repo/pull/${200 + i}`,
         pr_branch: `sharko/example-${i}`,
-        pr_title: `Merged PR ${i}`,
+        pr_title: `sharko: add addon datadog-${i}`,
         merged_at: new Date().toISOString(),
         author: 'admin',
       })
@@ -253,9 +263,17 @@ describe('PullRequestsPanel V125-1-6', () => {
     await waitFor(() => {
       expect(screen.getByRole('tab', { name: 'Merged' })).toHaveAttribute('aria-selected', 'true')
     })
-    // Search survives (list is long enough); category chips never do.
     expect(await screen.findByLabelText('Search PRs')).toBeInTheDocument()
-    expect(screen.queryByRole('group', { name: 'Filter by category' })).not.toBeInTheDocument()
+    const clustersChip = await screen.findByRole('button', { name: 'Clusters' })
+    expect(screen.getByText(/register cluster prod/)).toBeInTheDocument()
+    expect(screen.getByText(/add addon datadog-0\b/)).toBeInTheDocument()
+
+    fireEvent.click(clustersChip)
+
+    await waitFor(() => {
+      expect(screen.getByText(/register cluster prod/)).toBeInTheDocument()
+      expect(screen.queryByText(/add addon datadog/)).not.toBeInTheDocument()
+    })
   })
 
   describe('escape hatch wording is provider-aware', () => {
@@ -374,6 +392,202 @@ describe('PullRequestsPanel V125-1-6', () => {
 
       const pendingButton = screen.getByRole('tab', { name: 'Pending' })
       expect(pendingButton).toHaveAttribute('aria-selected', 'true')
+    })
+  })
+
+  // S2 (scale-walk) — root cause: a category click re-fetches pending with
+  // an operation filter and used to report the FILTERED count to the same
+  // handler that auto-defaults to Merged when pending===0 (meant for the
+  // BASELINE count only). Fixed by keying the auto-default purely off the
+  // baseline (category==='all') fetch.
+  describe('category click never hijacks the tab (S2 fix #1 + #3)', () => {
+    it('a category click with zero matches does not switch to Merged, and the filter bar stays visible', async () => {
+      vi.mocked(api.fetchTrackedPRs).mockImplementation(async (filters?: { operation?: string }) => {
+        if (filters?.operation) {
+          // The narrow category has nothing — elevenPendingPRs() has no
+          // init-repo PR.
+          return { prs: [] }
+        }
+        return { prs: elevenPendingPRs() }
+      })
+      vi.mocked(api.fetchMergedPRs).mockResolvedValue({ prs: [], limit: 100 })
+
+      renderPanel()
+
+      // Baseline loads first — filter bar shows (11 > 10), Pending active.
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search PRs')).toBeInTheDocument()
+      })
+      expect(screen.getByRole('tab', { name: 'Pending' })).toHaveAttribute('aria-selected', 'true')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Init' }))
+
+      await waitFor(() => {
+        expect(screen.getByText('No pending PRs in the selected category.')).toBeInTheDocument()
+      })
+      // The bug: this used to flip to Merged because the FILTERED count
+      // (0) hit the same auto-default handler the baseline count did.
+      expect(screen.getByRole('tab', { name: 'Pending' })).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByLabelText('Search PRs')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Init' })).toBeInTheDocument()
+    })
+
+    it('a genuinely empty baseline (not a category filter) still auto-switches to Merged', async () => {
+      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: [] })
+      vi.mocked(api.fetchMergedPRs).mockResolvedValue({
+        prs: [
+          {
+            pr_id: 900,
+            pr_url: 'https://github.com/test/repo/pull/900',
+            pr_branch: 'sharko/example',
+            pr_title: 'Merged PR example',
+            merged_at: new Date().toISOString(),
+            author: 'admin',
+          },
+        ],
+        limit: 100,
+      })
+
+      renderPanel()
+
+      await waitFor(() => {
+        expect(screen.getByRole('tab', { name: 'Merged' })).toHaveAttribute('aria-selected', 'true')
+      })
+    })
+  })
+
+  // S3 (scale-walk) — both tabs page the already-fetched list 10 at a time.
+  describe('paging (S3)', () => {
+    function fifteenPendingPRs(): TrackedPR[] {
+      const prs: TrackedPR[] = []
+      for (let i = 0; i < 15; i++) {
+        prs.push(trackedPR({ pr_id: 400 + i, operation: 'values-edit', pr_title: `Values PR ${i}` }))
+      }
+      return prs
+    }
+
+    it('shows 10 pending PRs with a "Show more" control, revealing the rest on click — fetch stays capped at 100', async () => {
+      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: fifteenPendingPRs() })
+
+      renderPanel()
+
+      await waitFor(() => {
+        expect(screen.getByText('Values PR 0')).toBeInTheDocument()
+      })
+      expect(screen.getByText('Values PR 9')).toBeInTheDocument()
+      expect(screen.queryByText('Values PR 10')).not.toBeInTheDocument()
+
+      await waitFor(() => {
+        expect(api.fetchTrackedPRs).toHaveBeenCalledWith(expect.objectContaining({ limit: 100 }))
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /show 5 more/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText('Values PR 14')).toBeInTheDocument()
+      })
+      expect(screen.queryByRole('button', { name: /show.*more/i })).not.toBeInTheDocument()
+    })
+
+    it('shows 10 merged PRs with a "Show more" control, revealing the rest on click', async () => {
+      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: [] })
+      const merged = []
+      for (let i = 0; i < 13; i++) {
+        merged.push({
+          pr_id: 500 + i,
+          pr_url: `https://github.com/test/repo/pull/${500 + i}`,
+          pr_branch: `sharko/example-${i}`,
+          pr_title: `Merged example ${i}`,
+          merged_at: new Date().toISOString(),
+          author: 'admin',
+        })
+      }
+      vi.mocked(api.fetchMergedPRs).mockResolvedValue({ prs: merged, limit: 100 })
+
+      renderPanel()
+
+      await waitFor(() => {
+        expect(screen.getByRole('tab', { name: 'Merged' })).toHaveAttribute('aria-selected', 'true')
+      })
+      expect(await screen.findByText(/Merged example 0/)).toBeInTheDocument()
+      expect(screen.queryByText(/Merged example 10/)).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: /show 3 more/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/Merged example 12/)).toBeInTheDocument()
+      })
+    })
+  })
+
+  // S4 (scale-walk) — the AI chip only shows when a real AI PR exists in
+  // the current tab's fetched list.
+  describe('AI chip only when real (S4)', () => {
+    it('is hidden when nothing in the fetched list matches the AI bucket', async () => {
+      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: elevenPendingPRs() })
+
+      renderPanel()
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search PRs')).toBeInTheDocument()
+      })
+      expect(screen.queryByRole('button', { name: 'AI' })).not.toBeInTheDocument()
+    })
+
+    it('shows when an ai-tool-* PR is in the fetched list', async () => {
+      const prs = [
+        ...elevenPendingPRs(),
+        trackedPR({ pr_id: 950, operation: 'ai-tool-enable', pr_title: '[Sharko] Enable cert-manager on prod' }),
+      ]
+      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs })
+
+      renderPanel()
+
+      const aiChip = await screen.findByRole('button', { name: 'AI' })
+      expect(aiChip).toBeInTheDocument()
+    })
+
+    it('falls back to All once the selected AI category has nothing left (its last PR merged away)', async () => {
+      // shouldAdvanceTime keeps real wall-clock time flowing alongside the
+      // fake one, so findByRole/waitFor's own internal polling still
+      // works normally — only the PR panel's setInterval-driven poll needs
+      // the deliberate fast-forward below. Plain vi.useFakeTimers() (no
+      // real-time passthrough) hangs findByRole/waitFor entirely; calling
+      // it only right before the fast-forward misses the interval created
+      // by the earlier chip click (a REAL setInterval already ticking on
+      // the real clock, which a later-installed fake clock can't reach).
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      let aiPRStillOpen = true
+      vi.mocked(api.fetchTrackedPRs).mockImplementation(async (filters?: { operation?: string }) => {
+        const base = elevenPendingPRs()
+        if (aiPRStillOpen) {
+          base.push(trackedPR({ pr_id: 950, operation: 'ai-tool-enable', pr_title: '[Sharko] Enable cert-manager on prod' }))
+        }
+        if (filters?.operation) {
+          const ops = filters.operation.split(',')
+          return { prs: base.filter((pr) => ops.includes(pr.operation)) }
+        }
+        return { prs: base }
+      })
+
+      renderPanel()
+
+      const aiChip = await screen.findByRole('button', { name: 'AI' })
+      fireEvent.click(aiChip)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'AI' }).className).toContain('bg-teal-600')
+      })
+
+      // Simulate the AI PR merging away, then fast-forward past the poll
+      // interval so the panel observes it.
+      aiPRStillOpen = false
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'All' }).className).toContain('bg-teal-600')
+      })
+
+      vi.useRealTimers()
     })
   })
 })
