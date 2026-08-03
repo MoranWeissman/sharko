@@ -45,6 +45,77 @@ func NewMockGitProvider() *MockGitProvider {
 	return p
 }
 
+// NewMockGitProviderWithConfig builds a MockGitProvider sized per cfg. For
+// the default size (cfg.IsDefault()) it defers to NewMockGitProvider
+// unchanged — same hand-written fixture, byte-for-byte, so the small
+// estate's shape never depends on the generator. For any other size it
+// generates a fresh estate and renders both the v3 and v4 layouts from it
+// instead of the hand-written consts.
+func NewMockGitProviderWithConfig(cfg ScaleConfig) (*MockGitProvider, error) {
+	if cfg.IsDefault() {
+		return NewMockGitProvider(), nil
+	}
+	estate, err := GenerateEstate(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("demo: generating estate for mock git provider: %w", err)
+	}
+	return NewMockGitProviderFromEstate(estate)
+}
+
+// NewMockGitProviderFromEstate builds a MockGitProvider directly from an
+// already-generated estate — used by NewMockGitProviderWithConfig, and by
+// SetupDemoServer when it needs the SAME estate shared across the mock git
+// provider, the mock ArgoCD server, and the mock credentials provider
+// (generating it once rather than once per constructor).
+func NewMockGitProviderFromEstate(estate *GeneratedEstate) (*MockGitProvider, error) {
+	p := &MockGitProvider{
+		files:    make(map[string][]byte),
+		branches: map[string]bool{"main": true},
+		nextPRID: 1000, // clear of both the default estate's 41-43 range and TrackedPRs' 100+ range
+	}
+
+	v3Managed, err := renderV3ManagedClusters(estate)
+	if err != nil {
+		return nil, err
+	}
+	p.files["configuration/managed-clusters.yaml"] = v3Managed
+	p.files["configuration/cluster-addons.yaml"] = v3Managed // legacy alias, same as seedFiles
+
+	v3Catalog, err := renderV3AddonsCatalog(estate)
+	if err != nil {
+		return nil, err
+	}
+	p.files["configuration/addons-catalog.yaml"] = v3Catalog
+
+	p.files[orchestrator.BootstrapRootAppPath] = []byte(`apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sharko-engine
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: ghcr.io/moranweissman/sharko
+      chart: sharko-engine
+      targetRevision: 0.1.0
+    - repoURL: https://github.com/demo/sharko-addons
+      targetRevision: main
+      ref: values
+`)
+
+	v4Files, err := buildV4DemoFilesFromEstate(estate)
+	if err != nil {
+		return nil, fmt.Errorf("demo: building v4 fixture files from generated estate: %w", err)
+	}
+	for path, content := range v4Files {
+		p.files[path] = content
+	}
+
+	p.prs = append([]gitprovider.PullRequest(nil), estate.GitPRs...)
+
+	return p, nil
+}
+
 func (p *MockGitProvider) seedFiles() {
 	// managed-clusters.yaml — the file ClusterService.ListClusters reads.
 	// Without this, GET /api/v1/clusters would 500 because the service

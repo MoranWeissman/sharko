@@ -72,9 +72,22 @@ type mockDestination struct {
 }
 
 type mockAppStatus struct {
-	Sync         mockSyncStatus   `json:"sync"`
-	Health       mockHealthStatus `json:"health"`
-	ReconciledAt string           `json:"reconciledAt"`
+	Sync         mockSyncStatus     `json:"sync"`
+	Health       mockHealthStatus   `json:"health"`
+	ReconciledAt string             `json:"reconciledAt"`
+	History      []mockHistoryEntry `json:"history,omitempty"`
+}
+
+// mockHistoryEntry mirrors the ArgoCD application history entry shape
+// internal/argocd/client.go's argocdApplicationItem decodes
+// (status.history[].id/deployedAt/deployStartedAt/revision). Only
+// generated (non-default) estates populate this — the default estate's
+// buildMockApps leaves it nil/omitted, unchanged from before S1.
+type mockHistoryEntry struct {
+	ID              int    `json:"id"`
+	DeployedAt      string `json:"deployedAt"`
+	DeployStartedAt string `json:"deployStartedAt"`
+	Revision        string `json:"revision,omitempty"`
 }
 
 type mockSyncStatus struct {
@@ -88,6 +101,36 @@ type mockHealthStatus struct {
 
 // NewMockArgocdServer creates and starts a mock ArgoCD HTTP server on a random port.
 func NewMockArgocdServer() (*MockArgocdServer, error) {
+	return newMockArgocdServerWithData(buildMockClusters(), buildMockApps())
+}
+
+// NewMockArgocdServerWithConfig builds a mock ArgoCD server sized per cfg.
+// For the default size (cfg.IsDefault()) it defers to NewMockArgocdServer
+// unchanged. For any other size it derives the cluster/application list
+// from a freshly generated estate (GenerateEstate) instead of the
+// hand-written demoClusters/demoAddons.
+func NewMockArgocdServerWithConfig(cfg ScaleConfig) (*MockArgocdServer, error) {
+	if cfg.IsDefault() {
+		return NewMockArgocdServer()
+	}
+	estate, err := GenerateEstate(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("demo: generating estate for mock argocd server: %w", err)
+	}
+	return NewMockArgocdServerFromEstate(estate)
+}
+
+// NewMockArgocdServerFromEstate builds a mock ArgoCD server directly from
+// an already-generated estate — see NewMockGitProviderFromEstate's doc for
+// why SetupDemoServer prefers this over NewMockArgocdServerWithConfig.
+func NewMockArgocdServerFromEstate(estate *GeneratedEstate) (*MockArgocdServer, error) {
+	return newMockArgocdServerWithData(buildMockClustersFromEstate(estate), buildMockAppsFromEstate(estate))
+}
+
+// newMockArgocdServerWithData starts the shared HTTP mux + listener over a
+// caller-supplied cluster/app list, factored out so both the default and
+// generated-estate constructors share one place that wires up routes.
+func newMockArgocdServerWithData(clusters []mockCluster, apps []mockApp) (*MockArgocdServer, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("starting mock argocd listener: %w", err)
@@ -95,8 +138,8 @@ func NewMockArgocdServer() (*MockArgocdServer, error) {
 
 	s := &MockArgocdServer{
 		listener: ln,
-		clusters: buildMockClusters(),
-		apps:     buildMockApps(),
+		clusters: clusters,
+		apps:     apps,
 	}
 
 	mux := http.NewServeMux()
@@ -396,6 +439,202 @@ func findAddon(name string) *Addon {
 		}
 	}
 	return nil
+}
+
+// buildMockClustersFromEstate is buildMockClusters' generated-estate
+// analogue: same shape, driven by a GeneratedEstate's registered clusters
+// instead of the hand-written demoClusters. Two coverage-addition
+// adjustments: estate.MissingClusterNames are skipped entirely (the
+// "missing ArgoCD secret" exemplar — ArgoCD simply doesn't know about
+// them), and estate.ArgoOnlyClusters are appended (the "discovered /
+// not_in_git" and "orphan" exemplars — clusters ArgoCD knows about that
+// have no git entry at all).
+func buildMockClustersFromEstate(estate *GeneratedEstate) []mockCluster {
+	missing := make(map[string]bool, len(estate.MissingClusterNames))
+	for _, name := range estate.MissingClusterNames {
+		missing[name] = true
+	}
+
+	toMockCluster := func(dc Cluster) mockCluster {
+		status := "Successful"
+		message := ""
+		if dc.ConnStatus == "Failed" {
+			status = "Failed"
+			message = "dial tcp: connect: connection refused"
+		}
+		return mockCluster{
+			Name:          dc.Name,
+			Server:        dc.Server,
+			ServerVersion: dc.K8sVersion,
+			Namespaces:    []string{},
+			Labels: map[string]string{
+				"region": dc.Region,
+				"env":    dc.Env,
+			},
+			Info: mockClusterInfo{
+				ConnectionState: mockConnectionState{
+					Status:  status,
+					Message: message,
+				},
+				ServerVersion: dc.K8sVersion,
+			},
+		}
+	}
+
+	clusters := make([]mockCluster, 0, len(estate.Clusters)+len(estate.ArgoOnlyClusters))
+	for _, dc := range estate.Clusters {
+		if missing[dc.Name] {
+			continue
+		}
+		clusters = append(clusters, toMockCluster(dc))
+	}
+	for _, ao := range estate.ArgoOnlyClusters {
+		clusters = append(clusters, toMockCluster(ao.Cluster))
+	}
+	return clusters
+}
+
+// buildMockAppsFromEstate is buildMockApps' generated-estate analogue: one
+// ArgoCD application per (cluster, enabled addon) cell, carrying the
+// per-cell health/sync/history detail GenerateEstate already computed
+// (deployments), instead of the hand-written per-cluster special cases
+// (perf-asia/staging-eu) buildMockApps hard-codes for the default estate.
+func buildMockAppsFromEstate(estate *GeneratedEstate) []mockApp {
+	createdAt := "2024-11-15T10:00:00Z"
+
+	repoByAddon := make(map[string]string, len(estate.Addons))
+	for _, a := range estate.Addons {
+		repoByAddon[a.Name] = a.RepoURL
+	}
+
+	apps := make([]mockApp, 0, len(estate.Clusters)*minAddonsPerCluster)
+
+	// Seed the bootstrap root app, same as buildMockApps, so
+	// ProbeBootstrapApp returns healthy and the first-run wizard doesn't nag.
+	apps = append(apps, mockApp{
+		Metadata: mockAppMetadata{
+			Name:              orchestrator.BootstrapRootAppName,
+			Namespace:         "argocd",
+			CreationTimestamp: createdAt,
+		},
+		Spec: mockAppSpec{
+			Project: "sharko",
+			Source: mockSource{
+				RepoURL:        "https://github.com/demo/sharko-addons",
+				Chart:          "",
+				TargetRevision: "HEAD",
+			},
+			Destination: mockDestination{
+				Server:    "https://kubernetes.default.svc",
+				Namespace: "argocd",
+			},
+		},
+		Status: mockAppStatus{
+			Sync:         mockSyncStatus{Status: "Synced"},
+			Health:       mockHealthStatus{Status: "Healthy", LastTransitionTime: createdAt},
+			ReconciledAt: createdAt,
+		},
+	})
+
+	missing := make(map[string]bool, len(estate.MissingClusterNames))
+	for _, name := range estate.MissingClusterNames {
+		missing[name] = true
+	}
+
+	for _, cluster := range estate.Clusters {
+		if missing[cluster.Name] {
+			// "missing ArgoCD secret" exemplar — ArgoCD knows nothing
+			// about this cluster, including any apps deployed to it.
+			continue
+		}
+		cellsByAddon := estate.Deployments[cluster.Name]
+		for addonName, version := range cluster.Addons {
+			cell := cellsByAddon[addonName]
+			reconciledAt := ""
+			if len(cell.History) > 0 {
+				reconciledAt = cell.History[len(cell.History)-1].DeployedAt
+			}
+
+			var history []mockHistoryEntry
+			for _, h := range cell.History {
+				history = append(history, mockHistoryEntry{
+					ID:              h.ID,
+					DeployedAt:      h.DeployedAt,
+					DeployStartedAt: h.DeployStartedAt,
+					Revision:        h.Revision,
+				})
+			}
+
+			repoURL := repoByAddon[addonName]
+			if repoURL == "" {
+				repoURL = "https://charts.example.com"
+			}
+
+			appName := fmt.Sprintf("%s-%s", addonName, cluster.Name)
+			apps = append(apps, mockApp{
+				Metadata: mockAppMetadata{
+					Name:              appName,
+					Namespace:         "argocd",
+					CreationTimestamp: createdAt,
+				},
+				Spec: mockAppSpec{
+					Project: "sharko",
+					Source: mockSource{
+						RepoURL:        repoURL,
+						Chart:          addonName,
+						TargetRevision: version,
+					},
+					Destination: mockDestination{
+						Server:    cluster.Server,
+						Namespace: addonName,
+					},
+				},
+				Status: mockAppStatus{
+					Sync:         mockSyncStatus{Status: cell.Sync},
+					Health:       mockHealthStatus{Status: cell.Health, LastTransitionTime: reconciledAt},
+					ReconciledAt: reconciledAt,
+					History:      history,
+				},
+			})
+		}
+	}
+
+	// Connectivity-check apps (coverage addition) — one per disconnected
+	// showcase cluster in estate.ConnectivityCheckApps, exercising every
+	// internal/api/connectivity_status.go verdict (verified_check,
+	// check_pending, check_failed).
+	serverByCluster := make(map[string]string, len(estate.Clusters))
+	for _, c := range estate.Clusters {
+		serverByCluster[c.Name] = c.Server
+	}
+	for _, check := range estate.ConnectivityCheckApps {
+		apps = append(apps, mockApp{
+			Metadata: mockAppMetadata{
+				Name:              orchestrator.ConnectivityCheckAppPrefix + check.ClusterName,
+				Namespace:         "argocd",
+				CreationTimestamp: check.CreatedAt,
+			},
+			Spec: mockAppSpec{
+				Project: "sharko",
+				Source: mockSource{
+					RepoURL:        "https://github.com/demo/sharko-addons",
+					Chart:          "",
+					TargetRevision: "main",
+				},
+				Destination: mockDestination{
+					Server:    serverByCluster[check.ClusterName],
+					Namespace: "sharko-test",
+				},
+			},
+			Status: mockAppStatus{
+				Sync:         mockSyncStatus{Status: check.Sync},
+				Health:       mockHealthStatus{Status: check.Health, LastTransitionTime: check.CreatedAt},
+				ReconciledAt: check.CreatedAt,
+			},
+		})
+	}
+
+	return apps
 }
 
 // writeJSON is a local helper for the mock server.

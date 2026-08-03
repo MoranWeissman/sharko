@@ -1,8 +1,9 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas generate-engine-version build-gitfake-image playground-up playground-status playground-tunnels playground-down operator-playground-up operator-playground-status operator-playground-tunnels operator-playground-down
+.PHONY: help demo demo-big dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas generate-engine-version build-gitfake-image playground-up playground-status playground-tunnels playground-down operator-playground-up operator-playground-status operator-playground-tunnels operator-playground-down
 
 PORT ?= 8080
+DEMO_BIG_PORT ?= 8090
 
 help: ## Show available targets
 	@echo ""
@@ -10,6 +11,7 @@ help: ## Show available targets
 	@echo ""
 	@echo "  Quick Start:"
 	@echo "    make demo             Build UI + start with mock backends (http://localhost:$(PORT))"
+	@echo "    make demo-big         A SECOND demo instance with a 50-cluster/30-addon estate (http://localhost:$(DEMO_BIG_PORT))"
 	@echo "    make dev              Hot-reload dev mode (http://localhost:5173)"
 	@echo ""
 	@echo "  Build & Test:"
@@ -56,6 +58,21 @@ demo: ## Build UI + start server in demo mode
 	@echo "  Login: admin/admin (admin) or qa/sharko (viewer)"
 	@echo ""
 	go run ./cmd/sharko serve --demo --port $(PORT) --static ui/dist
+
+demo-big: ## A SECOND local demo instance with a big (50-cluster/30-addon) estate, alongside your real playground
+	@echo ""
+	@echo "  🦈 Sharko Demo Mode — big estate"
+	@echo "  This runs as a SECOND, separate instance — it does not touch or"
+	@echo "  replace whatever you already have running on 'make demo' or a"
+	@echo "  real playground; both can stay up at the same time."
+	@echo "  Building UI..."
+	@rm -rf ui/dist
+	@cd ui && npm run build 2>&1 | grep -v "PLUGIN_TIMINGS\|chunks are larger\|dynamic import\|codeSplitting\|chunkSizeWarningLimit\|rolldown.rs"
+	@echo "  Open http://localhost:$(DEMO_BIG_PORT)"
+	@echo "  Login: admin/admin (admin) or qa/sharko (viewer) — demo mode still"
+	@echo "  requires signing in; it only replaces the ArgoCD/Git backends, not auth."
+	@echo ""
+	go run ./cmd/sharko serve --demo --demo-scale big --port $(DEMO_BIG_PORT) --static ui/dist
 
 dev: ## Start backend (demo) + frontend with hot reload
 	@-pkill -f "sharko serve --demo" 2>/dev/null || true

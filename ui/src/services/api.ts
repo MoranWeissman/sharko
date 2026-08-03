@@ -220,6 +220,34 @@ async function fetchJSON<T>(path: string): Promise<T> {
   return unwrapAttribution<T>(await res.json())
 }
 
+/**
+ * fetchJSONWithTotal — same GET contract as fetchJSON, but also reads the
+ * X-Total-Count response header (S4: server-side pagination surfaces this
+ * on list endpoints like /clusters, but plain fetchJSON has no way to
+ * expose it). `total` is null when the header is absent or not a number,
+ * so callers can fall back to `data`'s own length rather than trusting a
+ * NaN.
+ */
+async function fetchJSONWithTotal<T>(path: string): Promise<{ data: T; total: number | null }> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: authHeaders(),
+  })
+  if (res.status === 401) {
+    clearSession()
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (!res.ok) {
+    await throwApiError(res)
+  }
+  const totalHeader = res.headers.get('X-Total-Count')
+  const total = totalHeader !== null && totalHeader !== '' && !Number.isNaN(Number(totalHeader))
+    ? Number(totalHeader)
+    : null
+  const data = unwrapAttribution<T>(await res.json())
+  return { data, total }
+}
+
 async function postJSON<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: 'POST',
@@ -1348,12 +1376,26 @@ export function extractArgocdVersionString(raw: unknown): string | undefined {
   return undefined
 }
 
+// CLUSTERS_PAGE_SIZE is the per_page value the clusters list requests —
+// the server's own max (internal/api/pagination.go's maxPerPage), so a
+// single request covers any realistic estate (S4: the server silently
+// truncated to its 20-per-page default before this, hiding every cluster
+// past #20 at scale with no indication anything was cut).
+export const CLUSTERS_PAGE_SIZE = 100
+
 export const api = {
   // Health
   health: () => fetchJSON<HealthResponse>('/health'),
 
   // Clusters
-  getClusters: () => fetchJSON<ClustersResponse>('/clusters'),
+  getClusters: () => fetchJSON<ClustersResponse>(`/clusters?per_page=${CLUSTERS_PAGE_SIZE}`),
+  // getClustersPage — page-aware variant that also surfaces the total
+  // count (X-Total-Count), for continuing past the first page when an
+  // estate has more clusters than CLUSTERS_PAGE_SIZE. getClusters() above
+  // covers every realistic case in one call; this exists for the rare
+  // overflow the ClustersOverview "Load more" control handles.
+  getClustersPage: (page: number, perPage: number = CLUSTERS_PAGE_SIZE) =>
+    fetchJSONWithTotal<ClustersResponse>(`/clusters?page=${page}&per_page=${perPage}`),
   getDiscoveredClusters: () => fetchJSON<ClustersResponse>('/clusters?managed=false'),
   getCluster: (name: string) => fetchJSON<ClusterDetailResponse>(`/clusters/${name}`),
   getClusterComparison: (name: string) => fetchJSON<ClusterComparisonResponse>(`/clusters/${name}/comparison`),

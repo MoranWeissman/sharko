@@ -830,10 +830,28 @@ func (s *Server) AuditLog() *audit.Log {
 	return s.auditLog
 }
 
+// ConnectionService returns the server's current connection service. Exists
+// so callers that must resolve the connection service LATE — after demo mode
+// may have swapped it via SetDemoConnectionService — can read the live value
+// instead of capturing a pointer up front (S3 demo wiring fix: notification
+// checker + connection poller in cmd/sharko/serve.go now read through this
+// getter instead of closing over the pre-demo local variable).
+func (s *Server) ConnectionService() *service.ConnectionService {
+	return s.connSvc
+}
+
 // SetDemoConnectionService replaces the server's connection service with one
 // backed by the provided in-memory store. Used by demo mode only.
+//
+// Also repoints dashboardSvc at the new connection service: DashboardService
+// bakes connSvc in at construction (cmd/sharko/serve.go, well before demo
+// setup runs), so without this the dashboard's connection-totals stat kept
+// reading the real store even in demo mode (S3 demo wiring gap).
 func (s *Server) SetDemoConnectionService(store config.Store) {
 	s.connSvc = service.NewConnectionService(store)
+	if s.dashboardSvc != nil {
+		s.dashboardSvc.SetConnectionService(s.connSvc)
+	}
 }
 
 // SetDemoGitProvider installs a fixed GitProvider on the connection service,
