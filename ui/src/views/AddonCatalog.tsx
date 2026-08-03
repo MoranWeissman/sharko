@@ -8,8 +8,8 @@ import {
   ChevronUp,
   Package,
   CheckCircle,
-  XCircle,
   AlertTriangle,
+  ArrowUpCircle,
   ExternalLink,
   Eye,
   GitPullRequest,
@@ -33,6 +33,7 @@ import type {
   CatalogVersionsResponse,
   DryRunResult,
   TrackedPR,
+  VersionMatrixResponse,
 } from '@/services/models'
 import { getCached, setCached } from '@/lib/viewCache'
 import { StatCard } from '@/components/StatCard'
@@ -49,8 +50,7 @@ import {
   type SubmitPhase,
 } from '@/components/AddAddonFlow'
 import { PRModelExplainer } from '@/components/PRFeedback'
-import { VersionMatrixTable } from '@/components/VersionMatrixTable'
-import { BehindCatalogList } from '@/components/BehindCatalogList'
+import { AddonVersionList } from '@/components/AddonVersionList'
 import {
   Dialog,
   DialogContent,
@@ -70,11 +70,16 @@ type AddonsView = 'catalog' | 'marketplace'
 // uses.
 export const ADDON_CATALOG_CACHE_KEY = 'addon-catalog'
 
-// 'partial' and 'broken' are the two honest replacements for the old single
-// 'unhealthy' bucket (walk finding — see addonHealthBucket below).
-// 'unhealthy' stays a valid value so anything still asking for it (e.g. an
-// old bookmark) keeps working, mapped to their union.
-type FilterType = 'all' | 'healthy' | 'unhealthy' | 'partial' | 'broken' | 'git-only' | 'drifted'
+// S1 (scale-walk day 7): the Healthy / With issues / Broken split moved off
+// this page — the addons page's job is inventory, not health monitoring
+// (health lives on the Dashboard and Observability's addon groups). Their
+// FilterType values ('healthy' | 'partial' | 'broken') are gone too.
+// 'unhealthy' stays — it's still a real filter option in the dropdown
+// ("Any issue"), not one of the removed stat cards. Any deep link or stale
+// state that still asks for a removed value falls through the switch
+// below's `default: return true`, which behaves exactly like 'all' (every
+// addon passes) — no crash, no stuck empty state.
+type FilterType = 'all' | 'unhealthy' | 'git-only' | 'drifted'
 
 // True when any enabled application runs a version different from the
 // catalog version. Shared by the card drift chip, the `drifted` filter,
@@ -274,6 +279,32 @@ function DeploymentBadge({ addon }: { addon: AddonCatalogItem }) {
   )
 }
 
+/** Small colored dot (green/amber/red per addonHealthBucket) shown on the
+ *  catalog tile in place of the old visible health-fraction line (S1,
+ *  scale-walk day 7) — the addons page's job is inventory, not health
+ *  monitoring. The plain-words fraction ("48 of 50 apps healthy") still
+ *  exists, just as the dot's hover tooltip instead of body text. Only
+ *  rendered when there's something to say: an addon enabled nowhere isn't
+ *  in any health bucket at all. */
+function AddonHealthDot({ addon }: { addon: AddonCatalogItem }) {
+  if (addon.enabled_clusters === 0) return null
+  const bucket = addonHealthBucket(addon)
+  const dotColor =
+    bucket === 'healthy'
+      ? 'bg-green-500'
+      : bucket === 'partial'
+        ? 'bg-amber-500'
+        : 'bg-red-500'
+  return (
+    <span
+      data-testid="addon-health-dot"
+      title={addonHealthFraction(addon)}
+      aria-label={addonHealthFraction(addon)}
+      className={`mt-1 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${dotColor}`}
+    />
+  )
+}
+
 function AddonCard({ addon }: { addon: AddonCatalogItem }) {
   const [expanded, setExpanded] = useState(false)
   const navigate = useNavigate()
@@ -282,9 +313,6 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
     addon.applications.find((a) => a.enabled && a.namespace)?.namespace ??
     addon.namespace ??
     addon.addon_name
-
-  const deployed = addon.deployed_cluster_count ?? 0
-  const target = addon.total_target_cluster_count ?? 0
 
   const handleCardClick = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, a')) return
@@ -303,31 +331,26 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
             <h3 className="truncate text-lg font-bold text-teal-700 dark:text-teal-400">
               {addon.addon_name}
             </h3>
-            <p className="truncate text-xs text-[#2a5a7a] dark:text-gray-400">
-              Version: {addon.version} · Namespace: {namespace}
+            <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Version: {addon.version}</p>
+            {/* S1 scope addition (maintainer's walk day 7): a long
+                namespace on one line with "Version: ... · Namespace: ..."
+                got cut off with an ellipsis. Its own line, dim mono (same
+                treatment the cluster secret panel uses for resource
+                names), and break-all so it wraps instead of truncating —
+                the full namespace is never hidden. */}
+            <p className="mt-0.5 break-all font-mono text-xs text-[#5a8aaa] dark:text-gray-500">
+              Namespace: {namespace}
             </p>
-            <DeploymentBadge addon={addon} />
-            {/* Coverage count — welcome here (distinct from per-cluster health) */}
-            {target > 0 && (
-              <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-400">
-                Installed on {deployed}/{target} {target === 1 ? 'cluster' : 'clusters'}
-              </p>
-            )}
-            {/* Health fraction in plain words (walk finding) — only shown
-                when there's something to say: partial or broken. A fully
-                healthy addon doesn't need a line telling you nothing is
-                wrong. */}
-            {addon.enabled_clusters > 0 && addonHealthBucket(addon) !== 'healthy' && (
-              <p
-                className={`mt-1 text-xs font-medium ${
-                  addonHealthBucket(addon) === 'broken'
-                    ? 'text-red-700 dark:text-red-400'
-                    : 'text-amber-700 dark:text-amber-400'
-                }`}
-              >
-                {addonHealthFraction(addon)}
-              </p>
-            )}
+            {/* S1 (scale-walk day 7): the badge already carries the
+                deployment count — the "Installed on N/M clusters" line
+                that used to sit below it said the same thing twice. The
+                health fraction ("48 of 50 apps healthy") moved from a
+                visible line to this dot's hover tooltip — inventory is
+                this page's job, not health monitoring. */}
+            <div className="mt-1 flex items-center gap-2">
+              <DeploymentBadge addon={addon} />
+              <AddonHealthDot addon={addon} />
+            </div>
           </div>
           <button
             type="button"
@@ -620,8 +643,16 @@ function AddonListTable({ items }: { items: AddonGridItem[] }) {
                       Not deployed yet
                     </span>
                   ) : (
+                    // S1 scope addition (maintainer's walk day 7): dropped
+                    // the "Installed on N/M clusters" wording — it said the
+                    // same count as the grid card's DeploymentBadge, just
+                    // in different words. Reuses the badge's own "Running
+                    // on..." phrasing instead of a second vocabulary for
+                    // the same fact.
                     <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                      Installed on {item.addon.deployed_cluster_count ?? 0}/{item.addon.total_target_cluster_count ?? 0} {(item.addon.total_target_cluster_count ?? 0) === 1 ? 'cluster' : 'clusters'}
+                      {item.addon.deployed_cluster_count === item.addon.total_target_cluster_count
+                        ? `Running on ${item.addon.deployed_cluster_count ?? 0} ${(item.addon.deployed_cluster_count ?? 0) === 1 ? 'cluster' : 'clusters'}`
+                        : `Running on ${item.addon.deployed_cluster_count ?? 0}/${item.addon.total_target_cluster_count ?? 0} clusters`}
                     </span>
                   )}
                 </td>
@@ -745,6 +776,17 @@ export function AddonCatalog() {
     params.delete('filter')
     setSearchParams(params, { replace: true })
   }, [searchParams, setSearchParams])
+  // S1 (scale-walk day 7) — the new "Behind catalog version" stat card
+  // jumps straight to the versions view, pre-filtered, same landing spot
+  // as the Fleet Status Strip's own deep link.
+  const openBehindCatalogVersions = useCallback(() => {
+    setViewMode('matrix')
+    setMatrixBehindCatalogOnly(true)
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('view', 'matrix')
+    params.set('filter', 'behind-catalog')
+    setSearchParams(params, { replace: true })
+  }, [searchParams, setSearchParams])
   const [sortBy, setSortBy] = useState<SortBy>('name')
   const [pageSize, setPageSize] = useState<PageSize>(15)
   const [page, setPage] = useState(1)
@@ -847,6 +889,34 @@ export function AddonCatalog() {
     void fetchPendingAddonPRs()
   }, [fetchPendingAddonPRs])
 
+  // S1 (scale-walk day 7) — the "Behind catalog version" stat card and the
+  // versions view (AddonVersionList, S2) both need GET /addons/version-matrix.
+  // Fetched here, once, so the two share a single request instead of each
+  // firing its own: the stat card fills in quietly once this lands (shows
+  // "—" until then, never a spinner that blocks the top row), and switching
+  // to the versions view just hands over data that's already in flight or
+  // already here.
+  const [matrixData, setMatrixData] = useState<VersionMatrixResponse | null>(null)
+  const [matrixLoading, setMatrixLoading] = useState(true)
+  const [matrixError, setMatrixError] = useState<string | null>(null)
+
+  const fetchVersionMatrix = useCallback(() => {
+    return api
+      .getVersionMatrix()
+      .then((data) => {
+        setMatrixData(data)
+        setMatrixError(null)
+      })
+      .catch((e: unknown) => {
+        setMatrixError(e instanceof Error ? e.message : 'Could not load addon versions')
+      })
+      .finally(() => setMatrixLoading(false))
+  }, [])
+
+  useEffect(() => {
+    void fetchVersionMatrix()
+  }, [fetchVersionMatrix])
+
   const fetchCatalog = useCallback((background = false) => {
     if (background) {
       setIsRefreshing(true)
@@ -879,7 +949,8 @@ export function AddonCatalog() {
   const handleRefresh = useCallback(() => {
     void fetchCatalog(true)
     void fetchPendingAddonPRs()
-  }, [fetchCatalog, fetchPendingAddonPRs])
+    void fetchVersionMatrix()
+  }, [fetchCatalog, fetchPendingAddonPRs, fetchVersionMatrix])
 
   // perf S2 — stale-while-refresh: a cache hit paints the grid instantly
   // (no spinner) from this session's last successful load, then a normal
@@ -904,9 +975,10 @@ export function AddonCatalog() {
     const interval = setInterval(() => {
       void fetchCatalog(true)
       void fetchPendingAddonPRs()
+      void fetchVersionMatrix()
     }, 60_000)
     return () => clearInterval(interval)
-  }, [fetchCatalog, fetchPendingAddonPRs])
+  }, [fetchCatalog, fetchPendingAddonPRs, fetchVersionMatrix])
 
   const resetAddonFormState = useCallback(() => {
     setAddAddonError(null)
@@ -1226,15 +1298,7 @@ export function AddonCatalog() {
         if (item.kind !== 'real') return false
         const a = item.addon
         switch (filterType) {
-          case 'healthy':
-            return a.enabled_clusters > 0 && addonHealthBucket(a) === 'healthy'
-          case 'partial':
-            return a.enabled_clusters > 0 && addonHealthBucket(a) === 'partial'
-          case 'broken':
-            return a.enabled_clusters > 0 && addonHealthBucket(a) === 'broken'
           case 'unhealthy':
-            // Back-compat: the old single bucket, now the union of
-            // partial + broken.
             return a.enabled_clusters > 0 && addonHealthBucket(a) !== 'healthy'
           case 'git-only':
             return a.enabled_clusters === 0
@@ -1269,24 +1333,20 @@ export function AddonCatalog() {
     return filteredItems.slice(start, start + pageSize)
   }, [filteredItems, page, pageSize])
 
-  const healthyCount = catalogData
-    ? catalogData.addons.filter((a) => a.enabled_clusters > 0 && addonHealthBucket(a) === 'healthy')
-        .length
-    : 0
-
-  const partialCount = catalogData
-    ? catalogData.addons.filter((a) => a.enabled_clusters > 0 && addonHealthBucket(a) === 'partial')
-        .length
-    : 0
-
-  const brokenCount = catalogData
-    ? catalogData.addons.filter((a) => a.enabled_clusters > 0 && addonHealthBucket(a) === 'broken')
-        .length
-    : 0
-
   const handleStatFilter = (filter: FilterType) => {
     setFilterType(filterType === filter ? 'all' : filter)
   }
+
+  // "Behind catalog version" stat card (S1) — count of ADDONS with at
+  // least one deployed cell whose drift_from_catalog is true, not a count
+  // of cells. null while the matrix response hasn't landed yet, so the
+  // card can show its quiet "—" placeholder instead of a false zero.
+  const behindCatalogAddonCount = useMemo(() => {
+    if (!matrixData) return null
+    return matrixData.addons.filter((row) =>
+      Object.values(row.cells || {}).some((cell) => cell?.drift_from_catalog),
+    ).length
+  }, [matrixData])
 
   // The page header + tabs render unconditionally so the Marketplace tab is
   // reachable even while the installed catalog is loading or errored.
@@ -1791,41 +1851,19 @@ export function AddonCatalog() {
         </DialogContent>
       </Dialog>
 
-      {/* Summary stat cards — click to filter. Healthy / With issues /
-          Broken (walk finding: the old single Healthy/Unhealthy split made
-          every addon with even one bad app out of hundreds read the same
-          as an addon with none healthy at all). */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      {/* Summary stat cards — click to filter. S1 (scale-walk day 7): this
+          page's job is inventory — what addons you have, where they're
+          deployed, what version — not health monitoring. The Healthy /
+          With issues / Broken split moved out; health still lives on the
+          Dashboard and Observability's addon groups. "Behind catalog
+          version" takes the third slot instead. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard
-          title="All Addons"
+          title="All addons"
           value={catalogData.total_addons}
           icon={<Package className="h-5 w-5" />}
           onClick={() => handleStatFilter('all')}
           selected={filterType === 'all'}
-        />
-        <StatCard
-          title="Healthy"
-          value={healthyCount}
-          icon={<CheckCircle className="h-5 w-5" />}
-          color="success"
-          onClick={() => handleStatFilter('healthy')}
-          selected={filterType === 'healthy'}
-        />
-        <StatCard
-          title="With issues"
-          value={partialCount}
-          icon={<AlertTriangle className="h-5 w-5" />}
-          color="warning"
-          onClick={() => handleStatFilter('partial')}
-          selected={filterType === 'partial'}
-        />
-        <StatCard
-          title="Broken"
-          value={brokenCount}
-          icon={<XCircle className="h-5 w-5" />}
-          color="error"
-          onClick={() => handleStatFilter('broken')}
-          selected={filterType === 'broken'}
         />
         <StatCard
           title="Not deployed yet"
@@ -1835,6 +1873,17 @@ export function AddonCatalog() {
           onClick={() => handleStatFilter('git-only')}
           selected={filterType === 'git-only'}
           subtitle="In your catalog, not enabled on any cluster yet"
+        />
+        <StatCard
+          title="Behind catalog version"
+          // Loads progressively — the page renders from the catalog data
+          // first, this fills in once GET /addons/version-matrix lands. A
+          // quiet "—" while it's in flight, never a spinner blocking the row.
+          value={behindCatalogAddonCount === null ? '—' : behindCatalogAddonCount}
+          icon={<ArrowUpCircle className="h-5 w-5" />}
+          color={behindCatalogAddonCount ? 'warning' : 'default'}
+          onClick={openBehindCatalogVersions}
+          subtitle="Addons running a version other than their catalog default"
         />
       </div>
 
@@ -1859,10 +1908,7 @@ export function AddonCatalog() {
             className="rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
           >
             <option value="all">All Addons</option>
-            <option value="healthy">Healthy Only</option>
-            <option value="partial">With issues</option>
-            <option value="broken">Broken</option>
-            <option value="unhealthy">Any issue (with issues + broken)</option>
+            <option value="unhealthy">Any issue</option>
             <option value="git-only">Not deployed yet</option>
             <option value="drifted">With version drift</option>
           </select>
@@ -1926,28 +1972,31 @@ export function AddonCatalog() {
                 ? 'bg-teal-600 text-white'
                 : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
             }`}
-            aria-label="Version matrix view"
-            title="Version matrix — every addon across every cluster"
+            aria-label="Versions view"
+            title="Versions — what every cluster runs, addon by addon"
           >
             <Table className="h-4 w-4" />
           </button>
         </div>
       </div>
 
+      {/* S2 (scale-walk day 7) — the 50-column matrix grid is gone (the
+          maintainer's verdict on a real 50-cluster estate: "50 unreadable
+          columns"). One addon-first list now serves the plain view, the
+          "behind catalog" filter, and the "update available" filter —
+          'matrix' stays the view param's value (alias for this view) so
+          old deep links keep landing here. */}
       {viewMode === 'matrix' && (
-        matrixBehindCatalogOnly ? (
-          // S6 (scale-walk) — behind-catalog used to render the full
-          // 50-column matrix filtered by row (maintainer's screenshot
-          // verdict: "a big mess", cut off). A flat, addon-grouped list
-          // reads instead; the matrix itself is untouched and still used
-          // for the "outdated" filter below.
-          <BehindCatalogList onClear={clearMatrixBehindCatalogFilter} />
-        ) : (
-          <VersionMatrixTable
-            outdatedOnly={matrixOutdatedOnly}
-            onClearOutdatedFilter={clearMatrixOutdatedFilter}
-          />
-        )
+        <AddonVersionList
+          data={matrixData}
+          loading={matrixLoading}
+          error={matrixError}
+          onRetry={fetchVersionMatrix}
+          initialBehindCatalogOnly={matrixBehindCatalogOnly}
+          initialOutdatedOnly={matrixOutdatedOnly}
+          onClearBehindCatalogFilter={clearMatrixBehindCatalogFilter}
+          onClearOutdatedFilter={clearMatrixOutdatedFilter}
+        />
       )}
 
       {viewMode !== 'matrix' && (

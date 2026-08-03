@@ -182,21 +182,21 @@ describe('AddonCatalog', () => {
       expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
     })
 
-    // Summary stat cards — now clickable filters
+    // Summary stat cards — now clickable filters. S1 (scale-walk day 7):
+    // just three cards — All addons / Not deployed yet / Behind catalog
+    // version. Health cards (Healthy / With issues / Broken) moved off
+    // this page entirely.
     expect(screen.getAllByText('All Addons').length).toBeGreaterThanOrEqual(1)
     // Fixture has 4 addons.
     expect(screen.getAllByText('4').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('Healthy').length).toBeGreaterThanOrEqual(1)
-    // Health tells fractions now (walk finding) — the old single
-    // "Unhealthy" stat card split into "With issues" (amber) and "Broken"
-    // (red) so one bad app out of hundreds doesn't read the same as zero
-    // healthy apps at all.
-    expect(screen.getAllByText('With issues').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('Broken').length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText('Healthy')).not.toBeInTheDocument()
+    expect(screen.queryByText('With issues')).not.toBeInTheDocument()
+    expect(screen.queryByText('Broken')).not.toBeInTheDocument()
     // V2-cleanup-61.2 (D1): the benign stat is "Not deployed yet"; the
     // ambiguous "Catalog Only" wording is retired.
     expect(screen.getAllByText('Not deployed yet').length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText('Catalog Only')).not.toBeInTheDocument()
+    expect(screen.getByText('Behind catalog version')).toBeInTheDocument()
 
     // Addon cards
     expect(screen.getByText('ingress-nginx')).toBeInTheDocument()
@@ -240,6 +240,112 @@ describe('AddonCatalog', () => {
 
     // Page size
     expect(screen.getByText('15 per page')).toBeInTheDocument()
+  })
+})
+
+// S1 (scale-walk day 7): the top row is exactly three cards now — All
+// addons / Not deployed yet / Behind catalog version. The Healthy / With
+// issues / Broken split moved off this page entirely (it lives on the
+// Dashboard and Observability's addon groups instead).
+describe('AddonCatalog — top row is inventory, not health (S1, scale-walk day 7)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders exactly three stat cards: All addons, Not deployed yet, Behind catalog version', async () => {
+    renderCatalog()
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
+    })
+
+    expect(screen.getByRole('button', { name: /All addons/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Not deployed yet/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Behind catalog version/ })).toBeInTheDocument()
+
+    // The removed health cards are gone.
+    expect(screen.queryByRole('button', { name: /^Healthy$/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /With issues/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Broken$/ })).not.toBeInTheDocument()
+  })
+
+  it('the filter dropdown no longer offers Healthy Only / With issues / Broken options', async () => {
+    renderCatalog()
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText('Healthy Only')).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'With issues' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Broken' })).not.toBeInTheDocument()
+    // "Any issue" (the old 'unhealthy' union filter) still works — it isn't
+    // one of the three removed stat cards.
+    expect(screen.getByRole('option', { name: 'Any issue' })).toBeInTheDocument()
+  })
+
+  it('shows a quiet "—" placeholder on the Behind catalog version card until the matrix response lands, then fills in the count', async () => {
+    const { api } = await import('@/services/api')
+    let resolveMatrix: (v: VersionMatrixResponse) => void = () => {}
+    vi.mocked(api.getVersionMatrix).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveMatrix = resolve
+      }),
+    )
+
+    renderCatalog()
+
+    // The catalog grid renders immediately, before the matrix response
+    // lands — the stat card shows a placeholder, not a spinner blocking
+    // the row.
+    await waitFor(() => {
+      expect(screen.getByText('ingress-nginx')).toBeInTheDocument()
+    })
+    const card = screen.getByRole('button', { name: /Behind catalog version/ })
+    expect(card).toHaveTextContent('—')
+
+    resolveMatrix({
+      clusters: ['prod-eu'],
+      addons: [
+        {
+          addon_name: 'cert-manager',
+          catalog_version: '1.14.0',
+          chart: 'cert-manager',
+          cells: { 'prod-eu': { version: '1.10.0', health: 'Healthy', drift_from_catalog: true } },
+        },
+      ],
+    })
+
+    await waitFor(() => {
+      expect(card).toHaveTextContent('1')
+    })
+  })
+
+  it('clicking the Behind catalog version card lands on the versions view, pre-filtered', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getVersionMatrix).mockResolvedValue({
+      clusters: ['prod-eu'],
+      addons: [
+        {
+          addon_name: 'cert-manager',
+          catalog_version: '1.14.0',
+          chart: 'cert-manager',
+          cells: { 'prod-eu': { version: '1.10.0', health: 'Healthy', drift_from_catalog: true } },
+        },
+      ],
+    })
+
+    renderCatalog()
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Behind catalog version/ })).toHaveTextContent('1')
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Behind catalog version/ }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('version-list-behind-chip')).toBeInTheDocument()
+    })
+    expect(screen.getByText('cert-manager')).toBeInTheDocument()
   })
 })
 
@@ -442,11 +548,56 @@ describe('AddonCatalog — DeploymentBadge (V126-3.1)', () => {
     expect(screen.getByText(/Version: 1\.13\.0/)).toBeInTheDocument()
   })
 
-  // LW-15: coverage count wording consistent across grid and list
-  it('grid card shows "Installed on N/M clusters" coverage count', async () => {
+  // S1 scope addition (maintainer's walk day 7): a long namespace used to
+  // share one truncated line with the version ("Version: X · Namespace:
+  // Y…"), cutting the namespace off. It now gets its own line, styled
+  // dim mono with break-all so it wraps instead of truncating.
+  it('renders the namespace on its own line, dim mono, without truncating it', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce({
+      addons: [
+        {
+          addon_name: 'long-namespace-addon',
+          chart: 'long-namespace-addon',
+          repo_url: 'https://example.com/charts',
+          namespace: 'a-very-long-namespace-name-that-would-have-been-cut-off-before',
+          version: '1.0.0',
+          total_clusters: 1,
+          enabled_clusters: 0,
+          healthy_applications: 0,
+          degraded_applications: 0,
+          missing_applications: 0,
+          deployed_cluster_count: 0,
+          total_target_cluster_count: 0,
+          applications: [],
+        },
+      ],
+      total_addons: 1,
+      total_clusters: 1,
+      addons_only_in_git: 1,
+    })
+
+    renderCatalog()
+    const namespaceEl = await screen.findByText(
+      /Namespace: a-very-long-namespace-name-that-would-have-been-cut-off-before/,
+    )
+    expect(namespaceEl.className).toContain('break-all')
+    expect(namespaceEl.className).toContain('font-mono')
+    // The version line no longer combines "Version: X · Namespace: Y" —
+    // they're on separate lines now.
+    expect(screen.queryByText(/Version:.*Namespace:/)).not.toBeInTheDocument()
+  })
+
+  // S1 scope addition (maintainer's walk day 7): the grid card used to say
+  // the cluster coverage twice — the colored DeploymentBadge AND a
+  // separate "Installed on N/M clusters" text line underneath it. The
+  // duplicate text is gone; the badge (already asserted elsewhere via
+  // "Running on 3/5 clusters") is the only coverage indicator now.
+  it('grid card does not duplicate the coverage count as a separate "Installed on" line', async () => {
     await renderInGridView()
-    // cert-manager fixture: deployed=3, target=5
-    expect(screen.getByText(/Installed on 3\/5 clusters/)).toBeInTheDocument()
+    expect(screen.queryByText(/Installed on/)).not.toBeInTheDocument()
+    // The badge itself still carries the count.
+    expect(screen.getByText('Running on 3/5 clusters')).toBeInTheDocument()
   })
 
   // LW-14: per-cluster health removed from catalog tile
@@ -531,8 +682,12 @@ describe('AddonCatalog — D1 vocabulary split (V2-cleanup-61.2)', () => {
     })
   })
 
-  // LW-15: list view coverage text matches grid ("Installed on N/M clusters")
-  it('list view shows "Installed on N/M clusters" in the Deployed column', async () => {
+  // S1 scope addition (maintainer's walk day 7): the list view's Deployed
+  // column used to say "Installed on N/M clusters" — the same duplicate
+  // wording as the grid card's removed text line. It now echoes the
+  // badge's own "Running on..." phrasing instead of a second vocabulary
+  // for the same fact.
+  it('list view shows "Running on N/M clusters" in the Deployed column, not "Installed on"', async () => {
     renderCatalog()
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
@@ -542,8 +697,9 @@ describe('AddonCatalog — D1 vocabulary split (V2-cleanup-61.2)', () => {
     fireEvent.click(listViewBtn)
     await waitFor(() => {
       // cert-manager fixture: deployed=3, target=5
-      expect(screen.getByText(/Installed on 3\/5 clusters/)).toBeInTheDocument()
+      expect(screen.getByText(/Running on 3\/5 clusters/)).toBeInTheDocument()
     })
+    expect(screen.queryByText(/Installed on/)).not.toBeInTheDocument()
   })
 })
 
@@ -633,17 +789,19 @@ describe('AddonCatalog — ?drift=true deep-link (V2-cleanup-61.2)', () => {
 })
 
 /**
- * Walk finding #1: the version matrix view is now linkable. The Dashboard's
- * Upgrades card deep-links to /addons?view=matrix (via the /version-matrix
- * redirect, same pattern as the ?drift=true deep-link above) so clicking it
- * lands directly on the matrix instead of the plain catalog grid.
+ * Walk finding #1: the versions view is linkable. The Dashboard's Upgrades
+ * card deep-links to /addons?view=matrix (via the /version-matrix redirect,
+ * same pattern as the ?drift=true deep-link above) so clicking it lands
+ * directly there instead of the plain catalog grid. 'matrix' stays the
+ * accepted value for the `view` param (S2, scale-walk day 7) — it's now an
+ * alias for the addon-first versions list, not a 50-column grid.
  */
 describe('AddonCatalog — ?view=matrix deep-link (walk finding #1)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('lands on the version matrix view when ?view=matrix is present', async () => {
+  it('lands on the versions view when ?view=matrix is present', async () => {
     const { api } = await import('@/services/api')
     vi.mocked(api.getVersionMatrix).mockResolvedValueOnce({
       clusters: ['prod-eu'],
@@ -665,16 +823,19 @@ describe('AddonCatalog — ?view=matrix deep-link (walk finding #1)', () => {
       </MemoryRouter>,
     )
 
-    // The matrix table rendered, not the grid/list view.
+    // The versions list rendered, not the grid/list view.
     await waitFor(() => {
       expect(screen.getAllByText('cert-manager').length).toBeGreaterThan(0)
     })
-    expect(screen.getByText('prod-eu')).toBeInTheDocument()
+    // Collapsed row summary — every cluster matches the catalog version.
+    expect(screen.getByText('all 1 on 1.14.5')).toBeInTheDocument()
     // The grid pagination copy ("Showing N addons") only renders outside
-    // matrix mode.
+    // the versions view.
     expect(screen.queryByText(/Showing \d+ addons?/)).not.toBeInTheDocument()
-    // The matrix toggle button reflects the active view.
-    expect(screen.getByRole('button', { name: /version matrix view/i }).className).toContain('bg-teal-600')
+    // The versions toggle button reflects the active view. Renamed off
+    // "matrix" entirely (S2) — the word leaves all visible text.
+    expect(screen.getByRole('button', { name: /versions view/i }).className).toContain('bg-teal-600')
+    expect(screen.queryByRole('button', { name: /matrix/i })).not.toBeInTheDocument()
   })
 
   it('defaults to the grid view when ?view is absent', async () => {
@@ -695,7 +856,8 @@ describe('AddonCatalog — ?view=matrix deep-link (walk finding #1)', () => {
  * WQ-2: the Fleet Status Strip's Upgrades segment is now a bare clickable
  * number that deep-links to /addons?view=matrix&filter=outdated (same
  * pattern as ?view=matrix and ?drift=true above) so it lands directly on
- * the matrix, already filtered to just the outdated rows.
+ * the versions view, already filtered to just the rows with an upstream
+ * update available.
  */
 describe('AddonCatalog — ?filter=outdated deep-link (WQ-2)', () => {
   beforeEach(() => {
@@ -724,7 +886,7 @@ describe('AddonCatalog — ?filter=outdated deep-link (WQ-2)', () => {
     ],
   }
 
-  it('lands on the matrix pre-filtered to outdated rows when ?view=matrix&filter=outdated is present', async () => {
+  it('lands pre-filtered to rows with an update available when ?view=matrix&filter=outdated is present', async () => {
     const { api } = await import('@/services/api')
     vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(twoRowMatrix)
 
@@ -738,7 +900,8 @@ describe('AddonCatalog — ?filter=outdated deep-link (WQ-2)', () => {
       expect(screen.getByText('outdated-addon')).toBeInTheDocument()
     })
     expect(screen.queryByText('up-to-date-addon')).not.toBeInTheDocument()
-    expect(screen.getByTestId('matrix-outdated-chip')).toBeInTheDocument()
+    const chip = screen.getByTestId('version-list-outdated-chip')
+    expect(chip).toHaveTextContent('Update available')
   })
 
   it('clearing the chip shows every row again and drops ?filter from the URL', async () => {
@@ -752,18 +915,19 @@ describe('AddonCatalog — ?filter=outdated deep-link (WQ-2)', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('matrix-outdated-chip')).toBeInTheDocument()
+      expect(screen.getByText('outdated-addon')).toBeInTheDocument()
     })
+    expect(screen.queryByText('up-to-date-addon')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /clear the outdated filter/i }))
+    fireEvent.click(screen.getByRole('button', { name: /clear the update available filter/i }))
 
     await waitFor(() => {
       expect(screen.getByText('up-to-date-addon')).toBeInTheDocument()
     })
-    expect(screen.queryByTestId('matrix-outdated-chip')).not.toBeInTheDocument()
+    expect(screen.getByTestId('version-list-outdated-chip')).toHaveTextContent('Update available')
   })
 
-  it('matrix shows every row (no chip) when ?filter is absent', async () => {
+  it('shows every row (no active chip) when ?filter is absent', async () => {
     const { api } = await import('@/services/api')
     vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(twoRowMatrix)
 
@@ -777,18 +941,17 @@ describe('AddonCatalog — ?filter=outdated deep-link (WQ-2)', () => {
       expect(screen.getByText('up-to-date-addon')).toBeInTheDocument()
     })
     expect(screen.getByText('outdated-addon')).toBeInTheDocument()
-    expect(screen.queryByTestId('matrix-outdated-chip')).not.toBeInTheDocument()
   })
 })
 
 /**
- * S6 (scale-walk) — ?filter=behind-catalog used to render the full
- * 50-column VersionMatrixTable filtered by row (maintainer's screenshot
- * verdict on a real 50-cluster estate: "a big mess", cut off). It now
- * renders BehindCatalogList instead: a flat list, one row per behind cell,
- * grouped by addon. The matrix itself (outdatedOnly) is untouched.
+ * S6 / S2 (scale-walk) — ?filter=behind-catalog used to render the full
+ * 50-column VersionMatrixTable filtered by row, then a separate flat
+ * BehindCatalogList component. Both are gone now (S2, walk day 7): the
+ * SAME addon-first list serves this filter too, drift-first sorted, with a
+ * dismissible "Behind catalog" chip.
  */
-describe('AddonCatalog — ?filter=behind-catalog renders the flat list (S6)', () => {
+describe('AddonCatalog — ?filter=behind-catalog lands on the addon-first list, pre-filtered (S6/S2)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -825,7 +988,7 @@ describe('AddonCatalog — ?filter=behind-catalog renders the flat list (S6)', (
     ],
   }
 
-  it('renders a flat, addon-grouped list instead of the matrix, with a correct counts line', async () => {
+  it('renders the addon-first list pre-filtered to addons with drift', async () => {
     const { api } = await import('@/services/api')
     vi.mocked(api.getVersionMatrix).mockResolvedValueOnce(driftMatrix)
 
@@ -835,28 +998,24 @@ describe('AddonCatalog — ?filter=behind-catalog renders the flat list (S6)', (
       </MemoryRouter>,
     )
 
-    // 3 behind cells across 2 addons (cert-manager: prod-eu + staging-eu;
-    // external-dns: prod-us). metrics-server has no drifted cell, so it
-    // doesn't appear as a group at all.
     await waitFor(() => {
-      expect(screen.getByText('3 applications behind, across 2 addons')).toBeInTheDocument()
+      expect(screen.getByText('cert-manager')).toBeInTheDocument()
     })
-    expect(screen.getByText('cert-manager')).toBeInTheDocument()
     expect(screen.getByText('external-dns')).toBeInTheDocument()
+    // metrics-server has no drifted cell, so it's filtered out.
     expect(screen.queryByText('metrics-server')).not.toBeInTheDocument()
 
-    // Grouped rows: cluster name, deployed version → catalog version.
-    expect(screen.getByText('prod-eu')).toBeInTheDocument()
-    expect(screen.getByText('staging-eu')).toBeInTheDocument()
-    expect(screen.getAllByText('1.12.0').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('1.14.0').length).toBeGreaterThan(0) // catalog version, shown per row
+    // Collapsed-row spread summary (S2): counts from the cells.
+    expect(screen.getByText('1 on 1.14.0 · 2 behind')).toBeInTheDocument()
 
-    // The 50-column matrix table itself must NOT be on screen (no per-
-    // cluster header row for every cluster the way the grid would).
+    const chip = screen.getByTestId('version-list-behind-chip')
+    expect(chip).toHaveTextContent('Behind catalog')
+
+    // The old 50-column matrix table's own header must NOT be on screen.
     expect(screen.queryByText(/Newest available/)).not.toBeInTheDocument()
   })
 
-  it('keeps the dismissible "behind catalog version only" chip; dismissing restores the full matrix', async () => {
+  it('dismissing the chip shows every addon again, including ones with no drift', async () => {
     const { api } = await import('@/services/api')
     vi.mocked(api.getVersionMatrix).mockResolvedValue(driftMatrix)
 
@@ -866,18 +1025,23 @@ describe('AddonCatalog — ?filter=behind-catalog renders the flat list (S6)', (
       </MemoryRouter>,
     )
 
-    const chip = await screen.findByTestId('matrix-behind-catalog-chip')
-    expect(within(chip).getByText('behind catalog version only')).toBeInTheDocument()
+    const chip = await screen.findByTestId('version-list-behind-chip')
+    expect(within(chip).getByText('Behind catalog')).toBeInTheDocument()
 
-    fireEvent.click(within(chip).getByRole('button', { name: /clear the behind-catalog filter/i }))
+    fireEvent.click(within(chip).getByRole('button', { name: /clear the behind catalog filter/i }))
 
-    // Back to the full matrix view — metrics-server (no drift) shows up
-    // again, and the matrix's own "Newest available" column header is back.
+    // metrics-server (no drift) shows up again.
     await waitFor(() => {
       expect(screen.getByText('metrics-server')).toBeInTheDocument()
     })
-    expect(screen.getByText(/Newest available/)).toBeInTheDocument()
-    expect(screen.queryByTestId('matrix-behind-catalog-chip')).not.toBeInTheDocument()
+    // The chip itself is still there as a toggle (it's how you'd turn the
+    // filter back on) but no longer carries the active "dismiss" (X)
+    // affordance.
+    expect(
+      within(screen.getByTestId('version-list-behind-chip')).queryByRole('button', {
+        name: /clear the behind catalog filter/i,
+      }),
+    ).not.toBeInTheDocument()
   })
 
   it('shows the "nothing behind" message when the filter is active but nothing has drifted', async () => {
@@ -1558,7 +1722,7 @@ describe('AddonCatalog stale-while-refresh (perf S2)', () => {
  *   - broken:      0 healthy, 5 missing — nothing healthy at all
  *   - disabled:    enabled_clusters 0 — not in any of the three buckets
  */
-describe('AddonCatalog — health tells fractions, not a single unhealthy flip (S3)', () => {
+describe('AddonCatalog — health moves to a dot, not a stat card (S3 superseded by S1, scale-walk day 7)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -1631,66 +1795,43 @@ describe('AddonCatalog — health tells fractions, not a single unhealthy flip (
     addons_only_in_git: 1,
   }
 
-  it('splits the stat cards into Healthy / With issues / Broken, one addon each', async () => {
+  // S1 (scale-walk day 7): the Healthy / With issues / Broken stat cards
+  // are gone. Each addon's health now shows as one small colored dot on
+  // its card (green/amber/red), with the plain-words fraction as the
+  // dot's hover tooltip instead of a visible body line.
+  it('renders a colored health dot per addon, not stat cards', async () => {
     const { api } = await import('@/services/api')
     vi.mocked(api.getAddonCatalog).mockResolvedValueOnce(healthBucketFixture)
 
     renderCatalog()
     await waitFor(() => expect(screen.getByText('all-healthy-addon')).toBeInTheDocument())
 
-    // "With issues" / "Broken" are also option labels in the filter
-    // <select>, so scope to the clickable stat cards (role="button") only.
-    const healthyCard = screen.getByRole('button', { name: /Healthy/ })
-    const issuesCard = screen.getByRole('button', { name: /With issues/ })
-    const brokenCard = screen.getByRole('button', { name: /Broken/ })
-    expect(healthyCard).toHaveTextContent('1')
-    expect(issuesCard).toHaveTextContent('1')
-    expect(brokenCard).toHaveTextContent('1')
+    expect(screen.queryByRole('button', { name: /^Healthy$/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /With issues/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Broken$/ })).not.toBeInTheDocument()
+
+    const dots = screen.getAllByTestId('addon-health-dot')
+    // 3 addons are enabled somewhere (all-healthy, partial, broken);
+    // disabled-addon (enabled_clusters=0) gets no dot at all.
+    expect(dots).toHaveLength(3)
   })
 
-  it('shows the plain-words fraction on partial and broken cards, not on the healthy one', async () => {
+  it('carries the plain-words fraction as the dot\'s tooltip (title), not visible body text', async () => {
     const { api } = await import('@/services/api')
     vi.mocked(api.getAddonCatalog).mockResolvedValueOnce(healthBucketFixture)
 
     renderCatalog()
     await waitFor(() => expect(screen.getByText('all-healthy-addon')).toBeInTheDocument())
 
-    expect(screen.getByText('48 of 50 apps healthy')).toBeInTheDocument()
-    expect(screen.getByText('0 of 5 apps healthy')).toBeInTheDocument()
-    // The fully healthy addon gets no fraction line — nothing to say.
-    expect(screen.queryByText('50 of 50 apps healthy')).not.toBeInTheDocument()
-  })
+    // Not rendered as visible body text anymore.
+    expect(screen.queryByText('48 of 50 apps healthy')).not.toBeInTheDocument()
+    expect(screen.queryByText('0 of 5 apps healthy')).not.toBeInTheDocument()
 
-  it('clicking "With issues" filters to only the partial addon', async () => {
-    const { api } = await import('@/services/api')
-    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce(healthBucketFixture)
-
-    renderCatalog()
-    await waitFor(() => expect(screen.getByText('all-healthy-addon')).toBeInTheDocument())
-
-    // "With issues" is also an option label in the filter <select>, so
-    // scope to the clickable stat card specifically.
-    fireEvent.click(screen.getByRole('button', { name: /With issues/ }))
-
-    expect(screen.getByText('partial-addon')).toBeInTheDocument()
-    expect(screen.queryByText('all-healthy-addon')).not.toBeInTheDocument()
-    expect(screen.queryByText('broken-addon')).not.toBeInTheDocument()
-  })
-
-  it('clicking "Broken" filters to only the broken addon', async () => {
-    const { api } = await import('@/services/api')
-    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce(healthBucketFixture)
-
-    renderCatalog()
-    await waitFor(() => expect(screen.getByText('all-healthy-addon')).toBeInTheDocument())
-
-    // "Broken" is also an option label in the filter <select>, so scope to
-    // the clickable stat card specifically.
-    fireEvent.click(screen.getByRole('button', { name: /Broken/ }))
-
-    expect(screen.getByText('broken-addon')).toBeInTheDocument()
-    expect(screen.queryByText('all-healthy-addon')).not.toBeInTheDocument()
-    expect(screen.queryByText('partial-addon')).not.toBeInTheDocument()
+    const dots = screen.getAllByTestId('addon-health-dot')
+    const titles = dots.map((d) => d.getAttribute('title'))
+    expect(titles).toContain('48 of 50 apps healthy')
+    expect(titles).toContain('0 of 5 apps healthy')
+    expect(titles).toContain('50 of 50 apps healthy')
   })
 
   it('the old "unhealthy" filter value still works, as the union of with-issues + broken', async () => {
