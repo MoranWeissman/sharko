@@ -187,7 +187,12 @@ describe('AddonCatalog', () => {
     // Fixture has 4 addons.
     expect(screen.getAllByText('4').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Healthy').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('Unhealthy').length).toBeGreaterThanOrEqual(1)
+    // Health tells fractions now (walk finding) — the old single
+    // "Unhealthy" stat card split into "With issues" (amber) and "Broken"
+    // (red) so one bad app out of hundreds doesn't read the same as zero
+    // healthy apps at all.
+    expect(screen.getAllByText('With issues').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('Broken').length).toBeGreaterThanOrEqual(1)
     // V2-cleanup-61.2 (D1): the benign stat is "Not deployed yet"; the
     // ambiguous "Catalog Only" wording is retired.
     expect(screen.getAllByText('Not deployed yet').length).toBeGreaterThanOrEqual(1)
@@ -1540,5 +1545,166 @@ describe('AddonCatalog stale-while-refresh (perf S2)', () => {
       expect(screen.getByText('ingress-nginx')).toBeInTheDocument()
     })
     expect(screen.queryByText('stale-addon')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * S3 (maintainer's 50-cluster walk) — addon health tells fractions instead
+ * of flipping the whole addon red on one bad app out of hundreds. Four
+ * addons, one per bucket:
+ *
+ *   - all-healthy: 50 healthy, 0 bad
+ *   - partial:     48 healthy, 1 degraded, 1 missing — some bad, some fine
+ *   - broken:      0 healthy, 5 missing — nothing healthy at all
+ *   - disabled:    enabled_clusters 0 — not in any of the three buckets
+ */
+describe('AddonCatalog — health tells fractions, not a single unhealthy flip (S3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const healthBucketFixture = {
+    addons: [
+      {
+        addon_name: 'all-healthy-addon',
+        chart: 'all-healthy-addon',
+        repo_url: 'https://example.com/charts',
+        namespace: 'all-healthy-addon',
+        version: '1.0.0',
+        total_clusters: 50,
+        enabled_clusters: 10,
+        healthy_applications: 50,
+        degraded_applications: 0,
+        missing_applications: 0,
+        deployed_cluster_count: 10,
+        total_target_cluster_count: 10,
+        applications: [],
+      },
+      {
+        addon_name: 'partial-addon',
+        chart: 'partial-addon',
+        repo_url: 'https://example.com/charts',
+        namespace: 'partial-addon',
+        version: '1.0.0',
+        total_clusters: 50,
+        enabled_clusters: 50,
+        healthy_applications: 48,
+        degraded_applications: 1,
+        missing_applications: 1,
+        deployed_cluster_count: 50,
+        total_target_cluster_count: 50,
+        applications: [],
+      },
+      {
+        addon_name: 'broken-addon',
+        chart: 'broken-addon',
+        repo_url: 'https://example.com/charts',
+        namespace: 'broken-addon',
+        version: '1.0.0',
+        total_clusters: 50,
+        enabled_clusters: 5,
+        healthy_applications: 0,
+        degraded_applications: 0,
+        missing_applications: 5,
+        deployed_cluster_count: 5,
+        total_target_cluster_count: 5,
+        applications: [],
+      },
+      {
+        addon_name: 'disabled-addon',
+        chart: 'disabled-addon',
+        repo_url: 'https://example.com/charts',
+        namespace: 'disabled-addon',
+        version: '1.0.0',
+        total_clusters: 50,
+        enabled_clusters: 0,
+        healthy_applications: 0,
+        degraded_applications: 0,
+        missing_applications: 0,
+        deployed_cluster_count: 0,
+        total_target_cluster_count: 0,
+        applications: [],
+      },
+    ],
+    total_addons: 4,
+    total_clusters: 50,
+    addons_only_in_git: 1,
+  }
+
+  it('splits the stat cards into Healthy / With issues / Broken, one addon each', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce(healthBucketFixture)
+
+    renderCatalog()
+    await waitFor(() => expect(screen.getByText('all-healthy-addon')).toBeInTheDocument())
+
+    // "With issues" / "Broken" are also option labels in the filter
+    // <select>, so scope to the clickable stat cards (role="button") only.
+    const healthyCard = screen.getByRole('button', { name: /Healthy/ })
+    const issuesCard = screen.getByRole('button', { name: /With issues/ })
+    const brokenCard = screen.getByRole('button', { name: /Broken/ })
+    expect(healthyCard).toHaveTextContent('1')
+    expect(issuesCard).toHaveTextContent('1')
+    expect(brokenCard).toHaveTextContent('1')
+  })
+
+  it('shows the plain-words fraction on partial and broken cards, not on the healthy one', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce(healthBucketFixture)
+
+    renderCatalog()
+    await waitFor(() => expect(screen.getByText('all-healthy-addon')).toBeInTheDocument())
+
+    expect(screen.getByText('48 of 50 apps healthy')).toBeInTheDocument()
+    expect(screen.getByText('0 of 5 apps healthy')).toBeInTheDocument()
+    // The fully healthy addon gets no fraction line — nothing to say.
+    expect(screen.queryByText('50 of 50 apps healthy')).not.toBeInTheDocument()
+  })
+
+  it('clicking "With issues" filters to only the partial addon', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce(healthBucketFixture)
+
+    renderCatalog()
+    await waitFor(() => expect(screen.getByText('all-healthy-addon')).toBeInTheDocument())
+
+    // "With issues" is also an option label in the filter <select>, so
+    // scope to the clickable stat card specifically.
+    fireEvent.click(screen.getByRole('button', { name: /With issues/ }))
+
+    expect(screen.getByText('partial-addon')).toBeInTheDocument()
+    expect(screen.queryByText('all-healthy-addon')).not.toBeInTheDocument()
+    expect(screen.queryByText('broken-addon')).not.toBeInTheDocument()
+  })
+
+  it('clicking "Broken" filters to only the broken addon', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce(healthBucketFixture)
+
+    renderCatalog()
+    await waitFor(() => expect(screen.getByText('all-healthy-addon')).toBeInTheDocument())
+
+    // "Broken" is also an option label in the filter <select>, so scope to
+    // the clickable stat card specifically.
+    fireEvent.click(screen.getByRole('button', { name: /Broken/ }))
+
+    expect(screen.getByText('broken-addon')).toBeInTheDocument()
+    expect(screen.queryByText('all-healthy-addon')).not.toBeInTheDocument()
+    expect(screen.queryByText('partial-addon')).not.toBeInTheDocument()
+  })
+
+  it('the old "unhealthy" filter value still works, as the union of with-issues + broken', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce(healthBucketFixture)
+
+    renderCatalog()
+    await waitFor(() => expect(screen.getByText('all-healthy-addon')).toBeInTheDocument())
+
+    const select = screen.getByDisplayValue('All Addons')
+    fireEvent.change(select, { target: { value: 'unhealthy' } })
+
+    expect(screen.getByText('partial-addon')).toBeInTheDocument()
+    expect(screen.getByText('broken-addon')).toBeInTheDocument()
+    expect(screen.queryByText('all-healthy-addon')).not.toBeInTheDocument()
   })
 })

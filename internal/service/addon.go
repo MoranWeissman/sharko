@@ -352,6 +352,18 @@ func (s *AddonService) getCatalogUncached(ctx context.Context, gp gitprovider.Gi
 						// sync_failing counts as degraded for the tile counters so the
 						// catalog health bar and unhealthy chip reflect the real situation.
 						degradedCount++
+					// S3 (maintainer's 50-cluster walk) verification: an
+					// Application IS present here (we're in the `ok` branch),
+					// so a "deploying" status (classifyAddonApp's active-
+					// rollout case — op phase Running, or health
+					// Progressing, with no error signal yet) intentionally
+					// falls through this switch uncounted. It never reaches
+					// healthyCount, degradedCount, OR missingCount (missing
+					// only increments in the `else` below, for an
+					// Application that doesn't exist at all) — a cluster
+					// mid-rollout reads as neither healthy nor broken,
+					// which is the honest state for it to be in.
+					default:
 					}
 					if app.SyncStatus == "Synced" && app.HealthStatus == "Healthy" {
 						deployedCount++
@@ -499,6 +511,14 @@ func (s *AddonService) getCatalogV4(ctx context.Context, gp gitprovider.GitProvi
 					healthyCount++
 				case "sync_failing", "unhealthy":
 					degradedCount++
+				// S3 (maintainer's 50-cluster walk) verification: same as
+				// the v3 branch above — a "deploying" status (active
+				// rollout, no error yet) falls through uncounted since an
+				// Application IS present here. It never reads as missing
+				// (that only fires in the `else` below, for no Application
+				// at all) or as degraded/broken — a mid-rollout cluster is
+				// neither.
+				default:
 				}
 				if app.SyncStatus == "Synced" && app.HealthStatus == "Healthy" {
 					deployedCount++

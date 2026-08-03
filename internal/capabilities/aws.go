@@ -98,6 +98,24 @@ func NewAWSDetector() *AWSDetector {
 	}
 }
 
+// NewStaticAWSDetector returns a detector that always reports the given
+// identity, computed once at construction time. It never reads an
+// environment variable and never makes a network call — Detect(ctx) just
+// returns the identity passed in here. This is the seam demo mode (and
+// tests elsewhere) use to hand Sharko a deterministic, clearly-fake AWS
+// identity instead of ever running the real detection path, which would
+// otherwise report whatever AWS identity happens to be ambient on the host
+// running the demo.
+func NewStaticAWSDetector(identity AWSIdentity) *AWSDetector {
+	d := &AWSDetector{}
+	// Pre-populate the cached result and consume the sync.Once up front so
+	// a later Detect() call returns exactly this identity and never
+	// invokes lookupEnv/callerIdentityFn (both left nil — there is nothing
+	// for them to be called for).
+	d.once.Do(func() { d.result = identity })
+	return d
+}
+
 // Detect returns Sharko's own AWS identity, computing it on the first call
 // and returning the cached result on every subsequent call.
 func (d *AWSDetector) Detect(ctx context.Context) AWSIdentity {

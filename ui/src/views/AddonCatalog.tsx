@@ -70,7 +70,11 @@ type AddonsView = 'catalog' | 'marketplace'
 // uses.
 export const ADDON_CATALOG_CACHE_KEY = 'addon-catalog'
 
-type FilterType = 'all' | 'healthy' | 'unhealthy' | 'git-only' | 'drifted'
+// 'partial' and 'broken' are the two honest replacements for the old single
+// 'unhealthy' bucket (walk finding — see addonHealthBucket below).
+// 'unhealthy' stays a valid value so anything still asking for it (e.g. an
+// old bookmark) keeps working, mapped to their union.
+type FilterType = 'all' | 'healthy' | 'unhealthy' | 'partial' | 'broken' | 'git-only' | 'drifted'
 
 // True when any enabled application runs a version different from the
 // catalog version. Shared by the card drift chip, the `drifted` filter,
@@ -79,6 +83,39 @@ function countDriftedApps(addon: AddonCatalogItem): number {
   return addon.applications.filter(
     (a) => a.enabled && a.deployed_version && a.deployed_version !== addon.version,
   ).length
+}
+
+/**
+ * Three honest buckets per addon, replacing the old "any single bad app
+ * flips the whole addon to unhealthy" rule (walk finding: at 50 clusters,
+ * virtually every addon had at least one degraded/missing app somewhere,
+ * so ALL 30 addons showed red while the dashboard's own numbers said 518
+ * of 660 apps were healthy).
+ *
+ *   - 'healthy' — no degraded/missing apps
+ *   - 'partial' — some apps are bad, but some are also healthy
+ *   - 'broken'  — zero healthy apps
+ *
+ * Checked broken-first: an addon with zero healthy apps is never "healthy"
+ * even in the edge case where degraded/missing both happen to read 0 too
+ * (nothing has reported in yet). Only meaningful for addons enabled on at
+ * least one cluster — callers check enabled_clusters > 0 first; a disabled
+ * addon isn't in any of these three buckets at all.
+ */
+type AddonHealthBucket = 'healthy' | 'partial' | 'broken'
+
+function addonHealthBucket(addon: AddonCatalogItem): AddonHealthBucket {
+  if (addon.healthy_applications === 0) return 'broken'
+  if (addon.degraded_applications === 0 && addon.missing_applications === 0) return 'healthy'
+  return 'partial'
+}
+
+/** "48 of 50 apps healthy" — the plain-words fraction shown on partial and
+ *  broken cards, so the count backs up the color instead of just a red dot. */
+function addonHealthFraction(addon: AddonCatalogItem): string {
+  const total =
+    addon.healthy_applications + addon.degraded_applications + addon.missing_applications
+  return `${addon.healthy_applications} of ${total} ${total === 1 ? 'app' : 'apps'} healthy`
 }
 type SortBy = 'name' | 'applications'
 type PageSize = 15 | 30 | 60
@@ -270,10 +307,25 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
               Version: {addon.version} · Namespace: {namespace}
             </p>
             <DeploymentBadge addon={addon} />
-            {/* Fleet coverage count — welcome here (distinct from per-cluster health) */}
+            {/* Coverage count — welcome here (distinct from per-cluster health) */}
             {target > 0 && (
               <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-400">
                 Installed on {deployed}/{target} {target === 1 ? 'cluster' : 'clusters'}
+              </p>
+            )}
+            {/* Health fraction in plain words (walk finding) — only shown
+                when there's something to say: partial or broken. A fully
+                healthy addon doesn't need a line telling you nothing is
+                wrong. */}
+            {addon.enabled_clusters > 0 && addonHealthBucket(addon) !== 'healthy' && (
+              <p
+                className={`mt-1 text-xs font-medium ${
+                  addonHealthBucket(addon) === 'broken'
+                    ? 'text-red-700 dark:text-red-400'
+                    : 'text-amber-700 dark:text-amber-400'
+                }`}
+              >
+                {addonHealthFraction(addon)}
               </p>
             )}
           </div>
@@ -1175,13 +1227,15 @@ export function AddonCatalog() {
         const a = item.addon
         switch (filterType) {
           case 'healthy':
-            return (
-              a.enabled_clusters > 0 &&
-              a.degraded_applications === 0 &&
-              a.missing_applications === 0
-            )
+            return a.enabled_clusters > 0 && addonHealthBucket(a) === 'healthy'
+          case 'partial':
+            return a.enabled_clusters > 0 && addonHealthBucket(a) === 'partial'
+          case 'broken':
+            return a.enabled_clusters > 0 && addonHealthBucket(a) === 'broken'
           case 'unhealthy':
-            return a.degraded_applications > 0 || a.missing_applications > 0
+            // Back-compat: the old single bucket, now the union of
+            // partial + broken.
+            return a.enabled_clusters > 0 && addonHealthBucket(a) !== 'healthy'
           case 'git-only':
             return a.enabled_clusters === 0
           case 'drifted':
@@ -1216,18 +1270,18 @@ export function AddonCatalog() {
   }, [filteredItems, page, pageSize])
 
   const healthyCount = catalogData
-    ? catalogData.addons.filter(
-        (a) =>
-          a.enabled_clusters > 0 &&
-          a.degraded_applications === 0 &&
-          a.missing_applications === 0,
-      ).length
+    ? catalogData.addons.filter((a) => a.enabled_clusters > 0 && addonHealthBucket(a) === 'healthy')
+        .length
     : 0
 
-  const unhealthyCount = catalogData
-    ? catalogData.addons.filter(
-        (a) => a.degraded_applications > 0 || a.missing_applications > 0,
-      ).length
+  const partialCount = catalogData
+    ? catalogData.addons.filter((a) => a.enabled_clusters > 0 && addonHealthBucket(a) === 'partial')
+        .length
+    : 0
+
+  const brokenCount = catalogData
+    ? catalogData.addons.filter((a) => a.enabled_clusters > 0 && addonHealthBucket(a) === 'broken')
+        .length
     : 0
 
   const handleStatFilter = (filter: FilterType) => {
@@ -1737,8 +1791,11 @@ export function AddonCatalog() {
         </DialogContent>
       </Dialog>
 
-      {/* Summary stat cards — click to filter */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Summary stat cards — click to filter. Healthy / With issues /
+          Broken (walk finding: the old single Healthy/Unhealthy split made
+          every addon with even one bad app out of hundreds read the same
+          as an addon with none healthy at all). */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard
           title="All Addons"
           value={catalogData.total_addons}
@@ -1755,12 +1812,20 @@ export function AddonCatalog() {
           selected={filterType === 'healthy'}
         />
         <StatCard
-          title="Unhealthy"
-          value={unhealthyCount}
+          title="With issues"
+          value={partialCount}
+          icon={<AlertTriangle className="h-5 w-5" />}
+          color="warning"
+          onClick={() => handleStatFilter('partial')}
+          selected={filterType === 'partial'}
+        />
+        <StatCard
+          title="Broken"
+          value={brokenCount}
           icon={<XCircle className="h-5 w-5" />}
           color="error"
-          onClick={() => handleStatFilter('unhealthy')}
-          selected={filterType === 'unhealthy'}
+          onClick={() => handleStatFilter('broken')}
+          selected={filterType === 'broken'}
         />
         <StatCard
           title="Not deployed yet"
@@ -1795,7 +1860,9 @@ export function AddonCatalog() {
           >
             <option value="all">All Addons</option>
             <option value="healthy">Healthy Only</option>
-            <option value="unhealthy">Not Healthy</option>
+            <option value="partial">With issues</option>
+            <option value="broken">Broken</option>
+            <option value="unhealthy">Any issue (with issues + broken)</option>
             <option value="git-only">Not deployed yet</option>
             <option value="drifted">With version drift</option>
           </select>
