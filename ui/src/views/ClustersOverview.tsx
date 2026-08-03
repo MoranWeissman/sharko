@@ -42,6 +42,7 @@ import type {
   VerifyStep,
 } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
+import { PaginationControls, PageSizeSelector, type PageSize } from '@/components/PaginationControls';
 import { ClusterStatusSummary } from '@/components/ClusterStatusSummary';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
@@ -105,6 +106,61 @@ interface Filters {
   name: string;
   versions: string[];
   connectionTypes: string[];
+}
+
+// S1 (maintainer's 50-cluster walk, day 7): real sort controls for the
+// managed clusters list. "Most addons" reuses the exact enabled-addon-count
+// signal the Addons column already renders (Object.values(labels).filter
+// 'enabled') — there is no separate addon_count field on Cluster, so this
+// is the only client-side data the sort can honestly use. No age/"oldest
+// first" option exists — there is no creation-date field anywhere in the
+// cluster data (locked decision, do not add one).
+type ClusterSortOption = 'name-asc' | 'name-desc' | 'problems-first' | 'k8s-version' | 'most-addons';
+
+const CLUSTER_SORT_OPTIONS: Array<{ value: ClusterSortOption; label: string }> = [
+  { value: 'name-asc', label: 'Name A→Z' },
+  { value: 'name-desc', label: 'Name Z→A' },
+  { value: 'problems-first', label: 'Problems first' },
+  { value: 'k8s-version', label: 'Kubernetes version' },
+  { value: 'most-addons', label: 'Most addons' },
+];
+
+// Same enabled-addon-count signal the table/grid rows already compute
+// inline (see rowAddonCount / addonCount below) — pulled out here so the
+// sort comparator and the row renderers read one definition.
+function getEnabledAddonCount(cluster: Cluster): number {
+  return Object.values(cluster.labels).filter((v) => v === 'enabled').length;
+}
+
+// "Problems first" groups failed/missing clusters ahead of everything
+// else. Mirrors the exact definition the `disconnected` StatusFilter (and
+// the Dashboard's headline count) already use for "problem" — see the
+// StatusFilter type's comment above — so the sort agrees with the filter
+// and stat card on what counts as a problem.
+function isProblemCluster(cluster: Cluster): boolean {
+  const cs = cluster.connection_status?.toLowerCase() ?? '';
+  return cs === 'failed' || cs === 'missing';
+}
+
+// Loose semver-ish compare for the "Kubernetes version" sort — descending
+// (newest first), missing versions always sort last regardless of
+// direction. Cluster versions are plain dotted strings (e.g. "1.28",
+// "v1.29.3"); this is intentionally forgiving rather than a strict semver
+// parser.
+function compareServerVersionsDesc(a?: string, b?: string): number {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  const toParts = (v: string) => v.replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const pa = toParts(a);
+  const pb = toParts(b);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const na = pa[i] ?? 0;
+    const nb = pb[i] ?? 0;
+    if (na !== nb) return nb - na;
+  }
+  return 0;
 }
 
 // V2-cleanup-55.3: one plain-English line per credential-source option,
@@ -195,8 +251,9 @@ export function ClustersOverview() {
   // ArgoCD cluster Secrets with no managed-clusters.yaml entry AND no
   // open registration PR (typically left over from a manual-mode register
   // PR closed without merging). Surfaced in a dedicated amber/orange
-  // "Cancelled / Orphan Registrations" section with a "Discard cancelled
-  // registration" button — registration cleanup, not Secret management.
+  // "Leftovers from cancelled registrations" section with a "Discard
+  // cancelled registration" button — registration cleanup, not Secret
+  // management.
   const [orphanRegistrations, setOrphanRegistrations] = useState<OrphanRegistration[]>([]);
   // Per-cluster orphan-delete state. `null` = no action; `pending` = the
   // confirm dialog is open for this name; `deleting` = the API call is in
@@ -246,6 +303,12 @@ export function ClustersOverview() {
     connectionTypes: [],
   });
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+  // S1: sort + pagination for the managed clusters list. Page resets to 1
+  // whenever search/filters/sort/page-size change (effect below) so a
+  // narrowed result set never leaves the user stranded on an empty page.
+  const [sortOption, setSortOption] = useState<ClusterSortOption>('name-asc');
+  const [managedPage, setManagedPage] = useState(1);
+  const [managedPageSize, setManagedPageSize] = useState<PageSize>(20);
   // V2-cleanup-61.3 (B3): below the collapse threshold the legend is
   // on-demand — this tracks whether the user has opened it.
   // V2-cleanup-92.1 (F3): shown by default (legendOpen starts true).
@@ -985,7 +1048,7 @@ export function ClustersOverview() {
   );
 
   // Same defence-in-depth for orphans — they belong only in the
-  // "Cancelled / Orphan Registrations" section.
+  // "Leftovers from cancelled registrations" section.
   const orphanNames = useMemo(
     () => new Set(orphanRegistrations.map((o) => o.cluster_name)),
     [orphanRegistrations],
@@ -1005,6 +1068,56 @@ export function ClustersOverview() {
     ),
     [filteredClusters, pendingNames, orphanNames],
   );
+
+  // S1: sort, THEN paginate — filters/search already ran above in
+  // filteredClusters/managedClusters. Sorted via a decorate-sort-undecorate
+  // pass (rather than relying on Array.sort's stability) so "Problems
+  // first" keeps a deterministic, engine-independent order within each
+  // group.
+  const sortedManagedClusters = useMemo(() => {
+    const decorated = managedClusters.map((cluster, index) => ({ cluster, index }));
+    decorated.sort((x, y) => {
+      let cmp = 0;
+      switch (sortOption) {
+        case 'name-asc':
+          cmp = x.cluster.name.localeCompare(y.cluster.name);
+          break;
+        case 'name-desc':
+          cmp = y.cluster.name.localeCompare(x.cluster.name);
+          break;
+        case 'problems-first':
+          cmp = Number(isProblemCluster(y.cluster)) - Number(isProblemCluster(x.cluster));
+          break;
+        case 'k8s-version':
+          cmp = compareServerVersionsDesc(x.cluster.server_version, y.cluster.server_version);
+          break;
+        case 'most-addons':
+          cmp = getEnabledAddonCount(y.cluster) - getEnabledAddonCount(x.cluster);
+          break;
+      }
+      return cmp !== 0 ? cmp : x.index - y.index;
+    });
+    return decorated.map((d) => d.cluster);
+  }, [managedClusters, sortOption]);
+
+  const managedTotalPages = Math.max(1, Math.ceil(sortedManagedClusters.length / managedPageSize));
+  // Clamp rather than trust `managedPage` directly — a background refresh
+  // that shrinks the result set (or a page-size bump) can otherwise leave
+  // the view pointed at a page that no longer exists.
+  const clampedManagedPage = Math.min(managedPage, managedTotalPages);
+  const pagedManagedClusters = useMemo(
+    () => sortedManagedClusters.slice(
+      (clampedManagedPage - 1) * managedPageSize,
+      clampedManagedPage * managedPageSize,
+    ),
+    [sortedManagedClusters, clampedManagedPage, managedPageSize],
+  );
+
+  // Page resets to 1 whenever search, filters, status filter, sort, or
+  // page size change — never leaves the user stranded on a now-empty page.
+  useEffect(() => {
+    setManagedPage(1);
+  }, [filters.name, filters.versions, filters.connectionTypes, statusFilter, sortOption, managedPageSize]);
 
   // V2-cleanup-89.3: confirming a pick in the Register dialog's "Pick from
   // what ArgoCD already has" block closes the dialog and reuses the EXACT
@@ -1819,7 +1932,7 @@ export function ClustersOverview() {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#3a6a8a]" />
             <input
               type="text"
-              placeholder="Filter by name..."
+              placeholder="Search clusters by name..."
               value={filters.name}
               onChange={(e) =>
                 setFilters((prev) => ({ ...prev, name: e.target.value }))
@@ -1897,6 +2010,25 @@ export function ClustersOverview() {
                 )}
               </div>
             )}
+          </div>
+
+          {/* Sort (S1) */}
+          <div className="flex items-center gap-1.5">
+            <label htmlFor="cluster-sort" className="text-sm text-[#2a5a7a] dark:text-gray-400">
+              Sort
+            </label>
+            <select
+              id="cluster-sort"
+              value={sortOption}
+              onChange={(e) => setSortOption(e.target.value as ClusterSortOption)}
+              className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-2 text-sm text-[#0a3a5a] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+            >
+              {CLUSTER_SORT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Clear button */}
@@ -2043,25 +2175,29 @@ export function ClustersOverview() {
         </div>
       )}
 
-      {/* Cancelled / Orphan Registrations — ArgoCD cluster Secrets with
-          NO managed-clusters.yaml entry AND no open registration PR
+      {/* Leftovers from cancelled registrations — ArgoCD cluster Secrets
+          with NO managed-clusters.yaml entry AND no open registration PR
           (typically left over when a manual-mode register PR was closed
           without merging; the orchestrator pre-creates the Secret before
-          the PR opens). Per-row "Discard cancelled registration" button
-          deletes the Secret via DELETE /api/v1/clusters/{name}/orphan.
-          Amber/orange tint signals "needs cleanup attention". */}
+          the PR opens). S2 (maintainer's 50-cluster walk, day 7): the old
+          "safe to delete" one-liner asserted safety without explaining it
+          — the section body below now spells out the actual gate (owned by
+          Sharko, not in git, no open PR) so "Discard" isn't a leap of
+          faith. Per-row "Discard cancelled registration" button deletes
+          the Secret via DELETE /api/v1/clusters/{name}/orphan. Amber/
+          orange tint signals "needs cleanup attention". */}
       {orphanRegistrations.length > 0 && (
         <div className="space-y-3">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
             <AlertTriangle className="h-4 w-4 text-amber-600" />
-            Cancelled / Orphan Registrations
+            Leftovers from cancelled registrations
             <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
               {orphanRegistrations.length}
             </span>
-            <span className="text-xs font-normal text-[#3a6a8a] dark:text-gray-500">
-              — ArgoCD cluster Secret exists but no Git entry and no open PR; safe to delete
-            </span>
           </h3>
+          <p className="text-sm text-[#3a6a8a] dark:text-gray-400">
+            When a registration PR is closed without merging, the connection secret Sharko already created stays behind in ArgoCD. Everything listed here carries Sharko&apos;s own ownership label, is not in git, and has no open PR — nothing is using it. Discard removes just this leftover secret.
+          </p>
           <div className="overflow-x-auto rounded-xl ring-2 ring-amber-200 bg-amber-50/40 shadow-sm dark:ring-amber-900/40 dark:bg-gray-800">
             <table className="w-full text-left text-sm">
               <thead className="border-b border-amber-200 bg-amber-100/60 text-xs uppercase text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-400">
@@ -2129,13 +2265,24 @@ export function ClustersOverview() {
 
       {/* Managed Clusters */}
       <div className="space-y-3">
-        <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
-          <Server className="h-4 w-4 text-teal-600" />
-          Managed Clusters
-          <span className="rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
-            {managedClusters.length}
-          </span>
-        </h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
+            <Server className="h-4 w-4 text-teal-600" />
+            Managed Clusters
+            <span className="rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
+              {managedClusters.length}
+            </span>
+          </h3>
+          {/* S1: page-size selector — 5/10/20/50/100, default 20 for this
+              page. Always visible so the control is discoverable even for
+              a small list; PaginationControls itself hides once everything
+              fits on one page. */}
+          <PageSizeSelector
+            pageSize={managedPageSize}
+            onChange={setManagedPageSize}
+            sizes={[5, 10, 20, 50, 100]}
+          />
+        </div>
 
         {viewMode === 'list' ? (
           <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
@@ -2150,14 +2297,14 @@ export function ClustersOverview() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
-                {managedClusters.map((cluster) => {
+                {pagedManagedClusters.map((cluster) => {
                   const isInCluster = cluster.name === 'in-cluster';
                   const testResult = testResults[cluster.name];
                   // v4 walk-findings W2, item 2: same enabled-addon-count
                   // signal already used for the "Addons" column, reused so
                   // the connection pill can tell a zero-addon cluster apart
                   // from a genuinely mid-registration one.
-                  const rowAddonCount = Object.values(cluster.labels).filter((v) => v === 'enabled').length;
+                  const rowAddonCount = getEnabledAddonCount(cluster);
                   return (
                     <tr
                       key={cluster.name}
@@ -2251,9 +2398,9 @@ export function ClustersOverview() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {managedClusters.map((cluster) => {
+            {pagedManagedClusters.map((cluster) => {
               const isInCluster = cluster.name === 'in-cluster';
-              const addonCount = Object.values(cluster.labels).filter((v) => v === 'enabled').length;
+              const addonCount = getEnabledAddonCount(cluster);
               const testResult = testResults[cluster.name];
               return (
                 <div
@@ -2338,6 +2485,23 @@ export function ClustersOverview() {
                 No managed clusters match the current filters.
               </div>
             )}
+          </div>
+        )}
+
+        {/* S1: pagination over the loaded+filtered+sorted managed list.
+            Renders nothing when everything fits on one page. This pages
+            through what's already in memory — "Load more clusters" below
+            (unchanged) is still how more gets fetched from the server. */}
+        {managedTotalPages > 1 && (
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <span className="text-xs text-[#3a6a8a] dark:text-gray-500">
+              Page {clampedManagedPage} of {managedTotalPages}
+            </span>
+            <PaginationControls
+              page={clampedManagedPage}
+              totalPages={managedTotalPages}
+              onPageChange={setManagedPage}
+            />
           </div>
         )}
 
@@ -2431,8 +2595,8 @@ export function ClustersOverview() {
         open={orphanDeleteTarget !== null}
         onClose={() => setOrphanDeleteTarget(null)}
         onConfirm={handleDeleteOrphan}
-        title="Discard cancelled registration"
-        description={`This will remove the leftover ArgoCD cluster Secret for "${orphanDeleteTarget}". The Secret was created when you started registering this cluster, but the registration PR was closed without merging — so it is not in any active Git state. Discarding it is safe and will not affect any managed cluster.`}
+        title="Discard this leftover secret?"
+        description={`This removes only the leftover ArgoCD connection secret Sharko created for "${orphanDeleteTarget}" when its registration PR was opened. That PR was closed without merging, so nothing is using this secret. The cluster itself is not touched — this only cleans up the leftover secret.`}
         confirmText="Discard"
         destructive
         loading={orphanDeleteLoading}

@@ -66,7 +66,7 @@ describe('ClustersOverview — control collapse below 5 clusters (V2-cleanup-61.
     });
 
     expect(screen.queryByText('All Clusters')).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText('Filter by name...')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Search clusters by name...')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /ArgoCD Connection/ })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Grid view')).not.toBeInTheDocument();
 
@@ -89,7 +89,7 @@ describe('ClustersOverview — control collapse below 5 clusters (V2-cleanup-61.
     });
 
     expect(screen.getByText('All Clusters')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Filter by name...')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search clusters by name...')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /ArgoCD Connection/ })).toBeInTheDocument();
     expect(screen.getByLabelText('Grid view')).toBeInTheDocument();
 
@@ -107,6 +107,6 @@ describe('ClustersOverview — control collapse below 5 clusters (V2-cleanup-61.
     });
 
     expect(screen.queryByText('All Clusters')).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText('Filter by name...')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Search clusters by name...')).not.toBeInTheDocument();
   });
 });
