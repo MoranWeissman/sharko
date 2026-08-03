@@ -1,7 +1,7 @@
 // Shared pagination controls extracted from AddonCatalog.tsx
 // Used by: AddonCatalog, ClustersOverview, Observability
 
-export type PageSize = 20 | 50 | 100;
+export type PageSize = 10 | 20 | 50 | 100;
 
 /**
  * Pagination controls with ellipsis support.
@@ -84,7 +84,7 @@ export function PageSizeSelector({
   pageSize: PageSize;
   onChange: (size: PageSize) => void;
 }) {
-  const sizes: PageSize[] = [20, 50, 100];
+  const sizes: PageSize[] = [10, 20, 50, 100];
   return (
     <div className="flex items-center gap-2">
       <span className="text-xs text-[#2a5a7a] dark:text-gray-400">Show:</span>

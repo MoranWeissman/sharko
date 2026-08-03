@@ -1,7 +1,9 @@
 package service
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/models"
 )
@@ -221,6 +223,64 @@ func TestBuildRecentSyncs_MarksEarliestInstalledLaterUpdated(t *testing.T) {
 	}
 	if got := byRevision["rev7"].Action; got != models.SyncActionUpdated {
 		t.Errorf("rev7 (ID 7) Action = %q, want %q", got, models.SyncActionUpdated)
+	}
+}
+
+// TestCapRecentSyncs_BoundsAt300AndSortsDescending is the S4 (scale-walk
+// round 2) regression guard: the cap was raised from 20 to 300 so a
+// 50-cluster estate's per-addon/per-cluster charts get real data instead of
+// an almost-empty feed. This locks the new bound down directly (a fixture
+// well past 300 entries) and proves the result stays sorted newest-first —
+// same flat shape, same sort, just a bigger window.
+func TestCapRecentSyncs_BoundsAt300AndSortsDescending(t *testing.T) {
+	t.Parallel()
+
+	const total = 350
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	syncs := make([]models.SyncActivityEntry, total)
+	for i := 0; i < total; i++ {
+		// Increasing timestamps, deliberately built out of order below so
+		// capRecentSyncs' own sort is what puts them back in order.
+		syncs[i] = models.SyncActivityEntry{
+			Timestamp: base.Add(time.Duration(i) * time.Second).Format(time.RFC3339),
+			AddonName: fmt.Sprintf("addon-%d", i),
+		}
+	}
+	// Shuffle deterministically (reverse) so the input isn't already sorted.
+	for i, j := 0, len(syncs)-1; i < j; i, j = i+1, j-1 {
+		syncs[i], syncs[j] = syncs[j], syncs[i]
+	}
+
+	got := capRecentSyncs(syncs, recentSyncsCap)
+
+	if len(got) != 300 {
+		t.Fatalf("capRecentSyncs len = %d, want 300", len(got))
+	}
+
+	for i := 1; i < len(got); i++ {
+		if got[i-1].Timestamp < got[i].Timestamp {
+			t.Fatalf("not sorted descending at index %d: %q came before %q", i, got[i-1].Timestamp, got[i].Timestamp)
+		}
+	}
+
+	// The newest entry (index total-1, i.e. addon-349) must be first, and
+	// the 300 kept must be the 300 NEWEST, not an arbitrary slice.
+	if got[0].AddonName != fmt.Sprintf("addon-%d", total-1) {
+		t.Errorf("got[0].AddonName = %q, want %q (the newest entry)", got[0].AddonName, fmt.Sprintf("addon-%d", total-1))
+	}
+	oldestKept := got[len(got)-1].AddonName
+	if oldestKept != fmt.Sprintf("addon-%d", total-300) {
+		t.Errorf("oldest kept entry = %q, want %q (300th newest)", oldestKept, fmt.Sprintf("addon-%d", total-300))
+	}
+
+	// Below-cap input passes through unchanged.
+	small := []models.SyncActivityEntry{
+		{Timestamp: "2026-01-01T00:01:00Z"},
+		{Timestamp: "2026-01-01T00:00:00Z"},
+	}
+	gotSmall := capRecentSyncs(small, recentSyncsCap)
+	if len(gotSmall) != 2 {
+		t.Fatalf("capRecentSyncs len = %d, want 2 (below cap, unchanged)", len(gotSmall))
 	}
 }
 
