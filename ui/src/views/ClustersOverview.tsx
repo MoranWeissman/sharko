@@ -317,6 +317,13 @@ export function ClustersOverview() {
   const [connectionDropdownOpen, setConnectionDropdownOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  // S3 (walk day 7): clicking a stat card jumps down to the managed
+  // clusters list instead of leaving the user scrolled at the top with no
+  // sign anything happened. Scrolled only from the click handler
+  // (handleStatusFilter below) — never from an effect, so an unrelated
+  // re-render (a 30s poll, a filter typed elsewhere) can never yank the
+  // page down on its own.
+  const managedSectionRef = useRef<HTMLDivElement>(null);
 
   // V3-D5: cluster removal PR note carried via router state from ClusterDetail
   // after a successful removal. Read on mount, show as dismissible banner,
@@ -1168,6 +1175,10 @@ export function ClustersOverview() {
 
   const handleStatusFilter = (filter: StatusFilter) => {
     setStatusFilter(statusFilter === filter ? 'all' : filter);
+    // S3: jump to the managed clusters list so the filter change is
+    // visible right away, instead of leaving the user scrolled at the top
+    // wondering if the click did anything.
+    managedSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const toggleVersion = (version: string) => {
@@ -1291,8 +1302,12 @@ export function ClustersOverview() {
               ("Managed Clusters"), so this in-page title is left distinct
               to avoid two identical headings on the same page. */}
           <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Clusters</h2>
+          {/* S4 (walk day 7, missing-truth finding a): a quiet one-liner
+              saying what these clusters actually are and who owns the
+              connection — the maintainer's walk found the page never said
+              this plainly. */}
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-            All Kubernetes clusters managed by ArgoCD. Click a cluster to see deployed addons, health status, and configuration.
+            Clusters ArgoCD deploys to — Sharko manages their connections from git.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -2179,13 +2194,16 @@ export function ClustersOverview() {
           with NO managed-clusters.yaml entry AND no open registration PR
           (typically left over when a manual-mode register PR was closed
           without merging; the orchestrator pre-creates the Secret before
-          the PR opens). S2 (maintainer's 50-cluster walk, day 7): the old
-          "safe to delete" one-liner asserted safety without explaining it
-          — the section body below now spells out the actual gate (owned by
-          Sharko, not in git, no open PR) so "Discard" isn't a leap of
-          faith. Per-row "Discard cancelled registration" button deletes
-          the Secret via DELETE /api/v1/clusters/{name}/orphan. Amber/
-          orange tint signals "needs cleanup attention". */}
+          the PR opens). S4 (walk day 7, missing-truth finding b): the day-7
+          body (S2) explained the deletion gate but skipped the first beat —
+          WHY a secret exists in ArgoCD before the PR is even merged — and
+          that confused the maintainer. The body now opens with that beat
+          (register → secret created immediately + PR opens in git → PR
+          closed without merging → secret stranded) before the ownership/
+          not-in-git/no-open-PR gate. Per-row "Discard cancelled
+          registration" button deletes the Secret via DELETE
+          /api/v1/clusters/{name}/orphan. Amber/orange tint signals "needs
+          cleanup attention". */}
       {orphanRegistrations.length > 0 && (
         <div className="space-y-3">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
@@ -2196,7 +2214,7 @@ export function ClustersOverview() {
             </span>
           </h3>
           <p className="text-sm text-[#3a6a8a] dark:text-gray-400">
-            When a registration PR is closed without merging, the connection secret Sharko already created stays behind in ArgoCD. Everything listed here carries Sharko&apos;s own ownership label, is not in git, and has no open PR — nothing is using it. Discard removes just this leftover secret.
+            Registering a cluster creates its connection secret in ArgoCD right away — that&apos;s how Sharko tests the connection — while the PR records the cluster in git. If that PR is closed without merging, the secret stays behind with nothing using it. Everything listed here carries Sharko&apos;s own ownership label, is not in git, and has no open PR. Discard removes just this leftover secret.
           </p>
           <div className="overflow-x-auto rounded-xl ring-2 ring-amber-200 bg-amber-50/40 shadow-sm dark:ring-amber-900/40 dark:bg-gray-800">
             <table className="w-full text-left text-sm">
@@ -2264,7 +2282,7 @@ export function ClustersOverview() {
       )}
 
       {/* Managed Clusters */}
-      <div className="space-y-3">
+      <div id="managed-clusters-section" ref={managedSectionRef} className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
             <Server className="h-4 w-4 text-teal-600" />
@@ -2273,15 +2291,43 @@ export function ClustersOverview() {
               {managedClusters.length}
             </span>
           </h3>
-          {/* S1: page-size selector — 5/10/20/50/100, default 20 for this
-              page. Always visible so the control is discoverable even for
-              a small list; PaginationControls itself hides once everything
-              fits on one page. */}
-          <PageSizeSelector
-            pageSize={managedPageSize}
-            onChange={setManagedPageSize}
-            sizes={[5, 10, 20, 50, 100]}
-          />
+          <div className="flex flex-wrap items-center gap-3">
+            {/* S3 (walk day 7): the list's own status control, two-way
+                synced with the stat cards above — reuses the same
+                StatusFilter values and titles (statItems), so picking a
+                status here or up in the cards always agrees with the
+                other. Gated by showFullControls like the stat cards
+                themselves (V2-cleanup-61.3, B3) — below the 5-cluster
+                threshold there's no stat-card row to sync with either. */}
+            {showFullControls && (
+              <div className="flex items-center gap-1.5">
+                <label htmlFor="managed-status-filter" className="text-sm text-[#2a5a7a] dark:text-gray-400">
+                  Status
+                </label>
+                <select
+                  id="managed-status-filter"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                  className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-2 text-sm text-[#0a3a5a] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+                >
+                  {statItems.map((item) => (
+                    <option key={item.key} value={item.key}>
+                      {item.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {/* S1: page-size selector — 5/10/20/50/100, default 20 for this
+                page. Always visible so the control is discoverable even for
+                a small list; PaginationControls itself hides once everything
+                fits on one page. */}
+            <PageSizeSelector
+              pageSize={managedPageSize}
+              onChange={setManagedPageSize}
+              sizes={[5, 10, 20, 50, 100]}
+            />
+          </div>
         </div>
 
         {viewMode === 'list' ? (

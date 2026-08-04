@@ -116,6 +116,20 @@ describe('ClustersOverview', () => {
     expect(screen.getByText('Loading clusters...')).toBeInTheDocument();
   });
 
+  // S4 (walk day 7, missing-truth finding a): a quiet subtitle line under
+  // the page title saying what these clusters are and who owns the
+  // connection — the maintainer's walk found the page never said this.
+  it('shows the "Clusters ArgoCD deploys to" subtitle under the page title', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Clusters')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText('Clusters ArgoCD deploys to — Sharko manages their connections from git.'),
+    ).toBeInTheDocument();
+  });
+
   it('renders error state on API failure', async () => {
     mockGetClusters.mockRejectedValue(new Error('Network error'));
     renderView();
@@ -184,8 +198,11 @@ describe('ClustersOverview', () => {
     });
 
     // Stat cards — canonical connection vocabulary (V2-cleanup-61.2, D2;
-    // LW-11: "Not managed" reframed as "Available to manage").
-    expect(screen.getByText('All Clusters')).toBeInTheDocument();
+    // LW-11: "Not managed" reframed as "Available to manage"). "All
+    // Clusters" now also appears as an option in the S3 status select next
+    // to the managed list, so this asserts at-least-one like its siblings
+    // below, not exactly-one.
+    expect(screen.getAllByText('All Clusters').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Connected').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Disconnected').length).toBeGreaterThanOrEqual(1);
     // v4 walk-findings W2, item 2: this lane's canonical vocabulary label
@@ -547,7 +564,11 @@ describe('ClustersOverview', () => {
     }
   });
 
-  it('toggles status filter on stat card click', async () => {
+  it('toggles status filter on stat card click and scrolls to the managed clusters list (S3, walk day 7)', async () => {
+    // jsdom doesn't implement scrollIntoView — mock it so the click handler
+    // doesn't throw, and so the scroll call itself can be asserted.
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+
     // Stat cards only render at/above the 5-cluster collapse threshold
     // (V2-cleanup-61.3, B3).
     mockGetClusters.mockResolvedValue(clustersResponseAtThreshold);
@@ -569,6 +590,22 @@ describe('ClustersOverview', () => {
 
     // Only the failed cluster should remain
     expect(screen.queryByText('prod-eu')).not.toBeInTheDocument();
+    expect(screen.getByText('staging-us')).toBeInTheDocument();
+
+    // S3: the click also jumps down to the managed clusters list, so the
+    // filter change is visible instead of leaving the user scrolled at the
+    // top wondering if anything happened.
+    expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' });
+
+    // S3: the list's own status select is two-way synced — clicking the
+    // stat card updates it to match.
+    const statusSelect = screen.getByLabelText('Status') as HTMLSelectElement;
+    expect(statusSelect.value).toBe('failed');
+
+    // And picking a different value from the select updates the filter the
+    // other way — clearing back to "all" restores every cluster.
+    fireEvent.change(statusSelect, { target: { value: 'all' } });
+    expect(screen.getByText('prod-eu')).toBeInTheDocument();
     expect(screen.getByText('staging-us')).toBeInTheDocument();
   });
 

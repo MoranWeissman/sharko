@@ -100,6 +100,28 @@ describe('Dashboard', () => {
     expect(screen.getByText('Loading dashboard...')).toBeInTheDocument();
   });
 
+  // S2 (walk day 7): the manual refresh control is a real labeled button
+  // now — icon + visible "Refresh" text, same header position, spinner
+  // swap while a background refresh is in flight — not a bare icon.
+  it('shows a labeled Refresh button that spins while a manual refresh is in flight', async () => {
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+
+    const refreshButton = screen.getByTestId('dashboard-refresh');
+    expect(within(refreshButton).getByText('Refresh')).toBeInTheDocument();
+    expect(refreshButton).not.toBeDisabled();
+
+    fireEvent.click(refreshButton);
+    expect(refreshButton).toBeDisabled();
+
+    await waitFor(() => {
+      expect(refreshButton).not.toBeDisabled();
+    });
+  });
+
   it('renders fleet status strip segments after data loads (dashboard-purpose decision, WQ-2: donuts + total legend row, S4)', async () => {
     renderDashboard();
 
@@ -215,7 +237,7 @@ describe('Dashboard thin issues line (walk day 3, split into buckets S1)', () =>
     expect(screen.queryByText(/app.*unhealthy/i)).not.toBeInTheDocument();
 
     dateSpy.mockReturnValue(startTime + 11 * 60 * 1000);
-    fireEvent.click(screen.getByTitle('Refresh'));
+    fireEvent.click(screen.getByTestId('dashboard-refresh'));
 
     const appsLine = await screen.findByText(/1 app unhealthy/i);
     const clustersLine = await screen.findByText(/2 clusters unreachable/i);
@@ -228,7 +250,7 @@ describe('Dashboard thin issues line (walk day 3, split into buckets S1)', () =>
     dateSpy.mockRestore();
   });
 
-  it('renders nothing when there are no confirmed problems (quiet work-queue page)', async () => {
+  it('shows the quiet "No open issues" line inside the Issues box when there are no confirmed problems', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...baseStats,
       clusters: { total: 5, connected: 5, pending: 0, untested: 0, missing: 0, failed: 0 },
@@ -238,7 +260,9 @@ describe('Dashboard thin issues line (walk day 3, split into buckets S1)', () =>
     await waitFor(() => {
       expect(screen.getByTestId('fleet-strip-clusters')).toBeInTheDocument();
     });
-    expect(screen.queryByText(/open issues?/i)).not.toBeInTheDocument();
+    expect(screen.getByText('No open issues')).toBeInTheDocument();
+    expect(screen.queryByText(/\d+ apps? unhealthy/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d+ clusters? unreachable/i)).not.toBeInTheDocument();
     expect(screen.queryByText('All systems operational')).not.toBeInTheDocument();
   });
 
@@ -349,7 +373,9 @@ describe('Dashboard — empty install (B1, no false-green)', () => {
     });
     expect(screen.queryByText('All systems operational')).not.toBeInTheDocument();
     expect(screen.queryByText('Nothing connected yet')).not.toBeInTheDocument();
-    expect(screen.queryByText(/open issues?/i)).not.toBeInTheDocument();
+    // Quiet, healthy data still shows the Issues box, just with its
+    // no-problems line, not the old glued "N open issues" total.
+    expect(screen.getByText('No open issues')).toBeInTheDocument();
   });
 });
 
@@ -663,30 +689,39 @@ describe('Fleet Status Strip exception styling (WQ-1 / WQ-2 / walk day 3)', () =
   });
 });
 
-// Page order (dashboard-purpose decision, WQ-1): PullRequestsPanel is
-// promoted to the first content surface after Needs Attention — it must
-// appear BEFORE the Fleet Status Strip in DOM order.
-describe('Dashboard page order — PRs before the fleet strip (WQ-1)', () => {
+// Page order (S1, walk day 7): the pies read FIRST, then Pull Requests,
+// then one bottom row pairing Recent Activity with Issues. Supersedes the
+// old WQ-1 order (PRs before the strip) — the maintainer's walk moved the
+// strip to the top.
+describe('Dashboard page order — pies, then PRs, then the bottom row (S1, walk day 7)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('PullRequestsPanel appears before FleetStatusStrip in DOM order', async () => {
+  it('FleetStatusStrip appears before PullRequestsPanel, which appears before Recent Activity and Issues, in DOM order', async () => {
     (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
     (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
     const { container } = renderDashboard();
 
     await screen.findByTestId('fleet-strip-clusters');
-    const prPanel = screen.getByText('Pull Requests');
     const strip = screen.getByTestId('fleet-strip-clusters');
+    const prPanel = screen.getByText('Pull Requests');
+    const recentActivity = screen.getByText('Recent Activity');
+    const issuesBox = screen.getByText('Issues');
 
     const allNodes = Array.from(container.querySelectorAll('*'));
-    const prIndex = allNodes.indexOf(prPanel);
     const stripIndex = allNodes.indexOf(strip);
+    const prIndex = allNodes.indexOf(prPanel);
+    const recentActivityIndex = allNodes.indexOf(recentActivity);
+    const issuesIndex = allNodes.indexOf(issuesBox);
 
-    expect(prIndex).toBeGreaterThanOrEqual(0);
     expect(stripIndex).toBeGreaterThanOrEqual(0);
-    expect(prIndex).toBeLessThan(stripIndex);
+    expect(prIndex).toBeGreaterThanOrEqual(0);
+    expect(recentActivityIndex).toBeGreaterThanOrEqual(0);
+    expect(issuesIndex).toBeGreaterThanOrEqual(0);
+    expect(stripIndex).toBeLessThan(prIndex);
+    expect(prIndex).toBeLessThan(recentActivityIndex);
+    expect(prIndex).toBeLessThan(issuesIndex);
   });
 });
 

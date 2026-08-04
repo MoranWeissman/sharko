@@ -94,6 +94,11 @@ describe('ClustersOverview — V125-1-7 orphan cluster surface', () => {
     expect(screen.getByText(/is not in git, and has no open PR/i)).toBeInTheDocument();
     expect(screen.queryByText(/safe to delete/i)).not.toBeInTheDocument();
 
+    // S4 (walk day 7, missing-truth finding b): the body now opens with
+    // the first beat — WHY a secret exists in ArgoCD before the PR merges
+    // — that the day-7 (S2) body skipped and confused the maintainer.
+    expect(screen.getByText(/Registering a cluster creates its connection secret in ArgoCD right away/i)).toBeInTheDocument();
+
     // V125-1-7.1: button label renamed to user mental model.
     const deleteBtn = screen.getByRole('button', { name: /Discard cancelled registration for kind-orphan/i });
     expect(deleteBtn).toBeInTheDocument();
