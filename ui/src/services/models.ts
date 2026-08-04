@@ -149,15 +149,14 @@ export interface ConnectionSecretRow {
   last_repaired_detail?: string
 }
 
-// addon-values secrets have no per-row last_checked/last_repaired: the
-// values reconciler only keeps an aggregate, pass-level stat — see
-// ManagedSecretsEngineInfo below for the closest honest signal (this is a
-// known gap, not an oversight).
 export interface AddonValuesSecretRow {
   cluster: string
   addon: string
   secret_name?: string
   secret_namespace?: string
+  last_checked?: string // RFC3339, absent = unknown (never checked on this server instance)
+  last_repaired?: string // RFC3339, absent = never seen in the audit log's retained window
+  last_repaired_detail?: string
 }
 
 export interface ManagedSecretsEngineInfo {

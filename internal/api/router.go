@@ -166,6 +166,12 @@ type SecretReconciler interface {
 	LastRunTime() time.Time
 	LastError() string
 	Interval() time.Duration
+	// LastItemChecked reports the last-checked timestamp for one
+	// addon-values secret's cluster+addon pair — primitive-typed, same
+	// import-free-boundary reasoning as the three methods above (System
+	// page's addon_values_secrets rows). ok is false when this pair has
+	// never been reconciled on this server instance.
+	LastItemChecked(cluster, addon string) (lastChecked time.Time, ok bool)
 }
 
 // Server holds the HTTP handlers and their dependencies.

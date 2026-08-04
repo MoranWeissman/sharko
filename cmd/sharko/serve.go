@@ -913,6 +913,31 @@ var serveCmd = &cobra.Command{
 					})
 				})
 
+				// Wire per-item audit callback — one entry per addon-values
+				// secret actually created or updated (never for an
+				// unchanged check), Resource shaped so the System page's
+				// addon_values_secrets rows can join onto it the same way
+				// cluster_connection_secrets rows already join onto
+				// "cluster:<name>" entries (internal/api/system_managed_secrets.go).
+				reconciler.SetItemAuditFunc(func(cluster, addon string, outcome secrets.ItemOutcome) {
+					event := "addon_secret_updated"
+					detail := "secret updated"
+					if outcome == secrets.ItemOutcomeCreated {
+						event = "addon_secret_created"
+						detail = "secret created"
+					}
+					auditLog.Add(audit.Entry{
+						Level:    "info",
+						Event:    event,
+						User:     "sharko",
+						Action:   "push",
+						Resource: fmt.Sprintf("cluster:%s/addon:%s", cluster, addon),
+						Source:   "reconciler",
+						Result:   "success",
+						Detail:   detail,
+					})
+				})
+
 				reconciler.Start()
 				defer reconciler.Stop()
 				slog.Info("secret reconciler started", "interval", dur)

@@ -50,6 +50,73 @@ type RemoteClientFactory func(kubeconfig []byte) (kubernetes.Interface, error)
 // from this reconcile pass.
 type AuditFunc func(clusterName string, created, updated int)
 
+// ItemOutcome classifies the result of the most recent reconcile attempt
+// for a single addon-values secret (one cluster+addon pair). Mirrors the
+// vocabulary shape of clusterreconciler.ReconcileOutcome, widened with an
+// explicit "unchanged" state (this reconciler's most common outcome — a
+// hash match means nothing was written) and a "skipped" state distinct
+// from a live failure (a half-written catalog definition — nothing on the
+// remote cluster was ever touched, so it is not the same kind of problem
+// as a K8s API error).
+type ItemOutcome string
+
+const (
+	// ItemOutcomeCreated means the Secret did not exist on the remote
+	// cluster and this pass created it.
+	ItemOutcomeCreated ItemOutcome = "created"
+	// ItemOutcomeUpdated means the Secret existed but its content hash
+	// differed from the desired value, so this pass rotated it.
+	ItemOutcomeUpdated ItemOutcome = "updated"
+	// ItemOutcomeUnchanged means the Secret already matched the desired
+	// content hash — checked, nothing to do.
+	ItemOutcomeUnchanged ItemOutcome = "unchanged"
+	// ItemOutcomeSkipped means this pass deliberately did not attempt a
+	// write for this item — the catalog's push definition is incomplete
+	// (see models.AddonSecretRef.MissingFields). Not a live-cluster
+	// failure: nothing was attempted against Kubernetes at all.
+	ItemOutcomeSkipped ItemOutcome = "skipped"
+	// ItemOutcomeError means this pass attempted a write (or the reads
+	// leading up to one) and it failed — credentials, connecting to the
+	// cluster, fetching a value from the secrets provider, or the K8s API
+	// call itself.
+	ItemOutcomeError ItemOutcome = "error"
+)
+
+// ItemKey identifies one addon-values secret row: a single cluster+addon
+// pair. Matches the granularity internal/api's addon_values_secrets table
+// already reads at (one row per cluster+addon — see
+// buildAddonValuesSecretRows, which resolves exactly one secret definition
+// per addon name).
+type ItemKey struct {
+	Cluster string
+	Addon   string
+}
+
+// ItemRecord is the last known reconcile outcome for one addon-values
+// secret (cluster+addon pair).
+type ItemRecord struct {
+	// LastChecked is stamped on every pass that examined this item,
+	// regardless of outcome.
+	LastChecked time.Time
+	Outcome     ItemOutcome
+	// ChangedAt is the time of the last actual write (Created or
+	// Updated) — the zero time when this server instance has never
+	// written this item. An Unchanged/Skipped/Error outcome NEVER moves
+	// this forward; it carries the previous value across.
+	ChangedAt time.Time
+	// Error is the reconcileSecret error message when Outcome is Skipped
+	// or Error; empty otherwise.
+	Error string
+}
+
+// ItemAuditFunc is invoked once per addon-values secret that was actually
+// created or updated during a reconcile pass — never for an Unchanged
+// check. At 50 clusters x 10 addons on a 5-minute cadence, an entry per
+// check would flood the audit log; an entry per real change is the useful
+// signal. cluster and addon identify the row; outcome is always
+// ItemOutcomeCreated or ItemOutcomeUpdated.
+type ItemAuditFunc func(cluster, addon string, outcome ItemOutcome)
+
 // Reconciler periodically fetches secret definitions from the Git catalog and
 // ensures the corresponding K8s Secrets exist and are up-to-date on every
 // remote cluster that has the owning addon enabled.
@@ -83,14 +150,25 @@ type Reconciler struct {
 	stopCh              chan struct{}
 	stopOnce            sync.Once
 
-	// Optional audit callback — set via SetAuditFunc.
-	auditFn AuditFunc
+	// Optional audit callbacks — set via SetAuditFunc / SetItemAuditFunc.
+	auditFn     AuditFunc
+	itemAuditFn ItemAuditFunc
 
 	// Last reconcile stats (protected by mu)
 	mu         sync.RWMutex
 	lastRun    time.Time
 	lastStats  ReconcileStats
 	lastErrors []string
+	// itemRecords holds the last known outcome per addon-values secret
+	// (cluster+addon pair). Rebuilt from scratch on every pass that gets
+	// far enough to compute a plan (see reconcile()) — never merged with
+	// the previous map — so an item whose work has vanished from the plan
+	// (addon disabled, cluster removed) stops being reported the very
+	// next pass, rather than lingering forever. In-memory only, like
+	// every other reconciler status here: empty after a restart, which
+	// reads as "not checked since restart", never a fabricated
+	// timestamp.
+	itemRecords map[ItemKey]ItemRecord
 }
 
 // ReconcileStats holds counters and timing from the most recent reconcile cycle.
@@ -192,6 +270,39 @@ func (r *Reconciler) SetAuditFunc(fn AuditFunc) {
 	r.auditFn = fn
 }
 
+// SetItemAuditFunc registers an optional callback invoked once per
+// addon-values secret actually created or updated (never for an unchanged
+// check — see ItemAuditFunc). Pass nil to clear an existing callback.
+func (r *Reconciler) SetItemAuditFunc(fn ItemAuditFunc) {
+	r.itemAuditFn = fn
+}
+
+// LastItemState returns the most recently recorded reconcile outcome for
+// the named cluster+addon addon-values secret pair. ok is false when no
+// pass has ever processed this pair on this server instance — a fresh
+// startup, or a cluster/addon combination that has never appeared in the
+// plan (not registered, addon not enabled, or no secret definition).
+func (r *Reconciler) LastItemState(cluster, addon string) (ItemRecord, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	rec, ok := r.itemRecords[ItemKey{Cluster: cluster, Addon: addon}]
+	return rec, ok
+}
+
+// LastItemChecked returns the last-checked timestamp for one addon-values
+// secret's cluster+addon pair. Primitive-typed — same import-free-boundary
+// reasoning as LastRunTime/LastError/Interval, so internal/api can report
+// a per-row timestamp on the System page without importing this package.
+// ok is false when this pair has never been reconciled on this server
+// instance.
+func (r *Reconciler) LastItemChecked(cluster, addon string) (lastChecked time.Time, ok bool) {
+	rec, ok := r.LastItemState(cluster, addon)
+	if !ok {
+		return time.Time{}, false
+	}
+	return rec.LastChecked, true
+}
+
 // GetErrors returns the error messages from the last reconcile run.
 func (r *Reconciler) GetErrors() []string {
 	r.mu.RLock()
@@ -282,15 +393,33 @@ func (r *Reconciler) reconcile() {
 		}
 	}
 
-	if len(plan.work) == 0 && len(errs) == 0 {
-		log.Info("[secrets] no addons with secret definitions — nothing to reconcile", "layout", plan.layout)
-		return
+	// 3. Push every secret the plan asks for, recording a per-item outcome
+	// alongside the aggregate counters. Snapshot the previous per-item
+	// state first (under RLock) so an Unchanged/Skipped/Error outcome can
+	// carry its ChangedAt forward instead of losing "when was this last
+	// actually written" every time a pass finds nothing to change.
+	r.mu.RLock()
+	prevItems := make(map[ItemKey]ItemRecord, len(r.itemRecords))
+	for k, v := range r.itemRecords {
+		prevItems[k] = v
 	}
+	r.mu.RUnlock()
 
-	// 3. Push every secret the plan asks for.
+	itemResults := make(map[ItemKey]ItemRecord, len(plan.work))
 	for _, w := range plan.work {
 		stats.Checked++
-		if err := r.reconcileSecret(ctx, &stats, w.credLookup, w.addon, w.push); err != nil {
+		outcome, err := r.reconcileSecret(ctx, &stats, w.clusterName, w.credLookup, w.addon, w.push)
+
+		key := ItemKey{Cluster: w.clusterName, Addon: w.addon}
+		rec := ItemRecord{LastChecked: time.Now(), Outcome: outcome}
+		if outcome == ItemOutcomeCreated || outcome == ItemOutcomeUpdated {
+			rec.ChangedAt = rec.LastChecked
+		} else if prev, ok := prevItems[key]; ok {
+			rec.ChangedAt = prev.ChangedAt
+		}
+
+		if err != nil {
+			rec.Error = err.Error()
 			stats.Errors++
 			errs = append(errs, fmt.Sprintf("cluster=%s addon=%s secret=%s: %v",
 				w.clusterName, w.addon, w.push.SecretName, err))
@@ -300,7 +429,19 @@ func (r *Reconciler) reconcile() {
 				"secret", w.push.SecretName,
 				"error", err,
 			)
+		} else if r.itemAuditFn != nil && (outcome == ItemOutcomeCreated || outcome == ItemOutcomeUpdated) {
+			r.itemAuditFn(w.clusterName, w.addon, outcome)
 		}
+		itemResults[key] = rec
+	}
+
+	r.mu.Lock()
+	r.itemRecords = itemResults
+	r.mu.Unlock()
+
+	if len(plan.work) == 0 && len(errs) == 0 {
+		log.Info("[secrets] no addons with secret definitions — nothing to reconcile", "layout", plan.layout)
+		return
 	}
 
 	r.recordRun(start, stats, errs)
@@ -555,34 +696,49 @@ func enabledAddonNames(spec models.ClusterAddonsSpec) []string {
 }
 
 // reconcileSecret ensures a single K8s Secret exists and is current on the
-// named remote cluster. It increments Created, Updated, or Skipped on stats.
+// named remote cluster. It increments Created, Updated, or Skipped on
+// stats, and returns the per-item outcome the caller records alongside
+// stats (ItemOutcomeCreated/Updated/Unchanged/Skipped/Error) plus the same
+// error it always returned — callers that only care about aggregate
+// success/failure can ignore the outcome and check err exactly as before.
+//
+// clusterName is the cluster's display name — used for logging and as the
+// per-item record's key. credLookup is the key to fetch credentials with,
+// which differs from clusterName when the cluster record has a SecretPath
+// override (models.Cluster.CredentialLookupKey). Passing credLookup into
+// both used to be one parameter (a latent mislabeling bug fixed alongside
+// this story: every log line here used to show the credential lookup
+// key, not the cluster's real name, for any cluster with a SecretPath
+// override — cosmetic today, but it would have kept this function's new
+// per-item record keyed wrong).
 func (r *Reconciler) reconcileSecret(
 	ctx context.Context,
 	stats *ReconcileStats,
-	clusterName, addonName string,
+	clusterName, credLookup, addonName string,
 	ref models.AddonSecretRef,
-) error {
+) (ItemOutcome, error) {
 	log := logging.LoggerFromContext(ctx)
 
 	// A half-written definition would otherwise surface as a confusing
 	// Kubernetes API error (a Secret with no name, or no namespace to put
-	// it in). Say which part is missing instead.
+	// it in). Say which part is missing instead. Nothing on the remote
+	// cluster is touched, so this is a deliberate skip, not a failure.
 	if missing := ref.MissingFields(); len(missing) > 0 {
-		return fmt.Errorf("the secret definition in the catalog has no %s — fill that in and Sharko can push it",
+		return ItemOutcomeSkipped, fmt.Errorf("the secret definition in the catalog has no %s — fill that in and Sharko can push it",
 			strings.Join(missing, " and no "))
 	}
 
 	// Get kubeconfig for the cluster.
 	log.Info("[reconciler] connecting to cluster", "cluster", clusterName)
-	creds, err := r.credProvider.GetCredentials(clusterName)
+	creds, err := r.credProvider.GetCredentials(credLookup)
 	if err != nil {
-		return fmt.Errorf("getting credentials: %w", err)
+		return ItemOutcomeError, fmt.Errorf("getting credentials: %w", err)
 	}
 
 	// Build a K8s client for the remote cluster.
 	client, err := r.remoteClientFn(creds.Raw)
 	if err != nil {
-		return fmt.Errorf("connecting to cluster: %w", err)
+		return ItemOutcomeError, fmt.Errorf("connecting to cluster: %w", err)
 	}
 
 	// Fetch desired values from the secrets provider and compute a hash.
@@ -590,7 +746,7 @@ func (r *Reconciler) reconcileSecret(
 	for key, providerPath := range ref.Keys {
 		val, err := r.secretProvider.GetSecretValue(ctx, providerPath)
 		if err != nil {
-			return fmt.Errorf("fetching %q from provider: %w", providerPath, err)
+			return ItemOutcomeError, fmt.Errorf("fetching %q from provider: %w", providerPath, err)
 		}
 		desiredData[key] = val
 	}
@@ -600,7 +756,7 @@ func (r *Reconciler) reconcileSecret(
 	existing, err := client.CoreV1().Secrets(ref.Namespace).Get(ctx, ref.SecretName, metav1.GetOptions{})
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
-			return fmt.Errorf("checking existing secret: %w", err)
+			return ItemOutcomeError, fmt.Errorf("checking existing secret: %w", err)
 		}
 		// Secret doesn't exist — create it.
 		log.Info("[secrets] creating secret",
@@ -608,13 +764,13 @@ func (r *Reconciler) reconcileSecret(
 			"secret", ref.SecretName, "namespace", ref.Namespace,
 		)
 		if createErr := remoteclient.EnsureSecret(ctx, client, ref.Namespace, ref.SecretName, desiredData); createErr != nil {
-			return fmt.Errorf("creating secret: %w", createErr)
+			return ItemOutcomeError, fmt.Errorf("creating secret: %w", createErr)
 		}
 		stats.Created++
 		log.Info("[secrets] secret created",
 			"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 		)
-		return nil
+		return ItemOutcomeCreated, nil
 	}
 
 	// Secret exists — compare hashes to decide whether an update is needed.
@@ -629,7 +785,7 @@ func (r *Reconciler) reconcileSecret(
 			"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 		)
 		stats.Skipped++
-		return nil
+		return ItemOutcomeUnchanged, nil
 	}
 
 	// Hashes differ — rotate.
@@ -637,13 +793,13 @@ func (r *Reconciler) reconcileSecret(
 		"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 	)
 	if updateErr := remoteclient.EnsureSecret(ctx, client, ref.Namespace, ref.SecretName, desiredData); updateErr != nil {
-		return fmt.Errorf("updating secret: %w", updateErr)
+		return ItemOutcomeError, fmt.Errorf("updating secret: %w", updateErr)
 	}
 	stats.Updated++
 	log.Info("[secrets] secret updated",
 		"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 	)
-	return nil
+	return ItemOutcomeUpdated, nil
 }
 
 // hashSecretData returns a deterministic SHA-256 hex digest of secret data.

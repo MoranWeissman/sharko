@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
 	"time"
@@ -62,19 +63,24 @@ type connectionSecretRow struct {
 // addonValuesSecretRow is one row of addon_values_secrets — one row per
 // cluster+addon pair that has both a secret definition and the addon
 // enabled on that cluster.
-//
-// LastChecked/LastRepaired are deliberately absent from this struct: the
-// addon-values reconciler (internal/secrets) only keeps an aggregate,
-// pass-level stat (created/updated counts for the whole pass) — it has no
-// per-secret timestamp to report, and its audit trail summarizes the same
-// way (one "secret_push" entry per pass, not one per secret). Per-row
-// history is a known gap here; the engine-level addon_values figures below
-// are the closest honest signal. See the story report for this gap.
 type addonValuesSecretRow struct {
 	Cluster         string `json:"cluster"`
 	Addon           string `json:"addon"`
 	SecretName      string `json:"secret_name,omitempty"`
 	SecretNamespace string `json:"secret_namespace,omitempty"`
+	// LastChecked is RFC3339, or "" when the addon-values reconciler has
+	// never processed this cluster+addon pair on this server instance —
+	// an in-memory read on s.secretReconciler (internal/secrets), the
+	// same per-row-state pattern connectionSecretRow.LastChecked reads
+	// from the cluster-connection reconciler.
+	LastChecked string `json:"last_checked,omitempty"`
+	// LastRepaired / LastRepairedDetail come from a matching audit entry
+	// (Resource "cluster:<name>/addon:<addon>", an addon_secret_created
+	// or addon_secret_updated event, Result "success") — the same honest
+	// per-row join connectionSecretRow.LastRepaired uses. Empty when no
+	// such entry exists in the audit log's retained window.
+	LastRepaired       string `json:"last_repaired,omitempty"`
+	LastRepairedDetail string `json:"last_repaired_detail,omitempty"`
 }
 
 // managedSecretsEngineInfo reports one reconciler's cadence + health.
@@ -108,6 +114,19 @@ var connectionSecretRepairDetail = map[string]string{
 	"cluster_secret_create":            "secret created",
 	"cluster_secret_managed_self_heal": "labels corrected",
 	"cluster_secret_user_label_sync":   "labels synced onto your secret",
+}
+
+// addonValuesSecretRepairDetail maps the internal/secrets reconciler's
+// per-item audit Events (wired in cmd/sharko/serve.go's SetItemAuditFunc
+// callback) to a short plain-English description of what changed — the
+// same canned-detail pattern connectionSecretRepairDetail uses, never
+// free-form text. Only Result=="success" entries with one of these Events
+// count as a repair — an unchanged check never produces an audit entry at
+// all (see internal/secrets.Reconciler's item-audit callback), so there is
+// nothing else to exclude here.
+var addonValuesSecretRepairDetail = map[string]string{
+	"addon_secret_created": "secret created",
+	"addon_secret_updated": "secret updated",
 }
 
 // handleGetManagedSecrets godoc
@@ -156,7 +175,7 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 	auditEntries := s.AuditLog().List(0)
 
 	resp.ClusterConnectionSecrets = s.buildConnectionSecretRows(listResp.Clusters, auditEntries)
-	resp.AddonValuesSecrets = s.buildAddonValuesSecretRows(listResp.Clusters)
+	resp.AddonValuesSecrets = s.buildAddonValuesSecretRows(listResp.Clusters, auditEntries)
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -251,7 +270,7 @@ func lastConnectionSecretRepair(entries []audit.Entry, clusterName string) (at t
 // has both a registered secret definition AND the addon enabled on that
 // cluster (via the cluster's addon labels — already present on the Cluster
 // model from the same listing read, no extra I/O).
-func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster) []addonValuesSecretRow {
+func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, auditEntries []audit.Entry) []addonValuesSecretRow {
 	s.addonSecretDefsMu.RLock()
 	defNames := make([]string, 0, len(s.addonSecretDefs))
 	defs := make(map[string]struct{ SecretName, Namespace string }, len(s.addonSecretDefs))
@@ -276,12 +295,22 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster) []addonVa
 				continue
 			}
 			def := defs[addonName]
-			rows = append(rows, addonValuesSecretRow{
+			row := addonValuesSecretRow{
 				Cluster:         c.Name,
 				Addon:           addonName,
 				SecretName:      def.SecretName,
 				SecretNamespace: def.Namespace,
-			})
+			}
+			if s.secretReconciler != nil {
+				if checkedAt, ok := s.secretReconciler.LastItemChecked(c.Name, addonName); ok {
+					row.LastChecked = checkedAt.UTC().Format(time.RFC3339)
+				}
+			}
+			if at, detail, ok := lastAddonValuesSecretRepair(auditEntries, c.Name, addonName); ok {
+				row.LastRepaired = at.UTC().Format(time.RFC3339)
+				row.LastRepairedDetail = detail
+			}
+			rows = append(rows, row)
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -291,6 +320,26 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster) []addonVa
 		return rows[i].Addon < rows[j].Addon
 	})
 	return rows
+}
+
+// lastAddonValuesSecretRepair scans the audit log (newest-first, per
+// audit.Log.List) for the most recent successful write to this
+// cluster+addon's values secret. Mirrors lastConnectionSecretRepair's
+// one-scan-for-the-whole-page shape; Resource "cluster:<name>/addon:<addon>"
+// is written by internal/secrets.Reconciler's per-item audit callback
+// (wired in cmd/sharko/serve.go) for exactly the events in
+// addonValuesSecretRepairDetail.
+func lastAddonValuesSecretRepair(entries []audit.Entry, clusterName, addonName string) (at time.Time, detail string, ok bool) {
+	want := fmt.Sprintf("cluster:%s/addon:%s", clusterName, addonName)
+	for _, e := range entries {
+		if e.Resource != want || e.Result != "success" {
+			continue
+		}
+		if d, isRepair := addonValuesSecretRepairDetail[e.Event]; isRepair {
+			return e.Timestamp, d, true
+		}
+	}
+	return time.Time{}, "", false
 }
 
 // clusterConnectionEngineInfo reports the cluster-secret reconciler's own

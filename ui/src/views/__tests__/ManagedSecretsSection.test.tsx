@@ -66,6 +66,15 @@ const baseResponse: ManagedSecretsResponse = {
       addon: 'datadog',
       secret_name: 'datadog-secrets',
       secret_namespace: 'datadog',
+      last_checked: '2026-08-05T00:00:00Z',
+      last_repaired: '2026-08-04T22:00:00Z',
+      last_repaired_detail: 'secret created',
+    },
+    {
+      cluster: 'staging-us',
+      addon: 'datadog',
+      secret_name: 'datadog-secrets',
+      secret_namespace: 'datadog',
     },
   ],
   engines: {
@@ -89,8 +98,8 @@ describe('ManagedSecretsSection', () => {
     expect(within(connectionTable()).getByText('staging-us')).toBeInTheDocument()
     expect(within(connectionTable()).getByText('argocd/prod-eu')).toBeInTheDocument()
 
-    expect(within(addonTable()).getByText('datadog')).toBeInTheDocument()
-    expect(within(addonTable()).getByText('datadog/datadog-secrets')).toBeInTheDocument()
+    expect(within(addonTable()).getAllByText('datadog').length).toBe(2)
+    expect(within(addonTable()).getAllByText('datadog/datadog-secrets').length).toBe(2)
   })
 
   it('renders an honest "Unknown" for a row with no last_checked/last_repaired, never a fake timestamp', async () => {
@@ -106,11 +115,25 @@ describe('ManagedSecretsSection', () => {
     expect(stagingRow).not.toBeNull()
     expect(within(stagingRow as HTMLElement).getAllByText('Unknown').length).toBe(4)
 
-    // The addon-values row always shows "Unknown" for both timestamp
-    // columns — the values engine has no per-row history (documented gap).
-    const addonRow = within(addonTable()).getByText('datadog').closest('tr')
-    expect(addonRow).not.toBeNull()
-    expect(within(addonRow as HTMLElement).getAllByText('Unknown').length).toBe(2)
+    // The addon-values table has its own honest-unknown row too:
+    // staging-us/datadog has no last_checked/last_repaired.
+    const addonUnknownRow = within(addonTable()).getByText('staging-us').closest('tr')
+    expect(addonUnknownRow).not.toBeNull()
+    expect(within(addonUnknownRow as HTMLElement).getAllByText('Unknown').length).toBe(2)
+  })
+
+  it('renders real last-checked/last-repaired values for an addon-values row that has them', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderSection()
+
+    await waitFor(() => expect(within(addonTable()).getAllByText('datadog/datadog-secrets').length).toBe(2))
+
+    // prod-eu/datadog has both timestamps — the row must show them, not
+    // "Unknown", and the repair cell must include the canned detail text.
+    const prodRow = within(addonTable()).getByText('prod-eu').closest('tr')
+    expect(prodRow).not.toBeNull()
+    expect(within(prodRow as HTMLElement).queryAllByText('Unknown').length).toBe(0)
+    expect(within(prodRow as HTMLElement).getByText(/secret created/)).toBeInTheDocument()
   })
 
   it('filters the connection-secrets table by search text', async () => {
@@ -153,8 +176,10 @@ describe('ManagedSecretsSection', () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderSection()
 
-    await waitFor(() => expect(within(addonTable()).getByText('datadog')).toBeInTheDocument())
-    fireEvent.click(within(addonTable()).getByText('datadog'))
+    await waitFor(() => expect(within(addonTable()).getByText('prod-eu')).toBeInTheDocument())
+    const prodRow = within(addonTable()).getByText('prod-eu').closest('tr')
+    expect(prodRow).not.toBeNull()
+    fireEvent.click(within(prodRow as HTMLElement).getByText('datadog'))
 
     expect(mockNavigate).toHaveBeenCalledWith('/addons/datadog')
   })

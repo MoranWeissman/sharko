@@ -249,7 +249,7 @@ function ConnectionSecretsTable({ rows }: { rows: ConnectionSecretRow[] }) {
 // Addon values secrets table
 // ─────────────────────────────────────────────────────────────────────────────
 
-type AddonSortKey = 'cluster' | 'addon'
+type AddonSortKey = 'cluster' | 'addon' | 'last_checked' | 'last_repaired'
 
 function AddonValuesSecretsTable({ rows }: { rows: AddonValuesSecretRow[] }) {
   const navigate = useNavigate()
@@ -273,8 +273,8 @@ function AddonValuesSecretsTable({ rows }: { rows: AddonValuesSecretRow[] }) {
   const sorted = useMemo(() => {
     const copy = [...filtered]
     copy.sort((a, b) => {
-      const av = a[sortKey]
-      const bv = b[sortKey]
+      const av = a[sortKey] ?? ''
+      const bv = b[sortKey] ?? ''
       const cmp = av < bv ? -1 : av > bv ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
     })
@@ -326,8 +326,8 @@ function AddonValuesSecretsTable({ rows }: { rows: AddonValuesSecretRow[] }) {
               <SortableHeader label="Cluster" active={sortKey === 'cluster'} dir={sortDir} onClick={() => toggleSort('cluster')} />
               <SortableHeader label="Addon" active={sortKey === 'addon'} dir={sortDir} onClick={() => toggleSort('addon')} />
               <th className="px-4 py-2.5">Secret</th>
-              <th className="px-4 py-2.5">Last checked</th>
-              <th className="px-4 py-2.5">Last repaired</th>
+              <SortableHeader label="Last checked" active={sortKey === 'last_checked'} dir={sortDir} onClick={() => toggleSort('last_checked')} />
+              <SortableHeader label="Last repaired" active={sortKey === 'last_repaired'} dir={sortDir} onClick={() => toggleSort('last_repaired')} />
             </tr>
           </thead>
           <tbody className="divide-y divide-[#d0e8f8] dark:divide-gray-700">
@@ -348,14 +348,18 @@ function AddonValuesSecretsTable({ rows }: { rows: AddonValuesSecretRow[] }) {
                   <td className="px-4 py-2.5 text-[#2a5a7a] dark:text-gray-300">
                     {row.secret_namespace && row.secret_name ? `${row.secret_namespace}/${row.secret_name}` : 'Unknown'}
                   </td>
-                  {/* Per-row checked/repaired timestamps aren't tracked by the
-                      values-secret engine — see the engine line above the
-                      tables for the closest honest signal (known gap). */}
                   <td className="px-4 py-2.5">
-                    <span className="text-[#5a8aaa] dark:text-gray-500">Unknown</span>
+                    <WhenCell iso={row.last_checked} />
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className="text-[#5a8aaa] dark:text-gray-500">Unknown</span>
+                    {row.last_repaired ? (
+                      <span title={row.last_repaired} className="text-[#2a5a7a] dark:text-gray-300">
+                        {relativeTime(row.last_repaired)}
+                        {row.last_repaired_detail ? ` — ${row.last_repaired_detail}` : ''}
+                      </span>
+                    ) : (
+                      <span className="text-[#5a8aaa] dark:text-gray-500">Unknown</span>
+                    )}
                   </td>
                 </tr>
               ))

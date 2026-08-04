@@ -94,6 +94,11 @@ func (f *handlerFakeGitProvider) DeleteBranch(_ context.Context, _ string) error
 type fakeReconciler struct {
 	triggered bool
 	stats     interface{}
+	// itemChecked lets tests seed a per cluster+addon last-checked
+	// timestamp for LastItemChecked, keyed by [cluster, addon]. Nil/empty
+	// means "nothing known" — LastItemChecked returns ok=false, matching
+	// a real Reconciler that has never processed the pair.
+	itemChecked map[[2]string]time.Time
 }
 
 func (r *fakeReconciler) Trigger() { r.triggered = true }
@@ -103,6 +108,14 @@ func (r *fakeReconciler) GetStats() interface{} { return r.stats }
 func (r *fakeReconciler) LastRunTime() time.Time  { return time.Time{} }
 func (r *fakeReconciler) LastError() string       { return "" }
 func (r *fakeReconciler) Interval() time.Duration { return 0 }
+
+func (r *fakeReconciler) LastItemChecked(cluster, addon string) (time.Time, bool) {
+	if r.itemChecked == nil {
+		return time.Time{}, false
+	}
+	t, ok := r.itemChecked[[2]string{cluster, addon}]
+	return t, ok
+}
 
 // ---------------------------------------------------------------------------
 // handleRepoStatus

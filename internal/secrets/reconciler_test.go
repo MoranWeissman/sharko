@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -463,5 +464,236 @@ func TestReconcile_CredentialsError(t *testing.T) {
 	stats := r.GetStats().(ReconcileStats)
 	if stats.Errors == 0 {
 		t.Error("expected error due to credentials failure")
+	}
+}
+
+// ---- per-item state (S1: addon values secrets remember what happened to
+// each one) ----
+
+// TestReconcile_ItemRecord_FreshStartup verifies that a cluster+addon pair
+// that has never been reconciled on this server instance reports
+// ok=false — "not checked since restart", never a fabricated timestamp.
+func TestReconcile_ItemRecord_FreshStartup(t *testing.T) {
+	r := newReconciler(
+		standardGitReader(catalogWithSecrets),
+		&mockCredProvider{kubeconfig: []byte("fake-kubeconfig")},
+		&mockSecretProvider{values: map[string][]byte{}},
+		fakeRemoteClientFn(fake.NewSimpleClientset()),
+	)
+	if _, ok := r.LastItemState("prod-cluster", "datadog"); ok {
+		t.Fatal("expected no item state before the first reconcile ever runs")
+	}
+	if _, ok := r.LastItemChecked("prod-cluster", "datadog"); ok {
+		t.Fatal("expected LastItemChecked ok=false before the first reconcile ever runs")
+	}
+}
+
+// TestReconcile_ItemRecord_CreateThenUnchanged verifies outcome
+// classification per item, and that an unchanged pass moves LastChecked
+// forward while leaving ChangedAt exactly where the create left it.
+func TestReconcile_ItemRecord_CreateThenUnchanged(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	r := newReconciler(
+		standardGitReader(catalogWithSecrets),
+		&mockCredProvider{kubeconfig: []byte("fake-kubeconfig")},
+		&mockSecretProvider{values: map[string][]byte{
+			"secrets/datadog/api-key": []byte("key1"),
+			"secrets/datadog/app-key": []byte("key2"),
+		}},
+		fakeRemoteClientFn(client),
+	)
+
+	r.reconcile()
+	rec, ok := r.LastItemState("prod-cluster", "datadog")
+	if !ok {
+		t.Fatal("expected an item record after the first reconcile")
+	}
+	if rec.Outcome != ItemOutcomeCreated {
+		t.Errorf("outcome = %q, want %q", rec.Outcome, ItemOutcomeCreated)
+	}
+	if rec.LastChecked.IsZero() {
+		t.Error("expected LastChecked to be set")
+	}
+	if rec.ChangedAt.IsZero() {
+		t.Error("expected ChangedAt to be set on a create")
+	}
+	firstChecked, firstChanged := rec.LastChecked, rec.ChangedAt
+
+	// Second pass: same values, hash matches -> unchanged.
+	time.Sleep(2 * time.Millisecond)
+	r.reconcile()
+	rec, ok = r.LastItemState("prod-cluster", "datadog")
+	if !ok {
+		t.Fatal("expected an item record after the second reconcile")
+	}
+	if rec.Outcome != ItemOutcomeUnchanged {
+		t.Errorf("outcome = %q, want %q", rec.Outcome, ItemOutcomeUnchanged)
+	}
+	if !rec.LastChecked.After(firstChecked) {
+		t.Errorf("LastChecked = %v, want later than %v — an unchanged pass still checked it", rec.LastChecked, firstChecked)
+	}
+	if !rec.ChangedAt.Equal(firstChanged) {
+		t.Errorf("ChangedAt = %v, want unchanged from %v — an unchanged check must never move it", rec.ChangedAt, firstChanged)
+	}
+
+	// LastItemChecked (the primitive getter internal/api reads) agrees.
+	checked, ok := r.LastItemChecked("prod-cluster", "datadog")
+	if !ok || !checked.Equal(rec.LastChecked) {
+		t.Errorf("LastItemChecked = (%v, %v), want (%v, true)", checked, ok, rec.LastChecked)
+	}
+}
+
+// TestReconcile_ItemRecord_UpdateMovesChangedAt verifies that a rotation
+// (existing secret, different hash) is classified Updated and moves
+// ChangedAt forward.
+func TestReconcile_ItemRecord_UpdateMovesChangedAt(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	r := newReconciler(
+		standardGitReader(catalogWithSecrets),
+		&mockCredProvider{kubeconfig: []byte("fake-kubeconfig")},
+		&mockSecretProvider{values: map[string][]byte{
+			"secrets/datadog/api-key": []byte("old-key"),
+			"secrets/datadog/app-key": []byte("old-app"),
+		}},
+		fakeRemoteClientFn(client),
+	)
+	r.reconcile()
+	firstChanged := mustItemState(t, r, "prod-cluster", "datadog").ChangedAt
+
+	time.Sleep(2 * time.Millisecond)
+	r.secretProvider = &mockSecretProvider{values: map[string][]byte{
+		"secrets/datadog/api-key": []byte("rotated-key"),
+		"secrets/datadog/app-key": []byte("rotated-app"),
+	}}
+	r.reconcile()
+
+	rec := mustItemState(t, r, "prod-cluster", "datadog")
+	if rec.Outcome != ItemOutcomeUpdated {
+		t.Errorf("outcome = %q, want %q", rec.Outcome, ItemOutcomeUpdated)
+	}
+	if !rec.ChangedAt.After(firstChanged) {
+		t.Errorf("ChangedAt = %v, want later than %v — an update must move it", rec.ChangedAt, firstChanged)
+	}
+}
+
+// TestReconcile_ItemRecord_ErrorOutcome verifies that a live-cluster
+// failure is classified Error, carries the error message, and never moves
+// ChangedAt (nothing was actually written).
+func TestReconcile_ItemRecord_ErrorOutcome(t *testing.T) {
+	r := newReconciler(
+		standardGitReader(catalogWithSecrets),
+		&mockCredProvider{kubeconfig: []byte("fake-kubeconfig")},
+		&mockSecretProvider{values: map[string][]byte{
+			"secrets/datadog/api-key": []byte("key"),
+			"secrets/datadog/app-key": []byte("app"),
+		}},
+		errRemoteClientFn("connection refused"),
+	)
+	r.reconcile()
+
+	rec := mustItemState(t, r, "prod-cluster", "datadog")
+	if rec.Outcome != ItemOutcomeError {
+		t.Errorf("outcome = %q, want %q", rec.Outcome, ItemOutcomeError)
+	}
+	if rec.Error == "" {
+		t.Error("expected a non-empty error message on an Error outcome")
+	}
+	if !rec.ChangedAt.IsZero() {
+		t.Errorf("ChangedAt = %v, want zero — nothing was ever written for this item", rec.ChangedAt)
+	}
+}
+
+// TestReconcile_ItemRecord_VanishedWorkStopsBeingReported verifies that an
+// item whose work disappears from the plan (the addon gets disabled on the
+// cluster) is no longer reported the very next pass — the per-item map is
+// rebuilt fresh each pass, not accumulated forever.
+func TestReconcile_ItemRecord_VanishedWorkStopsBeingReported(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	gr := standardGitReader(catalogWithSecrets)
+	r := newReconciler(
+		gr,
+		&mockCredProvider{kubeconfig: []byte("fake-kubeconfig")},
+		&mockSecretProvider{values: map[string][]byte{
+			"secrets/datadog/api-key": []byte("key"),
+			"secrets/datadog/app-key": []byte("app"),
+		}},
+		fakeRemoteClientFn(client),
+	)
+	r.reconcile()
+	if _, ok := r.LastItemState("prod-cluster", "datadog"); !ok {
+		t.Fatal("expected an item record after the first reconcile")
+	}
+
+	// The addon is switched off on the cluster — the same catalog, a
+	// managed-clusters.yaml where the cluster no longer runs datadog.
+	gr.files["configuration/managed-clusters.yaml"] = []byte(clusterAddonsNoMatch)
+	r.reconcile()
+
+	if _, ok := r.LastItemState("prod-cluster", "datadog"); ok {
+		t.Error("expected the item record to be gone once the addon is no longer in the plan")
+	}
+}
+
+// mustItemState is a test helper that fails the test if no item record
+// exists for the given cluster+addon pair.
+func mustItemState(t *testing.T, r *Reconciler, cluster, addon string) ItemRecord {
+	t.Helper()
+	rec, ok := r.LastItemState(cluster, addon)
+	if !ok {
+		t.Fatalf("expected an item record for %s/%s", cluster, addon)
+	}
+	return rec
+}
+
+// ---- per-item audit (S2: an audit entry on a real change, never on an
+// unchanged check) ----
+
+// TestReconcile_ItemAuditFn_FiresOnRealChangeOnly verifies that the
+// per-item audit callback fires exactly once per create/update and never
+// for an unchanged check — the flood-prevention requirement at scale (50
+// clusters x 10 addons every 5 minutes).
+func TestReconcile_ItemAuditFn_FiresOnRealChangeOnly(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	r := newReconciler(
+		standardGitReader(catalogWithSecrets),
+		&mockCredProvider{kubeconfig: []byte("fake-kubeconfig")},
+		&mockSecretProvider{values: map[string][]byte{
+			"secrets/datadog/api-key": []byte("key1"),
+			"secrets/datadog/app-key": []byte("key2"),
+		}},
+		fakeRemoteClientFn(client),
+	)
+
+	var calls []string
+	r.SetItemAuditFunc(func(cluster, addon string, outcome ItemOutcome) {
+		calls = append(calls, fmt.Sprintf("%s/%s:%s", cluster, addon, outcome))
+	})
+
+	// First pass creates -> exactly one audit call.
+	r.reconcile()
+	if len(calls) != 1 {
+		t.Fatalf("expected exactly one item-audit call on create, got %d (%v)", len(calls), calls)
+	}
+	if calls[0] != "prod-cluster/datadog:created" {
+		t.Errorf("call = %q, want %q", calls[0], "prod-cluster/datadog:created")
+	}
+
+	// Second pass: unchanged -> no additional audit call.
+	r.reconcile()
+	if len(calls) != 1 {
+		t.Fatalf("expected no additional item-audit call on an unchanged check, got %d total (%v)", len(calls), calls)
+	}
+
+	// Rotate the value -> update -> exactly one more audit call.
+	r.secretProvider = &mockSecretProvider{values: map[string][]byte{
+		"secrets/datadog/api-key": []byte("rotated"),
+		"secrets/datadog/app-key": []byte("rotated2"),
+	}}
+	r.reconcile()
+	if len(calls) != 2 {
+		t.Fatalf("expected exactly one more item-audit call on update, got %d total (%v)", len(calls), calls)
+	}
+	if calls[1] != "prod-cluster/datadog:updated" {
+		t.Errorf("call = %q, want %q", calls[1], "prod-cluster/datadog:updated")
 	}
 }
