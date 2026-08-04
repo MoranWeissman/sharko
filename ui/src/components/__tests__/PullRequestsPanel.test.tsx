@@ -308,6 +308,30 @@ describe('PullRequestsPanel V125-1-6', () => {
       expect(link).toHaveAttribute('href', expect.stringContaining('github.com/org/repo'))
     })
 
+    // The escape hatch sits in the fixed summary line above the table, not
+    // inside the paged rows, so it stays visible no matter which page the
+    // list is scrolled to — it lives in the "Showing N of M" header, which
+    // renders once regardless of pagination state.
+    it('the escape-hatch link stays reachable while paging through the capped list', async () => {
+      mockConnection('github')
+      const seed: TrackedPR[] = []
+      for (let i = 0; i < 100; i++) {
+        seed.push(trackedPR({ pr_id: 4000 + i, pr_title: `PR ${i}`, operation: 'addon-add' }))
+      }
+      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: seed, limit: 100 })
+
+      renderPanel()
+
+      expect(await screen.findByRole('link', { name: /view all on github/i })).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: '2' }))
+
+      await waitFor(() => {
+        expect(screen.getByText('PR 10')).toBeInTheDocument()
+      })
+      expect(screen.getByRole('link', { name: /view all on github/i })).toBeInTheDocument()
+    })
+
     it('never renders a github.com link for a non-GitHub connection — plain wording instead', async () => {
       mockConnection('gitea')
       const seed: TrackedPR[] = []
@@ -456,67 +480,259 @@ describe('PullRequestsPanel V125-1-6', () => {
     })
   })
 
-  // S3 (scale-walk) — both tabs page the already-fetched list 10 at a time.
-  describe('paging (S3)', () => {
-    function fifteenPendingPRs(): TrackedPR[] {
+  // Real pagination — both tabs page the already-fetched list with page
+  // numbers and a page-size choice (5/10/20/50/100, default 10), instead of
+  // growing a "Show more" list.
+  describe('pagination', () => {
+    function manyPendingPRs(n: number, titlePrefix = 'Pending item'): TrackedPR[] {
       const prs: TrackedPR[] = []
-      for (let i = 0; i < 15; i++) {
-        prs.push(trackedPR({ pr_id: 400 + i, operation: 'values-edit', pr_title: `Values PR ${i}` }))
+      for (let i = 0; i < n; i++) {
+        prs.push(trackedPR({ pr_id: 400 + i, operation: 'values-edit', pr_title: `${titlePrefix} ${i}` }))
       }
       return prs
     }
 
-    it('shows 10 pending PRs with a "Show more" control, revealing the rest on click — fetch stays capped at 100', async () => {
-      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: fifteenPendingPRs() })
+    function manyMergedPRs(n: number, titlePrefix = 'Merged item') {
+      const merged = []
+      for (let i = 0; i < n; i++) {
+        merged.push({
+          pr_id: 500 + i,
+          pr_url: `https://github.com/test/repo/pull/${500 + i}`,
+          pr_branch: `sharko/example-${i}`,
+          pr_title: `${titlePrefix} ${i}`,
+          merged_at: new Date().toISOString(),
+          author: 'admin',
+        })
+      }
+      return merged
+    }
+
+    it('pending list shows 10 rows per page by default and moves to page 2 on click, fetch stays capped at 100', async () => {
+      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: manyPendingPRs(15) })
 
       renderPanel()
 
       await waitFor(() => {
-        expect(screen.getByText('Values PR 0')).toBeInTheDocument()
+        expect(screen.getByText('Pending item 0')).toBeInTheDocument()
       })
-      expect(screen.getByText('Values PR 9')).toBeInTheDocument()
-      expect(screen.queryByText('Values PR 10')).not.toBeInTheDocument()
+      expect(screen.getByText('Pending item 9')).toBeInTheDocument()
+      expect(screen.queryByText('Pending item 10')).not.toBeInTheDocument()
 
       await waitFor(() => {
         expect(api.fetchTrackedPRs).toHaveBeenCalledWith(expect.objectContaining({ limit: 100 }))
       })
 
-      fireEvent.click(screen.getByRole('button', { name: /show 5 more/i }))
+      fireEvent.click(screen.getByRole('button', { name: '2' }))
 
       await waitFor(() => {
-        expect(screen.getByText('Values PR 14')).toBeInTheDocument()
+        expect(screen.getByText('Pending item 14')).toBeInTheDocument()
       })
+      expect(screen.queryByText('Pending item 0')).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /show.*more/i })).not.toBeInTheDocument()
     })
 
-    it('shows 10 merged PRs with a "Show more" control, revealing the rest on click', async () => {
+    it('merged list shows 10 rows per page by default and moves to page 2 on click', async () => {
       vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: [] })
-      const merged = []
-      for (let i = 0; i < 13; i++) {
-        merged.push({
-          pr_id: 500 + i,
-          pr_url: `https://github.com/test/repo/pull/${500 + i}`,
-          pr_branch: `sharko/example-${i}`,
-          pr_title: `Merged example ${i}`,
-          merged_at: new Date().toISOString(),
-          author: 'admin',
-        })
-      }
-      vi.mocked(api.fetchMergedPRs).mockResolvedValue({ prs: merged, limit: 100 })
+      vi.mocked(api.fetchMergedPRs).mockResolvedValue({ prs: manyMergedPRs(13), limit: 100 })
 
       renderPanel()
 
       await waitFor(() => {
         expect(screen.getByRole('tab', { name: 'Merged' })).toHaveAttribute('aria-selected', 'true')
       })
-      expect(await screen.findByText(/Merged example 0/)).toBeInTheDocument()
-      expect(screen.queryByText(/Merged example 10/)).not.toBeInTheDocument()
+      expect(await screen.findByText(/Merged item 0/)).toBeInTheDocument()
+      expect(screen.queryByText(/Merged item 10/)).not.toBeInTheDocument()
 
-      fireEvent.click(screen.getByRole('button', { name: /show 3 more/i }))
+      fireEvent.click(screen.getByRole('button', { name: '2' }))
 
       await waitFor(() => {
-        expect(screen.getByText(/Merged example 12/)).toBeInTheDocument()
+        expect(screen.getByText(/Merged item 12/)).toBeInTheDocument()
       })
+      expect(screen.queryByText(/Merged item 0\b/)).not.toBeInTheDocument()
+    })
+
+    it('changing the page size shows more rows on one page', async () => {
+      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: manyPendingPRs(15) })
+
+      renderPanel()
+
+      await waitFor(() => {
+        expect(screen.getByText('Pending item 0')).toBeInTheDocument()
+      })
+      expect(screen.queryByText('Pending item 14')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Show 20 per page' }))
+
+      await waitFor(() => {
+        expect(screen.getByText('Pending item 14')).toBeInTheDocument()
+      })
+      expect(screen.getByText('Pending item 0')).toBeInTheDocument()
+    })
+
+    it('changing the category filter resets the pending list back to page 1', async () => {
+      vi.mocked(api.fetchTrackedPRs).mockImplementation(async (filters?: { operation?: string }) => {
+        if (filters?.operation) {
+          return { prs: manyPendingPRs(12, 'Cluster item') }
+        }
+        return { prs: manyPendingPRs(15, 'Baseline item') }
+      })
+
+      renderPanel()
+
+      await waitFor(() => {
+        expect(screen.getByText('Baseline item 0')).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: '2' }))
+      await waitFor(() => {
+        expect(screen.getByText('Baseline item 10')).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Clusters' }))
+
+      await waitFor(() => {
+        expect(screen.getByText('Cluster item 0')).toBeInTheDocument()
+      })
+      // Page reset to 1 — page-1 items of the NEW filtered list show, its
+      // page-2 items don't, and nothing from the old baseline list lingers.
+      expect(screen.getByText('Cluster item 9')).toBeInTheDocument()
+      expect(screen.queryByText('Cluster item 10')).not.toBeInTheDocument()
+      expect(screen.queryByText(/Baseline item/)).not.toBeInTheDocument()
+    })
+
+    it('changing the cluster scope resets the pending list back to page 1', async () => {
+      vi.mocked(api.fetchTrackedPRs).mockImplementation(async (filters?: { cluster?: string }) => {
+        if (filters?.cluster === 'cluster-b') {
+          return { prs: manyPendingPRs(12, 'B item') }
+        }
+        return { prs: manyPendingPRs(15, 'A item') }
+      })
+
+      const { rerender } = render(
+        <MemoryRouter>
+          <PullRequestsPanel cluster="cluster-a" />
+        </MemoryRouter>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('A item 0')).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: '2' }))
+      await waitFor(() => {
+        expect(screen.getByText('A item 10')).toBeInTheDocument()
+      })
+
+      rerender(
+        <MemoryRouter>
+          <PullRequestsPanel cluster="cluster-b" />
+        </MemoryRouter>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('B item 0')).toBeInTheDocument()
+      })
+      expect(screen.queryByText('B item 10')).not.toBeInTheDocument()
+      expect(screen.queryByText(/A item/)).not.toBeInTheDocument()
+    })
+
+    it('clamps the pending list to the last valid page when the fetched set shrinks under the current page', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      let big = true
+      vi.mocked(api.fetchTrackedPRs).mockImplementation(async () => {
+        return { prs: manyPendingPRs(big ? 25 : 12, 'Shrink item') }
+      })
+
+      renderPanel()
+
+      await waitFor(() => {
+        expect(screen.getByText('Shrink item 0')).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: '3' }))
+      await waitFor(() => {
+        expect(screen.getByText('Shrink item 20')).toBeInTheDocument()
+      })
+
+      big = false
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      // 12 items at page size 10 = 2 pages. Page 3 no longer exists, so the
+      // view clamps to page 2 rather than going blank.
+      await waitFor(() => {
+        expect(screen.getByText('Shrink item 10')).toBeInTheDocument()
+      })
+      expect(screen.queryByText('Shrink item 20')).not.toBeInTheDocument()
+
+      vi.useRealTimers()
+    })
+
+    it('clamps the merged list to the last valid page when the fetched set shrinks under the current page', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: [] })
+      let big = true
+      vi.mocked(api.fetchMergedPRs).mockImplementation(async () => ({
+        prs: manyMergedPRs(big ? 25 : 12, 'Shrink merged'),
+        limit: 100,
+      }))
+
+      renderPanel()
+
+      await waitFor(() => {
+        expect(screen.getByRole('tab', { name: 'Merged' })).toHaveAttribute('aria-selected', 'true')
+      })
+      expect(await screen.findByText(/Shrink merged 0/)).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: '3' }))
+      await waitFor(() => {
+        expect(screen.getByText(/Shrink merged 20/)).toBeInTheDocument()
+      })
+
+      big = false
+      await vi.advanceTimersByTimeAsync(60_000)
+
+      await waitFor(() => {
+        expect(screen.getByText(/Shrink merged 10/)).toBeInTheDocument()
+      })
+      expect(screen.queryByText(/Shrink merged 20/)).not.toBeInTheDocument()
+
+      vi.useRealTimers()
+    })
+
+    it('each tab keeps its own page — switching tabs starts the newly active list back on page 1', async () => {
+      vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: manyPendingPRs(15) })
+      vi.mocked(api.fetchMergedPRs).mockResolvedValue({ prs: manyMergedPRs(13), limit: 100 })
+
+      renderPanel()
+
+      await waitFor(() => {
+        expect(screen.getByText('Pending item 0')).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: '2' }))
+      await waitFor(() => {
+        expect(screen.getByText('Pending item 10')).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('tab', { name: 'Merged' }))
+      await waitFor(() => {
+        expect(screen.getByText(/Merged item 0/)).toBeInTheDocument()
+      })
+      // Merged starts fresh on page 1 — Pending's page-2 position didn't leak over.
+      expect(screen.queryByText(/Merged item 10/)).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: '2' }))
+      await waitFor(() => {
+        expect(screen.getByText(/Merged item 10/)).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('tab', { name: 'Pending' }))
+      await waitFor(() => {
+        expect(screen.getByText('Pending item 0')).toBeInTheDocument()
+      })
+      // Switching back to Pending resets it to page 1 too, rather than
+      // resuming at the page-2 position it was left at.
+      expect(screen.queryByText('Pending item 10')).not.toBeInTheDocument()
     })
   })
 

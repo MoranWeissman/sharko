@@ -37,6 +37,7 @@ import { useConnectionsOptional } from '@/hooks/useConnections'
 import type { TrackedPR } from '@/services/models'
 import { EmptyState } from '@/components/EmptyState'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { PaginationControls, PageSizeSelector, type PageSize } from '@/components/PaginationControls'
 
 const POLL_INTERVAL = 30_000
 
@@ -46,12 +47,14 @@ const POLL_INTERVAL = 30_000
 // the actual UX contract.
 const PR_FETCH_LIMIT = 100
 
-// S3 (scale-walk) — both tabs page their already-fetched list 10 rows at a
-// time behind a "Show more" control, rather than dumping up to 100 rows on
-// screen at once. This is purely a display slice over the list that's
-// already in memory — it does NOT change PR_FETCH_LIMIT or the merged
-// fetch's own limit (still 100 either way).
-const PAGE_SIZE = 10
+// Both tabs page their already-fetched list with real page numbers (same
+// PaginationControls the clusters page and Observability use), rather than
+// dumping up to 100 rows on screen or growing a "Show more" list forever.
+// This is purely a display slice over the list that's already in memory —
+// it does NOT change PR_FETCH_LIMIT or the merged fetch's own limit (still
+// 100 either way). Default page size keeps the original first-screen
+// density (10 rows).
+const DEFAULT_PAGE_SIZE: PageSize = 10
 
 type TabKey = 'pending' | 'merged'
 type CategoryKey = 'all' | 'clusters' | 'addons' | 'init' | 'ai'
@@ -398,13 +401,16 @@ function PendingTabBody({
   const [error, setError] = useState<string | null>(null)
   const [refreshingId, setRefreshingId] = useState<number | null>(null)
   const previousStatusRef = useRef<Record<number, string>>({})
-  // S3 — paginate the already-fetched list 10 at a time. Resets whenever
-  // the active filters change so a stale "revealed 40" doesn't carry over
-  // into a different, smaller filtered set.
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  // Real pagination over the already-fetched list — this tab's own page
+  // and page-size state, independent of the Merged tab's. Resets to page 1
+  // whenever the active filters (or the page size itself) change so the
+  // view never stays pointed at a page from a different, differently-sized
+  // filtered set.
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE)
   useEffect(() => {
-    setVisibleCount(PAGE_SIZE)
-  }, [category, search, cluster])
+    setPage(1)
+  }, [category, search, cluster, pageSize])
 
   const operationCSV = useMemo(() => {
     const bucket = CATEGORY_BUCKETS.find((b) => b.key === category)
@@ -510,9 +516,13 @@ function PendingTabBody({
   // cap; surface the escape hatch so the user can pivot to the GitHub
   // PR page for the full list.
   const atCap = serverLimit > 0 && prs.length >= serverLimit
-  // S3 — page the (already category+search filtered) list 10 at a time.
-  const pagedPrs = visiblePrs.slice(0, visibleCount)
-  const remaining = visiblePrs.length - pagedPrs.length
+  // Page the (already category+search filtered) list. Clamp rather than
+  // trust `page` directly — a background poll that shrinks the result set
+  // (or a page-size bump) can otherwise leave the view pointed at a page
+  // that no longer exists.
+  const totalPages = Math.max(1, Math.ceil(visiblePrs.length / pageSize))
+  const clampedPage = Math.min(page, totalPages)
+  const pagedPrs = visiblePrs.slice((clampedPage - 1) * pageSize, clampedPage * pageSize)
 
   return (
     <div className="space-y-2">
@@ -599,15 +609,17 @@ function PendingTabBody({
           </tbody>
         </table>
       </div>
-      {remaining > 0 && (
-        <button
-          type="button"
-          onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
-          className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-card-foreground hover:bg-muted"
-        >
-          Show {Math.min(PAGE_SIZE, remaining)} more
-        </button>
-      )}
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+        <div className="flex items-center gap-3">
+          {totalPages > 1 && (
+            <span className="text-xs text-muted-foreground">
+              Page {clampedPage} of {totalPages}
+            </span>
+          )}
+          <PageSizeSelector pageSize={pageSize} onChange={setPageSize} sizes={[5, 10, 20, 50, 100]} />
+        </div>
+        <PaginationControls page={clampedPage} totalPages={totalPages} onPageChange={setPage} />
+      </div>
     </div>
   )
 }
@@ -630,11 +642,14 @@ function MergedTabBody({
   const [prs, setPrs] = useState<MergedPRItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  // S3 — same paging as the Pending tab; resets on filter change.
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  // Same real pagination as the Pending tab — its own page and page-size
+  // state, independent of the Pending tab's. Resets to page 1 on filter or
+  // page-size change.
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE)
   useEffect(() => {
-    setVisibleCount(PAGE_SIZE)
-  }, [category, search, cluster])
+    setPage(1)
+  }, [category, search, cluster, pageSize])
 
   const fetchMerged = useCallback(
     async (showLoading = false) => {
@@ -714,9 +729,11 @@ function MergedTabBody({
     )
   }
 
-  // S3 — page the (already category+search filtered) list 10 at a time.
-  const pagedPrs = visiblePrs.slice(0, visibleCount)
-  const remaining = visiblePrs.length - pagedPrs.length
+  // Page the (already category+search filtered) list. Clamp rather than
+  // trust `page` directly — same reasoning as the Pending tab above.
+  const totalPages = Math.max(1, Math.ceil(visiblePrs.length / pageSize))
+  const clampedPage = Math.min(page, totalPages)
+  const pagedPrs = visiblePrs.slice((clampedPage - 1) * pageSize, clampedPage * pageSize)
 
   return (
     <div className="space-y-2">
@@ -781,15 +798,17 @@ function MergedTabBody({
           </tbody>
         </table>
       </div>
-      {remaining > 0 && (
-        <button
-          type="button"
-          onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
-          className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-card-foreground hover:bg-muted"
-        >
-          Show {Math.min(PAGE_SIZE, remaining)} more
-        </button>
-      )}
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+        <div className="flex items-center gap-3">
+          {totalPages > 1 && (
+            <span className="text-xs text-muted-foreground">
+              Page {clampedPage} of {totalPages}
+            </span>
+          )}
+          <PageSizeSelector pageSize={pageSize} onChange={setPageSize} sizes={[5, 10, 20, 50, 100]} />
+        </div>
+        <PaginationControls page={clampedPage} totalPages={totalPages} onPageChange={setPage} />
+      </div>
     </div>
   )
 }
