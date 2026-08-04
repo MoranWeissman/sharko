@@ -69,6 +69,8 @@ describe('ClustersOverview — control collapse below 5 clusters (V2-cleanup-61.
     expect(screen.queryByPlaceholderText('Search clusters by name...')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /ArgoCD Connection/ })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Grid view')).not.toBeInTheDocument();
+    // S3's status select is gated the same way the stat cards are.
+    expect(screen.queryByLabelText('Status')).not.toBeInTheDocument();
 
     // V2-cleanup-92.1 (F3): Legend is shown by default, but togglable.
     expect(screen.getByText('Cluster Status:')).toBeInTheDocument();
@@ -88,10 +90,14 @@ describe('ClustersOverview — control collapse below 5 clusters (V2-cleanup-61.
       expect(screen.getByText('cluster-1')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('All Clusters')).toBeInTheDocument();
+    // "All Clusters" now also appears as an option in the S3 status select
+    // next to the managed list (gated by the same showFullControls
+    // threshold as the stat cards) — assert at-least-one, not exactly-one.
+    expect(screen.getAllByText('All Clusters').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByPlaceholderText('Search clusters by name...')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /ArgoCD Connection/ })).toBeInTheDocument();
     expect(screen.getByLabelText('Grid view')).toBeInTheDocument();
+    expect(screen.getByLabelText('Status')).toBeInTheDocument();
 
     // Legend renders automatically — no on-demand toggle.
     expect(screen.getByText('Cluster Status:')).toBeInTheDocument();

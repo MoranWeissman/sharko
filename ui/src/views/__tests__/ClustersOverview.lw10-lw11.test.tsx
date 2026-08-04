@@ -143,8 +143,10 @@ describe('ClustersOverview — LW-10: pending registrations excluded from discon
 
     // Stat cards render only when totalClusters >= 5, which confirms the
     // total = total_in_git + not_in_git = 5 formula resolved correctly.
+    // "All Clusters" also appears as an option in the S3 status select next
+    // to the managed list at this threshold, so this asserts at-least-one.
     await waitFor(() => {
-      expect(screen.getByText('All Clusters')).toBeInTheDocument();
+      expect(screen.getAllByText('All Clusters').length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText('Available to manage').length).toBeGreaterThanOrEqual(1);
     });
   });

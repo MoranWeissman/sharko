@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Server, AlertTriangle,
   Clock, ChevronRight, ShieldAlert, RefreshCw,
-  Store, PlusCircle
+  Store, PlusCircle, Loader2
 } from 'lucide-react';
 import { api } from '@/services/api';
 import type { DashboardStats, SyncActivityEntry, ClustersResponse } from '@/services/models';
@@ -347,11 +347,15 @@ export function Dashboard() {
           </p>
         </div>
         <button
+          type="button"
           onClick={handleRefresh}
-          className="rounded-md p-2 text-white/70 hover:bg-white/10 hover:text-white"
+          disabled={isRefreshing}
           title="Refresh"
+          data-testid="dashboard-refresh"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          {isRefreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+          Refresh
         </button>
       </div>
       <WaveDecoration />
@@ -421,60 +425,16 @@ export function Dashboard() {
         />
       )}
 
-      {/* Issues line, split into plain buckets (walk finding: a glued-
-          together total like "120 open issues" reads scary and says
-          nothing about what's actually wrong). Two separate counts —
-          unhealthy apps and unreachable clusters — each its own small
-          card, each with its own deep link, each rendered only when its
-          count is above zero. Same underlying numbers as before
-          (confirmedProblemCount == redAppCount + clusterProblemCount,
-          components/AttentionSection.tsx's getConfirmedProblemCount) —
-          only the presentation changed. Renders nothing at zero — a quiet
-          work-queue page has nothing to announce.
-
-          Progressing is not an issue (maintainer's verdict) — it no
-          longer renders on this page at all. It's still visible on
-          Observability. */}
-      {confirmedProblemCount > 0 && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {redAppCount > 0 && (
-            <button
-              onClick={() => navigate('/observability#addon-health')}
-              className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-left text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/30"
-            >
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              {redAppCount} app{redAppCount !== 1 ? 's' : ''} unhealthy
-              <ChevronRight className="ml-auto h-4 w-4 shrink-0" />
-            </button>
-          )}
-          {clusterProblemCount > 0 && (
-            <button
-              onClick={() => navigate('/clusters?status=disconnected')}
-              className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-left text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/30"
-            >
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              {clusterProblemCount} cluster{clusterProblemCount !== 1 ? 's' : ''} unreachable
-              <ChevronRight className="ml-auto h-4 w-4 shrink-0" />
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Pull Requests — promoted to the first content surface after the
-          attention layer (dashboard-purpose decision, WQ-1): a Tier-2
-          bordered panel with the larger title tier, so it carries the most
-          visual weight of anything below Needs Attention. Pending/Merged
-          toggle. */}
-      <PullRequestsPanel onMergeDetected={handlePRMerged} />
-
-      {/* Fleet Status Strip — replaces the three stat cards (Total
-          Clusters / Applications / Upgrades). Maintainer's verdict on the
-          old cards: "small fonts, boring looks"; 16-product research says
-          nobody lands on a stats poster. One slim row, numbers are doors:
-          clicking a segment goes straight to Clusters, Observability's
-          Addon Health section, or the version matrix. Each segment now
-          carries a short title saying what it's counting — managed
-          clusters vs. addon applications/versions (walk day 5 finding). */}
+      {/* Fleet Status Strip — reads FIRST now (S1, walk day 7): the
+          numbers-are-doors summary of the whole estate before anything
+          else. Replaces the three stat cards (Total Clusters /
+          Applications / Upgrades). Maintainer's verdict on the old cards:
+          "small fonts, boring looks"; 16-product research says nobody
+          lands on a stats poster. One slim row, numbers are doors: clicking
+          a segment goes straight to Clusters, Observability's Addon Health
+          section, or the version matrix. Each segment carries a short
+          title saying what it's counting — managed clusters vs. addon
+          applications/versions (walk day 5 finding). */}
       <FleetStatusStrip
         clusters={stats.clusters}
         appsTotal={appTotal}
@@ -482,45 +442,104 @@ export function Dashboard() {
         behindCatalog={behindCatalog}
       />
 
-      {/* Recent Activity — moved up from the old bottom row (Package 2:
-          new page order). Rows read "installed/updated <addon> on <cluster>
-          · rev <sha> · <time>" (S3, walk day 5 ride-along — every row used
-          to say "deployed" even for an app that has been upgrading for
-          months; falls back to "deployed" if the server hasn't sent
-          action yet) — no status dot, since the server always reports
-          Succeeded here and a permanently-green dot says nothing. */}
-      <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Clock className="h-4 w-4 text-muted-foreground" />
-            <h3 className="text-base font-semibold text-card-foreground">Recent Activity</h3>
+      {/* Pull Requests — second content surface (dashboard-purpose
+          decision, WQ-1; S1 walk day 7 keeps it right after the pies): a
+          Tier-2 bordered panel with the larger title tier, so it carries
+          the most visual weight below the fleet strip. Pending/Merged
+          toggle. */}
+      <PullRequestsPanel onMergeDetected={handlePRMerged} />
+
+      {/* Bottom row (S1, walk day 7): Recent Activity and Issues now sit
+          side by side instead of Recent Activity running the full page
+          width on its own — its real content (a handful of short rows) was
+          narrow and the full width was wasted (maintainer's walk
+          complaint). Stacks to one column on narrow screens. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {/* Recent Activity. Rows read "installed/updated <addon> on
+            <cluster> · rev <sha> · <time>" (S3, walk day 5 ride-along —
+            every row used to say "deployed" even for an app that has been
+            upgrading for months; falls back to "deployed" if the server
+            hasn't sent action yet) — no status dot, since the server
+            always reports Succeeded here and a permanently-green dot says
+            nothing. */}
+        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-muted-foreground" />
+              <h3 className="text-base font-semibold text-card-foreground">Recent Activity</h3>
+            </div>
+            <button onClick={() => navigate('/observability')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
+              View all
+            </button>
           </div>
-          <button onClick={() => navigate('/observability')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
-            View all
-          </button>
-        </div>
-        {recentSyncs.length === 0 ? (
-          <EmptyState compact title="No recent sync activity" />
-        ) : (
-          <div className="space-y-2">
-            {recentSyncs.map((sync, i) => (
-              <div key={i} className="flex items-center gap-3 text-xs">
-                <div className="min-w-0 flex-1 truncate">
-                  <span className="text-muted-foreground">{activityVerb(sync.action)}</span>
-                  <span className="font-medium text-card-foreground">{sync.addon_name}</span>
-                  <span className="text-muted-foreground"> on {sync.cluster_name}</span>
-                  {sync.revision && (
-                    <span className="text-muted-foreground"> · rev {sync.revision.slice(0, 7)}</span>
-                  )}
+          {recentSyncs.length === 0 ? (
+            <EmptyState compact title="No recent sync activity" />
+          ) : (
+            <div className="space-y-2">
+              {recentSyncs.map((sync, i) => (
+                <div key={i} className="flex items-center gap-3 text-xs">
+                  <div className="min-w-0 flex-1 truncate">
+                    <span className="text-muted-foreground">{activityVerb(sync.action)}</span>
+                    <span className="font-medium text-card-foreground">{sync.addon_name}</span>
+                    <span className="text-muted-foreground"> on {sync.cluster_name}</span>
+                    {sync.revision && (
+                      <span className="text-muted-foreground"> · rev {sync.revision.slice(0, 7)}</span>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-muted-foreground flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {timeAgo(sync.timestamp)}
+                  </span>
                 </div>
-                <span className="shrink-0 text-muted-foreground flex items-center gap-1">
-                  <Clock className="h-3 w-3" />
-                  {timeAgo(sync.timestamp)}
-                </span>
-              </div>
-            ))}
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Issues — folds the two former standalone cards ("N apps
+            unhealthy", "M clusters unreachable") into one box (S1, walk day
+            7) so the bottom row pairs cleanly with Recent Activity. Same
+            underlying numbers and links as before (confirmedProblemCount ==
+            redAppCount + clusterProblemCount, components/AttentionSection.tsx's
+            getConfirmedProblemCount) — only the presentation changed. At
+            zero, a quiet one-line "No open issues" replaces the cards
+            instead of the box disappearing, so the bottom row keeps its
+            two-box shape either way.
+
+            Progressing is not an issue (maintainer's verdict) — it never
+            renders here. It's still visible on Observability. */}
+        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-base font-semibold text-card-foreground">Issues</h3>
           </div>
-        )}
+          {confirmedProblemCount > 0 ? (
+            <div className="space-y-2">
+              {redAppCount > 0 && (
+                <button
+                  onClick={() => navigate('/observability#addon-health')}
+                  className="flex w-full items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-left text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                >
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  {redAppCount} app{redAppCount !== 1 ? 's' : ''} unhealthy
+                  <ChevronRight className="ml-auto h-4 w-4 shrink-0" />
+                </button>
+              )}
+              {clusterProblemCount > 0 && (
+                <button
+                  onClick={() => navigate('/clusters?status=disconnected')}
+                  className="flex w-full items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-left text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                >
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  {clusterProblemCount} cluster{clusterProblemCount !== 1 ? 's' : ''} unreachable
+                  <ChevronRight className="ml-auto h-4 w-4 shrink-0" />
+                </button>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No open issues</p>
+          )}
+        </div>
       </div>
 
       {/* GitOps corrections (audit-derived orphan/drift cleanup — distinct
