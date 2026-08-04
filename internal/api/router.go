@@ -172,6 +172,27 @@ type SecretReconciler interface {
 	// page's addon_values_secrets rows). ok is false when this pair has
 	// never been reconciled on this server instance.
 	LastItemChecked(cluster, addon string) (lastChecked time.Time, ok bool)
+	// LastItemOutcome reports the last-recorded outcome for one addon-values
+	// secret's cluster+addon pair as a plain string — one of "created",
+	// "updated", "unchanged", "skipped", "error", "out_of_sync", "missing"
+	// (see secrets.ItemOutcome). Primitive-typed, same import-free-boundary
+	// reasoning as LastItemChecked. ok is false when this pair has never
+	// been checked, synced, or reconciled on this server instance.
+	LastItemOutcome(cluster, addon string) (outcome string, ok bool)
+	// CheckOne re-checks a single addon-values secret against its source
+	// right now, WITHOUT writing anything (S4's "Refresh" row action).
+	// Returns the outcome as a plain string (see secrets.ItemOutcome); a
+	// non-nil error means the check itself could not run (no Git
+	// connection, no credentials, cluster unreachable, incomplete catalog
+	// definition, or the pair does not resolve to any known secret) — the
+	// error text is safe to show the caller verbatim.
+	CheckOne(ctx context.Context, clusterName, addonName string) (outcome string, err error)
+	// SyncOne re-pushes a single addon-values secret (S4's "Sync" row
+	// action) — the single-item counterpart to Trigger()'s fleet-wide pass.
+	// Returns the outcome as a plain string (see secrets.ItemOutcome); a
+	// non-nil error means the push itself failed or could not run, and the
+	// error text is safe to show the caller verbatim.
+	SyncOne(ctx context.Context, clusterName, addonName string) (outcome string, err error)
 }
 
 // Server holds the HTTP handlers and their dependencies.
@@ -960,6 +981,12 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}", srv.handleEnableAddon)
 	mux.HandleFunc("DELETE /api/v1/clusters/{name}/addons/{addon}", srv.handleDisableAddon)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}/restart-sync", srv.handleRestartAddonSync)
+	// Single-item addon-values-secret row actions (S4 — Managed Secrets
+	// page). Refresh re-checks against the vault without writing; Sync
+	// re-pushes. Both are scoped to exactly this one secret, never a
+	// fleet-wide pass — see internal/secrets.Reconciler.CheckOne/SyncOne.
+	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}/secret/refresh", srv.handleRefreshAddonValuesSecret)
+	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}/secret/sync", srv.handleSyncAddonValuesSecret)
 	// v4 Wave 1 Story 4.3 — the sharpened enable/disable pipeline for v4
 	// (cluster-addons/*.yaml) repos. Distinct routes from the pair above so a v3
 	// repo's behavior never changes underfoot (addon_ops_v4.go).

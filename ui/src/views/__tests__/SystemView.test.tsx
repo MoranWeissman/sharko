@@ -26,10 +26,11 @@ import type { Cluster } from '@/services/models'
 import type { RepoStatusReason } from '@/services/api'
 
 const mockGetSystemCapabilities = vi.fn()
-// ManagedSecretsSection (rendered at the bottom of SystemView) fetches on
-// its own mount via these two named exports — mock them here too so every
-// existing SystemView test (which never cared about managed secrets) still
-// gets a resolved, empty-by-default response instead of an unmocked vi.fn()
+// ManagedSecretsSummaryLine (S1 — rendered at the bottom of SystemView,
+// the full tables now live on their own page at /secrets) fetches on its
+// own mount via getManagedSecrets — mock it here too so every existing
+// SystemView test (which never cared about managed secrets) still gets a
+// resolved, empty-by-default response instead of an unmocked vi.fn()
 // returning undefined and throwing inside the effect.
 // clearAllMocks() (see beforeEach below) clears call history but NOT a
 // mock's resolvedValue implementation — so this default, set once here,
@@ -613,6 +614,27 @@ describe('SystemView', () => {
 // that the System page fetches capabilities and renders the full panel:
 // detected ARN, method, and the expandable "how it works" explainer.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// S1 — Managed Secrets moved off this page onto its own (/secrets). This
+// page keeps ONE quiet summary line with a link, never the two tables the
+// old ManagedSecretsSection rendered here.
+describe('SystemView — Managed secrets summary line (S1)', () => {
+  it('shows the one-line summary and a link to /secrets, never a table', async () => {
+    mockAll()
+    mockGetManagedSecrets.mockResolvedValue({
+      cluster_connection_secrets: [{ cluster: 'prod-eu', state: 'in_sync' }],
+      addon_values_secrets: [],
+      engines: { cluster_connection: { wired: true }, addon_values: { wired: false } },
+    })
+    renderPage()
+
+    await waitFor(() =>
+      expect(screen.getByText(/Sharko manages 1 secret — all in sync\./)).toBeInTheDocument(),
+    )
+    expect(screen.getByRole('link', { name: 'View Managed Secrets' })).toHaveAttribute('href', '/secrets')
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+  })
+})
 
 describe('SystemView — Sharko identity section (V2-cleanup-89.2)', () => {
   it('shows the detected ARN and method, and the setup-guide docs link', async () => {

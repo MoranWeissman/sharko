@@ -2270,6 +2270,19 @@ definitions:
       summary:
         type: string
     type: object
+  internal_api.addonValuesSecretActionResult:
+    properties:
+      addon:
+        type: string
+      cluster:
+        type: string
+      message:
+        type: string
+      outcome:
+        type: string
+      status:
+        type: string
+    type: object
   internal_api.addonValuesSecretRow:
     properties:
       addon:
@@ -2297,6 +2310,15 @@ definitions:
       secret_name:
         type: string
       secret_namespace:
+        type: string
+      state:
+        description: |-
+          State is one of "in_sync", "out_of_sync", "missing", or "unknown" —
+          the same vocabulary connectionSecretRow.State uses, derived here from
+          the addon-values reconciler's per-item outcome (see
+          addonValuesSecretRowState) rather than its own per-cluster record.
+          Compared against the vault (the secrets provider), NOT git — git only
+          holds a pointer to where the value lives (S3(a) honesty lock).
         type: string
     type: object
   internal_api.aiAnnotateBlockedResponse:
@@ -5439,6 +5461,106 @@ paths:
       summary: Restart addon sync on cluster
       tags:
       - clusters
+  /clusters/{name}/addons/{addon}/secret/refresh:
+    post:
+      description: |-
+        Checks a single cluster+addon addon-values secret against the secrets provider (the vault) right now, WITHOUT writing anything — the read-only counterpart to Sync below.
+        Reports whether the live secret matches its source, or that it does not exist yet — never the secret's own content.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Addon name
+        in: path
+        name: addon
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Check result
+          schema:
+            $ref: '#/definitions/internal_api.addonValuesSecretActionResult'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden — requires operator role or higher
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Could not check — no Git connection, incomplete catalog definition,
+            cluster unreachable, or this cluster+addon has no addon-values secret
+            defined
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: The addon-values secrets engine is not running on this server
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Re-check one addon-values secret against its source
+      tags:
+      - secrets
+  /clusters/{name}/addons/{addon}/secret/sync:
+    post:
+      description: |-
+        Re-pushes a single cluster+addon addon-values secret from the secrets provider (the vault) to the remote cluster right now — creates it if missing, rotates it if the content differs, no-ops if it already matches.
+        Drives the same write primitive the periodic addon-values pass uses, scoped to exactly this one secret.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Addon name
+        in: path
+        name: addon
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Sync result
+          schema:
+            $ref: '#/definitions/internal_api.addonValuesSecretActionResult'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden — requires operator role or higher
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Could not sync — no Git connection, incomplete catalog definition,
+            cluster unreachable, no vault configured, or this cluster+addon has no
+            addon-values secret defined
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: The addon-values secrets engine is not running on this server
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Push one addon-values secret to match its source
+      tags:
+      - secrets
   /clusters/{name}/changes:
     get:
       description: |-

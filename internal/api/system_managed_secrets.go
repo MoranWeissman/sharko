@@ -68,6 +68,13 @@ type addonValuesSecretRow struct {
 	Addon           string `json:"addon"`
 	SecretName      string `json:"secret_name,omitempty"`
 	SecretNamespace string `json:"secret_namespace,omitempty"`
+	// State is one of "in_sync", "out_of_sync", "missing", or "unknown" —
+	// the same vocabulary connectionSecretRow.State uses, derived here from
+	// the addon-values reconciler's per-item outcome (see
+	// addonValuesSecretRowState) rather than its own per-cluster record.
+	// Compared against the vault (the secrets provider), NOT git — git only
+	// holds a pointer to where the value lives (S3(a) honesty lock).
+	State string `json:"state"`
 	// LastChecked is RFC3339, or "" when the addon-values reconciler has
 	// never processed this cluster+addon pair on this server instance —
 	// an in-memory read on s.secretReconciler (internal/secrets), the
@@ -300,6 +307,7 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, auditEntr
 				Addon:           addonName,
 				SecretName:      def.SecretName,
 				SecretNamespace: def.Namespace,
+				State:           addonValuesSecretRowState(s.secretReconciler, c.Name, addonName),
 			}
 			if s.secretReconciler != nil {
 				if checkedAt, ok := s.secretReconciler.LastItemChecked(c.Name, addonName); ok {
@@ -320,6 +328,42 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, auditEntr
 		return rows[i].Addon < rows[j].Addon
 	})
 	return rows
+}
+
+// addonValuesSecretRowState derives one addon-values row's honest state
+// from the reconciler's per-item outcome (SecretReconciler.LastItemOutcome
+// — populated by the periodic pass AND by a single-item Refresh/Sync, S4).
+// Mirrors connectionSecretState's shape but off a different, flatter
+// vocabulary (internal/secrets.ItemOutcome has no drift sub-structure):
+//
+//   - recon == nil or never checked -> "unknown": nothing to report yet.
+//   - "unchanged"/"created"/"updated" -> "in_sync": the secret matches its
+//     source as of the last check or write.
+//   - "out_of_sync" (a Refresh found a mismatch) or "error" (a push
+//     attempt failed — matches connectionSecretState's own "failed ->
+//     out_of_sync" precedent) -> "out_of_sync".
+//   - "missing" (a Refresh found no Secret at all) -> "missing".
+//   - "skipped" (the catalog's push definition is incomplete) -> "unknown"
+//     — the reconciler deliberately took no position, same as
+//     connectionSecretState's own catch-all.
+func addonValuesSecretRowState(recon SecretReconciler, cluster, addon string) string {
+	if recon == nil {
+		return "unknown"
+	}
+	outcome, ok := recon.LastItemOutcome(cluster, addon)
+	if !ok {
+		return "unknown"
+	}
+	switch outcome {
+	case "unchanged", "created", "updated":
+		return "in_sync"
+	case "out_of_sync", "error":
+		return "out_of_sync"
+	case "missing":
+		return "missing"
+	default: // "skipped"
+		return "unknown"
+	}
 }
 
 // lastAddonValuesSecretRepair scans the audit log (newest-first, per

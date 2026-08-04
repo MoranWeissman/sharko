@@ -1,6 +1,7 @@
 import type {
   AddonCatalogResponse,
   AddonDetailResponse,
+  AddonValuesSecretActionResult,
   AdoptClustersResponse,
   AIConfigResponse,
   APIToken,
@@ -526,6 +527,35 @@ export async function getManagedSecrets() {
  */
 export async function triggerSecretsReconcile() {
   return postJSON<{ status: string }>('/secrets/reconcile', {})
+}
+
+/**
+ * refreshAddonValuesSecret — POST /clusters/{name}/addons/{addon}/secret/refresh
+ * (S4). Re-checks ONE addon-values secret against its source (the vault)
+ * right now, WITHOUT writing anything — the row-scoped "Refresh" action on
+ * the Managed Secrets page. Throws with the server's plain-English error
+ * text when the check itself could not run (no Git connection, cluster
+ * unreachable, no secret definition for this pair, etc.).
+ */
+export async function refreshAddonValuesSecret(cluster: string, addon: string) {
+  return postJSON<AddonValuesSecretActionResult>(
+    `/clusters/${encodeURIComponent(cluster)}/addons/${encodeURIComponent(addon)}/secret/refresh`,
+    {},
+  )
+}
+
+/**
+ * syncAddonValuesSecret — POST /clusters/{name}/addons/{addon}/secret/sync
+ * (S4). Re-pushes ONE addon-values secret from its source (the vault) to
+ * the remote cluster right now — the row-scoped "Sync" action on the
+ * Managed Secrets page. Throws with the server's plain-English error text
+ * when the push itself could not run or failed.
+ */
+export async function syncAddonValuesSecret(cluster: string, addon: string) {
+  return postJSON<AddonValuesSecretActionResult>(
+    `/clusters/${encodeURIComponent(cluster)}/addons/${encodeURIComponent(addon)}/secret/sync`,
+    {},
+  )
 }
 
 /**

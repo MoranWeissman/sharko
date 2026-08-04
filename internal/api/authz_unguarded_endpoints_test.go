@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -24,8 +25,27 @@ import (
 // that mode in these tests.)
 
 // fakeSecretReconciler satisfies the SecretReconciler interface so the trigger
-// handler can reach its 202 success path under an allowed role.
-type fakeSecretReconciler struct{ triggered int }
+// handler can reach its 202 success path under an allowed role. The
+// itemCallArgs / checkOutcome / syncOutcome fields (S4) let tests configure
+// and assert exactly what CheckOne/SyncOne were called with and what they
+// returned, without pulling in the real internal/secrets.Reconciler (which
+// would need a live Git connection).
+type fakeSecretReconciler struct {
+	triggered int
+
+	checkOutcome string
+	checkErr     error
+	checkCalls   []itemCallArgs
+
+	syncOutcome string
+	syncErr     error
+	syncCalls   []itemCallArgs
+
+	lastItemOutcome   string
+	lastItemOutcomeOK bool
+}
+
+type itemCallArgs struct{ cluster, addon string }
 
 func (f *fakeSecretReconciler) Trigger()                { f.triggered++ }
 func (f *fakeSecretReconciler) GetStats() interface{}   { return map[string]int{} }
@@ -34,6 +54,20 @@ func (f *fakeSecretReconciler) LastError() string       { return "" }
 func (f *fakeSecretReconciler) Interval() time.Duration { return 0 }
 func (f *fakeSecretReconciler) LastItemChecked(_, _ string) (time.Time, bool) {
 	return time.Time{}, false
+}
+
+func (f *fakeSecretReconciler) LastItemOutcome(_, _ string) (string, bool) {
+	return f.lastItemOutcome, f.lastItemOutcomeOK
+}
+
+func (f *fakeSecretReconciler) CheckOne(_ context.Context, cluster, addon string) (string, error) {
+	f.checkCalls = append(f.checkCalls, itemCallArgs{cluster, addon})
+	return f.checkOutcome, f.checkErr
+}
+
+func (f *fakeSecretReconciler) SyncOne(_ context.Context, cluster, addon string) (string, error) {
+	f.syncCalls = append(f.syncCalls, itemCallArgs{cluster, addon})
+	return f.syncOutcome, f.syncErr
 }
 
 // assert403 decodes the body and asserts a clean JSON 403.

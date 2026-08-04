@@ -126,6 +126,12 @@ var ActionRequirements = map[string]Role{
 	"catalog.add":               RoleOperator,
 	"reconciler.trigger":        RoleOperator,
 	"catalog.freshness.refresh": RoleOperator,
+	// Single-item addon-values-secret row actions (S4 — Managed Secrets
+	// page). Same tier as reconciler.trigger and cluster.reconcile: both
+	// reach a live remote cluster with real credentials, just scoped to one
+	// secret instead of a fleet-wide pass.
+	"addon-secret.refresh": RoleOperator,
+	"addon-secret.sync":    RoleOperator,
 	"token.create":              RoleOperator,
 	"token.renew-own":           RoleOperator,
 	"token.revoke-own":          RoleOperator,

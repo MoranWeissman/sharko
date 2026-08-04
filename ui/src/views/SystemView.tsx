@@ -43,7 +43,7 @@ import {
 } from '@/components/WhoseConnectionLabel'
 import { ClusterIdentityPanel } from '@/components/ClusterIdentityPanel'
 import { HomeClusterCard, type HomeClusterInfo } from '@/components/HomeClusterCard'
-import { ManagedSecretsSection } from '@/components/ManagedSecretsSection'
+import { ManagedSecretsSummaryLine } from '@/components/ManagedSecretsSummaryLine'
 import testedRange from '@/generated/argocd-tested-range.json'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -593,10 +593,12 @@ export function SystemView() {
         <ClusterIdentityPanel capabilities={capabilities} loading={capabilitiesLoading} />
       </section>
 
-      {/* Managed secrets — every secret Sharko manages, connection secrets
-        * and addon values secrets, in two searchable tables. Visibility
-        * only; row click-through goes to the cluster/addon page where the
-        * real actions already live. */}
+      {/* Managed secrets — S1: this used to be two full tables bolted onto
+        * the bottom of this page. The System page's job is how Sharko
+        * itself is set up and doing, not a resource list — so, same as
+        * Managed Clusters and Addons, every secret now has its own page
+        * (/secrets). This stays a single quiet line with the headline fact
+        * and a link. */}
       <section>
         <div className="mb-3 flex items-center gap-2">
           <KeyRound className="h-4 w-4 text-[#3a6a8a] dark:text-gray-400" aria-hidden="true" />
@@ -604,7 +606,7 @@ export function SystemView() {
             Managed secrets
           </h2>
         </div>
-        <ManagedSecretsSection />
+        <ManagedSecretsSummaryLine />
       </section>
     </div>
   )

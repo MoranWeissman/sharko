@@ -21,6 +21,7 @@ const AddonCatalog = lazy(() => import('@/views/AddonCatalog'))
 const AddonDetail = lazy(() => import('@/views/AddonDetail'))
 const Observability = lazy(() => import('@/views/Observability'))
 const SystemView = lazy(() => import('@/views/SystemView'))
+const ManagedSecrets = lazy(() => import('@/views/ManagedSecrets'))
 const Dashboards = lazy(() => import('@/views/Dashboards'))
 const Settings = lazy(() => import('@/views/Settings'))
 const UserInfo = lazy(() => import('@/views/UserInfo'))
@@ -263,6 +264,7 @@ export function ConnectedApp() {
           <Route path="version-matrix" element={<RedirectPreservingQuery to="/addons" />} />
           <Route path="observability" element={<Observability />} />
           <Route path="system" element={<SystemView />} />
+          <Route path="secrets" element={<ManagedSecrets />} />
           {/* V2-cleanup-61.4 (F2): the standalone Upgrade Checker page
               duplicated AddonDetail's Upgrade tab (per-addon analysis,
               conflicts, AI summary, downgrade guard, per-cluster upgrade —
