@@ -2270,6 +2270,17 @@ definitions:
       summary:
         type: string
     type: object
+  internal_api.addonValuesSecretRow:
+    properties:
+      addon:
+        type: string
+      cluster:
+        type: string
+      secret_name:
+        type: string
+      secret_namespace:
+        type: string
+    type: object
   internal_api.aiAnnotateBlockedResponse:
     properties:
       code:
@@ -2534,6 +2545,34 @@ definitions:
           $ref: '#/definitions/internal_api.catalogVersionEntry'
         type: array
     type: object
+  internal_api.connectionSecretRow:
+    properties:
+      cluster:
+        type: string
+      last_checked:
+        description: |-
+          LastChecked is RFC3339, or "" when the reconciler has never
+          processed this cluster on this server instance.
+        type: string
+      last_repaired:
+        description: |-
+          LastRepaired / LastRepairedDetail come from a matching audit entry
+          (Resource "cluster:<name>", a repair event, Result "success") — an
+          honest per-row join, not an approximation. Empty when no such entry
+          exists in the audit log's retained window.
+        type: string
+      last_repaired_detail:
+        type: string
+      secret_name:
+        type: string
+      secret_namespace:
+        type: string
+      state:
+        description: |-
+          State is one of "in_sync", "out_of_sync", "missing", or "unknown" —
+          see connectionSecretState for exactly how each is derived.
+        type: string
+    type: object
   internal_api.doctorCheck:
     properties:
       detail:
@@ -2676,6 +2715,47 @@ definitions:
           onto drifted managed-cluster Secrets every tick (enforcement-by-
           reconcile, same mechanism as the self-managed path).
         type: boolean
+    type: object
+  internal_api.managedSecretsEngineInfo:
+    properties:
+      interval_seconds:
+        description: IntervalSeconds is the configured tick cadence, 0 when not wired.
+        type: integer
+      last_error:
+        description: |-
+          LastError is the most recent failure message, "" when the last known
+          state has no error.
+        type: string
+      last_run:
+        description: LastRun is RFC3339, "" when wired but no tick has completed yet.
+        type: string
+      wired:
+        description: |-
+          Wired is false when this server instance has no such reconciler
+          running at all (out-of-cluster, or no credentials provider) — every
+          other field stays zero/empty in that case, which is different from
+          "wired but never run yet".
+        type: boolean
+    type: object
+  internal_api.managedSecretsEngines:
+    properties:
+      addon_values:
+        $ref: '#/definitions/internal_api.managedSecretsEngineInfo'
+      cluster_connection:
+        $ref: '#/definitions/internal_api.managedSecretsEngineInfo'
+    type: object
+  internal_api.managedSecretsResponse:
+    properties:
+      addon_values_secrets:
+        items:
+          $ref: '#/definitions/internal_api.addonValuesSecretRow'
+        type: array
+      cluster_connection_secrets:
+        items:
+          $ref: '#/definitions/internal_api.connectionSecretRow'
+        type: array
+      engines:
+        $ref: '#/definitions/internal_api.managedSecretsEngines'
     type: object
   internal_api.meResponse:
     properties:
@@ -8408,6 +8488,27 @@ paths:
       security:
       - BearerAuth: []
       summary: Get auto-detected system capabilities
+      tags:
+      - system
+  /system/managed-secrets:
+    get:
+      description: Aggregates cluster-connection secrets (the ArgoCD cluster Secret
+        per managed cluster) and addon-values secrets (pushed into remote clusters),
+        plus each reconciler engine's cadence, last run, and last error. Built entirely
+        from data already read for the cluster list and the two reconcilers' in-memory
+        stats — no per-row Kubernetes call. A fact the server cannot currently determine
+        is left empty/unknown rather than approximated. Any authenticated user may
+        read this, the same convention as /providers, /config, and /secrets/status.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Managed secrets summary
+          schema:
+            $ref: '#/definitions/internal_api.managedSecretsResponse'
+      security:
+      - BearerAuth: []
+      summary: Get every secret Sharko manages
       tags:
       - system
   /tokens:

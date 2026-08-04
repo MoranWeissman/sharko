@@ -159,6 +159,13 @@ func (s *Server) publishGitopsCfg(cfg orchestrator.GitOpsConfig) {
 type SecretReconciler interface {
 	Trigger()
 	GetStats() interface{} // returns secrets.ReconcileStats but we keep the import-free boundary
+	// LastRunTime, LastError, and Interval (System-page managed-secrets
+	// summary) are primitive-typed on purpose — same import-free-boundary
+	// reasoning as GetStats, but callers that only need these facts don't
+	// have to type-assert an interface{} to get them.
+	LastRunTime() time.Time
+	LastError() string
+	Interval() time.Duration
 }
 
 // Server holds the HTTP handlers and their dependencies.
@@ -1054,6 +1061,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// authenticated user (the register-cluster screen needs it before the
 	// user has picked a role).
 	mux.HandleFunc("GET /api/v1/system/capabilities", srv.handleGetSystemCapabilities)
+	// Managed-secrets visibility for the System page — read-tier, same
+	// no-explicit-gate convention as /providers, /config, and /secrets/status
+	// above (see handleGetManagedSecrets doc comment).
+	mux.HandleFunc("GET /api/v1/system/managed-secrets", srv.handleGetManagedSecrets)
 
 	// MARKETPLACE — what you could run. The curated list Sharko ships (plus
 	// any third-party feeds an operator configured), read-only, discovery

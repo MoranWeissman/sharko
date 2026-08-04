@@ -1241,8 +1241,7 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 			Detail:    "connection is managed by the user; create the ArgoCD cluster Secret by hand (see operator guide: self-managed connections)",
 			RequestID: logging.RequestID(ctx),
 		})
-		r.recordReconcile(entry.Name, OutcomeSkipped,
-			"Waiting for you to create this cluster's ArgoCD cluster secret — this connection is self-managed, so Sharko only syncs addon labels onto it once it exists.", nil)
+		r.recordReconcile(entry.Name, OutcomeSkipped, SelfManagedSecretNotCreatedMessage, nil)
 		return
 	}
 	if changed {

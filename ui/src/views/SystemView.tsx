@@ -28,6 +28,7 @@ import {
   Fingerprint,
   GitBranch,
   HelpCircle,
+  KeyRound,
   Server,
   Waves,
   XCircle,
@@ -42,6 +43,7 @@ import {
 } from '@/components/WhoseConnectionLabel'
 import { ClusterIdentityPanel } from '@/components/ClusterIdentityPanel'
 import { HomeClusterCard, type HomeClusterInfo } from '@/components/HomeClusterCard'
+import { ManagedSecretsSection } from '@/components/ManagedSecretsSection'
 import testedRange from '@/generated/argocd-tested-range.json'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -589,6 +591,20 @@ export function SystemView() {
           </h2>
         </div>
         <ClusterIdentityPanel capabilities={capabilities} loading={capabilitiesLoading} />
+      </section>
+
+      {/* Managed secrets — every secret Sharko manages, connection secrets
+        * and addon values secrets, in two searchable tables. Visibility
+        * only; row click-through goes to the cluster/addon page where the
+        * real actions already live. */}
+      <section>
+        <div className="mb-3 flex items-center gap-2">
+          <KeyRound className="h-4 w-4 text-[#3a6a8a] dark:text-gray-400" aria-hidden="true" />
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-[#3a6a8a] dark:text-gray-400">
+            Managed secrets
+          </h2>
+        </div>
+        <ManagedSecretsSection />
       </section>
     </div>
   )

@@ -201,6 +201,36 @@ func (r *Reconciler) GetErrors() []string {
 	return out
 }
 
+// Interval returns the configured reconcile cadence (how often the
+// background loop ticks, independent of Trigger() nudges). Primitive
+// return type — same import-free-boundary reasoning as GetStats — so
+// internal/api can report it on the System page without importing this
+// package (System-page managed-secrets summary).
+func (r *Reconciler) Interval() time.Duration {
+	return r.interval
+}
+
+// LastRunTime returns the timestamp of the most recent reconcile run, or
+// the zero time if the reconciler has never run yet (fresh startup, or no
+// Git connection has ever been configured).
+func (r *Reconciler) LastRunTime() time.Time {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.lastRun
+}
+
+// LastError returns the first error message recorded during the most
+// recent reconcile run, or "" when that run had no errors (including the
+// "never run yet" case).
+func (r *Reconciler) LastError() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.lastErrors) == 0 {
+		return ""
+	}
+	return r.lastErrors[0]
+}
+
 // reconcile is the main reconcile cycle. It is safe to call concurrently but
 // will run sequentially via the single-goroutine loop in Start().
 //

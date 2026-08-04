@@ -134,6 +134,52 @@ export interface SystemCapabilitiesResponse {
   hub_platform: string
 }
 
+// ManagedSecretsResponse mirrors GET /api/v1/system/managed-secrets — every
+// secret Sharko manages, built server-side from data it already read (the
+// cluster list, the two reconcilers' own stats, the audit log). Visibility
+// only; nothing here writes anything.
+export interface ConnectionSecretRow {
+  cluster: string
+  secret_namespace?: string
+  secret_name?: string
+  // One of 'in_sync' | 'out_of_sync' | 'missing' | 'unknown'.
+  state: string
+  last_checked?: string // RFC3339, absent = unknown
+  last_repaired?: string // RFC3339, absent = never seen in the audit log's retained window
+  last_repaired_detail?: string
+}
+
+// addon-values secrets have no per-row last_checked/last_repaired: the
+// values reconciler only keeps an aggregate, pass-level stat — see
+// ManagedSecretsEngineInfo below for the closest honest signal (this is a
+// known gap, not an oversight).
+export interface AddonValuesSecretRow {
+  cluster: string
+  addon: string
+  secret_name?: string
+  secret_namespace?: string
+}
+
+export interface ManagedSecretsEngineInfo {
+  // false = this reconciler isn't running on this server at all (every
+  // other field stays empty in that case — different from "wired, never run yet").
+  wired: boolean
+  interval_seconds?: number
+  last_run?: string // RFC3339
+  last_error?: string
+}
+
+export interface ManagedSecretsEngines {
+  cluster_connection: ManagedSecretsEngineInfo
+  addon_values: ManagedSecretsEngineInfo
+}
+
+export interface ManagedSecretsResponse {
+  cluster_connection_secrets: ConnectionSecretRow[]
+  addon_values_secrets: AddonValuesSecretRow[]
+  engines: ManagedSecretsEngines
+}
+
 // DoctorCheck / DoctorClusterResponse mirror POST
 // /api/v1/clusters/{name}/doctor (V2-cleanup-88.4, V2-cleanup-89.5's fifth
 // check, and the 'warn' status added by V2-cleanup-90.1) — the connection
