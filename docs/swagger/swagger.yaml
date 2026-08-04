@@ -2276,6 +2276,24 @@ definitions:
         type: string
       cluster:
         type: string
+      last_checked:
+        description: |-
+          LastChecked is RFC3339, or "" when the addon-values reconciler has
+          never processed this cluster+addon pair on this server instance —
+          an in-memory read on s.secretReconciler (internal/secrets), the
+          same per-row-state pattern connectionSecretRow.LastChecked reads
+          from the cluster-connection reconciler.
+        type: string
+      last_repaired:
+        description: |-
+          LastRepaired / LastRepairedDetail come from a matching audit entry
+          (Resource "cluster:<name>/addon:<addon>", an addon_secret_created
+          or addon_secret_updated event, Result "success") — the same honest
+          per-row join connectionSecretRow.LastRepaired uses. Empty when no
+          such entry exists in the audit log's retained window.
+        type: string
+      last_repaired_detail:
+        type: string
       secret_name:
         type: string
       secret_namespace:

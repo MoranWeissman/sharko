@@ -11548,6 +11548,17 @@
                 "cluster": {
                     "type": "string"
                 },
+                "last_checked": {
+                    "description": "LastChecked is RFC3339, or \"\" when the addon-values reconciler has\nnever processed this cluster+addon pair on this server instance —\nan in-memory read on s.secretReconciler (internal/secrets), the\nsame per-row-state pattern connectionSecretRow.LastChecked reads\nfrom the cluster-connection reconciler.",
+                    "type": "string"
+                },
+                "last_repaired": {
+                    "description": "LastRepaired / LastRepairedDetail come from a matching audit entry\n(Resource \"cluster:\u003cname\u003e/addon:\u003caddon\u003e\", an addon_secret_created\nor addon_secret_updated event, Result \"success\") — the same honest\nper-row join connectionSecretRow.LastRepaired uses. Empty when no\nsuch entry exists in the audit log's retained window.",
+                    "type": "string"
+                },
+                "last_repaired_detail": {
+                    "type": "string"
+                },
                 "secret_name": {
                     "type": "string"
                 },

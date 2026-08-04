@@ -32,6 +32,9 @@ func (f *fakeSecretReconciler) GetStats() interface{}   { return map[string]int{
 func (f *fakeSecretReconciler) LastRunTime() time.Time  { return time.Time{} }
 func (f *fakeSecretReconciler) LastError() string       { return "" }
 func (f *fakeSecretReconciler) Interval() time.Duration { return 0 }
+func (f *fakeSecretReconciler) LastItemChecked(_, _ string) (time.Time, bool) {
+	return time.Time{}, false
+}
 
 // assert403 decodes the body and asserts a clean JSON 403.
 func assert403(t *testing.T, rw *httptest.ResponseRecorder) {

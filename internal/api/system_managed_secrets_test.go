@@ -218,6 +218,115 @@ func TestHandleGetManagedSecrets_AddonValuesSecretRow(t *testing.T) {
 	}
 }
 
+// TestHandleGetManagedSecrets_AddonValuesSecretRow_TimestampsFromReconcilerAndAudit
+// pins S3: addon_values_secrets rows now carry real last_checked (from the
+// addon-values reconciler's per-item state) and last_repaired (+ a canned
+// detail string, joined from an audit entry) — the same honest-unknown
+// contract connection-secret rows already have. A row with neither source
+// available still comes back with both fields empty ("unknown" stays
+// unknown), never a guessed value.
+func TestHandleGetManagedSecrets_AddonValuesSecretRow_TimestampsFromReconcilerAndAudit(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
+	}, http.StatusOK)
+	gp := &reconcileFakeGP{
+		managedYAML: []byte("clusters:\n- name: prod-eu\n  labels:\n    datadog: enabled\n"),
+	}
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+		"datadog": {
+			AddonName:  "datadog",
+			SecretName: "datadog-secrets",
+			Namespace:  "datadog",
+			Keys:       map[string]string{"api-key": "secrets/datadog/api-key"},
+		},
+	})
+
+	checkedAt := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	srv.SetSecretReconciler(&fakeReconciler{
+		itemChecked: map[[2]string]time.Time{{"prod-eu", "datadog"}: checkedAt},
+	})
+
+	srv.AuditLog().Add(audit.Entry{
+		Event:    "addon_secret_created",
+		Resource: "cluster:prod-eu/addon:datadog",
+		Source:   "reconciler",
+		Result:   "success",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.AddonValuesSecrets) != 1 {
+		t.Fatalf("expected exactly 1 addon-values row, got %d (%+v)", len(body.AddonValuesSecrets), body.AddonValuesSecrets)
+	}
+	row := body.AddonValuesSecrets[0]
+	wantChecked := checkedAt.Format(time.RFC3339)
+	if row.LastChecked != wantChecked {
+		t.Errorf("last_checked = %q, want %q", row.LastChecked, wantChecked)
+	}
+	if row.LastRepaired == "" {
+		t.Error("expected last_repaired to be populated from the matching audit entry")
+	}
+	if row.LastRepairedDetail != "secret created" {
+		t.Errorf("last_repaired_detail = %q, want %q", row.LastRepairedDetail, "secret created")
+	}
+}
+
+// TestHandleGetManagedSecrets_AddonValuesSecretRow_UnknownStaysUnknown pins
+// the honest-unknown half of S3: with no secretReconciler wired and no
+// matching audit entry, last_checked/last_repaired/last_repaired_detail
+// stay empty — never a fabricated timestamp.
+func TestHandleGetManagedSecrets_AddonValuesSecretRow_UnknownStaysUnknown(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
+	}, http.StatusOK)
+	gp := &reconcileFakeGP{
+		managedYAML: []byte("clusters:\n- name: prod-eu\n  labels:\n    datadog: enabled\n"),
+	}
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+		"datadog": {
+			AddonName:  "datadog",
+			SecretName: "datadog-secrets",
+			Namespace:  "datadog",
+			Keys:       map[string]string{"api-key": "secrets/datadog/api-key"},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.AddonValuesSecrets) != 1 {
+		t.Fatalf("expected exactly 1 addon-values row, got %d (%+v)", len(body.AddonValuesSecrets), body.AddonValuesSecrets)
+	}
+	row := body.AddonValuesSecrets[0]
+	if row.LastChecked != "" {
+		t.Errorf("last_checked = %q, want empty (no secretReconciler wired)", row.LastChecked)
+	}
+	if row.LastRepaired != "" || row.LastRepairedDetail != "" {
+		t.Errorf("last_repaired/detail = %q/%q, want empty (no matching audit entry)", row.LastRepaired, row.LastRepairedDetail)
+	}
+}
+
 func TestHandleGetManagedSecrets_AddonValuesEngine_WiredReportsStats(t *testing.T) {
 	srv := newTestServer()
 	router := NewRouter(srv, nil)

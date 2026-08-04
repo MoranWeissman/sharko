@@ -351,9 +351,12 @@ func TestReconcileV4_HalfWrittenPushSaysWhatIsMissing(t *testing.T) {
 	)
 
 	stats := ReconcileStats{}
-	err := r.reconcileSecret(context.Background(), &stats, work.credLookup, work.addon, work.push)
+	outcome, err := r.reconcileSecret(context.Background(), &stats, work.clusterName, work.credLookup, work.addon, work.push)
 	if err == nil {
 		t.Fatal("expected the incomplete definition to be refused")
+	}
+	if outcome != ItemOutcomeSkipped {
+		t.Errorf("outcome = %q, want %q (a half-written definition is a deliberate skip, not a live failure)", outcome, ItemOutcomeSkipped)
 	}
 	for _, want := range []string{"namespace", "keys"} {
 		if !strings.Contains(err.Error(), want) {
