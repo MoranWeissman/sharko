@@ -21,6 +21,7 @@ import type {
   DropLegacyLabelsRequestBody,
   DropLegacyLabelsResponse,
   DryRunResult,
+  ManagedSecretsResponse,
   MigrateResult,
   MigrationMigrateRequest,
   MigrationPlan,
@@ -504,6 +505,27 @@ export async function resyncClusterLabels(name: string) {
  */
 export async function getSystemCapabilities() {
   return fetchJSON<SystemCapabilitiesResponse>('/system/capabilities')
+}
+
+/**
+ * getManagedSecrets — GET /api/v1/system/managed-secrets. Every secret
+ * Sharko manages (connection secrets + addon values secrets) plus each
+ * reconciler engine's cadence, last run, and last error. Read-tier, same
+ * convention as getSystemCapabilities above.
+ */
+export async function getManagedSecrets() {
+  return fetchJSON<ManagedSecretsResponse>('/system/managed-secrets')
+}
+
+/**
+ * triggerSecretsReconcile — POST /api/v1/secrets/reconcile. Nudges the
+ * addon-values secrets engine to run immediately instead of waiting for its
+ * 5-minute tick. Returns 202 as soon as the trigger is accepted — the
+ * reconcile itself runs in the background, so callers should refetch
+ * getManagedSecrets shortly after to see the updated engine stats.
+ */
+export async function triggerSecretsReconcile() {
+  return postJSON<{ status: string }>('/secrets/reconcile', {})
 }
 
 /**

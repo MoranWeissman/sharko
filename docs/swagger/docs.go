@@ -7605,6 +7605,31 @@ const docTemplate = `{
                 }
             }
         },
+        "/system/managed-secrets": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Aggregates cluster-connection secrets (the ArgoCD cluster Secret per managed cluster) and addon-values secrets (pushed into remote clusters), plus each reconciler engine's cadence, last run, and last error. Built entirely from data already read for the cluster list and the two reconcilers' in-memory stats — no per-row Kubernetes call. A fact the server cannot currently determine is left empty/unknown rather than approximated. Any authenticated user may read this, the same convention as /providers, /config, and /secrets/status.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Get every secret Sharko manages",
+                "responses": {
+                    "200": {
+                        "description": "Managed secrets summary",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.managedSecretsResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/tokens": {
             "get": {
                 "security": [
@@ -11520,6 +11545,23 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api.addonValuesSecretRow": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "type": "string"
+                },
+                "cluster": {
+                    "type": "string"
+                },
+                "secret_name": {
+                    "type": "string"
+                },
+                "secret_namespace": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_api.aiAnnotateBlockedResponse": {
             "type": "object",
             "properties": {
@@ -11848,6 +11890,35 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api.connectionSecretRow": {
+            "type": "object",
+            "properties": {
+                "cluster": {
+                    "type": "string"
+                },
+                "last_checked": {
+                    "description": "LastChecked is RFC3339, or \"\" when the reconciler has never\nprocessed this cluster on this server instance.",
+                    "type": "string"
+                },
+                "last_repaired": {
+                    "description": "LastRepaired / LastRepairedDetail come from a matching audit entry\n(Resource \"cluster:\u003cname\u003e\", a repair event, Result \"success\") — an\nhonest per-row join, not an approximation. Empty when no such entry\nexists in the audit log's retained window.",
+                    "type": "string"
+                },
+                "last_repaired_detail": {
+                    "type": "string"
+                },
+                "secret_name": {
+                    "type": "string"
+                },
+                "secret_namespace": {
+                    "type": "string"
+                },
+                "state": {
+                    "description": "State is one of \"in_sync\", \"out_of_sync\", \"missing\", or \"unknown\" —\nsee connectionSecretState for exactly how each is derived.",
+                    "type": "string"
+                }
+            }
+        },
         "internal_api.doctorCheck": {
             "type": "object",
             "properties": {
@@ -12042,6 +12113,58 @@ const docTemplate = `{
                 "managed_cluster_self_heal": {
                     "description": "ManagedClusterSelfHeal is false (the default) when the reconciler\ndetects drift on Sharko-managed clusters but does NOT re-apply\ngit-desired labels (drift detection only, surfaces OutOfSync state).\nWhen set to true, the reconciler re-applies git-desired addon labels\nonto drifted managed-cluster Secrets every tick (enforcement-by-\nreconcile, same mechanism as the self-managed path).",
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_api.managedSecretsEngineInfo": {
+            "type": "object",
+            "properties": {
+                "interval_seconds": {
+                    "description": "IntervalSeconds is the configured tick cadence, 0 when not wired.",
+                    "type": "integer"
+                },
+                "last_error": {
+                    "description": "LastError is the most recent failure message, \"\" when the last known\nstate has no error.",
+                    "type": "string"
+                },
+                "last_run": {
+                    "description": "LastRun is RFC3339, \"\" when wired but no tick has completed yet.",
+                    "type": "string"
+                },
+                "wired": {
+                    "description": "Wired is false when this server instance has no such reconciler\nrunning at all (out-of-cluster, or no credentials provider) — every\nother field stays zero/empty in that case, which is different from\n\"wired but never run yet\".",
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.managedSecretsEngines": {
+            "type": "object",
+            "properties": {
+                "addon_values": {
+                    "$ref": "#/definitions/internal_api.managedSecretsEngineInfo"
+                },
+                "cluster_connection": {
+                    "$ref": "#/definitions/internal_api.managedSecretsEngineInfo"
+                }
+            }
+        },
+        "internal_api.managedSecretsResponse": {
+            "type": "object",
+            "properties": {
+                "addon_values_secrets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.addonValuesSecretRow"
+                    }
+                },
+                "cluster_connection_secrets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.connectionSecretRow"
+                    }
+                },
+                "engines": {
+                    "$ref": "#/definitions/internal_api.managedSecretsEngines"
                 }
             }
         },

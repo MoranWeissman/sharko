@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/argocd"
@@ -98,6 +99,10 @@ type fakeReconciler struct {
 func (r *fakeReconciler) Trigger() { r.triggered = true }
 
 func (r *fakeReconciler) GetStats() interface{} { return r.stats }
+
+func (r *fakeReconciler) LastRunTime() time.Time  { return time.Time{} }
+func (r *fakeReconciler) LastError() string       { return "" }
+func (r *fakeReconciler) Interval() time.Duration { return 0 }
 
 // ---------------------------------------------------------------------------
 // handleRepoStatus

@@ -26,6 +26,25 @@ import type { Cluster } from '@/services/models'
 import type { RepoStatusReason } from '@/services/api'
 
 const mockGetSystemCapabilities = vi.fn()
+// ManagedSecretsSection (rendered at the bottom of SystemView) fetches on
+// its own mount via these two named exports — mock them here too so every
+// existing SystemView test (which never cared about managed secrets) still
+// gets a resolved, empty-by-default response instead of an unmocked vi.fn()
+// returning undefined and throwing inside the effect.
+// clearAllMocks() (see beforeEach below) clears call history but NOT a
+// mock's resolvedValue implementation — so this default, set once here,
+// keeps every test that never touches managed-secrets working even if it
+// doesn't call mockAll() (e.g. the tests below that mock each api call by
+// hand). mockAll() overwrites it for tests that care.
+const mockGetManagedSecrets = vi.fn().mockResolvedValue({
+  cluster_connection_secrets: [],
+  addon_values_secrets: [],
+  engines: {
+    cluster_connection: { wired: false },
+    addon_values: { wired: false },
+  },
+})
+const mockTriggerSecretsReconcile = vi.fn()
 
 vi.mock('@/services/api', () => ({
   api: {
@@ -39,6 +58,8 @@ vi.mock('@/services/api', () => ({
     getFleetStatus: vi.fn(),
   },
   getSystemCapabilities: (...args: unknown[]) => mockGetSystemCapabilities(...args),
+  getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
+  triggerSecretsReconcile: (...args: unknown[]) => mockTriggerSecretsReconcile(...args),
 }))
 
 import { api } from '@/services/api'
@@ -102,6 +123,14 @@ function mockAll({
   mockedApi.getFleetStatus.mockResolvedValue(
     (uptime ? { server_version: sharkoVersion ?? '', uptime } : null) as never,
   )
+  mockGetManagedSecrets.mockResolvedValue({
+    cluster_connection_secrets: [],
+    addon_values_secrets: [],
+    engines: {
+      cluster_connection: { wired: false },
+      addon_values: { wired: false },
+    },
+  })
 }
 
 function renderPage() {

@@ -119,6 +119,61 @@ func (r *Reconciler) LastReconcile(name string) (ClusterReconcileRecord, bool) {
 	return rec, ok
 }
 
+// TickInterval returns the reconciler's configured poll cadence — how often
+// the background loop ticks, independent of Trigger() nudges (System-page
+// managed-secrets summary).
+func (r *Reconciler) TickInterval() time.Duration {
+	return r.tickInterval
+}
+
+// LastRunTime returns the most recent timestamp recorded across every
+// per-cluster reconcile record. Every cluster touched in the same tick gets
+// the same r.now() stamp (see recordReconcile), so this is exactly the last
+// full pass's timestamp whenever at least one cluster has been reconciled
+// on this server instance. Returns the zero time when no reconcile has ever
+// recorded a per-cluster outcome (fresh startup, or the reconciler has
+// never processed any cluster).
+func (r *Reconciler) LastRunTime() time.Time {
+	r.lastReconcileMu.RLock()
+	defer r.lastReconcileMu.RUnlock()
+	var latest time.Time
+	for _, rec := range r.lastReconcile {
+		if rec.Time.After(latest) {
+			latest = rec.Time
+		}
+	}
+	return latest
+}
+
+// LastError returns the message and timestamp of the most recent Failed
+// per-cluster reconcile record. ok is false when no cluster currently has a
+// Failed outcome recorded (a clean fleet, or no reconcile has run yet).
+// This is a real, grounded signal — the same per-cluster failure a
+// cluster's own detail page would show — not an engine-wide abort reason
+// (the reconciler doesn't track one separately; see stampAbortedTick, which
+// stamps the SAME per-cluster records this reads).
+func (r *Reconciler) LastError() (message string, at time.Time, ok bool) {
+	r.lastReconcileMu.RLock()
+	defer r.lastReconcileMu.RUnlock()
+	for _, rec := range r.lastReconcile {
+		if rec.Outcome == OutcomeFailed && rec.Time.After(at) {
+			at = rec.Time
+			message = rec.Message
+			ok = true
+		}
+	}
+	return message, at, ok
+}
+
+// SelfManagedSecretNotCreatedMessage is the exact ClusterReconcileRecord.Message
+// recorded when a self-managed connection's ArgoCD cluster Secret does not
+// exist yet — Sharko is waiting for the user to create it (see
+// syncSelfManaged's `!found` branch in reconciler.go). Exported as a single
+// source of truth so read-model code (the System page's managed-secrets
+// summary) can recognize this specific, well-defined skip reason as
+// "the secret is missing" without fuzzy-matching a duplicated string.
+const SelfManagedSecretNotCreatedMessage = "Waiting for you to create this cluster's ArgoCD cluster secret — this connection is self-managed, so Sharko only syncs addon labels onto it once it exists."
+
 // pruneStaleReconcileRecords removes lastReconcile and fightState entries
 // for cluster names that were neither desired (in managed-clusters.yaml)
 // nor observed live in ArgoCD during this pass (V2-cleanup-90.2, fix M3).

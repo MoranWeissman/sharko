@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/operations"
@@ -26,8 +27,11 @@ import (
 // handler can reach its 202 success path under an allowed role.
 type fakeSecretReconciler struct{ triggered int }
 
-func (f *fakeSecretReconciler) Trigger()              { f.triggered++ }
-func (f *fakeSecretReconciler) GetStats() interface{} { return map[string]int{} }
+func (f *fakeSecretReconciler) Trigger()                { f.triggered++ }
+func (f *fakeSecretReconciler) GetStats() interface{}   { return map[string]int{} }
+func (f *fakeSecretReconciler) LastRunTime() time.Time  { return time.Time{} }
+func (f *fakeSecretReconciler) LastError() string       { return "" }
+func (f *fakeSecretReconciler) Interval() time.Duration { return 0 }
 
 // assert403 decodes the body and asserts a clean JSON 403.
 func assert403(t *testing.T, rw *httptest.ResponseRecorder) {
