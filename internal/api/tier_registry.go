@@ -54,6 +54,12 @@ var HandlerTier = map[string]audit.Tier{
 	"handleTriggerReconcile":      audit.Tier1,
 	"handleRefreshClusterSecrets": audit.Tier1,
 
+	// Single-item addon-values-secret row actions (S4 — Managed Secrets
+	// page). Same bucket as handleTriggerReconcile/handleReconcileCluster:
+	// operational, reaches a live remote cluster with real credentials.
+	"handleRefreshAddonValuesSecret": audit.Tier1,
+	"handleSyncAddonValuesSecret":    audit.Tier1,
+
 	// Connection CRUD — Tier 1 because it manages Sharko-internal credentials, not values
 	"handleCreateConnection":    audit.Tier1,
 	"handleUpdateConnection":    audit.Tier1,

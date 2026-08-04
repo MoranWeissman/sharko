@@ -3447,6 +3447,144 @@ const docTemplate = `{
                 }
             }
         },
+        "/clusters/{name}/addons/{addon}/secret/refresh": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Checks a single cluster+addon addon-values secret against the secrets provider (the vault) right now, WITHOUT writing anything — the read-only counterpart to Sync below.\nReports whether the live secret matches its source, or that it does not exist yet — never the secret's own content.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "secrets"
+                ],
+                "summary": "Re-check one addon-values secret against its source",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "addon",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Check result",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.addonValuesSecretActionResult"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — requires operator role or higher",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "Could not check — no Git connection, incomplete catalog definition, cluster unreachable, or this cluster+addon has no addon-values secret defined",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "The addon-values secrets engine is not running on this server",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/clusters/{name}/addons/{addon}/secret/sync": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Re-pushes a single cluster+addon addon-values secret from the secrets provider (the vault) to the remote cluster right now — creates it if missing, rotates it if the content differs, no-ops if it already matches.\nDrives the same write primitive the periodic addon-values pass uses, scoped to exactly this one secret.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "secrets"
+                ],
+                "summary": "Push one addon-values secret to match its source",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "addon",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Sync result",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.addonValuesSecretActionResult"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — requires operator role or higher",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "Could not sync — no Git connection, incomplete catalog definition, cluster unreachable, no vault configured, or this cluster+addon has no addon-values secret defined",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "The addon-values secrets engine is not running on this server",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/clusters/{name}/changes": {
             "get": {
                 "security": [
@@ -11545,6 +11683,26 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api.addonValuesSecretActionResult": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "type": "string"
+                },
+                "cluster": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "outcome": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_api.addonValuesSecretRow": {
             "type": "object",
             "properties": {
@@ -11569,6 +11727,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "secret_namespace": {
+                    "type": "string"
+                },
+                "state": {
+                    "description": "State is one of \"in_sync\", \"out_of_sync\", \"missing\", or \"unknown\" —\nthe same vocabulary connectionSecretRow.State uses, derived here from\nthe addon-values reconciler's per-item outcome (see\naddonValuesSecretRowState) rather than its own per-cluster record.\nCompared against the vault (the secrets provider), NOT git — git only\nholds a pointer to where the value lives (S3(a) honesty lock).",
                     "type": "string"
                 }
             }

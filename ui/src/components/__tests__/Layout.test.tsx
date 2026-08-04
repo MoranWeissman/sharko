@@ -103,6 +103,13 @@ describe('Layout', () => {
     expect(screen.getByText('Settings')).toBeInTheDocument()
   })
 
+  // S1 — Managed Secrets gets its own page and its own nav item under
+  // Monitor, matching "Managed Clusters"' naming under Overview.
+  it('shows the Managed Secrets nav item under Monitor', () => {
+    renderLayout()
+    expect(screen.getByText('Managed Secrets')).toBeInTheDocument()
+  })
+
   it('collapses sidebar when toggle button is clicked', () => {
     renderLayout()
     const collapseBtn = screen.getByLabelText('Collapse sidebar')

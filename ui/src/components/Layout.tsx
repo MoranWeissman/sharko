@@ -7,6 +7,7 @@ import {
   Activity,
   BarChart3,
   ClipboardList,
+  KeyRound,
   Network,
   Settings,
   ChevronLeft,
@@ -67,6 +68,7 @@ const navSections: NavSection[] = [
     label: 'Monitor',
     items: [
       { to: '/system', label: 'System', icon: Network },
+      { to: '/secrets', label: 'Managed Secrets', icon: KeyRound },
       { to: '/observability', label: 'Observability', icon: Activity },
       // A4: "Dashboards" read as a sibling/typo of "Dashboard" above.
       { to: '/dashboards', label: 'External Dashboards', icon: BarChart3 },
@@ -97,6 +99,7 @@ const routeLabels: Record<string, string> = {
   clusters: 'Managed Clusters',
   addons: 'Addons',
   system: 'System',
+  secrets: 'Managed Secrets',
   observability: 'Observability',
   dashboards: 'External Dashboards',
   audit: 'Audit Log',
@@ -143,6 +146,7 @@ function getAIPageContext(pathname: string): string | undefined {
     '/clusters': 'the Managed Clusters page',
     '/addons': 'the Addons page (Catalog + Marketplace)',
     '/system': 'the System page (Sharko/ArgoCD → repo/clusters chain)',
+    '/secrets': 'the Managed Secrets page (every secret Sharko manages)',
     '/observability': 'the Observability page',
     '/dashboards': 'the External Dashboards page (external dashboard links)',
     '/audit': 'the Audit Log page',

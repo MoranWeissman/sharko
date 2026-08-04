@@ -99,6 +99,21 @@ type fakeReconciler struct {
 	// means "nothing known" — LastItemChecked returns ok=false, matching
 	// a real Reconciler that has never processed the pair.
 	itemChecked map[[2]string]time.Time
+	// itemOutcome lets tests seed a per cluster+addon last outcome for
+	// LastItemOutcome (S4), same keying/nil-means-unknown convention as
+	// itemChecked above.
+	itemOutcome map[[2]string]string
+
+	// checkOutcome/checkErr and syncOutcome/syncErr (S4) are what
+	// CheckOne/SyncOne return; checkCalls/syncCalls record every
+	// (cluster, addon) pair they were called with, for assertions.
+	checkOutcome string
+	checkErr     error
+	checkCalls   []itemCallArgs
+
+	syncOutcome string
+	syncErr     error
+	syncCalls   []itemCallArgs
 }
 
 func (r *fakeReconciler) Trigger() { r.triggered = true }
@@ -115,6 +130,24 @@ func (r *fakeReconciler) LastItemChecked(cluster, addon string) (time.Time, bool
 	}
 	t, ok := r.itemChecked[[2]string{cluster, addon}]
 	return t, ok
+}
+
+func (r *fakeReconciler) LastItemOutcome(cluster, addon string) (string, bool) {
+	if r.itemOutcome == nil {
+		return "", false
+	}
+	o, ok := r.itemOutcome[[2]string{cluster, addon}]
+	return o, ok
+}
+
+func (r *fakeReconciler) CheckOne(_ context.Context, cluster, addon string) (string, error) {
+	r.checkCalls = append(r.checkCalls, itemCallArgs{cluster, addon})
+	return r.checkOutcome, r.checkErr
+}
+
+func (r *fakeReconciler) SyncOne(_ context.Context, cluster, addon string) (string, error) {
+	r.syncCalls = append(r.syncCalls, itemCallArgs{cluster, addon})
+	return r.syncOutcome, r.syncErr
 }
 
 // ---------------------------------------------------------------------------

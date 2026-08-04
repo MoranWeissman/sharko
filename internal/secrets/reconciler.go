@@ -80,7 +80,27 @@ const (
 	// cluster, fetching a value from the secrets provider, or the K8s API
 	// call itself.
 	ItemOutcomeError ItemOutcome = "error"
+	// ItemOutcomeOutOfSync means a single-item, read-only check (CheckOne —
+	// S4's "Refresh" row action) found the live secret's content hash does
+	// NOT match its source, WITHOUT writing a fix. Distinct from
+	// ItemOutcomeUpdated: the periodic pass always writes when hashes
+	// differ, but a check-only request must not. Never produced by the
+	// periodic reconcile() pass itself.
+	ItemOutcomeOutOfSync ItemOutcome = "out_of_sync"
+	// ItemOutcomeMissing means a single-item, read-only check (CheckOne)
+	// found no Secret at all on the remote cluster. Distinct from
+	// ItemOutcomeCreated: the periodic pass creates it on the spot, but a
+	// check-only request only observes and reports. Never produced by the
+	// periodic reconcile() pass itself.
+	ItemOutcomeMissing ItemOutcome = "missing"
 )
+
+// ErrNoGitConnection means a single-item action (CheckOne/SyncOne — S4)
+// could not run because no Git connection is currently active. The
+// periodic pass treats this as a quiet "setup state, skip this tick" (see
+// reconcile()); a single request-driven action has a caller waiting on an
+// answer, so it gets a real error instead.
+var ErrNoGitConnection = errors.New("no Git connection is configured — nothing to check or push")
 
 // ItemKey identifies one addon-values secret row: a single cluster+addon
 // pair. Matches the granularity internal/api's addon_values_secrets table
@@ -301,6 +321,20 @@ func (r *Reconciler) LastItemChecked(cluster, addon string) (lastChecked time.Ti
 		return time.Time{}, false
 	}
 	return rec.LastChecked, true
+}
+
+// LastItemOutcome reports the last-recorded outcome for one addon-values
+// secret's cluster+addon pair, as a plain string (one of the ItemOutcome
+// constants above). Primitive-typed — same import-free-boundary reasoning
+// as LastItemChecked, so internal/api can compute a per-row state without
+// importing this package. ok is false when this pair has never been
+// checked, synced, or reconciled on this server instance.
+func (r *Reconciler) LastItemOutcome(cluster, addon string) (outcome string, ok bool) {
+	rec, ok := r.LastItemState(cluster, addon)
+	if !ok {
+		return "", false
+	}
+	return string(rec.Outcome), true
 }
 
 // GetErrors returns the error messages from the last reconcile run.
@@ -800,6 +834,168 @@ func (r *Reconciler) reconcileSecret(
 		"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 	)
 	return ItemOutcomeUpdated, nil
+}
+
+// findWork resolves the exact secretWork one cluster+addon pair maps to, by
+// re-reading the connected repo (git catalog + cluster files) the same way
+// planPushes does for the periodic pass — filtered down to a single pair.
+// Used by CheckOne and SyncOne (S4) so a single-item action always agrees
+// with what the periodic pass would compute for the same pair, instead of
+// re-implementing the v3/v4 layout logic a second time.
+//
+// The "not found" error deliberately names every reason the pair could be
+// absent from the plan — cluster not registered, addon not enabled on it,
+// or the addon's catalog entry has no push block — since findWork has no
+// cheap way to tell which one actually applies without extra reads that
+// duplicate planPushes' own work.
+func (r *Reconciler) findWork(ctx context.Context, clusterName, addonName string) (secretWork, error) {
+	gr := r.gitReader()
+	if gr == nil {
+		return secretWork{}, ErrNoGitConnection
+	}
+	plan, err := r.planPushes(ctx, gr)
+	if err != nil {
+		return secretWork{}, fmt.Errorf("could not read the addon catalog or managed clusters list: %w", err)
+	}
+	for _, w := range plan.work {
+		if w.clusterName == clusterName && w.addon == addonName {
+			return w, nil
+		}
+	}
+	return secretWork{}, fmt.Errorf(
+		"no addon-values secret is defined for cluster %q, addon %q — check that the cluster is registered, the addon is enabled on it, and the addon's catalog entry defines a secret to push",
+		clusterName, addonName)
+}
+
+// recordItemCheck stamps the per-item record for a single key — the same
+// itemRecords map the periodic pass writes wholesale on every tick, updated
+// here for exactly one key instead. ChangedAt is always carried forward
+// from whatever it already was: only a real write (see SyncOne) ever
+// advances it, never a read-only check.
+func (r *Reconciler) recordItemCheck(cluster, addon string, outcome ItemOutcome, errMsg string) {
+	key := ItemKey{Cluster: cluster, Addon: addon}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.itemRecords == nil {
+		r.itemRecords = make(map[ItemKey]ItemRecord)
+	}
+	prev := r.itemRecords[key]
+	r.itemRecords[key] = ItemRecord{
+		LastChecked: time.Now(),
+		Outcome:     outcome,
+		ChangedAt:   prev.ChangedAt,
+		Error:       errMsg,
+	}
+}
+
+// CheckOne re-checks a single addon-values secret (one cluster+addon pair)
+// against its source RIGHT NOW, without writing anything — S4's "Refresh"
+// row action. Returns the outcome as a plain string (one of the
+// ItemOutcome constants above; "" on error) so internal/api never has to
+// import this package to read it back.
+//
+// Unlike reconcileSecret (the periodic pass's write primitive, which always
+// fixes what it finds), this only reads: it fetches the desired value from
+// the secrets provider, reads the live Secret if one exists, and compares
+// hashes. A mismatch is reported as ItemOutcomeOutOfSync and a missing
+// Secret as ItemOutcomeMissing — neither ever writes. Updates the same
+// per-item record CheckOne/SyncOne/the periodic pass all share, so the
+// System page and the Managed Secrets page see this check immediately.
+func (r *Reconciler) CheckOne(ctx context.Context, clusterName, addonName string) (string, error) {
+	w, err := r.findWork(ctx, clusterName, addonName)
+	if err != nil {
+		return "", err
+	}
+
+	if missing := w.push.MissingFields(); len(missing) > 0 {
+		checkErr := fmt.Errorf("the secret definition in the catalog has no %s — fill that in before Sharko can check it",
+			strings.Join(missing, " and no "))
+		r.recordItemCheck(clusterName, addonName, ItemOutcomeSkipped, checkErr.Error())
+		return "", checkErr
+	}
+
+	creds, err := r.credProvider.GetCredentials(w.credLookup)
+	if err != nil {
+		return "", fmt.Errorf("getting credentials for cluster %q: %w", clusterName, err)
+	}
+	client, err := r.remoteClientFn(creds.Raw)
+	if err != nil {
+		return "", fmt.Errorf("connecting to cluster %q: %w", clusterName, err)
+	}
+
+	desiredData := make(map[string][]byte, len(w.push.Keys))
+	for key, providerPath := range w.push.Keys {
+		val, err := r.secretProvider.GetSecretValue(ctx, providerPath)
+		if err != nil {
+			return "", fmt.Errorf("fetching %q from the secrets provider: %w", providerPath, err)
+		}
+		desiredData[key] = val
+	}
+	desiredHash := hashSecretData(desiredData)
+
+	existing, err := client.CoreV1().Secrets(w.push.Namespace).Get(ctx, w.push.SecretName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			r.recordItemCheck(clusterName, addonName, ItemOutcomeMissing, "")
+			return string(ItemOutcomeMissing), nil
+		}
+		return "", fmt.Errorf("checking the existing secret on cluster %q: %w", clusterName, err)
+	}
+
+	outcome := ItemOutcomeUnchanged
+	if hashSecretData(existing.Data) != desiredHash {
+		outcome = ItemOutcomeOutOfSync
+	}
+	r.recordItemCheck(clusterName, addonName, outcome, "")
+	return string(outcome), nil
+}
+
+// SyncOne re-pushes a single addon-values secret (one cluster+addon pair) —
+// S4's "Sync" row action. Drives the exact same write primitive the
+// periodic pass uses (reconcileSecret), so a manual sync and a scheduled
+// pass can never diverge on what "push this secret" means. Uses a
+// throwaway *ReconcileStats scoped to this one call — it is never merged
+// into r.lastStats, since that field reports the periodic pass's own
+// counters, not a single on-demand action's. Fires the per-item audit
+// callback on an actual write, exactly like the periodic pass does, so a
+// manual Sync shows up in the audit log the same way an automatic repair
+// does.
+func (r *Reconciler) SyncOne(ctx context.Context, clusterName, addonName string) (string, error) {
+	w, err := r.findWork(ctx, clusterName, addonName)
+	if err != nil {
+		return "", err
+	}
+
+	stats := &ReconcileStats{}
+	outcome, syncErr := r.reconcileSecret(ctx, stats, w.clusterName, w.credLookup, w.addon, w.push)
+
+	errMsg := ""
+	if syncErr != nil {
+		errMsg = syncErr.Error()
+	}
+
+	key := ItemKey{Cluster: clusterName, Addon: addonName}
+	r.mu.Lock()
+	if r.itemRecords == nil {
+		r.itemRecords = make(map[ItemKey]ItemRecord)
+	}
+	prev := r.itemRecords[key]
+	rec := ItemRecord{LastChecked: time.Now(), Outcome: outcome, Error: errMsg, ChangedAt: prev.ChangedAt}
+	if outcome == ItemOutcomeCreated || outcome == ItemOutcomeUpdated {
+		rec.ChangedAt = rec.LastChecked
+	}
+	r.itemRecords[key] = rec
+	r.mu.Unlock()
+
+	if syncErr != nil {
+		return "", syncErr
+	}
+
+	if r.itemAuditFn != nil && (outcome == ItemOutcomeCreated || outcome == ItemOutcomeUpdated) {
+		r.itemAuditFn(clusterName, addonName, outcome)
+	}
+
+	return string(outcome), nil
 }
 
 // hashSecretData returns a deterministic SHA-256 hex digest of secret data.

@@ -154,9 +154,27 @@ export interface AddonValuesSecretRow {
   addon: string
   secret_name?: string
   secret_namespace?: string
+  // One of 'in_sync' | 'out_of_sync' | 'missing' | 'unknown'. Compared
+  // against the vault (the secrets provider) — NOT git, which only holds a
+  // pointer to where the value actually lives (S3(a) honesty lock).
+  state: string
   last_checked?: string // RFC3339, absent = unknown (never checked on this server instance)
   last_repaired?: string // RFC3339, absent = never seen in the audit log's retained window
   last_repaired_detail?: string
+}
+
+// AddonValuesSecretActionResult mirrors the response body of both
+// POST /clusters/{name}/addons/{addon}/secret/refresh and .../secret/sync
+// (S4). outcome is one of "created" | "updated" | "unchanged" |
+// "out_of_sync" | "missing" — never the secret's own content (S3(b)
+// honesty lock: these endpoints report what happened, not what the secret
+// holds).
+export interface AddonValuesSecretActionResult {
+  status: string
+  cluster: string
+  addon: string
+  outcome: string
+  message: string
 }
 
 export interface ManagedSecretsEngineInfo {
