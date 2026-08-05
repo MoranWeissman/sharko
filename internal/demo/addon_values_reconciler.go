@@ -243,6 +243,14 @@ func (r *demoAddonValuesReconciler) LastItemOutcome(cluster, addon string) (stri
 	return rec.outcome, true
 }
 
+// LastItemError is always "" in demo mode (S8) — same reasoning as
+// LastError/GetErrors: nothing here has ever failed a real push (an
+// "out_of_sync" demo row is a seeded comparison outcome, not a check that
+// itself failed), so there is nothing honest to report.
+func (r *demoAddonValuesReconciler) LastItemError(_, _ string) (string, bool) {
+	return "", false
+}
+
 // CheckOne is S3's "Refresh" row action — stamps last-checked to now and
 // re-reports whatever outcome is already on file, without changing it (a
 // real Refresh only reads; it never fixes what it finds).

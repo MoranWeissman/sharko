@@ -1,13 +1,14 @@
-// ManagedSecrets — the /secrets page (S1-S3).
-//
-// Covers: rows render as the resource they are (real name/namespace,
-// purpose, and source per kind), the two kinds name different sources
-// (S3(a)), greyed actions carry a reason, a values-secret Diff never
-// renders secret content (S3(b)) — only match/no-match wording — and
-// search/filter/pagination still work.
+// ManagedSecrets — the /secrets page rebuilt as one dense resource list
+// (S1-S8). Pins: the source column ("git" / "the vault") appears on every
+// row and survives sort/filter; the default sort is worst-first, never
+// alphabetical; filter chips show real counts and filter correctly; a row
+// click opens the detail panel with the right content; the values-secret
+// Diff makes no network call, ever; and a row-menu info hint appears only
+// next to a genuinely disabled action.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { ManagedSecrets } from '@/views/ManagedSecrets'
 import { AuthContext } from '@/hooks/useAuth'
@@ -15,7 +16,7 @@ import type { ManagedSecretsResponse } from '@/services/models'
 
 // Refresh/Sync are role-gated (admin/operator only) — provide an admin
 // auth context so RoleGuard renders them; every test here cares about
-// those buttons existing, not about the role gate itself (that's covered
+// those controls existing, not about the role gate itself (that's covered
 // by RoleGuard's own tests and the server-side authz tests).
 const adminAuth = {
   token: 'test-token',
@@ -68,6 +69,8 @@ function renderPage() {
   )
 }
 
+// prod-eu rows are in_sync, staging-us rows are out_of_sync — the fixture
+// this suite uses for both the source-column and worst-first-sort pins.
 const baseResponse: ManagedSecretsResponse = {
   cluster_connection_secrets: [
     {
@@ -101,6 +104,7 @@ const baseResponse: ManagedSecretsResponse = {
       secret_name: 'datadog-secrets',
       secret_namespace: 'datadog',
       state: 'out_of_sync',
+      last_check_error: "Sharko couldn't fetch this secret's value from the vault.",
     },
   ],
   engines: {
@@ -114,68 +118,70 @@ beforeEach(() => {
 })
 
 describe('ManagedSecrets', () => {
-  it('renders each row as the resource it is — real name/namespace, purpose, and its own source', async () => {
+  it('shows the source column on every row — git for connection secrets, the vault for addon-values secrets (S3 honesty lock)', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
-    await waitFor(() => expect(screen.getByText('argocd/prod-eu')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
 
-    // Connection secret: identity, purpose, and source against git.
-    expect(screen.getAllByText(/Connects/).length).toBe(2)
-    expect(screen.getAllByText('Compared against git.').length).toBe(2)
+    const connRow1 = screen.getByTestId('secret-row-connection-prod-eu')
+    const connRow2 = screen.getByTestId('secret-row-connection-staging-us')
+    expect(within(connRow1).getByText('git')).toBeInTheDocument()
+    expect(within(connRow2).getByText('git')).toBeInTheDocument()
 
-    // Addon-values secret: identity, purpose, and source against the vault
-    // — a DIFFERENT sentence than the connection row's, never the same
-    // generic "out of sync" phrase for both kinds (S3(a)).
-    expect(screen.getAllByText('datadog/datadog-secrets').length).toBe(2)
-    expect(screen.getAllByText(/Carries values for addon/).length).toBe(2)
-    expect(screen.getAllByText('Compared against the vault — git only holds a pointer to it.').length).toBe(2)
+    const valuesRow1 = screen.getByTestId('secret-row-values-prod-eu-datadog')
+    const valuesRow2 = screen.getByTestId('secret-row-values-staging-us-datadog')
+    expect(within(valuesRow1).getByText('the vault')).toBeInTheDocument()
+    expect(within(valuesRow2).getByText('the vault')).toBeInTheDocument()
+
+    // Never a generic phrase shared by both kinds — connection rows never
+    // say "the vault" and values rows never say "git" in this column.
+    expect(within(connRow1).queryByText('the vault')).not.toBeInTheDocument()
+    expect(within(valuesRow1).queryByText('git')).not.toBeInTheDocument()
   })
 
-  it('greys the connection Sync button with a reason when the secret already matches git', async () => {
+  it('sorts worst-first by default — out-of-sync rows come before in-sync rows, never alphabetically (S3)', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
-    await waitFor(() => expect(screen.getByTestId('connection-sync-prod-eu')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
 
-    // prod-eu is in_sync — Sync must be disabled with a reason attached
-    // right next to it.
-    const prodSyncBtn = screen.getByTestId('connection-sync-prod-eu')
-    expect(prodSyncBtn).toBeDisabled()
-    expect(within(prodSyncBtn.parentElement as HTMLElement).getByLabelText('Why is Sync unavailable?')).toBeInTheDocument()
+    const rows = screen.getAllByTestId(/^secret-row-/)
+    const order = rows.map((r) => r.getAttribute('data-testid'))
+    const outOfSyncIdx = order.map((id, i) => (id?.includes('staging-us') ? i : -1)).filter((i) => i >= 0)
+    const inSyncIdx = order.map((id, i) => (id?.includes('prod-eu') ? i : -1)).filter((i) => i >= 0)
 
-    // staging-us is out_of_sync — Sync must be enabled.
-    expect(screen.getByTestId('connection-sync-staging-us')).not.toBeDisabled()
+    // Both out-of-sync rows (staging-us) sort ahead of both in-sync rows
+    // (prod-eu) — alphabetically "prod-eu" would come first, so this only
+    // passes if the sort is genuinely state-priority-based.
+    expect(Math.max(...outOfSyncIdx)).toBeLessThan(Math.min(...inSyncIdx))
   })
 
-  it('greys the values Sync button with a reason when nothing needs pushing', async () => {
+  it('filter chips show real per-state counts and filter the table when clicked (S4)', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
-    await waitFor(() => expect(screen.getByTestId('values-sync-prod-eu-datadog')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('filter-chip-in_sync')).toBeInTheDocument())
 
-    expect(screen.getByTestId('values-sync-prod-eu-datadog')).toBeDisabled()
-    expect(screen.getByTestId('values-sync-staging-us-datadog')).not.toBeDisabled()
+    expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('In sync 2')
+    expect(screen.getByTestId('filter-chip-out_of_sync')).toHaveTextContent('Out of sync 2')
+    expect(screen.getByTestId('filter-chip-missing')).toHaveTextContent('Missing 0')
+    expect(screen.getByTestId('filter-chip-unknown')).toHaveTextContent('Not checked yet 0')
+
+    // All 4 rows visible before filtering.
+    expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(4)
+
+    fireEvent.click(screen.getByTestId('filter-chip-out_of_sync'))
+    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
+    expect(screen.queryByTestId('secret-row-connection-prod-eu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument()
+
+    // Clicking the same chip again clears the filter.
+    fireEvent.click(screen.getByTestId('filter-chip-out_of_sync'))
+    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(4))
   })
 
-  it('a values-secret Diff never renders secret content — only match/no-match wording', async () => {
-    mockGetManagedSecrets.mockResolvedValue(baseResponse)
-    renderPage()
-
-    await waitFor(() => expect(screen.getByTestId('values-diff-prod-eu-datadog')).toBeInTheDocument())
-    fireEvent.click(screen.getByTestId('values-diff-prod-eu-datadog'))
-
-    const panel = await screen.findByTestId('values-diff-panel-prod-eu-datadog')
-    expect(within(panel).getByText('Matches its source.')).toBeInTheDocument()
-    // Never a live fetch for a values-secret Diff — no content to leak.
-    expect(mockGetClusterComparison).not.toHaveBeenCalled()
-
-    fireEvent.click(screen.getByTestId('values-diff-staging-us-datadog'))
-    const outOfSyncPanel = await screen.findByTestId('values-diff-panel-staging-us-datadog')
-    expect(within(outOfSyncPanel).getByText(/Does not match its source right now/)).toBeInTheDocument()
-  })
-
-  it('a connection-secret Diff fetches and shows the label diff (no credentials, existing behavior)', async () => {
+  it('clicking a connection-secret row opens the detail panel with identity, purpose, source, state, and a Diff that fetches labels only', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     mockGetClusterComparison.mockResolvedValue({
       cluster: {
@@ -190,42 +196,84 @@ describe('ManagedSecrets', () => {
     })
     renderPage()
 
-    await waitFor(() => expect(screen.getByTestId('connection-diff-staging-us')).toBeInTheDocument())
-    fireEvent.click(screen.getByTestId('connection-diff-staging-us'))
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('secret-row-connection-staging-us'))
+
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(within(panel).getByText(/Connects/)).toBeInTheDocument()
+    expect(within(panel).getByText('Compared against git.')).toBeInTheDocument()
 
     await waitFor(() => expect(mockGetClusterComparison).toHaveBeenCalledWith('staging-us'))
-    const panel = await screen.findByTestId('connection-diff-panel-staging-us')
-    expect(within(panel).getByText(/Missing 1 addon label/)).toBeInTheDocument()
+    await waitFor(() => expect(within(panel).getByText(/Missing 1 addon label/)).toBeInTheDocument())
     expect(within(panel).getByText('datadog')).toBeInTheDocument()
   })
 
-  it('search narrows the connection-secrets section', async () => {
+  it('the values-secret Diff never makes a network call — it restates the row state and shows the S8 check-failure sentence', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
-    await waitFor(() => expect(screen.getByTestId('connection-identity-prod-eu')).toBeInTheDocument())
-    const search = screen.getByPlaceholderText('Search by cluster or secret name...')
+    await waitFor(() => expect(screen.getByTestId('secret-row-values-staging-us-datadog')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('secret-row-values-staging-us-datadog'))
+
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(within(panel).getByText(/Carries values for addon/)).toBeInTheDocument()
+    expect(within(panel).getByText('Compared against the vault — git only holds a pointer to it.')).toBeInTheDocument()
+    expect(within(panel).getByText(/Does not match its source right now/)).toBeInTheDocument()
+
+    // S8: the mapped canned sentence shows, plainly labeled as a failed
+    // check — never implying the state itself is the report of drift.
+    expect(within(panel).getByTestId('last-check-error')).toHaveTextContent(
+      "The last check failed: Sharko couldn't fetch this secret's value from the vault.",
+    )
+
+    // Never a live fetch for a values-secret Diff — no content to leak.
+    expect(mockGetClusterComparison).not.toHaveBeenCalled()
+
+    // A different (in-sync) values row shows the matching-source sentence,
+    // still with zero network calls.
+    fireEvent.click(screen.getByTestId('secret-row-values-prod-eu-datadog'))
+    await waitFor(() => expect(within(panel).getByText('Matches its source.')).toBeInTheDocument())
+    expect(mockGetClusterComparison).not.toHaveBeenCalled()
+  })
+
+  it('shows an info hint next to Sync ONLY when it is genuinely disabled, with the correct accessible label (S7.1)', async () => {
+    const user = userEvent.setup()
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+
+    // prod-eu is in_sync — Sync is disabled and carries a hint.
+    await user.click(screen.getByRole('button', { name: 'Actions for prod-eu' }))
+    const syncItemDisabled = await screen.findByRole('menuitem', { name: /Sync/ })
+    expect(within(syncItemDisabled).getByLabelText('Why is Sync unavailable?')).toBeInTheDocument()
+    // Refresh is always enabled here — it must carry NO hint at all.
+    const refreshItem = screen.getByRole('menuitem', { name: /Refresh/ })
+    expect(within(refreshItem).queryByLabelText(/Why is Refresh unavailable\?/)).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+
+    // staging-us is out_of_sync — Sync is enabled and must carry NO hint.
+    await user.click(screen.getByRole('button', { name: 'Actions for staging-us' }))
+    const syncItemEnabled = await screen.findByRole('menuitem', { name: /Sync/ })
+    expect(within(syncItemEnabled).queryByLabelText(/Why is Sync unavailable\?/)).not.toBeInTheDocument()
+  })
+
+  it('search narrows the table across both secret kinds', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    const search = screen.getByPlaceholderText('Search by cluster, addon, or secret name...')
     fireEvent.change(search, { target: { value: 'staging' } })
 
-    expect(screen.queryByTestId('connection-identity-prod-eu')).not.toBeInTheDocument()
-    expect(screen.getByTestId('connection-identity-staging-us')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
+    expect(screen.queryByTestId('secret-row-connection-prod-eu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument()
+    expect(screen.getByTestId('secret-row-values-staging-us-datadog')).toBeInTheDocument()
   })
 
-  it('the state filter narrows the addon-values section', async () => {
-    mockGetManagedSecrets.mockResolvedValue(baseResponse)
-    renderPage()
-
-    await waitFor(() => expect(screen.getByTestId('values-identity-prod-eu-datadog')).toBeInTheDocument())
-    const stateFilters = screen.getAllByLabelText('State')
-    // Second "State" select belongs to the addon-values section.
-    fireEvent.change(stateFilters[1], { target: { value: 'out_of_sync' } })
-
-    expect(screen.queryByTestId('values-diff-prod-eu-datadog')).not.toBeInTheDocument()
-    expect(screen.getByTestId('values-diff-staging-us-datadog')).toBeInTheDocument()
-  })
-
-  it('paginates a long connection-secrets list', async () => {
-    const manyRows = Array.from({ length: 12 }, (_, i) => ({
+  it('paginates a long combined list', async () => {
+    const manyRows = Array.from({ length: 25 }, (_, i) => ({
       cluster: `cluster-${String(i).padStart(2, '0')}`,
       state: 'in_sync',
       last_checked: '2026-08-05T00:00:00Z',
@@ -240,24 +288,30 @@ describe('ManagedSecrets', () => {
     })
     renderPage()
 
-    await waitFor(() => expect(screen.getByTestId('connection-diff-cluster-00')).toBeInTheDocument())
-    expect(screen.queryByTestId('connection-diff-cluster-11')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-cluster-00')).toBeInTheDocument())
+    // Default page size is 20 — row 24 (cluster-24) is on page 2.
+    expect(screen.queryByTestId('secret-row-connection-cluster-24')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Next' })[0])
 
-    await waitFor(() => expect(screen.getByTestId('connection-diff-cluster-11')).toBeInTheDocument())
-    expect(screen.queryByTestId('connection-diff-cluster-00')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-cluster-24')).toBeInTheDocument())
+    expect(screen.queryByTestId('secret-row-connection-cluster-00')).not.toBeInTheDocument()
   })
 
-  it('clicking a row navigates to its cluster/addon page', async () => {
+  it('the detail panel has a link to the cluster/addon page that navigates there', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
-    await waitFor(() => expect(screen.getByTestId('connection-identity-prod-eu')).toBeInTheDocument())
-    fireEvent.click(screen.getByTestId('connection-identity-prod-eu'))
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('secret-row-connection-prod-eu'))
+
+    const link = await screen.findByTestId('detail-view-page-link')
+    fireEvent.click(link)
     expect(mockNavigate).toHaveBeenCalledWith('/clusters/prod-eu')
 
-    fireEvent.click(screen.getByTestId('values-identity-prod-eu-datadog'))
+    fireEvent.click(screen.getByTestId('secret-row-values-prod-eu-datadog'))
+    const link2 = await screen.findByTestId('detail-view-page-link')
+    fireEvent.click(link2)
     expect(mockNavigate).toHaveBeenCalledWith('/addons/datadog')
   })
 
@@ -273,5 +327,20 @@ describe('ManagedSecrets', () => {
     renderPage()
 
     await waitFor(() => expect(screen.getAllByText('· Not running on this server.')).toHaveLength(2))
+  })
+
+  it('Refresh all triggers both engines when connection secrets exist', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    mockTriggerSecretsReconcile.mockResolvedValue({ status: 'ok' })
+    mockReconcileCluster.mockResolvedValue({ status: 'ok', message: 'triggered' })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('refresh-all')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('refresh-all'))
+
+    await waitFor(() => expect(mockTriggerSecretsReconcile).toHaveBeenCalled())
+    // Any real cluster name works — the endpoint triggers the whole
+    // reconciler regardless of which cluster name is in the path.
+    expect(mockReconcileCluster).toHaveBeenCalledWith('prod-eu')
   })
 })

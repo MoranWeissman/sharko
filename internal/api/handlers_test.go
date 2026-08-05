@@ -103,6 +103,10 @@ type fakeReconciler struct {
 	// LastItemOutcome (S4), same keying/nil-means-unknown convention as
 	// itemChecked above.
 	itemOutcome map[[2]string]string
+	// itemError lets tests seed a per cluster+addon RAW error for
+	// LastItemError (S8), same keying/nil-means-unknown convention as
+	// itemOutcome above.
+	itemError map[[2]string]string
 
 	// checkOutcome/checkErr and syncOutcome/syncErr (S4) are what
 	// CheckOne/SyncOne return; checkCalls/syncCalls record every
@@ -138,6 +142,14 @@ func (r *fakeReconciler) LastItemOutcome(cluster, addon string) (string, bool) {
 	}
 	o, ok := r.itemOutcome[[2]string{cluster, addon}]
 	return o, ok
+}
+
+func (r *fakeReconciler) LastItemError(cluster, addon string) (string, bool) {
+	if r.itemError == nil {
+		return "", false
+	}
+	e, ok := r.itemError[[2]string{cluster, addon}]
+	return e, ok
 }
 
 func (r *fakeReconciler) CheckOne(_ context.Context, cluster, addon string) (string, error) {
