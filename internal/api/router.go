@@ -179,6 +179,16 @@ type SecretReconciler interface {
 	// reasoning as LastItemChecked. ok is false when this pair has never
 	// been checked, synced, or reconciled on this server instance.
 	LastItemOutcome(cluster, addon string) (outcome string, ok bool)
+	// LastItemError reports the RAW reconcile-failure text recorded for one
+	// addon-values secret's cluster+addon pair (S8) — ok is false when the
+	// pair has never been checked or its last outcome carried no error.
+	// Primitive-typed, same import-free-boundary reasoning as
+	// LastItemOutcome. UNLIKE CheckOne/SyncOne's error below, this text is
+	// NOT safe to show a caller verbatim — a misbehaving secrets-provider
+	// SDK could echo a fragment of a value into its own error text (see
+	// secrets.Reconciler.LastItemError's doc comment). Callers must map it
+	// through addonValuesSecretCheckFailureSentence first.
+	LastItemError(cluster, addon string) (errMsg string, ok bool)
 	// CheckOne re-checks a single addon-values secret against its source
 	// right now, WITHOUT writing anything (S4's "Refresh" row action).
 	// Returns the outcome as a plain string (see secrets.ItemOutcome); a

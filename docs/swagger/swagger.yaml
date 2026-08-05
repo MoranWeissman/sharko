@@ -2289,6 +2289,19 @@ definitions:
         type: string
       cluster:
         type: string
+      last_check_error:
+        description: |-
+          LastCheckError (S8) is a safe, canned sentence describing why the
+          last check didn't finish — set only when the reconciler's per-item
+          record carries an error (a failed check, NOT a real "this drifted"
+          finding). Distinct from State=="out_of_sync", which claims Sharko
+          actually compared the secret to its source and found a mismatch:
+          this field exists so the UI can say plainly "the last check
+          failed: …" instead of implying drift when the truth is the check
+          itself never completed. Always the mapped output of
+          addonValuesSecretCheckFailureSentence — NEVER the reconciler's raw
+          error text (see that function's doc comment for why).
+        type: string
       last_checked:
         description: |-
           LastChecked is RFC3339, or "" when the addon-values reconciler has

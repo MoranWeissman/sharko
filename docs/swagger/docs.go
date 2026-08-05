@@ -11712,6 +11712,10 @@ const docTemplate = `{
                 "cluster": {
                     "type": "string"
                 },
+                "last_check_error": {
+                    "description": "LastCheckError (S8) is a safe, canned sentence describing why the\nlast check didn't finish — set only when the reconciler's per-item\nrecord carries an error (a failed check, NOT a real \"this drifted\"\nfinding). Distinct from State==\"out_of_sync\", which claims Sharko\nactually compared the secret to its source and found a mismatch:\nthis field exists so the UI can say plainly \"the last check\nfailed: …\" instead of implying drift when the truth is the check\nitself never completed. Always the mapped output of\naddonValuesSecretCheckFailureSentence — NEVER the reconciler's raw\nerror text (see that function's doc comment for why).",
+                    "type": "string"
+                },
                 "last_checked": {
                     "description": "LastChecked is RFC3339, or \"\" when the addon-values reconciler has\nnever processed this cluster+addon pair on this server instance —\nan in-memory read on s.secretReconciler (internal/secrets), the\nsame per-row-state pattern connectionSecretRow.LastChecked reads\nfrom the cluster-connection reconciler.",
                     "type": "string"

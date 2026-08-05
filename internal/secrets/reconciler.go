@@ -337,6 +337,27 @@ func (r *Reconciler) LastItemOutcome(cluster, addon string) (outcome string, ok 
 	return string(rec.Outcome), true
 }
 
+// LastItemError reports the raw reconcile-failure text recorded for one
+// addon-values secret's cluster+addon pair (ItemRecord.Error — populated
+// when the periodic pass's reconcileSecret call returned an error; see the
+// reconcile() loop above). ok is false when this pair has never been
+// checked, or its last recorded outcome carried no error. Primitive-typed,
+// same import-free-boundary reasoning as LastItemOutcome.
+//
+// SECURITY (S8): this is the RAW error text — reconcileSecret wraps
+// secrets-provider errors verbatim (e.g. "fetching %q from provider: %w"),
+// and a misbehaving provider SDK could in principle echo a fragment of a
+// secret value inside its own error text. Callers MUST NOT render this
+// string to a user directly — map it to a safe canned sentence first (see
+// internal/api's addonValuesSecretCheckFailureSentence).
+func (r *Reconciler) LastItemError(cluster, addon string) (errMsg string, ok bool) {
+	rec, ok := r.LastItemState(cluster, addon)
+	if !ok || rec.Error == "" {
+		return "", false
+	}
+	return rec.Error, true
+}
+
 // GetErrors returns the error messages from the last reconcile run.
 func (r *Reconciler) GetErrors() []string {
 	r.mu.RLock()

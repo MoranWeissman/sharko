@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
@@ -88,6 +89,17 @@ type addonValuesSecretRow struct {
 	// such entry exists in the audit log's retained window.
 	LastRepaired       string `json:"last_repaired,omitempty"`
 	LastRepairedDetail string `json:"last_repaired_detail,omitempty"`
+	// LastCheckError (S8) is a safe, canned sentence describing why the
+	// last check didn't finish — set only when the reconciler's per-item
+	// record carries an error (a failed check, NOT a real "this drifted"
+	// finding). Distinct from State=="out_of_sync", which claims Sharko
+	// actually compared the secret to its source and found a mismatch:
+	// this field exists so the UI can say plainly "the last check
+	// failed: …" instead of implying drift when the truth is the check
+	// itself never completed. Always the mapped output of
+	// addonValuesSecretCheckFailureSentence — NEVER the reconciler's raw
+	// error text (see that function's doc comment for why).
+	LastCheckError string `json:"last_check_error,omitempty"`
 }
 
 // managedSecretsEngineInfo reports one reconciler's cadence + health.
@@ -308,6 +320,7 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, auditEntr
 				SecretName:      def.SecretName,
 				SecretNamespace: def.Namespace,
 				State:           addonValuesSecretRowState(s.secretReconciler, c.Name, addonName),
+				LastCheckError:  addonValuesRowLastCheckError(s.secretReconciler, c.Name, addonName),
 			}
 			if s.secretReconciler != nil {
 				if checkedAt, ok := s.secretReconciler.LastItemChecked(c.Name, addonName); ok {
@@ -363,6 +376,64 @@ func addonValuesSecretRowState(recon SecretReconciler, cluster, addon string) st
 		return "missing"
 	default: // "skipped"
 		return "unknown"
+	}
+}
+
+// addonValuesRowLastCheckError reads the reconciler's RAW per-item error
+// (S8) and maps it through addonValuesSecretCheckFailureSentence before it
+// ever reaches the row struct — the JSON response never carries the raw
+// string. recon == nil or no recorded error both return "" (the common
+// case: nothing to report).
+func addonValuesRowLastCheckError(recon SecretReconciler, cluster, addon string) string {
+	if recon == nil {
+		return ""
+	}
+	raw, ok := recon.LastItemError(cluster, addon)
+	if !ok {
+		return ""
+	}
+	return addonValuesSecretCheckFailureSentence(raw)
+}
+
+// addonValuesSecretCheckFailureSentence maps a secrets-reconciler item
+// error to a safe, canned sentence (S8's chosen route — see the security
+// note on secrets.Reconciler.LastItemError). The reconciler wraps
+// secrets-provider errors verbatim
+// (internal/secrets/reconciler.go's reconcileSecret, e.g.
+// `fmt.Errorf("fetching %q from provider: %w", providerPath, err)`) — a
+// misbehaving provider SDK could in principle echo a fragment of a value
+// inside its own error text, and this project has had a near-miss on
+// exactly that kind of leak before. Rather than trust every string that
+// could reach this function, categorize by which STAGE of the check
+// failed — never render the wrapped error's own text back to the browser —
+// and return one fixed, pre-written sentence per stage. Same "canned
+// detail, not the raw string" choice connectionSecretRepairDetail already
+// makes for repair events, just applied to failures instead of successes.
+//
+// The match order matters: "the secret definition in the catalog has no"
+// (the MissingFields skip, always this project's own message, never a
+// wrapped provider error) is checked before the provider/network cases so
+// a catalog-authoring mistake reads as exactly that, not a vault outage.
+func addonValuesSecretCheckFailureSentence(errMsg string) string {
+	switch {
+	case errMsg == "":
+		return ""
+	case strings.Contains(errMsg, "the secret definition in the catalog has no"):
+		return "The secret definition in the catalog is incomplete — fill in the missing fields."
+	case strings.Contains(errMsg, "getting credentials"):
+		return "Sharko couldn't get credentials for this cluster."
+	case strings.Contains(errMsg, "connecting to cluster"):
+		return "Sharko couldn't connect to this cluster."
+	case strings.Contains(errMsg, "provider"):
+		return "Sharko couldn't fetch this secret's value from the vault."
+	case strings.Contains(errMsg, "existing secret"):
+		return "Sharko couldn't read the existing secret on this cluster."
+	case strings.Contains(errMsg, "creating secret"):
+		return "Sharko couldn't create this secret on the cluster."
+	case strings.Contains(errMsg, "updating secret"):
+		return "Sharko couldn't update this secret on the cluster."
+	default:
+		return "The last check didn't finish."
 	}
 }
 

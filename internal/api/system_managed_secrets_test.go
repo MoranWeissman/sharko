@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -324,6 +325,127 @@ func TestHandleGetManagedSecrets_AddonValuesSecretRow_UnknownStaysUnknown(t *tes
 	}
 	if row.LastRepaired != "" || row.LastRepairedDetail != "" {
 		t.Errorf("last_repaired/detail = %q/%q, want empty (no matching audit entry)", row.LastRepaired, row.LastRepairedDetail)
+	}
+}
+
+// TestHandleGetManagedSecrets_AddonValuesSecretRow_LastCheckErrorIsCanned
+// pins S8: a per-item error recorded by the reconciler surfaces on the row
+// as a safe, pre-written sentence — NEVER the reconciler's raw error text,
+// which could in principle carry a fragment of a secret value (the
+// provider-fetch error case is wrapped verbatim by
+// internal/secrets.Reconciler).
+func TestHandleGetManagedSecrets_AddonValuesSecretRow_LastCheckErrorIsCanned(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
+	}, http.StatusOK)
+	gp := &reconcileFakeGP{
+		managedYAML: []byte("clusters:\n- name: prod-eu\n  labels:\n    datadog: enabled\n"),
+	}
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+		"datadog": {
+			AddonName:  "datadog",
+			SecretName: "datadog-secrets",
+			Namespace:  "datadog",
+			Keys:       map[string]string{"api-key": "secrets/datadog/api-key"},
+		},
+	})
+
+	rawErr := `fetching "secrets/datadog/api-key" from provider: dial tcp: connection refused`
+	srv.SetSecretReconciler(&fakeReconciler{
+		itemError: map[[2]string]string{{"prod-eu", "datadog"}: rawErr},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.AddonValuesSecrets) != 1 {
+		t.Fatalf("expected exactly 1 addon-values row, got %d", len(body.AddonValuesSecrets))
+	}
+	row := body.AddonValuesSecrets[0]
+	want := "Sharko couldn't fetch this secret's value from the vault."
+	if row.LastCheckError != want {
+		t.Errorf("last_check_error = %q, want %q", row.LastCheckError, want)
+	}
+	if strings.Contains(row.LastCheckError, "dial tcp") || strings.Contains(row.LastCheckError, "secrets/datadog/api-key") {
+		t.Errorf("last_check_error leaked the raw provider error text: %q", row.LastCheckError)
+	}
+}
+
+// TestAddonValuesSecretCheckFailureSentence_NeverEchoesRawText is a
+// table-driven pin on the mapping function itself (S8): every known
+// failure stage maps to its own fixed sentence, an unrecognized stage
+// falls back to a generic sentence rather than the raw text, and the
+// output NEVER contains the substrings a value-fetch error could plausibly
+// carry (the provider path, or something that looks like leaked content).
+func TestAddonValuesSecretCheckFailureSentence_NeverEchoesRawText(t *testing.T) {
+	cases := []struct {
+		name   string
+		errMsg string
+		want   string
+	}{
+		{"empty", "", ""},
+		{
+			"missing catalog field",
+			`the secret definition in the catalog has no secret name — fill that in and Sharko can push it`,
+			"The secret definition in the catalog is incomplete — fill in the missing fields.",
+		},
+		{
+			"credentials",
+			`getting credentials: assume role denied`,
+			"Sharko couldn't get credentials for this cluster.",
+		},
+		{
+			"connecting",
+			`connecting to cluster: dial tcp 10.0.0.1:443: i/o timeout`,
+			"Sharko couldn't connect to this cluster.",
+		},
+		{
+			"provider fetch — the exact near-miss shape",
+			`fetching "secrets/datadog/api-key" from provider: secret value was "sk_live_abc123..."`,
+			"Sharko couldn't fetch this secret's value from the vault.",
+		},
+		{
+			"existing secret read",
+			`checking existing secret: etcdserver: request timed out`,
+			"Sharko couldn't read the existing secret on this cluster.",
+		},
+		{
+			"create",
+			`creating secret: secrets "datadog-secrets" already exists`,
+			"Sharko couldn't create this secret on the cluster.",
+		},
+		{
+			"update",
+			`updating secret: Operation cannot be fulfilled`,
+			"Sharko couldn't update this secret on the cluster.",
+		},
+		{
+			"unrecognized stage — safe fallback, not the raw string",
+			`something entirely unexpected: value=hunter2`,
+			"The last check didn't finish.",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := addonValuesSecretCheckFailureSentence(tc.errMsg)
+			if got != tc.want {
+				t.Errorf("addonValuesSecretCheckFailureSentence(%q) = %q, want %q", tc.errMsg, got, tc.want)
+			}
+			if tc.errMsg != "" && got == tc.errMsg {
+				t.Errorf("mapped sentence equals the raw error text — S8 requires a canned sentence, never a passthrough")
+			}
+		})
 	}
 }
 

@@ -161,6 +161,14 @@ export interface AddonValuesSecretRow {
   last_checked?: string // RFC3339, absent = unknown (never checked on this server instance)
   last_repaired?: string // RFC3339, absent = never seen in the audit log's retained window
   last_repaired_detail?: string
+  // last_check_error (S8) is a safe, pre-written sentence saying why the
+  // last check didn't finish — set only when the reconciler's per-item
+  // record carries an error. Distinct from state === 'out_of_sync', which
+  // claims Sharko actually compared the secret and found a mismatch: this
+  // field exists so the UI can say "the last check failed: …" instead of
+  // implying drift when the check itself never completed. Never the
+  // reconciler's raw error text — the server maps it before it ships.
+  last_check_error?: string
 }
 
 // AddonValuesSecretActionResult mirrors the response body of both
