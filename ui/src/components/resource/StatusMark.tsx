@@ -41,6 +41,13 @@ interface StatusMeta {
   label: string
   /** Fill colour for the dot — in_sync/out_of_sync/missing only (unknown is hollow, no fill). */
   dotClassName: string
+  /**
+   * Border colour for the row edge strip (S3) — the SAME colour as the dot,
+   * just as a `border-*` class instead of `bg-*`, so the strip can never
+   * drift out of sync with the dot and the filter chip (they all read off
+   * this one table).
+   */
+  stripClassName: string
   /** The small mark drawn inside the filled dot — absent for the hollow "unknown" ring. */
   mark?: LucideIcon
   /** true = a hollow/outline ring (rule 1 above) — never fill or spin this one. */
@@ -51,21 +58,28 @@ const STATUS_META: Record<ResourceStatus, StatusMeta> = {
   in_sync: {
     label: 'In sync',
     dotClassName: 'bg-green-600 dark:bg-green-500',
+    stripClassName: 'border-green-600 dark:border-green-500',
     mark: Check,
   },
   out_of_sync: {
     label: 'Out of sync',
     dotClassName: 'bg-amber-600 dark:bg-amber-500',
+    stripClassName: 'border-amber-600 dark:border-amber-500',
     mark: undefined, // exclamation mark is drawn as text — see StatusDot
   },
   missing: {
     label: 'Missing',
     dotClassName: 'bg-red-600 dark:bg-red-500',
+    stripClassName: 'border-red-600 dark:border-red-500',
     mark: X,
   },
   unknown: {
     label: 'Not checked yet',
     dotClassName: '',
+    // Same blue-grey as the hollow ring (line ~115 below) — "not checked
+    // yet" reads as its own distinct thing everywhere it shows up, not as
+    // a fainter version of "in sync".
+    stripClassName: 'border-[#8aa2b6] dark:border-gray-500',
     hollow: true,
   },
 }
@@ -95,6 +109,21 @@ const STATUS_RANK: Record<ResourceStatus, number> = {
 
 export function statusSortRank(state: string): number {
   return STATUS_RANK[toResourceStatus(state)]
+}
+
+/**
+ * statusStripClassName (S3) — the thin coloured strip on the left edge of a
+ * resource row, copied from ArgoCD's own list and tile views. Returns the
+ * full className including the 3px width, so a row/cell can just spread it
+ * in. The colour is read off the same STATUS_META table as <StatusDot> and
+ * the filter chips, so the strip, the dot, and the chip can never disagree
+ * about what colour a state is. Meant to work on any `<td>`/row-shaped
+ * element that already sits at the left edge of its list — apply it to the
+ * first cell of a row, not the row's own background, so it survives
+ * table border-collapse without extra CSS.
+ */
+export function statusStripClassName(state: string): string {
+  return `border-l-[3px] ${STATUS_META[toResourceStatus(state)].stripClassName}`
 }
 
 /**
