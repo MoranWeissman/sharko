@@ -29,6 +29,17 @@
 //        text on the row; everything else — the kind/source subline, the
 //        cluster, the time, the status word — is lighter ink.
 //
+// H1 follow-up (maintainer: "gray doesnt suits the original colors of
+// sharko... this is literally copying the colors from argocd one to
+// one"): the page background and border tokens went back to a light,
+// calm SHARKO blue instead of neutral grey — see ui/src/index.css. And
+// a thing we were missing that ArgoCD does have: a thin (3px) status
+// colour strip down the left edge of every row, copied from ArgoCD's own
+// list and tile views. It reads off the exact same colour table as the
+// status dot and the filter chips (StatusMark.tsx's statusStripClassName)
+// so the three can never disagree, and it adds no other colour to the
+// row — the status word stays plain dark ink (H2 still holds).
+//
 // Bugs fixed in the same pass:
 //
 //   B1 — filter-chip counts now follow the search box (searchFiltered),
@@ -100,7 +111,7 @@ import { RoleGuard } from '@/components/RoleGuard'
 import { RowActionsMenu, type RowAction } from '@/components/RowActionsMenu'
 import { ConfirmationModal } from '@/components/ConfirmationModal'
 import { showToast } from '@/components/ToastNotification'
-import { StatusDot, StatusMark, statusLabel, statusSortRank, toResourceStatus, type ResourceStatus } from '@/components/resource/StatusMark'
+import { StatusDot, StatusMark, statusLabel, statusSortRank, statusStripClassName, toResourceStatus, type ResourceStatus } from '@/components/resource/StatusMark'
 import { TimeChip } from '@/components/resource/TimeChip'
 import { ResourceDetailSheet } from '@/components/resource/ResourceDetailSheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -1024,8 +1035,18 @@ export function ManagedSecrets() {
                       row. The small grey line under it carries the S3
                       honesty lock (kind + source) — this replaces the old
                       separate COMPARED AGAINST column, which said the same
-                      thing two columns away from the kind glyph. */}
-                  <TableCell className="py-1.5">
+                      thing two columns away from the kind glyph.
+
+                      The status edge strip (copied from ArgoCD's own list
+                      and tile views) lives on this same cell, as a left
+                      border — a `<td>` always wins the collapsed-border
+                      fight for its own edge, so it renders reliably
+                      regardless of the table's border-collapse mode. Its
+                      colour is read off the exact same STATUS_META table
+                      as the row's own <StatusMark> dot and the filter
+                      chips, via statusStripClassName — it cannot disagree
+                      with the dot two columns over. */}
+                  <TableCell className={`py-1.5 ${statusStripClassName(row.state)}`}>
                     <div className="flex items-start gap-2">
                       {row.kind === 'connection' ? (
                         <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#8098ac] dark:text-gray-500" aria-hidden="true" />

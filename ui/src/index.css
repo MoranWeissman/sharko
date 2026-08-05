@@ -50,12 +50,19 @@ body {
 @layer base {
   :root {
     /* House-style pass (maintainer's adopted design review, H1): the old
-       value was a genuinely saturated blue that competed with page content
-       for attention — ArgoCD's own canvas is closer to a dead blue-grey
-       (~#dee6e9). This is a global token change; every page's background
-       shifts. TO REVERT JUST THIS PAGE COLOUR: put back
-       `oklch(0.88 0.04 220)` on this one line. */
-    --background: oklch(0.93 0.008 230); /* ~#e8edf2 */
+       value (`oklch(0.88 0.04 220)`) was a genuinely saturated blue that
+       competed with page content for attention. The FIRST fix
+       (`oklch(0.93 0.008 230)`) over-corrected — chroma 0.008 reads as
+       plain grey, and the maintainer called it out directly: "why gray?
+       this is literally copying argocd one to one." Sharko's own identity
+       is blue (sidebar navy #1a3d5c, the pale surfaces #f0f7ff/#dceaf5,
+       the #6aade0 accent) — the habit we actually wanted, "quieter than
+       the content", holds fine in that blue. This value keeps the page
+       light enough that white content still reads as the brighter surface,
+       with enough chroma to read as Sharko blue, not neutral. This is a
+       global token change; every page's background shifts. TO REVERT JUST
+       THIS PAGE COLOUR: put back `oklch(0.88 0.04 220)`. */
+    --background: oklch(0.95 0.022 235); /* ~#e9f0f7 — light Sharko blue, not grey */
     --foreground: oklch(0.15 0.02 240);
     --card: oklch(0.98 0.015 220);
     --card-foreground: oklch(0.15 0.02 240);
@@ -74,12 +81,15 @@ body {
     /* House-style pass (H4): the old value was a mid-saturation blue line
        (~#4a8cc0) — every border in the app, including every row divider,
        was that same strong blue, which is why rows read as "boxes with a
-       frame" instead of a list with a hairline between entries. This is a
-       global token change (every `border`/`divide` in the app lightens).
-       TO REVERT JUST THIS LINE: put back `oklch(0.55 0.08 220)`. --input
-       is intentionally left alone — it's a separate token, not touched by
-       this pass. */
-    --border: oklch(0.86 0.012 225); /* pale hairline, near the H1 page value */
+       frame" instead of a list with a hairline between entries. Keeping it
+       a hairline was right; the follow-up fix (`oklch(0.86 0.012 225)`)
+       just carried the H1 over-correction along — chroma 0.012 is grey,
+       same complaint as the background. This is a global token change
+       (every `border`/`divide` in the app lightens, applied everywhere via
+       `* { @apply border-border }`) — TO REVERT JUST THIS LINE: put back
+       `oklch(0.55 0.08 220)`. --input is intentionally left alone — it's a
+       separate token, not touched by this pass. */
+    --border: oklch(0.88 0.03 230); /* pale hairline, recognisably Sharko blue */
     --input: oklch(0.55 0.08 220);
     --ring: oklch(0.35 0.08 240);
     --chart-1: oklch(0.45 0.1 240);
