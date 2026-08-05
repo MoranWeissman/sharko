@@ -203,6 +203,15 @@ type SecretReconciler interface {
 	// non-nil error means the push itself failed or could not run, and the
 	// error text is safe to show the caller verbatim.
 	SyncOne(ctx context.Context, clusterName, addonName string) (outcome string, err error)
+	// CheckAll re-checks EVERY addon-values secret against its source right
+	// now, WITHOUT writing anything (P1-A A3 — what the page's "Refresh
+	// all" drives on this engine). The fleet-wide counterpart of CheckOne,
+	// and deliberately NOT Trigger(): Trigger() runs the periodic pass,
+	// which creates and rotates secrets, and a button labelled "check" must
+	// never do that. A non-nil error means nothing could be checked at all
+	// (no Git connection, catalog unreadable); a single unreachable cluster
+	// is isolated inside the pass and does not surface here.
+	CheckAll(ctx context.Context) error
 }
 
 // Server holds the HTTP handlers and their dependencies.
@@ -314,6 +323,19 @@ type Server struct {
 	// inherits this trigger via attachPRTracker. nil disables — the
 	// reconciler still converges on its periodic safety-net tick.
 	reconcilerTrigger func()
+
+	// reconcilerCheckTrigger asks the cluster Secret reconciler for a
+	// READ-ONLY check pass — read git, read the live secrets, compare,
+	// write down what was found, change nothing (P1-A A2). This is what
+	// POST /clusters/{name}/reconcile fires, so the page's Refresh button
+	// and its help text finally mean the same thing. Optional — set via
+	// SetReconcilerCheckTrigger; nil means no reconciler is running on this
+	// server and the handler answers 503.
+	//
+	// Deliberately separate from reconcilerTrigger above: that one is the
+	// WRITE nudge the orchestrator fires after a merge, and it must keep
+	// writing.
+	reconcilerCheckTrigger func()
 
 	// clusterRecon is the canonical cluster-secret reconciler (optional —
 	// set via SetClusterReconciler). Used read-only by the cluster read
@@ -645,6 +667,21 @@ func (s *Server) SetReconcilerTrigger(fn func()) {
 // through a real orchestrator request.
 func (s *Server) ReconcilerTrigger() func() {
 	return s.reconcilerTrigger
+}
+
+// SetReconcilerCheckTrigger wires in the cluster Secret reconciler's
+// TriggerCheck() nudge — the READ-ONLY pass POST /clusters/{name}/reconcile
+// fires (P1-A A2). Call once at startup alongside SetReconcilerTrigger.
+// Optional — when nil that endpoint answers 503, because there is no
+// reconciler on this server to ask.
+func (s *Server) SetReconcilerCheckTrigger(fn func()) {
+	s.reconcilerCheckTrigger = fn
+}
+
+// ReconcilerCheckTrigger returns the currently-wired check trigger (may be
+// nil). Exposed for tests + harness wiring, same as ReconcilerTrigger.
+func (s *Server) ReconcilerCheckTrigger() func() {
+	return s.reconcilerCheckTrigger
 }
 
 // SetClusterReconciler wires in the canonical cluster-secret reconciler
@@ -1100,6 +1137,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 
 	// Secrets reconciler
 	mux.HandleFunc("POST /api/v1/secrets/reconcile", srv.handleTriggerReconcile)
+	mux.HandleFunc("POST /api/v1/secrets/check", srv.handleCheckSecrets)
 	mux.HandleFunc("GET /api/v1/secrets/status", srv.handleReconcileStatus)
 
 	// Cluster status overview

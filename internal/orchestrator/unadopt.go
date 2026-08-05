@@ -119,7 +119,7 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 	if o.credProvider != nil {
 		creds, credErr := o.fetchClusterCredentials(ctx, name)
 		if credErr == nil {
-			o.deleteAllAddonSecrets(ctx, creds.Raw) // best-effort
+			o.deleteAllAddonSecrets(ctx, name, creds.Raw) // best-effort
 		} else {
 			log.Warn("could not fetch credentials for remote secret cleanup", "cluster", name, "error", credErr)
 		}

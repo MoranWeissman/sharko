@@ -399,6 +399,65 @@ func TestHandleGetManagedSecrets_AddonValuesSecretRow_UnknownStaysUnknown(t *tes
 	}
 }
 
+// TestAddonValuesSecretRowState_Foreign pins P1-A: the reconciler's
+// "foreign" outcome gets its own row state. Collapsing it into
+// out_of_sync would tell a reader to press Sync on a secret Sharko must
+// never write; collapsing it into unknown would claim Sharko never looked,
+// when it looked and knows exactly what it found.
+func TestAddonValuesSecretRowState_Foreign(t *testing.T) {
+	rec := &fakeReconciler{
+		itemOutcome: map[[2]string]string{{"prod-eu", "eso"}: "foreign"},
+	}
+	if got := addonValuesSecretRowState(rec, "prod-eu", "eso"); got != "foreign" {
+		t.Errorf("state = %q, want %q", got, "foreign")
+	}
+}
+
+// TestHandleGetManagedSecrets_AddonValuesSecretRow_ForeignSurfacesOnTheRow
+// takes the same fact all the way through the endpoint.
+func TestHandleGetManagedSecrets_AddonValuesSecretRow_ForeignSurfacesOnTheRow(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
+	}, http.StatusOK)
+	gp := &reconcileFakeGP{
+		managedYAML: []byte("clusters:\n- name: prod-eu\n  labels:\n    datadog: enabled\n"),
+	}
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+		"datadog": {
+			AddonName:  "datadog",
+			SecretName: "datadog-secrets",
+			Namespace:  "datadog",
+			Keys:       map[string]string{"api-key": "secrets/datadog/api-key"},
+		},
+	})
+	srv.SetSecretReconciler(&fakeReconciler{
+		itemOutcome: map[[2]string]string{{"prod-eu", "datadog"}: "foreign"},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.AddonValuesSecrets) != 1 {
+		t.Fatalf("expected exactly 1 addon-values row, got %d", len(body.AddonValuesSecrets))
+	}
+	if got := body.AddonValuesSecrets[0].State; got != "foreign" {
+		t.Errorf("state = %q, want %q", got, "foreign")
+	}
+	// A boundary is not a failed check — the row must carry no error text.
+	if got := body.AddonValuesSecrets[0].LastCheckError; got != "" {
+		t.Errorf("last_check_error = %q, want empty", got)
+	}
+}
+
 // TestHandleGetManagedSecrets_AddonValuesSecretRow_LastCheckErrorIsCanned
 // pins S8: a per-item error recorded by the reconciler surfaces on the row
 // as a safe, pre-written sentence — NEVER the reconciler's raw error text,

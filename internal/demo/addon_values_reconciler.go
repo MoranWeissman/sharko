@@ -15,6 +15,7 @@ package demo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -93,10 +94,12 @@ var addonValuesAgeOffsets = []time.Duration{
 // math/rand, no per-request randomness.
 //
 // The spread: 2 pairs in every 10 (by cycle position) come back
-// "out_of_sync", 1 in every 10 comes back "missing", everything else is
-// "unchanged" (in sync) — except the very first qualifying pair overall,
-// which is deliberately left out of items entirely so it reads as
-// genuinely never checked (S2's "hasn't been checked yet" row).
+// "out_of_sync", 1 in every 10 comes back "missing", 1 in every 10 comes
+// back "foreign" (a secret with that name is already on the cluster and
+// Sharko did not create it — P1-A), everything else is "unchanged" (in
+// sync) — except the very first qualifying pair overall, which is
+// deliberately left out of items entirely so it reads as genuinely never
+// checked (S2's "hasn't been checked yet" row).
 func newDemoAddonValuesReconciler(estate *GeneratedEstate, defs map[string]orchestrator.AddonSecretDefinition, now time.Time, auditLog *audit.Log) *demoAddonValuesReconciler {
 	r := &demoAddonValuesReconciler{
 		items:    make(map[demoAddonValueKey]demoAddonValueRecord),
@@ -145,6 +148,8 @@ func newDemoAddonValuesReconciler(estate *GeneratedEstate, defs map[string]orche
 
 			outcome := "unchanged"
 			switch i % 10 {
+			case 6:
+				outcome = "foreign"
 			case 7, 8:
 				outcome = "out_of_sync"
 			case 9:
@@ -251,6 +256,33 @@ func (r *demoAddonValuesReconciler) LastItemError(_, _ string) (string, bool) {
 	return "", false
 }
 
+// demoForeignRefusal is the sentence a demo Sync gets back for a row whose
+// secret Sharko did not create. Kept word-for-word identical to
+// internal/secrets.ErrForeignSecret (the real engine's refusal) and to the
+// disabled-Sync reason on the page — the demo has to say the same thing the
+// real thing says, or the walk teaches the wrong sentence. Copied rather
+// than imported to keep this package free of an internal/secrets dependency.
+const demoForeignRefusal = "Someone else created this one — Sharko will not touch it."
+
+// CheckAll is the page's "Refresh all" on this engine — re-stamps every
+// known row's last-checked time and leaves every outcome exactly where it
+// was. Same rule as CheckOne below: a check looks, it never fixes.
+func (r *demoAddonValuesReconciler) CheckAll(_ context.Context) error {
+	now := time.Now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key := range r.valid {
+		rec, ok := r.items[key]
+		outcome := "unchanged"
+		if ok {
+			outcome = rec.outcome
+		}
+		r.items[key] = demoAddonValueRecord{outcome: outcome, lastChecked: now}
+	}
+	r.lastRun = now
+	return nil
+}
+
 // CheckOne is S3's "Refresh" row action — stamps last-checked to now and
 // re-reports whatever outcome is already on file, without changing it (a
 // real Refresh only reads; it never fixes what it finds).
@@ -288,6 +320,15 @@ func (r *demoAddonValuesReconciler) SyncOne(_ context.Context, cluster, addon st
 		return "", fmt.Errorf("no addon-values secret is defined for cluster %q, addon %q in this demo estate", cluster, addon)
 	}
 	prev, hadRecord := r.items[key]
+
+	// P1-A: Sharko will not write a secret it did not create, in demo mode
+	// exactly as in real life. The page already disables Sync on this row;
+	// this is the same refusal one layer down, so a walk that pokes the API
+	// directly gets the same answer the button gives.
+	if hadRecord && prev.outcome == "foreign" {
+		r.mu.Unlock()
+		return "", errors.New(demoForeignRefusal)
+	}
 
 	outcome := "unchanged"
 	event, detail := "", ""

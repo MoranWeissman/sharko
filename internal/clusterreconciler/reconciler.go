@@ -80,6 +80,14 @@ func syntheticFanoutID() string {
 	return fmt.Sprintf("recon-fanout-%d", time.Now().Unix())
 }
 
+// syntheticCheckID returns the correlation ID for a READ-ONLY check pass
+// (P1-A A2 — what the page's Refresh drives). Distinct from the two IDs
+// above so a log search can tell "somebody asked Sharko to look" apart from
+// "Sharko went and fixed things".
+func syntheticCheckID() string {
+	return fmt.Sprintf("recon-check-%d", time.Now().Unix())
+}
+
 const (
 	// DefaultTickInterval is the reconciler's safety-net poll cadence.
 	//
@@ -245,7 +253,13 @@ type Reconciler struct {
 	branch              string
 
 	triggerCh chan struct{} // buffered(1) — Trigger() never blocks
-	stopCh    chan struct{}
+	// checkCh carries the READ-ONLY check request (P1-A A2). Same
+	// single-slot, never-blocks shape as triggerCh, and deliberately a
+	// SEPARATE channel: a queued check must never be swallowed by a queued
+	// write pass, and a queued write must never be downgraded to a check.
+	// The two are different acts, so they get different slots.
+	checkCh chan struct{}
+	stopCh  chan struct{}
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -265,6 +279,13 @@ type Reconciler struct {
 	// within-window / expired Secret deterministically. Per-instance (not a
 	// package-level var) so parallel tests do not race on a shared seam.
 	nowFn func() time.Time
+
+	// checkFn is the per-instance test seam invoked by run() on every
+	// TriggerCheck. Production initializes it to (*Reconciler).checkOnce in
+	// New(); tests may swap it to observe that the check path — and not the
+	// write path — was the one that ran. Per-instance for the same
+	// no-shared-race reason as pollFn.
+	checkFn func(context.Context)
 
 	// lastReconcileMu guards lastReconcile. See reconcile_status.go
 	// (V2-cleanup-89.4 — per-cluster reconcile visibility).
@@ -323,11 +344,13 @@ func New(deps Deps) *Reconciler {
 		namespace:           ns,
 		branch:              branch,
 		triggerCh:           make(chan struct{}, 1),
+		checkCh:             make(chan struct{}, 1),
 		stopCh:              make(chan struct{}),
 		nowFn:               time.Now,
 		lastReconcile:       make(map[string]ClusterReconcileRecord),
 	}
 	r.pollFn = r.pollOnce
+	r.checkFn = r.checkOnce
 	return r
 }
 
@@ -399,6 +422,8 @@ func (r *Reconciler) run(ctx context.Context) {
 			r.pollFn(logging.WithRequestID(ctx, syntheticTickID()))
 		case <-r.triggerCh:
 			r.pollFn(logging.WithRequestID(ctx, syntheticFanoutID()))
+		case <-r.checkCh:
+			r.checkFn(logging.WithRequestID(ctx, syntheticCheckID()))
 		}
 	}
 }
@@ -1596,12 +1621,31 @@ func (r *Reconciler) ResyncClusterLabels(ctx context.Context, name string) (Resy
 	// an honest "what this resync applied" diff — the write itself is done
 	// entirely by the reused primitive below, not by anything here.
 	var before, beforeAnnotations map[string]string
+	secretExists := false
 	if secret, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, name, metav1.GetOptions{}); getErr == nil {
 		before = secret.Labels
 		beforeAnnotations = secret.Annotations
+		secretExists = true
 	} else if !apierrors.IsNotFound(getErr) {
 		return ResyncResult{}, fmt.Errorf("reading cluster secret: %w", getErr)
 	}
+
+	// Task #117: a Sharko-managed cluster whose secret has NEVER existed
+	// used to be told the secret "disappeared between drift detection and
+	// self-heal attempt" — a race that did not happen, describing a moment
+	// that never was. Nothing disappeared; there is simply nothing there
+	// yet. Say that, and don't attempt a write that has nothing to write
+	// onto. A self-managed connection keeps its own wording (the user is
+	// the one who creates that secret), so it falls through to
+	// syncSelfManaged below exactly as before.
+	if !secretExists && !entry.UserManagedConnection() {
+		r.recordReconcile(name, OutcomeSkipped, ManagedSecretNotCreatedMessage, nil)
+		return ResyncResult{
+			Outcome: OutcomeSkipped,
+			Message: ManagedSecretNotCreatedMessage,
+		}, nil
+	}
+
 	drift := computeLabelDrift(desired, before, beforeAnnotations)
 	unchanged := unchangedAddonLabelKeys(desired, before)
 

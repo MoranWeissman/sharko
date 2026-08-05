@@ -303,6 +303,15 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 		srv.SetReconcilerTrigger(func() {
 			applyDemoReconcileSeeds(clusterRecon, reconcileSeeds, time.Now())
 		})
+		// The Refresh path (P1-A A2) is the READ-ONLY check pass. Re-stamping
+		// the same seeds with a fresh time is exactly what a check does in
+		// demo: it looks again and writes down when it looked. No seed's
+		// STATE moves, because a check never fixes what it finds — the demo
+		// row that is out of sync stays out of sync until somebody clicks
+		// Sync, which is the whole point of the two words being different.
+		srv.SetReconcilerCheckTrigger(func() {
+			applyDemoReconcileSeeds(clusterRecon, reconcileSeeds, time.Now())
+		})
 
 		// Addon values secrets — real rows across the generated estate
 		// (S2), a full state spread including one row that has genuinely

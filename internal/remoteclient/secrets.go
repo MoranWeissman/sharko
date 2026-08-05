@@ -2,6 +2,7 @@ package remoteclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -14,14 +15,49 @@ import (
 const managedByLabel = "app.kubernetes.io/managed-by"
 const managedByValue = "sharko"
 
+// ErrForeignSecret means a Secret with the wanted name already exists on the
+// remote cluster and does NOT carry app.kubernetes.io/managed-by=sharko —
+// somebody else created it (a person, External Secrets Operator, Sealed
+// Secrets, a vault agent, a Helm chart). Sharko refuses to change or remove
+// it.
+//
+// This package is the SINGLE CHOKE POINT for that rule on the addon-values
+// side: every write and every delete Sharko performs on a remote cluster's
+// addon secret goes through EnsureSecret or DeleteSecretIfManaged below, so
+// putting the ownership question here means no caller can forget to ask it.
+// The same rule already guards the cluster-connection side in
+// internal/clusterreconciler (IsManagedBySharko + the orphan-delete gate);
+// this is that rule finally applied to the other engine too.
+//
+// Creating a Secret that does not exist yet is still allowed: a new Secret is
+// labeled at birth, and that label is exactly how ownership is established.
+var ErrForeignSecret = errors.New("this secret already exists on the cluster and Sharko did not create it, so Sharko will not change or remove it")
+
 // ManagedSecretInfo describes a Sharko-managed secret on a remote cluster.
 type ManagedSecretInfo struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 }
 
-// EnsureSecret creates or updates a K8s Secret on the remote cluster.
-// The secret is labeled with app.kubernetes.io/managed-by=sharko.
+// IsManagedBySharko reports whether a Secret carries Sharko's ownership
+// label. Nil-safe (a nil Secret is not Sharko's). Mirrors
+// clusterreconciler.IsManagedBySharko — same question, other engine.
+func IsManagedBySharko(secret *corev1.Secret) bool {
+	if secret == nil {
+		return false
+	}
+	return secret.Labels[managedByLabel] == managedByValue
+}
+
+// EnsureSecret creates a K8s Secret on the remote cluster when none exists,
+// or updates one Sharko already owns. The secret is labeled with
+// app.kubernetes.io/managed-by=sharko.
+//
+// It REFUSES, with ErrForeignSecret, to update a Secret that exists without
+// that label — see ErrForeignSecret. Before this gate existed, an addon
+// secret owned by someone else was silently overwritten every five minutes
+// and re-labeled as Sharko's, which took ownership of a resource Sharko had
+// never created.
 func EnsureSecret(ctx context.Context, client kubernetes.Interface, namespace, name string, data map[string][]byte) error {
 	slog.Info("[remoteclient] EnsureSecret called", "namespace", namespace, "name", name, "keys", len(data))
 	secret := &corev1.Secret{
@@ -49,6 +85,15 @@ func EnsureSecret(ctx context.Context, client kubernetes.Interface, namespace, n
 		return fmt.Errorf("checking secret %s/%s: %w", namespace, name, err)
 	}
 
+	// Ownership gate — the whole point of this function existing as one
+	// choke point. No write of any kind happens below this line for a Secret
+	// Sharko did not create.
+	if !IsManagedBySharko(existing) {
+		slog.Info("[remoteclient] leaving this secret alone — it exists on the cluster and Sharko did not create it",
+			"namespace", namespace, "name", name)
+		return fmt.Errorf("secret %s/%s: %w", namespace, name, ErrForeignSecret)
+	}
+
 	// Update existing secret.
 	existing.Data = data
 	if existing.Labels == nil {
@@ -61,6 +106,36 @@ func EnsureSecret(ctx context.Context, client kubernetes.Interface, namespace, n
 	}
 	slog.Info("[remoteclient] secret updated", "namespace", namespace, "name", name)
 	return nil
+}
+
+// DeleteSecretIfManaged deletes one named Secret from a remote cluster ONLY
+// when it carries Sharko's ownership label. The delete side of the same rule
+// EnsureSecret enforces for writes, and the more dangerous direction: an
+// unguarded delete of somebody else's secret cannot be undone by the next
+// reconcile pass.
+//
+// Returns deleted=false with a nil error in the two ordinary cases — the
+// Secret is already gone, or it belongs to somebody else — so a best-effort
+// cleanup loop can carry straight on to the next addon. Only a real API
+// failure comes back as an error.
+func DeleteSecretIfManaged(ctx context.Context, client kubernetes.Interface, namespace, name string) (deleted bool, err error) {
+	existing, getErr := client.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+	if getErr != nil {
+		if apierrors.IsNotFound(getErr) {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking secret %s/%s before deleting it: %w", namespace, name, getErr)
+	}
+	if !IsManagedBySharko(existing) {
+		return false, fmt.Errorf("secret %s/%s: %w", namespace, name, ErrForeignSecret)
+	}
+	if delErr := client.CoreV1().Secrets(namespace).Delete(ctx, name, metav1.DeleteOptions{}); delErr != nil {
+		if apierrors.IsNotFound(delErr) {
+			return false, nil
+		}
+		return false, fmt.Errorf("deleting secret %s/%s: %w", namespace, name, delErr)
+	}
+	return true, nil
 }
 
 // DeleteManagedSecrets deletes all Sharko-managed secrets in a namespace.

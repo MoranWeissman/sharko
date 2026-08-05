@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -118,6 +119,11 @@ type fakeReconciler struct {
 	syncOutcome string
 	syncErr     error
 	syncCalls   []itemCallArgs
+
+	// checkedAll counts CheckAll calls (P1-A A3). Guarded because the
+	// handler runs the check in a goroutine.
+	checkAllMu sync.Mutex
+	checkedAll int
 }
 
 func (r *fakeReconciler) Trigger() { r.triggered = true }
@@ -160,6 +166,13 @@ func (r *fakeReconciler) CheckOne(_ context.Context, cluster, addon string) (str
 func (r *fakeReconciler) SyncOne(_ context.Context, cluster, addon string) (string, error) {
 	r.syncCalls = append(r.syncCalls, itemCallArgs{cluster, addon})
 	return r.syncOutcome, r.syncErr
+}
+
+func (r *fakeReconciler) CheckAll(_ context.Context) error {
+	r.checkAllMu.Lock()
+	defer r.checkAllMu.Unlock()
+	r.checkedAll++
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +537,55 @@ func TestHandleTriggerReconcile_Configured(t *testing.T) {
 	}
 	if body["status"] != "reconcile triggered" {
 		t.Errorf("unexpected status: %v", body["status"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleCheckSecrets (P1-A A3) — the read-only fleet-wide check
+// ---------------------------------------------------------------------------
+
+func TestHandleCheckSecrets_RunsTheCheckAndNotTheWritePass(t *testing.T) {
+	srv := newTestServer()
+	rec := &fakeReconciler{}
+	srv.SetSecretReconciler(rec)
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/check", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	// The check runs in a goroutine, so wait for it rather than racing it.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rec.checkAllMu.Lock()
+		n := rec.checkedAll
+		rec.checkAllMu.Unlock()
+		if n == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected CheckAll to run exactly once, saw %d", n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if rec.triggered {
+		t.Error("a check must never fire the write pass")
+	}
+}
+
+func TestHandleCheckSecrets_NotConfigured(t *testing.T) {
+	srv := newTestServer()
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/check", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
 	}
 }
 

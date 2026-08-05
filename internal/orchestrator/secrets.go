@@ -2,12 +2,11 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -138,7 +137,13 @@ func (o *Orchestrator) listSecretsToCreate(addons map[string]bool) []string {
 }
 
 // deleteAddonSecrets deletes Sharko-managed secrets for specific addons from a remote cluster.
-func (o *Orchestrator) deleteAddonSecrets(ctx context.Context, kubeconfig []byte, addons map[string]bool) ([]string, error) {
+//
+// Ownership gate (P1-A): every delete goes through
+// remoteclient.DeleteSecretIfManaged, so a secret with the right name that
+// Sharko did not create is left exactly where it is. clusterName is carried
+// only so the log line names the cluster the secret sits on — never a value,
+// never a key.
+func (o *Orchestrator) deleteAddonSecrets(ctx context.Context, clusterName string, kubeconfig []byte, addons map[string]bool) ([]string, error) {
 	log := logging.LoggerFromContext(ctx)
 	if o.remoteClientFn == nil || o.secretDefs == nil {
 		return nil, nil
@@ -159,13 +164,20 @@ func (o *Orchestrator) deleteAddonSecrets(ctx context.Context, kubeconfig []byte
 			continue
 		}
 		// Delete only the specific secret for this addon, not all managed secrets in the namespace.
-		err = client.CoreV1().Secrets(def.Namespace).Delete(ctx, def.SecretName, metav1.DeleteOptions{})
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				log.Info("secret already gone", "addon", addonName, "secret", def.SecretName)
+		removed, delErr := remoteclient.DeleteSecretIfManaged(ctx, client, def.Namespace, def.SecretName)
+		if delErr != nil {
+			if errors.Is(delErr, remoteclient.ErrForeignSecret) {
+				log.Info("leaving this secret alone — Sharko did not create it",
+					"cluster", clusterName, "addon", addonName,
+					"namespace", def.Namespace, "secret", def.SecretName)
 			} else {
-				log.Warn("failed to delete secret", "addon", addonName, "secret", def.SecretName, "error", err)
+				log.Warn("failed to delete secret",
+					"cluster", clusterName, "addon", addonName, "secret", def.SecretName, "error", delErr)
 			}
+			continue
+		}
+		if !removed {
+			log.Info("secret already gone", "cluster", clusterName, "addon", addonName, "secret", def.SecretName)
 			continue
 		}
 		deleted = append(deleted, def.SecretName)
@@ -175,7 +187,10 @@ func (o *Orchestrator) deleteAddonSecrets(ctx context.Context, kubeconfig []byte
 
 // deleteAllAddonSecrets deletes all known addon secrets from a remote cluster (used during deregister).
 // Best-effort: continues on individual delete failures, logs errors but doesn't abort.
-func (o *Orchestrator) deleteAllAddonSecrets(ctx context.Context, kubeconfig []byte) ([]string, error) {
+//
+// Same ownership gate as deleteAddonSecrets above — a secret Sharko did not
+// create survives a deregister untouched.
+func (o *Orchestrator) deleteAllAddonSecrets(ctx context.Context, clusterName string, kubeconfig []byte) ([]string, error) {
 	log := logging.LoggerFromContext(ctx)
 	if o.remoteClientFn == nil || o.secretDefs == nil {
 		return nil, nil
@@ -189,13 +204,20 @@ func (o *Orchestrator) deleteAllAddonSecrets(ctx context.Context, kubeconfig []b
 	var deleted []string
 	for _, def := range o.secretDefs {
 		// Delete by specific secret name, not namespace sweep, to avoid cross-addon deletion.
-		err = client.CoreV1().Secrets(def.Namespace).Delete(ctx, def.SecretName, metav1.DeleteOptions{})
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				log.Info("secret already gone", "addon", def.AddonName, "secret", def.SecretName)
+		removed, delErr := remoteclient.DeleteSecretIfManaged(ctx, client, def.Namespace, def.SecretName)
+		if delErr != nil {
+			if errors.Is(delErr, remoteclient.ErrForeignSecret) {
+				log.Info("leaving this secret alone — Sharko did not create it",
+					"cluster", clusterName, "addon", def.AddonName,
+					"namespace", def.Namespace, "secret", def.SecretName)
 			} else {
-				log.Warn("failed to delete secret", "addon", def.AddonName, "secret", def.SecretName, "error", err)
+				log.Warn("failed to delete secret",
+					"cluster", clusterName, "addon", def.AddonName, "secret", def.SecretName, "error", delErr)
 			}
+			continue
+		}
+		if !removed {
+			log.Info("secret already gone", "cluster", clusterName, "addon", def.AddonName, "secret", def.SecretName)
 			continue
 		}
 		deleted = append(deleted, def.SecretName)

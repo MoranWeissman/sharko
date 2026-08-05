@@ -3,6 +3,7 @@ package clusterreconciler
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -308,6 +309,56 @@ spec:
 	}
 	if result.Outcome != OutcomeSkipped {
 		t.Errorf("expected OutcomeSkipped when the user hasn't created the Secret yet, got %v", result.Outcome)
+	}
+}
+
+// TestResyncClusterLabels_ManagedSecretNeverExisted_SaysSoPlainly is task
+// #117. A Sharko-managed cluster whose secret has never been created used
+// to be told the secret "disappeared between drift detection and self-heal
+// attempt" — a race that never happened, describing a moment that never
+// was. Nothing disappeared; there is simply nothing there yet.
+func TestResyncClusterLabels_ManagedSecretNeverExisted_SaysSoPlainly(t *testing.T) {
+	client := fake.NewSimpleClientset()
+
+	var gp fakeGit
+	gp.files = map[string][]byte{
+		"configuration/managed-clusters.yaml": []byte(`
+apiVersion: sharko.io/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  clusters:
+    - name: never-created
+      labels:
+        addon-foo: enabled
+`),
+	}
+
+	r := New(Deps{
+		GitProvider: func() gitprovider.GitProvider { return &gp },
+		ArgoClient:  client,
+		Vault:       &fakeVault{},
+		AuditFn:     func(audit.Entry) {},
+		Namespace:   "argocd",
+	})
+
+	result, err := r.ResyncClusterLabels(context.Background(), "never-created")
+	if err != nil {
+		t.Fatalf("ResyncClusterLabels: %v", err)
+	}
+	if result.Outcome != OutcomeSkipped {
+		t.Errorf("outcome = %v, want skipped", result.Outcome)
+	}
+	if result.Message != ManagedSecretNotCreatedMessage {
+		t.Errorf("message = %q, want %q", result.Message, ManagedSecretNotCreatedMessage)
+	}
+	if strings.Contains(result.Message, "disappeared") {
+		t.Error("the message still claims the secret disappeared when it never existed")
+	}
+	rec, ok := r.LastReconcile("never-created")
+	if !ok || rec.Message != ManagedSecretNotCreatedMessage {
+		t.Errorf("record = %+v, ok=%v — want the same plain message on the row", rec, ok)
 	}
 }
 

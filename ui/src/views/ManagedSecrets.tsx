@@ -125,7 +125,7 @@ import {
   refreshAddonValuesSecret,
   resyncClusterLabels,
   syncAddonValuesSecret,
-  triggerSecretsReconcile,
+  checkAllAddonValuesSecrets,
 } from '@/services/api'
 import type {
   AddonValuesSecretRow,
@@ -157,7 +157,28 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 // The four states, worst first — the order the filter chips render in and
 // the order a group header lists its sums in. Declared here because both
 // the chips (far below) and groupSummary (just below) read it.
-const CHIP_ORDER: ResourceStatus[] = ['out_of_sync', 'missing', 'unknown', 'in_sync']
+const CHIP_ORDER: ResourceStatus[] = ['out_of_sync', 'missing', 'foreign', 'unknown', 'in_sync']
+
+/**
+ * The one sentence Sharko says about a secret somebody else created — on the
+ * disabled Sync button here, and word-for-word the same sentence the server
+ * returns if an API call gets past the button (internal/secrets.
+ * ErrForeignSecret). One boundary, one sentence, everywhere.
+ */
+const FOREIGN_SYNC_REASON = 'Someone else created this one — Sharko will not touch it.'
+
+/**
+ * What "Refresh all" does, in the user's words. Both engines are checked and
+ * neither is written to; the repairs are the engines' own job on their own
+ * schedule, which is what makes Refresh safe to press.
+ */
+const REFRESH_ALL_HINT =
+  "Asks Sharko to check every secret against its source — connection secrets against git, addon values against your secrets store. Checking only: nothing is written. The engines' own loops do the repairs."
+
+/** The toast a connection row's Refresh raises. The check is estate-wide by nature, so the sentence says so instead of implying one cluster was singled out. */
+function connectionRefreshToast(cluster: string): string {
+  return `Checking every cluster's connection secret now, ${cluster} included.`
+}
 
 interface UnifiedRow {
   kind: 'connection' | 'values'
@@ -288,7 +309,7 @@ export function buildRowGroups(rows: UnifiedRow[], groupBy: GroupBy): RowGroup[]
  *     must say that in words.
  */
 export function groupSummary(rows: UnifiedRow[]): string {
-  const counts: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, unknown: 0 }
+  const counts: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, foreign: 0, unknown: 0 }
   for (const r of rows) counts[toResourceStatus(r.state)]++
   const parts = [`${rows.length} secret${rows.length === 1 ? '' : 's'}`]
   for (const status of CHIP_ORDER) {
@@ -342,6 +363,9 @@ function compareRows(a: UnifiedRow, b: UnifiedRow, key: SortKey): number {
 // row right now, and why not when it doesn't — shared by the row's ⋯ menu
 // and the detail panel's own Sync button so the two never disagree.
 function syncGateFor(row: UnifiedRow): { disabled: boolean; reason?: string } {
+  // Checked first, and for both kinds of row: a secret Sharko did not create
+  // is never Sharko's to write, whatever else is true about it (P1-A).
+  if (row.state === 'foreign') return { disabled: true, reason: FOREIGN_SYNC_REASON }
   if (row.kind === 'connection') {
     if (row.state === 'in_sync') return { disabled: true, reason: 'Nothing to apply — this secret already matches git.' }
     if (row.state === 'missing')
@@ -743,7 +767,7 @@ function SecretDetailPanel({
     try {
       if (row.kind === 'connection') {
         await reconcileCluster(row.cluster)
-        showToast(`Refresh triggered for cluster "${row.cluster}".`, 'success')
+        showToast(connectionRefreshToast(row.cluster), 'success')
       } else {
         const result = await refreshAddonValuesSecret(row.cluster, row.addon!)
         showToast(result.message, 'success')
@@ -1185,7 +1209,7 @@ export function ManagedSecrets() {
   }, [unifiedRows, search])
 
   const counts = useMemo(() => {
-    const c: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, unknown: 0 }
+    const c: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, foreign: 0, unknown: 0 }
     for (const r of searchFiltered) c[toResourceStatus(r.state)]++
     return c
   }, [searchFiltered])
@@ -1275,7 +1299,7 @@ export function ManagedSecrets() {
       try {
         if (row.kind === 'connection') {
           await reconcileCluster(row.cluster)
-          showToast(`Refresh triggered for cluster "${row.cluster}".`, 'success')
+          showToast(connectionRefreshToast(row.cluster), 'success')
         } else {
           const result = await refreshAddonValuesSecret(row.cluster, row.addon!)
           showToast(result.message, 'success')
@@ -1294,17 +1318,18 @@ export function ManagedSecrets() {
     [load],
   )
 
-  // Refresh all: values secrets have a real fleet-wide trigger
-  // (triggerSecretsReconcile). Connection secrets' own trigger
-  // (POST /clusters/{name}/reconcile) is ALSO fleet-wide despite taking a
-  // cluster name in its path — see internal/api/clusters_reconcile.go's
-  // handleReconcileCluster doc comment — so as long as at least one
-  // connection-secret row exists, this button genuinely refreshes both
-  // engines, not just one.
+  // Refresh all drives the CHECK on both engines and writes nothing (P1-A
+  // A3). Values secrets go to POST /secrets/check — NOT
+  // triggerSecretsReconcile, which runs the pass that creates and rotates
+  // secrets; a button labelled "Refresh" must never do that. Connection
+  // secrets go to POST /clusters/{name}/reconcile, which is now the
+  // read-only check and covers every cluster despite taking one name in its
+  // path (see internal/api/clusters_reconcile.go), so one call with any
+  // connection row's cluster checks them all.
   const handleRefreshAll = async () => {
     setRefreshingAll(true)
     try {
-      const tasks: Promise<unknown>[] = [triggerSecretsReconcile()]
+      const tasks: Promise<unknown>[] = [checkAllAddonValuesSecrets()]
       if (connectionRows.length > 0) {
         tasks.push(reconcileCluster(connectionRows[0].cluster))
       }
@@ -1362,10 +1387,7 @@ export function ManagedSecrets() {
               <RefreshCw className={`h-3 w-3 ${refreshingAll ? 'animate-spin' : ''}`} />
               Refresh all
             </button>
-            <InfoHint
-              text={`Checks every secret in this table against its source right now — connection secrets against git, addon values secrets against ${valuesSourceLabel} — instead of waiting for each engine's regular pass.`}
-              label="What does Refresh all do?"
-            />
+            <InfoHint text={REFRESH_ALL_HINT} label="What does Refresh all do?" />
           </div>
         </RoleGuard>
       </div>

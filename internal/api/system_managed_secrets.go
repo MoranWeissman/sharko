@@ -96,10 +96,12 @@ type addonValuesSecretRow struct {
 	Addon           string `json:"addon"`
 	SecretName      string `json:"secret_name,omitempty"`
 	SecretNamespace string `json:"secret_namespace,omitempty"`
-	// State is one of "in_sync", "out_of_sync", "missing", or "unknown" —
-	// the same vocabulary connectionSecretRow.State uses, derived here from
-	// the addon-values reconciler's per-item outcome (see
-	// addonValuesSecretRowState) rather than its own per-cluster record.
+	// State is one of "in_sync", "out_of_sync", "missing", "foreign", or
+	// "unknown" — derived here from the addon-values reconciler's per-item
+	// outcome (see addonValuesSecretRowState) rather than its own
+	// per-cluster record. "foreign" (P1-A) means a secret with this name is
+	// on the cluster and Sharko did not create it, so Sharko will not
+	// change or remove it.
 	// Compared against the vault (the secrets provider), NOT git — git only
 	// holds a pointer to where the value lives (S3(a) honesty lock).
 	State string `json:"state"`
@@ -426,6 +428,13 @@ func addonValuesSecretRowState(recon SecretReconciler, cluster, addon string) st
 		return "out_of_sync"
 	case "missing":
 		return "missing"
+	case "foreign":
+		// P1-A: a secret with this name is on the cluster and Sharko did
+		// not create it. Its own state, on purpose — it is neither drift
+		// (nothing to correct) nor damage (nothing is broken) nor unknown
+		// (Sharko looked and knows exactly what it found). It is a boundary,
+		// and Sharko stays on its side of it.
+		return "foreign"
 	default: // "skipped"
 		return "unknown"
 	}
