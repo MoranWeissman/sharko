@@ -71,3 +71,25 @@ type GitProvider interface {
 	GetPullRequestStatus(ctx context.Context, prNumber int) (string, error)
 	DeleteBranch(ctx context.Context, branchName string) error
 }
+
+// BranchRevisioner is an OPTIONAL capability a GitProvider may implement:
+// report the current head commit SHA of a branch. It is deliberately NOT
+// part of the core GitProvider interface — adding a required method there
+// would force every test fake and mock across the codebase (orchestrator,
+// service, api, e2e harness — dozens of them) to grow a method they have no
+// reason to implement, for a fact only the cluster reconciler's revision
+// reporting (P2-C1) actually needs.
+//
+// A provider that does not implement this interface is simply never asked
+// — the caller type-asserts and treats "does not implement it" exactly like
+// "the call failed": the row shows nothing, never a guessed or stale SHA.
+// GitHubProvider, AzureDevOpsProvider, and GiteaProvider all implement it
+// (see their own GetBranchHeadSHA); internal/demo.MockGitProvider
+// implements it too, with a fixed, obviously-fake 40-char SHA, so the demo
+// walks the exact same code path production does.
+type BranchRevisioner interface {
+	// GetBranchHeadSHA returns the current commit SHA the named branch
+	// points at. Implementations must return an error rather than a
+	// guessed, cached, or stale value when they cannot answer honestly.
+	GetBranchHeadSHA(ctx context.Context, branch string) (string, error)
+}

@@ -82,6 +82,31 @@ type ClusterReconcileRecord struct {
 	Outcome    ReconcileOutcome
 	Message    string
 	LabelDrift *LabelDrift
+
+	// ComparedRevision (P2-C1) is the branch head commit SHA the PASS that
+	// produced this record read git at — fetched once per pass (pollOnce
+	// or checkOnce), never per cluster, since every cluster processed in
+	// the same pass reads the same managed-clusters file at the same git
+	// state. Empty when the active provider does not implement
+	// gitprovider.BranchRevisioner, or the call failed, or the pass
+	// aborted before reaching any per-cluster work — never a guessed or
+	// stale value (see Reconciler.fetchComparedRevision).
+	ComparedRevision string
+	// ComparedPath (P2-C1) is the exact managed-clusters file path this
+	// pass read from git: DefaultManagedClustersPath (v3) or
+	// V4ManagedClustersPath (v4) — see readDesiredState's v3→v4 fallback.
+	// Same pass-level, not per-cluster, reasoning as ComparedRevision.
+	ComparedPath string
+	// AppliedRevision (P2-C1) is the branch head commit SHA the LAST
+	// SUCCESSFUL WRITE to this cluster's ArgoCD secret was built from —
+	// the "applied" half of the generation/observedGeneration pair.
+	// Stamped ONLY at the moment a real Kubernetes write succeeds
+	// (createOne, a changed selfHealManagedCluster, a changed
+	// syncSelfManaged); a check pass, a no-op tick, or a failed write
+	// carries the PREVIOUS value forward untouched — see
+	// Reconciler.stampAppliedRevision. Empty until this server instance
+	// has ever successfully written this cluster's secret.
+	AppliedRevision string
 }
 
 // recordReconcile stores the outcome of the most recent reconcile attempt
@@ -93,16 +118,25 @@ type ClusterReconcileRecord struct {
 // drift (V3 G1) carries the label difference for Sharko-managed clusters;
 // nil when labels are in sync or for self-managed connections.
 func (r *Reconciler) recordReconcile(name string, outcome ReconcileOutcome, message string, drift *LabelDrift) {
+	// Read the pass-level compared facts and this cluster's persisted
+	// applied-revision BEFORE taking lastReconcileMu — currentPassCompared
+	// and appliedRevisionFor each take their own, separate lock (P2-C1).
+	comparedRevision, comparedPath := r.currentPassCompared()
+	appliedRevision := r.appliedRevisionFor(name)
+
 	r.lastReconcileMu.Lock()
 	defer r.lastReconcileMu.Unlock()
 	if r.lastReconcile == nil {
 		r.lastReconcile = make(map[string]ClusterReconcileRecord)
 	}
 	r.lastReconcile[name] = ClusterReconcileRecord{
-		Time:       r.now(),
-		Outcome:    outcome,
-		Message:    message,
-		LabelDrift: drift,
+		Time:             r.now(),
+		Outcome:          outcome,
+		Message:          message,
+		LabelDrift:       drift,
+		ComparedRevision: comparedRevision,
+		ComparedPath:     comparedPath,
+		AppliedRevision:  appliedRevision,
 	}
 }
 
@@ -253,6 +287,19 @@ func (r *Reconciler) pruneStaleReconcileRecords(known map[string]struct{}) {
 		}
 	}
 	r.fightMu.Unlock()
+
+	// P2-C1: a cluster that has dropped out of both git and the live
+	// ArgoCD Secret listing has nothing left to say "the last successful
+	// write was built from commit X" ABOUT — prune its persisted applied
+	// revision the same pass lastReconcile/fightState prune theirs, so a
+	// removed-then-reused cluster name never inherits a stale ghost value.
+	r.appliedRevMu.Lock()
+	for name := range r.appliedRevision {
+		if _, ok := known[name]; !ok {
+			delete(r.appliedRevision, name)
+		}
+	}
+	r.appliedRevMu.Unlock()
 }
 
 // stampAbortedTick records OutcomeFailed for every cluster currently known
@@ -271,6 +318,15 @@ func (r *Reconciler) pruneStaleReconcileRecords(known map[string]struct{}) {
 // Deliberately does NOT prune: an aborted pass has no reliable "this
 // pass's clusters" set to prune against (see pruneStaleReconcileRecords).
 func (r *Reconciler) stampAbortedTick(reason string) {
+	// An aborted pass never completed a real git-vs-live comparison, so it
+	// has nothing honest to say about WHICH commit was compared (P2-C1) —
+	// clear the pass-level compared facts before stamping so every record
+	// written below carries empty ComparedRevision/ComparedPath rather than
+	// a stale value left over from the last pass that DID complete.
+	// AppliedRevision is untouched: a past successful write is still a past
+	// successful write, whatever THIS pass's abort reason is.
+	r.setPassCompared("", "")
+
 	r.lastReconcileMu.RLock()
 	names := make([]string, 0, len(r.lastReconcile))
 	for name := range r.lastReconcile {

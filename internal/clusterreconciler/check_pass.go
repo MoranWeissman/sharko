@@ -77,7 +77,12 @@ func (r *Reconciler) checkOnce(ctx context.Context) {
 		return
 	}
 
-	spec, v4, _, err := r.readDesiredState(ctx, gp)
+	// P2-C1: fetch the branch head SHA once for this check pass, same as
+	// the write pass — this is what lets a Refresh click's rows say WHICH
+	// commit they were just compared against.
+	revision := r.fetchComparedRevision(ctx, gp)
+
+	spec, v4, _, readPath, err := r.readDesiredState(ctx, gp)
 	if err != nil {
 		var rdErr *desiredStateReadError
 		if !errors.As(err, &rdErr) {
@@ -89,10 +94,13 @@ func (r *Reconciler) checkOnce(ctx context.Context) {
 		// cluster's record is stamped so a reader sees the abort instead of
 		// a stale success quietly ageing. (How that then RENDERS — "the
 		// check failed" versus "these all drifted" — is lane P1-B's job for
-		// both passes at once, not something to fork here.)
+		// both passes at once, not something to fork here.) stampAbortedTick
+		// also clears the pass-compared facts (P2-C1) — an aborted check has
+		// nothing honest to say about which commit it compared against.
 		r.stampAbortedTick(string(rdErr.Kind) + " failed: " + rdErr.Err.Error())
 		return
 	}
+	r.setPassCompared(revision, readPath)
 
 	existing, err := r.listManagedSecrets(ctx)
 	if err != nil {

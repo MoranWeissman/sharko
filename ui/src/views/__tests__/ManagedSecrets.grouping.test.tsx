@@ -80,8 +80,8 @@ function renderPage(initialEntries: string[] = ['/secrets']) {
 // header has something real to add up.
 const response: ManagedSecretsResponse = {
   cluster_connection_secrets: [
-    { cluster: 'prod-eu', secret_namespace: 'argocd', secret_name: 'prod-eu', state: 'in_sync', source: 'git' },
-    { cluster: 'staging-us', secret_namespace: 'argocd', secret_name: 'staging-us', state: 'out_of_sync', source: 'git' },
+    { cluster: 'prod-eu', secret_namespace: 'argocd', secret_name: 'prod-eu', state: 'in_sync', source: 'git', self_heals: true },
+    { cluster: 'staging-us', secret_namespace: 'argocd', secret_name: 'staging-us', state: 'out_of_sync', source: 'git', self_heals: true },
   ],
   addon_values_secrets: [
     {
@@ -91,6 +91,7 @@ const response: ManagedSecretsResponse = {
       secret_namespace: 'datadog',
       state: 'in_sync',
       source: 'AWS Secrets Manager',
+      self_heals: true,
     },
     {
       cluster: 'staging-us',
@@ -99,6 +100,7 @@ const response: ManagedSecretsResponse = {
       secret_namespace: 'datadog',
       state: 'out_of_sync',
       source: 'AWS Secrets Manager',
+      self_heals: true,
     },
     {
       cluster: 'prod-eu',
@@ -107,6 +109,7 @@ const response: ManagedSecretsResponse = {
       secret_namespace: 'vault',
       state: 'unknown',
       source: 'a Kubernetes Secret',
+      self_heals: true,
     },
   ],
   engines: {
@@ -126,8 +129,8 @@ const blankedResource: SecretResource = {
   labels: [{ key: 'app.kubernetes.io/managed-by', value: 'sharko' }],
   annotations: [{ key: 'kubectl.kubernetes.io/last-applied-configuration', value: '••••••••', blanked: true }],
   data_keys: [
-    { key: 'api-key', value: '••••••••' },
-    { key: 'app-key', value: '••••••••' },
+    { key: 'api-key', value: '••••••••', path: 'secrets/datadog/api-key' },
+    { key: 'app-key', value: '••••••••', path: 'secrets/datadog/app-key' },
   ],
   read_from: 'cluster "prod-eu", namespace "datadog"',
   values_blanked: true,
@@ -283,6 +286,11 @@ describe('ManagedSecrets — the live resource, read-only (G4)', () => {
     expect(within(keys).getByText('api-key')).toBeInTheDocument()
     expect(within(keys).getByText('app-key')).toBeInTheDocument()
     expect(within(keys).getAllByText('••••••••')).toHaveLength(2)
+
+    // P2-C2: each key shows the store pointer it comes from — a location,
+    // never a value.
+    expect(within(keys).getByText('← secrets/datadog/api-key')).toBeInTheDocument()
+    expect(within(keys).getByText('← secrets/datadog/app-key')).toBeInTheDocument()
 
     // The label is shown in full — labels are not secret.
     expect(within(within(panel).getByTestId('resource-labels')).getByText('sharko')).toBeInTheDocument()

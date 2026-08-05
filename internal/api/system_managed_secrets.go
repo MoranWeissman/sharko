@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
@@ -101,6 +102,33 @@ type connectionSecretRow struct {
 	// clusterreconciler.FailureSentence — NEVER the reconciler's raw
 	// record text.
 	LastCheckError string `json:"last_check_error,omitempty"`
+
+	// ComparedRevision (P2-C1) is the full branch head commit SHA the pass
+	// that produced this row's state read git at. Empty when the active
+	// git provider cannot say — never a guessed or stale value. The UI
+	// shows the first 7 characters on the row/panel and the full value on
+	// hover.
+	ComparedRevision string `json:"compared_revision,omitempty"`
+	// ComparedPath (P2-C1) is the exact managed-clusters file path this
+	// row's state was compared against.
+	ComparedPath string `json:"compared_path,omitempty"`
+	// AppliedRevision (P2-C1) is the full commit SHA the last SUCCESSFUL
+	// WRITE to this cluster's secret was built from — empty until this
+	// server instance has ever successfully written it.
+	AppliedRevision string `json:"applied_revision,omitempty"`
+	// SelfHeals (P2-C3) reports whether Sharko will repair THIS row on its
+	// own, without a human clicking Sync — derived from the real rule (see
+	// connectionSelfHeals): self-managed connections and v4 repos always
+	// heal; a v3 repo's managed clusters heal only when the
+	// managed_cluster_self_heal setting is on.
+	SelfHeals bool `json:"self_heals"`
+	// DriftSource (P2-C6) names which side moved for an out_of_sync row:
+	// "git" (the intent commit changed since the last successful write —
+	// ComparedRevision != AppliedRevision) or "cluster" (the revisions
+	// agree but the live secret still differs — something changed it
+	// outside git). Empty when the row isn't out_of_sync, or when either
+	// revision is unknown — never a guess.
+	DriftSource string `json:"drift_source,omitempty"`
 }
 
 // addonValuesSecretRow is one row of addon_values_secrets — one row per
@@ -151,6 +179,12 @@ type addonValuesSecretRow struct {
 	// addonValuesSecretCheckFailureSentence — NEVER the reconciler's raw
 	// error text (see that function's doc comment for why).
 	LastCheckError string `json:"last_check_error,omitempty"`
+
+	// SelfHeals (P2-C3) reports whether Sharko will repair THIS row on its
+	// own: true for every values row except a foreign one (P1-A's
+	// ownership gate means Sharko never touches a secret it did not
+	// create, so it can never self-heal one either).
+	SelfHeals bool `json:"self_heals"`
 }
 
 // managedSecretsEngineInfo reports one reconciler's cadence + health.
@@ -257,7 +291,7 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 
 	auditEntries := s.AuditLog().List(0)
 
-	resp.ClusterConnectionSecrets = s.buildConnectionSecretRows(listResp.Clusters, auditEntries)
+	resp.ClusterConnectionSecrets = s.buildConnectionSecretRows(r.Context(), listResp.Clusters, auditEntries)
 	resp.AddonValuesSecrets = s.buildAddonValuesSecretRows(listResp.Clusters, auditEntries)
 
 	writeJSON(w, http.StatusOK, resp)
@@ -267,8 +301,16 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 // Discovered/orphan clusters (Managed == false) are excluded — Sharko has
 // no connection secret of its own to report for a cluster it didn't
 // register.
-func (s *Server) buildConnectionSecretRows(clusters []models.Cluster, auditEntries []audit.Entry) []connectionSecretRow {
+func (s *Server) buildConnectionSecretRows(ctx context.Context, clusters []models.Cluster, auditEntries []audit.Entry) []connectionSecretRow {
 	_, ns, _ := s.k8sClientAndNamespace()
+
+	// The managed_cluster_self_heal setting is read ONCE per request (P2-C3)
+	// — it is a single, repo-wide server setting, not a per-cluster fact,
+	// so there is no reason to ask the settings store once per row. A nil
+	// settingsStore (out-of-cluster mode) reads as "off", matching
+	// clusterreconciler.Deps.SelfHealFn's own "nil means default OFF"
+	// contract.
+	v3SelfHealOn := s.settingsStore != nil && s.settingsStore.IsManagedClusterSelfHealEnabled(ctx)
 
 	rows := make([]connectionSecretRow, 0, len(clusters))
 	for _, c := range clusters {
@@ -285,6 +327,13 @@ func (s *Server) buildConnectionSecretRows(clusters []models.Cluster, auditEntri
 		}
 		row.State, row.LastChecked = connectionSecretState(c.LastReconcile)
 		row.LastCheckError = connectionSecretCheckError(c.LastReconcile)
+		if c.LastReconcile != nil {
+			row.ComparedRevision = c.LastReconcile.ComparedRevision
+			row.ComparedPath = c.LastReconcile.ComparedPath
+			row.AppliedRevision = c.LastReconcile.AppliedRevision
+		}
+		row.SelfHeals = connectionSelfHeals(c, row.ComparedPath, v3SelfHealOn)
+		row.DriftSource = connectionDriftSource(row.State, row.ComparedRevision, row.AppliedRevision)
 
 		if at, detail, ok := lastConnectionSecretRepair(auditEntries, c.Name); ok {
 			row.LastRepaired = at.UTC().Format(time.RFC3339)
@@ -294,6 +343,61 @@ func (s *Server) buildConnectionSecretRows(clusters []models.Cluster, auditEntri
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Cluster < rows[j].Cluster })
 	return rows
+}
+
+// connectionSelfHeals derives the real self-heal rule for a connection row
+// (P2-C3): which future does this cluster's out-of-sync secret actually
+// have.
+//
+//   - A self-managed connection (c.ConnectionManagedBy == "user") always
+//     heals: syncSelfManaged re-applies addon labels onto the user's
+//     secret every tick, unconditionally — see reconciler.go's doc comment
+//     on that function.
+//   - A v4 repo (comparedPath == clusterreconciler.V4ManagedClustersPath)
+//     always heals: applyV4AddonLabels converges the addons.sharko.dev/
+//     labels every tick, with no setting gate — that is how enable/disable
+//     take effect on a v4 repo.
+//   - A v3, Sharko-managed cluster heals only when the LIVE
+//     managed_cluster_self_heal setting is on (V3 GF1, opt-in, default
+//     off) — reflected here verbatim, not re-derived.
+//
+// comparedPath being empty (this cluster has never been checked on this
+// server instance) falls through to the v3SelfHealOn answer: a real,
+// grounded server setting is a better default than an invented tri-state.
+func connectionSelfHeals(c models.Cluster, comparedPath string, v3SelfHealOn bool) bool {
+	if c.ConnectionManagedBy == "user" {
+		return true
+	}
+	if comparedPath == clusterreconciler.V4ManagedClustersPath {
+		return true
+	}
+	return v3SelfHealOn
+}
+
+// connectionDriftSource names which side moved for an out_of_sync
+// connection row (P2-C6): compare the commit Sharko last CHECKED against
+// (comparedRevision) to the commit the last SUCCESSFUL WRITE was built
+// from (appliedRevision).
+//
+//   - Different → "git": a newer commit changed the desired state since
+//     the last successful write, and the live secret hasn't caught up yet.
+//   - Equal → "cluster": the desired state hasn't moved since the last
+//     write, yet the live secret still differs — something changed it
+//     outside git.
+//   - Either revision unknown, or the row isn't out_of_sync → "" (say
+//     nothing rather than guess; values rows skip drift blame entirely
+//     this lane — their intent has no commit to compare against).
+func connectionDriftSource(state, comparedRevision, appliedRevision string) string {
+	if state != "out_of_sync" {
+		return ""
+	}
+	if comparedRevision == "" || appliedRevision == "" {
+		return ""
+	}
+	if comparedRevision != appliedRevision {
+		return "git"
+	}
+	return "cluster"
 }
 
 // connectionSecretState derives the row's honest state + last-checked
@@ -419,14 +523,19 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, auditEntr
 				continue
 			}
 			def := defs[addonName]
+			state := addonValuesSecretRowState(s.secretReconciler, c.Name, addonName)
 			row := addonValuesSecretRow{
 				Cluster:         c.Name,
 				Addon:           addonName,
 				SecretName:      def.SecretName,
 				SecretNamespace: def.Namespace,
 				Source:          source,
-				State:           addonValuesSecretRowState(s.secretReconciler, c.Name, addonName),
+				State:           state,
 				LastCheckError:  addonValuesRowLastCheckError(s.secretReconciler, c.Name, addonName),
+				// P2-C3: the values engine always repairs what it owns
+				// (P1-A's ownership gate) — the one exception is a foreign
+				// row, which Sharko will never touch.
+				SelfHeals: state != "foreign",
 			}
 			if s.secretReconciler != nil {
 				if checkedAt, ok := s.secretReconciler.LastItemChecked(c.Name, addonName); ok {

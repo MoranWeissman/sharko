@@ -203,6 +203,21 @@ interface UnifiedRow {
    * that is genuinely about the whole page.
    */
   sourceLabel: string
+  /**
+   * (P2-C1) Full branch head commit SHA the pass that produced this row's
+   * state read git at. Connection rows only — values rows never get a
+   * commit (their intent is the store, not git; see comparedPath's doc
+   * comment). Absent when the git provider couldn't say.
+   */
+  comparedRevision?: string
+  /** (P2-C1) The exact managed-clusters file path this row was compared against. Connection rows only. */
+  comparedPath?: string
+  /** (P2-C1) Full commit SHA the last successful write was built from. Connection rows only. */
+  appliedRevision?: string
+  /** (P2-C3) Will Sharko fix this row on its own, without a human clicking Sync. */
+  selfHeals: boolean
+  /** (P2-C6) Which side moved for an out-of-sync connection row: 'git' or 'cluster'. Connection rows only. */
+  driftSource?: 'git' | 'cluster'
 }
 
 function buildUnifiedRows(connectionRows: ConnectionSecretRow[], addonRows: AddonValuesSecretRow[], valuesSourceLabel: string): UnifiedRow[] {
@@ -221,6 +236,11 @@ function buildUnifiedRows(connectionRows: ConnectionSecretRow[], addonRows: Addo
     // below (the panel's lastCheckError paragraph), no per-kind branch.
     lastCheckError: r.last_check_error,
     sourceLabel: r.source || 'git',
+    comparedRevision: r.compared_revision,
+    comparedPath: r.compared_path,
+    appliedRevision: r.applied_revision,
+    selfHeals: r.self_heals,
+    driftSource: r.drift_source,
   }))
   const values: UnifiedRow[] = addonRows.map((r) => ({
     kind: 'values',
@@ -235,6 +255,7 @@ function buildUnifiedRows(connectionRows: ConnectionSecretRow[], addonRows: Addo
     lastRepairedDetail: r.last_repaired_detail,
     lastCheckError: r.last_check_error,
     sourceLabel: r.source || valuesSourceLabel,
+    selfHeals: r.self_heals,
   }))
   return [...conn, ...values]
 }
@@ -608,7 +629,15 @@ function EngineStat({
 // server handler says the same thing in its own header.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function KeyValueList({ items, empty, testId }: { items: { key: string; value: string; blanked?: boolean }[]; empty: string; testId: string }) {
+function KeyValueList({
+  items,
+  empty,
+  testId,
+}: {
+  items: { key: string; value: string; blanked?: boolean; path?: string }[]
+  empty: string
+  testId: string
+}) {
   if (items.length === 0) {
     return <p className="text-xs text-[#8098ac] dark:text-gray-500">{empty}</p>
   }
@@ -618,6 +647,8 @@ function KeyValueList({ items, empty, testId }: { items: { key: string; value: s
         <div key={item.key} className="flex items-baseline justify-between gap-3">
           <dt className="truncate font-mono text-xs text-[#3a5770] dark:text-gray-400" title={item.key}>
             {item.key}
+            {/* P2-C2: the store pointer this key's value comes from — a location, not a value. */}
+            {item.path && <span className="text-[#8098ac] dark:text-gray-500"> ← {item.path}</span>}
           </dt>
           <dd
             className={`shrink-0 font-mono text-xs ${item.blanked ? 'text-[#8098ac] dark:text-gray-500' : 'text-[#08192b] dark:text-gray-200'}`}
@@ -890,11 +921,38 @@ function SecretDetailPanel({
       >
         {sourceSentence}
       </p>
+      {/* P2-C1: which commit and which file this row was compared against — short SHA here, full SHA on hover. Connection rows only; values rows have no commit to point at (their intent is the store, C2 covers that instead). */}
+      {row.kind === 'connection' && row.comparedRevision && (
+        <p className="text-xs text-[#5c7288] dark:text-gray-500" title={`Full commit: ${row.comparedRevision}`} data-testid="detail-compared-revision">
+          Compared against git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
+          {row.comparedPath && (
+            <>
+              {' '}
+              · <span className="font-mono">{row.comparedPath}</span>
+            </>
+          )}
+        </p>
+      )}
 
       <div className="flex items-center justify-between rounded-lg ring-1 ring-[#d7e2ea] bg-white p-3 dark:ring-gray-700 dark:bg-gray-800">
         <span className="text-sm text-[#3a5770] dark:text-gray-300">State</span>
         <StatusMark status={row.state} />
       </div>
+
+      {/* P2-C3: the one-line self-heal promise — only where it changes what the reader should do (an out-of-sync or missing row). */}
+      {(row.state === 'out_of_sync' || row.state === 'missing') && (
+        <p className="text-xs text-[#5c7288] dark:text-gray-500" data-testid="detail-self-heals">
+          {row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
+        </p>
+      )}
+      {/* P2-C6: drift blame — which side moved. Connection rows, out-of-sync only, and only when both revisions are known. */}
+      {row.kind === 'connection' && row.state === 'out_of_sync' && row.driftSource && (
+        <p className="text-xs text-[#5c7288] dark:text-gray-500" data-testid="detail-drift-source">
+          {row.driftSource === 'git'
+            ? 'Git moved — a newer commit changed what this secret should be.'
+            : 'The cluster moved — something changed this secret outside git.'}
+        </p>
+      )}
 
       <dl className="space-y-1.5 text-sm">
         <div className="flex items-center justify-between">

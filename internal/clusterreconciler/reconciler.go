@@ -310,6 +310,21 @@ type Reconciler struct {
 	// zero, which only delays (never prevents) the warning from
 	// resurfacing on a genuinely ongoing fight.
 	fightState map[string]clusterFightState
+
+	// passMu guards passCompared — the branch head SHA and file path THIS
+	// PASS read from git (P2-C1), set once per pass by setPassCompared and
+	// read by every recordReconcile call made during it. See revision.go.
+	passMu       sync.RWMutex
+	passCompared currentPassRevisionState
+
+	// appliedRevMu guards appliedRevision — the commit the last SUCCESSFUL
+	// WRITE to each cluster's secret was built from (P2-C1's
+	// generation/observedGeneration pair). In memory only, keyed by
+	// cluster name, updated ONLY at the moment a real Kubernetes write
+	// succeeds (see stampAppliedRevision) — a check pass never touches it.
+	// Pruned alongside lastReconcile/fightState in pruneStaleReconcileRecords.
+	appliedRevMu    sync.RWMutex
+	appliedRevision map[string]string
 }
 
 // New constructs a Reconciler with the given dependencies. It does NOT start
@@ -492,13 +507,20 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 		return
 	}
 
+	// Fetch the branch head SHA ONCE for this pass (P2-C1), best effort —
+	// before readDesiredState, so even a pass that fails to read the file
+	// still knows what it tried to compare against. setPassCompared below
+	// is what actually publishes it; a failed pass clears it again via
+	// stampAbortedTick.
+	revision := r.fetchComparedRevision(ctx, gp)
+
 	// Steps 1/2/2b — read + parse + validate the desired state from git.
 	// Extracted to readDesiredState so a one-time single-cluster resync
 	// (ResyncClusterLabels, v4-8-5's "Re-sync now") computes the identical
 	// desired-label set this tick would, from the SAME read path, instead
 	// of a second git-reading path that could drift out of sync with this
 	// one over time.
-	spec, v4, fileNonEmpty, err := r.readDesiredState(ctx, gp)
+	spec, v4, fileNonEmpty, readPath, err := r.readDesiredState(ctx, gp)
 	if err != nil {
 		var rdErr *desiredStateReadError
 		if !errors.As(err, &rdErr) {
@@ -564,6 +586,11 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 		)
 	}
 
+	// The read succeeded (even an "empty desired state" read is a real,
+	// completed comparison) — publish this pass's compared revision + path
+	// so every recordReconcile call below carries them (P2-C1).
+	r.setPassCompared(revision, readPath)
+
 	r.reconcileDiff(ctx, spec, fileNonEmpty, v4, &stats)
 	r.emitSummaryAudit(ctx, stats)
 }
@@ -602,7 +629,7 @@ func (e *desiredStateReadError) Unwrap() error { return e.Err }
 // fresh repo before the first cluster registration) — callers should treat
 // that as "zero clusters desired". A non-nil error is always a
 // *desiredStateReadError.
-func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitProvider) (spec *models.ManagedClustersSpec, v4 *v4Assignments, fileNonEmpty bool, err error) {
+func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitProvider) (spec *models.ManagedClustersSpec, v4 *v4Assignments, fileNonEmpty bool, readPath string, err error) {
 	log := logging.LoggerFromContext(ctx)
 
 	// Step 1: read the managed-clusters file from git. Tries the configured
@@ -612,7 +639,12 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 	// connected repo is one format or the other, never both, so this is a
 	// single extra read only on the (common, cheap) not-found path — v3
 	// repos with a populated managed-clusters.yaml never take it.
-	readPath := r.managedClustersPath
+	//
+	// readPath is a NAMED RETURN (P2-C1) so every branch below — including
+	// the two error returns — reports the exact path this attempt used.
+	// That is what lets recordReconcile's ComparedPath field say "here is
+	// where Sharko looked" even when the read itself failed.
+	readPath = r.managedClustersPath
 	body, readErr := gp.GetFileContent(ctx, readPath, r.branch)
 	if readErr != nil && errors.Is(readErr, gitprovider.ErrFileNotFound) {
 		if v4Body, v4Err := gp.GetFileContent(ctx, V4ManagedClustersPath, r.branch); v4Err == nil {
@@ -629,16 +661,16 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 		// caller diffs against argocd correctly either way (no creates,
 		// only the deletes that would have happened anyway).
 		if errors.Is(readErr, gitprovider.ErrFileNotFound) {
-			return nil, nil, false, nil
+			return nil, nil, false, readPath, nil
 		}
-		return nil, nil, false, &desiredStateReadError{Kind: desiredStateReadKindGit, Path: readPath, Err: readErr}
+		return nil, nil, false, readPath, &desiredStateReadError{Kind: desiredStateReadKindGit, Path: readPath, Err: readErr}
 	}
 
 	// Step 2: parse + schema-validate. Same kind (ManagedClusters), same
 	// reader, regardless of which path Step 1 actually read from.
 	parsedSpec, parseErr := models.LoadManagedClusters(body)
 	if parseErr != nil {
-		return nil, nil, false, &desiredStateReadError{Kind: desiredStateReadKindSchema, Path: readPath, Err: parseErr}
+		return nil, nil, false, readPath, &desiredStateReadError{Kind: desiredStateReadKindSchema, Path: readPath, Err: parseErr}
 	}
 
 	// Step 2b (v4 only): derive each cluster's addon-enablement labels from
@@ -657,7 +689,7 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 	// a file that EXISTS with content but parses to zero clusters is the
 	// signature of a version/format mismatch, not of an intentionally
 	// emptied fleet — see orphanSweepHeld.
-	return &parsedSpec, v4, len(bytes.TrimSpace(body)) > 0, nil
+	return &parsedSpec, v4, len(bytes.TrimSpace(body)) > 0, readPath, nil
 }
 
 // orphanSweepHeld is the orphan-sweep sanity guard (H2 forward guard,
@@ -1284,6 +1316,13 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 			Result:    "success",
 			RequestID: logging.RequestID(ctx),
 		})
+		// P2-C1: a real label write just landed on the user's Secret.
+		// AppliedRevision tracks every successful write this reconciler
+		// makes, self-managed included — NOT provenance annotations, which
+		// stay off self-managed/user-owned Secrets by design (see
+		// SyncLabelsOnly's own doc comment); this is a separate, in-memory
+		// fact, never written onto the Secret itself.
+		r.stampAppliedRevision(entry.Name)
 	}
 	// Whether this tick changed a label or found the Secret already
 	// converged, the self-managed connection is in sync as of now — the
@@ -1405,8 +1444,17 @@ func (r *Reconciler) syncConnectivityCheckLabel(ctx context.Context, name string
 func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, desiredLabels map[string]string, stats *reconcileStats) {
 	log := logging.LoggerFromContext(ctx)
 
+	// Provenance (P2-C5): built from THIS pass's own compared facts, same
+	// as createOne, so a Secret's annotations always agree with what this
+	// same tick's ComparedRevision/ComparedPath report. Only actually
+	// written by SyncManagedClusterLabels when a real Update call happens
+	// (see that function — annotations are untouched on the "already
+	// converged, no write" no-op path).
+	revision, path := r.currentPassCompared()
+	provenance := connectionProvenanceAnnotations(path, revision, r.now())
+
 	mgr := argosecrets.NewManager(r.deps.ArgoClient, r.namespace)
-	res, err := mgr.SyncManagedClusterLabels(ctx, name, desiredLabels)
+	res, err := mgr.SyncManagedClusterLabels(ctx, name, desiredLabels, provenance)
 	if err != nil {
 		stats.Errors++
 		log.Error("[clusterreconciler] managed cluster self-heal failed — continuing to next cluster",
@@ -1496,6 +1544,13 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 			Result:    "success",
 			RequestID: logging.RequestID(ctx),
 		})
+		// P2-C1: a real Update call just landed and verification confirmed
+		// it fully converged — stamp the applied revision before recording
+		// the outcome. Gated on res.Changed: when nothing changed (the
+		// no-op "already converged" path inside SyncManagedClusterLabels),
+		// no write happened this tick, so the PREVIOUS applied revision is
+		// still the honest answer and must not be overwritten.
+		r.stampAppliedRevision(name)
 	}
 	// Verified converged: addon labels exactly match git AND (managed path)
 	// the ownership label survives. drift is genuinely nil.
@@ -1589,10 +1644,18 @@ func (r *Reconciler) ResyncClusterLabels(ctx context.Context, name string) (Resy
 		return ResyncResult{}, errors.New("no ArgoClient (k8s clientset) configured on this reconciler")
 	}
 
-	spec, v4, _, err := r.readDesiredState(ctx, gp)
+	// P2-C1: a one-time resync is still a real read of git, so it publishes
+	// its own compared revision + path exactly like a periodic pass would
+	// — the write below (selfHealManagedCluster / syncSelfManaged) reads
+	// these same pass-compared facts to stamp its provenance/applied
+	// revision, so a Resync's write is attributed to the commit THIS call
+	// actually read, not whatever the last periodic tick happened to see.
+	revision := r.fetchComparedRevision(ctx, gp)
+	spec, v4, _, readPath, err := r.readDesiredState(ctx, gp)
 	if err != nil {
 		return ResyncResult{}, fmt.Errorf("reading desired cluster state from git: %w", err)
 	}
+	r.setPassCompared(revision, readPath)
 
 	var entry models.ManagedClusterEntry
 	found := false
@@ -2001,6 +2064,19 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	// "every Secret this reconciler writes carries the sharko label".
 	ApplyManagedBySharkoLabel(secret)
 
+	// Provenance (P2-C5): stamp WHERE this write's desired state came from
+	// and WHEN, before the Create call — never a value, never a hash,
+	// never a store path. revision/path come from THIS pass's own
+	// compared facts, so the annotation always agrees with what
+	// ComparedRevision/ComparedPath report for this same tick.
+	revision, path := r.currentPassCompared()
+	if secret.Annotations == nil {
+		secret.Annotations = make(map[string]string, 3)
+	}
+	for k, v := range connectionProvenanceAnnotations(path, revision, r.now()) {
+		secret.Annotations[k] = v
+	}
+
 	if _, createErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{}); createErr != nil {
 		stats.Errors++
 		log.Error("[clusterreconciler] Secret Create failed — skipping cluster",
@@ -2036,6 +2112,11 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		Result:    "success",
 		RequestID: logging.RequestID(ctx),
 	})
+	// P2-C1: a Create is unambiguously a real write — stamp the applied
+	// revision before recording the outcome, so this SAME record's
+	// AppliedRevision field (read inside recordReconcile) already reflects
+	// it rather than needing a second pass to catch up.
+	r.stampAppliedRevision(entry.Name)
 	r.recordReconcile(entry.Name, OutcomeSucceeded, "", nil)
 }
 

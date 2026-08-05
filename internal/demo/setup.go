@@ -363,9 +363,20 @@ func buildDemoClusterSecrets(estate *GeneratedEstate) []runtime.Object {
 
 	newSecret := func(c Cluster, owned bool) *corev1.Secret {
 		labels := map[string]string{}
+		annotations := map[string]string{
+			"sharko.io/managed-cluster": c.Name,
+		}
 		if owned {
 			labels[clusterreconciler.LabelManagedBy] = clusterreconciler.LabelValueSharko
 			labels["argocd.argoproj.io/secret-type"] = "cluster"
+			// P2-C5/C4: provenance annotations on every Secret Sharko OWNS,
+			// so the resource panel shows the same sharko.dev/* facts a
+			// real deployment's writes would carry. Never on a secret
+			// Sharko does NOT own (owned==false — self-managed/foreign),
+			// matching the real write path's rule.
+			annotations[clusterreconciler.AnnotationSourceFile] = demoComparedPath(index)
+			annotations[clusterreconciler.AnnotationRevision] = demoBranchHeadSHA
+			annotations[clusterreconciler.AnnotationWrittenAt] = now.Add(-demoSecretAgeOffsets[index%len(demoSecretAgeOffsets)]).UTC().Format(time.RFC3339)
 		}
 		// The addon labels are the genuinely useful content of a
 		// connection secret — they are what decides which addons run on
@@ -376,12 +387,10 @@ func buildDemoClusterSecrets(estate *GeneratedEstate) []runtime.Object {
 		}
 		sec := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      c.Name,
-				Namespace: "argocd",
-				Labels:    labels,
-				Annotations: map[string]string{
-					"sharko.io/managed-cluster": c.Name,
-				},
+				Name:              c.Name,
+				Namespace:         "argocd",
+				Labels:            labels,
+				Annotations:       annotations,
 				CreationTimestamp: metav1.NewTime(now.Add(-demoSecretAgeOffsets[index%len(demoSecretAgeOffsets)])),
 			},
 			Data: map[string][]byte{

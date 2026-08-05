@@ -88,6 +88,18 @@ var annotationsThatEmbedTheObject = map[string]bool{
 type secretResourceKeyView struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
+	// Path (P2-C2) is the secrets-store POINTER this key's value comes
+	// from — a location, not a value; safe to show (the whole point of
+	// this endpoint's own header comment: Sharko may describe the
+	// delivery, never the secret). Populated ONLY on the addon-values
+	// live-read response (handleGetAddonValuesSecretResource), which is
+	// already behind the operator-gated secret.resource.read action — NEVER
+	// on the list endpoint (buildAddonValuesSecretRows), which any logged-in
+	// user can reach. Empty on the connection-secret live-read response,
+	// which has no per-key store-pointer concept — a connection secret's
+	// desired state lives at one FILE path, already carried on the row
+	// (connectionSecretRow.ComparedPath), not per-key.
+	Path string `json:"path,omitempty"`
 }
 
 // secretResourceLabelView is one label or annotation, as a sorted list
@@ -132,7 +144,13 @@ type secretResourceView struct {
 // function never reads sec.Data[k] or sec.StringData[k] — only their key
 // names. Nothing downstream of here has access to the live object, so
 // there is no second place a value could escape from.
-func newSecretResourceView(sec *corev1.Secret, readFrom string) secretResourceView {
+//
+// keyPaths (P2-C2) is the per-key secrets-store pointer map (data key →
+// provider path, e.g. models.AddonSecretRef.Keys) — nil for the connection
+// endpoint, def.Keys for the addon-values endpoint. A key with no entry in
+// keyPaths simply gets an empty Path, same as before this parameter
+// existed.
+func newSecretResourceView(sec *corev1.Secret, readFrom string, keyPaths map[string]string) secretResourceView {
 	view := secretResourceView{
 		Kind:          "Secret",
 		APIVersion:    "v1",
@@ -182,7 +200,7 @@ func newSecretResourceView(sec *corev1.Secret, readFrom string) secretResourceVi
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		view.DataKeys = append(view.DataKeys, secretResourceKeyView{Key: k, Value: blankedValue})
+		view.DataKeys = append(view.DataKeys, secretResourceKeyView{Key: k, Value: blankedValue, Path: keyPaths[k]})
 	}
 
 	return view
@@ -308,8 +326,11 @@ func (s *Server) handleGetConnectionSecretResource(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// A connection secret has no per-key store pointer — its desired state
+	// lives at one FILE path, already on the row (P2-C1's ComparedPath) —
+	// so keyPaths is nil here (P2-C2).
 	writeJSON(w, http.StatusOK, newSecretResourceView(sec,
-		fmt.Sprintf("Sharko's own cluster, namespace %q", ns)))
+		fmt.Sprintf("Sharko's own cluster, namespace %q", ns), nil))
 }
 
 // handleGetAddonValuesSecretResource godoc
@@ -367,8 +388,12 @@ func (s *Server) handleGetAddonValuesSecretResource(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// P2-C2: the per-key store pointer list — key name -> provider path.
+	// This is the ONE place it ever ships: this endpoint is already
+	// operator-gated (secret.resource.read, checked at the top of this
+	// handler), unlike the list endpoint any logged-in user can reach.
 	writeJSON(w, http.StatusOK, newSecretResourceView(sec,
-		fmt.Sprintf("cluster %q, namespace %q", cluster, def.Namespace)))
+		fmt.Sprintf("cluster %q, namespace %q", cluster, def.Namespace), def.Keys))
 }
 
 // secretResourceViewHasNoValue is a belt-and-braces assertion used by the

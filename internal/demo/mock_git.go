@@ -370,6 +370,28 @@ func (p *MockGitProvider) GetPullRequestStatus(_ context.Context, prNumber int) 
 	return "", fmt.Errorf("PR #%d not found", prNumber)
 }
 
+// demoBranchHeadSHA is the fixed, obviously-fake 40-char commit SHA the
+// demo git provider reports as every branch's head (P2-C4). Well-formed
+// (real hex, real length) so it renders exactly like a real SHA would —
+// only its content ("deaddead...") says it is fake. One fixed value on
+// purpose: the demo's whole managed-clusters.yaml is a static, hand-written
+// fixture that never actually changes commit-to-commit, so a single
+// unchanging SHA is the honest answer, not a randomly-varying one.
+const demoBranchHeadSHA = "deaddead0102030405060708090a0b0c0d0e0f1"
+
+// GetBranchHeadSHA implements gitprovider.BranchRevisioner so this provider
+// answers the same question a real GitHub, Azure DevOps, or Gitea
+// connection does. Demo mode's cluster reconciler is constructed but never
+// Started (see setup.go — the state the page shows is direct-seeded, the
+// same reasoning as SeedReconcileRecordForDemo), so this method is not what
+// puts a revision on the demo's rows; connection_secrets_demo.go seeds
+// demoBranchHeadSHA directly for that. This method exists so any test or
+// future code path that DOES run a real tick against MockGitProvider gets
+// an honest, well-formed answer instead of "unimplemented".
+func (p *MockGitProvider) GetBranchHeadSHA(_ context.Context, _ string) (string, error) {
+	return demoBranchHeadSHA, nil
+}
+
 // DeleteBranch removes a branch from the in-memory store.
 func (p *MockGitProvider) DeleteBranch(_ context.Context, branchName string) error {
 	p.mu.Lock()

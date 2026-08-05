@@ -898,6 +898,11 @@ var serveCmd = &cobra.Command{
 				)
 				srv.SetSecretReconciler(reconciler)
 				secretRecon = reconciler
+				// P2-C5: the raw provider type string ("aws-sm",
+				// "k8s-secrets", ...) stamped verbatim into every
+				// addon-values Secret's sharko.dev/source provenance
+				// annotation.
+				reconciler.SetSourceType(addonCfgPtr.Type)
 
 				// Wire audit callback so reconcile events appear in GET /api/v1/audit.
 				auditLog := srv.AuditLog()

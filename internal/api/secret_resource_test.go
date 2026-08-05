@@ -122,7 +122,7 @@ func TestSecretResource_NeverReturnsAValue(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "ns"},
 				Data:       tc.data,
 			}
-			view := newSecretResourceView(sec, "somewhere")
+			view := newSecretResourceView(sec, "somewhere", nil)
 
 			if field, ok := secretResourceViewHasNoValue(view); !ok {
 				t.Fatalf("view carries something other than the blank mask at %s", field)
@@ -183,7 +183,7 @@ func TestSecretResource_BlanksTheSelfCopyingAnnotation(t *testing.T) {
 		Data: map[string][]byte{"api-key": []byte(theValue)},
 	}
 
-	view := newSecretResourceView(sec, "somewhere")
+	view := newSecretResourceView(sec, "somewhere", nil)
 	body, err := json.Marshal(view)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -225,7 +225,7 @@ func TestSecretResource_ShowsLabelsInFull(t *testing.T) {
 		},
 		Data: map[string][]byte{"config": []byte(`{"bearerToken":"secret"}`)},
 	}
-	view := newSecretResourceView(sec, "somewhere")
+	view := newSecretResourceView(sec, "somewhere", nil)
 
 	got := map[string]string{}
 	for _, l := range view.Labels {

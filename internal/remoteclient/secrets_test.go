@@ -51,7 +51,7 @@ func somebodyElsesSecret(owner string) *corev1.Secret {
 
 func TestEnsureSecret_CreatesWhenAbsentAndLabelsItAtBirth(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	if err := EnsureSecret(context.Background(), client, "monitoring", "addon-creds", map[string][]byte{"api-key": []byte("new")}); err != nil {
+	if err := EnsureSecret(context.Background(), client, "monitoring", "addon-creds", map[string][]byte{"api-key": []byte("new")}, nil); err != nil {
 		t.Fatalf("EnsureSecret: %v", err)
 	}
 	live, err := client.CoreV1().Secrets("monitoring").Get(context.Background(), "addon-creds", metav1.GetOptions{})
@@ -65,7 +65,7 @@ func TestEnsureSecret_CreatesWhenAbsentAndLabelsItAtBirth(t *testing.T) {
 
 func TestEnsureSecret_UpdatesItsOwn(t *testing.T) {
 	client := fake.NewSimpleClientset(sharkosSecret())
-	if err := EnsureSecret(context.Background(), client, "monitoring", "addon-creds", map[string][]byte{"api-key": []byte("new")}); err != nil {
+	if err := EnsureSecret(context.Background(), client, "monitoring", "addon-creds", map[string][]byte{"api-key": []byte("new")}, nil); err != nil {
 		t.Fatalf("EnsureSecret: %v", err)
 	}
 	live, _ := client.CoreV1().Secrets("monitoring").Get(context.Background(), "addon-creds", metav1.GetOptions{})
@@ -77,7 +77,7 @@ func TestEnsureSecret_UpdatesItsOwn(t *testing.T) {
 func TestEnsureSecret_RefusesSomebodyElses(t *testing.T) {
 	for _, owner := range []string{"external-secrets", "helm", ""} {
 		client := fake.NewSimpleClientset(somebodyElsesSecret(owner))
-		err := EnsureSecret(context.Background(), client, "monitoring", "addon-creds", map[string][]byte{"api-key": []byte("new")})
+		err := EnsureSecret(context.Background(), client, "monitoring", "addon-creds", map[string][]byte{"api-key": []byte("new")}, nil)
 		if !errors.Is(err, ErrForeignSecret) {
 			t.Fatalf("owner=%q: error = %v, want ErrForeignSecret", owner, err)
 		}

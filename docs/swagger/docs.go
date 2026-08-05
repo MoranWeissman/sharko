@@ -11926,6 +11926,10 @@ const docTemplate = `{
                 "secret_namespace": {
                     "type": "string"
                 },
+                "self_heals": {
+                    "description": "SelfHeals (P2-C3) reports whether Sharko will repair THIS row on its\nown: true for every values row except a foreign one (P1-A's\nownership gate means Sharko never touches a secret it did not\ncreate, so it can never self-heal one either).",
+                    "type": "boolean"
+                },
                 "source": {
                     "description": "Source (S1) names, per row, the real backend this secret's value\ncomes from and is compared against — \"AWS Secrets Manager\", \"a\nKubernetes Secret\", ..., or the honest \"secrets store\" fallback when\nthe server cannot name a product. Per row, not per response: the row\nis what a reader filters, sorts and groups by, so the fact has to\nlive on the row.",
                     "type": "string"
@@ -12267,7 +12271,23 @@ const docTemplate = `{
         "internal_api.connectionSecretRow": {
             "type": "object",
             "properties": {
+                "applied_revision": {
+                    "description": "AppliedRevision (P2-C1) is the full commit SHA the last SUCCESSFUL\nWRITE to this cluster's secret was built from — empty until this\nserver instance has ever successfully written it.",
+                    "type": "string"
+                },
                 "cluster": {
+                    "type": "string"
+                },
+                "compared_path": {
+                    "description": "ComparedPath (P2-C1) is the exact managed-clusters file path this\nrow's state was compared against.",
+                    "type": "string"
+                },
+                "compared_revision": {
+                    "description": "ComparedRevision (P2-C1) is the full branch head commit SHA the pass\nthat produced this row's state read git at. Empty when the active\ngit provider cannot say — never a guessed or stale value. The UI\nshows the first 7 characters on the row/panel and the full value on\nhover.",
+                    "type": "string"
+                },
+                "drift_source": {
+                    "description": "DriftSource (P2-C6) names which side moved for an out_of_sync row:\n\"git\" (the intent commit changed since the last successful write —\nComparedRevision != AppliedRevision) or \"cluster\" (the revisions\nagree but the live secret still differs — something changed it\noutside git). Empty when the row isn't out_of_sync, or when either\nrevision is unknown — never a guess.",
                     "type": "string"
                 },
                 "last_check_error": {
@@ -12290,6 +12310,10 @@ const docTemplate = `{
                 },
                 "secret_namespace": {
                     "type": "string"
+                },
+                "self_heals": {
+                    "description": "SelfHeals (P2-C3) reports whether Sharko will repair THIS row on its\nown, without a human clicking Sync — derived from the real rule (see\nconnectionSelfHeals): self-managed connections and v4 repos always\nheal; a v3 repo's managed clusters heal only when the\nmanaged_cluster_self_heal setting is on.",
+                    "type": "boolean"
                 },
                 "source": {
                     "description": "Source (S1) names, per row, which store this secret's content is\ncompared against. A connection secret always follows git — git holds\nthe addon labels this secret is built from — so this is the constant\n\"git\" here, and it is stated per row rather than assumed by the UI so\nboth kinds of row answer the same question in the same field.",
@@ -12763,6 +12787,10 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "key": {
+                    "type": "string"
+                },
+                "path": {
+                    "description": "Path (P2-C2) is the secrets-store POINTER this key's value comes\nfrom — a location, not a value; safe to show (the whole point of\nthis endpoint's own header comment: Sharko may describe the\ndelivery, never the secret). Populated ONLY on the addon-values\nlive-read response (handleGetAddonValuesSecretResource), which is\nalready behind the operator-gated secret.resource.read action — NEVER\non the list endpoint (buildAddonValuesSecretRows), which any logged-in\nuser can reach. Empty on the connection-secret live-read response,\nwhich has no per-key store-pointer concept — a connection secret's\ndesired state lives at one FILE path, already carried on the row\n(connectionSecretRow.ComparedPath), not per-key.",
                     "type": "string"
                 },
                 "value": {

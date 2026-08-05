@@ -214,6 +214,25 @@ type Reconciler struct {
 	// reads as "not checked since restart", never a fabricated
 	// timestamp.
 	itemRecords map[ItemKey]ItemRecord
+
+	// sourceType (P2-C5) names the real secrets-provider backend this
+	// reconciler's pushes are compared against — the value the caller
+	// configured (e.g. "aws-sm", "k8s-secrets"), stamped verbatim into
+	// every values Secret's sharko.dev/source provenance annotation. Set
+	// via SetSourceType; "" is a legitimate zero value (falls back to the
+	// honest generic label — see remoteclient.ValuesProvenanceAnnotations),
+	// never guessed.
+	sourceType string
+}
+
+// SetSourceType records the real secrets-provider backend type this
+// reconciler pushes addon-values secrets from, for the sharko.dev/source
+// provenance annotation stamped on every write (P2-C5). Pass the same
+// providers.AddonSecretProviderConfig.Type value wired into
+// providers.NewAddonSecretProvider for this reconciler's secretProvider —
+// see cmd/sharko/serve.go's wiring.
+func (r *Reconciler) SetSourceType(sourceType string) {
+	r.sourceType = sourceType
 }
 
 // ReconcileStats holds counters and timing from the most recent reconcile cycle.
@@ -889,7 +908,8 @@ func (r *Reconciler) reconcileSecret(
 			"cluster", clusterName, "addon", addonName,
 			"secret", ref.SecretName, "namespace", ref.Namespace,
 		)
-		if createErr := remoteclient.EnsureSecret(ctx, client, ref.Namespace, ref.SecretName, desiredData); createErr != nil {
+		provenance := remoteclient.ValuesProvenanceAnnotations(addonName, r.sourceType, time.Now())
+		if createErr := remoteclient.EnsureSecret(ctx, client, ref.Namespace, ref.SecretName, desiredData, provenance); createErr != nil {
 			// A Secret that appeared between this Get and the create, owned
 			// by somebody else — the choke point refused it, and so does
 			// this pass.
@@ -942,7 +962,8 @@ func (r *Reconciler) reconcileSecret(
 	log.Warn("[secrets] secret rotated, updating",
 		"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 	)
-	if updateErr := remoteclient.EnsureSecret(ctx, client, ref.Namespace, ref.SecretName, desiredData); updateErr != nil {
+	updateProvenance := remoteclient.ValuesProvenanceAnnotations(addonName, r.sourceType, time.Now())
+	if updateErr := remoteclient.EnsureSecret(ctx, client, ref.Namespace, ref.SecretName, desiredData, updateProvenance); updateErr != nil {
 		// Belt and braces: the ownership gate above already returned for a
 		// foreign Secret, so this only fires if the label was stripped
 		// between the two calls. Either way, no write happened.

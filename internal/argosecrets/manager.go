@@ -935,7 +935,16 @@ type ManagedLabelSyncResult struct {
 // No churn: when the converged label set already equals the live one, no
 // K8s write is issued (Changed=false). Not-found is NOT an error
 // (Found=false) — the caller records a skip.
-func (m *Manager) SyncManagedClusterLabels(ctx context.Context, name string, desiredAddonLabels map[string]string) (ManagedLabelSyncResult, error) {
+//
+// annotations (P2-C5) are the caller's provenance facts — source file,
+// revision, written-at — merged onto the Secret's existing annotations
+// (never replacing them) ONLY when a real Update call is about to happen.
+// The "no churn" no-op path above never touches annotations at all: an
+// unchanged tick did not write anything, so it has nothing to be
+// provenance FOR. nil or empty is a legitimate value (e.g. ResyncClusterLabels
+// calling in a context where the caller has nothing to say) and leaves
+// Annotations byte-identical to before this parameter existed.
+func (m *Manager) SyncManagedClusterLabels(ctx context.Context, name string, desiredAddonLabels map[string]string, annotations map[string]string) (ManagedLabelSyncResult, error) {
 	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(getErr) {
 		return ManagedLabelSyncResult{Found: false}, nil
@@ -1016,8 +1025,19 @@ func (m *Manager) SyncManagedClusterLabels(ctx context.Context, name string, des
 		return ManagedLabelSyncResult{Found: true, Changed: false, Adopted: adopted, Converged: sortedKeys(desired)}, nil
 	}
 
-	// Data / StringData / Annotations are deliberately NOT touched — DeepCopy
-	// preserved them and the loops above only mutate updated.Labels.
+	// Data / StringData are deliberately NOT touched — DeepCopy preserved
+	// them. Annotations receive ONLY the caller's provenance keys (P2-C5),
+	// merged on top of whatever DeepCopy already carried — every other
+	// annotation on the Secret (a takeover's preserved-label record, an
+	// adopted annotation) survives untouched.
+	if len(annotations) > 0 {
+		if updated.Annotations == nil {
+			updated.Annotations = make(map[string]string, len(annotations))
+		}
+		for k, v := range annotations {
+			updated.Annotations[k] = v
+		}
+	}
 	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
 		return ManagedLabelSyncResult{Found: true}, fmt.Errorf("converging managed cluster labels on secret %q in namespace %q: %w", name, m.namespace, updateErr)
 	}

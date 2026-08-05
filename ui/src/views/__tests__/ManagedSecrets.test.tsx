@@ -124,11 +124,17 @@ const baseResponse: ManagedSecretsResponse = {
       last_checked: '2026-08-05T00:00:00Z',
       last_repaired: '2026-08-04T23:00:00Z',
       last_repaired_detail: 'secret created',
+      self_heals: true,
     },
     {
       cluster: 'staging-us',
       state: 'out_of_sync',
       source: 'git',
+      self_heals: false,
+      compared_revision: 'abcdef1234567890abcdef1234567890abcdef12',
+      compared_path: 'configuration/managed-clusters.yaml',
+      applied_revision: '00000000000000000000000000000000000000',
+      drift_source: 'git',
     },
   ],
   addon_values_secrets: [
@@ -142,6 +148,7 @@ const baseResponse: ManagedSecretsResponse = {
       last_checked: '2026-08-05T00:00:00Z',
       last_repaired: '2026-08-04T22:00:00Z',
       last_repaired_detail: 'secret created',
+      self_heals: true,
     },
     {
       cluster: 'staging-us',
@@ -151,6 +158,7 @@ const baseResponse: ManagedSecretsResponse = {
       state: 'out_of_sync',
       source: 'AWS Secrets Manager',
       last_check_error: "Sharko couldn't fetch this secret's value from the vault.",
+      self_heals: true,
     },
   ],
   engines: {
@@ -504,6 +512,54 @@ describe('ManagedSecrets', () => {
     await waitFor(() => expect(mockGetClusterComparison).toHaveBeenCalledWith('staging-us'))
     await waitFor(() => expect(within(panel).getByText(/Missing 1 addon label/)).toBeInTheDocument())
     expect(within(panel).getByText('datadog')).toBeInTheDocument()
+  })
+
+  // P2-C1/C3/C6: the out-of-sync connection row (staging-us in baseResponse)
+  // carries a known compared revision, a compared path, an applied
+  // revision that DISAGREES with it (drift blame "git"), and
+  // self_heals: false — the panel must show all three facts, verbatim.
+  it('the connection panel shows which commit it was compared against, the self-heal promise, and drift blame — verbatim', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    mockGetClusterComparison.mockResolvedValue({
+      cluster: {
+        name: 'staging-us',
+        labels: {},
+        last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded', label_drift: { added: [], removed: [], changed: [] } },
+      },
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('secret-row-connection-staging-us'))
+
+    const panel = await screen.findByTestId('secret-detail-panel')
+
+    // C1: short SHA (7 chars) + full path shown; full SHA on hover (title).
+    const revisionLine = within(panel).getByTestId('detail-compared-revision')
+    expect(revisionLine).toHaveTextContent('Compared against git abcdef1 · configuration/managed-clusters.yaml')
+    expect(revisionLine.title).toBe('Full commit: abcdef1234567890abcdef1234567890abcdef12')
+
+    // C3: self_heals: false on an out_of_sync row -> "Waiting for Sync."
+    expect(within(panel).getByTestId('detail-self-heals')).toHaveTextContent('Waiting for Sync.')
+
+    // C6: compared_revision != applied_revision -> "git moved" sentence.
+    expect(within(panel).getByTestId('detail-drift-source')).toHaveTextContent(
+      'Git moved — a newer commit changed what this secret should be.',
+    )
+  })
+
+  // P2-C3: the in-sync row (prod-eu) must show neither the drift sentence
+  // nor the self-heal promise — both are scoped to out_of_sync/missing rows.
+  it('an in-sync connection row shows no self-heal promise and no drift blame', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('secret-row-connection-prod-eu'))
+
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(within(panel).queryByTestId('detail-self-heals')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-drift-source')).not.toBeInTheDocument()
   })
 
   it('the values-secret Diff never makes a network call — it restates the row state, the real source, and the S8 check-failure sentence', async () => {

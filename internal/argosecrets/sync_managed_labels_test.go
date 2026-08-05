@@ -51,7 +51,7 @@ func TestSyncManagedClusterLabels_Managed_Converges(t *testing.T) {
 	client := fake.NewSimpleClientset(existing)
 	mgr := NewManager(client, testNamespace)
 
-	res, err := mgr.SyncManagedClusterLabels(context.Background(), "c1", map[string]string{"addon-foo": "enabled"})
+	res, err := mgr.SyncManagedClusterLabels(context.Background(), "c1", map[string]string{"addon-foo": "enabled"}, nil)
 	if err != nil {
 		t.Fatalf("SyncManagedClusterLabels: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestSyncManagedClusterLabels_Managed_ReAppliesLostOwnership(t *testing.T) {
 	client := fake.NewSimpleClientset(existing)
 	mgr := NewManager(client, testNamespace)
 
-	res, err := mgr.SyncManagedClusterLabels(context.Background(), "c1", map[string]string{"addon-foo": "enabled"})
+	res, err := mgr.SyncManagedClusterLabels(context.Background(), "c1", map[string]string{"addon-foo": "enabled"}, nil)
 	if err != nil {
 		t.Fatalf("SyncManagedClusterLabels: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestSyncManagedClusterLabels_Adopted(t *testing.T) {
 	client := fake.NewSimpleClientset(existing)
 	mgr := NewManager(client, testNamespace)
 
-	res, err := mgr.SyncManagedClusterLabels(context.Background(), "adopted", map[string]string{"addon-foo": "enabled"})
+	res, err := mgr.SyncManagedClusterLabels(context.Background(), "adopted", map[string]string{"addon-foo": "enabled"}, nil)
 	if err != nil {
 		t.Fatalf("SyncManagedClusterLabels: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestSyncManagedClusterLabels_NoChurn(t *testing.T) {
 	client := fake.NewSimpleClientset(existing)
 	mgr := NewManager(client, testNamespace)
 
-	res, err := mgr.SyncManagedClusterLabels(context.Background(), "c1", map[string]string{"addon-foo": "enabled"})
+	res, err := mgr.SyncManagedClusterLabels(context.Background(), "c1", map[string]string{"addon-foo": "enabled"}, nil)
 	if err != nil {
 		t.Fatalf("SyncManagedClusterLabels: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestSyncManagedClusterLabels_NoChurn(t *testing.T) {
 func TestSyncManagedClusterLabels_NotFound(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	mgr := NewManager(client, testNamespace)
-	res, err := mgr.SyncManagedClusterLabels(context.Background(), "missing", map[string]string{"addon-foo": "enabled"})
+	res, err := mgr.SyncManagedClusterLabels(context.Background(), "missing", map[string]string{"addon-foo": "enabled"}, nil)
 	if err != nil {
 		t.Fatalf("not-found must not be an error: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestSyncManagedClusterLabels_LegacyValueNormalized(t *testing.T) {
 	client := fake.NewSimpleClientset(existing)
 	mgr := NewManager(client, testNamespace)
 
-	if _, err := mgr.SyncManagedClusterLabels(context.Background(), "c1", map[string]string{"addon-foo": "true"}); err != nil {
+	if _, err := mgr.SyncManagedClusterLabels(context.Background(), "c1", map[string]string{"addon-foo": "true"}, nil); err != nil {
 		t.Fatalf("SyncManagedClusterLabels: %v", err)
 	}
 	got, _ := client.CoreV1().Secrets(testNamespace).Get(context.Background(), "c1", metav1.GetOptions{})

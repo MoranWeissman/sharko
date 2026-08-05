@@ -21,7 +21,7 @@ func TestEnsureSecret_CreatesNew(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	err := EnsureSecret(context.Background(), client, "datadog", "datadog-keys", map[string][]byte{
 		"api-key": []byte("secret-value"),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestEnsureSecret_UpdatesExisting(t *testing.T) {
 	client := fake.NewSimpleClientset(existing)
 	err := EnsureSecret(context.Background(), client, "datadog", "datadog-keys", map[string][]byte{
 		"api-key": []byte("new-value"),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

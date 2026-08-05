@@ -159,6 +159,26 @@ export interface ConnectionSecretRow {
   // the last reconcile attempt for this cluster failed (not because it was
   // never checked). Mirrors AddonValuesSecretRow.last_check_error exactly.
   last_check_error?: string
+  // compared_revision (P2-C1) is the full branch head commit SHA the pass
+  // that produced this row's state read git at. Absent when the active git
+  // provider couldn't say — never a guessed or stale value. The panel
+  // shows the first 7 characters, full value on hover.
+  compared_revision?: string
+  // compared_path (P2-C1) is the exact managed-clusters file path this
+  // row's state was compared against.
+  compared_path?: string
+  // applied_revision (P2-C1) is the full commit SHA the last SUCCESSFUL
+  // write to this cluster's secret was built from — absent until this
+  // server instance has ever successfully written it.
+  applied_revision?: string
+  // self_heals (P2-C3) — will Sharko fix THIS row on its own, without a
+  // human clicking Sync.
+  self_heals: boolean
+  // drift_source (P2-C6) — which side moved for an out_of_sync row: 'git'
+  // (the intent commit changed since the last successful write) or
+  // 'cluster' (the revisions agree but the live secret still differs).
+  // Absent when the row isn't out_of_sync, or either revision is unknown.
+  drift_source?: 'git' | 'cluster'
 }
 
 export interface AddonValuesSecretRow {
@@ -186,6 +206,10 @@ export interface AddonValuesSecretRow {
   // implying drift when the check itself never completed. Never the
   // reconciler's raw error text — the server maps it before it ships.
   last_check_error?: string
+  // self_heals (P2-C3) — true for every values row except a foreign one:
+  // the ownership gate means Sharko never touches (and so never heals) a
+  // secret it did not create.
+  self_heals: boolean
 }
 
 // AddonValuesSecretActionResult mirrors the response body of both
@@ -252,6 +276,14 @@ export interface SecretResourceKey {
   key: string
   /** Always the server's fixed mask. Never a real value, never a length. */
   value: string
+  /**
+   * (P2-C2) The secrets-store pointer this key's value comes from — a
+   * location, not a value. Only ever present on the addon-values secret
+   * response (this endpoint is already behind the operator-gated
+   * secret.resource.read action); absent on the connection-secret
+   * response, which has no per-key pointer concept.
+   */
+  path?: string
 }
 
 export interface SecretResourceLabel {
