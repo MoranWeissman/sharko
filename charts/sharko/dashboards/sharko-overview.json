@@ -33,16 +33,17 @@
     {
       "title": "Reconciler Run Duration",
       "type": "timeseries",
+      "description": "P2-D: sharko_reconciler_duration_seconds is now written by both engines — internal/clusterreconciler's write pass and check pass, and internal/secrets' periodic pass. engine is 'cluster_connection' or 'addon_values' (fixed from the prior 'reconciler' label, which no series ever carried).",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "targets": [
         {
           "expr": "rate(sharko_reconciler_duration_seconds_sum[5m]) / rate(sharko_reconciler_duration_seconds_count[5m])",
-          "legendFormat": "{{reconciler}} avg",
+          "legendFormat": "{{engine}} avg",
           "refId": "A"
         },
         {
           "expr": "histogram_quantile(0.99, rate(sharko_reconciler_duration_seconds_bucket[5m]))",
-          "legendFormat": "{{reconciler}} p99",
+          "legendFormat": "{{engine}} p99",
           "refId": "B"
         }
       ],
@@ -93,6 +94,47 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "Managed Secrets by State",
+      "type": "timeseries",
+      "description": "P2-D: sharko_managed_secrets_state — how many secrets each engine currently knows about are in each state (in_sync, out_of_sync, missing, foreign, unknown), snapshotted at the end of every completed pass. A rising out_of_sync/missing line with a flat writes rate (see the panel below) is the 'stuck repairing the same thing forever' signal.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sharko_managed_secrets_state",
+          "legendFormat": "{{engine}} · {{state}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "title": "Reconciler Writes & Item Failures",
+      "type": "timeseries",
+      "description": "P2-D D2, the stuck-loop counter: sharko_reconciler_writes_total (a real Kubernetes write) vs. sharko_reconciler_item_failures_total (a check or write that itself could not complete). A flat non-zero writes rate alongside an unchanging Managed Secrets by State panel is the alarm — something keeps reverting what Sharko just wrote.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(rate(sharko_reconciler_writes_total[5m])) by (engine, kind)",
+          "legendFormat": "{{engine}} writes · {{kind}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(sharko_reconciler_item_failures_total[5m])) by (engine, reason)",
+          "legendFormat": "{{engine}} failures · {{reason}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
         }
       }
     }

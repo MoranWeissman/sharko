@@ -454,6 +454,91 @@ describe('ManagedSecrets', () => {
     )
   })
 
+  // P2-D D3: a connection row whose self-managed secret keeps getting
+  // reverted shows a quiet warning in the panel, once the streak reaches 3.
+  it('P2-D: a connection row with fight_count >= 3 shows the quiet fight warning in the panel', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      cluster_connection_secrets: [
+        ...baseResponse.cluster_connection_secrets,
+        {
+          cluster: 'byo-cluster',
+          secret_namespace: 'argocd',
+          secret_name: 'byo-cluster',
+          state: 'in_sync',
+          source: 'git',
+          last_checked: '2026-08-05T00:05:00Z',
+          fight_count: 4,
+        },
+      ],
+    })
+    renderPage()
+
+    const row = await screen.findByTestId('secret-row-connection-byo-cluster')
+    fireEvent.click(row)
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(within(panel).getByTestId('fight-warning')).toHaveTextContent(
+      'Something keeps changing this secret back — Sharko has re-applied it 4 times in a row.',
+    )
+  })
+
+  // P2-D D3: a values row with a fight_count below 3 (or a connection row
+  // below 3) must stay quiet — the warning is only for a real, sustained
+  // pattern, never a single blip.
+  it('P2-D: a connection row with fight_count below 3 shows no fight warning', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      cluster_connection_secrets: [
+        ...baseResponse.cluster_connection_secrets,
+        {
+          cluster: 'byo-cluster',
+          secret_namespace: 'argocd',
+          secret_name: 'byo-cluster',
+          state: 'in_sync',
+          source: 'git',
+          last_checked: '2026-08-05T00:05:00Z',
+          fight_count: 2,
+        },
+      ],
+    })
+    renderPage()
+
+    const row = await screen.findByTestId('secret-row-connection-byo-cluster')
+    fireEvent.click(row)
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(within(panel).queryByTestId('fight-warning')).not.toBeInTheDocument()
+  })
+
+  // P2-D D3: the values-side counterpart — a secret whose last 3 checks
+  // failed in a row shows its own quiet warning.
+  it('P2-D: a values row with consecutive_failures >= 3 shows the quiet consecutive-failures warning in the panel', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      addon_values_secrets: [
+        ...baseResponse.addon_values_secrets,
+        {
+          cluster: 'staging-us',
+          addon: 'grafana',
+          secret_name: 'grafana-secret',
+          secret_namespace: 'monitoring',
+          state: 'unknown',
+          source: 'AWS Secrets Manager',
+          last_checked: '2026-08-05T00:05:00Z',
+          last_check_error: "Sharko couldn't connect to one of the clusters.",
+          consecutive_failures: 3,
+        },
+      ],
+    })
+    renderPage()
+
+    const row = await screen.findByTestId('secret-row-values-staging-us-grafana')
+    fireEvent.click(row)
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(within(panel).getByTestId('consecutive-failures-warning')).toHaveTextContent(
+      'The last 3 checks of this secret failed in a row.',
+    )
+  })
+
   it('H2: the status word is plain dark ink for every state — colour lives on the status dot only', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()

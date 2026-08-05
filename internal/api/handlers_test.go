@@ -108,6 +108,10 @@ type fakeReconciler struct {
 	// LastItemError (S8), same keying/nil-means-unknown convention as
 	// itemOutcome above.
 	itemError map[[2]string]string
+	// itemConsecutiveFailures (P2-D D3) lets tests seed a per cluster+addon
+	// consecutive-failure count, same keying/nil-means-unknown convention
+	// as itemError above.
+	itemConsecutiveFailures map[[2]string]int
 
 	// checkOutcome/checkErr and syncOutcome/syncErr (S4) are what
 	// CheckOne/SyncOne return; checkCalls/syncCalls record every
@@ -165,6 +169,14 @@ func (r *fakeReconciler) LastItemError(cluster, addon string) (string, bool) {
 	}
 	e, ok := r.itemError[[2]string{cluster, addon}]
 	return e, ok
+}
+
+func (r *fakeReconciler) LastItemConsecutiveFailures(cluster, addon string) (int, bool) {
+	if r.itemConsecutiveFailures == nil {
+		return 0, false
+	}
+	c, ok := r.itemConsecutiveFailures[[2]string{cluster, addon}]
+	return c, ok
 }
 
 func (r *fakeReconciler) CheckOne(_ context.Context, cluster, addon string) (string, error) {

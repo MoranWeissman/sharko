@@ -697,3 +697,41 @@ func TestReconcile_ItemAuditFn_FiresOnRealChangeOnly(t *testing.T) {
 		t.Errorf("call = %q, want %q", calls[1], "prod-cluster/datadog:updated")
 	}
 }
+
+// TestReconciler_StartRunsImmediatePass pins P2-D D5: this engine already
+// ran one pass immediately at Start() before this lane (Start's body is
+// `r.reconcile(); ticker := ...` — a plain read of the code, not something
+// this lane changed) — this test locks that behaviour in so a future edit
+// cannot silently regress it back to "wait for the first tick". Uses a
+// git reader that always errors, so the immediate pass takes the fast
+// plan-level-failure path (recordRun is called directly, no cluster/addon
+// mocks needed) and LastRunTime() moves off the zero value the moment that
+// pass completes — with a one-hour tick interval, the only way it can move
+// within this test's short deadline is the immediate pass.
+func TestReconciler_StartRunsImmediatePass(t *testing.T) {
+	t.Parallel()
+	reader := &mockGitReader{err: errors.New("git host unreachable (test)")}
+	parser := config.NewParser()
+	r := NewReconciler(
+		&mockCredProvider{},
+		&mockSecretProvider{},
+		func() GitReader { return reader },
+		fakeRemoteClientFn(fake.NewSimpleClientset()),
+		parser,
+		"main",
+		"configuration/managed-clusters.yaml",
+		time.Hour,
+	)
+
+	r.Start()
+	defer r.Stop()
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if !r.LastRunTime().IsZero() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("Start() did not run an immediate pass within 500ms — LastRunTime is still zero")
+}

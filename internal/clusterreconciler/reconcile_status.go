@@ -2,7 +2,10 @@ package clusterreconciler
 
 import (
 	"fmt"
+	"strings"
 	"time"
+
+	"github.com/MoranWeissman/sharko/internal/metrics"
 )
 
 // reconcile_status.go — per-cluster reconcile visibility (V2-cleanup-89.4).
@@ -138,6 +141,46 @@ func (r *Reconciler) recordReconcile(name string, outcome ReconcileOutcome, mess
 		ComparedPath:     comparedPath,
 		AppliedRevision:  appliedRevision,
 	}
+	// P2-D D2: recordReconcile is the single choke point every Failed
+	// outcome in this package passes through — whether it is one cluster's
+	// own write failing, or every known cluster being stamped at once by
+	// stampAbortedTick — so it is also the single place to count per-item
+	// failures. reason is a small fixed set (classifyFailureReason), never
+	// the raw message text, so this counter's cardinality never grows with
+	// the variety of underlying errors.
+	if outcome == OutcomeFailed {
+		metrics.ReconcilerItemFailures.WithLabelValues(engineClusterConnection, classifyFailureReason(message)).Inc()
+	}
+}
+
+// classifyFailureReason buckets a ClusterReconcileRecord's Message into the
+// small fixed reason vocabulary sharko_reconciler_item_failures_total uses
+// (P2-D D2). Mirrors FailureSentence's own stage-matching order and prefixes
+// exactly (failure_sentence.go) — same classification, a short metric-label
+// code instead of a sentence for a person.
+func classifyFailureReason(msg string) string {
+	switch {
+	case strings.Contains(msg, "git_read failed"), strings.Contains(msg, "git read failed"):
+		return "git_read"
+	case strings.Contains(msg, "schema_validation failed"), strings.Contains(msg, "schema validation failed"):
+		return "schema_validation"
+	case strings.Contains(msg, "reconciler pass aborted"):
+		return "cluster_unreachable"
+	case strings.Contains(msg, "credentials"):
+		return "credentials"
+	case strings.Contains(msg, "check whether an ArgoCD cluster secret already exists"),
+		strings.Contains(msg, "read this cluster's ArgoCD secret to check it"),
+		strings.Contains(msg, "re-read the cluster Secret"):
+		return "cluster_unreachable"
+	case strings.Contains(msg, "couldn't build"),
+		strings.Contains(msg, "couldn't create"),
+		strings.Contains(msg, "couldn't sync"),
+		strings.Contains(msg, "couldn't converge"),
+		strings.Contains(msg, "couldn't remove"):
+		return "write_failed"
+	default:
+		return "other"
+	}
 }
 
 // LastReconcile returns the most recently recorded reconcile outcome for
@@ -177,6 +220,122 @@ func (r *Reconciler) LastRunTime() time.Time {
 		}
 	}
 	return latest
+}
+
+// recordWrite marks one actual Kubernetes write this pass made (P2-D
+// D1/D2) — kind is "created" | "updated" | "deleted". Bumps both the
+// legacy-shaped items-changed counter (declared since before this lane,
+// never written until now) and the new writes_total counter, which share
+// the same (engine, kind) shape on purpose — every write call site in this
+// package calls this exactly once per actual write, right next to the
+// existing reconcileStats counter it already bumped.
+func recordWrite(kind string) {
+	metrics.ReconcilerItemsChanged.WithLabelValues(engineClusterConnection, kind).Inc()
+	metrics.ReconcilerWrites.WithLabelValues(engineClusterConnection, kind).Inc()
+}
+
+// recordRunMetrics is the single point both pollOnce (write pass) and
+// checkOnce (check pass) call at the end of a completed run — abort branches
+// included, with itemsChecked 0 (P2-D D1). engine is always
+// engineClusterConnection for this package; taken as a parameter (rather
+// than hardcoded) only so a test can call this against a throwaway engine
+// label without polluting the real one's series.
+//
+// outcome is "success" | "partial" | "failure" — never anything else, kept
+// tiny per the sprint plan's label-cardinality rule.
+func (r *Reconciler) recordRunMetrics(engine string, start time.Time, outcome string, itemsChecked int) {
+	metrics.ReconcilerRuns.WithLabelValues(engine, outcome).Inc()
+	metrics.ReconcilerDuration.WithLabelValues(engine).Observe(r.now().Sub(start).Seconds())
+	now := float64(r.now().Unix())
+	metrics.ReconcilerLastRun.WithLabelValues(engine).Set(now)
+	if outcome == "success" {
+		metrics.ReconcilerLastSuccess.WithLabelValues(engine).Set(now)
+	}
+	if itemsChecked > 0 {
+		metrics.ReconcilerItemsChecked.WithLabelValues(engine).Add(float64(itemsChecked))
+	}
+}
+
+// managedSecretsMetricStates is every state sharko_managed_secrets_state can
+// report for this engine (P2-D D1/D4) — written every pass, in full, so a
+// state that just emptied out reports 0 instead of leaving a stale nonzero
+// value behind. Matches the vocabulary internal/api's connectionSecretState
+// renders per row.
+var managedSecretsMetricStates = []string{"in_sync", "out_of_sync", "missing", "unknown"}
+
+// metricStateFromRecord buckets one cluster's reconcile record into the
+// sharko_managed_secrets_state vocabulary (P2-D D1). Deliberately mirrors
+// internal/api/system_managed_secrets.go's connectionSecretState rule
+// (self-managed "not created yet" -> missing; succeeded + no drift ->
+// in_sync; succeeded + drift -> out_of_sync; anything else -> unknown) —
+// api cannot be imported here (it imports this package), so the two are
+// kept in sync by hand; a future package split could hoist the shared rule
+// out from under both, out of scope for this lane.
+func metricStateFromRecord(rec ClusterReconcileRecord) string {
+	switch {
+	case rec.Outcome == OutcomeSkipped && rec.Message == SelfManagedSecretNotCreatedMessage:
+		return "missing"
+	case rec.Outcome == OutcomeSucceeded && rec.LabelDrift == nil:
+		return "in_sync"
+	case rec.Outcome == OutcomeSucceeded:
+		return "out_of_sync"
+	default:
+		return "unknown"
+	}
+}
+
+// recordStateGauges recomputes sharko_managed_secrets_state from the
+// CURRENT full lastReconcile map (every cluster this server instance
+// currently knows about, not just the clusters this one pass touched) and
+// sets every known state bucket (P2-D D1/D4).
+func (r *Reconciler) recordStateGauges() {
+	r.lastReconcileMu.RLock()
+	counts := make(map[string]int, len(managedSecretsMetricStates))
+	for _, rec := range r.lastReconcile {
+		counts[metricStateFromRecord(rec)]++
+	}
+	r.lastReconcileMu.RUnlock()
+
+	for _, state := range managedSecretsMetricStates {
+		metrics.ManagedSecretsState.WithLabelValues(engineClusterConnection, state).Set(float64(counts[state]))
+	}
+}
+
+// fightGaugeThreshold is the "is this item worth surfacing as a fight"
+// bar (P2-D D3) — the row warning in ui/src/views/ManagedSecrets.tsx and
+// sharko_reconciler_fights both use this same number. Deliberately
+// SEPARATE from fightRevertThreshold (2): that constant decides when
+// recordFightCheck's internal warning text starts (a lower, earlier bar,
+// unchanged by this lane per the "no backoff/detection changes" scope
+// guard); this one decides when a fight is worth a person's attention on
+// the page and in Grafana.
+const fightGaugeThreshold = 3
+
+// FightCount returns the number of CONSECUTIVE reverted ticks currently
+// recorded for the named self-managed cluster's label-fight detector
+// (P2-D D3) — the same counter recordFightCheck advances, exposed for the
+// managed-secrets API response's fight_count field. 0 when the cluster has
+// no fight-tracking state at all (never a self-managed connection, or no
+// tick has run for it yet).
+func (r *Reconciler) FightCount(name string) int {
+	r.fightMu.Lock()
+	defer r.fightMu.Unlock()
+	return r.fightState[name].reverts
+}
+
+// recordFightGauge recomputes sharko_reconciler_fights from the current
+// fightState map (P2-D D3) — the count of clusters whose revert streak has
+// reached fightGaugeThreshold or more.
+func (r *Reconciler) recordFightGauge() {
+	r.fightMu.Lock()
+	count := 0
+	for _, state := range r.fightState {
+		if state.reverts >= fightGaugeThreshold {
+			count++
+		}
+	}
+	r.fightMu.Unlock()
+	metrics.ReconcilerFights.WithLabelValues(engineClusterConnection).Set(float64(count))
 }
 
 // LastError returns the cluster name, message, and timestamp of the most

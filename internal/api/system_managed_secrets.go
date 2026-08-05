@@ -129,6 +129,13 @@ type connectionSecretRow struct {
 	// outside git). Empty when the row isn't out_of_sync, or when either
 	// revision is unknown — never a guess.
 	DriftSource string `json:"drift_source,omitempty"`
+	// FightCount (P2-D D3) is the connection reconciler's label-fight
+	// counter for this cluster — how many consecutive ticks something else
+	// has reverted Sharko's own write on this cluster's self-managed ArgoCD
+	// secret. 0/omitted for every cluster with no fight in progress
+	// (including every Sharko-managed, non-self-managed cluster, which has
+	// no fight concept). The UI shows a quiet row warning at 3 or more.
+	FightCount int `json:"fight_count,omitempty"`
 }
 
 // addonValuesSecretRow is one row of addon_values_secrets — one row per
@@ -185,6 +192,13 @@ type addonValuesSecretRow struct {
 	// ownership gate means Sharko never touches a secret it did not
 	// create, so it can never self-heal one either).
 	SelfHeals bool `json:"self_heals"`
+	// ConsecutiveFailures (P2-D D3) is the values reconciler's per-item
+	// consecutive-failure count for this cluster+addon pair — how many
+	// passes in a row this item's check or write attempt itself failed
+	// (never for a legitimate finding like out_of_sync or missing).
+	// 0/omitted when the last attempt succeeded or the pair has never been
+	// checked. The UI shows a quiet row warning at 3 or more.
+	ConsecutiveFailures int `json:"consecutive_failures,omitempty"`
 }
 
 // managedSecretsEngineInfo reports one reconciler's cadence + health.
@@ -331,6 +345,7 @@ func (s *Server) buildConnectionSecretRows(ctx context.Context, clusters []model
 			row.ComparedRevision = c.LastReconcile.ComparedRevision
 			row.ComparedPath = c.LastReconcile.ComparedPath
 			row.AppliedRevision = c.LastReconcile.AppliedRevision
+			row.FightCount = c.LastReconcile.FightCount
 		}
 		row.SelfHeals = connectionSelfHeals(c, row.ComparedPath, v3SelfHealOn)
 		row.DriftSource = connectionDriftSource(row.State, row.ComparedRevision, row.AppliedRevision)
@@ -540,6 +555,9 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, auditEntr
 			if s.secretReconciler != nil {
 				if checkedAt, ok := s.secretReconciler.LastItemChecked(c.Name, addonName); ok {
 					row.LastChecked = checkedAt.UTC().Format(time.RFC3339)
+				}
+				if count, ok := s.secretReconciler.LastItemConsecutiveFailures(c.Name, addonName); ok {
+					row.ConsecutiveFailures = count
 				}
 			}
 			if at, detail, ok := lastAddonValuesSecretRepair(auditEntries, c.Name, addonName); ok {

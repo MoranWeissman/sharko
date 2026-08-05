@@ -325,6 +325,15 @@ func (r *demoAddonValuesReconciler) LastItemError(cluster, addon string) (string
 	return rec.errMsg, true
 }
 
+// LastItemConsecutiveFailures (P2-D D3) always reports 0/false in demo
+// mode: the seeded "error" outcome (S2/P1-B B3) is a fixed snapshot, not a
+// pass-over-pass streak a demo estate has no real history to accumulate —
+// the row's consecutive-failure warning is honestly absent here rather
+// than a fabricated number.
+func (r *demoAddonValuesReconciler) LastItemConsecutiveFailures(_, _ string) (int, bool) {
+	return 0, false
+}
+
 // demoForeignRefusal is the sentence a demo Sync gets back for a row whose
 // secret Sharko did not create. Kept word-for-word identical to
 // internal/secrets.ErrForeignSecret (the real engine's refusal) and to the

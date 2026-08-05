@@ -77,6 +77,10 @@ func (r *Reconciler) checkOnce(ctx context.Context) {
 		return
 	}
 
+	// P2-D D1: same "only count a real attempt" stance pollOnce takes —
+	// timing starts once every dependency precondition above has passed.
+	start := r.now()
+
 	// P2-C1: fetch the branch head SHA once for this check pass, same as
 	// the write pass — this is what lets a Refresh click's rows say WHICH
 	// commit they were just compared against.
@@ -98,6 +102,8 @@ func (r *Reconciler) checkOnce(ctx context.Context) {
 		// also clears the pass-compared facts (P2-C1) — an aborted check has
 		// nothing honest to say about which commit it compared against.
 		r.stampAbortedTick(string(rdErr.Kind) + " failed: " + rdErr.Err.Error())
+		r.recordRunMetrics(engineClusterConnection, start, "failure", 0)
+		r.recordStateGauges()
 		return
 	}
 	r.setPassCompared(revision, readPath)
@@ -107,6 +113,8 @@ func (r *Reconciler) checkOnce(ctx context.Context) {
 		log.Error("[clusterreconciler] check pass could not list the ArgoCD cluster secrets — nothing was compared",
 			"namespace", r.namespace, "error", err)
 		r.stampAbortedTick("listing ArgoCD cluster secrets failed: " + err.Error())
+		r.recordRunMetrics(engineClusterConnection, start, "failure", 0)
+		r.recordStateGauges()
 		return
 	}
 
@@ -165,6 +173,18 @@ func (r *Reconciler) checkOnce(ctx context.Context) {
 
 	log.Info("[clusterreconciler] check pass complete — nothing was written",
 		"namespace", r.namespace, "clusters_in_git", len(desired), "sharko_owned_secrets_live", len(existing))
+
+	// P2-D D1: a completed check pass never writes, so it has no "partial"
+	// concept the way the write pass does (stats.Errors) — reaching this
+	// line means the pass read git and listed the live secrets successfully,
+	// so "success" always applies here. A per-cluster read failure inside
+	// checkOneSecret still shows up as that cluster's own OutcomeFailed
+	// record (and so in sharko_managed_secrets_state's "unknown" bucket and
+	// sharko_reconciler_item_failures_total) without downgrading the whole
+	// pass's outcome — the same relationship stats.Errors has to pollOnce's
+	// "partial" outcome.
+	r.recordRunMetrics(engineClusterConnection, start, "success", len(desired))
+	r.recordStateGauges()
 }
 
 // secretReadResult is what one read-by-name came back with: the secret, or

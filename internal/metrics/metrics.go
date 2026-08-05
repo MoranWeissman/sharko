@@ -81,33 +81,100 @@ var (
 	}, []string{"url"})
 )
 
-// Reconciler metrics
+// Reconciler metrics (P2-D — wired from internal/clusterreconciler's write
+// pass + check pass and internal/secrets' periodic pass; see each package's
+// doc comment on the wiring choice — a direct import, no hook interface,
+// matching how internal/catalog and internal/orchestrator already call this
+// package directly).
+//
+// Label vocabulary, deliberately tiny (never a cluster or secret name):
+//   - engine: "cluster_connection" | "addon_values" — one value per engine,
+//     matching the two rows in GET /system/managed-secrets' "engines"
+//     section.
+//   - outcome (ReconcilerRuns only): "success" | "partial" | "failure".
 var (
 	ReconcilerRuns = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "sharko_reconciler_runs_total",
 		Help: "Reconciler invocations by outcome",
-	}, []string{"reconciler", "result"})
+	}, []string{"engine", "outcome"})
 
 	ReconcilerDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "sharko_reconciler_duration_seconds",
 		Help:    "Reconciler run duration",
 		Buckets: prometheus.DefBuckets,
-	}, []string{"reconciler"})
+	}, []string{"engine"})
 
 	ReconcilerLastRun = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "sharko_reconciler_last_run_timestamp",
-		Help: "Unix timestamp of last run",
-	}, []string{"reconciler"})
+		Help: "Unix timestamp of last completed run (any outcome)",
+	}, []string{"engine"})
+
+	// ReconcilerLastSuccess is the "last completed run that did NOT abort"
+	// counterpart to ReconcilerLastRun — set only on a "success" outcome
+	// pass, never on "partial" or "failure". This is the gauge the pass-age
+	// alert (charts/sharko/templates/prometheusrules.yaml) actually watches:
+	// time() - this, one expression, no need to reason about outcome labels
+	// inside the alert itself.
+	ReconcilerLastSuccess = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "sharko_reconciler_last_success_timestamp",
+		Help: "Unix timestamp of last run that completed without aborting",
+	}, []string{"engine"})
 
 	ReconcilerItemsChecked = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "sharko_reconciler_items_checked_total",
 		Help: "Items processed per reconciler",
-	}, []string{"reconciler"})
+	}, []string{"engine"})
 
 	ReconcilerItemsChanged = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "sharko_reconciler_items_changed_total",
 		Help: "Items changed by action type",
-	}, []string{"reconciler", "action"})
+	}, []string{"engine", "action"})
+
+	// ManagedSecretsState is a snapshot gauge: how many secrets this engine
+	// currently knows about are in each state, right now — set (never
+	// incremented) at the end of every completed pass, all known states
+	// written every time so a state that just emptied out shows 0 instead
+	// of a stale last-nonzero value. States: "in_sync" | "out_of_sync" |
+	// "missing" | "foreign" | "unknown" — the same vocabulary
+	// internal/api/system_managed_secrets.go renders per row.
+	ManagedSecretsState = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "sharko_managed_secrets_state",
+		Help: "Count of managed secrets currently in each state, by engine",
+	}, []string{"engine", "state"})
+
+	// ReconcilerItemFailures is the stuck-loop counter's failure half (P2-D
+	// D2): one increment per item whose check or write itself could not
+	// complete this pass — never for a legitimate state like out_of_sync or
+	// missing, which are findings, not failures. reason is a SMALL fixed
+	// set keyed the same way each package's FailureSentence functions key
+	// failing stages (e.g. "git_read", "credentials", "write_failed") —
+	// never free text, so this counter's cardinality stays bounded
+	// regardless of what the underlying error actually said.
+	ReconcilerItemFailures = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "sharko_reconciler_item_failures_total",
+		Help: "Per-item check/write failures by reason",
+	}, []string{"engine", "reason"})
+
+	// ReconcilerWrites is the stuck-loop counter's write half (P2-D D2): one
+	// increment per actual Kubernetes write a pass makes. A flat non-zero
+	// rate here alongside an unchanging ManagedSecretsState gauge is the
+	// "Sharko keeps repairing the same thing forever" signal — something
+	// else keeps reverting what Sharko just wrote. kind is "created" |
+	// "updated" | "deleted".
+	ReconcilerWrites = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "sharko_reconciler_writes_total",
+		Help: "Reconciler writes to Kubernetes by kind",
+	}, []string{"engine", "kind"})
+
+	// ReconcilerFights is a snapshot gauge (P2-D D3): how many items this
+	// engine currently considers "in a fight" — the connection engine's
+	// label-fight detector (three or more consecutive reverted ticks) or
+	// the values engine's consecutive-failure count reaching the same
+	// three-in-a-row bar. Set at the end of every completed pass.
+	ReconcilerFights = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "sharko_reconciler_fights",
+		Help: "Count of items currently in a fight or consecutive-failure state (>=3 in a row), by engine",
+	}, []string{"engine"})
 )
 
 // PR metrics

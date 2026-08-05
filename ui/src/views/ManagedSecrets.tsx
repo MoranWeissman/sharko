@@ -181,6 +181,25 @@ function connectionRefreshToast(cluster: string): string {
   return `Checking every cluster's connection secret now, ${cluster} included.`
 }
 
+/**
+ * P2-D D3: the bar both quiet row warnings below use — three in a row is
+ * worth a person's attention. Matches the backend's fightGaugeThreshold
+ * (internal/clusterreconciler and internal/secrets), which also drives
+ * sharko_reconciler_fights, so the page and the metric agree on what
+ * counts as "a fight worth mentioning."
+ */
+const ROW_WARNING_THRESHOLD = 3
+
+/** The connection-row panel line for D3's fight warning — only shown at ROW_WARNING_THRESHOLD or more. */
+function fightWarningSentence(count: number): string {
+  return `Something keeps changing this secret back — Sharko has re-applied it ${count} times in a row.`
+}
+
+/** The values-row panel line for D3's consecutive-failure warning — only shown at ROW_WARNING_THRESHOLD or more. */
+function consecutiveFailuresSentence(count: number): string {
+  return `The last ${count} checks of this secret failed in a row.`
+}
+
 interface UnifiedRow {
   kind: 'connection' | 'values'
   key: string
@@ -193,6 +212,15 @@ interface UnifiedRow {
   lastRepaired?: string
   lastRepairedDetail?: string
   lastCheckError?: string
+  /**
+   * fightCount (connection rows) / consecutiveFailures (values rows) — P2-D
+   * D3's two quiet row warnings. Only one is ever set for a given row (a
+   * row is one kind or the other); kept as two separate fields rather than
+   * one shared "warningCount" so each panel sentence stays specific about
+   * what it's counting instead of a generic number nobody can place.
+   */
+  fightCount?: number
+  consecutiveFailures?: number
   /**
    * What this row is compared against, already resolved to display text —
    * the S3 honesty lock, now a PER-ROW fact (G1). It comes straight off
@@ -235,6 +263,7 @@ function buildUnifiedRows(connectionRows: ConnectionSecretRow[], addonRows: Addo
     // finish" fact values rows already did — shares the exact rendering
     // below (the panel's lastCheckError paragraph), no per-kind branch.
     lastCheckError: r.last_check_error,
+    fightCount: r.fight_count,
     sourceLabel: r.source || 'git',
     comparedRevision: r.compared_revision,
     comparedPath: r.compared_path,
@@ -254,6 +283,7 @@ function buildUnifiedRows(connectionRows: ConnectionSecretRow[], addonRows: Addo
     lastRepaired: r.last_repaired,
     lastRepairedDetail: r.last_repaired_detail,
     lastCheckError: r.last_check_error,
+    consecutiveFailures: r.consecutive_failures,
     sourceLabel: r.source || valuesSourceLabel,
     selfHeals: r.self_heals,
   }))
@@ -975,6 +1005,17 @@ function SecretDetailPanel({
       {row.lastCheckError && (
         <p className="text-sm text-red-700 dark:text-red-400" data-testid="last-check-error">
           The last check failed: {row.lastCheckError}
+        </p>
+      )}
+
+      {row.kind === 'connection' && (row.fightCount ?? 0) >= ROW_WARNING_THRESHOLD && (
+        <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="fight-warning">
+          {fightWarningSentence(row.fightCount ?? 0)}
+        </p>
+      )}
+      {row.kind === 'values' && (row.consecutiveFailures ?? 0) >= ROW_WARNING_THRESHOLD && (
+        <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="consecutive-failures-warning">
+          {consecutiveFailuresSentence(row.consecutiveFailures ?? 0)}
         </p>
       )}
 

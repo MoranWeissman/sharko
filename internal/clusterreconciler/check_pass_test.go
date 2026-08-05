@@ -187,6 +187,16 @@ func TestTriggerCheck_RunsTheCheckAndNotTheWritePass(t *testing.T) {
 	r.Start(context.Background())
 	defer r.Stop()
 
+	// P2-D D5: Start() now runs one immediate write pass before entering
+	// the select loop, so the FIRST value on polled is that startup pass,
+	// not a signal about TriggerCheck. Drain it before asserting anything
+	// about what TriggerCheck itself did or didn't fire.
+	select {
+	case <-polled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Start did not run its immediate write pass")
+	}
+
 	r.TriggerCheck()
 	select {
 	case <-checked:
