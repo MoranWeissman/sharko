@@ -72,8 +72,15 @@ func TestLastError_ReturnsClusterName(t *testing.T) {
 	if cluster != "newer-fail" {
 		t.Errorf("cluster = %q, want %q (the most recent Failed record)", cluster, "newer-fail")
 	}
-	if message != "newer failure" {
-		t.Errorf("message = %q, want %q", message, "newer failure")
+	// P1-B B2: message is the MAPPED sentence, never the record's raw
+	// Message text — "newer failure" here stands in for whatever a real
+	// call site would have appended a wrapped error onto. See
+	// failure_sentence_test.go for the full raw != mapped pinning.
+	if message != FailureSentence("newer failure") {
+		t.Errorf("message = %q, want the FailureSentence mapping of %q", message, "newer failure")
+	}
+	if message == "newer failure" {
+		t.Error("message is the raw record text — LastError must never return it unmapped")
 	}
 }
 

@@ -35,11 +35,19 @@ type demoAddonValueKey struct {
 
 // demoAddonValueRecord is the last known state of one addon-values secret,
 // in the same outcome vocabulary internal/secrets.ItemOutcome uses
-// ("unchanged", "out_of_sync", "missing", "created", "updated") — never the
-// secret's own content.
+// ("unchanged", "out_of_sync", "missing", "created", "updated", "error") —
+// never the secret's own content.
 type demoAddonValueRecord struct {
 	outcome     string
 	lastChecked time.Time
+	// errMsg (P1-B B3) is a RAW-shaped error string — set only for the
+	// "error" outcome (a check that itself failed, not a real drift
+	// finding). Mirrors internal/secrets.ItemRecord.Error's shape exactly
+	// (a substring one of addonValuesSecretCheckFailureSentence's real
+	// branches recognizes) so the demo exercises the SAME mapping the real
+	// engine's raw errors go through, rather than showing a hand-written
+	// sentence that happens to look right.
+	errMsg string
 }
 
 // demoAddonValuesReconciler implements api.SecretReconciler for demo mode
@@ -61,6 +69,18 @@ type demoAddonValuesReconciler struct {
 	lastRun  time.Time
 
 	auditLog *audit.Log
+
+	// lastErrorCluster/lastErrorMsg/lastErrorAt (P1-B B3) seed the
+	// engine-level error the page's top strip shows for this engine —
+	// mirrors what a real reconcile() pass with at least one failing item
+	// would report via LastError/LastErrorCluster/LastErrorAt. Set once at
+	// construction and never mutated afterward: the real engine's
+	// equivalent fields are only ever written by the periodic WRITE pass,
+	// never by a check (CheckAll/CheckOne), so the demo's Refresh/Sync
+	// re-stamps correctly leave these alone too.
+	lastErrorCluster string
+	lastErrorMsg     string
+	lastErrorAt      time.Time
 }
 
 // addonValuesAgeOffsets is the "how long ago was this last checked" spread
@@ -93,13 +113,17 @@ var addonValuesAgeOffsets = []time.Duration{
 // fresher "ago" numbers, since they're relative to the new now). No
 // math/rand, no per-request randomness.
 //
-// The spread: 2 pairs in every 10 (by cycle position) come back
-// "out_of_sync", 1 in every 10 comes back "missing", 1 in every 10 comes
+// The spread: 2 pairs in every 12 (by cycle position) come back
+// "out_of_sync", 1 in every 12 comes back "missing", 1 in every 12 comes
 // back "foreign" (a secret with that name is already on the cluster and
-// Sharko did not create it — P1-A), everything else is "unchanged" (in
-// sync) — except the very first qualifying pair overall, which is
-// deliberately left out of items entirely so it reads as genuinely never
-// checked (S2's "hasn't been checked yet" row).
+// Sharko did not create it — P1-A), 1 in every 12 comes back "error" (P1-B
+// B3 — a check that itself failed, closing queued row
+// demo-seed-a-failing-check: the values side has always had the
+// last_check_error field, but the demo never seeded a row that used it),
+// everything else is "unchanged" (in sync) — except the very first
+// qualifying pair overall, which is deliberately left out of items
+// entirely so it reads as genuinely never checked (S2's "hasn't been
+// checked yet" row).
 func newDemoAddonValuesReconciler(estate *GeneratedEstate, defs map[string]orchestrator.AddonSecretDefinition, now time.Time, auditLog *audit.Log) *demoAddonValuesReconciler {
 	r := &demoAddonValuesReconciler{
 		items:    make(map[demoAddonValueKey]demoAddonValueRecord),
@@ -147,17 +171,41 @@ func newDemoAddonValuesReconciler(estate *GeneratedEstate, defs map[string]orche
 			}
 
 			outcome := "unchanged"
-			switch i % 10 {
+			errMsg := ""
+			switch i % 12 {
 			case 6:
 				outcome = "foreign"
 			case 7, 8:
 				outcome = "out_of_sync"
 			case 9:
 				outcome = "missing"
+			case 10:
+				// P1-B B3: a check that itself failed — the demo's
+				// counterpart to a real reconcileSecret error. Raw-shaped
+				// on purpose (see demoAddonValueRecord.errMsg's doc
+				// comment): "connecting to cluster: ..." is a substring
+				// addonValuesSecretCheckFailureSentence already recognizes,
+				// so the row's last_check_error goes through the SAME
+				// mapping a real error would.
+				outcome = "error"
+				errMsg = "connecting to cluster: connection refused (demo)"
 			}
+			checkedAt := now.Add(-addonValuesAgeOffsets[i%len(addonValuesAgeOffsets)])
 			r.items[key] = demoAddonValueRecord{
 				outcome:     outcome,
-				lastChecked: now.Add(-addonValuesAgeOffsets[i%len(addonValuesAgeOffsets)]),
+				lastChecked: checkedAt,
+				errMsg:      errMsg,
+			}
+
+			// Seed the engine-level error strip (P1-B B3) off the FIRST
+			// "error" row this loop finds — a real reconcile() pass's
+			// LastError/LastErrorCluster/LastErrorAt name the first
+			// failing item it hit, so this mirrors that shape instead of
+			// picking an arbitrary cluster.
+			if outcome == "error" && r.lastErrorCluster == "" {
+				r.lastErrorCluster = c.Name
+				r.lastErrorMsg = "Sharko couldn't connect to one of the clusters. Check that Sharko can reach that cluster, then click Refresh."
+				r.lastErrorAt = checkedAt
 			}
 
 			if outcome == "unchanged" && i%6 == 0 && auditLog != nil {
@@ -223,8 +271,19 @@ func (r *demoAddonValuesReconciler) LastRunTime() time.Time {
 	return r.lastRun
 }
 
-// LastError is always empty in demo mode — same reasoning as GetErrors.
-func (r *demoAddonValuesReconciler) LastError() string { return "" }
+// LastError reports the engine-level error seeded at construction (P1-B
+// B3) — already an already-canned, safe-to-show sentence, exactly the
+// shape secrets.Reconciler.LastError returns for real (secrets.
+// FailureSentence-mapped), never raw text. Empty when the estate seeded no
+// "error" outcome row.
+func (r *demoAddonValuesReconciler) LastError() string { return r.lastErrorMsg }
+
+// LastErrorCluster names the cluster LastError is about (P1-B B3) — the
+// same cluster that seeded the engine-level error at construction.
+func (r *demoAddonValuesReconciler) LastErrorCluster() string { return r.lastErrorCluster }
+
+// LastErrorAt is the timestamp LastError was seeded with (P1-B B3).
+func (r *demoAddonValuesReconciler) LastErrorAt() time.Time { return r.lastErrorAt }
 
 func (r *demoAddonValuesReconciler) Interval() time.Duration { return r.interval }
 
@@ -248,12 +307,22 @@ func (r *demoAddonValuesReconciler) LastItemOutcome(cluster, addon string) (stri
 	return rec.outcome, true
 }
 
-// LastItemError is always "" in demo mode (S8) — same reasoning as
-// LastError/GetErrors: nothing here has ever failed a real push (an
-// "out_of_sync" demo row is a seeded comparison outcome, not a check that
-// itself failed), so there is nothing honest to report.
-func (r *demoAddonValuesReconciler) LastItemError(_, _ string) (string, bool) {
-	return "", false
+// LastItemError reports the seeded row's raw-shaped error text (S8, P1-B
+// B3) — "" for every outcome except "error", the same rule the real
+// reconciler follows (ItemRecord.Error is populated only alongside
+// ItemOutcomeError; an "out_of_sync" row is a seeded comparison outcome,
+// not a check that itself failed). The caller (addonValuesRowLastCheckError
+// in internal/api/system_managed_secrets.go) maps this through
+// addonValuesSecretCheckFailureSentence exactly as it does for a real
+// reconciler — the demo never hands back an already-rendered sentence here.
+func (r *demoAddonValuesReconciler) LastItemError(cluster, addon string) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	rec, ok := r.items[demoAddonValueKey{Cluster: cluster, Addon: addon}]
+	if !ok || rec.errMsg == "" {
+		return "", false
+	}
+	return rec.errMsg, true
 }
 
 // demoForeignRefusal is the sentence a demo Sync gets back for a row whose
@@ -274,10 +343,16 @@ func (r *demoAddonValuesReconciler) CheckAll(_ context.Context) error {
 	for key := range r.valid {
 		rec, ok := r.items[key]
 		outcome := "unchanged"
+		errMsg := ""
 		if ok {
 			outcome = rec.outcome
+			// P1-B B3: a check that fails again stays failed — carry the
+			// error text forward exactly like the outcome, so a row seeded
+			// "error" is still "error" (with its reason) after a Refresh,
+			// not silently cleared by the re-stamp.
+			errMsg = rec.errMsg
 		}
-		r.items[key] = demoAddonValueRecord{outcome: outcome, lastChecked: now}
+		r.items[key] = demoAddonValueRecord{outcome: outcome, lastChecked: now, errMsg: errMsg}
 	}
 	r.lastRun = now
 	return nil
@@ -295,10 +370,14 @@ func (r *demoAddonValuesReconciler) CheckOne(_ context.Context, cluster, addon s
 	}
 	rec, ok := r.items[key]
 	outcome := "unchanged"
+	errMsg := ""
 	if ok {
 		outcome = rec.outcome
+		// P1-B B3: same carry-forward as CheckAll — a single-row Refresh
+		// on a row whose last check failed must still say so afterward.
+		errMsg = rec.errMsg
 	}
-	r.items[key] = demoAddonValueRecord{outcome: outcome, lastChecked: time.Now()}
+	r.items[key] = demoAddonValueRecord{outcome: outcome, lastChecked: time.Now(), errMsg: errMsg}
 	return outcome, nil
 }
 

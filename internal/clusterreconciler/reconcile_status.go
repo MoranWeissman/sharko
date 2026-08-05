@@ -157,16 +157,25 @@ func (r *Reconciler) LastRunTime() time.Time {
 // summary, in particular — can say WHICH cluster's connection secret is
 // failing and let a reader jump straight to it, instead of a message with
 // no subject.
+//
+// message is ALWAYS the mapped output of FailureSentence (P1-B B2) — never
+// the record's raw Message text. The raw text still reaches the server log
+// at every call site that records a Failed outcome; this is the one place
+// that decides what the API (and so the browser) gets to see.
 func (r *Reconciler) LastError() (cluster, message string, at time.Time, ok bool) {
 	r.lastReconcileMu.RLock()
 	defer r.lastReconcileMu.RUnlock()
+	var rawMessage string
 	for name, rec := range r.lastReconcile {
 		if rec.Outcome == OutcomeFailed && rec.Time.After(at) {
 			at = rec.Time
 			cluster = name
-			message = rec.Message
+			rawMessage = rec.Message
 			ok = true
 		}
+	}
+	if ok {
+		message = FailureSentence(rawMessage)
 	}
 	return cluster, message, at, ok
 }

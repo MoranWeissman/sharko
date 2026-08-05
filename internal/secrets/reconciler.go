@@ -195,6 +195,15 @@ type Reconciler struct {
 	lastRun    time.Time
 	lastStats  ReconcileStats
 	lastErrors []string
+	// lastErrorCluster / lastErrorAt (P1-B B2) name WHICH cluster the first
+	// entry in lastErrors is about, and WHEN that pass ran — mirroring
+	// clusterreconciler.Reconciler.LastError's cluster+time fields (#716).
+	// lastErrorCluster is empty when the failure was plan-level (the
+	// catalog or managed-clusters file itself couldn't be read, before any
+	// per-item work started) — there is no cluster to name in that case.
+	// Both are the zero value exactly when lastErrors is empty.
+	lastErrorCluster string
+	lastErrorAt      time.Time
 	// itemRecords holds the last known outcome per addon-values secret
 	// (cluster+addon pair). Rebuilt from scratch on every pass that gets
 	// far enough to compute a plan (see reconcile()) — never merged with
@@ -401,16 +410,38 @@ func (r *Reconciler) LastRunTime() time.Time {
 	return r.lastRun
 }
 
-// LastError returns the first error message recorded during the most
+// LastError returns the mapped, safe-to-show sentence (P1-B B2, via
+// FailureSentence) for the first error message recorded during the most
 // recent reconcile run, or "" when that run had no errors (including the
-// "never run yet" case).
+// "never run yet" case). NEVER the raw error text — see FailureSentence's
+// doc comment for why.
 func (r *Reconciler) LastError() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if len(r.lastErrors) == 0 {
 		return ""
 	}
-	return r.lastErrors[0]
+	return FailureSentence(r.lastErrors[0])
+}
+
+// LastErrorCluster names the cluster LastError's sentence is ABOUT — the
+// first failing cluster+addon pair's cluster name recorded during the most
+// recent reconcile run (P1-B B2, mirrors clusterreconciler.Reconciler.
+// LastError's cluster — #716). Empty when LastError() is empty, or when the
+// failure was plan-level (there is no cluster to name).
+func (r *Reconciler) LastErrorCluster() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.lastErrorCluster
+}
+
+// LastErrorAt is the timestamp of the reconcile run LastError was recorded
+// during (P1-B B2) — an error with no "since when" isn't actionable. The
+// zero time exactly when LastError() is empty.
+func (r *Reconciler) LastErrorAt() time.Time {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.lastErrorAt
 }
 
 // reconcile is the main reconcile cycle. It is safe to call concurrently but
@@ -453,7 +484,9 @@ func (r *Reconciler) reconcile() {
 		stats.Errors = 1
 		errs = []string{err.Error()}
 		log.Error("[secrets] could not work out which secrets to push — nothing was pushed this run", "error", err)
-		r.recordRun(start, stats, errs)
+		// Plan-level failure: nothing cluster-specific went wrong yet, so
+		// there is no cluster to name (P1-B B2).
+		r.recordRun(start, stats, errs, "")
 		return
 	}
 	if len(plan.problems) > 0 {
@@ -477,6 +510,12 @@ func (r *Reconciler) reconcile() {
 	r.mu.RUnlock()
 
 	itemResults := make(map[ItemKey]ItemRecord, len(plan.work))
+	// errCluster (P1-B B2) is the cluster the FIRST per-item error in errs
+	// is about — mirrors clusterreconciler.Reconciler.LastError's
+	// "first/most-recent Failed record names its cluster" contract, so
+	// LastErrorCluster() always agrees with what LastError()'s message is
+	// actually describing.
+	var errCluster string
 	for _, w := range plan.work {
 		stats.Checked++
 		outcome, err := r.reconcileSecret(ctx, &stats, w.clusterName, w.credLookup, w.addon, w.push)
@@ -494,6 +533,9 @@ func (r *Reconciler) reconcile() {
 			stats.Errors++
 			errs = append(errs, fmt.Sprintf("cluster=%s addon=%s secret=%s: %v",
 				w.clusterName, w.addon, w.push.SecretName, err))
+			if errCluster == "" {
+				errCluster = w.clusterName
+			}
 			log.Error("[secrets] reconcile failed",
 				"cluster", w.clusterName,
 				"addon", w.addon,
@@ -515,7 +557,7 @@ func (r *Reconciler) reconcile() {
 		return
 	}
 
-	r.recordRun(start, stats, errs)
+	r.recordRun(start, stats, errs, errCluster)
 
 	log.Info("[secrets] reconcile complete",
 		"layout", plan.layout,
@@ -539,7 +581,13 @@ func (r *Reconciler) reconcile() {
 // including a pass that failed before pushing anything — goes through here,
 // so "the status says fine" and "secrets are being pushed" cannot come
 // apart.
-func (r *Reconciler) recordRun(start time.Time, stats ReconcileStats, errs []string) {
+//
+// errCluster (P1-B B2) is the cluster the first entry in errs is about —
+// "" for a plan-level failure (nothing cluster-specific to name) or when
+// errs is empty. Stamped alongside lastErrors under the same lock so
+// LastError()/LastErrorCluster()/LastErrorAt() can never disagree about
+// which pass they're describing.
+func (r *Reconciler) recordRun(start time.Time, stats ReconcileStats, errs []string, errCluster string) {
 	stats.Duration = time.Since(start).String()
 	stats.LastRun = time.Now()
 
@@ -547,6 +595,13 @@ func (r *Reconciler) recordRun(start time.Time, stats ReconcileStats, errs []str
 	r.lastRun = stats.LastRun
 	r.lastStats = stats
 	r.lastErrors = errs
+	if len(errs) > 0 {
+		r.lastErrorCluster = errCluster
+		r.lastErrorAt = stats.LastRun
+	} else {
+		r.lastErrorCluster = ""
+		r.lastErrorAt = time.Time{}
+	}
 	r.mu.Unlock()
 }
 

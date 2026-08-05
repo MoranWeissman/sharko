@@ -66,9 +66,10 @@
 //
 // S3/S8 (carried forward): sorting by state uses a real priority order
 // (StatusMark's statusSortRank: out_of_sync, missing, unknown, in_sync),
-// never the alphabet. A "the last check failed" reason (addon-values rows
-// only) is a MAPPED, pre-written sentence from the server — never raw
-// error text.
+// never the alphabet. A "the last check failed" reason — on BOTH kinds of
+// row since P1-B, a connection row's failed check renders unknown, not
+// out_of_sync — is a MAPPED, pre-written sentence from the server, never
+// raw error text.
 //
 // S5 (carried forward): the values-secret Diff makes NO server call, by
 // construction — it renders canned sentences from the row's own state
@@ -215,6 +216,10 @@ function buildUnifiedRows(connectionRows: ConnectionSecretRow[], addonRows: Addo
     lastChecked: r.last_checked,
     lastRepaired: r.last_repaired,
     lastRepairedDetail: r.last_repaired_detail,
+    // P1-B: connection rows now carry the same "why didn't the last check
+    // finish" fact values rows already did — shares the exact rendering
+    // below (the panel's lastCheckError paragraph), no per-kind branch.
+    lastCheckError: r.last_check_error,
     sourceLabel: r.source || 'git',
   }))
   const values: UnifiedRow[] = addonRows.map((r) => ({
@@ -1373,7 +1378,7 @@ export function ManagedSecrets() {
       <div className="flex flex-wrap items-start justify-between gap-3 border-y border-[#d7e2ea] py-2 dark:border-gray-800">
         <div className="flex flex-wrap divide-x divide-[#d7e2ea] dark:divide-gray-800">
           <EngineStat label="Cluster connections" kind="connection" info={data?.engines.cluster_connection} onErrorClick={filterToCluster} />
-          <EngineStat label="Addon values" kind="values" info={data?.engines.addon_values} />
+          <EngineStat label="Addon values" kind="values" info={data?.engines.addon_values} onErrorClick={filterToCluster} />
         </div>
         <RoleGuard roles={['admin', 'operator']}>
           <div className="flex items-center gap-1.5">

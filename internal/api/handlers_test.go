@@ -124,15 +124,24 @@ type fakeReconciler struct {
 	// handler runs the check in a goroutine.
 	checkAllMu sync.Mutex
 	checkedAll int
+
+	// lastError/lastErrorCluster/lastErrorAt (P1-B B2) let tests configure
+	// the engine-level error the LastError/LastErrorCluster/LastErrorAt
+	// trio reports — zero values mean "no error", same as a clean pass.
+	lastError        string
+	lastErrorCluster string
+	lastErrorAt      time.Time
 }
 
 func (r *fakeReconciler) Trigger() { r.triggered = true }
 
 func (r *fakeReconciler) GetStats() interface{} { return r.stats }
 
-func (r *fakeReconciler) LastRunTime() time.Time  { return time.Time{} }
-func (r *fakeReconciler) LastError() string       { return "" }
-func (r *fakeReconciler) Interval() time.Duration { return 0 }
+func (r *fakeReconciler) LastRunTime() time.Time   { return time.Time{} }
+func (r *fakeReconciler) LastError() string        { return r.lastError }
+func (r *fakeReconciler) LastErrorCluster() string { return r.lastErrorCluster }
+func (r *fakeReconciler) LastErrorAt() time.Time   { return r.lastErrorAt }
+func (r *fakeReconciler) Interval() time.Duration  { return 0 }
 
 func (r *fakeReconciler) LastItemChecked(cluster, addon string) (time.Time, bool) {
 	if r.itemChecked == nil {

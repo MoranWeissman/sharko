@@ -15,6 +15,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
@@ -191,6 +192,165 @@ func TestHandleGetManagedSecrets_ConnectionSecretRow_RepairJoinsFromAudit(t *tes
 	// honest ("unknown"), not be inferred from the repair join.
 	if row.State != "unknown" {
 		t.Errorf("state = %q, want unknown (no clusterRecon wired)", row.State)
+	}
+}
+
+// TestConnectionSecretState_FailedOutcomeIsUnknownNotOutOfSync pins P1-B B1
+// / finding #120: a FAILED check must never wear "out_of_sync"'s badge —
+// out_of_sync claims Sharko compared and found a real mismatch, and a
+// failed check means Sharko does not know. Table-driven over every branch
+// connectionSecretState's doc comment describes.
+func TestConnectionSecretState_FailedOutcomeIsUnknownNotOutOfSync(t *testing.T) {
+	cases := []struct {
+		name string
+		rec  *models.ClusterLastReconcile
+		want string
+	}{
+		{"nil record", nil, "unknown"},
+		{
+			"self-managed secret not created yet -> missing",
+			&models.ClusterLastReconcile{
+				Outcome: string(clusterreconciler.OutcomeSkipped),
+				Message: clusterreconciler.SelfManagedSecretNotCreatedMessage,
+			},
+			"missing",
+		},
+		{
+			"succeeded, no drift -> in_sync",
+			&models.ClusterLastReconcile{Outcome: string(clusterreconciler.OutcomeSucceeded)},
+			"in_sync",
+		},
+		{
+			"succeeded WITH drift -> out_of_sync (a real comparison found a mismatch)",
+			&models.ClusterLastReconcile{
+				Outcome:    string(clusterreconciler.OutcomeSucceeded),
+				LabelDrift: &models.ClusterLastReconcileLabelDrift{Changed: []string{"datadog"}},
+			},
+			"out_of_sync",
+		},
+		{
+			"failed -> unknown, NEVER out_of_sync (P1-B B1 / #120)",
+			&models.ClusterLastReconcile{
+				Outcome: string(clusterreconciler.OutcomeFailed),
+				Message: "reconciler pass aborted: git read failed: dial tcp: i/o timeout",
+			},
+			"unknown",
+		},
+		{
+			"other skipped reason -> unknown",
+			&models.ClusterLastReconcile{
+				Outcome: string(clusterreconciler.OutcomeSkipped),
+				Message: clusterreconciler.UnlabeledSecretExistsMessage,
+			},
+			"unknown",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := connectionSecretState(tc.rec)
+			if got != tc.want {
+				t.Errorf("connectionSecretState(%+v) state = %q, want %q", tc.rec, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestConnectionSecretCheckError_OnlyFailedRecordsCarryASentence pins the
+// second half of the two-facts shape (P1-B B1): last_check_error is set
+// ONLY when Outcome is Failed, and it is always the FailureSentence
+// mapping of the record's Message — never the raw text.
+func TestConnectionSecretCheckError_OnlyFailedRecordsCarryASentence(t *testing.T) {
+	if got := connectionSecretCheckError(nil); got != "" {
+		t.Errorf("nil record: last_check_error = %q, want empty", got)
+	}
+	succeeded := &models.ClusterLastReconcile{Outcome: string(clusterreconciler.OutcomeSucceeded)}
+	if got := connectionSecretCheckError(succeeded); got != "" {
+		t.Errorf("succeeded record: last_check_error = %q, want empty", got)
+	}
+	skipped := &models.ClusterLastReconcile{
+		Outcome: string(clusterreconciler.OutcomeSkipped),
+		Message: clusterreconciler.SelfManagedSecretNotCreatedMessage,
+	}
+	if got := connectionSecretCheckError(skipped); got != "" {
+		t.Errorf("skipped record: last_check_error = %q, want empty", got)
+	}
+
+	raw := "reconciler pass aborted: git read failed: dial tcp: i/o timeout"
+	failed := &models.ClusterLastReconcile{Outcome: string(clusterreconciler.OutcomeFailed), Message: raw}
+	got := connectionSecretCheckError(failed)
+	if got == "" {
+		t.Fatal("failed record: last_check_error is empty, want the mapped sentence")
+	}
+	if got == raw {
+		t.Errorf("last_check_error is the raw record text: %q", got)
+	}
+	if want := clusterreconciler.FailureSentence(raw); got != want {
+		t.Errorf("last_check_error = %q, want the FailureSentence mapping %q", got, want)
+	}
+	if strings.Contains(got, "dial tcp") {
+		t.Errorf("last_check_error leaked the raw error text: %q", got)
+	}
+}
+
+// TestHandleGetManagedSecrets_ConnectionSecretRow_FailedCheckIsUnknownWithSentence
+// takes the same fact all the way through the endpoint, with a REAL
+// clusterreconciler.Reconciler driven into a genuine Failed outcome — not
+// just the pure function above.
+func TestHandleGetManagedSecrets_ConnectionSecretRow_FailedCheckIsUnknownWithSentence(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
+	}, http.StatusOK)
+	gp := &reconcileFakeGP{
+		managedYAML: []byte("clusters:\n- name: prod-eu\n  labels: {}\n"),
+	}
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	recon := clusterreconciler.New(clusterreconciler.Deps{
+		GitProvider: func() gitprovider.GitProvider { return gp },
+		ArgoClient:  fake.NewSimpleClientset(),
+		Vault:       erroringVault{},
+		AuditFn:     func(audit.Entry) {},
+		Namespace:   "argocd",
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	recon.Start(ctx)
+	defer recon.Stop()
+	recon.Trigger()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if rec, ok := recon.LastReconcile("prod-eu"); ok && rec.Outcome == clusterreconciler.OutcomeFailed {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	srv.SetClusterReconciler(recon)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.ClusterConnectionSecrets) != 1 {
+		t.Fatalf("expected exactly 1 connection-secret row, got %d", len(body.ClusterConnectionSecrets))
+	}
+	row := body.ClusterConnectionSecrets[0]
+	if row.State != "unknown" {
+		t.Errorf("state = %q, want unknown — a failed check must never wear out_of_sync's badge", row.State)
+	}
+	if row.LastCheckError == "" {
+		t.Fatal("last_check_error is empty, want the canned failure sentence")
+	}
+	if strings.Contains(row.LastCheckError, "dial tcp") || strings.Contains(row.LastCheckError, "connection refused") {
+		t.Errorf("last_check_error leaked the raw vault error text: %q", row.LastCheckError)
 	}
 }
 
@@ -410,6 +570,63 @@ func TestAddonValuesSecretRowState_Foreign(t *testing.T) {
 	}
 	if got := addonValuesSecretRowState(rec, "prod-eu", "eso"); got != "foreign" {
 		t.Errorf("state = %q, want %q", got, "foreign")
+	}
+}
+
+// TestAddonValuesSecretRowState_ErrorOutcomeIsUnknownNotOutOfSync is the
+// values-row symmetry fix for the SAME #120 bug this lane already fixed on
+// the connection side (TestConnectionSecretState_FailedOutcomeIsUnknownNotOutOfSync):
+// "error" (a check or push that itself failed) must never wear
+// "out_of_sync"'s badge — out_of_sync claims a real comparison found a
+// mismatch, and a failed check means Sharko does not know. Table-driven
+// over every branch addonValuesSecretRowState's doc comment describes.
+func TestAddonValuesSecretRowState_ErrorOutcomeIsUnknownNotOutOfSync(t *testing.T) {
+	cases := []struct {
+		name  string
+		recon SecretReconciler
+		want  string
+	}{
+		{"nil reconciler", nil, "unknown"},
+		{"never checked", &fakeReconciler{}, "unknown"},
+		{
+			"unchanged -> in_sync",
+			&fakeReconciler{itemOutcome: map[[2]string]string{{"prod-eu", "eso"}: "unchanged"}},
+			"in_sync",
+		},
+		{
+			"out_of_sync -> out_of_sync (a REAL comparison found a mismatch)",
+			&fakeReconciler{itemOutcome: map[[2]string]string{{"prod-eu", "eso"}: "out_of_sync"}},
+			"out_of_sync",
+		},
+		{
+			"error -> unknown, NEVER out_of_sync (P1-B symmetry fix / #120)",
+			&fakeReconciler{itemOutcome: map[[2]string]string{{"prod-eu", "eso"}: "error"}},
+			"unknown",
+		},
+		{
+			"missing -> missing",
+			&fakeReconciler{itemOutcome: map[[2]string]string{{"prod-eu", "eso"}: "missing"}},
+			"missing",
+		},
+		{
+			"foreign -> foreign (not unknown, not out_of_sync)",
+			&fakeReconciler{itemOutcome: map[[2]string]string{{"prod-eu", "eso"}: "foreign"}},
+			"foreign",
+		},
+		{
+			"skipped -> unknown",
+			&fakeReconciler{itemOutcome: map[[2]string]string{{"prod-eu", "eso"}: "skipped"}},
+			"unknown",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := addonValuesSecretRowState(tc.recon, "prod-eu", "eso")
+			if got != tc.want {
+				t.Errorf("addonValuesSecretRowState() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -704,5 +921,69 @@ func TestHandleGetManagedSecrets_AddonValuesEngine_WiredReportsStats(t *testing.
 	// fabricated timestamp.
 	if body.Engines.AddonValues.LastRun != "" {
 		t.Errorf("last_run = %q, want empty (reconciler never ran)", body.Engines.AddonValues.LastRun)
+	}
+}
+
+// TestHandleGetManagedSecrets_AddonValuesEngine_LastErrorNamesClusterAndTime
+// pins P1-B B2 for the values engine: the same cluster+time fields #716
+// added to the connection engine now exist on this one too, and last_error
+// itself is already the fakeReconciler's pre-set (canned-shaped) sentence —
+// the API layer does not double-map it.
+func TestHandleGetManagedSecrets_AddonValuesEngine_LastErrorNamesClusterAndTime(t *testing.T) {
+	srv := newTestServer()
+	router := NewRouter(srv, nil)
+
+	at := time.Date(2026, 8, 5, 9, 30, 0, 0, time.UTC)
+	rec := &fakeReconciler{
+		stats:            map[string]int{},
+		lastError:        "Sharko couldn't connect to one of the clusters. Check that Sharko can reach that cluster, then click Refresh.",
+		lastErrorCluster: "prod-eu",
+		lastErrorAt:      at,
+	}
+	srv.SetSecretReconciler(rec)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Engines.AddonValues.LastError != rec.lastError {
+		t.Errorf("last_error = %q, want %q", body.Engines.AddonValues.LastError, rec.lastError)
+	}
+	if body.Engines.AddonValues.LastErrorCluster != "prod-eu" {
+		t.Errorf("last_error_cluster = %q, want %q", body.Engines.AddonValues.LastErrorCluster, "prod-eu")
+	}
+	if body.Engines.AddonValues.LastErrorAt == "" {
+		t.Error("expected last_error_at to be set — an error with no time isn't actionable")
+	}
+}
+
+// TestHandleGetManagedSecrets_AddonValuesEngine_NoErrorLeavesClusterAndTimeEmpty
+// makes sure the new fields stay empty on a clean pass — no fabricated
+// cluster or timestamp just because the fields now exist.
+func TestHandleGetManagedSecrets_AddonValuesEngine_NoErrorLeavesClusterAndTimeEmpty(t *testing.T) {
+	srv := newTestServer()
+	router := NewRouter(srv, nil)
+	srv.SetSecretReconciler(&fakeReconciler{stats: map[string]int{}})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Engines.AddonValues.LastErrorCluster != "" {
+		t.Errorf("last_error_cluster = %q, want empty on a clean pass", body.Engines.AddonValues.LastErrorCluster)
+	}
+	if body.Engines.AddonValues.LastErrorAt != "" {
+		t.Errorf("last_error_at = %q, want empty on a clean pass", body.Engines.AddonValues.LastErrorAt)
 	}
 }

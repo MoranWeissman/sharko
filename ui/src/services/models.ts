@@ -142,7 +142,10 @@ export interface ConnectionSecretRow {
   cluster: string
   secret_namespace?: string
   secret_name?: string
-  // One of 'in_sync' | 'out_of_sync' | 'missing' | 'unknown'.
+  // One of 'in_sync' | 'out_of_sync' | 'missing' | 'unknown'. A FAILED
+  // check (P1-B) renders as 'unknown', never 'out_of_sync' — Sharko could
+  // not look, which is a different fact from "Sharko looked and it
+  // differs". See last_check_error below.
   state: string
   // source (S1) says, per row, which store this secret's content is
   // compared against. Always 'git' for a connection secret — git holds
@@ -151,6 +154,11 @@ export interface ConnectionSecretRow {
   last_checked?: string // RFC3339, absent = unknown
   last_repaired?: string // RFC3339, absent = never seen in the audit log's retained window
   last_repaired_detail?: string
+  // last_check_error (P1-B) is a safe, pre-written sentence saying why the
+  // last check didn't finish — set only when state === 'unknown' because
+  // the last reconcile attempt for this cluster failed (not because it was
+  // never checked). Mirrors AddonValuesSecretRow.last_check_error exactly.
+  last_check_error?: string
 }
 
 export interface AddonValuesSecretRow {
@@ -201,10 +209,12 @@ export interface ManagedSecretsEngineInfo {
   interval_seconds?: number
   last_run?: string // RFC3339
   last_error?: string
-  // last_error_cluster names the cluster last_error is ABOUT — set only for
-  // the cluster-connection engine, whose per-cluster records carry a
-  // cluster name. Absent for the addon-values engine (a single fleet-wide
-  // error string with no per-row subject) or when there is no error.
+  // last_error_cluster names the cluster last_error is ABOUT. Cluster
+  // connection: the failing cluster's own record. Addon values (P1-B): the
+  // first failing cluster+addon pair from the most recent reconcile pass.
+  // Absent when there is no error, or when the failure was plan-level (the
+  // catalog or managed-clusters file itself couldn't be read) — no cluster
+  // to name in that case.
   last_error_cluster?: string
   // last_error_at is the RFC3339 timestamp of last_error — an error with no
   // "since when" isn't actionable. Absent exactly when last_error is absent.

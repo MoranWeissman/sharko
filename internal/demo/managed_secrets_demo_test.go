@@ -31,6 +31,7 @@ type managedSecretsBody struct {
 		LastChecked        string `json:"last_checked"`
 		LastRepaired       string `json:"last_repaired"`
 		LastRepairedDetail string `json:"last_repaired_detail"`
+		LastCheckError     string `json:"last_check_error"`
 	} `json:"cluster_connection_secrets"`
 	AddonValuesSecrets []struct {
 		Cluster            string `json:"cluster"`
@@ -39,17 +40,24 @@ type managedSecretsBody struct {
 		LastChecked        string `json:"last_checked"`
 		LastRepaired       string `json:"last_repaired"`
 		LastRepairedDetail string `json:"last_repaired_detail"`
+		LastCheckError     string `json:"last_check_error"`
 	} `json:"addon_values_secrets"`
 	Engines struct {
 		ClusterConnection struct {
-			Wired           bool   `json:"wired"`
-			IntervalSeconds int    `json:"interval_seconds"`
-			LastRun         string `json:"last_run"`
+			Wired            bool   `json:"wired"`
+			IntervalSeconds  int    `json:"interval_seconds"`
+			LastRun          string `json:"last_run"`
+			LastError        string `json:"last_error"`
+			LastErrorCluster string `json:"last_error_cluster"`
+			LastErrorAt      string `json:"last_error_at"`
 		} `json:"cluster_connection"`
 		AddonValues struct {
-			Wired           bool   `json:"wired"`
-			IntervalSeconds int    `json:"interval_seconds"`
-			LastRun         string `json:"last_run"`
+			Wired            bool   `json:"wired"`
+			IntervalSeconds  int    `json:"interval_seconds"`
+			LastRun          string `json:"last_run"`
+			LastError        string `json:"last_error"`
+			LastErrorCluster string `json:"last_error_cluster"`
+			LastErrorAt      string `json:"last_error_at"`
 		} `json:"addon_values"`
 	} `json:"engines"`
 }
@@ -177,6 +185,135 @@ func TestBigEstate_ManagedSecrets_FullStateSpread(t *testing.T) {
 	}
 }
 
+// TestBigEstate_ManagedSecrets_FailedChecksAreHonest is P1-B B3: the demo
+// estate must show a failed check on BOTH engines — a connection row whose
+// last check failed (state unknown, never out_of_sync, with a canned
+// reason), an addon-values row likewise (closing queued row
+// demo-seed-a-failing-check — the values side has always had the field,
+// the demo never seeded it), and a non-empty engine-level error WITH a
+// cluster and a time on the addon-values engine (the connection engine's
+// half of this was already pinned by
+// TestHandleGetManagedSecrets_ClusterConnectionEngine_LastErrorNamesClusterAndTime
+// in internal/api, driven off this same demo-shaped seed).
+func TestBigEstate_ManagedSecrets_FailedChecksAreHonest(t *testing.T) {
+	srv := newTestServer(t)
+	cleanup, err := SetupDemoServer(srv, BigScaleConfig)
+	if err != nil {
+		t.Fatalf("SetupDemoServer: %v", err)
+	}
+	defer cleanup()
+
+	router := api.NewRouter(srv, nil)
+	token := demoLoginToken(t, router)
+	body := getManagedSecrets(t, router, token)
+
+	// --- Connection side: a failed check reads as unknown, with a reason,
+	// never out_of_sync. ---
+	var failedConnRow *struct {
+		Cluster            string `json:"cluster"`
+		State              string `json:"state"`
+		LastChecked        string `json:"last_checked"`
+		LastRepaired       string `json:"last_repaired"`
+		LastRepairedDetail string `json:"last_repaired_detail"`
+		LastCheckError     string `json:"last_check_error"`
+	}
+	for i := range body.ClusterConnectionSecrets {
+		if body.ClusterConnectionSecrets[i].LastCheckError != "" {
+			failedConnRow = &body.ClusterConnectionSecrets[i]
+			break
+		}
+	}
+	if failedConnRow == nil {
+		t.Fatal("no cluster_connection_secrets row carries last_check_error — want at least one seeded failed check (P1-B B3)")
+	}
+	if failedConnRow.State != "unknown" {
+		t.Errorf("cluster %q: state = %q, want unknown (a failed check is not drift)", failedConnRow.Cluster, failedConnRow.State)
+	}
+	if strings.Contains(failedConnRow.LastCheckError, "Kubernetes API timed out") {
+		t.Errorf("connection last_check_error looks like the raw demo seed text, not a canned sentence: %q", failedConnRow.LastCheckError)
+	}
+
+	// --- Addon values side: at least one row now carries last_check_error
+	// (previously never seeded — queued row demo-seed-a-failing-check). ---
+	var failedValuesRow *struct {
+		Cluster            string `json:"cluster"`
+		Addon              string `json:"addon"`
+		State              string `json:"state"`
+		LastChecked        string `json:"last_checked"`
+		LastRepaired       string `json:"last_repaired"`
+		LastRepairedDetail string `json:"last_repaired_detail"`
+		LastCheckError     string `json:"last_check_error"`
+	}
+	for i := range body.AddonValuesSecrets {
+		if body.AddonValuesSecrets[i].LastCheckError != "" {
+			failedValuesRow = &body.AddonValuesSecrets[i]
+			break
+		}
+	}
+	if failedValuesRow == nil {
+		t.Fatal("no addon_values_secrets row carries last_check_error on the big estate — closes demo-seed-a-failing-check, but it's not seeded")
+	}
+	// P1-B symmetry fix: a failed check is not drift on EITHER kind of row
+	// — the values side had the same #120 bug (a failed check collapsed
+	// into out_of_sync) the connection side was fixed for; this row must
+	// now read unknown, never out_of_sync.
+	if failedValuesRow.State != "unknown" {
+		t.Errorf("cluster %q addon %q: state = %q, want unknown (a failed check is not drift)", failedValuesRow.Cluster, failedValuesRow.Addon, failedValuesRow.State)
+	}
+	if strings.Contains(failedValuesRow.LastCheckError, "connection refused") || strings.Contains(failedValuesRow.LastCheckError, "dial tcp") {
+		t.Errorf("addon-values last_check_error leaked raw text: %q", failedValuesRow.LastCheckError)
+	}
+
+	// --- Addon-values engine: a non-empty error with a cluster and a time,
+	// so both halves of the top strip can be seen failing. ---
+	if body.Engines.AddonValues.LastError == "" {
+		t.Error("engines.addon_values.last_error is empty, want a seeded engine-level failure (P1-B B3)")
+	}
+	if body.Engines.AddonValues.LastErrorCluster == "" {
+		t.Error("engines.addon_values.last_error_cluster is empty, want a named cluster")
+	}
+	if body.Engines.AddonValues.LastErrorAt == "" {
+		t.Error("engines.addon_values.last_error_at is empty, want a timestamp")
+	}
+	if strings.Contains(body.Engines.AddonValues.LastError, "connection refused") {
+		t.Errorf("engines.addon_values.last_error leaked raw text: %q", body.Engines.AddonValues.LastError)
+	}
+
+	// --- Refresh (the read-only check trigger) must not clear either
+	// failure — a check that fails again stays failed. ---
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters/"+failedConnRow.Cluster+"/reconcile", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rw := httptest.NewRecorder()
+	router.ServeHTTP(rw, req)
+	if rw.Code != http.StatusAccepted {
+		t.Fatalf("POST reconcile status = %d, want 202; body = %s", rw.Code, rw.Body.String())
+	}
+
+	after := getManagedSecrets(t, router, token)
+	var stillFailed bool
+	for _, row := range after.ClusterConnectionSecrets {
+		if row.Cluster == failedConnRow.Cluster && row.State == "unknown" && row.LastCheckError != "" {
+			stillFailed = true
+		}
+	}
+	if !stillFailed {
+		t.Errorf("cluster %q no longer shows a failed check after Refresh — a check that fails again must stay failed", failedConnRow.Cluster)
+	}
+
+	var stillFailedValues bool
+	for _, row := range after.AddonValuesSecrets {
+		if row.Cluster == failedValuesRow.Cluster && row.Addon == failedValuesRow.Addon && row.LastCheckError != "" {
+			if row.State != "unknown" {
+				t.Errorf("cluster %q addon %q: state = %q after Refresh, want unknown to stay unknown", row.Cluster, row.Addon, row.State)
+			}
+			stillFailedValues = true
+		}
+	}
+	if !stillFailedValues {
+		t.Errorf("cluster %q addon %q no longer carries last_check_error after Refresh — a check that fails again must stay failed", failedValuesRow.Cluster, failedValuesRow.Addon)
+	}
+}
+
 // TestBigEstate_SmallEstateAddonSecretDefsUnchanged pins S1's other half:
 // the small hand-written estate (plain `make demo`, DefaultScaleConfig)
 // must keep showing exactly the datadog/vault rows it always has — no new
@@ -234,9 +371,10 @@ func TestBigEstate_RefreshAndSync_ChangeTheRow(t *testing.T) {
 		LastChecked        string `json:"last_checked"`
 		LastRepaired       string `json:"last_repaired"`
 		LastRepairedDetail string `json:"last_repaired_detail"`
+		LastCheckError     string `json:"last_check_error"`
 	}
 	for i := range body.AddonValuesSecrets {
-		if body.AddonValuesSecrets[i].State == "out_of_sync" {
+		if body.AddonValuesSecrets[i].State == "out_of_sync" && body.AddonValuesSecrets[i].LastCheckError == "" {
 			target = &body.AddonValuesSecrets[i]
 			break
 		}
