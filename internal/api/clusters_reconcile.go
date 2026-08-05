@@ -49,6 +49,12 @@ func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) 
 		ComparedRevision: rec.ComparedRevision,
 		ComparedPath:     rec.ComparedPath,
 		AppliedRevision:  rec.AppliedRevision,
+		// P2-D D3: the connection engine's fight counter, read straight off
+		// the reconciler by cluster name — 0 for every cluster that has
+		// never had a fight-detection tick run against it (Sharko-managed
+		// clusters included; FightCount is nil-safe and only ever nonzero
+		// for a self-managed connection mid-fight).
+		FightCount: recon.FightCount(c.Name),
 	}
 	// V3 G1 — copy drift info if present
 	if rec.LabelDrift != nil {

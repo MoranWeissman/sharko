@@ -179,6 +179,11 @@ export interface ConnectionSecretRow {
   // 'cluster' (the revisions agree but the live secret still differs).
   // Absent when the row isn't out_of_sync, or either revision is unknown.
   drift_source?: 'git' | 'cluster'
+  // fight_count (P2-D) is how many consecutive checks something else has
+  // reverted Sharko's own write on this cluster's self-managed ArgoCD
+  // secret. Absent/0 for every cluster with no fight in progress. The panel
+  // shows a quiet warning at 3 or more.
+  fight_count?: number
 }
 
 export interface AddonValuesSecretRow {
@@ -210,6 +215,11 @@ export interface AddonValuesSecretRow {
   // the ownership gate means Sharko never touches (and so never heals) a
   // secret it did not create.
   self_heals: boolean
+  // consecutive_failures (P2-D) is how many passes in a row this item's
+  // check or write attempt itself failed — never for a legitimate finding
+  // like out_of_sync or missing. Absent/0 when the last attempt succeeded.
+  // The panel shows a quiet warning at 3 or more.
+  consecutive_failures?: number
 }
 
 // AddonValuesSecretActionResult mirrors the response body of both

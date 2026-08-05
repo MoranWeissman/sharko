@@ -346,4 +346,61 @@ spec:
           Sharko dashboard_read is consuming its 99.9% error budget at >6x the sustainable rate.
           File a ticket for daytime investigation.
         runbook_url: "https://moranweissman.github.io/sharko/operator/budget-burn-runbook/#sharkodashboardreadslowburn"
+
+  # ---------------------------------------------------------------------
+  # Alerting rules — reconciler observability (P2-D)
+  #
+  # These two watch the metrics P2-D wired: sharko_reconciler_last_success_
+  # timestamp (both engines' write/periodic pass) and
+  # sharko_managed_secrets_state (both engines' per-state snapshot). Not
+  # SLO burn-rate rules — a stalled reconciler and a pile of unrepaired
+  # secrets are correctness problems, not latency/error-budget ones, so
+  # these use a plain threshold-and-duration shape instead of the
+  # multi-window burn-rate pattern above.
+  # ---------------------------------------------------------------------
+  - name: sharko.reconciler.alerts
+    rules:
+    - alert: SharkoReconcilerPassAge
+      # Threshold is 10x each engine's own tick interval (sprint plan,
+      # fixed rather than derived from Deps.TickInterval/Interval() — a
+      # PromQL alert cannot read the running server's config, so these
+      # mirror DefaultTickInterval (30s, clusterreconciler) and the
+      # secrets reconciler's default interval (5m) directly. If either
+      # default ever changes, update the matching threshold here.
+      expr: |
+        (time() - sharko_reconciler_last_success_timestamp{engine="cluster_connection"} > 300)
+        or
+        (time() - sharko_reconciler_last_success_timestamp{engine="addon_values"} > 1800)
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        # NOTE: {{"{{"}} / {{"}}"}} below are the escape trick for a
+        # Prometheus template action inside a file this chart ALSO renders
+        # through Helm's own Go templating — without it, Helm would try to
+        # evaluate $labels.engine itself (undefined) instead of leaving it
+        # for Prometheus to fill in at alert-fire time.
+        summary: "Sharko's {{"{{"}} $labels.engine {{"}}"}} checks have not completed recently"
+        description: |
+          Sharko's {{"{{"}} $labels.engine {{"}}"}} engine has not completed a
+          check without errors in over 10x its normal cadence. New drift is
+          going unnoticed and unrepaired for as long as this holds. Check the
+          pod's logs for the engine's tick/pass lines and confirm its Git
+          connection and Kubernetes access are both healthy.
+        runbook_url: "https://moranweissman.github.io/sharko/operator/reconciler-crash-loop/"
+    - alert: SharkoManagedSecretsSustainedBadState
+      expr: sharko_managed_secrets_state{state=~"missing|out_of_sync"} > 0
+      for: 30m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Sharko has secrets stuck missing or out of sync"
+        description: |
+          {{"{{"}} $value {{"}}"}} secret(s) on the {{"{{"}} $labels.engine {{"}}"}}
+          engine have been in the "{{"{{"}} $labels.state {{"}}"}}" state for at
+          least 30 minutes straight — Sharko's own repair loop has not cleared
+          it. Check the Managed Secrets page for the affected rows and their
+          last_check_error, and confirm Sharko can reach the affected
+          cluster(s) and its secrets store.
+        runbook_url: "https://moranweissman.github.io/sharko/operator/cluster-reconciler/"
 {{- end }}

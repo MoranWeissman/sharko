@@ -29,8 +29,13 @@ func TestMetricsRegistered(t *testing.T) {
 		"sharko_reconciler_runs_total":              false,
 		"sharko_reconciler_duration_seconds":        false,
 		"sharko_reconciler_last_run_timestamp":      false,
+		"sharko_reconciler_last_success_timestamp":  false,
 		"sharko_reconciler_items_checked_total":     false,
 		"sharko_reconciler_items_changed_total":     false,
+		"sharko_managed_secrets_state":              false,
+		"sharko_reconciler_item_failures_total":     false,
+		"sharko_reconciler_writes_total":            false,
+		"sharko_reconciler_fights":                  false,
 		"sharko_pr_tracked":                         false,
 		"sharko_pr_merge_duration_seconds":          false,
 		"sharko_api_requests_total":                 false,
@@ -64,8 +69,13 @@ func TestMetricsRegistered(t *testing.T) {
 		ReconcilerRuns.Describe(descCh)
 		ReconcilerDuration.Describe(descCh)
 		ReconcilerLastRun.Describe(descCh)
+		ReconcilerLastSuccess.Describe(descCh)
 		ReconcilerItemsChecked.Describe(descCh)
 		ReconcilerItemsChanged.Describe(descCh)
+		ManagedSecretsState.Describe(descCh)
+		ReconcilerItemFailures.Describe(descCh)
+		ReconcilerWrites.Describe(descCh)
+		ReconcilerFights.Describe(descCh)
 		PRTracked.Describe(descCh)
 		PRMergeDuration.Describe(descCh)
 		AuthLoginTotal.Describe(descCh)
@@ -77,8 +87,8 @@ func TestMetricsRegistered(t *testing.T) {
 	for range descCh {
 		descCount++
 	}
-	if descCount != 20 {
-		t.Errorf("expected 20 metric descriptions, got %d", descCount)
+	if descCount != 25 {
+		t.Errorf("expected 25 metric descriptions, got %d", descCount)
 	}
 }
 

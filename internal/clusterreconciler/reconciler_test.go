@@ -182,6 +182,37 @@ func TestReconciler_TriggerBeforeStart_DoesNotPanic(t *testing.T) {
 	}
 }
 
+// TestReconciler_StartRunsImmediatePass pins P2-D D5: Start() must fire one
+// reconcile pass right away, before the first tick, so a restarted server
+// shows real per-cluster rows within moments rather than waiting up to a
+// full tick interval. Uses a long TickInterval (1 hour) so the ONLY way the
+// counter can move within the test's short deadline is the startup pass —
+// a regression back to "wait for the first tick" would time out here.
+func TestReconciler_StartRunsImmediatePass(t *testing.T) {
+	t.Parallel()
+	var counter atomic.Int64
+	signal := make(chan struct{}, 1)
+
+	r := New(Deps{TickInterval: time.Hour})
+	setPollFn(r, &counter, signal)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r.Start(ctx)
+
+	select {
+	case <-signal:
+		// Good — the startup pass fired without needing a tick or a Trigger.
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Start() did not run an immediate pass within 500ms")
+	}
+
+	r.Stop()
+	if got := counter.Load(); got < 1 {
+		t.Fatalf("counter = %d after Start, want at least 1 (the immediate startup pass)", got)
+	}
+}
+
 func TestReconciler_TriggerDuringRun_QueuesPoll(t *testing.T) {
 	t.Parallel()
 	var counter atomic.Int64

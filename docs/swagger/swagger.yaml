@@ -2289,6 +2289,15 @@ definitions:
         type: string
       cluster:
         type: string
+      consecutive_failures:
+        description: |-
+          ConsecutiveFailures (P2-D D3) is the values reconciler's per-item
+          consecutive-failure count for this cluster+addon pair — how many
+          passes in a row this item's check or write attempt itself failed
+          (never for a legitimate finding like out_of_sync or missing).
+          0/omitted when the last attempt succeeded or the pair has never been
+          checked. The UI shows a quiet row warning at 3 or more.
+        type: integer
       last_check_error:
         description: |-
           LastCheckError (S8) is a safe, canned sentence describing why the
@@ -2648,6 +2657,15 @@ definitions:
           outside git). Empty when the row isn't out_of_sync, or when either
           revision is unknown — never a guess.
         type: string
+      fight_count:
+        description: |-
+          FightCount (P2-D D3) is the connection reconciler's label-fight
+          counter for this cluster — how many consecutive ticks something else
+          has reverted Sharko's own write on this cluster's self-managed ArgoCD
+          secret. 0/omitted for every cluster with no fight in progress
+          (including every Sharko-managed, non-self-managed cluster, which has
+          no fight concept). The UI shows a quiet row warning at 3 or more.
+        type: integer
       last_check_error:
         description: |-
           LastCheckError (P1-B B1) is a safe, canned sentence describing why the

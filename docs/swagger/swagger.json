@@ -11899,6 +11899,10 @@
                 "cluster": {
                     "type": "string"
                 },
+                "consecutive_failures": {
+                    "description": "ConsecutiveFailures (P2-D D3) is the values reconciler's per-item\nconsecutive-failure count for this cluster+addon pair — how many\npasses in a row this item's check or write attempt itself failed\n(never for a legitimate finding like out_of_sync or missing).\n0/omitted when the last attempt succeeded or the pair has never been\nchecked. The UI shows a quiet row warning at 3 or more.",
+                    "type": "integer"
+                },
                 "last_check_error": {
                     "description": "LastCheckError (S8) is a safe, canned sentence describing why the\nlast check didn't finish — set only when the reconciler's per-item\nrecord carries an error (a failed check, NOT a real \"this drifted\"\nfinding). Distinct from State==\"out_of_sync\", which claims Sharko\nactually compared the secret to its source and found a mismatch:\nthis field exists so the UI can say plainly \"the last check\nfailed: …\" instead of implying drift when the truth is the check\nitself never completed. Always the mapped output of\naddonValuesSecretCheckFailureSentence — NEVER the reconciler's raw\nerror text (see that function's doc comment for why).",
                     "type": "string"
@@ -12283,6 +12287,10 @@
                 "drift_source": {
                     "description": "DriftSource (P2-C6) names which side moved for an out_of_sync row:\n\"git\" (the intent commit changed since the last successful write —\nComparedRevision != AppliedRevision) or \"cluster\" (the revisions\nagree but the live secret still differs — something changed it\noutside git). Empty when the row isn't out_of_sync, or when either\nrevision is unknown — never a guess.",
                     "type": "string"
+                },
+                "fight_count": {
+                    "description": "FightCount (P2-D D3) is the connection reconciler's label-fight\ncounter for this cluster — how many consecutive ticks something else\nhas reverted Sharko's own write on this cluster's self-managed ArgoCD\nsecret. 0/omitted for every cluster with no fight in progress\n(including every Sharko-managed, non-self-managed cluster, which has\nno fight concept). The UI shows a quiet row warning at 3 or more.",
+                    "type": "integer"
                 },
                 "last_check_error": {
                     "description": "LastCheckError (P1-B B1) is a safe, canned sentence describing why the\nlast check didn't finish — set only when this cluster's most recent\nreconcile record is OutcomeFailed. Mirrors addonValuesSecretRow's\nfield of the same name exactly: distinct from State == \"out_of_sync\"\n(which claims Sharko actually compared the secret and found a\nmismatch), this field exists so the UI can say plainly \"the last\ncheck failed: …\" instead of implying drift when the truth is the\ncheck itself never finished. Always the mapped output of\nclusterreconciler.FailureSentence — NEVER the reconciler's raw\nrecord text.",

@@ -204,6 +204,12 @@ type SecretReconciler interface {
 	// secrets.Reconciler.LastItemError's doc comment). Callers must map it
 	// through addonValuesSecretCheckFailureSentence first.
 	LastItemError(cluster, addon string) (errMsg string, ok bool)
+	// LastItemConsecutiveFailures (P2-D D3) reports how many passes in a row
+	// this addon-values secret's check or write attempt itself failed —
+	// primitive-typed, same import-free-boundary reasoning as
+	// LastItemOutcome. ok is false when this pair has never been checked or
+	// written on this server instance.
+	LastItemConsecutiveFailures(cluster, addon string) (count int, ok bool)
 	// CheckOne re-checks a single addon-values secret against its source
 	// right now, WITHOUT writing anything (S4's "Refresh" row action).
 	// Returns the outcome as a plain string (see secrets.ItemOutcome); a

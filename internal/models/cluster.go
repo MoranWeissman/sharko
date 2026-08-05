@@ -470,6 +470,15 @@ type ClusterLastReconcile struct {
 	// this server instance has ever successfully written this cluster's
 	// secret; a check pass never moves it.
 	AppliedRevision string `json:"applied_revision,omitempty"`
+
+	// FightCount (P2-D D3) is the number of CONSECUTIVE ticks the connection
+	// reconciler's label-fight detector has observed something else revert
+	// Sharko's own write on this cluster's self-managed ArgoCD secret — the
+	// same counter clusterreconciler.Reconciler.FightCount reads. 0 (the
+	// zero value / omitted) means no fight currently in progress, including
+	// for every Sharko-managed (non-self-managed) cluster, which has no
+	// fight concept at all.
+	FightCount int `json:"fight_count,omitempty"`
 }
 
 // ClusterResyncLabelDiff is the label diff a one-time "Re-sync now" action

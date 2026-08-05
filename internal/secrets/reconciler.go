@@ -14,6 +14,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
@@ -21,6 +22,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
+
+// engineAddonValues is this package's value for the "engine" metric label
+// (P2-D) — matches the "addon_values" key of GET /system/managed-secrets'
+// "engines" section. Wiring choice: a direct import of internal/metrics,
+// the same as internal/clusterreconciler — see that package's
+// engineClusterConnection doc comment for the full reasoning (leaf package,
+// no import-cycle risk, matches the rest of the codebase's direct-call
+// convention for this package).
+const engineAddonValues = "addon_values"
 
 // v3CatalogPath is where a v3 repo keeps its addon catalog. The v4 repo's
 // two files are config.AddonCatalogPath (catalog.yaml) and
@@ -143,6 +153,15 @@ type ItemRecord struct {
 	// Error is the reconcileSecret error message when Outcome is Skipped
 	// or Error; empty otherwise.
 	Error string
+	// ConsecutiveFailures (P2-D D3) counts how many passes IN A ROW this
+	// item's check or write attempt itself failed (ItemOutcomeError only —
+	// never for a legitimate finding like out_of_sync, missing, or
+	// foreign, which are not failures). Reset to 0 the instant a pass
+	// completes without erroring on this item, whatever outcome it found.
+	// In-memory only, like every other field here — a restart starts the
+	// count over at 0, which only delays (never falsifies) the "the last N
+	// checks failed in a row" panel line reaching 3.
+	ConsecutiveFailures int
 }
 
 // ItemAuditFunc is invoked once per addon-values secret that was actually
@@ -402,6 +421,20 @@ func (r *Reconciler) LastItemError(cluster, addon string) (errMsg string, ok boo
 	return rec.Error, true
 }
 
+// LastItemConsecutiveFailures reports the current consecutive-failure count
+// (P2-D D3) for one addon-values secret's cluster+addon pair — the ItemKey
+// primitive-typed accessor internal/api reads to surface consecutive_
+// failures on the row without importing this package (same import-free-
+// boundary reasoning as LastItemOutcome/LastItemError). ok is false when
+// this pair has never been checked or written on this server instance.
+func (r *Reconciler) LastItemConsecutiveFailures(cluster, addon string) (count int, ok bool) {
+	rec, ok := r.LastItemState(cluster, addon)
+	if !ok {
+		return 0, false
+	}
+	return rec.ConsecutiveFailures, true
+}
+
 // GetErrors returns the error messages from the last reconcile run.
 func (r *Reconciler) GetErrors() []string {
 	r.mu.RLock()
@@ -506,6 +539,13 @@ func (r *Reconciler) reconcile() {
 		// Plan-level failure: nothing cluster-specific went wrong yet, so
 		// there is no cluster to name (P1-B B2).
 		r.recordRun(start, stats, errs, "")
+		// P2-D D1: a plan-level failure aborts before any per-item work — the
+		// same "failure" outcome clusterreconciler reserves for its own
+		// whole-pass aborts (git read / schema validation), never "partial"
+		// (partial means SOME items were attempted).
+		metrics.ReconcilerRuns.WithLabelValues(engineAddonValues, "failure").Inc()
+		metrics.ReconcilerDuration.WithLabelValues(engineAddonValues).Observe(time.Since(start).Seconds())
+		metrics.ReconcilerLastRun.WithLabelValues(engineAddonValues).Set(float64(time.Now().Unix()))
 		return
 	}
 	if len(plan.problems) > 0 {
@@ -547,6 +587,14 @@ func (r *Reconciler) reconcile() {
 			rec.ChangedAt = prev.ChangedAt
 		}
 
+		// P2-D D3: consecutive-failure count — increments only on a real
+		// attempt failure (err != nil below), resets to 0 on anything else,
+		// including a legitimate finding like out_of_sync or missing (those
+		// are not failures — the check itself succeeded at determining them).
+		if err != nil {
+			rec.ConsecutiveFailures = prevItems[key].ConsecutiveFailures + 1
+		}
+
 		if err != nil {
 			rec.Error = err.Error()
 			stats.Errors++
@@ -561,8 +609,24 @@ func (r *Reconciler) reconcile() {
 				"secret", w.push.SecretName,
 				"error", err,
 			)
-		} else if r.itemAuditFn != nil && (outcome == ItemOutcomeCreated || outcome == ItemOutcomeUpdated) {
-			r.itemAuditFn(w.clusterName, w.addon, outcome)
+			// P2-D D2: the stuck-loop counter's failure half — a SMALL fixed
+			// reason set, never the raw error text.
+			metrics.ReconcilerItemFailures.WithLabelValues(engineAddonValues, itemFailureReason(err)).Inc()
+		} else if outcome == ItemOutcomeCreated || outcome == ItemOutcomeUpdated {
+			// P2-D D1/D2: the stuck-loop counter's write half — one increment
+			// per actual Kubernetes write this pass made. Shares the
+			// (engine, kind) shape with the legacy items-changed counter
+			// (declared since before this lane, never written until now) on
+			// purpose — they describe the same events.
+			kind := "created"
+			if outcome == ItemOutcomeUpdated {
+				kind = "updated"
+			}
+			metrics.ReconcilerItemsChanged.WithLabelValues(engineAddonValues, kind).Inc()
+			metrics.ReconcilerWrites.WithLabelValues(engineAddonValues, kind).Inc()
+			if r.itemAuditFn != nil {
+				r.itemAuditFn(w.clusterName, w.addon, outcome)
+			}
 		}
 		itemResults[key] = rec
 	}
@@ -573,6 +637,16 @@ func (r *Reconciler) reconcile() {
 
 	if len(plan.work) == 0 && len(errs) == 0 {
 		log.Info("[secrets] no addons with secret definitions — nothing to reconcile", "layout", plan.layout)
+		// P2-D D1: still a completed pass (git and the catalog both read
+		// fine — there is simply nothing to push), so it counts toward
+		// runs_total/duration/last_run like any other clean pass. Pass-age
+		// alerting depends on this: an estate with zero secret definitions
+		// must not look like the engine stopped running.
+		metrics.ReconcilerRuns.WithLabelValues(engineAddonValues, "success").Inc()
+		metrics.ReconcilerDuration.WithLabelValues(engineAddonValues).Observe(time.Since(start).Seconds())
+		now := float64(time.Now().Unix())
+		metrics.ReconcilerLastRun.WithLabelValues(engineAddonValues).Set(now)
+		metrics.ReconcilerLastSuccess.WithLabelValues(engineAddonValues).Set(now)
 		return
 	}
 
@@ -592,6 +666,115 @@ func (r *Reconciler) reconcile() {
 	// Invoke audit callback when secrets were created or updated.
 	if r.auditFn != nil && (stats.Created > 0 || stats.Updated > 0) {
 		r.auditFn("*", stats.Created, stats.Updated)
+	}
+
+	// P2-D D1: outcome mirrors clusterreconciler's own success/partial rule
+	// — reaching this line means the pass did NOT abort (that already
+	// returned above), so "failure" never applies here; "partial" is any
+	// pass with at least one per-item error.
+	outcome := "success"
+	if stats.Errors > 0 {
+		outcome = "partial"
+	}
+	metrics.ReconcilerRuns.WithLabelValues(engineAddonValues, outcome).Inc()
+	metrics.ReconcilerDuration.WithLabelValues(engineAddonValues).Observe(time.Since(start).Seconds())
+	now := float64(time.Now().Unix())
+	metrics.ReconcilerLastRun.WithLabelValues(engineAddonValues).Set(now)
+	if outcome == "success" {
+		metrics.ReconcilerLastSuccess.WithLabelValues(engineAddonValues).Set(now)
+	}
+	metrics.ReconcilerItemsChecked.WithLabelValues(engineAddonValues).Add(float64(stats.Checked))
+
+	recordAddonValuesStateGauges(itemResults)
+	recordAddonValuesFightGauge(itemResults)
+}
+
+// addonValuesMetricStates is every state sharko_managed_secrets_state can
+// report for this engine (P2-D D1/D4) — written every pass, in full, so a
+// state that just emptied out reports 0 instead of a stale nonzero value.
+var addonValuesMetricStates = []string{"in_sync", "out_of_sync", "missing", "foreign", "unknown"}
+
+// metricStateFromOutcome buckets one item's outcome into the
+// sharko_managed_secrets_state vocabulary (P2-D D1). Deliberately mirrors
+// internal/api/system_managed_secrets.go's addonValuesSecretRowState rule —
+// api cannot be imported here (it imports this package), so the two are
+// kept in sync by hand; see clusterreconciler.metricStateFromRecord's doc
+// comment for the same trade-off on the connection side.
+func metricStateFromOutcome(outcome ItemOutcome) string {
+	switch outcome {
+	case ItemOutcomeCreated, ItemOutcomeUpdated, ItemOutcomeUnchanged:
+		return "in_sync"
+	case ItemOutcomeOutOfSync:
+		return "out_of_sync"
+	case ItemOutcomeMissing:
+		return "missing"
+	case ItemOutcomeForeign:
+		return "foreign"
+	default: // ItemOutcomeError, ItemOutcomeSkipped
+		return "unknown"
+	}
+}
+
+// recordAddonValuesStateGauges sets sharko_managed_secrets_state for the
+// addon_values engine from THIS pass's freshly rebuilt item map (P2-D D1) —
+// itemResults, not r.itemRecords, since reconcile() already rebuilds the
+// whole map from scratch every pass (never merged with the previous one —
+// see itemRecords' own doc comment), so itemResults IS the complete current
+// picture without an extra lock round-trip.
+func recordAddonValuesStateGauges(items map[ItemKey]ItemRecord) {
+	counts := make(map[string]int, len(addonValuesMetricStates))
+	for _, rec := range items {
+		counts[metricStateFromOutcome(rec.Outcome)]++
+	}
+	for _, state := range addonValuesMetricStates {
+		metrics.ManagedSecretsState.WithLabelValues(engineAddonValues, state).Set(float64(counts[state]))
+	}
+}
+
+// fightGaugeThreshold mirrors clusterreconciler.fightGaugeThreshold (P2-D
+// D3) — the same "three in a row" bar the row warning in
+// ui/src/views/ManagedSecrets.tsx uses, applied here to ConsecutiveFailures
+// instead of the connection engine's revert streak.
+const fightGaugeThreshold = 3
+
+// recordAddonValuesFightGauge sets sharko_reconciler_fights for the
+// addon_values engine (P2-D D3) — the count of items whose consecutive
+// check/write failure streak has reached fightGaugeThreshold or more.
+func recordAddonValuesFightGauge(items map[ItemKey]ItemRecord) {
+	count := 0
+	for _, rec := range items {
+		if rec.ConsecutiveFailures >= fightGaugeThreshold {
+			count++
+		}
+	}
+	metrics.ReconcilerFights.WithLabelValues(engineAddonValues).Set(float64(count))
+}
+
+// itemFailureReason buckets a reconcileSecret error into the small fixed
+// reason vocabulary sharko_reconciler_item_failures_total uses (P2-D D2).
+// Mirrors FailureSentence's own stage-matching order and prefixes exactly
+// (failure_sentence.go) — same classification, a short metric-label code
+// instead of a sentence for a person.
+func itemFailureReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "the secret definition in the catalog has no"):
+		return "catalog_definition"
+	case strings.Contains(msg, "getting credentials"):
+		return "credentials"
+	case strings.Contains(msg, "connecting to cluster"):
+		return "connect"
+	case strings.Contains(msg, "provider"):
+		return "provider_fetch"
+	case strings.Contains(msg, "existing secret"):
+		return "read_secret"
+	case strings.Contains(msg, "creating secret"), strings.Contains(msg, "updating secret"):
+		return "write_failed"
+	default:
+		return "other"
 	}
 }
 

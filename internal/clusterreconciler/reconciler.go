@@ -64,6 +64,22 @@ import (
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
+// engineClusterConnection is this package's value for the "engine" metric
+// label (P2-D) — matches the "cluster_connection" key of GET
+// /system/managed-secrets' "engines" section, so a Grafana panel and the
+// page agree on what to call this engine. A direct import of
+// internal/metrics — not a hook interface — is the wiring choice for this
+// lane: internal/metrics is a leaf package (only prometheus + stdlib
+// imports, confirmed by grep before this lane started), so there is no
+// import-cycle risk, and the rest of the codebase already calls it directly
+// from non-test code (internal/api, internal/orchestrator,
+// internal/catalog) rather than through an interface — an AuditFn-style
+// hook exists here for audit specifically because audit entries need a
+// request-scoped sink a test can swap for a spy; a promauto counter has no
+// such need and is safe to touch directly in tests too (see
+// internal/metrics/metrics_test.go's own direct-call pattern).
+const engineClusterConnection = "cluster_connection"
+
 // syntheticTickID returns the canonical "recon-<unix_ts>" correlation ID
 // for a single reconciler tick. The unix timestamp is captured at the tick
 // boundary so every slog line emitted during the tick shares the same ID.
@@ -372,10 +388,13 @@ func New(deps Deps) *Reconciler {
 // Start launches the reconcile goroutine. Calling Start more than once is a
 // no-op (sync.Once). Cancel via Stop() or by cancelling ctx.
 //
-// Unlike prtracker.Start, this scaffold does NOT run an immediate
-// reconcile before entering the loop — Story 8.1 will revisit that
-// decision when the real pollOnce lands (it may want a startup reconcile
-// to recover from drift accumulated while the pod was down).
+// P2-D D5: runs one reconcile pass immediately, before entering the
+// tick/trigger/check select loop (see run()) — a server that restarts no
+// longer shows every cluster as "not checked yet" for up to
+// DefaultTickInterval (30s); it shows real rows within moments of startup.
+// Matches secrets.Reconciler.Start's existing shape (that engine already
+// ran its first pass immediately — its Story 8.1-era doc comment above is
+// now out of date and is corrected here).
 func (r *Reconciler) Start(ctx context.Context) {
 	r.startOnce.Do(func() {
 		go r.run(ctx)
@@ -424,7 +443,17 @@ func (r *Reconciler) ClientAndNamespace() (kubernetes.Interface, string) {
 // `recon-<unix_ts>`, trigger ticks use `recon-fanout-<unix_ts>` so operators
 // can distinguish the routine drift safety-net from the low-latency post-
 // merge nudge in log queries. V2-2.2.
+//
+// P2-D D5: runs one pass immediately, before the ticker is even created, so
+// a server that just restarted shows real per-cluster rows within moments
+// rather than waiting up to a full DefaultTickInterval for the first tick.
+// Uses the same synthetic tick ID shape a ticker-driven pass gets — an
+// operator reading logs cannot tell a startup pass apart from an ordinary
+// 30s tick, which is the point: it behaves exactly like one, just fired
+// once, early.
 func (r *Reconciler) run(ctx context.Context) {
+	r.pollFn(logging.WithRequestID(ctx, syntheticTickID()))
+
 	ticker := time.NewTicker(r.tickInterval)
 	defer ticker.Stop()
 	for {
@@ -507,6 +536,13 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 		return
 	}
 
+	// P2-D D1: metrics only start counting once every dependency precondition
+	// above has passed — a "not configured yet" skip is a setup state, not a
+	// completed (or even attempted) pass, the same distinction
+	// secrets.Reconciler's "no Git connection" branch already draws for its
+	// own engine.
+	start := r.now()
+
 	// Fetch the branch head SHA ONCE for this pass (P2-C1), best effort —
 	// before readDesiredState, so even a pass that fails to read the file
 	// still knows what it tried to compare against. setPassCompared below
@@ -573,6 +609,9 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 			// tick.
 			r.stampAbortedTick("git read failed: " + rdErr.Err.Error())
 		}
+		r.recordRunMetrics(engineClusterConnection, start, "failure", 0)
+		r.recordStateGauges()
+		r.recordFightGauge()
 		return
 	}
 
@@ -593,6 +632,26 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 
 	r.reconcileDiff(ctx, spec, fileNonEmpty, v4, &stats)
 	r.emitSummaryAudit(ctx, stats)
+
+	// P2-D D1: itemsChecked is the count of cluster entries this pass read
+	// from git — the same set reconcileDiff diffed against the live ArgoCD
+	// secrets. outcome is "partial" when this pass recorded an error against
+	// ANY cluster (createOne/deleteOne/syncSelfManaged/etc, or the
+	// listManagedSecrets-abort branch inside reconcileDiff, which now also
+	// counts toward stats.Errors) and "success" otherwise — pollOnce reaching
+	// this line at all means it did NOT abort before per-cluster work, so
+	// "failure" (reserved for an abort) never applies here.
+	itemsChecked := 0
+	if spec != nil {
+		itemsChecked = len(spec.Clusters)
+	}
+	outcome := "success"
+	if stats.Errors > 0 {
+		outcome = "partial"
+	}
+	r.recordRunMetrics(engineClusterConnection, start, outcome, itemsChecked)
+	r.recordStateGauges()
+	r.recordFightGauge()
 }
 
 // desiredStateReadKind classifies why readDesiredState could not produce a
@@ -766,6 +825,12 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 			Error:     err.Error(),
 			RequestID: logging.RequestID(ctx),
 		})
+		// P2-D: this abort was previously invisible to stats.Errors, which
+		// left emitSummaryAudit's level/result computation (and, now, this
+		// tick's outcome metric label) reading this as a clean "success" tick
+		// even though nothing after this point ran. One-line honesty fix,
+		// same spirit as M5a below.
+		stats.Errors++
 		// M5a — this pass never reaches the per-cluster work either; see
 		// the pollOnce git-read-failure branch for the full rationale.
 		r.stampAbortedTick("listing ArgoCD cluster secrets failed: " + err.Error())
@@ -1303,6 +1368,7 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 	}
 	if changed {
 		stats.UserLabelSynced++
+		recordWrite("updated")
 		log.Info("[clusterreconciler] self-managed connection: addon labels synced — connection data untouched",
 			"cluster", entry.Name, "namespace", r.namespace,
 		)
@@ -1390,6 +1456,7 @@ func (r *Reconciler) syncConnectivityCheckLabel(ctx context.Context, name string
 	}
 	if changed {
 		stats.ConnCheckSynced++
+		recordWrite("updated")
 		log.Info("[clusterreconciler] connectivity-check label converged from the live enabled-addon count",
 			"cluster", name, "namespace", r.namespace,
 		)
@@ -1531,6 +1598,7 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 	}
 
 	if res.Changed {
+		recordWrite("updated")
 		log.Info("[clusterreconciler] managed cluster self-heal: git-desired addon labels converged — ownership preserved, drift corrected",
 			"cluster", name, "namespace", r.namespace, "adopted", res.Adopted,
 		)
@@ -1857,6 +1925,7 @@ func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, 
 		return
 	}
 	stats.ClearedPending++
+	recordWrite("updated")
 	log.Info("[clusterreconciler] registration-pending annotation cleared — cluster is now managed",
 		"cluster", name, "namespace", r.namespace,
 	)
@@ -2099,6 +2168,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	}
 
 	stats.Created++
+	recordWrite("created")
 	log.Info("[clusterreconciler] cluster Secret created",
 		"cluster", entry.Name, "namespace", r.namespace, "server", creds.Server,
 	)
@@ -2174,6 +2244,7 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 	}
 
 	stats.Deleted++
+	recordWrite("deleted")
 	log.Info("[clusterreconciler] orphan Secret deleted",
 		"cluster", name, "namespace", r.namespace,
 	)
