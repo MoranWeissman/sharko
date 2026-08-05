@@ -55,8 +55,17 @@ vi.mock('react-router-dom', async () => {
   }
 })
 
+// P1-A A3 pins the exact toast wording, so the toast helper is mocked here
+// rather than rendered — the sentence is what matters, not the widget.
+const mockShowToast = vi.fn()
+vi.mock('@/components/ToastNotification', async () => {
+  const actual = await vi.importActual('@/components/ToastNotification')
+  return { ...actual, showToast: (...args: unknown[]) => mockShowToast(...args) }
+})
+
 const mockGetManagedSecrets = vi.fn()
 const mockTriggerSecretsReconcile = vi.fn()
+const mockCheckAllAddonValuesSecrets = vi.fn()
 const mockReconcileCluster = vi.fn()
 const mockResyncClusterLabels = vi.fn()
 const mockRefreshAddonValuesSecret = vi.fn()
@@ -77,6 +86,7 @@ vi.mock('@/services/api', () => ({
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
   getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
   triggerSecretsReconcile: (...args: unknown[]) => mockTriggerSecretsReconcile(...args),
+  checkAllAddonValuesSecrets: (...args: unknown[]) => mockCheckAllAddonValuesSecrets(...args),
   reconcileCluster: (...args: unknown[]) => mockReconcileCluster(...args),
   resyncClusterLabels: (...args: unknown[]) => mockResyncClusterLabels(...args),
   refreshAddonValuesSecret: (...args: unknown[]) => mockRefreshAddonValuesSecret(...args),
@@ -478,6 +488,104 @@ describe('ManagedSecrets', () => {
     expect(within(syncItemEnabled).queryByLabelText(/Why is Sync unavailable\?/)).not.toBeInTheDocument()
   })
 
+  // ───────────────────────────────────────────────────────────────────────
+  // P1-A — a secret Sharko did not create
+  // ───────────────────────────────────────────────────────────────────────
+
+  it('renders a foreign row with its own status mark and word', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      addon_values_secrets: [
+        {
+          cluster: 'prod-eu',
+          addon: 'eso',
+          secret_name: 'eso-creds',
+          secret_namespace: 'external-secrets',
+          state: 'foreign',
+          source: 'AWS Secrets Manager',
+          last_checked: '2026-08-05T00:00:00Z',
+        },
+      ],
+    })
+    renderPage()
+
+    const row = await screen.findByTestId('secret-row-values-prod-eu-eso')
+    expect(within(row).getByText('Foreign')).toBeInTheDocument()
+    const dot = within(row).getAllByTestId('status-dot')[0]
+    expect(dot).toHaveAttribute('data-status', 'foreign')
+    // Neither red nor amber — foreign is a boundary, not damage.
+    expect(dot.className).not.toMatch(/red|amber/)
+  })
+
+  it('disables Sync on a foreign row with the exact sentence', async () => {
+    const user = userEvent.setup()
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      cluster_connection_secrets: [],
+      addon_values_secrets: [
+        {
+          cluster: 'prod-eu',
+          addon: 'eso',
+          secret_name: 'eso-creds',
+          secret_namespace: 'external-secrets',
+          state: 'foreign',
+          source: 'AWS Secrets Manager',
+        },
+      ],
+    })
+    renderPage()
+
+    await screen.findByTestId('secret-row-values-prod-eu-eso')
+    await user.click(screen.getByRole('button', { name: 'Actions for prod-eu / eso' }))
+    const syncItem = await screen.findByRole('menuitem', { name: /Sync/ })
+    expect(syncItem).toHaveAttribute('aria-disabled', 'true')
+    await user.click(within(syncItem).getByLabelText('Why is Sync unavailable?'))
+    await waitFor(() =>
+      expect(screen.getByText('Someone else created this one — Sharko will not touch it.')).toBeInTheDocument(),
+    )
+  })
+
+  it('sorts a foreign row after out-of-sync and missing, but ahead of never-checked', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      cluster_connection_secrets: [],
+      addon_values_secrets: [
+        { cluster: 'c-unknown', addon: 'a', state: 'unknown', source: 'AWS Secrets Manager' },
+        { cluster: 'c-foreign', addon: 'a', state: 'foreign', source: 'AWS Secrets Manager' },
+        { cluster: 'c-missing', addon: 'a', state: 'missing', source: 'AWS Secrets Manager' },
+        { cluster: 'c-drift', addon: 'a', state: 'out_of_sync', source: 'AWS Secrets Manager' },
+      ],
+    })
+    renderPage()
+
+    await screen.findByTestId('secret-row-values-c-drift-a')
+    const order = screen.getAllByTestId(/^secret-row-/).map((r) => r.getAttribute('data-testid'))
+    expect(order).toEqual([
+      'secret-row-values-c-drift-a',
+      'secret-row-values-c-missing-a',
+      'secret-row-values-c-foreign-a',
+      'secret-row-values-c-unknown-a',
+    ])
+  })
+
+  // P1-A A3 — a connection row's Refresh checks every cluster, and the
+  // toast says so instead of implying one cluster was singled out.
+  it("a connection row's Refresh names the real blast radius in its toast", async () => {
+    const user = userEvent.setup()
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    mockReconcileCluster.mockResolvedValue({ status: 'accepted', message: 'checking' })
+    renderPage()
+
+    await screen.findByTestId('secret-row-connection-staging-us')
+    await user.click(screen.getByRole('button', { name: 'Actions for staging-us' }))
+    await user.click(await screen.findByRole('menuitem', { name: /Refresh/ }))
+
+    await waitFor(() => expect(mockReconcileCluster).toHaveBeenCalledWith('staging-us'))
+    await waitFor(() =>
+      expect(mockShowToast).toHaveBeenCalledWith("Checking every cluster's connection secret now, staging-us included.", 'success'),
+    )
+  })
+
   it('search narrows the table across both secret kinds', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
@@ -551,18 +659,40 @@ describe('ManagedSecrets', () => {
     await waitFor(() => expect(screen.getAllByText('Not running on this server.')).toHaveLength(2))
   })
 
-  it('Refresh all triggers both engines when connection secrets exist', async () => {
+  // P1-A A3 — "Refresh all" checks both engines and writes to neither. The
+  // second assertion is the one that matters: triggerSecretsReconcile runs
+  // the pass that CREATES and ROTATES secrets, so a button labelled Refresh
+  // must never reach it.
+  it('Refresh all checks both engines and never fires the values write pass', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
-    mockTriggerSecretsReconcile.mockResolvedValue({ status: 'ok' })
+    mockCheckAllAddonValuesSecrets.mockResolvedValue({ status: 'ok' })
     mockReconcileCluster.mockResolvedValue({ status: 'ok', message: 'triggered' })
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('refresh-all')).toBeInTheDocument())
     fireEvent.click(screen.getByTestId('refresh-all'))
 
-    await waitFor(() => expect(mockTriggerSecretsReconcile).toHaveBeenCalled())
-    // Any real cluster name works — the endpoint triggers the whole
-    // reconciler regardless of which cluster name is in the path.
+    await waitFor(() => expect(mockCheckAllAddonValuesSecrets).toHaveBeenCalled())
+    expect(mockTriggerSecretsReconcile).not.toHaveBeenCalled()
+    // Any real cluster name works — the endpoint checks every cluster
+    // regardless of which cluster name is in the path.
     expect(mockReconcileCluster).toHaveBeenCalledWith('prod-eu')
+  })
+
+  // P1-A A3 — the help text has to describe what the button actually does.
+  it('Refresh all says plainly that it only checks', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('refresh-all')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('What does Refresh all do?'))
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "Asks Sharko to check every secret against its source — connection secrets against git, addon values against your secrets store. Checking only: nothing is written. The engines' own loops do the repairs.",
+        ),
+      ).toBeInTheDocument(),
+    )
   })
 })

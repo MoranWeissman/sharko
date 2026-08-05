@@ -1185,6 +1185,11 @@ var serveCmd = &cobra.Command{
 				// (attachPRTracker) immediately sees the nudge fn — no
 				// startup race.
 				srv.SetReconcilerTrigger(clusterRecon.Trigger)
+				// The read-only check the UI's Refresh drives (P1-A A2) —
+				// a separate nudge from the write trigger above, so a
+				// button labelled "check" can never start a pass that
+				// writes.
+				srv.SetReconcilerCheckTrigger(clusterRecon.TriggerCheck)
 				// Read side of V2-cleanup-89.4: lets the cluster read model
 				// project each cluster's last reconcile outcome and lets
 				// handleReconcileCluster tell "reconciler not wired" apart

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,7 +119,9 @@ func TestBigEstate_ManagedSecrets_FullStateSpread(t *testing.T) {
 	}
 	t.Logf("addon_values_secrets: %d rows, states=%v, never_checked=%d", len(body.AddonValuesSecrets), avStates, neverChecked)
 
-	for _, want := range []string{"in_sync", "out_of_sync", "missing"} {
+	// "foreign" (P1-A) joins the spread: the walk has to be able to see a
+	// secret Sharko refuses to touch, or the new state is invisible.
+	for _, want := range []string{"in_sync", "out_of_sync", "missing", "foreign"} {
 		if avStates[want] == 0 {
 			t.Errorf("addon_values_secrets has no row in state %q — want the full spread, states=%v", want, avStates)
 		}
@@ -289,6 +292,71 @@ func TestBigEstate_RefreshAndSync_ChangeTheRow(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("row for cluster %q addon %q not found after Sync", target.Cluster, target.Addon)
+	}
+}
+
+// TestBigEstate_ForeignRow_RefusesSyncAndStaysForeign is P1-A A4: the demo
+// has to teach the same lesson the real thing does. A Refresh on a foreign
+// row still reports foreign (a check looks, it never fixes), and a Sync is
+// refused with the exact sentence the page shows on the disabled button.
+func TestBigEstate_ForeignRow_RefusesSyncAndStaysForeign(t *testing.T) {
+	srv := newTestServer(t)
+	cleanup, err := SetupDemoServer(srv, BigScaleConfig)
+	if err != nil {
+		t.Fatalf("SetupDemoServer: %v", err)
+	}
+	defer cleanup()
+
+	router := api.NewRouter(srv, nil)
+	token := demoLoginToken(t, router)
+	body := getManagedSecrets(t, router, token)
+
+	var cluster, addon string
+	for _, row := range body.AddonValuesSecrets {
+		if row.State == "foreign" {
+			cluster, addon = row.Cluster, row.Addon
+			break
+		}
+	}
+	if cluster == "" {
+		t.Fatal("no foreign addon_values_secrets row in the big estate — the walk cannot see the new state")
+	}
+
+	post := func(path string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(nil))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rw := httptest.NewRecorder()
+		router.ServeHTTP(rw, req)
+		return rw
+	}
+
+	rw := post(fmt.Sprintf("/api/v1/clusters/%s/addons/%s/secret/refresh", cluster, addon))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("Refresh status = %d, want 200; body = %s", rw.Code, rw.Body.String())
+	}
+	var refreshResp map[string]string
+	if err := json.Unmarshal(rw.Body.Bytes(), &refreshResp); err != nil {
+		t.Fatalf("decode Refresh response: %v", err)
+	}
+	if refreshResp["outcome"] != "foreign" {
+		t.Errorf("Refresh outcome = %q, want foreign", refreshResp["outcome"])
+	}
+
+	rw = post(fmt.Sprintf("/api/v1/clusters/%s/addons/%s/secret/sync", cluster, addon))
+	if rw.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("Sync status = %d, want 422; body = %s", rw.Code, rw.Body.String())
+	}
+	if !strings.Contains(rw.Body.String(), "Someone else created this one — Sharko will not touch it.") {
+		t.Errorf("Sync refusal body = %s, want the exact foreign sentence", rw.Body.String())
+	}
+
+	// And the row is unchanged: still foreign after both clicks.
+	after := getManagedSecrets(t, router, token)
+	for _, row := range after.AddonValuesSecrets {
+		if row.Cluster == cluster && row.Addon == addon && row.State != "foreign" {
+			t.Errorf("row state = %q after Refresh+Sync, want it to stay foreign", row.State)
+		}
 	}
 }
 

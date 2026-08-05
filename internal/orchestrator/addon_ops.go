@@ -196,7 +196,7 @@ func (o *Orchestrator) DisableAddon(ctx context.Context, req DisableAddonRequest
 		creds, credErr := o.fetchClusterCredentials(ctx, req.Cluster)
 		if credErr == nil {
 			disabledAddons := map[string]bool{req.Addon: false}
-			deleted, _ := o.deleteAddonSecrets(ctx, creds.Raw, disabledAddons)
+			deleted, _ := o.deleteAddonSecrets(ctx, req.Cluster, creds.Raw, disabledAddons)
 			if len(deleted) > 0 {
 				steps = append(steps, "delete_remote_secrets")
 			}

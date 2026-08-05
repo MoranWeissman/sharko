@@ -4026,14 +4026,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Nudges the cluster-secret reconciler to run immediately instead of waiting for its periodic tick.\nThis is a fleet-wide pass, not a targeted single-cluster reconcile — see the 202 response message.\nReturns 202 as soon as the trigger is accepted — the reconcile itself runs asynchronously.\nPoll GET /clusters/{name} and read the updated last_reconcile field once the pass completes.",
+                "description": "Asks the cluster-secret reconciler to CHECK right now instead of waiting for its periodic pass: it reads git, reads the live ArgoCD cluster secrets, compares them, and records what it found. Nothing is created, changed or deleted.\nThis check covers every cluster, not only the one named in the path — see the 202 response message.\nTo actually apply what a check found, use POST /clusters/{name}/resync.\nReturns 202 as soon as the check is accepted — the check itself runs asynchronously.\nPoll GET /clusters/{name} and read the updated last_reconcile field once the check completes.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "clusters"
                 ],
-                "summary": "Trigger a manual cluster reconcile",
+                "summary": "Check cluster connection secrets against git",
                 "parameters": [
                     {
                         "type": "string",
@@ -7477,6 +7477,61 @@ const docTemplate = `{
                         "description": "Repo status",
                         "schema": {
                             "$ref": "#/definitions/internal_api.RepoStatusResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/secrets/check": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Checks every addon-values secret against the secrets store right now, WITHOUT writing anything — no secret is created, changed or deleted.\nThis is what the Managed Secrets page's \"Refresh all\" drives on this engine. To actually push values, use POST /secrets/reconcile or the per-row sync endpoint.\nReturns 202 as soon as the check is accepted — the check itself runs in the background.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "secrets"
+                ],
+                "summary": "Check every addon-values secret against its source",
+                "responses": {
+                    "202": {
+                        "description": "Check started",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — requires operator role or higher",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Secrets reconciler not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }
@@ -11876,7 +11931,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "state": {
-                    "description": "State is one of \"in_sync\", \"out_of_sync\", \"missing\", or \"unknown\" —\nthe same vocabulary connectionSecretRow.State uses, derived here from\nthe addon-values reconciler's per-item outcome (see\naddonValuesSecretRowState) rather than its own per-cluster record.\nCompared against the vault (the secrets provider), NOT git — git only\nholds a pointer to where the value lives (S3(a) honesty lock).",
+                    "description": "State is one of \"in_sync\", \"out_of_sync\", \"missing\", \"foreign\", or\n\"unknown\" — derived here from the addon-values reconciler's per-item\noutcome (see addonValuesSecretRowState) rather than its own\nper-cluster record. \"foreign\" (P1-A) means a secret with this name is\non the cluster and Sharko did not create it, so Sharko will not\nchange or remove it.\nCompared against the vault (the secrets provider), NOT git — git only\nholds a pointer to where the value lives (S3(a) honesty lock).",
                     "type": "string"
                 }
             }

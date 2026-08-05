@@ -93,7 +93,23 @@ const (
 	// check-only request only observes and reports. Never produced by the
 	// periodic reconcile() pass itself.
 	ItemOutcomeMissing ItemOutcome = "missing"
+	// ItemOutcomeForeign means a Secret with this name already exists on
+	// the remote cluster and Sharko did not create it — it carries no
+	// app.kubernetes.io/managed-by=sharko label (P1-A). Somebody else owns
+	// it: a person, External Secrets Operator, Sealed Secrets, a vault
+	// agent, a Helm chart. Sharko records it every pass and never writes to
+	// it, so this is a boundary, not damage and not a failure: the item
+	// carries no error text, because nothing went wrong.
+	ItemOutcomeForeign ItemOutcome = "foreign"
 )
+
+// ErrForeignSecret is what SyncOne returns when the target Secret exists on
+// the cluster without Sharko's ownership label. The UI already disables Sync
+// for a foreign row, so reaching this is defense in depth — but the message
+// is written to be shown to a person verbatim (internal/api hands it back on
+// a 422), which is why it reads as a sentence rather than the usual
+// lowercase error fragment.
+var ErrForeignSecret = errors.New("Someone else created this one — Sharko will not touch it.")
 
 // ErrNoGitConnection means a single-item action (CheckOne/SyncOne — S4)
 // could not run because no Git connection is currently active. The
@@ -819,6 +835,12 @@ func (r *Reconciler) reconcileSecret(
 			"secret", ref.SecretName, "namespace", ref.Namespace,
 		)
 		if createErr := remoteclient.EnsureSecret(ctx, client, ref.Namespace, ref.SecretName, desiredData); createErr != nil {
+			// A Secret that appeared between this Get and the create, owned
+			// by somebody else — the choke point refused it, and so does
+			// this pass.
+			if errors.Is(createErr, remoteclient.ErrForeignSecret) {
+				return ItemOutcomeForeign, nil
+			}
 			return ItemOutcomeError, fmt.Errorf("creating secret: %w", createErr)
 		}
 		stats.Created++
@@ -826,6 +848,24 @@ func (r *Reconciler) reconcileSecret(
 			"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 		)
 		return ItemOutcomeCreated, nil
+	}
+
+	// Ownership gate (P1-A). The Secret exists but Sharko did not create
+	// it — no hash comparison, no write, no error. Sharko only reconciles
+	// what is its own; every pass re-records this same outcome, and the row
+	// says so on the page.
+	//
+	// remoteclient.EnsureSecret refuses the same write on its own (that is
+	// the real choke point, and it covers the orchestrator's create path
+	// too). This early return exists so the periodic pass never even
+	// attempts a write it knows will be refused, and so the recorded
+	// outcome is "foreign" rather than an error.
+	if !remoteclient.IsManagedBySharko(existing) {
+		log.Info("[secrets] leaving this secret alone — it exists on the cluster and Sharko did not create it",
+			"cluster", clusterName, "addon", addonName,
+			"namespace", ref.Namespace, "secret", ref.SecretName,
+		)
+		return ItemOutcomeForeign, nil
 	}
 
 	// Secret exists — compare hashes to decide whether an update is needed.
@@ -848,6 +888,12 @@ func (r *Reconciler) reconcileSecret(
 		"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 	)
 	if updateErr := remoteclient.EnsureSecret(ctx, client, ref.Namespace, ref.SecretName, desiredData); updateErr != nil {
+		// Belt and braces: the ownership gate above already returned for a
+		// foreign Secret, so this only fires if the label was stripped
+		// between the two calls. Either way, no write happened.
+		if errors.Is(updateErr, remoteclient.ErrForeignSecret) {
+			return ItemOutcomeForeign, nil
+		}
 		return ItemOutcomeError, fmt.Errorf("updating secret: %w", updateErr)
 	}
 	stats.Updated++
@@ -927,6 +973,67 @@ func (r *Reconciler) CheckOne(ctx context.Context, clusterName, addonName string
 	if err != nil {
 		return "", err
 	}
+	outcome, err := r.checkWork(ctx, w)
+	if err != nil {
+		return "", err
+	}
+	return string(outcome), nil
+}
+
+// CheckAll re-checks EVERY addon-values secret against its source right now,
+// without writing anything — the fleet-wide counterpart of CheckOne, and
+// what the page's "Refresh all" button drives (P1-A A3).
+//
+// It is deliberately NOT the periodic pass with a flag: reconcile() creates
+// missing Secrets and rotates changed ones, which is exactly what a button
+// labelled "check" must never do. This function reuses checkWork, the same
+// read-only primitive CheckOne uses, over the same plan the periodic pass
+// computes — so a check and a repair always agree on which items exist,
+// while only one of them ever writes.
+//
+// Per-item failure isolation matches the periodic pass: one unreachable
+// cluster does not stop the rest being checked. The returned error is only
+// for the case where nothing could be checked at all (no Git connection, or
+// the catalog could not be read).
+func (r *Reconciler) CheckAll(ctx context.Context) error {
+	log := logging.LoggerFromContext(ctx)
+
+	gr := r.gitReader()
+	if gr == nil {
+		return ErrNoGitConnection
+	}
+	plan, err := r.planPushes(ctx, gr)
+	if err != nil {
+		return fmt.Errorf("could not read the addon catalog or managed clusters list: %w", err)
+	}
+
+	checked, failed := 0, 0
+	for _, w := range plan.work {
+		if _, checkErr := r.checkWork(ctx, w); checkErr != nil {
+			failed++
+			log.Warn("[secrets] could not check this addon-values secret — carrying on with the rest",
+				"cluster", w.clusterName, "addon", w.addon, "secret", w.push.SecretName, "error", checkErr)
+			continue
+		}
+		checked++
+	}
+	log.Info("[secrets] check-only pass complete — nothing was written",
+		"layout", plan.layout, "checked", checked, "could_not_check", failed)
+	return nil
+}
+
+// checkWork is the read-only half of the values engine: fetch what the
+// secret SHOULD hold, read what is live on the cluster, compare, record.
+// It never creates, updates, patches or deletes anything in Kubernetes —
+// that guarantee is what makes every "Refresh" button on this page honest,
+// so keep it that way.
+//
+// Outcomes it can record: unchanged (matches), out_of_sync (differs),
+// missing (nothing there), foreign (something is there that Sharko did not
+// create), skipped (the catalog definition is incomplete — paired with an
+// error). A returned error means the check itself could not finish.
+func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, error) {
+	clusterName, addonName := w.clusterName, w.addon
 
 	if missing := w.push.MissingFields(); len(missing) > 0 {
 		checkErr := fmt.Errorf("the secret definition in the catalog has no %s — fill that in before Sharko can check it",
@@ -944,31 +1051,38 @@ func (r *Reconciler) CheckOne(ctx context.Context, clusterName, addonName string
 		return "", fmt.Errorf("connecting to cluster %q: %w", clusterName, err)
 	}
 
-	desiredData := make(map[string][]byte, len(w.push.Keys))
-	for key, providerPath := range w.push.Keys {
-		val, err := r.secretProvider.GetSecretValue(ctx, providerPath)
-		if err != nil {
-			return "", fmt.Errorf("fetching %q from the secrets provider: %w", providerPath, err)
-		}
-		desiredData[key] = val
-	}
-	desiredHash := hashSecretData(desiredData)
-
 	existing, err := client.CoreV1().Secrets(w.push.Namespace).Get(ctx, w.push.SecretName, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			r.recordItemCheck(clusterName, addonName, ItemOutcomeMissing, "")
-			return string(ItemOutcomeMissing), nil
+			return ItemOutcomeMissing, nil
 		}
 		return "", fmt.Errorf("checking the existing secret on cluster %q: %w", clusterName, err)
 	}
 
+	// Ownership gate (P1-A), asked BEFORE anything is pulled out of the
+	// secrets store: there is no reason to fetch a value Sharko is never
+	// going to write.
+	if !remoteclient.IsManagedBySharko(existing) {
+		r.recordItemCheck(clusterName, addonName, ItemOutcomeForeign, "")
+		return ItemOutcomeForeign, nil
+	}
+
+	desiredData := make(map[string][]byte, len(w.push.Keys))
+	for key, providerPath := range w.push.Keys {
+		val, valErr := r.secretProvider.GetSecretValue(ctx, providerPath)
+		if valErr != nil {
+			return "", fmt.Errorf("fetching %q from the secrets provider: %w", providerPath, valErr)
+		}
+		desiredData[key] = val
+	}
+
 	outcome := ItemOutcomeUnchanged
-	if hashSecretData(existing.Data) != desiredHash {
+	if hashSecretData(existing.Data) != hashSecretData(desiredData) {
 		outcome = ItemOutcomeOutOfSync
 	}
 	r.recordItemCheck(clusterName, addonName, outcome, "")
-	return string(outcome), nil
+	return outcome, nil
 }
 
 // SyncOne re-pushes a single addon-values secret (one cluster+addon pair) —
@@ -995,6 +1109,14 @@ func (r *Reconciler) SyncOne(ctx context.Context, clusterName, addonName string)
 		errMsg = syncErr.Error()
 	}
 
+	// Ownership gate (P1-A), defense in depth. reconcileSecret already
+	// refused to write and came back "foreign" with no error; a caller who
+	// got here anyway (an API call straight past the disabled button) is
+	// told plainly why nothing happened. The RECORD stays error-free on
+	// purpose — "somebody else owns this" is a boundary the row states in
+	// its own status, not a failed check to report as one.
+	refusedForeign := syncErr == nil && outcome == ItemOutcomeForeign
+
 	key := ItemKey{Cluster: clusterName, Addon: addonName}
 	r.mu.Lock()
 	if r.itemRecords == nil {
@@ -1008,6 +1130,9 @@ func (r *Reconciler) SyncOne(ctx context.Context, clusterName, addonName string)
 	r.itemRecords[key] = rec
 	r.mu.Unlock()
 
+	if refusedForeign {
+		return "", ErrForeignSecret
+	}
 	if syncErr != nil {
 		return "", syncErr
 	}

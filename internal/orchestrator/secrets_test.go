@@ -143,7 +143,7 @@ func TestDeleteAddonSecrets_DeletesDisabledAddonSecret(t *testing.T) {
 	_, _ = orch.createAddonSecrets(context.Background(), nil, map[string]bool{"datadog": true})
 
 	// Now disable it — should delete.
-	deleted, err := orch.deleteAddonSecrets(context.Background(), nil, map[string]bool{"datadog": false})
+	deleted, err := orch.deleteAddonSecrets(context.Background(), "prod-eu", nil, map[string]bool{"datadog": false})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestDeleteAllAddonSecrets_DeletesAll(t *testing.T) {
 	_, _ = orch.createAddonSecrets(context.Background(), nil, map[string]bool{"datadog": true})
 
 	// Delete all.
-	deleted, err := orch.deleteAllAddonSecrets(context.Background(), nil)
+	deleted, err := orch.deleteAllAddonSecrets(context.Background(), "prod-eu", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestDeleteAllAddonSecrets_DeletesAll(t *testing.T) {
 
 func TestDeleteAllAddonSecrets_NoSecretManagement(t *testing.T) {
 	orch := New(nil, defaultCreds(), newMockArgocd(), newMockGitProvider(), autoMergeGitOps(), defaultPaths(), nil)
-	deleted, err := orch.deleteAllAddonSecrets(context.Background(), nil)
+	deleted, err := orch.deleteAllAddonSecrets(context.Background(), "prod-eu", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

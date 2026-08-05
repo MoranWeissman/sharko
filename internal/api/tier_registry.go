@@ -52,6 +52,7 @@ var HandlerTier = map[string]audit.Tier{
 
 	// ArgoCD cluster secret sync, secret reconciliation
 	"handleTriggerReconcile":      audit.Tier1,
+	"handleCheckSecrets":          audit.Tier1,
 	"handleRefreshClusterSecrets": audit.Tier1,
 
 	// Single-item addon-values-secret row actions (S4 — Managed Secrets

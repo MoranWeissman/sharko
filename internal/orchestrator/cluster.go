@@ -821,7 +821,7 @@ func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serve
 	if o.credProvider != nil {
 		creds, credErr := o.fetchClusterCredentials(ctx, name)
 		if credErr == nil {
-			o.deleteAllAddonSecrets(ctx, creds.Raw) // best-effort, don't fail deregister for this
+			o.deleteAllAddonSecrets(ctx, name, creds.Raw) // best-effort, don't fail deregister for this
 		}
 	}
 
@@ -1055,7 +1055,7 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 				disabledAddons[a] = false
 			}
 		}
-		o.deleteAddonSecrets(ctx, rawKubeconfig, disabledAddons) //nolint:errcheck // best-effort
+		o.deleteAddonSecrets(ctx, name, rawKubeconfig, disabledAddons) //nolint:errcheck // best-effort
 	}
 
 	// Step 4: Update values file in Git AND managed-clusters.yaml labels.

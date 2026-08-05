@@ -219,7 +219,7 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 	if cleanup == "all" && o.credProvider != nil {
 		creds, credErr := providers.GetCredentialsWithOptionalRole(o.credProvider, credLookupKey, credRoleARN)
 		if credErr == nil {
-			deleted, _ := o.deleteAllAddonSecrets(ctx, creds.Raw)
+			deleted, _ := o.deleteAllAddonSecrets(ctx, req.Name, creds.Raw)
 			if len(deleted) > 0 {
 				steps = append(steps, "delete_remote_secrets")
 			}

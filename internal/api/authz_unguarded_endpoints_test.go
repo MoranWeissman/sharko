@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,7 +32,13 @@ import (
 // returned, without pulling in the real internal/secrets.Reconciler (which
 // would need a live Git connection).
 type fakeSecretReconciler struct {
+	mu        sync.Mutex
 	triggered int
+	// checkedAll counts CheckAll calls (P1-A A3) — the read-only fleet-wide
+	// pass "Refresh all" drives on this engine. Guarded by mu because the
+	// handler runs it in a goroutine.
+	checkedAll int
+	checkAllErr error
 
 	checkOutcome string
 	checkErr     error
@@ -72,6 +79,20 @@ func (f *fakeSecretReconciler) CheckOne(_ context.Context, cluster, addon string
 func (f *fakeSecretReconciler) SyncOne(_ context.Context, cluster, addon string) (string, error) {
 	f.syncCalls = append(f.syncCalls, itemCallArgs{cluster, addon})
 	return f.syncOutcome, f.syncErr
+}
+
+func (f *fakeSecretReconciler) CheckAll(_ context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checkedAll++
+	return f.checkAllErr
+}
+
+// checkAllCount reads the CheckAll counter under the lock.
+func (f *fakeSecretReconciler) checkAllCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.checkedAll
 }
 
 // assert403 decodes the body and asserts a clean JSON 403.

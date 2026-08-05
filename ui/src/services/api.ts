@@ -474,11 +474,14 @@ export async function diagnoseCluster(name: string) {
 }
 
 /**
- * reconcileCluster — POST /clusters/{name}/reconcile (V2-cleanup-89.4).
- * "Sync now": nudges the cluster-secret reconciler to run immediately
- * instead of waiting for its periodic tick. Returns 202 as soon as the
- * trigger is accepted — the reconcile itself is async, so callers should
- * refetch the cluster shortly after to pick up the updated last_reconcile.
+ * reconcileCluster — POST /clusters/{name}/reconcile.
+ * "Refresh": asks the cluster-secret engine to CHECK right now instead of
+ * waiting for its regular pass — it reads git, reads the live secrets,
+ * compares them, and records what it found. Nothing is created, changed or
+ * deleted. To actually apply what a check found, call resyncClusterLabels
+ * below. The check covers every cluster, not only the one named. Returns 202
+ * as soon as it is accepted — the check is async, so callers should refetch
+ * shortly after to pick up the updated last_reconcile.
  */
 export async function reconcileCluster(name: string) {
   return postJSON<{ status: string; message: string }>(`/clusters/${encodeURIComponent(name)}/reconcile`, {})
@@ -528,6 +531,19 @@ export async function getManagedSecrets() {
  */
 export async function triggerSecretsReconcile() {
   return postJSON<{ status: string }>('/secrets/reconcile', {})
+}
+
+/**
+ * checkAllAddonValuesSecrets — POST /api/v1/secrets/check. Checks EVERY
+ * addon-values secret against its source right now, WITHOUT writing
+ * anything. This is what "Refresh all" drives on this engine — deliberately
+ * not triggerSecretsReconcile above, which runs the pass that creates and
+ * rotates secrets. Returns 202 as soon as the check is accepted; the check
+ * runs in the background, so callers should refetch getManagedSecrets
+ * shortly after.
+ */
+export async function checkAllAddonValuesSecrets() {
+  return postJSON<{ status: string }>('/secrets/check', {})
 }
 
 /**

@@ -119,15 +119,21 @@ func reconcileOperatorReq(name string) *http.Request {
 	return req
 }
 
-func TestHandleReconcileCluster_202_TriggersReconciler(t *testing.T) {
+// TestHandleReconcileCluster_202_TriggersCheckOnlyPass pins the P1-A A2
+// contract: the endpoint every "Refresh" button in the UI reaches must fire
+// the READ-ONLY check, and must NOT fire the write nudge. Wiring both and
+// asserting one moved is the point — a regression that swaps them back is
+// exactly the bug this lane fixed.
+func TestHandleReconcileCluster_202_TriggersCheckOnlyPass(t *testing.T) {
 	argo := newStubArgoSrv(t, []map[string]interface{}{
 		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
 	}, http.StatusOK)
 	gp := &reconcileFakeGP{managedYAML: []byte("clusters:\n- name: prod-eu\n  labels: {}\n")}
 	srv, router := reconcileTestServer(t, gp, argo.URL)
 
-	triggered := 0
-	srv.SetReconcilerTrigger(func() { triggered++ })
+	wrote, checked := 0, 0
+	srv.SetReconcilerTrigger(func() { wrote++ })
+	srv.SetReconcilerCheckTrigger(func() { checked++ })
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, reconcileOperatorReq("prod-eu"))
@@ -135,8 +141,11 @@ func TestHandleReconcileCluster_202_TriggersReconciler(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("expected 202, got %d (body=%s)", w.Code, w.Body.String())
 	}
-	if triggered != 1 {
-		t.Fatalf("expected the reconciler trigger to fire exactly once, got %d", triggered)
+	if checked != 1 {
+		t.Fatalf("expected the read-only check trigger to fire exactly once, got %d", checked)
+	}
+	if wrote != 0 {
+		t.Fatalf("a button labelled Refresh must never fire the write pass — write trigger fired %d time(s)", wrote)
 	}
 	var body map[string]string
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
@@ -145,10 +154,9 @@ func TestHandleReconcileCluster_202_TriggersReconciler(t *testing.T) {
 	if body["status"] != "accepted" {
 		t.Errorf(`status = %q, want "accepted"`, body["status"])
 	}
-	// V2-cleanup-90.3 / review finding L2 — the 202 message must not
-	// overclaim per-cluster scoping: this is a fleet-wide pass that happens
-	// to include the named cluster, not a targeted single-cluster reconcile.
-	wantMsg := `reconcile pass triggered — the fleet-wide pass includes cluster "prod-eu"`
+	// The message must not overclaim per-cluster scoping (the pass covers
+	// every cluster), and must say plainly that nothing is written.
+	wantMsg := `checking every cluster's connection secret now, "prod-eu" included — nothing is written`
 	if body["message"] != wantMsg {
 		t.Errorf("message = %q, want %q", body["message"], wantMsg)
 	}
@@ -162,7 +170,7 @@ func TestHandleReconcileCluster_202_TriggersReconciler(t *testing.T) {
 func TestHandleReconcileCluster_503_NoReconcilerWired_SkipsGitAndArgoCDRoundTrips(t *testing.T) {
 	gp := &reconcileFakeGP{}                                      // no managedYAML set — GetFileContent always errors if called
 	_, router := reconcileTestServer(t, gp, "http://127.0.0.1:1") // unreachable ArgoCD URL
-	// Deliberately do NOT call SetReconcilerTrigger.
+	// Deliberately do NOT call SetReconcilerCheckTrigger.
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, reconcileOperatorReq("does-not-exist"))
@@ -176,7 +184,7 @@ func TestHandleReconcileCluster_404_UnknownCluster(t *testing.T) {
 	argo := newStubArgoSrv(t, nil, http.StatusOK)
 	gp := &reconcileFakeGP{managedYAML: []byte("clusters:\n- name: prod-eu\n  labels: {}\n")}
 	srv, router := reconcileTestServer(t, gp, argo.URL)
-	srv.SetReconcilerTrigger(func() {})
+	srv.SetReconcilerCheckTrigger(func() {})
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, reconcileOperatorReq("does-not-exist"))
@@ -192,7 +200,7 @@ func TestHandleReconcileCluster_503_NoReconcilerWired(t *testing.T) {
 	}, http.StatusOK)
 	gp := &reconcileFakeGP{managedYAML: []byte("clusters:\n- name: prod-eu\n  labels: {}\n")}
 	_, router := reconcileTestServer(t, gp, argo.URL)
-	// Deliberately do NOT call SetReconcilerTrigger — simulates a
+	// Deliberately do NOT call SetReconcilerCheckTrigger — simulates a
 	// deployment mode where the cluster reconciler never got wired
 	// (out-of-cluster, no credentials provider).
 
@@ -210,7 +218,7 @@ func TestHandleReconcileCluster_403_ViewerRole(t *testing.T) {
 	}, http.StatusOK)
 	gp := &reconcileFakeGP{managedYAML: []byte("clusters:\n- name: prod-eu\n  labels: {}\n")}
 	srv, router := reconcileTestServer(t, gp, argo.URL)
-	srv.SetReconcilerTrigger(func() {})
+	srv.SetReconcilerCheckTrigger(func() {})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters/prod-eu/reconcile", nil)
 	req.Header.Set("X-Sharko-User", "bob")

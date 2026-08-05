@@ -93,6 +93,7 @@ var mutatingPatternTier = map[string]audit.Tier{
 
 	// Secrets reconciler — Tier 1.
 	"POST /api/v1/secrets/reconcile": audit.Tier1,
+	"POST /api/v1/secrets/check":     audit.Tier1,
 
 	// Providers tests — Tier 1.
 	"POST /api/v1/providers/test":        audit.Tier1,

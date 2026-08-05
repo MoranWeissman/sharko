@@ -92,11 +92,12 @@ func (s *Server) applyManagedSecretFields(ctx context.Context, c *models.Cluster
 
 // handleReconcileCluster godoc
 //
-// @Summary Trigger a manual cluster reconcile
-// @Description Nudges the cluster-secret reconciler to run immediately instead of waiting for its periodic tick.
-// @Description This is a fleet-wide pass, not a targeted single-cluster reconcile — see the 202 response message.
-// @Description Returns 202 as soon as the trigger is accepted — the reconcile itself runs asynchronously.
-// @Description Poll GET /clusters/{name} and read the updated last_reconcile field once the pass completes.
+// @Summary Check cluster connection secrets against git
+// @Description Asks the cluster-secret reconciler to CHECK right now instead of waiting for its periodic pass: it reads git, reads the live ArgoCD cluster secrets, compares them, and records what it found. Nothing is created, changed or deleted.
+// @Description This check covers every cluster, not only the one named in the path — see the 202 response message.
+// @Description To actually apply what a check found, use POST /clusters/{name}/resync.
+// @Description Returns 202 as soon as the check is accepted — the check itself runs asynchronously.
+// @Description Poll GET /clusters/{name} and read the updated last_reconcile field once the check completes.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
@@ -109,16 +110,29 @@ func (s *Server) applyManagedSecretFields(ctx context.Context, c *models.Cluster
 // @Router /clusters/{name}/reconcile [post]
 // handleReconcileCluster handles POST /api/v1/clusters/{name}/reconcile.
 //
-// IMPLEMENTATION NOTE — global pass, not a targeted single-cluster
-// reconcile: this fires the reconciler's existing Trigger() channel, the
-// same low-latency nudge prTracker uses after a PR merge. Reconciler.pollOnce
-// always diffs the full desired-vs-live set in one pass (see
-// internal/clusterreconciler/reconciler.go); carving out a scoped
-// single-cluster code path would duplicate that diff logic for no real
-// latency win — a full pass over the fleet is the same work the 30s
-// safety-net tick already does continuously, so triggering it early is
-// cheap. The UI polls GET /clusters/{name} afterward and reads the updated
-// last_reconcile field once the triggered pass completes.
+// IMPLEMENTATION NOTE — this is a CHECK, and it covers every cluster.
+//
+// It fires the reconciler's TriggerCheck() channel (P1-A A2), which runs the
+// read-only pass: read git, list the live ArgoCD cluster secrets, compare,
+// record. No secret is created, changed or deleted by anything this handler
+// starts. That matters because every button in the UI that reaches this
+// endpoint is labelled "Refresh" and its help text says it checks — before
+// this, it fired the full write pass instead, which created secrets, deleted
+// orphans and stamped labels.
+//
+// Applying what a check found is a different endpoint on purpose:
+// POST /clusters/{name}/resync (handleResyncCluster). The 30-second
+// safety-net loop and the post-merge trigger still run the WRITE pass —
+// that loop is the agent doing continuous reconciliation, and nothing here
+// changes it.
+//
+// The check is not scoped to one cluster: the reconciler always diffs the
+// full desired-vs-live set in one pass, and carving out a single-cluster
+// code path would duplicate that logic for no real win. The cluster name in
+// the path still matters — it is what the 404 check below verifies, and it
+// is what the response message names — but the pass covers the rest too,
+// and the message says so. The UI polls GET /clusters/{name} afterward and
+// reads the updated last_reconcile field once the check completes.
 //
 // Handler order (V2-cleanup-90.3 / review finding L2): the cheap
 // "is a reconciler even wired on this server" 503 check runs FIRST, before
@@ -140,7 +154,7 @@ func (s *Server) handleReconcileCluster(w http.ResponseWriter, r *http.Request) 
 
 	name := r.PathValue("name")
 
-	if s.reconcilerTrigger == nil {
+	if s.reconcilerCheckTrigger == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error": "the cluster reconciler is not running on this server (no in-cluster Kubernetes client or credentials provider configured) — addon labels are not auto-synced to ArgoCD on this deployment",
 		})
@@ -168,15 +182,16 @@ func (s *Server) handleReconcileCluster(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	s.reconcilerTrigger()
+	s.reconcilerCheckTrigger()
 
 	audit.Enrich(r.Context(), audit.Fields{
-		Event:    "cluster_reconcile_triggered",
+		Event:    "cluster_connection_secret_check_triggered",
 		Resource: fmt.Sprintf("cluster:%s", name),
+		Detail:   "read-only check of every cluster's connection secret",
 	})
 
 	writeJSON(w, http.StatusAccepted, map[string]string{
 		"status":  "accepted",
-		"message": fmt.Sprintf("reconcile pass triggered — the fleet-wide pass includes cluster %q", name),
+		"message": fmt.Sprintf("checking every cluster's connection secret now, %q included — nothing is written", name),
 	})
 }

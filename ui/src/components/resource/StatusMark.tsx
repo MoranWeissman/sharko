@@ -4,11 +4,18 @@
 // addon rows) that has this same one-question shape: does the live thing
 // match where it's supposed to come from?
 //
-// Exactly four states, exact words — never invent a fifth:
+// Exactly five states, exact words — never invent a sixth:
 //   in_sync      "In sync"          — matches its source right now
 //   out_of_sync  "Out of sync"      — checked, and it does NOT match
 //   missing      "Missing"          — checked, and there's nothing there
+//   foreign      "Foreign"          — something IS there, and Sharko did not
+//                                     create it, so Sharko leaves it alone
 //   unknown      "Not checked yet"  — Sharko has no answer at all
+//
+// "Foreign" is deliberately NOT red and NOT amber. Nothing is broken and
+// nothing needs fixing — somebody else owns that secret, and Sharko staying
+// off it is the system working correctly. It gets a neutral slate dot: its
+// own thing, calm, and impossible to mistake for damage.
 //
 // Two rules that matter more than they look like they do:
 //
@@ -33,9 +40,9 @@
 //    "Not checked yet" stays its own shape (a hollow ring) ON PURPOSE — it
 //    must never be mistaken for a filled, checked state at a glance.
 
-import { Check, X, type LucideIcon } from 'lucide-react'
+import { Check, Minus, X, type LucideIcon } from 'lucide-react'
 
-export type ResourceStatus = 'in_sync' | 'out_of_sync' | 'missing' | 'unknown'
+export type ResourceStatus = 'in_sync' | 'out_of_sync' | 'missing' | 'foreign' | 'unknown'
 
 interface StatusMeta {
   label: string
@@ -73,6 +80,15 @@ const STATUS_META: Record<ResourceStatus, StatusMeta> = {
     stripClassName: 'border-red-600 dark:border-red-500',
     mark: X,
   },
+  foreign: {
+    label: 'Foreign',
+    // Neutral slate, on purpose — see the note at the top of this file.
+    // Filled (something IS there, Sharko looked and knows what) with a dash
+    // inside (Sharko does nothing here).
+    dotClassName: 'bg-slate-500 dark:bg-slate-400',
+    stripClassName: 'border-slate-500 dark:border-slate-400',
+    mark: Minus,
+  },
   unknown: {
     label: 'Not checked yet',
     dotClassName: '',
@@ -94,17 +110,22 @@ export function statusLabel(state: string): string {
 }
 
 /**
- * Worst-first sort rank (S3): out_of_sync, then missing, then unknown, then
- * in_sync last. Ascending sort on this rank is "problems float to the top",
- * matching ArgoCD's own status-priority sort — NEVER sort states
- * alphabetically (that buries "out_of_sync" between "in_sync" and
+ * Worst-first sort rank (S3): out_of_sync, then missing, then foreign, then
+ * unknown, then in_sync last. Ascending sort on this rank is "problems float
+ * to the top", matching ArgoCD's own status-priority sort — NEVER sort
+ * states alphabetically (that buries "out_of_sync" between "in_sync" and
  * "missing").
+ *
+ * "Foreign" sits below the two damaged states and above "not checked yet": a
+ * boundary you should know about matters more than a row nobody has looked
+ * at, and less than a secret that is wrong or absent.
  */
 const STATUS_RANK: Record<ResourceStatus, number> = {
   out_of_sync: 0,
   missing: 1,
-  unknown: 2,
-  in_sync: 3,
+  foreign: 2,
+  unknown: 3,
+  in_sync: 4,
 }
 
 export function statusSortRank(state: string): number {

@@ -180,6 +180,24 @@ func (r *Reconciler) LastError() (cluster, message string, at time.Time, ok bool
 // "the secret is missing" without fuzzy-matching a duplicated string.
 const SelfManagedSecretNotCreatedMessage = "Waiting for you to create this cluster's ArgoCD cluster secret — this connection is self-managed, so Sharko only syncs addon labels onto it once it exists."
 
+// ManagedSecretNotCreatedMessage is the exact ClusterReconcileRecord.Message
+// recorded when a Sharko-managed cluster has no ArgoCD cluster secret on the
+// cluster at all — the check-only pass found nothing there (CheckOnce), or a
+// one-time "Sync" was asked for a secret that has never existed
+// (ResyncClusterLabels). The write pass never records it: that pass creates
+// the secret instead of reporting on it.
+//
+// Exported for the same reason as the self-managed message above: the read
+// model recognises this exact, well-defined reason as "the secret is
+// missing" without fuzzy-matching a duplicated string.
+const ManagedSecretNotCreatedMessage = "This cluster's ArgoCD secret has not been created yet, so there is nothing to sync onto."
+
+// UnlabeledSecretExistsMessage is recorded by the check-only pass when a
+// secret with the cluster's name already sits in the ArgoCD namespace
+// without Sharko's ownership label. Sharko takes no position on it — it is
+// somebody else's, and adopting it is a separate, deliberate action.
+const UnlabeledSecretExistsMessage = "A secret with this cluster's name already exists and Sharko did not create it — adopt the cluster instead of overwriting it."
+
 // pruneStaleReconcileRecords removes lastReconcile and fightState entries
 // for cluster names that were neither desired (in managed-clusters.yaml)
 // nor observed live in ArgoCD during this pass (V2-cleanup-90.2, fix M3).
