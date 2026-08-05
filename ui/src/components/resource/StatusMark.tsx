@@ -17,42 +17,55 @@
 //     not what "nobody has looked yet" means, and showing one would be
 //     lying about what Sharko is doing.
 //  2. "Not checked yet" is never grey-that-reads-as-fine sitting next to
-//     green/amber/red — it gets its own muted-but-distinct blue-grey tone
-//     with proper light AND dark variants (the bug this fixes: the old
-//     STATE_CLASSES.unknown had no dark: variant at all).
+//     green/amber/red — it gets its own muted-but-distinct blue-grey ring
+//     with proper light AND dark variants.
+//
+// House-style pass (maintainer's adopted design review, "shaped like
+// ArgoCD but painted like the opposite of ArgoCD"):
+//
+//  - H2: colour lives ONLY on the small dot below — the word next to it is
+//    always plain dark ink, never a colour. Twenty amber words filling a
+//    screen was the bug; ArgoCD's own "Healthy"/"Synced" are black text
+//    next to a small coloured mark, and this rule keeps the same honesty
+//    ("state has a word, not just a colour") without the colour-noise.
+//  - H3: ONE dot shape (a filled circle) for all three "checked" states —
+//    only the fill colour and the mark inside change (check / "!" / cross).
+//    "Not checked yet" stays its own shape (a hollow ring) ON PURPOSE — it
+//    must never be mistaken for a filled, checked state at a glance.
 
-import { AlertTriangle, Circle, CheckCircle2, XCircle, type LucideIcon } from 'lucide-react'
+import { Check, X, type LucideIcon } from 'lucide-react'
 
 export type ResourceStatus = 'in_sync' | 'out_of_sync' | 'missing' | 'unknown'
 
 interface StatusMeta {
   label: string
-  icon: LucideIcon
-  className: string
-  /** true = a hollow/outline glyph (rule 1 above) — never spin this one. */
+  /** Fill colour for the dot — in_sync/out_of_sync/missing only (unknown is hollow, no fill). */
+  dotClassName: string
+  /** The small mark drawn inside the filled dot — absent for the hollow "unknown" ring. */
+  mark?: LucideIcon
+  /** true = a hollow/outline ring (rule 1 above) — never fill or spin this one. */
   hollow?: boolean
 }
 
 const STATUS_META: Record<ResourceStatus, StatusMeta> = {
   in_sync: {
     label: 'In sync',
-    icon: CheckCircle2,
-    className: 'text-green-700 dark:text-green-400',
+    dotClassName: 'bg-green-600 dark:bg-green-500',
+    mark: Check,
   },
   out_of_sync: {
     label: 'Out of sync',
-    icon: AlertTriangle,
-    className: 'text-amber-700 dark:text-amber-400',
+    dotClassName: 'bg-amber-600 dark:bg-amber-500',
+    mark: undefined, // exclamation mark is drawn as text — see StatusDot
   },
   missing: {
     label: 'Missing',
-    icon: XCircle,
-    className: 'text-red-700 dark:text-red-400',
+    dotClassName: 'bg-red-600 dark:bg-red-500',
+    mark: X,
   },
   unknown: {
     label: 'Not checked yet',
-    icon: Circle,
-    className: 'text-[#5a7a95] dark:text-gray-400',
+    dotClassName: '',
     hollow: true,
   },
 }
@@ -84,14 +97,60 @@ export function statusSortRank(state: string): number {
   return STATUS_RANK[toResourceStatus(state)]
 }
 
-export function StatusMark({ status, className }: { status: string; className?: string }) {
-  const meta = STATUS_META[toResourceStatus(status)]
-  const Icon = meta.icon
+/**
+ * StatusDot — H3's one dot shape. A filled circle whose fill colour and
+ * inner mark carry the state; "unknown" is a hollow ring instead of a
+ * filled circle so it can never be mistaken for a checked, healthy state at
+ * a glance (still, never a spinner — rule 1 above).
+ */
+export function StatusDot({ status, className }: { status: ResourceStatus; className?: string }) {
+  const meta = STATUS_META[status]
+  if (meta.hollow) {
+    return (
+      <span
+        aria-hidden="true"
+        data-testid="status-dot"
+        data-status={status}
+        data-hollow="true"
+        className={`inline-block h-3 w-3 shrink-0 rounded-full border-2 border-[#8aa2b6] dark:border-gray-500 ${className ?? ''}`}
+      />
+    )
+  }
+  const Mark = meta.mark
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-sm font-medium ${meta.className} ${className ?? ''}`}
+      aria-hidden="true"
+      data-testid="status-dot"
+      data-status={status}
+      data-hollow="false"
+      className={`inline-flex h-3 w-3 shrink-0 items-center justify-center rounded-full ${meta.dotClassName} ${className ?? ''}`}
     >
-      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      {Mark ? (
+        <Mark className="h-2 w-2 text-white" strokeWidth={4} />
+      ) : (
+        // out_of_sync's "!" — text, not an icon: matches ArgoCD's own
+        // exclamation-in-a-dot degraded mark without adding a lucide
+        // triangle (a triangle would break the one-shape rule).
+        <span className="text-[8px] font-bold leading-none text-white">!</span>
+      )}
+    </span>
+  )
+}
+
+export function StatusMark({ status, className }: { status: string; className?: string }) {
+  const s = toResourceStatus(status)
+  const meta = STATUS_META[s]
+  return (
+    <span
+      data-testid="status-mark"
+      data-status={s}
+      // H2: this classname is the ONLY colour carrier that ever changes
+      // per-status on the WORD — it doesn't, on purpose. text-[#13293f] /
+      // dark:text-gray-200 is plain dark ink for all four states; colour
+      // lives on the <StatusDot> glyph only.
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-sm font-medium text-[#13293f] dark:text-gray-200 ${className ?? ''}`}
+    >
+      <StatusDot status={s} />
       {meta.label}
     </span>
   )

@@ -52,9 +52,14 @@ export function PaginationControls({
               key={item}
               type="button"
               onClick={() => onPageChange(item)}
+              // B4: the selected page used to be the same teal
+              // StatusMark uses for "in sync" — green/teal meant both
+              // "healthy" and "you clicked this". Selection is not a
+              // status, so it gets its own colour (the brand navy the
+              // sidebar already uses), never a status hue.
               className={`rounded px-3 py-1 text-sm font-medium transition-colors ${
                 item === page
-                  ? 'bg-teal-600 text-white'
+                  ? 'bg-[#1a3d5c] text-white dark:bg-teal-700'
                   : 'text-[#0a3a5a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700'
               }`}
             >
@@ -101,9 +106,10 @@ export function PageSizeSelector({
             type="button"
             onClick={() => onChange(size)}
             aria-label={`Show ${size} per page`}
+            // B4: same fix as the page button above — navy for "selected", never the status-teal.
             className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
               pageSize === size
-                ? 'bg-teal-600 text-white'
+                ? 'bg-[#1a3d5c] text-white dark:bg-teal-700'
                 : 'text-[#2a5a7a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800'
             }`}
           >
