@@ -37,7 +37,7 @@ type fakeSecretReconciler struct {
 	// checkedAll counts CheckAll calls (P1-A A3) — the read-only fleet-wide
 	// pass "Refresh all" drives on this engine. Guarded by mu because the
 	// handler runs it in a goroutine.
-	checkedAll int
+	checkedAll  int
 	checkAllErr error
 
 	checkOutcome string
@@ -50,14 +50,25 @@ type fakeSecretReconciler struct {
 
 	lastItemOutcome   string
 	lastItemOutcomeOK bool
+
+	// lastError/lastErrorCluster/lastErrorAt (P1-B B2) let tests configure
+	// the engine-level error the LastError/LastErrorCluster/LastErrorAt
+	// trio reports — zero values mean "no error", same as a clean pass.
+	lastError        string
+	lastErrorCluster string
+	lastErrorAt      time.Time
 }
 
 type itemCallArgs struct{ cluster, addon string }
 
-func (f *fakeSecretReconciler) Trigger()                { f.triggered++ }
-func (f *fakeSecretReconciler) GetStats() interface{}   { return map[string]int{} }
-func (f *fakeSecretReconciler) LastRunTime() time.Time  { return time.Time{} }
-func (f *fakeSecretReconciler) LastError() string       { return "" }
+func (f *fakeSecretReconciler) Trigger()               { f.triggered++ }
+func (f *fakeSecretReconciler) GetStats() interface{}  { return map[string]int{} }
+func (f *fakeSecretReconciler) LastRunTime() time.Time { return time.Time{} }
+func (f *fakeSecretReconciler) LastError() string      { return f.lastError }
+func (f *fakeSecretReconciler) LastErrorCluster() string {
+	return f.lastErrorCluster
+}
+func (f *fakeSecretReconciler) LastErrorAt() time.Time  { return f.lastErrorAt }
 func (f *fakeSecretReconciler) Interval() time.Duration { return 0 }
 func (f *fakeSecretReconciler) LastItemChecked(_, _ string) (time.Time, bool) {
 	return time.Time{}, false

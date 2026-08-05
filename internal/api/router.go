@@ -163,8 +163,23 @@ type SecretReconciler interface {
 	// summary) are primitive-typed on purpose — same import-free-boundary
 	// reasoning as GetStats, but callers that only need these facts don't
 	// have to type-assert an interface{} to get them.
+	//
+	// LastError (P1-B B2) is ALREADY the mapped, safe-to-show sentence
+	// (secrets.Reconciler.LastError applies secrets.FailureSentence before
+	// returning) — never the raw error text.
 	LastRunTime() time.Time
 	LastError() string
+	// LastErrorCluster names the cluster LastError's sentence is ABOUT — the
+	// first failing cluster+addon pair's cluster name from the most recent
+	// reconcile run (P1-B B2, mirrors clusterreconciler.Reconciler.
+	// LastError's cluster — #716). Empty when LastError() is empty, or when
+	// the failure was plan-level (reading the catalog/managed-clusters file
+	// itself failed, before any per-item work started) — no cluster to name.
+	LastErrorCluster() string
+	// LastErrorAt is the timestamp of the reconcile run LastError was
+	// recorded during — an error with no "since when" isn't actionable.
+	// Zero exactly when LastError() is empty.
+	LastErrorAt() time.Time
 	Interval() time.Duration
 	// LastItemChecked reports the last-checked timestamp for one
 	// addon-values secret's cluster+addon pair — primitive-typed, same

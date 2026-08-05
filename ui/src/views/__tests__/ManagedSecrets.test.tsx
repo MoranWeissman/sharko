@@ -378,6 +378,74 @@ describe('ManagedSecrets', () => {
     expect(screen.queryByTestId('secret-row-connection-prod-eu')).not.toBeInTheDocument()
   })
 
+  // P1-B B2: the addon-values engine's red line now carries a cluster and a
+  // time exactly like the connection one, and clicks the same way —
+  // EngineStat is generic over both engines, so this only needed the
+  // backend to start sending the fields and the page to pass onErrorClick.
+  it("clicking the addon-values engine's red error names the cluster, carries a time, and filters the table to that cluster on click", async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      engines: {
+        ...baseResponse.engines,
+        addon_values: {
+          ...baseResponse.engines.addon_values,
+          last_error: "Sharko couldn't connect to one of the clusters. Check that Sharko can reach that cluster, then click Refresh.",
+          last_error_cluster: 'staging-us',
+          last_error_at: '2026-08-05T00:10:00Z',
+        },
+      },
+    })
+    renderPage()
+
+    const errorEl = await screen.findByTestId('engine-error-values')
+    expect(errorEl).toHaveTextContent('staging-us')
+    expect(errorEl).toHaveTextContent("Sharko couldn't connect to one of the clusters.")
+
+    fireEvent.click(errorEl)
+    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
+    expect(screen.getByTestId('secret-row-values-staging-us-datadog')).toBeInTheDocument()
+    expect(screen.queryByTestId('secret-row-values-prod-eu-datadog')).not.toBeInTheDocument()
+  })
+
+  // P1-B B1: a connection row whose last check FAILED is not the same
+  // thing as a row that was never checked at all — but both are honestly
+  // "Sharko doesn't know", so both render the same not-checked/unknown
+  // family mark. The failure sentence is what tells them apart, in the
+  // panel, exactly where a values row's check-failure sentence already
+  // shows.
+  it("a connection row whose last check failed renders the unknown-family mark (not out-of-sync) and shows the check-failure sentence in the panel", async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      cluster_connection_secrets: [
+        ...baseResponse.cluster_connection_secrets,
+        {
+          cluster: 'spoke-asia',
+          secret_namespace: 'argocd',
+          secret_name: 'spoke-asia',
+          state: 'unknown',
+          source: 'git',
+          last_checked: '2026-08-05T00:05:00Z',
+          last_check_error: 'Sharko could not read git, so this check did not finish. Check that Sharko can reach your git host, then click Refresh.',
+        },
+      ],
+    })
+    renderPage()
+
+    const row = await screen.findByTestId('secret-row-connection-spoke-asia')
+    const dot = within(row).getByTestId('status-dot')
+    // Hollow/still — the same mark a genuinely never-checked row gets,
+    // never the filled amber out_of_sync dot.
+    expect(dot).toHaveAttribute('data-hollow', 'true')
+    expect(dot).toHaveAttribute('data-status', 'unknown')
+    expect(within(row).getByTestId('status-mark')).not.toHaveTextContent(/out of sync/i)
+
+    fireEvent.click(row)
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(within(panel).getByTestId('last-check-error')).toHaveTextContent(
+      'The last check failed: Sharko could not read git, so this check did not finish. Check that Sharko can reach your git host, then click Refresh.',
+    )
+  })
+
   it('H2: the status word is plain dark ink for every state — colour lives on the status dot only', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
@@ -542,6 +610,52 @@ describe('ManagedSecrets', () => {
     await user.click(within(syncItem).getByLabelText('Why is Sync unavailable?'))
     await waitFor(() =>
       expect(screen.getByText('Someone else created this one — Sharko will not touch it.')).toBeInTheDocument(),
+    )
+  })
+
+  // P1-B symmetry fix: a values row whose last check FAILED now renders
+  // "unknown" (never out_of_sync — see the Go-side
+  // TestAddonValuesSecretRowState_ErrorOutcomeIsUnknownNotOutOfSync). This
+  // pins the UI-side consequence the coordinator asked to verify: Sync
+  // must stay disabled for it, exactly like any other unknown row — a
+  // failed check must never leave Sync looking like a safe action to take.
+  it('disables Sync on a values row whose last check failed (state unknown) with the "click Refresh first" reason', async () => {
+    const user = userEvent.setup()
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      cluster_connection_secrets: [],
+      addon_values_secrets: [
+        {
+          cluster: 'prod-eu',
+          addon: 'eso',
+          secret_name: 'eso-creds',
+          secret_namespace: 'external-secrets',
+          state: 'unknown',
+          source: 'AWS Secrets Manager',
+          last_check_error: "Sharko couldn't connect to this cluster.",
+        },
+      ],
+    })
+    renderPage()
+
+    const row = await screen.findByTestId('secret-row-values-prod-eu-eso')
+    const dot = within(row).getByTestId('status-dot')
+    expect(dot).toHaveAttribute('data-hollow', 'true')
+    expect(dot).toHaveAttribute('data-status', 'unknown')
+
+    await user.click(screen.getByRole('button', { name: 'Actions for prod-eu / eso' }))
+    const syncItem = await screen.findByRole('menuitem', { name: /Sync/ })
+    expect(syncItem).toHaveAttribute('aria-disabled', 'true')
+    await user.click(within(syncItem).getByLabelText('Why is Sync unavailable?'))
+    await waitFor(() => expect(screen.getByText('Click Refresh first to check this secret.')).toBeInTheDocument())
+    await user.keyboard('{Escape}')
+
+    // And the panel shows the failure sentence, same as the connection-row
+    // symmetry test above.
+    fireEvent.click(row)
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(within(panel).getByTestId('last-check-error')).toHaveTextContent(
+      "The last check failed: Sharko couldn't connect to this cluster.",
     )
   })
 

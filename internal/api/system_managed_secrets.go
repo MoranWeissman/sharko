@@ -69,7 +69,11 @@ type connectionSecretRow struct {
 	SecretNamespace string `json:"secret_namespace,omitempty"`
 	SecretName      string `json:"secret_name,omitempty"`
 	// State is one of "in_sync", "out_of_sync", "missing", or "unknown" —
-	// see connectionSecretState for exactly how each is derived.
+	// see connectionSecretState for exactly how each is derived. A FAILED
+	// check (P1-B B1) renders as "unknown", never "out_of_sync": Sharko
+	// could not look, which is a different fact from "Sharko looked and it
+	// differs". See LastCheckError below for the two-facts shape this
+	// implies (ArgoCD's own sync-state / last-operation-result split).
 	State string `json:"state"`
 	// Source (S1) names, per row, which store this secret's content is
 	// compared against. A connection secret always follows git — git holds
@@ -86,6 +90,17 @@ type connectionSecretRow struct {
 	// exists in the audit log's retained window.
 	LastRepaired       string `json:"last_repaired,omitempty"`
 	LastRepairedDetail string `json:"last_repaired_detail,omitempty"`
+	// LastCheckError (P1-B B1) is a safe, canned sentence describing why the
+	// last check didn't finish — set only when this cluster's most recent
+	// reconcile record is OutcomeFailed. Mirrors addonValuesSecretRow's
+	// field of the same name exactly: distinct from State == "out_of_sync"
+	// (which claims Sharko actually compared the secret and found a
+	// mismatch), this field exists so the UI can say plainly "the last
+	// check failed: …" instead of implying drift when the truth is the
+	// check itself never finished. Always the mapped output of
+	// clusterreconciler.FailureSentence — NEVER the reconciler's raw
+	// record text.
+	LastCheckError string `json:"last_check_error,omitempty"`
 }
 
 // addonValuesSecretRow is one row of addon_values_secrets — one row per
@@ -152,11 +167,14 @@ type managedSecretsEngineInfo struct {
 	// LastError is the most recent failure message, "" when the last known
 	// state has no error.
 	LastError string `json:"last_error,omitempty"`
-	// LastErrorCluster names the cluster the LastError message is ABOUT —
-	// set only for the cluster-connection engine, whose per-cluster records
-	// (clusterreconciler.Reconciler.LastError) carry a cluster name. Empty
-	// when there is no current error, or for an engine (addon-values) whose
-	// LastError is a single fleet-wide string with no per-cluster subject.
+	// LastErrorCluster names the cluster the LastError message is ABOUT.
+	// Cluster-connection: the per-cluster record LastError itself reads off
+	// (clusterreconciler.Reconciler.LastError). Addon-values (P1-B B2): the
+	// first failing cluster+addon pair from the most recent reconcile run
+	// (secrets.Reconciler.LastErrorCluster). Empty when there is no current
+	// error, or when the failure was plan-level (reading the catalog or the
+	// managed-clusters file itself failed, before any per-item work
+	// started) — there is no cluster to name in that case.
 	LastErrorCluster string `json:"last_error_cluster,omitempty"`
 	// LastErrorAt is the RFC3339 timestamp of LastError — an error with no
 	// "since when" is not actionable. Empty exactly when LastError is empty.
@@ -266,6 +284,7 @@ func (s *Server) buildConnectionSecretRows(clusters []models.Cluster, auditEntri
 			row.SecretName = c.Name
 		}
 		row.State, row.LastChecked = connectionSecretState(c.LastReconcile)
+		row.LastCheckError = connectionSecretCheckError(c.LastReconcile)
 
 		if at, detail, ok := lastConnectionSecretRepair(auditEntries, c.Name); ok {
 			row.LastRepaired = at.UTC().Format(time.RFC3339)
@@ -289,11 +308,29 @@ func (s *Server) buildConnectionSecretRows(clusters []models.Cluster, auditEntri
 //     doesn't exist.
 //   - Outcome "succeeded" with no label drift -> "in_sync".
 //   - Outcome "succeeded" WITH label drift (self-heal off, or a
-//     self-managed fight in progress), or Outcome "failed" -> "out_of_sync".
+//     self-managed fight in progress) -> "out_of_sync": Sharko compared and
+//     found a real mismatch.
+//   - Outcome "failed" -> "unknown" (P1-B B1, finding #120). A failed check
+//     means Sharko does not know whether the secret matches — that is a
+//     different fact from "Sharko looked and it differs", and wearing
+//     out_of_sync's badge told an ArgoCD-literate reader a real comparison
+//     had happened when it hadn't. LastCheckError (connectionSecretRow)
+//     carries the canned reason alongside this state — see
+//     connectionSecretCheckError.
 //   - Any other "skipped" reason (a git read failure that left labels
 //     untouched, a same-name unlabeled Secret in Adopt territory, etc.) ->
 //     "unknown" — collapsing these into "in sync" or "out of sync" would
 //     overclaim; the reconciler deliberately took no position this tick.
+//
+// HONEST TRADE-OFF, on purpose: ClusterReconcileRecord holds only the LAST
+// outcome — a cluster whose last SUCCESSFUL check found real drift
+// (out_of_sync), followed by a check that itself FAILED, loses the "it was
+// out of sync" fact the moment the failed record overwrites it. This
+// function does not invent memory to paper over that: state = unknown +
+// LastCheckError's reason is the honest rendering of what Sharko can
+// currently prove, not a guess at what was true before the check failed.
+// Preserving the prior verdict across a failed check would need the record
+// to carry more than one outcome, which is out of this lane's scope.
 func connectionSecretState(rec *models.ClusterLastReconcile) (state, lastChecked string) {
 	if rec == nil {
 		return "unknown", ""
@@ -304,11 +341,26 @@ func connectionSecretState(rec *models.ClusterLastReconcile) (state, lastChecked
 		return "missing", lastChecked
 	case rec.Outcome == string(clusterreconciler.OutcomeSucceeded) && rec.LabelDrift == nil:
 		return "in_sync", lastChecked
-	case rec.Outcome == string(clusterreconciler.OutcomeSucceeded), rec.Outcome == string(clusterreconciler.OutcomeFailed):
+	case rec.Outcome == string(clusterreconciler.OutcomeSucceeded):
 		return "out_of_sync", lastChecked
-	default:
+	default: // OutcomeFailed and any other "skipped" reason
 		return "unknown", lastChecked
 	}
+}
+
+// connectionSecretCheckError reports the canned reason (P1-B B1) a
+// connection row's last check didn't finish — set only when the
+// reconciler's per-cluster record is OutcomeFailed. Mirrors
+// addonValuesRowLastCheckError's shape: mapped through
+// clusterreconciler.FailureSentence, NEVER the record's raw Message text
+// (see that function's doc comment on why — the same S8/#123 concern, one
+// stampAbortedTick call away from leaking a raw git or Kubernetes error
+// into every cluster's row at once).
+func connectionSecretCheckError(rec *models.ClusterLastReconcile) string {
+	if rec == nil || rec.Outcome != string(clusterreconciler.OutcomeFailed) {
+		return ""
+	}
+	return clusterreconciler.FailureSentence(rec.Message)
 }
 
 // lastConnectionSecretRepair scans the audit log (newest-first, per
@@ -406,9 +458,14 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, auditEntr
 //   - recon == nil or never checked -> "unknown": nothing to report yet.
 //   - "unchanged"/"created"/"updated" -> "in_sync": the secret matches its
 //     source as of the last check or write.
-//   - "out_of_sync" (a Refresh found a mismatch) or "error" (a push
-//     attempt failed — matches connectionSecretState's own "failed ->
-//     out_of_sync" precedent) -> "out_of_sync".
+//   - "out_of_sync" (a Refresh found a mismatch — a REAL comparison, Sharko
+//     looked and it differs) -> "out_of_sync".
+//   - "error" (P1-B symmetry fix, same #120 bug this lane already fixed on
+//     the connection side): a check or push attempt itself FAILED — Sharko
+//     does not know whether the secret matches, which is a different fact
+//     from "compared and it differs" -> "unknown", never "out_of_sync".
+//     LastCheckError (addonValuesRowLastCheckError) carries the canned
+//     reason alongside this state, unchanged by this fix.
 //   - "missing" (a Refresh found no Secret at all) -> "missing".
 //   - "skipped" (the catalog's push definition is incomplete) -> "unknown"
 //     — the reconciler deliberately took no position, same as
@@ -424,7 +481,7 @@ func addonValuesSecretRowState(recon SecretReconciler, cluster, addon string) st
 	switch outcome {
 	case "unchanged", "created", "updated":
 		return "in_sync"
-	case "out_of_sync", "error":
+	case "out_of_sync":
 		return "out_of_sync"
 	case "missing":
 		return "missing"
@@ -435,7 +492,10 @@ func addonValuesSecretRowState(recon SecretReconciler, cluster, addon string) st
 		// (Sharko looked and knows exactly what it found). It is a boundary,
 		// and Sharko stays on its side of it.
 		return "foreign"
-	default: // "skipped"
+	default: // "error", "skipped"
+		// "error": a failed check is not drift (P1-B). "skipped": the
+		// reconciler deliberately took no position — both collapse to the
+		// same honest "Sharko does not know" state.
 		return "unknown"
 	}
 }
@@ -569,6 +629,14 @@ func (s *Server) addonValuesSecretSourceLabel() string {
 
 // addonValuesEngineInfo reports the addon-values reconciler's own cadence +
 // health — an in-memory read on s.secretReconciler, never a K8s call.
+//
+// LastError is ALREADY the mapped, canned sentence (secrets.Reconciler.
+// LastError applies secrets.FailureSentence before returning — P1-B B2).
+// LastErrorCluster/LastErrorAt (new here) mirror the cluster-connection
+// engine's fields added by #716, so the page's red line for this engine can
+// name a cluster and a time exactly like the connection one does — and so
+// its click-to-filter behaviour (EngineStat in ManagedSecrets.tsx, already
+// generic over both engines) has something to filter to.
 func (s *Server) addonValuesEngineInfo() managedSecretsEngineInfo {
 	if s.secretReconciler == nil {
 		return managedSecretsEngineInfo{}
@@ -580,6 +648,12 @@ func (s *Server) addonValuesEngineInfo() managedSecretsEngineInfo {
 	}
 	if t := s.secretReconciler.LastRunTime(); !t.IsZero() {
 		info.LastRun = t.UTC().Format(time.RFC3339)
+	}
+	if info.LastError != "" {
+		info.LastErrorCluster = s.secretReconciler.LastErrorCluster()
+		if at := s.secretReconciler.LastErrorAt(); !at.IsZero() {
+			info.LastErrorAt = at.UTC().Format(time.RFC3339)
+		}
 	}
 	return info
 }

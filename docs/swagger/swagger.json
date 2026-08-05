@@ -12264,6 +12264,10 @@
                 "cluster": {
                     "type": "string"
                 },
+                "last_check_error": {
+                    "description": "LastCheckError (P1-B B1) is a safe, canned sentence describing why the\nlast check didn't finish — set only when this cluster's most recent\nreconcile record is OutcomeFailed. Mirrors addonValuesSecretRow's\nfield of the same name exactly: distinct from State == \"out_of_sync\"\n(which claims Sharko actually compared the secret and found a\nmismatch), this field exists so the UI can say plainly \"the last\ncheck failed: …\" instead of implying drift when the truth is the\ncheck itself never finished. Always the mapped output of\nclusterreconciler.FailureSentence — NEVER the reconciler's raw\nrecord text.",
+                    "type": "string"
+                },
                 "last_checked": {
                     "description": "LastChecked is RFC3339, or \"\" when the reconciler has never\nprocessed this cluster on this server instance.",
                     "type": "string"
@@ -12286,7 +12290,7 @@
                     "type": "string"
                 },
                 "state": {
-                    "description": "State is one of \"in_sync\", \"out_of_sync\", \"missing\", or \"unknown\" —\nsee connectionSecretState for exactly how each is derived.",
+                    "description": "State is one of \"in_sync\", \"out_of_sync\", \"missing\", or \"unknown\" —\nsee connectionSecretState for exactly how each is derived. A FAILED\ncheck (P1-B B1) renders as \"unknown\", never \"out_of_sync\": Sharko\ncould not look, which is a different fact from \"Sharko looked and it\ndiffers\". See LastCheckError below for the two-facts shape this\nimplies (ArgoCD's own sync-state / last-operation-result split).",
                     "type": "string"
                 }
             }
@@ -12504,7 +12508,7 @@
                     "type": "string"
                 },
                 "last_error_cluster": {
-                    "description": "LastErrorCluster names the cluster the LastError message is ABOUT —\nset only for the cluster-connection engine, whose per-cluster records\n(clusterreconciler.Reconciler.LastError) carry a cluster name. Empty\nwhen there is no current error, or for an engine (addon-values) whose\nLastError is a single fleet-wide string with no per-cluster subject.",
+                    "description": "LastErrorCluster names the cluster the LastError message is ABOUT.\nCluster-connection: the per-cluster record LastError itself reads off\n(clusterreconciler.Reconciler.LastError). Addon-values (P1-B B2): the\nfirst failing cluster+addon pair from the most recent reconcile run\n(secrets.Reconciler.LastErrorCluster). Empty when there is no current\nerror, or when the failure was plan-level (reading the catalog or the\nmanaged-clusters file itself failed, before any per-item work\nstarted) — there is no cluster to name in that case.",
                     "type": "string"
                 },
                 "last_run": {
