@@ -1,15 +1,31 @@
-// ManagedSecrets — the /secrets page rebuilt as one dense resource list
-// (S1-S8). Pins: the source column ("git" / "the vault") appears on every
-// row and survives sort/filter; the default sort is worst-first, never
-// alphabetical; filter chips show real counts and filter correctly; a row
-// click opens the detail panel with the right content; the values-secret
-// Diff makes no network call, ever; and a row-menu info hint appears only
-// next to a genuinely disabled action.
+// ManagedSecrets — the /secrets page rebuilt to look like ArgoCD's own
+// Application list (maintainer's adopted design review, "shaped like
+// ArgoCD but painted like the opposite of ArgoCD"). Pins:
+//
+//  - S3 honesty lock: every row states, in visible text, what it's
+//    compared against ("cluster connection · follows git" /
+//    "addon values · follows <the real backend name>") — never
+//    tooltip-only, never the generic misleading "the vault".
+//  - the default sort is worst-first, never alphabetical.
+//  - B1: filter-chip counts follow the search box, not the chip filter
+//    itself (selecting a chip must not zero out the other chips' counts).
+//  - B2: the "Showing X–Y of Z" footer is honest — never "N of N shown"
+//    while a page of N-minus-something rows is on screen — and says when
+//    a filter has narrowed the total.
+//  - B3: the active chip filter, the search text, and the selected row
+//    all live in the URL and survive a reload.
+//  - H2: the status word is plain dark ink — colour lives on the status
+//    DOT only.
+//  - H3: the "not checked yet" mark is a hollow ring, a different SHAPE
+//    from the filled "in sync" dot, not just a different colour.
+//  - a row click opens the detail panel with the right content; the
+//    values-secret Diff makes no network call, ever; a row-menu info hint
+//    appears only next to a genuinely disabled action.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useSearchParams } from 'react-router-dom'
 import { ManagedSecrets } from '@/views/ManagedSecrets'
 import { AuthContext } from '@/hooks/useAuth'
 import type { ManagedSecretsResponse } from '@/services/models'
@@ -59,10 +75,18 @@ vi.mock('@/services/api', () => ({
   syncAddonValuesSecret: (...args: unknown[]) => mockSyncAddonValuesSecret(...args),
 }))
 
-function renderPage() {
+// Renders the current URL's search string into a testid'd node — B3 pins
+// need to see the URL actually change, not just the component's own state.
+function LocationProbe() {
+  const [searchParams] = useSearchParams()
+  return <div data-testid="location-probe">{searchParams.toString()}</div>
+}
+
+function renderPage(initialEntries: string[] = ['/secrets']) {
   return render(
     <AuthContext.Provider value={adminAuth}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={initialEntries}>
+        <LocationProbe />
         <ManagedSecrets />
       </MemoryRouter>
     </AuthContext.Provider>,
@@ -70,7 +94,7 @@ function renderPage() {
 }
 
 // prod-eu rows are in_sync, staging-us rows are out_of_sync — the fixture
-// this suite uses for both the source-column and worst-first-sort pins.
+// this suite uses for both the source-line and worst-first-sort pins.
 const baseResponse: ManagedSecretsResponse = {
   cluster_connection_secrets: [
     {
@@ -111,6 +135,7 @@ const baseResponse: ManagedSecretsResponse = {
     cluster_connection: { wired: true, interval_seconds: 30, last_run: '2026-08-05T00:00:00Z' },
     addon_values: { wired: true, interval_seconds: 300, last_run: '2026-08-04T23:55:00Z' },
   },
+  addon_values_secret_source: 'AWS Secrets Manager',
 }
 
 beforeEach(() => {
@@ -118,7 +143,7 @@ beforeEach(() => {
 })
 
 describe('ManagedSecrets', () => {
-  it('shows the source column on every row — git for connection secrets, the vault for addon-values secrets (S3 honesty lock)', async () => {
+  it('states its source in visible text on every row — connection rows read "cluster connection · follows git", values rows read "addon values · follows <the real backend>" (S3 honesty lock)', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
@@ -126,18 +151,27 @@ describe('ManagedSecrets', () => {
 
     const connRow1 = screen.getByTestId('secret-row-connection-prod-eu')
     const connRow2 = screen.getByTestId('secret-row-connection-staging-us')
-    expect(within(connRow1).getByText('git')).toBeInTheDocument()
-    expect(within(connRow2).getByText('git')).toBeInTheDocument()
+    expect(within(connRow1).getByText('cluster connection · follows git')).toBeInTheDocument()
+    expect(within(connRow2).getByText('cluster connection · follows git')).toBeInTheDocument()
 
     const valuesRow1 = screen.getByTestId('secret-row-values-prod-eu-datadog')
     const valuesRow2 = screen.getByTestId('secret-row-values-staging-us-datadog')
-    expect(within(valuesRow1).getByText('the vault')).toBeInTheDocument()
-    expect(within(valuesRow2).getByText('the vault')).toBeInTheDocument()
+    expect(within(valuesRow1).getByText('addon values · follows AWS Secrets Manager')).toBeInTheDocument()
+    expect(within(valuesRow2).getByText('addon values · follows AWS Secrets Manager')).toBeInTheDocument()
 
-    // Never a generic phrase shared by both kinds — connection rows never
-    // say "the vault" and values rows never say "git" in this column.
-    expect(within(connRow1).queryByText('the vault')).not.toBeInTheDocument()
-    expect(within(valuesRow1).queryByText('git')).not.toBeInTheDocument()
+    // Never the generic, misleading "the vault" wording — the server's
+    // real backend name is what ships.
+    expect(screen.queryByText(/the vault/)).not.toBeInTheDocument()
+  })
+
+  it('falls back to the generic lowercase "secrets store" when the server has no real backend name to give', async () => {
+    mockGetManagedSecrets.mockResolvedValue({ ...baseResponse, addon_values_secret_source: 'secrets store' })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument())
+    expect(
+      within(screen.getByTestId('secret-row-values-prod-eu-datadog')).getByText('addon values · follows secrets store'),
+    ).toBeInTheDocument()
   })
 
   it('sorts worst-first by default — out-of-sync rows come before in-sync rows, never alphabetically (S3)', async () => {
@@ -157,16 +191,17 @@ describe('ManagedSecrets', () => {
     expect(Math.max(...outOfSyncIdx)).toBeLessThan(Math.min(...inSyncIdx))
   })
 
-  it('filter chips show real per-state counts and filter the table when clicked (S4)', async () => {
+  it('filter chips show real per-state counts (plus an All chip) and filter the table when clicked (S4)', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('filter-chip-in_sync')).toBeInTheDocument())
 
-    expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('In sync 2')
-    expect(screen.getByTestId('filter-chip-out_of_sync')).toHaveTextContent('Out of sync 2')
-    expect(screen.getByTestId('filter-chip-missing')).toHaveTextContent('Missing 0')
-    expect(screen.getByTestId('filter-chip-unknown')).toHaveTextContent('Not checked yet 0')
+    expect(screen.getByTestId('filter-chip-all')).toHaveTextContent('All4')
+    expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('In sync2')
+    expect(screen.getByTestId('filter-chip-out_of_sync')).toHaveTextContent('Out of sync2')
+    expect(screen.getByTestId('filter-chip-missing')).toHaveTextContent('Missing0')
+    expect(screen.getByTestId('filter-chip-unknown')).toHaveTextContent('Not checked yet0')
 
     // All 4 rows visible before filtering.
     expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(4)
@@ -176,9 +211,155 @@ describe('ManagedSecrets', () => {
     expect(screen.queryByTestId('secret-row-connection-prod-eu')).not.toBeInTheDocument()
     expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument()
 
-    // Clicking the same chip again clears the filter.
+    // Clicking the same chip again clears the filter back to "All".
     fireEvent.click(screen.getByTestId('filter-chip-out_of_sync'))
     await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(4))
+  })
+
+  it('B1: chip counts follow the search box, and selecting a chip never zeroes the OTHER chips (they stay computed off the search, not the chip filter)', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('filter-chip-in_sync')).toBeInTheDocument())
+
+    // Narrow to "prod" — only the two prod-eu (in_sync) rows match.
+    const search = screen.getByPlaceholderText('Search by cluster, addon, or secret name...')
+    fireEvent.change(search, { target: { value: 'prod' } })
+
+    await waitFor(() => expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('In sync2'))
+    expect(screen.getByTestId('filter-chip-out_of_sync')).toHaveTextContent('Out of sync0')
+    expect(screen.getByTestId('filter-chip-all')).toHaveTextContent('All2')
+
+    // Now also select the in_sync chip — the OUT OF SYNC chip must still
+    // read the same search-scoped count (0), not zero-from-being-unselected
+    // and not the pre-search count either. This is the exact bug: counts
+    // were memoized on unifiedRows only, never the search text.
+    fireEvent.click(screen.getByTestId('filter-chip-in_sync'))
+    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
+    expect(screen.getByTestId('filter-chip-out_of_sync')).toHaveTextContent('Out of sync0')
+    expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('In sync2')
+  })
+
+  it('B2: the footer says "Showing X–Y of Z" honestly — never "N of N shown" with a partial page on screen — and states when a filter narrowed the total', async () => {
+    const manyRows = Array.from({ length: 25 }, (_, i) => ({
+      cluster: `cluster-${String(i).padStart(2, '0')}`,
+      state: 'in_sync',
+      last_checked: '2026-08-05T00:00:00Z',
+    }))
+    mockGetManagedSecrets.mockResolvedValue({
+      cluster_connection_secrets: manyRows,
+      addon_values_secrets: [],
+      engines: {
+        cluster_connection: { wired: true, interval_seconds: 30 },
+        addon_values: { wired: false },
+      },
+      addon_values_secret_source: 'secrets store',
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-cluster-00')).toBeInTheDocument())
+    // Default page size is 20 of 25 total — must be an honest range, never "25 of 25".
+    expect(screen.getByTestId('pagination-summary')).toHaveTextContent('Showing 1–20 of 25')
+    expect(screen.getByTestId('pagination-summary')).not.toHaveTextContent('25 of 25')
+
+    // Filtering narrows the total — the summary says so explicitly.
+    const search = screen.getByPlaceholderText('Search by cluster, addon, or secret name...')
+    fireEvent.change(search, { target: { value: 'cluster-0' } })
+    await waitFor(() => expect(screen.getByTestId('pagination-summary')).toHaveTextContent('filtered from 25'))
+  })
+
+  it('B3: the active chip filter and the search text are written to the URL and restored from it on load', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('filter-chip-out_of_sync')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('filter-chip-out_of_sync'))
+    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveTextContent('state=out_of_sync'))
+
+    const search = screen.getByPlaceholderText('Search by cluster, addon, or secret name...')
+    fireEvent.change(search, { target: { value: 'staging' } })
+    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveTextContent('q=staging'))
+
+    // A fresh render seeded with that exact URL comes up already filtered —
+    // this is the "survives a reload" half of the pin.
+    renderPage(['/secrets?state=out_of_sync&q=staging'])
+    await waitFor(() => expect(screen.getAllByTestId('filter-chip-out_of_sync').length).toBeGreaterThan(0))
+    const chips = screen.getAllByTestId('filter-chip-out_of_sync')
+    expect(chips[chips.length - 1]).toHaveAttribute('aria-pressed', 'true')
+    const searches = screen.getAllByPlaceholderText('Search by cluster, addon, or secret name...')
+    expect(searches[searches.length - 1]).toHaveValue('staging')
+  })
+
+  it('B3: the selected row is written to the URL and a reload with that URL opens the same row', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    mockGetClusterComparison.mockResolvedValue({ cluster: { name: 'prod-eu', labels: {}, last_reconcile: null } })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('secret-row-connection-prod-eu'))
+    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveTextContent('row=connection-prod-eu'))
+
+    renderPage(['/secrets?row=connection-prod-eu'])
+    const panel = await screen.findAllByTestId('secret-detail-panel')
+    expect(panel.length).toBeGreaterThan(0)
+  })
+
+  it('clicking the connection-engine\'s red error names the cluster, carries a time, and filters the table to that cluster on click', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      engines: {
+        ...baseResponse.engines,
+        cluster_connection: {
+          ...baseResponse.engines.cluster_connection,
+          last_error: "Sharko couldn't reach this cluster's Kubernetes API.",
+          last_error_cluster: 'staging-us',
+          last_error_at: '2026-08-05T00:10:00Z',
+        },
+      },
+    })
+    renderPage()
+
+    const errorEl = await screen.findByTestId('engine-error-connection')
+    expect(errorEl).toHaveTextContent('staging-us')
+    expect(errorEl).toHaveTextContent("Sharko couldn't reach this cluster's Kubernetes API.")
+
+    fireEvent.click(errorEl)
+    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
+    expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument()
+    expect(screen.queryByTestId('secret-row-connection-prod-eu')).not.toBeInTheDocument()
+  })
+
+  it('H2: the status word is plain dark ink for every state — colour lives on the status dot only', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getAllByTestId('status-mark').length).toBeGreaterThan(0))
+    for (const mark of screen.getAllByTestId('status-mark')) {
+      // The word's own className never carries a status colour (green/
+      // amber/red) — those live on the nested <StatusDot> only.
+      expect(mark.className).not.toMatch(/text-(green|amber|red)-\d/)
+    }
+  })
+
+  it('H3: the "not checked yet" mark is a hollow ring — a different SHAPE from the filled in-sync dot, not just a different colour', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      cluster_connection_secrets: [
+        { cluster: 'prod-eu', state: 'in_sync' },
+        { cluster: 'staging-us', state: 'unknown' },
+      ],
+      addon_values_secrets: [],
+      engines: { cluster_connection: { wired: true, interval_seconds: 30 }, addon_values: { wired: false } },
+      addon_values_secret_source: 'secrets store',
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    // Scoped to each ROW's own dot — the filter chips above also render
+    // StatusDot for their own glyphs, which isn't what this pin is about.
+    const inSyncDot = within(screen.getByTestId('secret-row-connection-prod-eu')).getByTestId('status-dot')
+    const unknownDot = within(screen.getByTestId('secret-row-connection-staging-us')).getByTestId('status-dot')
+    expect(inSyncDot).toHaveAttribute('data-hollow', 'false')
+    expect(unknownDot).toHaveAttribute('data-hollow', 'true')
   })
 
   it('clicking a connection-secret row opens the detail panel with identity, purpose, source, state, and a Diff that fetches labels only', async () => {
@@ -208,7 +389,7 @@ describe('ManagedSecrets', () => {
     expect(within(panel).getByText('datadog')).toBeInTheDocument()
   })
 
-  it('the values-secret Diff never makes a network call — it restates the row state and shows the S8 check-failure sentence', async () => {
+  it('the values-secret Diff never makes a network call — it restates the row state, the real source, and the S8 check-failure sentence', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
@@ -217,7 +398,7 @@ describe('ManagedSecrets', () => {
 
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).getByText(/Carries values for addon/)).toBeInTheDocument()
-    expect(within(panel).getByText('Compared against the vault — git only holds a pointer to it.')).toBeInTheDocument()
+    expect(within(panel).getByText('Compared against AWS Secrets Manager — git only holds a pointer to it.')).toBeInTheDocument()
     expect(within(panel).getByText(/Does not match its source right now/)).toBeInTheDocument()
 
     // S8: the mapped canned sentence shows, plainly labeled as a failed
@@ -285,6 +466,7 @@ describe('ManagedSecrets', () => {
         cluster_connection: { wired: true, interval_seconds: 30 },
         addon_values: { wired: false },
       },
+      addon_values_secret_source: 'secrets store',
     })
     renderPage()
 
@@ -323,10 +505,11 @@ describe('ManagedSecrets', () => {
         cluster_connection: { wired: false },
         addon_values: { wired: false },
       },
+      addon_values_secret_source: 'secrets store',
     })
     renderPage()
 
-    await waitFor(() => expect(screen.getAllByText('· Not running on this server.')).toHaveLength(2))
+    await waitFor(() => expect(screen.getAllByText('Not running on this server.')).toHaveLength(2))
   })
 
   it('Refresh all triggers both engines when connection secrets exist', async () => {

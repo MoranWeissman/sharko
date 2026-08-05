@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,6 +37,57 @@ func TestLastReconcile_UnknownCluster_NotOK(t *testing.T) {
 	_, ok := r.LastReconcile("never-seen")
 	if ok {
 		t.Fatal("expected ok=false for a cluster the reconciler has never reconciled")
+	}
+}
+
+// TestLastError_ReturnsClusterName pins the fix behind the managed-secrets
+// page's red engine error: LastError used to return only a message + time,
+// throwing the cluster name away — a caller had a sentence with no subject.
+// This asserts the cluster name comes back too, and that with multiple
+// Failed records, the MOST RECENT one (by time) wins.
+func TestLastError_ReturnsClusterName(t *testing.T) {
+	t.Parallel()
+	r := New(Deps{})
+	// Deterministic clock — recordReconcile stamps r.now() on every call,
+	// so LastError's "most recent Failed record wins" behavior needs a
+	// clock under test control rather than relying on real-time.Now()
+	// calls happening to land in call order.
+	clockTick := 0
+	base := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	r.nowFn = func() time.Time {
+		clockTick++
+		return base.Add(time.Duration(clockTick) * time.Minute)
+	}
+
+	r.recordReconcile("older-fail", OutcomeFailed, "older failure", nil) // t+1m
+	r.recordReconcile("newer-fail", OutcomeFailed, "newer failure", nil) // t+2m
+	// A Succeeded record for a third cluster, stamped LATER than both
+	// failures, must still never win over a Failed one.
+	r.recordReconcile("healthy", OutcomeSucceeded, "", nil) // t+3m
+
+	cluster, message, _, ok := r.LastError()
+	if !ok {
+		t.Fatal("expected ok=true — a Failed record exists")
+	}
+	if cluster != "newer-fail" {
+		t.Errorf("cluster = %q, want %q (the most recent Failed record)", cluster, "newer-fail")
+	}
+	if message != "newer failure" {
+		t.Errorf("message = %q, want %q", message, "newer failure")
+	}
+}
+
+// TestLastError_NoFailedRecords_NotOK asserts a clean fleet (or a fleet
+// that's never reconciled) reports ok=false, not a zero-value cluster name
+// that could be misread as "cluster \"\" failed".
+func TestLastError_NoFailedRecords_NotOK(t *testing.T) {
+	t.Parallel()
+	r := New(Deps{})
+	r.recordReconcile("healthy", OutcomeSucceeded, "", nil)
+
+	cluster, _, _, ok := r.LastError()
+	if ok {
+		t.Fatalf("expected ok=false with no Failed records, got cluster=%q", cluster)
 	}
 }
 

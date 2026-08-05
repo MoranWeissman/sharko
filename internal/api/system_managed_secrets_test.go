@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,7 +16,22 @@ import (
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/providers"
 )
+
+// erroringVault is a providers.ClusterCredentialsProvider whose
+// GetCredentials always fails — used to drive a real
+// clusterreconciler.Reconciler tick into an OutcomeFailed record so the
+// managed-secrets endpoint's cluster-connection engine has a genuine
+// last_error to surface (TestHandleGetManagedSecrets_ClusterConnectionEngine_LastErrorNamesClusterAndTime).
+type erroringVault struct{}
+
+func (erroringVault) GetCredentials(name string) (*providers.Kubeconfig, error) {
+	return nil, errors.New("dial tcp: connection refused")
+}
+func (erroringVault) ListClusters() ([]providers.ClusterInfo, error) { return nil, nil }
+func (erroringVault) SearchSecrets(_ string) ([]string, error)       { return nil, nil }
+func (erroringVault) HealthCheck(_ context.Context) error            { return nil }
 
 // GET /api/v1/system/managed-secrets — pinned contract:
 //
@@ -444,6 +460,105 @@ func TestAddonValuesSecretCheckFailureSentence_NeverEchoesRawText(t *testing.T) 
 			}
 			if tc.errMsg != "" && got == tc.errMsg {
 				t.Errorf("mapped sentence equals the raw error text — S8 requires a canned sentence, never a passthrough")
+			}
+		})
+	}
+}
+
+// TestHandleGetManagedSecrets_ClusterConnectionEngine_LastErrorNamesClusterAndTime
+// pins the fix behind the managed-secrets page's red engine error: the
+// response now names WHICH cluster the error is about and WHEN it happened,
+// not just a bare message with no subject.
+func TestHandleGetManagedSecrets_ClusterConnectionEngine_LastErrorNamesClusterAndTime(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
+	}, http.StatusOK)
+	gp := &reconcileFakeGP{
+		managedYAML: []byte("clusters:\n- name: prod-eu\n  labels: {}\n"),
+	}
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	recon := clusterreconciler.New(clusterreconciler.Deps{
+		GitProvider: func() gitprovider.GitProvider { return gp },
+		ArgoClient:  fake.NewSimpleClientset(),
+		// A vault that always errors makes the reconciler record a Failed
+		// outcome for the one managed cluster in managed-clusters.yaml.
+		Vault:        erroringVault{},
+		AuditFn:      func(audit.Entry) {},
+		Namespace:    "argocd",
+		TickInterval: 45 * time.Second,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	recon.Start(ctx)
+	defer recon.Stop()
+	recon.Trigger()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if rec, ok := recon.LastReconcile("prod-eu"); ok && rec.Outcome == clusterreconciler.OutcomeFailed {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	srv.SetClusterReconciler(recon)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Engines.ClusterConnection.LastError == "" {
+		t.Fatal("expected cluster_connection engine last_error to be set")
+	}
+	if body.Engines.ClusterConnection.LastErrorCluster != "prod-eu" {
+		t.Errorf("last_error_cluster = %q, want %q", body.Engines.ClusterConnection.LastErrorCluster, "prod-eu")
+	}
+	if body.Engines.ClusterConnection.LastErrorAt == "" {
+		t.Error("expected last_error_at to be set — an error with no time isn't actionable")
+	}
+}
+
+// TestAddonValuesSecretSourceLabel pins the fix for the "the vault" wording
+// bug: the label is derived from the server's OWN addon-secret provider
+// config, never a fixed guess, and unrecognized/unimplemented/demo backends
+// fall back to the generic, lowercase, article-free "secrets store" rather
+// than a product name Sharko isn't actually using.
+func TestAddonValuesSecretSourceLabel(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  *providers.AddonSecretProviderConfig
+		want string
+	}{
+		{"nil config", nil, "secrets store"},
+		{"aws-sm", &providers.AddonSecretProviderConfig{Type: "aws-sm"}, "AWS Secrets Manager"},
+		{"aws-secrets-manager alias", &providers.AddonSecretProviderConfig{Type: "aws-secrets-manager"}, "AWS Secrets Manager"},
+		{"k8s-secrets", &providers.AddonSecretProviderConfig{Type: "k8s-secrets"}, "a Kubernetes Secret"},
+		{"kubernetes alias", &providers.AddonSecretProviderConfig{Type: "kubernetes"}, "a Kubernetes Secret"},
+		{"gcp-sm", &providers.AddonSecretProviderConfig{Type: "gcp-sm"}, "Google Secret Manager"},
+		{"azure-kv", &providers.AddonSecretProviderConfig{Type: "azure-kv"}, "Azure Key Vault"},
+		// "vault" has no implemented factory (see AddonSecretProviderConfig.Type
+		// doc comment) — never claim it's HashiCorp Vault when it isn't wired.
+		{"vault type — no real factory, falls back honestly", &providers.AddonSecretProviderConfig{Type: "vault"}, "secrets store"},
+		{"empty type", &providers.AddonSecretProviderConfig{Type: ""}, "secrets store"},
+		{"demo backend — not a real product", &providers.AddonSecretProviderConfig{Type: "demo"}, "secrets store"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServer()
+			if tc.cfg != nil {
+				srv.providerState.Store(&providerSet{addonSecretCfg: tc.cfg})
+			}
+			got := srv.addonValuesSecretSourceLabel()
+			if got != tc.want {
+				t.Errorf("addonValuesSecretSourceLabel() = %q, want %q", got, tc.want)
 			}
 		})
 	}

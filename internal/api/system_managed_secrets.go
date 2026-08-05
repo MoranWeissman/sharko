@@ -39,6 +39,16 @@ type managedSecretsResponse struct {
 	ClusterConnectionSecrets []connectionSecretRow  `json:"cluster_connection_secrets"`
 	AddonValuesSecrets       []addonValuesSecretRow `json:"addon_values_secrets"`
 	Engines                  managedSecretsEngines  `json:"engines"`
+	// AddonValuesSecretSource is the real, human-readable name of the
+	// backend addon-values secrets are compared against — "AWS Secrets
+	// Manager", "a Kubernetes Secret", etc, or the generic "secrets store"
+	// fallback when the configured backend has no recognizable product name
+	// (unconfigured, a demo/stub backend, or an unimplemented type). Never
+	// "the vault" — that reads as HashiCorp Vault to every DevOps reader,
+	// which is misleading unless the backend genuinely IS Vault. Computed
+	// once per response (one addon-secret backend serves the whole
+	// server), not per row — see addonValuesSecretSourceLabel.
+	AddonValuesSecretSource string `json:"addon_values_secret_source"`
 }
 
 // connectionSecretRow is one row of cluster_connection_secrets — one row
@@ -116,6 +126,15 @@ type managedSecretsEngineInfo struct {
 	// LastError is the most recent failure message, "" when the last known
 	// state has no error.
 	LastError string `json:"last_error,omitempty"`
+	// LastErrorCluster names the cluster the LastError message is ABOUT —
+	// set only for the cluster-connection engine, whose per-cluster records
+	// (clusterreconciler.Reconciler.LastError) carry a cluster name. Empty
+	// when there is no current error, or for an engine (addon-values) whose
+	// LastError is a single fleet-wide string with no per-cluster subject.
+	LastErrorCluster string `json:"last_error_cluster,omitempty"`
+	// LastErrorAt is the RFC3339 timestamp of LastError — an error with no
+	// "since when" is not actionable. Empty exactly when LastError is empty.
+	LastErrorAt string `json:"last_error_at,omitempty"`
 }
 
 type managedSecretsEngines struct {
@@ -167,6 +186,7 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 	// build it first so a connection outage still reports engine health.
 	resp.Engines.ClusterConnection = s.clusterConnectionEngineInfo()
 	resp.Engines.AddonValues = s.addonValuesEngineInfo()
+	resp.AddonValuesSecretSource = s.addonValuesSecretSourceLabel()
 
 	gp, gpErr := s.connSvc.GetActiveGitProvider()
 	ac, acErr := s.connSvc.GetActiveArgocdClient()
@@ -470,10 +490,40 @@ func (s *Server) clusterConnectionEngineInfo() managedSecretsEngineInfo {
 	if t := s.clusterRecon.LastRunTime(); !t.IsZero() {
 		info.LastRun = t.UTC().Format(time.RFC3339)
 	}
-	if msg, _, ok := s.clusterRecon.LastError(); ok {
+	if cluster, msg, at, ok := s.clusterRecon.LastError(); ok {
 		info.LastError = msg
+		info.LastErrorCluster = cluster
+		info.LastErrorAt = at.UTC().Format(time.RFC3339)
 	}
 	return info
+}
+
+// addonValuesSecretSourceLabel names the real backend addon-values secrets
+// are compared against, from the same config the addon-secret provider
+// factory itself reads (s.addonSecretCfg) — never a fixed, possibly-wrong
+// product name. Types with no dedicated backend implementation today
+// ("vault" — the doc comment on AddonSecretProviderConfig.Type notes "future;
+// current code has no vault factory"), no config at all, or a non-production
+// type (the demo server's synthetic "demo" backend) fall back to the
+// generic, lowercase, article-free "secrets store" — honest about not
+// knowing, rather than guessing a product name Sharko isn't actually using.
+func (s *Server) addonValuesSecretSourceLabel() string {
+	cfg := s.addonSecretCfg()
+	if cfg == nil {
+		return "secrets store"
+	}
+	switch cfg.Type {
+	case "aws-sm", "aws-secrets-manager":
+		return "AWS Secrets Manager"
+	case "k8s-secrets", "kubernetes":
+		return "a Kubernetes Secret"
+	case "gcp", "gcp-sm", "google-secret-manager":
+		return "Google Secret Manager"
+	case "azure", "azure-kv", "azure-key-vault":
+		return "Azure Key Vault"
+	default:
+		return "secrets store"
+	}
 }
 
 // addonValuesEngineInfo reports the addon-values reconciler's own cadence +

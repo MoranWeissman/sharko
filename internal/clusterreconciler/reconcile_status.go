@@ -145,24 +145,30 @@ func (r *Reconciler) LastRunTime() time.Time {
 	return latest
 }
 
-// LastError returns the message and timestamp of the most recent Failed
-// per-cluster reconcile record. ok is false when no cluster currently has a
-// Failed outcome recorded (a clean fleet, or no reconcile has run yet).
-// This is a real, grounded signal — the same per-cluster failure a
-// cluster's own detail page would show — not an engine-wide abort reason
-// (the reconciler doesn't track one separately; see stampAbortedTick, which
-// stamps the SAME per-cluster records this reads).
-func (r *Reconciler) LastError() (message string, at time.Time, ok bool) {
+// LastError returns the cluster name, message, and timestamp of the most
+// recent Failed per-cluster reconcile record. ok is false when no cluster
+// currently has a Failed outcome recorded (a clean fleet, or no reconcile
+// has run yet). This is a real, grounded signal — the same per-cluster
+// failure a cluster's own detail page would show — not an engine-wide abort
+// reason (the reconciler doesn't track one separately; see
+// stampAbortedTick, which stamps the SAME per-cluster records this reads).
+//
+// cluster is returned (not just discarded) so a caller — the managed-secrets
+// summary, in particular — can say WHICH cluster's connection secret is
+// failing and let a reader jump straight to it, instead of a message with
+// no subject.
+func (r *Reconciler) LastError() (cluster, message string, at time.Time, ok bool) {
 	r.lastReconcileMu.RLock()
 	defer r.lastReconcileMu.RUnlock()
-	for _, rec := range r.lastReconcile {
+	for name, rec := range r.lastReconcile {
 		if rec.Outcome == OutcomeFailed && rec.Time.After(at) {
 			at = rec.Time
+			cluster = name
 			message = rec.Message
 			ok = true
 		}
 	}
-	return message, at, ok
+	return cluster, message, at, ok
 }
 
 // SelfManagedSecretNotCreatedMessage is the exact ClusterReconcileRecord.Message

@@ -12304,6 +12304,14 @@ const docTemplate = `{
                     "description": "LastError is the most recent failure message, \"\" when the last known\nstate has no error.",
                     "type": "string"
                 },
+                "last_error_at": {
+                    "description": "LastErrorAt is the RFC3339 timestamp of LastError — an error with no\n\"since when\" is not actionable. Empty exactly when LastError is empty.",
+                    "type": "string"
+                },
+                "last_error_cluster": {
+                    "description": "LastErrorCluster names the cluster the LastError message is ABOUT —\nset only for the cluster-connection engine, whose per-cluster records\n(clusterreconciler.Reconciler.LastError) carry a cluster name. Empty\nwhen there is no current error, or for an engine (addon-values) whose\nLastError is a single fleet-wide string with no per-cluster subject.",
+                    "type": "string"
+                },
                 "last_run": {
                     "description": "LastRun is RFC3339, \"\" when wired but no tick has completed yet.",
                     "type": "string"
@@ -12328,6 +12336,10 @@ const docTemplate = `{
         "internal_api.managedSecretsResponse": {
             "type": "object",
             "properties": {
+                "addon_values_secret_source": {
+                    "description": "AddonValuesSecretSource is the real, human-readable name of the\nbackend addon-values secrets are compared against — \"AWS Secrets\nManager\", \"a Kubernetes Secret\", etc, or the generic \"secrets store\"\nfallback when the configured backend has no recognizable product name\n(unconfigured, a demo/stub backend, or an unimplemented type). Never\n\"the vault\" — that reads as HashiCorp Vault to every DevOps reader,\nwhich is misleading unless the backend genuinely IS Vault. Computed\nonce per response (one addon-secret backend serves the whole\nserver), not per row — see addonValuesSecretSourceLabel.",
+                    "type": "string"
+                },
                 "addon_values_secrets": {
                     "type": "array",
                     "items": {

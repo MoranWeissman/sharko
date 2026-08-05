@@ -192,6 +192,14 @@ export interface ManagedSecretsEngineInfo {
   interval_seconds?: number
   last_run?: string // RFC3339
   last_error?: string
+  // last_error_cluster names the cluster last_error is ABOUT — set only for
+  // the cluster-connection engine, whose per-cluster records carry a
+  // cluster name. Absent for the addon-values engine (a single fleet-wide
+  // error string with no per-row subject) or when there is no error.
+  last_error_cluster?: string
+  // last_error_at is the RFC3339 timestamp of last_error — an error with no
+  // "since when" isn't actionable. Absent exactly when last_error is absent.
+  last_error_at?: string
 }
 
 export interface ManagedSecretsEngines {
@@ -203,6 +211,13 @@ export interface ManagedSecretsResponse {
   cluster_connection_secrets: ConnectionSecretRow[]
   addon_values_secrets: AddonValuesSecretRow[]
   engines: ManagedSecretsEngines
+  // addon_values_secret_source is the real, human-readable backend name
+  // addon-values secrets are compared against ("AWS Secrets Manager", "a
+  // Kubernetes Secret", ...), or the generic lowercase "secrets store"
+  // fallback when the server can't name a real product. Never "the vault"
+  // — that reads as HashiCorp Vault to every DevOps reader, misleading
+  // unless the configured backend genuinely is Vault.
+  addon_values_secret_source: string
 }
 
 // DoctorCheck / DoctorClusterResponse mirror POST
