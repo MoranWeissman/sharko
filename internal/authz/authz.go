@@ -132,6 +132,16 @@ var ActionRequirements = map[string]Role{
 	// secret instead of a fleet-wide pass.
 	"addon-secret.refresh": RoleOperator,
 	"addon-secret.sync":    RoleOperator,
+	// Reading the LIVE Secret object behind one Managed Secrets row, with
+	// every value blanked server-side before the response is built (see
+	// internal/api/secret_resource.go). Operator, not viewer, on purpose:
+	// this is the same class of read as cluster.secrets.list above — it
+	// reaches a live cluster with real credentials and returns that
+	// Secret's own metadata and data KEY NAMES. The per-cluster comparison
+	// read (GET /clusters/{name}/comparison) is open to any authenticated
+	// caller, but it only ever exposes addon labels derived from git, never
+	// a live Secret, so it is the wrong precedent to copy here.
+	"secret.resource.read": RoleOperator,
 	"token.create":              RoleOperator,
 	"token.renew-own":           RoleOperator,
 	"token.revoke-own":          RoleOperator,

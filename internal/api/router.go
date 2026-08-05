@@ -287,6 +287,17 @@ type Server struct {
 	// secretReconciler reconciles addon secrets across remote clusters (optional — set via SetSecretReconciler).
 	secretReconciler SecretReconciler
 
+	// demoRemoteClusterClientFn replaces the "fetch credentials, build a
+	// throwaway client" step of the live-Secret read
+	// (internal/api/secret_resource.go) for demo mode ONLY — set via
+	// SetDemoRemoteClusterClient, nil everywhere else. Demo mode has no
+	// real clusters, and its fake kubeconfigs point at addresses nothing
+	// answers, so the real path would just sit there until the client's
+	// 30-second timeout. Deliberately scoped to that one read handler: it
+	// is not a general remote-client override, and no write path consults
+	// it.
+	demoRemoteClusterClientFn func(ctx context.Context, cluster string) (kubernetes.Interface, error)
+
 	// ArgoCD cluster secret manager (optional — set via SetArgoSecretManager).
 	// The Manager is a pure writer for the kubeconfig direct-write path
 	// (adopt, remove, providers, API handlers). The legacy Reconciler loop
@@ -502,6 +513,15 @@ func (s *Server) SetVersion(v string) {
 // Call this after NewServer, before starting the HTTP listener.
 func (s *Server) SetSecretReconciler(r SecretReconciler) {
 	s.secretReconciler = r
+}
+
+// SetDemoRemoteClusterClient replaces the credentials-fetch + client-build
+// step of the live-Secret read (internal/api/secret_resource.go) for demo
+// mode. Demo mode has no real clusters; without this the read would dial a
+// fake address and block until the client's 30-second timeout. Nothing
+// outside internal/demo calls this, and no write path consults the field.
+func (s *Server) SetDemoRemoteClusterClient(fn func(ctx context.Context, cluster string) (kubernetes.Interface, error)) {
+	s.demoRemoteClusterClientFn = fn
 }
 
 // SetArgoSecretManager stores the ArgoCD secrets Manager for use by downstream handlers.
@@ -997,6 +1017,13 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// fleet-wide pass — see internal/secrets.Reconciler.CheckOne/SyncOne.
 	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}/secret/refresh", srv.handleRefreshAddonValuesSecret)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}/secret/sync", srv.handleSyncAddonValuesSecret)
+	// "Show me the actual Secret on the cluster" — read-only, one live
+	// round trip, ON CLICK ONLY. Every value is blanked server-side before
+	// the response body is built; see internal/api/secret_resource.go's own
+	// header for the cost rule and the blanking point. These must never be
+	// called from a list render, a timer, or a fan-out loop.
+	mux.HandleFunc("GET /api/v1/clusters/{name}/secret/resource", srv.handleGetConnectionSecretResource)
+	mux.HandleFunc("GET /api/v1/clusters/{name}/addons/{addon}/secret/resource", srv.handleGetAddonValuesSecretResource)
 	// v4 Wave 1 Story 4.3 — the sharpened enable/disable pipeline for v4
 	// (cluster-addons/*.yaml) repos. Distinct routes from the pair above so a v3
 	// repo's behavior never changes underfoot (addon_ops_v4.go).

@@ -308,7 +308,16 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 		// (S2), a full state spread including one row that has genuinely
 		// never been checked (S3), and Refresh/Sync that actually change
 		// what the next read reports.
-		srv.SetSecretReconciler(newDemoAddonValuesReconciler(estate, addonSecretDefs, now, auditLog))
+		valuesRecon := newDemoAddonValuesReconciler(estate, addonSecretDefs, now, auditLog)
+		srv.SetSecretReconciler(valuesRecon)
+
+		// 12. "Show me the actual Secret on the cluster" (S3). The read
+		// itself goes through the real handler — including the real
+		// server-side blanking — but the cluster it reads FROM is a fake
+		// in-memory one per cluster, since demo mode has no real clusters
+		// and its fake kubeconfigs point at addresses nothing answers. See
+		// secret_resource_demo.go.
+		srv.SetDemoRemoteClusterClient(newDemoRemoteClusterClients(valuesRecon, addonSecretDefs, now))
 	}
 
 	cleanup = func() {
@@ -336,22 +345,49 @@ func buildDemoClusterSecrets(estate *GeneratedEstate) []runtime.Object {
 		foreign[name] = true
 	}
 
-	newSecret := func(name string, owned bool) *corev1.Secret {
+	// created spreads the fake creationTimestamps so the "show me the
+	// resource" panel's age line reads as a real estate instead of every
+	// secret being born in the same second. Relative to now, never a
+	// calendar date.
+	now := time.Now()
+	index := 0
+
+	newSecret := func(c Cluster, owned bool) *corev1.Secret {
 		labels := map[string]string{}
 		if owned {
 			labels[clusterreconciler.LabelManagedBy] = clusterreconciler.LabelValueSharko
+			labels["argocd.argoproj.io/secret-type"] = "cluster"
 		}
-		return &corev1.Secret{
+		// The addon labels are the genuinely useful content of a
+		// connection secret — they are what decides which addons run on
+		// this cluster, and they are not secret. Rendering them here means
+		// the demo's resource panel shows the same thing a real one does.
+		for addonName := range c.Addons {
+			labels[addonName] = "enabled"
+		}
+		sec := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      name,
+				Name:      c.Name,
 				Namespace: "argocd",
 				Labels:    labels,
+				Annotations: map[string]string{
+					"sharko.io/managed-cluster": c.Name,
+				},
+				CreationTimestamp: metav1.NewTime(now.Add(-demoSecretAgeOffsets[index%len(demoSecretAgeOffsets)])),
 			},
 			Data: map[string][]byte{
-				"name":   []byte(name),
-				"server": []byte("https://k8s." + name + ".demo.internal"),
+				"name":   []byte(c.Name),
+				"server": []byte("https://k8s." + c.Name + ".demo.internal"),
+				// A real ArgoCD cluster secret keeps the bearer token
+				// inside data["config"]. The demo carries the key so the
+				// resource panel shows what an operator would actually
+				// see — blanked, exactly like the real one.
+				"config": []byte(`{"bearerToken":"` + demoSecretValue + `","tlsClientConfig":{"insecure":true}}`),
 			},
+			Type: corev1.SecretTypeOpaque,
 		}
+		index++
+		return sec
 	}
 
 	objs := make([]runtime.Object, 0, len(estate.Clusters)+len(estate.ArgoOnlyClusters))
@@ -359,10 +395,10 @@ func buildDemoClusterSecrets(estate *GeneratedEstate) []runtime.Object {
 		if missing[c.Name] {
 			continue
 		}
-		objs = append(objs, newSecret(c.Name, !foreign[c.Name]))
+		objs = append(objs, newSecret(c, !foreign[c.Name]))
 	}
 	for _, ao := range estate.ArgoOnlyClusters {
-		objs = append(objs, newSecret(ao.Cluster.Name, ao.SharkoOwned))
+		objs = append(objs, newSecret(ao.Cluster, ao.SharkoOwned))
 	}
 	return objs
 }

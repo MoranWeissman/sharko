@@ -32,6 +32,7 @@ import type {
   ObservabilityOverviewResponse,
   PullRequestsResponse,
   RegisterClusterResult,
+  SecretResource,
   SyncActivityEntry,
   SystemCapabilitiesResponse,
   TakeoverReport,
@@ -555,6 +556,35 @@ export async function syncAddonValuesSecret(cluster: string, addon: string) {
   return postJSON<AddonValuesSecretActionResult>(
     `/clusters/${encodeURIComponent(cluster)}/addons/${encodeURIComponent(addon)}/secret/sync`,
     {},
+  )
+}
+
+/**
+ * getConnectionSecretResource — GET /clusters/{name}/secret/resource (S3).
+ * Reads the cluster's ArgoCD connection Secret from Sharko's own cluster
+ * as it is right now, for read-only display.
+ *
+ * COST: one live read per call. Call it ON A CLICK and only on a click —
+ * never while the list renders, never on a timer, never in a loop over
+ * rows. The server says the same thing in the handler's own comment.
+ *
+ * The response NEVER carries a secret value: the server blanks every
+ * value before the body is built. Do not ask it for one.
+ */
+export async function getConnectionSecretResource(cluster: string) {
+  return fetchJSON<SecretResource>(`/clusters/${encodeURIComponent(cluster)}/secret/resource`)
+}
+
+/**
+ * getAddonValuesSecretResource — GET
+ * /clusters/{name}/addons/{addon}/secret/resource (S3). Reads one addon's
+ * values Secret from the remote cluster it was pushed to, as it is right
+ * now, for read-only display. Same cost rule and same blanking guarantee
+ * as getConnectionSecretResource above.
+ */
+export async function getAddonValuesSecretResource(cluster: string, addon: string) {
+  return fetchJSON<SecretResource>(
+    `/clusters/${encodeURIComponent(cluster)}/addons/${encodeURIComponent(addon)}/secret/resource`,
   )
 }
 

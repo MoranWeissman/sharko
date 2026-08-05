@@ -74,8 +74,35 @@
 // construction — it renders canned sentences from the row's own state
 // field. The connection-secret Diff keeps its existing getClusterComparison
 // fetch (labels only, never credentials).
+//
+// ─────────────────────────────────────────────────────────────────────────
+// This pass (maintainer's ask: "datadog → cluster name → the secret name
+// with namespace, backend type, synced/out of synced… and clicking on it
+// should open the resource as it looks inside the cluster right now, read
+// only"):
+//
+//   G1 — every row carries its own backend (row.source, from the server's
+//        per-row field) instead of one label for the whole page, so
+//        grouping, filtering and sorting by backend all read a real
+//        per-row fact.
+//   G2 — a "Group by" control: none (the default, today's flat list),
+//        addon, or cluster. Grouped view is a collapsible parent line with
+//        its rows under it, the same interaction AddonVersionList already
+//        uses. Group by addon gives exactly his datadog → cluster →
+//        secret picture; group by cluster gives one cluster's whole set,
+//        both kinds together.
+//   G3 — a group header may only state PLAIN SUMS of the real per-row
+//        states ("12 secrets · 9 in sync · 2 out of sync"). Never a
+//        rolled-up verdict, never a percentage, and never a group-level
+//        "last checked" — different rows were checked at different times.
+//   G4 — the detail panel gained a Resource section: the live Secret as it
+//        is on the cluster right now, rendered the way ArgoCD renders one.
+//        EVERY VALUE IS BLANKED BY THE SERVER — the browser never receives
+//        one, and there is no field in the response a value could arrive
+//        in. One live read per opened row, on the click that opened it;
+//        never during a list render, never on a timer, never fanned out.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   CheckCircle,
@@ -91,6 +118,8 @@ import {
 } from 'lucide-react'
 import {
   api,
+  getAddonValuesSecretResource,
+  getConnectionSecretResource,
   getManagedSecrets,
   reconcileCluster,
   refreshAddonValuesSecret,
@@ -104,6 +133,7 @@ import type {
   ConnectionSecretRow,
   ManagedSecretsEngineInfo,
   ManagedSecretsResponse,
+  SecretResource,
 } from '@/services/models'
 import { PaginationControls, PageSizeSelector, type PageSize } from '@/components/PaginationControls'
 import { InfoHint } from '@/components/InfoHint'
@@ -124,6 +154,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 // every keystroke.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The four states, worst first — the order the filter chips render in and
+// the order a group header lists its sums in. Declared here because both
+// the chips (far below) and groupSummary (just below) read it.
+const CHIP_ORDER: ResourceStatus[] = ['out_of_sync', 'missing', 'unknown', 'in_sync']
+
 interface UnifiedRow {
   kind: 'connection' | 'values'
   key: string
@@ -138,11 +173,12 @@ interface UnifiedRow {
   lastCheckError?: string
   /**
    * What this row is compared against, already resolved to display text —
-   * the S3 honesty lock. "git" for connection secrets; the real backend
-   * name (or the "secrets store" fallback) for values secrets — see
-   * addon_values_secret_source on the API response. Resolved once here,
-   * not re-derived at render time, so every place that prints it (the row,
-   * the detail panel) says the exact same thing.
+   * the S3 honesty lock, now a PER-ROW fact (G1). It comes straight off
+   * the row the server sent (row.source): "git" for a connection secret,
+   * the real backend name (or the honest "secrets store" fallback) for a
+   * values secret. The page-level addon_values_secret_source is only the
+   * fallback for a server that predates the per-row field, and the copy
+   * that is genuinely about the whole page.
    */
   sourceLabel: string
 }
@@ -158,7 +194,7 @@ function buildUnifiedRows(connectionRows: ConnectionSecretRow[], addonRows: Addo
     lastChecked: r.last_checked,
     lastRepaired: r.last_repaired,
     lastRepairedDetail: r.last_repaired_detail,
-    sourceLabel: 'git',
+    sourceLabel: r.source || 'git',
   }))
   const values: UnifiedRow[] = addonRows.map((r) => ({
     kind: 'values',
@@ -172,9 +208,93 @@ function buildUnifiedRows(connectionRows: ConnectionSecretRow[], addonRows: Addo
     lastRepaired: r.last_repaired,
     lastRepairedDetail: r.last_repaired_detail,
     lastCheckError: r.last_check_error,
-    sourceLabel: valuesSourceLabel,
+    sourceLabel: r.source || valuesSourceLabel,
   }))
   return [...conn, ...values]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Grouping (G2/G3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type GroupBy = 'none' | 'addon' | 'cluster'
+
+export interface RowGroup {
+  key: string
+  label: string
+  /** The small grey line under a group's name — what KIND of thing it is. */
+  sublabel: string
+  rows: UnifiedRow[]
+}
+
+/** The bucket connection secrets land in when grouping by addon: they are
+ *  not an addon, and pretending otherwise would be the kind of tidy lie
+ *  this page keeps refusing to tell. */
+const CONNECTIONS_GROUP_KEY = '__connections__'
+
+/**
+ * buildRowGroups splits already-sorted rows into groups, in the order each
+ * group's FIRST row appears. That is deliberate: the page's default sort
+ * is worst-first, so groups with problems in them float to the top without
+ * needing a second, separate rule anyone has to learn.
+ */
+export function buildRowGroups(rows: UnifiedRow[], groupBy: GroupBy): RowGroup[] {
+  if (groupBy === 'none') return []
+  const order: string[] = []
+  const byKey = new Map<string, RowGroup>()
+
+  for (const row of rows) {
+    let key: string
+    let label: string
+    let sublabel: string
+    if (groupBy === 'cluster') {
+      key = `cluster-${row.cluster}`
+      label = row.cluster
+      sublabel = 'cluster'
+    } else if (row.kind === 'values') {
+      key = `addon-${row.addon}`
+      label = row.addon ?? '—'
+      sublabel = 'addon'
+    } else {
+      key = CONNECTIONS_GROUP_KEY
+      label = 'Cluster connections'
+      sublabel = 'not an addon — one secret per cluster'
+    }
+
+    let group = byKey.get(key)
+    if (!group) {
+      group = { key, label, sublabel, rows: [] }
+      byKey.set(key, group)
+      order.push(key)
+    }
+    group.rows.push(row)
+  }
+
+  return order.map((k) => byKey.get(k)!)
+}
+
+/**
+ * groupSummary is the ONLY thing a group header is allowed to say about
+ * its rows (G3): plain sums of the real per-row states, in the page's own
+ * worst-first order, and only the states that are actually present.
+ *
+ * Deliberately absent, and not to be added later:
+ *   - a rolled-up verdict ("healthy", "all good") — a group is not a
+ *     thing that has a state; its rows are.
+ *   - a percentage — it hides how many rows it is over.
+ *   - a group-level "last checked" — different rows were checked at
+ *     different times, so any single time here would be wrong for most of
+ *     them. If one is ever genuinely wanted it must be the OLDEST, and it
+ *     must say that in words.
+ */
+export function groupSummary(rows: UnifiedRow[]): string {
+  const counts: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, unknown: 0 }
+  for (const r of rows) counts[toResourceStatus(r.state)]++
+  const parts = [`${rows.length} secret${rows.length === 1 ? '' : 's'}`]
+  for (const status of CHIP_ORDER) {
+    if (counts[status] > 0) parts.push(`${counts[status]} ${statusLabel(status).toLowerCase()}`)
+  }
+  return parts.join(' · ')
 }
 
 /** The row's small grey "kind · follows source" line — the honesty lock, printed once so the row and nowhere else has to remember the exact wording. */
@@ -262,8 +382,6 @@ function actionsForRow(row: UnifiedRow, opts: { busy: boolean; onRefresh: () => 
 // navy "selected" ink, never the green/amber "in sync"/"out of sync"
 // status colours — active is a fact about the UI, not about a secret.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const CHIP_ORDER: ResourceStatus[] = ['out_of_sync', 'missing', 'unknown', 'in_sync']
 
 function FilterChip({
   status,
@@ -443,6 +561,123 @@ function EngineStat({
             Last error: {info.last_error}
           </p>
         ))}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Resource section (G4) — the live Secret, the way ArgoCD shows one.
+//
+// EVERY VALUE HERE WAS BLANKED BY THE SERVER. The response carries key
+// NAMES paired with a fixed mask the server put in; there is no field a
+// real value could arrive in, and nothing below un-hides anything. Do not
+// "improve" this by adding a reveal toggle, a copy button, or a request
+// for the real content — that is a new design decision, not a refactor.
+//
+// COST: one live read per opened row, fired by the click that opened the
+// panel. Not on a timer, not prefetched, not fanned out across rows. The
+// server handler says the same thing in its own header.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function KeyValueList({ items, empty, testId }: { items: { key: string; value: string; blanked?: boolean }[]; empty: string; testId: string }) {
+  if (items.length === 0) {
+    return <p className="text-xs text-[#8098ac] dark:text-gray-500">{empty}</p>
+  }
+  return (
+    <dl className="space-y-0.5" data-testid={testId}>
+      {items.map((item) => (
+        <div key={item.key} className="flex items-baseline justify-between gap-3">
+          <dt className="truncate font-mono text-xs text-[#3a5770] dark:text-gray-400" title={item.key}>
+            {item.key}
+          </dt>
+          <dd
+            className={`shrink-0 font-mono text-xs ${item.blanked ? 'text-[#8098ac] dark:text-gray-500' : 'text-[#08192b] dark:text-gray-200'}`}
+            title={item.blanked ? 'Sharko blanked this — it holds a copy of the whole secret.' : undefined}
+          >
+            {item.value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function ResourceSection({ row }: { row: UnifiedRow }) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [resource, setResource] = useState<SecretResource | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setResource(null)
+    setError(null)
+    setLoading(true)
+    const request =
+      row.kind === 'connection' ? getConnectionSecretResource(row.cluster) : getAddonValuesSecretResource(row.cluster, row.addon!)
+    request
+      .then((res) => {
+        if (!cancelled) setResource(res)
+      })
+      .catch((err) => {
+        // Whatever the server said, verbatim — it only ever sends
+        // pre-written sentences here, never raw provider or cluster text.
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Sharko could not read this secret.')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row.key])
+
+  return (
+    <div>
+      <h3 className="mb-1 text-sm font-semibold text-[#08192b] dark:text-gray-100">On the cluster right now</h3>
+      <div className="space-y-3 rounded-md ring-1 ring-[#d7e2ea] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900" data-testid="detail-resource-panel">
+        {loading ? (
+          <p className="text-sm text-[#3a5770] dark:text-gray-400">Reading it from the cluster…</p>
+        ) : error ? (
+          // A failed read says so and shows nothing else. It never falls
+          // back to the last thing we saw, or to anything made up.
+          <p className="text-sm text-red-700 dark:text-red-400" data-testid="resource-error">
+            {error}
+          </p>
+        ) : resource ? (
+          <>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-[#5c7288] dark:text-gray-500">
+              <span className="font-mono text-sm font-semibold text-[#08192b] dark:text-white">
+                {resource.namespace}/{resource.name}
+              </span>
+              <span>{resource.kind}</span>
+              {resource.secret_type && <span>type {resource.secret_type}</span>}
+              <span>
+                created <TimeChip iso={resource.created_at} />
+              </span>
+            </div>
+            <p className="text-xs text-[#5c7288] dark:text-gray-500">Read from {resource.read_from}.</p>
+
+            <div>
+              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8098ac] dark:text-gray-500">Keys</div>
+              <KeyValueList items={resource.data_keys} empty="This secret has no keys." testId="resource-data-keys" />
+              <p className="mt-1 text-xs text-[#5c7288] dark:text-gray-500">
+                Sharko blanks every value on the server. The values never leave the cluster.
+              </p>
+            </div>
+
+            <div>
+              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8098ac] dark:text-gray-500">Labels</div>
+              <KeyValueList items={resource.labels} empty="No labels." testId="resource-labels" />
+            </div>
+
+            <div>
+              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8098ac] dark:text-gray-500">Annotations</div>
+              <KeyValueList items={resource.annotations} empty="No annotations." testId="resource-annotations" />
+            </div>
+          </>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -680,6 +915,8 @@ function SecretDetailPanel({
         </div>
       </div>
 
+      <ResourceSection row={row} />
+
       <button
         type="button"
         onClick={() => navigate(row.kind === 'connection' ? `/clusters/${encodeURIComponent(row.cluster)}` : `/addons/${encodeURIComponent(row.addon!)}`)}
@@ -689,6 +926,126 @@ function SecretDetailPanel({
         {row.kind === 'connection' ? 'View cluster page' : 'View addon page'}
       </button>
     </ResourceDetailSheet>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// One secret row. Hoisted out of the page so the flat list and the grouped
+// list render the exact same markup — a second copy would drift, and the
+// two views would quietly start disagreeing about what a row says.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SecretTableRow({
+  row,
+  indented,
+  busy,
+  onSelect,
+  onRefresh,
+  onRequestSync,
+}: {
+  row: UnifiedRow
+  /** true when the row sits under a group parent — a small left inset, nothing else changes. */
+  indented?: boolean
+  busy: boolean
+  onSelect: () => void
+  onRefresh: () => void
+  onRequestSync: () => void
+}) {
+  return (
+    <TableRow data-testid={`secret-row-${row.key}`} onClick={onSelect} className="cursor-pointer">
+      {/* H6: the identity is the darkest, boldest text on the row. The
+          small grey line under it carries the S3 honesty lock (kind +
+          source) — this replaces the old separate COMPARED AGAINST
+          column, which said the same thing two columns away from the
+          kind glyph. The source now comes from the ROW (G1), not from
+          one label for the whole page.
+
+          The status edge strip (copied from ArgoCD's own list and tile
+          views) lives on this same cell, as a left border — a `<td>`
+          always wins the collapsed-border fight for its own edge, so it
+          renders reliably regardless of the table's border-collapse
+          mode. Its colour is read off the exact same STATUS_META table
+          as the row's own <StatusMark> dot and the filter chips, via
+          statusStripClassName — it cannot disagree with the dot two
+          columns over. */}
+      <TableCell className={`py-1.5 ${statusStripClassName(row.state)} ${indented ? 'pl-6' : ''}`}>
+        <div className="flex items-start gap-2">
+          {row.kind === 'connection' ? (
+            <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#8098ac] dark:text-gray-500" aria-hidden="true" />
+          ) : (
+            <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#8098ac] dark:text-gray-500" aria-hidden="true" />
+          )}
+          <div className="leading-tight">
+            <div className="whitespace-nowrap font-mono text-sm font-semibold text-[#08192b] dark:text-white">
+              {row.secretNamespace && row.secretName ? `${row.secretNamespace}/${row.secretName}` : '—'}
+            </div>
+            <div className="text-[11px] text-[#5c7288] dark:text-gray-500">{kindSourceLine(row)}</div>
+          </div>
+        </div>
+      </TableCell>
+      {/*
+        Cluster: connection rows leave this blank ON PURPOSE — the
+        identity above (namespace/secretName) already IS the cluster name
+        (the same fact printed twice, side by side, was the exact
+        duplicate flagged in review). Values rows show it here because
+        it's the one thing that actually distinguishes two rows with the
+        same addon on different clusters — not a duplicate there.
+      */}
+      <TableCell className="py-1.5 text-sm text-[#3a5770] dark:text-gray-300">
+        {row.kind === 'values' ? row.cluster : null}
+      </TableCell>
+      <TableCell className="py-1.5">
+        <TimeChip iso={row.lastChecked} />
+      </TableCell>
+      <TableCell className="py-1.5">
+        <StatusMark status={row.state} />
+      </TableCell>
+      <TableCell className="py-1.5" onClick={(e) => e.stopPropagation()}>
+        <RoleGuard roles={['admin', 'operator']}>
+          <RowActionsMenu
+            label={`Actions for ${row.cluster}${row.addon ? ' / ' + row.addon : ''}`}
+            actions={actionsForRow(row, { busy, onRefresh, onRequestSync })}
+          />
+        </RoleGuard>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The collapsible group parent (G2/G3). Same interaction as
+// AddonVersionList: click the line, the children appear under it.
+//
+// The right-hand summary is groupSummary's output and nothing else — see
+// that function for what a header is and is not allowed to say.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function GroupHeaderRow({ group, expanded, onToggle }: { group: RowGroup; expanded: boolean; onToggle: () => void }) {
+  return (
+    <TableRow className="hover:bg-transparent">
+      <TableCell colSpan={5} className="p-0">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          data-testid={`secret-group-${group.key}`}
+          className="flex w-full flex-wrap items-center justify-between gap-2 bg-[#f2f6f9] px-3 py-2 text-left hover:bg-[#e8eff5] dark:bg-gray-800/60 dark:hover:bg-gray-800"
+        >
+          <span className="flex items-center gap-1.5">
+            {expanded ? (
+              <ChevronUp className="h-4 w-4 shrink-0 text-[#5c7288] dark:text-gray-400" aria-hidden="true" />
+            ) : (
+              <ChevronDown className="h-4 w-4 shrink-0 text-[#5c7288] dark:text-gray-400" aria-hidden="true" />
+            )}
+            <span className="font-semibold text-[#08192b] dark:text-gray-100">{group.label}</span>
+            <span className="text-[11px] text-[#8098ac] dark:text-gray-500">{group.sublabel}</span>
+          </span>
+          <span className="text-xs text-[#3a5770] dark:text-gray-400" data-testid={`secret-group-summary-${group.key}`}>
+            {groupSummary(group.rows)}
+          </span>
+        </button>
+      </TableCell>
+    </TableRow>
   )
 }
 
@@ -761,6 +1118,31 @@ export function ManagedSecrets() {
     [updateParams],
   )
 
+  // G2 — "Group by" lives in the URL too (?group=addon|cluster), for the
+  // same reasons the chip filter and the search text do: reloadable,
+  // bookmarkable, back-button-safe. `none` is the default and is never
+  // written to the URL.
+  const [groupBy, setGroupByState] = useState<GroupBy>(() => {
+    const v = searchParams.get('group')
+    return v === 'addon' || v === 'cluster' ? v : 'none'
+  })
+  const setGroupBy = useCallback(
+    (next: GroupBy) => {
+      setGroupByState(next)
+      updateParams((p) => {
+        if (next === 'none') p.delete('group')
+        else p.set('group', next)
+      })
+    },
+    [updateParams],
+  )
+  // Which group parents are open. Collapsed by default — the same
+  // interaction AddonVersionList uses, which the maintainer already knows.
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
+  const toggleGroup = useCallback((key: string) => {
+    setExpandedGroups((g) => ({ ...g, [key]: !g[key] }))
+  }, [])
+
   const [sortKey, setSortKey] = useState<SortKey>('state')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [page, setPage] = useState(1)
@@ -822,28 +1204,46 @@ export function ManagedSecrets() {
     return copy
   }, [filtered, sortKey, sortDir])
 
+  // G2 — grouping. `none` is the default and is today's flat list,
+  // unchanged. Grouped, the page pages over GROUPS rather than rows, so a
+  // group is never split in half across a page boundary.
+  const groups = useMemo(() => buildRowGroups(sorted, groupBy), [sorted, groupBy])
+
   useEffect(() => {
     setPage(1)
-  }, [search, stateFilter, sortKey, sortDir, pageSize])
+  }, [search, stateFilter, sortKey, sortDir, pageSize, groupBy])
 
-  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize))
+  const grouped = groupBy !== 'none'
+  const pageUnitCount = grouped ? groups.length : sorted.length
+  const totalPages = Math.max(1, Math.ceil(pageUnitCount / pageSize))
   const clampedPage = Math.min(page, totalPages)
   const paged = useMemo(() => sorted.slice((clampedPage - 1) * pageSize, clampedPage * pageSize), [sorted, clampedPage, pageSize])
+  const pagedGroups = useMemo(
+    () => groups.slice((clampedPage - 1) * pageSize, clampedPage * pageSize),
+    [groups, clampedPage, pageSize],
+  )
 
   // B2 — an honest "Showing X–Y of Z" line: never "169 of 169 shown" while
   // 20 rows are on screen, and plain about it when a filter has narrowed
-  // the total below everything Sharko manages.
+  // the total below everything Sharko manages. Grouped, it counts groups
+  // and SAYS it counts groups — "1–5 of 12" with no noun would be exactly
+  // the kind of quietly-wrong number this page keeps refusing to print.
   const hasActiveFilter = stateFilter !== 'all' || search.trim() !== ''
-  const rangeStart = sorted.length === 0 ? 0 : (clampedPage - 1) * pageSize + 1
-  const rangeEnd = Math.min(clampedPage * pageSize, sorted.length)
+  const unit = grouped ? (groupBy === 'addon' ? 'addons' : 'clusters') : ''
+  const rangeStart = pageUnitCount === 0 ? 0 : (clampedPage - 1) * pageSize + 1
+  const rangeEnd = Math.min(clampedPage * pageSize, pageUnitCount)
   const paginationSummary =
-    sorted.length === 0
+    pageUnitCount === 0
       ? hasActiveFilter
         ? `No secrets match this filter (${unifiedRows.length} total)`
         : 'No secrets'
-      : hasActiveFilter
-        ? `Showing ${rangeStart}–${rangeEnd} of ${sorted.length} (filtered from ${unifiedRows.length})`
-        : `Showing ${rangeStart}–${rangeEnd} of ${sorted.length}`
+      : grouped
+        ? hasActiveFilter
+          ? `Showing ${rangeStart}–${rangeEnd} of ${pageUnitCount} ${unit}, ${sorted.length} secrets (filtered from ${unifiedRows.length})`
+          : `Showing ${rangeStart}–${rangeEnd} of ${pageUnitCount} ${unit}, ${sorted.length} secrets`
+        : hasActiveFilter
+          ? `Showing ${rangeStart}–${rangeEnd} of ${sorted.length} (filtered from ${unifiedRows.length})`
+          : `Showing ${rangeStart}–${rangeEnd} of ${sorted.length}`
 
   const handleSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -995,6 +1395,36 @@ export function ManagedSecrets() {
             className="w-full rounded-lg border border-[#c7d6e0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500"
           />
         </div>
+        {/* G2 — Group by. `None` is the default and is the flat list this
+            page has always shown; the other two fold the same rows under a
+            parent line you click to open. */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-[#5c7288] dark:text-gray-400">Group by</span>
+          <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#d7e2ea] dark:ring-gray-700">
+            {(
+              [
+                ['none', 'None'],
+                ['addon', 'Addon'],
+                ['cluster', 'Cluster'],
+              ] as [GroupBy, string][]
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setGroupBy(value)}
+                aria-pressed={groupBy === value}
+                data-testid={`group-by-${value}`}
+                className={`px-2.5 py-1 text-xs font-medium ${
+                  groupBy === value
+                    ? 'bg-[#1a3d5c] text-white dark:bg-teal-700'
+                    : 'bg-white text-[#3a5770] hover:bg-[#f2f6f9] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="ml-auto">
           <PageSizeSelector pageSize={pageSize} onChange={setPageSize} sizes={[10, 20, 50, 100]} />
         </div>
@@ -1004,7 +1434,7 @@ export function ManagedSecrets() {
         <div className="flex items-center justify-center py-24">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#d7e2ea] border-t-[#1a3d5c] dark:border-gray-700 dark:border-t-teal-500" />
         </div>
-      ) : paged.length === 0 ? (
+      ) : sorted.length === 0 ? (
         <div className="rounded-lg ring-1 ring-[#d7e2ea] bg-white p-6 text-center text-sm text-[#8098ac] dark:ring-gray-800 dark:bg-gray-900 dark:text-gray-500">
           {unifiedRows.length === 0 ? 'Sharko is not managing any secrets yet.' : 'No secrets match this search.'}
         </div>
@@ -1024,75 +1454,38 @@ export function ManagedSecrets() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {paged.map((row) => (
-                <TableRow
-                  key={row.key}
-                  data-testid={`secret-row-${row.key}`}
-                  onClick={() => selectRow(row.key)}
-                  className="cursor-pointer"
-                >
-                  {/* H6: the identity is the darkest, boldest text on the
-                      row. The small grey line under it carries the S3
-                      honesty lock (kind + source) — this replaces the old
-                      separate COMPARED AGAINST column, which said the same
-                      thing two columns away from the kind glyph.
-
-                      The status edge strip (copied from ArgoCD's own list
-                      and tile views) lives on this same cell, as a left
-                      border — a `<td>` always wins the collapsed-border
-                      fight for its own edge, so it renders reliably
-                      regardless of the table's border-collapse mode. Its
-                      colour is read off the exact same STATUS_META table
-                      as the row's own <StatusMark> dot and the filter
-                      chips, via statusStripClassName — it cannot disagree
-                      with the dot two columns over. */}
-                  <TableCell className={`py-1.5 ${statusStripClassName(row.state)}`}>
-                    <div className="flex items-start gap-2">
-                      {row.kind === 'connection' ? (
-                        <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#8098ac] dark:text-gray-500" aria-hidden="true" />
-                      ) : (
-                        <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#8098ac] dark:text-gray-500" aria-hidden="true" />
-                      )}
-                      <div className="leading-tight">
-                        <div className="whitespace-nowrap font-mono text-sm font-semibold text-[#08192b] dark:text-white">
-                          {row.secretNamespace && row.secretName ? `${row.secretNamespace}/${row.secretName}` : '—'}
-                        </div>
-                        <div className="text-[11px] text-[#5c7288] dark:text-gray-500">{kindSourceLine(row)}</div>
-                      </div>
-                    </div>
-                  </TableCell>
-                  {/*
-                    Cluster: connection rows leave this blank ON PURPOSE —
-                    the identity above (namespace/secretName) already IS
-                    the cluster name (the same fact printed twice, side by
-                    side, was the exact duplicate flagged in review). Values
-                    rows show it here because it's the one thing that
-                    actually distinguishes two rows with the same addon on
-                    different clusters — not a duplicate there.
-                  */}
-                  <TableCell className="py-1.5 text-sm text-[#3a5770] dark:text-gray-300">
-                    {row.kind === 'values' ? row.cluster : null}
-                  </TableCell>
-                  <TableCell className="py-1.5">
-                    <TimeChip iso={row.lastChecked} />
-                  </TableCell>
-                  <TableCell className="py-1.5">
-                    <StatusMark status={row.state} />
-                  </TableCell>
-                  <TableCell className="py-1.5" onClick={(e) => e.stopPropagation()}>
-                    <RoleGuard roles={['admin', 'operator']}>
-                      <RowActionsMenu
-                        label={`Actions for ${row.cluster}${row.addon ? ' / ' + row.addon : ''}`}
-                        actions={actionsForRow(row, {
-                          busy: !!busyRows[row.key],
-                          onRefresh: () => handleRefreshRow(row),
-                          onRequestSync: () => setSyncTarget(row),
-                        })}
+              {grouped
+                ? pagedGroups.map((group) => (
+                    <Fragment key={group.key}>
+                      <GroupHeaderRow
+                        group={group}
+                        expanded={!!expandedGroups[group.key]}
+                        onToggle={() => toggleGroup(group.key)}
                       />
-                    </RoleGuard>
-                  </TableCell>
-                </TableRow>
-              ))}
+                      {expandedGroups[group.key] &&
+                        group.rows.map((row) => (
+                          <SecretTableRow
+                            key={row.key}
+                            row={row}
+                            indented
+                            busy={!!busyRows[row.key]}
+                            onSelect={() => selectRow(row.key)}
+                            onRefresh={() => handleRefreshRow(row)}
+                            onRequestSync={() => setSyncTarget(row)}
+                          />
+                        ))}
+                    </Fragment>
+                  ))
+                : paged.map((row) => (
+                    <SecretTableRow
+                      key={row.key}
+                      row={row}
+                      busy={!!busyRows[row.key]}
+                      onSelect={() => selectRow(row.key)}
+                      onRefresh={() => handleRefreshRow(row)}
+                      onRequestSync={() => setSyncTarget(row)}
+                    />
+                  ))}
             </TableBody>
           </Table>
         </div>

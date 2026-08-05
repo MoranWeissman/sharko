@@ -3510,6 +3510,75 @@
                 }
             }
         },
+        "/clusters/{name}/addons/{addon}/secret/resource": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reads one addon's values Secret from the remote cluster it was pushed to, as it is right now, and returns it for display: kind, name, namespace, labels, annotations, age, secret type, and the data KEY NAMES with every value blanked server-side. Values never reach the browser: the response is built from key names only (see internal/api/secret_resource.go). One live read per call, on click only — never while a list renders, never on a timer, never fanned out.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "secrets"
+                ],
+                "summary": "Read the live addon values Secret on a cluster, values blanked",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "addon",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The live Secret, values blanked",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.secretResourceView"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — requires operator role or higher",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "No values secret is defined for this addon, or it does not exist on the cluster right now",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Sharko could not read the secret",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/clusters/{name}/addons/{addon}/secret/sync": {
             "post": {
                 "security": [
@@ -4138,6 +4207,75 @@
                     },
                     "503": {
                         "description": "Reconciler not running on this server",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/clusters/{name}/secret/resource": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reads the named cluster's ArgoCD connection Secret from the hub's argocd namespace as it is right now, and returns it for display: kind, name, namespace, labels, annotations, age, secret type, and the data KEY NAMES with every value blanked server-side. The addon labels are shown in full — they are not secret and they are what decides which addons run on that cluster. Values never reach the browser: the response is built from key names only (see internal/api/secret_resource.go). One live read per call, on click only — never while a list renders, never on a timer, never fanned out.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "secrets"
+                ],
+                "summary": "Read the live cluster connection Secret, values blanked",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The live Secret, values blanked",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.secretResourceView"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — requires operator role or higher",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "This secret does not exist right now",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Sharko could not read the secret",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Sharko has no Kubernetes client for its own cluster on this server",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -11727,6 +11865,10 @@
                 "secret_namespace": {
                     "type": "string"
                 },
+                "source": {
+                    "description": "Source (S1) names, per row, the real backend this secret's value\ncomes from and is compared against — \"AWS Secrets Manager\", \"a\nKubernetes Secret\", ..., or the honest \"secrets store\" fallback when\nthe server cannot name a product. Per row, not per response: the row\nis what a reader filters, sorts and groups by, so the fact has to\nlive on the row.",
+                    "type": "string"
+                },
                 "state": {
                     "description": "State is one of \"in_sync\", \"out_of_sync\", \"missing\", or \"unknown\" —\nthe same vocabulary connectionSecretRow.State uses, derived here from\nthe addon-values reconciler's per-item outcome (see\naddonValuesSecretRowState) rather than its own per-cluster record.\nCompared against the vault (the secrets provider), NOT git — git only\nholds a pointer to where the value lives (S3(a) honesty lock).",
                     "type": "string"
@@ -12084,6 +12226,10 @@
                 "secret_namespace": {
                     "type": "string"
                 },
+                "source": {
+                    "description": "Source (S1) names, per row, which store this secret's content is\ncompared against. A connection secret always follows git — git holds\nthe addon labels this secret is built from — so this is the constant\n\"git\" here, and it is stated per row rather than assumed by the UI so\nboth kinds of row answer the same question in the same field.",
+                    "type": "string"
+                },
                 "state": {
                     "description": "State is one of \"in_sync\", \"out_of_sync\", \"missing\", or \"unknown\" —\nsee connectionSecretState for exactly how each is derived.",
                     "type": "string"
@@ -12331,7 +12477,7 @@
             "type": "object",
             "properties": {
                 "addon_values_secret_source": {
-                    "description": "AddonValuesSecretSource is the real, human-readable name of the\nbackend addon-values secrets are compared against — \"AWS Secrets\nManager\", \"a Kubernetes Secret\", etc, or the generic \"secrets store\"\nfallback when the configured backend has no recognizable product name\n(unconfigured, a demo/stub backend, or an unimplemented type). Never\n\"the vault\" — that reads as HashiCorp Vault to every DevOps reader,\nwhich is misleading unless the backend genuinely IS Vault. Computed\nonce per response (one addon-secret backend serves the whole\nserver), not per row — see addonValuesSecretSourceLabel.",
+                    "description": "AddonValuesSecretSource is the real, human-readable name of the\nbackend addon-values secrets are compared against — \"AWS Secrets\nManager\", \"a Kubernetes Secret\", etc, or the generic \"secrets store\"\nfallback when the configured backend has no recognizable product name\n(unconfigured, a demo/stub backend, or an unimplemented type). Never\n\"the vault\" — that reads as HashiCorp Vault to every DevOps reader,\nwhich is misleading unless the backend genuinely IS Vault.\n\nKEPT for the whole-page copy that genuinely is about the page and not\nabout one row (the \"Refresh all\" hint). It is NOT what a row reads\nanymore: every row now carries its own Source field (S1), so a reader\nfiltering, sorting or grouping by backend is reading a per-row fact,\nand a future server that resolves a different backend per addon does\nnot need a response-shape change to say so.",
                     "type": "string"
                 },
                 "addon_values_secrets": {
@@ -12545,6 +12691,85 @@
                 },
                 "provider": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.secretResourceKeyView": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.secretResourceLabelView": {
+            "type": "object",
+            "properties": {
+                "blanked": {
+                    "description": "Blanked is true when Value is the mask rather than the real text —\nonly ever set for an annotation that embeds a copy of the object\n(see annotationsThatEmbedTheObject).",
+                    "type": "boolean"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.secretResourceView": {
+            "type": "object",
+            "properties": {
+                "annotations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.secretResourceLabelView"
+                    }
+                },
+                "api_version": {
+                    "description": "always \"v1\"",
+                    "type": "string"
+                },
+                "created_at": {
+                    "description": "CreatedAt is the object's creationTimestamp in RFC3339, \"\" when the\ncluster did not set one. The UI turns this into an age.",
+                    "type": "string"
+                },
+                "data_keys": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.secretResourceKeyView"
+                    }
+                },
+                "kind": {
+                    "description": "always \"Secret\"",
+                    "type": "string"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.secretResourceLabelView"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "read_from": {
+                    "description": "ReadFrom is a plain sentence naming where this object was read from,\nso the panel never leaves a reader guessing which cluster they are\nlooking at.",
+                    "type": "string"
+                },
+                "secret_type": {
+                    "description": "SecretType is the Kubernetes Secret type (\"Opaque\",\n\"kubernetes.io/tls\", ...) — metadata, never content.",
+                    "type": "string"
+                },
+                "values_blanked": {
+                    "description": "ValuesBlanked is always true. It is in the body so the contract is\nvisible to anyone reading the API, not only to anyone reading this\nfile.",
+                    "type": "boolean"
                 }
             }
         },
