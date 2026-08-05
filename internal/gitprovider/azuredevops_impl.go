@@ -209,6 +209,18 @@ func (a *AzureDevOpsProvider) getRefSHA(branchName string) (string, error) {
 	return result.Value[0].ObjectID, nil
 }
 
+// GetBranchHeadSHA returns the commit SHA the named branch currently points
+// at (P2-C1's BranchRevisioner capability) — a thin, context-taking wrapper
+// over the existing getRefSHA helper CreateBranch already uses to resolve a
+// branch to its head commit. No new Azure DevOps API surface.
+func (a *AzureDevOpsProvider) GetBranchHeadSHA(_ context.Context, branch string) (string, error) {
+	sha, err := a.getRefSHA(branch)
+	if err != nil {
+		return "", fmt.Errorf("get branch head sha: %w", err)
+	}
+	return sha, nil
+}
+
 // fileExists checks whether a file exists at the given path and ref.
 func (a *AzureDevOpsProvider) fileExists(filePath, ref string) bool {
 	apiURL := fmt.Sprintf("%s/items?path=%s&versionDescriptor.version=%s&api-version=7.1",

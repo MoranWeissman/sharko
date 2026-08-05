@@ -458,7 +458,7 @@ func TestSyncManagedClusterLabels_NeverEatsPreservedLabels(t *testing.T) {
 
 	// Git declares one addon and knows nothing about env/team.
 	if _, err := m.SyncManagedClusterLabels(context.Background(), "prod-eu",
-		map[string]string{"datadog": "enabled"}); err != nil {
+		map[string]string{"datadog": "enabled"}, nil); err != nil {
 		t.Fatalf("sync failed: %v", err)
 	}
 
@@ -475,7 +475,7 @@ func TestSyncManagedClusterLabels_NeverEatsPreservedLabels(t *testing.T) {
 
 	// A stale addon key that was never preserved still gets converged away.
 	if _, err := m.SyncManagedClusterLabels(context.Background(), "prod-eu",
-		map[string]string{}); err != nil {
+		map[string]string{}, nil); err != nil {
 		t.Fatalf("second sync failed: %v", err)
 	}
 	after = getSecret(t, client, "prod-eu")

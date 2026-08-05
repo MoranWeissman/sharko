@@ -40,3 +40,41 @@ func (r *Reconciler) SeedReconcileRecordForDemo(clusterName string, outcome Reco
 		LabelDrift: drift,
 	}
 }
+
+// SeedReconcileRevisionForDemo (P2-C4) patches the two-revision + path facts
+// (P2-C1) onto a cluster's ALREADY-seeded record — call this after
+// SeedReconcileRecordForDemo for the same cluster. A separate method rather
+// than widening SeedReconcileRecordForDemo's own parameter list: that
+// function's shape mirrors what a real tick writes in one call
+// (recordReconcile), while these three facts are demo-only bookkeeping this
+// package's real write path derives from its OWN pass-level/per-cluster
+// state (setPassCompared / stampAppliedRevision) — state a direct record
+// seed has no pass to derive them from. FOR DEMO MODE AND TESTS ONLY — see
+// the package doc comment above.
+//
+// appliedRevision is set on the reconciler's persisted per-cluster map
+// (the same one stampAppliedRevision writes) rather than only on this one
+// record, so it also flows into whatever THIS cluster's record looks like
+// after a later demo "Refresh" re-seed — matching production's "a check
+// pass carries AppliedRevision forward untouched" contract.
+func (r *Reconciler) SeedReconcileRevisionForDemo(clusterName, comparedRevision, comparedPath, appliedRevision string) {
+	if appliedRevision != "" {
+		r.appliedRevMu.Lock()
+		if r.appliedRevision == nil {
+			r.appliedRevision = make(map[string]string)
+		}
+		r.appliedRevision[clusterName] = appliedRevision
+		r.appliedRevMu.Unlock()
+	}
+
+	r.lastReconcileMu.Lock()
+	defer r.lastReconcileMu.Unlock()
+	rec, ok := r.lastReconcile[clusterName]
+	if !ok {
+		return
+	}
+	rec.ComparedRevision = comparedRevision
+	rec.ComparedPath = comparedPath
+	rec.AppliedRevision = appliedRevision
+	r.lastReconcile[clusterName] = rec
+}

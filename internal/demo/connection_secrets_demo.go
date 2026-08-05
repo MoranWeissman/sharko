@@ -44,6 +44,14 @@ var repairHistoryOffsets = []time.Duration{
 	3*24*time.Hour + 14*time.Hour,
 }
 
+// demoOlderBranchHeadSHA is a second, distinct, obviously-fake commit SHA
+// (P2-C4/C6) — the "applied" revision for the one seeded row that shows the
+// "git moved" drift blame: its last successful write was built from THIS
+// commit, while the current pass compared against demoBranchHeadSHA
+// (mock_git.go), so the two disagree exactly the way a real cluster looks
+// after a newer commit changes the desired state.
+const demoOlderBranchHeadSHA = "beefbeef0102030405060708090a0b0c0d0e0f1"
+
 // demoClusterReconcileSeed is one cluster's chosen reconcile outcome — see
 // buildDemoReconcileSeeds.
 type demoClusterReconcileSeed struct {
@@ -51,6 +59,18 @@ type demoClusterReconcileSeed struct {
 	outcome clusterreconciler.ReconcileOutcome
 	message string
 	drift   *clusterreconciler.LabelDrift
+
+	// comparedPath (P2-C1/C3) alternates between the v3 and v4
+	// managed-clusters path per cluster so the page shows a genuine
+	// self_heals spread (a v4 row always heals; a v3 row heals only when
+	// the — off by default, and off in demo mode, since no settings store
+	// is wired out-of-cluster — managed_cluster_self_heal setting is on).
+	comparedPath string
+	// appliedRevision (P2-C1/C6) is "" for a cluster whose secret has
+	// never been successfully written (the two special cases below), or
+	// one of the two fixed demo SHAs for everything else — see
+	// buildDemoReconcileSeeds for which row gets which.
+	appliedRevision string
 }
 
 // buildDemoReconcileSeeds works out, once and deterministically, which
@@ -68,10 +88,18 @@ type demoClusterReconcileSeed struct {
 //     already exists but isn't Sharko's (Adopt territory); the reconciler
 //     deliberately takes no position on it, which reads as "unknown".
 //   - everything else cycles deterministically: most clusters succeed with
-//     no drift (in sync), roughly 1 in 12 succeeds WITH label drift (out of
-//     sync — self-heal caught up to a point but a difference remains), and
-//     roughly 1 in 12 fails outright (out of sync via a different honest
-//     reason).
+//     no drift (in sync), roughly 1 in 12 succeeds WITH label drift where
+//     git moved since the last write (out of sync, drift blame "git"),
+//     roughly 1 in 12 succeeds WITH label drift where git has NOT moved
+//     (out of sync, drift blame "cluster" — P2-C6), and roughly 1 in 12
+//     fails outright (unknown via a different honest reason).
+//
+// comparedPath (P2-C1/C3) alternates v4/v3 per cluster (demoComparedPath)
+// so the self_heals column shows a real spread: a v4 row always heals
+// itself; a v3 row only heals when managed_cluster_self_heal is on, and no
+// settings store is wired in demo mode (out-of-cluster), so every v3 row
+// reads self_heals=false — the honest, grounded default the same code path
+// falls back to in production when it doesn't know.
 func buildDemoReconcileSeeds(estate *GeneratedEstate) []demoClusterReconcileSeed {
 	special := make(map[string]bool)
 	seeds := make([]demoClusterReconcileSeed, 0, len(estate.Clusters))
@@ -80,18 +108,22 @@ func buildDemoReconcileSeeds(estate *GeneratedEstate) []demoClusterReconcileSeed
 		name := estate.SelfManagedClusterNames[0]
 		special[name] = true
 		seeds = append(seeds, demoClusterReconcileSeed{
-			cluster: name,
-			outcome: clusterreconciler.OutcomeSkipped,
-			message: clusterreconciler.SelfManagedSecretNotCreatedMessage,
+			cluster:      name,
+			outcome:      clusterreconciler.OutcomeSkipped,
+			message:      clusterreconciler.SelfManagedSecretNotCreatedMessage,
+			comparedPath: demoComparedPath(0),
+			// Never successfully written — the secret doesn't exist yet.
 		})
 	}
 	if len(estate.ForeignSecretClusterNames) > 0 {
 		name := estate.ForeignSecretClusterNames[0]
 		special[name] = true
 		seeds = append(seeds, demoClusterReconcileSeed{
-			cluster: name,
-			outcome: clusterreconciler.OutcomeSkipped,
-			message: "an unlabeled secret with this name already exists on this cluster — this looks like an existing installation, not something Sharko created. Register it as an adopted cluster instead of overwriting it.",
+			cluster:      name,
+			outcome:      clusterreconciler.OutcomeSkipped,
+			message:      "an unlabeled secret with this name already exists on this cluster — this looks like an existing installation, not something Sharko created. Register it as an adopted cluster instead of overwriting it.",
+			comparedPath: demoComparedPath(1),
+			// Never successfully written — it isn't Sharko's secret.
 		})
 	}
 
@@ -104,23 +136,48 @@ func buildDemoReconcileSeeds(estate *GeneratedEstate) []demoClusterReconcileSeed
 		if special[c.Name] {
 			continue
 		}
+		path := demoComparedPath(i)
 		switch i % 12 {
 		case 0:
 			seeds = append(seeds, demoClusterReconcileSeed{
-				cluster: c.Name,
-				outcome: clusterreconciler.OutcomeFailed,
-				message: "could not update this cluster's ArgoCD connection secret — the last attempt to reach its Kubernetes API timed out.",
+				cluster:      c.Name,
+				outcome:      clusterreconciler.OutcomeFailed,
+				message:      "could not update this cluster's ArgoCD connection secret — the last attempt to reach its Kubernetes API timed out.",
+				comparedPath: path,
+				// The pass's git read still succeeded (only the write
+				// failed) but this cluster has never had a successful
+				// write on this server instance yet.
 			})
 		case 1:
+			// Drift blame "git" (P2-C6): the last successful write was
+			// built from an OLDER commit than the one this pass just
+			// compared against — a newer commit changed the desired state
+			// since then.
 			seeds = append(seeds, demoClusterReconcileSeed{
-				cluster: c.Name,
-				outcome: clusterreconciler.OutcomeSucceeded,
-				drift:   &clusterreconciler.LabelDrift{Changed: []string{"an addon label"}},
+				cluster:         c.Name,
+				outcome:         clusterreconciler.OutcomeSucceeded,
+				drift:           &clusterreconciler.LabelDrift{Changed: []string{"an addon label"}},
+				comparedPath:    path,
+				appliedRevision: demoOlderBranchHeadSHA,
+			})
+		case 2:
+			// Drift blame "cluster" (P2-C6): the last successful write was
+			// built from the SAME commit this pass just compared against
+			// — git hasn't moved, so something changed the live secret
+			// outside git.
+			seeds = append(seeds, demoClusterReconcileSeed{
+				cluster:         c.Name,
+				outcome:         clusterreconciler.OutcomeSucceeded,
+				drift:           &clusterreconciler.LabelDrift{Changed: []string{"an addon label"}},
+				comparedPath:    path,
+				appliedRevision: demoBranchHeadSHA,
 			})
 		default:
 			seeds = append(seeds, demoClusterReconcileSeed{
-				cluster: c.Name,
-				outcome: clusterreconciler.OutcomeSucceeded,
+				cluster:         c.Name,
+				outcome:         clusterreconciler.OutcomeSucceeded,
+				comparedPath:    path,
+				appliedRevision: demoBranchHeadSHA,
 			})
 		}
 		i++
@@ -140,7 +197,26 @@ func applyDemoReconcileSeeds(recon *clusterreconciler.Reconciler, seeds []demoCl
 	for i, seed := range seeds {
 		checkedAt := at.Add(-connectionAgeOffsets[i%len(connectionAgeOffsets)])
 		recon.SeedReconcileRecordForDemo(seed.cluster, seed.outcome, seed.message, checkedAt, seed.drift)
+		// P2-C1/C4: every pass — real or seeded — reads git at the SAME
+		// branch head, so every row's ComparedRevision is demoBranchHeadSHA.
+		// ComparedPath and AppliedRevision are per-seed (see
+		// buildDemoReconcileSeeds's doc comment).
+		recon.SeedReconcileRevisionForDemo(seed.cluster, demoBranchHeadSHA, seed.comparedPath, seed.appliedRevision)
 	}
+}
+
+// demoComparedPath (P2-C1/C3) alternates the demo's managed-clusters file
+// path per cluster index — even indices read as a v4 repo
+// (V4ManagedClustersPath, always self-heals), odd indices as a v3 repo
+// (DefaultManagedClustersPath, self-heals only when the setting is on —
+// off in demo mode). A real repo is one layout or the other for its whole
+// estate; this alternation exists only so the demo's self_heals column
+// shows both true and false instead of every row reading the same way.
+func demoComparedPath(i int) string {
+	if i%2 == 0 {
+		return clusterreconciler.V4ManagedClustersPath
+	}
+	return clusterreconciler.DefaultManagedClustersPath
 }
 
 // seedDemoConnectionRepairHistory (S5) records a past repair audit entry

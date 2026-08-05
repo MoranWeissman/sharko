@@ -2324,6 +2324,13 @@ definitions:
         type: string
       secret_namespace:
         type: string
+      self_heals:
+        description: |-
+          SelfHeals (P2-C3) reports whether Sharko will repair THIS row on its
+          own: true for every values row except a foreign one (P1-A's
+          ownership gate means Sharko never touches a secret it did not
+          create, so it can never self-heal one either).
+        type: boolean
       source:
         description: |-
           Source (S1) names, per row, the real backend this secret's value
@@ -2611,7 +2618,35 @@ definitions:
     type: object
   internal_api.connectionSecretRow:
     properties:
+      applied_revision:
+        description: |-
+          AppliedRevision (P2-C1) is the full commit SHA the last SUCCESSFUL
+          WRITE to this cluster's secret was built from — empty until this
+          server instance has ever successfully written it.
+        type: string
       cluster:
+        type: string
+      compared_path:
+        description: |-
+          ComparedPath (P2-C1) is the exact managed-clusters file path this
+          row's state was compared against.
+        type: string
+      compared_revision:
+        description: |-
+          ComparedRevision (P2-C1) is the full branch head commit SHA the pass
+          that produced this row's state read git at. Empty when the active
+          git provider cannot say — never a guessed or stale value. The UI
+          shows the first 7 characters on the row/panel and the full value on
+          hover.
+        type: string
+      drift_source:
+        description: |-
+          DriftSource (P2-C6) names which side moved for an out_of_sync row:
+          "git" (the intent commit changed since the last successful write —
+          ComparedRevision != AppliedRevision) or "cluster" (the revisions
+          agree but the live secret still differs — something changed it
+          outside git). Empty when the row isn't out_of_sync, or when either
+          revision is unknown — never a guess.
         type: string
       last_check_error:
         description: |-
@@ -2644,6 +2679,14 @@ definitions:
         type: string
       secret_namespace:
         type: string
+      self_heals:
+        description: |-
+          SelfHeals (P2-C3) reports whether Sharko will repair THIS row on its
+          own, without a human clicking Sync — derived from the real rule (see
+          connectionSelfHeals): self-managed connections and v4 repos always
+          heal; a v3 repo's managed clusters heal only when the
+          managed_cluster_self_heal setting is on.
+        type: boolean
       source:
         description: |-
           Source (S1) names, per row, which store this secret's content is
@@ -3061,6 +3104,20 @@ definitions:
   internal_api.secretResourceKeyView:
     properties:
       key:
+        type: string
+      path:
+        description: |-
+          Path (P2-C2) is the secrets-store POINTER this key's value comes
+          from — a location, not a value; safe to show (the whole point of
+          this endpoint's own header comment: Sharko may describe the
+          delivery, never the secret). Populated ONLY on the addon-values
+          live-read response (handleGetAddonValuesSecretResource), which is
+          already behind the operator-gated secret.resource.read action — NEVER
+          on the list endpoint (buildAddonValuesSecretRows), which any logged-in
+          user can reach. Empty on the connection-secret live-read response,
+          which has no per-key store-pointer concept — a connection secret's
+          desired state lives at one FILE path, already carried on the row
+          (connectionSecretRow.ComparedPath), not per-key.
         type: string
       value:
         type: string

@@ -84,6 +84,24 @@ func (g *GiteaProvider) TestConnection(ctx context.Context) error {
 	return nil
 }
 
+// GetBranchHeadSHA returns the commit SHA the named branch currently points
+// at (P2-C1's BranchRevisioner capability). ctx is unused — the Gitea SDK
+// (pinned v0.23.2) does not accept a context on this call, matching every
+// other read method in this file.
+func (g *GiteaProvider) GetBranchHeadSHA(_ context.Context, branch string) (string, error) {
+	b, resp, err := g.client.GetRepoBranch(g.owner, g.repo, branch)
+	if err != nil {
+		return "", fmt.Errorf("get branch head sha: %w", err)
+	}
+	if resp != nil && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+		return "", fmt.Errorf("get branch head sha: unexpected status %d", resp.StatusCode)
+	}
+	if b == nil || b.Commit == nil || b.Commit.ID == "" {
+		return "", fmt.Errorf("get branch head sha: branch %q returned no commit id", branch)
+	}
+	return b.Commit.ID, nil
+}
+
 // GetFileContent retrieves the raw content of a single file at the given ref.
 //
 // When the path does not exist Gitea returns 404; the error is wrapped

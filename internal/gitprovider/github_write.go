@@ -29,6 +29,22 @@ func (g *GitHubProvider) getContentsRaw(ctx context.Context, path, ref string) (
 	return fileContent, nil
 }
 
+// GetBranchHeadSHA returns the commit SHA the named branch currently points
+// at (P2-C1's BranchRevisioner capability). Same GetRef call CreateBranch
+// and BatchCreateFiles already use to resolve a branch to its head commit —
+// no new API surface, just exposed as its own honest fact.
+func (g *GitHubProvider) GetBranchHeadSHA(ctx context.Context, branch string) (string, error) {
+	ref, _, err := g.client.Git.GetRef(ctx, g.owner, g.repo, "refs/heads/"+branch)
+	if err != nil {
+		return "", fmt.Errorf("get branch head sha: %w", err)
+	}
+	sha := ref.GetObject().GetSHA()
+	if sha == "" {
+		return "", fmt.Errorf("get branch head sha: branch %q returned no commit sha", branch)
+	}
+	return sha, nil
+}
+
 // CreateBranch creates a new branch from the given ref (branch name or SHA).
 // If the repository is empty (no commits yet), it initialises the repo with an
 // initial commit on fromRef before creating the target branch.

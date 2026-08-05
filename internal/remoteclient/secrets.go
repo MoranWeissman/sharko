@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -49,6 +50,34 @@ func IsManagedBySharko(secret *corev1.Secret) bool {
 	return secret.Labels[managedByLabel] == managedByValue
 }
 
+// defaultSourceLabel is the honest, generic fallback used when a caller
+// does not know the real store product name — never a guessed product,
+// never blank.
+const defaultSourceLabel = "secrets store"
+
+// ValuesProvenanceAnnotations builds the sharko.dev/* provenance
+// annotations stamped on every addon-values Secret Sharko creates or
+// updates (P2-C5): which addon it belongs to, what store its content is
+// compared against, and when this write happened.
+//
+// HARD RULE, enforced by construction: this function only ever takes an
+// addon name, a source label, and a timestamp — none of which can carry a
+// secret value, a hash of one, or a store path that embeds a credential.
+// Per-key store paths (the addon's AddonSecretRef.Keys map) never reach
+// this function — those stay in the operator-gated live-read response only
+// (internal/api/secret_resource.go), never in an annotation any
+// authenticated user's `kubectl describe` could read.
+func ValuesProvenanceAnnotations(addon, source string, at time.Time) map[string]string {
+	if source == "" {
+		source = defaultSourceLabel
+	}
+	return map[string]string{
+		"sharko.dev/addon":      addon,
+		"sharko.dev/source":     source,
+		"sharko.dev/written-at": at.UTC().Format(time.RFC3339),
+	}
+}
+
 // EnsureSecret creates a K8s Secret on the remote cluster when none exists,
 // or updates one Sharko already owns. The secret is labeled with
 // app.kubernetes.io/managed-by=sharko.
@@ -58,7 +87,13 @@ func IsManagedBySharko(secret *corev1.Secret) bool {
 // secret owned by someone else was silently overwritten every five minutes
 // and re-labeled as Sharko's, which took ownership of a resource Sharko had
 // never created.
-func EnsureSecret(ctx context.Context, client kubernetes.Interface, namespace, name string, data map[string][]byte) error {
+//
+// annotations (P2-C5) are the caller's provenance facts (see
+// ValuesProvenanceAnnotations) — merged onto the Secret's existing
+// annotations on update (never replacing them wholesale), set directly on
+// create. nil/empty leaves annotation handling byte-identical to before
+// this parameter existed.
+func EnsureSecret(ctx context.Context, client kubernetes.Interface, namespace, name string, data map[string][]byte, annotations map[string]string) error {
 	slog.Info("[remoteclient] EnsureSecret called", "namespace", namespace, "name", name, "keys", len(data))
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -67,6 +102,7 @@ func EnsureSecret(ctx context.Context, client kubernetes.Interface, namespace, n
 			Labels: map[string]string{
 				managedByLabel: managedByValue,
 			},
+			Annotations: annotations,
 		},
 		Data: data,
 		Type: corev1.SecretTypeOpaque,
@@ -100,6 +136,14 @@ func EnsureSecret(ctx context.Context, client kubernetes.Interface, namespace, n
 		existing.Labels = make(map[string]string)
 	}
 	existing.Labels[managedByLabel] = managedByValue
+	if len(annotations) > 0 {
+		if existing.Annotations == nil {
+			existing.Annotations = make(map[string]string, len(annotations))
+		}
+		for k, v := range annotations {
+			existing.Annotations[k] = v
+		}
+	}
 	_, err = client.CoreV1().Secrets(namespace).Update(ctx, existing, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("updating secret %s/%s: %w", namespace, name, err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
@@ -105,7 +106,16 @@ func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte
 		}
 
 		log.Info("[secrets] pushing secret to cluster", "addon", def.AddonName, "secret", def.SecretName, "namespace", def.Namespace)
-		if err := remoteclient.EnsureSecret(ctx, client, def.Namespace, def.SecretName, data); err != nil {
+		// Provenance (P2-C5): this registration-time path doesn't know the
+		// configured provider's real backend name (that lives in
+		// internal/api's typed provider config, out of scope for the
+		// orchestrator) — the generic "secrets store" label
+		// remoteclient.ValuesProvenanceAnnotations falls back to is still
+		// honest, and the periodic internal/secrets.Reconciler pass (which
+		// DOES know the real name) refreshes this same annotation on its
+		// very next 5-minute tick.
+		provenance := remoteclient.ValuesProvenanceAnnotations(def.AddonName, "", time.Now())
+		if err := remoteclient.EnsureSecret(ctx, client, def.Namespace, def.SecretName, data, provenance); err != nil {
 			log.Error("[secrets] failed to create secret, continuing", "addon", def.AddonName, "error", err)
 			result.Failed = append(result.Failed, SecretError{
 				Name:  def.SecretName,

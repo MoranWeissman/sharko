@@ -150,8 +150,15 @@ func buildDemoAddonValuesSecret(
 		data[key] = []byte(demoSecretValue)
 	}
 
+	createdAt := now.Add(-demoSecretAgeOffsets[index%len(demoSecretAgeOffsets)])
 	annotations := map[string]string{
 		"sharko.io/pushed-by": "the addon values engine",
+		// P2-C5/C4: the same provenance annotations a real push stamps —
+		// which addon this secret belongs to, what store it was compared
+		// against, and when Sharko last wrote it.
+		"sharko.dev/addon":      addon,
+		"sharko.dev/source":     "a demo secrets store",
+		"sharko.dev/written-at": createdAt.UTC().Format(time.RFC3339),
 	}
 	if index%5 == 4 {
 		annotations["kubectl.kubernetes.io/last-applied-configuration"] =
@@ -169,7 +176,7 @@ func buildDemoAddonValuesSecret(
 				"sharko.io/cluster":              cluster,
 			},
 			Annotations:       annotations,
-			CreationTimestamp: metav1.NewTime(now.Add(-demoSecretAgeOffsets[index%len(demoSecretAgeOffsets)])),
+			CreationTimestamp: metav1.NewTime(createdAt),
 		},
 		Data: data,
 		Type: corev1.SecretTypeOpaque,

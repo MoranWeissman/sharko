@@ -455,6 +455,21 @@ type ClusterLastReconcile struct {
 	Outcome    string                          `json:"outcome"`               // "succeeded" | "failed" | "skipped"
 	Message    string                          `json:"message,omitempty"`     // plain-English detail; set on failed/skipped
 	LabelDrift *ClusterLastReconcileLabelDrift `json:"label_drift,omitempty"` // V3 G1 — drift detection
+
+	// ComparedRevision (P2-C1) is the full branch head commit SHA the pass
+	// that produced this record read git at. Empty when the active git
+	// provider cannot say (see clusterreconciler.BranchRevisioner) — never
+	// a guessed or stale value.
+	ComparedRevision string `json:"compared_revision,omitempty"`
+	// ComparedPath (P2-C1) is the exact managed-clusters file path this
+	// pass read from git.
+	ComparedPath string `json:"compared_path,omitempty"`
+	// AppliedRevision (P2-C1) is the full commit SHA the last SUCCESSFUL
+	// WRITE to this cluster's ArgoCD secret was built from — the
+	// generation/observedGeneration pair's "applied" half. Empty until
+	// this server instance has ever successfully written this cluster's
+	// secret; a check pass never moves it.
+	AppliedRevision string `json:"applied_revision,omitempty"`
 }
 
 // ClusterResyncLabelDiff is the label diff a one-time "Re-sync now" action

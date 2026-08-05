@@ -43,9 +43,12 @@ func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) 
 		return
 	}
 	lastRec := &models.ClusterLastReconcile{
-		Time:    rec.Time.Format(time.RFC3339),
-		Outcome: string(rec.Outcome),
-		Message: rec.Message,
+		Time:             rec.Time.Format(time.RFC3339),
+		Outcome:          string(rec.Outcome),
+		Message:          rec.Message,
+		ComparedRevision: rec.ComparedRevision,
+		ComparedPath:     rec.ComparedPath,
+		AppliedRevision:  rec.AppliedRevision,
 	}
 	// V3 G1 — copy drift info if present
 	if rec.LabelDrift != nil {

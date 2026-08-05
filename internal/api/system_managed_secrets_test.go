@@ -987,3 +987,174 @@ func TestHandleGetManagedSecrets_AddonValuesEngine_NoErrorLeavesClusterAndTimeEm
 		t.Errorf("last_error_at = %q, want empty on a clean pass", body.Engines.AddonValues.LastErrorAt)
 	}
 }
+
+// TestConnectionSelfHeals_DerivationBothKinds pins P2-C3's real rule for a
+// connection row's self_heals promise: self-managed and v4 always heal
+// regardless of the setting; a v3, Sharko-managed cluster heals only when
+// the live managed_cluster_self_heal setting says so.
+func TestConnectionSelfHeals_DerivationBothKinds(t *testing.T) {
+	cases := []struct {
+		name         string
+		cluster      models.Cluster
+		comparedPath string
+		v3SelfHealOn bool
+		want         bool
+	}{
+		{
+			name:         "self-managed connection always heals, setting off",
+			cluster:      models.Cluster{ConnectionManagedBy: "user"},
+			comparedPath: clusterreconciler.DefaultManagedClustersPath,
+			v3SelfHealOn: false,
+			want:         true,
+		},
+		{
+			name:         "self-managed connection always heals, setting on",
+			cluster:      models.Cluster{ConnectionManagedBy: "user"},
+			comparedPath: clusterreconciler.DefaultManagedClustersPath,
+			v3SelfHealOn: true,
+			want:         true,
+		},
+		{
+			name:         "v4 repo always heals, setting off",
+			cluster:      models.Cluster{},
+			comparedPath: clusterreconciler.V4ManagedClustersPath,
+			v3SelfHealOn: false,
+			want:         true,
+		},
+		{
+			name:         "v3 repo heals only when the setting is on — ON",
+			cluster:      models.Cluster{},
+			comparedPath: clusterreconciler.DefaultManagedClustersPath,
+			v3SelfHealOn: true,
+			want:         true,
+		},
+		{
+			name:         "v3 repo heals only when the setting is on — OFF",
+			cluster:      models.Cluster{},
+			comparedPath: clusterreconciler.DefaultManagedClustersPath,
+			v3SelfHealOn: false,
+			want:         false,
+		},
+		{
+			name:         "never checked (comparedPath unknown) falls back to the real setting, not a guess",
+			cluster:      models.Cluster{},
+			comparedPath: "",
+			v3SelfHealOn: false,
+			want:         false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := connectionSelfHeals(tc.cluster, tc.comparedPath, tc.v3SelfHealOn); got != tc.want {
+				t.Errorf("connectionSelfHeals() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestConnectionDriftSource_BothDirections pins P2-C6: which side moved,
+// derived purely from comparing the two revisions on an out_of_sync row.
+func TestConnectionDriftSource_BothDirections(t *testing.T) {
+	cases := []struct {
+		name             string
+		state            string
+		comparedRevision string
+		appliedRevision  string
+		want             string
+	}{
+		{
+			name:             "git moved — compared and applied disagree",
+			state:            "out_of_sync",
+			comparedRevision: "newcommit1111111111111111111111111111aa",
+			appliedRevision:  "oldcommit2222222222222222222222222222bb",
+			want:             "git",
+		},
+		{
+			name:             "the cluster moved — compared and applied agree, yet live differs",
+			state:            "out_of_sync",
+			comparedRevision: "samecommit111111111111111111111111111a",
+			appliedRevision:  "samecommit111111111111111111111111111a",
+			want:             "cluster",
+		},
+		{
+			name:             "not out_of_sync — never guesses",
+			state:            "in_sync",
+			comparedRevision: "newcommit1111111111111111111111111111aa",
+			appliedRevision:  "oldcommit2222222222222222222222222222bb",
+			want:             "",
+		},
+		{
+			name:             "compared revision unknown — says nothing",
+			state:            "out_of_sync",
+			comparedRevision: "",
+			appliedRevision:  "oldcommit2222222222222222222222222222bb",
+			want:             "",
+		},
+		{
+			name:             "applied revision unknown (never successfully written) — says nothing",
+			state:            "out_of_sync",
+			comparedRevision: "newcommit1111111111111111111111111111aa",
+			appliedRevision:  "",
+			want:             "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := connectionDriftSource(tc.state, tc.comparedRevision, tc.appliedRevision); got != tc.want {
+				t.Errorf("connectionDriftSource() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHandleGetManagedSecrets_AddonValuesSecretRow_SelfHeals pins P2-C3 for
+// the values side: every row self-heals except a foreign one, taken all
+// the way through the endpoint (mirrors
+// TestHandleGetManagedSecrets_AddonValuesSecretRow_ForeignSurfacesOnTheRow's
+// shape).
+func TestHandleGetManagedSecrets_AddonValuesSecretRow_SelfHeals(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
+	}, http.StatusOK)
+	gp := &reconcileFakeGP{
+		managedYAML: []byte("clusters:\n- name: prod-eu\n  labels:\n    datadog: enabled\n    eso: enabled\n"),
+	}
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+		"datadog": {AddonName: "datadog", SecretName: "datadog-secrets", Namespace: "datadog", Keys: map[string]string{"api-key": "secrets/datadog/api-key"}},
+		"eso":     {AddonName: "eso", SecretName: "eso-secrets", Namespace: "eso", Keys: map[string]string{"api-key": "secrets/eso/api-key"}},
+	})
+	srv.SetSecretReconciler(&fakeReconciler{
+		itemOutcome: map[[2]string]string{
+			{"prod-eu", "datadog"}: "foreign",
+			{"prod-eu", "eso"}:     "unchanged",
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.AddonValuesSecrets) != 2 {
+		t.Fatalf("expected exactly 2 addon-values rows, got %d", len(body.AddonValuesSecrets))
+	}
+	for _, row := range body.AddonValuesSecrets {
+		switch row.Addon {
+		case "datadog":
+			if row.SelfHeals {
+				t.Error("a foreign row must never self-heal — Sharko doesn't touch what it didn't create")
+			}
+		case "eso":
+			if !row.SelfHeals {
+				t.Error("an owned row self-heals — the values engine always repairs what it owns")
+			}
+		}
+	}
+}

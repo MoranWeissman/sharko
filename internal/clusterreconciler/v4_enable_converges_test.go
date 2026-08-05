@@ -234,8 +234,26 @@ func TestV4Converge_LeavesNonAddonLabelsAlone(t *testing.T) {
 	if secret.Data == nil && before.Data != nil || len(secret.Data) != len(before.Data) {
 		t.Errorf("the connection data changed: before %v, after %v", before.Data, secret.Data)
 	}
-	if len(secret.Annotations) != len(before.Annotations) {
-		t.Errorf("the annotations changed: before %v, after %v", before.Annotations, secret.Annotations)
+	// P2-C5: a real write now stamps provenance annotations
+	// (sharko.dev/source-file, sharko.dev/written-at — sharko.dev/revision
+	// is absent here because the fake git provider doesn't implement
+	// gitprovider.BranchRevisioner, so the compared revision is honestly
+	// unknown). This test's job is still "nothing UNRELATED was touched" —
+	// every pre-existing annotation key (none, in this fixture) must
+	// survive, and no other key should appear.
+	for k, v := range before.Annotations {
+		if got := secret.Annotations[k]; got != v {
+			t.Errorf("pre-existing annotation %q changed: before %q, after %q", k, v, got)
+		}
+	}
+	wantKeys := map[string]bool{AnnotationSourceFile: true, AnnotationWrittenAt: true}
+	for k := range secret.Annotations {
+		if !wantKeys[k] && before.Annotations[k] == "" {
+			t.Errorf("unexpected new annotation %q = %q", k, secret.Annotations[k])
+		}
+	}
+	if secret.Annotations[AnnotationSourceFile] == "" {
+		t.Error("expected sharko.dev/source-file to be stamped on a real write")
 	}
 }
 
