@@ -62,12 +62,20 @@ const mockResyncClusterLabels = vi.fn()
 const mockRefreshAddonValuesSecret = vi.fn()
 const mockSyncAddonValuesSecret = vi.fn()
 const mockGetClusterComparison = vi.fn()
+// G4 — the detail panel now also reads the LIVE Secret. These two are
+// mocked here so opening a panel in this suite makes exactly one such
+// call and never a real one; the blanking itself is the server's job and
+// is pinned server-side.
+const mockGetConnectionSecretResource = vi.fn()
+const mockGetAddonValuesSecretResource = vi.fn()
 
 vi.mock('@/services/api', () => ({
   api: {
     getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
   },
   getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
+  getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
+  getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
   triggerSecretsReconcile: (...args: unknown[]) => mockTriggerSecretsReconcile(...args),
   reconcileCluster: (...args: unknown[]) => mockReconcileCluster(...args),
   resyncClusterLabels: (...args: unknown[]) => mockResyncClusterLabels(...args),
@@ -102,6 +110,7 @@ const baseResponse: ManagedSecretsResponse = {
       secret_namespace: 'argocd',
       secret_name: 'prod-eu',
       state: 'in_sync',
+      source: 'git',
       last_checked: '2026-08-05T00:00:00Z',
       last_repaired: '2026-08-04T23:00:00Z',
       last_repaired_detail: 'secret created',
@@ -109,6 +118,7 @@ const baseResponse: ManagedSecretsResponse = {
     {
       cluster: 'staging-us',
       state: 'out_of_sync',
+      source: 'git',
     },
   ],
   addon_values_secrets: [
@@ -118,6 +128,7 @@ const baseResponse: ManagedSecretsResponse = {
       secret_name: 'datadog-secrets',
       secret_namespace: 'datadog',
       state: 'in_sync',
+      source: 'AWS Secrets Manager',
       last_checked: '2026-08-05T00:00:00Z',
       last_repaired: '2026-08-04T22:00:00Z',
       last_repaired_detail: 'secret created',
@@ -128,6 +139,7 @@ const baseResponse: ManagedSecretsResponse = {
       secret_name: 'datadog-secrets',
       secret_namespace: 'datadog',
       state: 'out_of_sync',
+      source: 'AWS Secrets Manager',
       last_check_error: "Sharko couldn't fetch this secret's value from the vault.",
     },
   ],
@@ -138,8 +150,27 @@ const baseResponse: ManagedSecretsResponse = {
   addon_values_secret_source: 'AWS Secrets Manager',
 }
 
+const blankedResource = {
+  kind: 'Secret',
+  api_version: 'v1',
+  name: 'datadog-secrets',
+  namespace: 'datadog',
+  secret_type: 'Opaque',
+  created_at: '2026-07-01T00:00:00Z',
+  labels: [{ key: 'app.kubernetes.io/managed-by', value: 'sharko' }],
+  annotations: [],
+  data_keys: [
+    { key: 'api-key', value: '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' },
+    { key: 'app-key', value: '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' },
+  ],
+  read_from: 'cluster "prod-eu", namespace "datadog"',
+  values_blanked: true,
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  mockGetConnectionSecretResource.mockResolvedValue({ ...blankedResource, name: 'prod-eu', namespace: 'argocd' })
+  mockGetAddonValuesSecretResource.mockResolvedValue(blankedResource)
 })
 
 describe('ManagedSecrets', () => {
@@ -164,8 +195,16 @@ describe('ManagedSecrets', () => {
     expect(screen.queryByText(/the vault/)).not.toBeInTheDocument()
   })
 
+  // G1: the backend a row follows is now a PER-ROW fact (row.source), so
+  // this fixture sets it on the row. The page-level
+  // addon_values_secret_source is set to match only because the "Refresh
+  // all" hint still reads it — the row itself no longer does.
   it('falls back to the generic lowercase "secrets store" when the server has no real backend name to give', async () => {
-    mockGetManagedSecrets.mockResolvedValue({ ...baseResponse, addon_values_secret_source: 'secrets store' })
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      addon_values_secrets: baseResponse.addon_values_secrets.map((r) => ({ ...r, source: 'secrets store' })),
+      addon_values_secret_source: 'secrets store',
+    })
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument())

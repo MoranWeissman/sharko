@@ -235,6 +235,61 @@ func TestHandleGetManagedSecrets_AddonValuesSecretRow(t *testing.T) {
 	}
 }
 
+// TestHandleGetManagedSecrets_SourceIsOnEveryRow pins S1: the backend a
+// secret's content comes from is a PER-ROW fact, not one label for the
+// whole page. A reader grouping, filtering or sorting the list by backend
+// is reading row.Source, so it has to be there — on both kinds of row,
+// with the honest answer for each: a connection secret follows git, a
+// values secret follows the real backend name the server resolved.
+func TestHandleGetManagedSecrets_SourceIsOnEveryRow(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
+	}, http.StatusOK)
+	gp := &reconcileFakeGP{
+		managedYAML: []byte("clusters:\n- name: prod-eu\n  labels:\n    datadog: enabled\n"),
+	}
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+		"datadog": {
+			AddonName:  "datadog",
+			SecretName: "datadog-secrets",
+			Namespace:  "datadog",
+			Keys:       map[string]string{"api-key": "secrets/datadog/api-key"},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(body.ClusterConnectionSecrets) == 0 {
+		t.Fatal("expected at least one connection-secret row")
+	}
+	for _, row := range body.ClusterConnectionSecrets {
+		if row.Source != "git" {
+			t.Errorf("connection row %q source = %q, want %q", row.Cluster, row.Source, "git")
+		}
+	}
+
+	if len(body.AddonValuesSecrets) == 0 {
+		t.Fatal("expected at least one addon-values row")
+	}
+	for _, row := range body.AddonValuesSecrets {
+		if row.Source == "" {
+			t.Errorf("addon-values row %s/%s has an empty source — every row must say what it follows", row.Cluster, row.Addon)
+		}
+		if row.Source != body.AddonValuesSecretSource {
+			t.Errorf("addon-values row source = %q, want the resolved backend name %q", row.Source, body.AddonValuesSecretSource)
+		}
+	}
+}
+
 // TestHandleGetManagedSecrets_AddonValuesSecretRow_TimestampsFromReconcilerAndAudit
 // pins S3: addon_values_secrets rows now carry real last_checked (from the
 // addon-values reconciler's per-item state) and last_repaired (+ a canned

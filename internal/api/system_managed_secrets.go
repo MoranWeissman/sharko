@@ -34,6 +34,12 @@ import (
 // the "unknown" state / omitted timestamp — never an invented or
 // approximated one.
 
+// connectionSecretSource is what a cluster connection secret follows: git.
+// Git holds the cluster's addon labels, and those labels are the content
+// this secret is reconciled against. Named rather than repeated as a
+// string literal so the row builder and any test read the same word.
+const connectionSecretSource = "git"
+
 // managedSecretsResponse is the response body for GET /api/v1/system/managed-secrets.
 type managedSecretsResponse struct {
 	ClusterConnectionSecrets []connectionSecretRow  `json:"cluster_connection_secrets"`
@@ -45,9 +51,14 @@ type managedSecretsResponse struct {
 	// fallback when the configured backend has no recognizable product name
 	// (unconfigured, a demo/stub backend, or an unimplemented type). Never
 	// "the vault" — that reads as HashiCorp Vault to every DevOps reader,
-	// which is misleading unless the backend genuinely IS Vault. Computed
-	// once per response (one addon-secret backend serves the whole
-	// server), not per row — see addonValuesSecretSourceLabel.
+	// which is misleading unless the backend genuinely IS Vault.
+	//
+	// KEPT for the whole-page copy that genuinely is about the page and not
+	// about one row (the "Refresh all" hint). It is NOT what a row reads
+	// anymore: every row now carries its own Source field (S1), so a reader
+	// filtering, sorting or grouping by backend is reading a per-row fact,
+	// and a future server that resolves a different backend per addon does
+	// not need a response-shape change to say so.
 	AddonValuesSecretSource string `json:"addon_values_secret_source"`
 }
 
@@ -60,6 +71,12 @@ type connectionSecretRow struct {
 	// State is one of "in_sync", "out_of_sync", "missing", or "unknown" —
 	// see connectionSecretState for exactly how each is derived.
 	State string `json:"state"`
+	// Source (S1) names, per row, which store this secret's content is
+	// compared against. A connection secret always follows git — git holds
+	// the addon labels this secret is built from — so this is the constant
+	// "git" here, and it is stated per row rather than assumed by the UI so
+	// both kinds of row answer the same question in the same field.
+	Source string `json:"source"`
 	// LastChecked is RFC3339, or "" when the reconciler has never
 	// processed this cluster on this server instance.
 	LastChecked string `json:"last_checked,omitempty"`
@@ -86,6 +103,13 @@ type addonValuesSecretRow struct {
 	// Compared against the vault (the secrets provider), NOT git — git only
 	// holds a pointer to where the value lives (S3(a) honesty lock).
 	State string `json:"state"`
+	// Source (S1) names, per row, the real backend this secret's value
+	// comes from and is compared against — "AWS Secrets Manager", "a
+	// Kubernetes Secret", ..., or the honest "secrets store" fallback when
+	// the server cannot name a product. Per row, not per response: the row
+	// is what a reader filters, sorts and groups by, so the fact has to
+	// live on the row.
+	Source string `json:"source"`
 	// LastChecked is RFC3339, or "" when the addon-values reconciler has
 	// never processed this cluster+addon pair on this server instance —
 	// an in-memory read on s.secretReconciler (internal/secrets), the
@@ -231,7 +255,7 @@ func (s *Server) buildConnectionSecretRows(clusters []models.Cluster, auditEntri
 		if !c.Managed {
 			continue
 		}
-		row := connectionSecretRow{Cluster: c.Name}
+		row := connectionSecretRow{Cluster: c.Name, Source: connectionSecretSource}
 		if ns != "" {
 			// The Secret's Name always equals the cluster's Name (see
 			// argosecrets.Manager.Ensure) — same deterministic fact
@@ -310,6 +334,13 @@ func lastConnectionSecretRepair(entries []audit.Entry, clusterName string) (at t
 // cluster (via the cluster's addon labels — already present on the Cluster
 // model from the same listing read, no extra I/O).
 func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, auditEntries []audit.Entry) []addonValuesSecretRow {
+	// Resolved once per request and stamped onto every row it applies to
+	// (S1). One addon-secret backend serves the whole server today, so
+	// every values row currently gets the same answer — but the ANSWER
+	// lives on the row, which is what a reader groups, filters and sorts
+	// by, and what a future per-addon backend would vary.
+	source := s.addonValuesSecretSourceLabel()
+
 	s.addonSecretDefsMu.RLock()
 	defNames := make([]string, 0, len(s.addonSecretDefs))
 	defs := make(map[string]struct{ SecretName, Namespace string }, len(s.addonSecretDefs))
@@ -339,6 +370,7 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, auditEntr
 				Addon:           addonName,
 				SecretName:      def.SecretName,
 				SecretNamespace: def.Namespace,
+				Source:          source,
 				State:           addonValuesSecretRowState(s.secretReconciler, c.Name, addonName),
 				LastCheckError:  addonValuesRowLastCheckError(s.secretReconciler, c.Name, addonName),
 			}

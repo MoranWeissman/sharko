@@ -144,6 +144,10 @@ export interface ConnectionSecretRow {
   secret_name?: string
   // One of 'in_sync' | 'out_of_sync' | 'missing' | 'unknown'.
   state: string
+  // source (S1) says, per row, which store this secret's content is
+  // compared against. Always 'git' for a connection secret — git holds
+  // the addon labels this secret is built from.
+  source: string
   last_checked?: string // RFC3339, absent = unknown
   last_repaired?: string // RFC3339, absent = never seen in the audit log's retained window
   last_repaired_detail?: string
@@ -158,6 +162,11 @@ export interface AddonValuesSecretRow {
   // against the vault (the secrets provider) — NOT git, which only holds a
   // pointer to where the value actually lives (S3(a) honesty lock).
   state: string
+  // source (S1) is the real backend this row's value comes from and is
+  // compared against — 'AWS Secrets Manager', 'a Kubernetes Secret', ...,
+  // or the honest 'secrets store' fallback. Per row, because the row is
+  // what a reader groups, filters and sorts by.
+  source: string
   last_checked?: string // RFC3339, absent = unknown (never checked on this server instance)
   last_repaired?: string // RFC3339, absent = never seen in the audit log's retained window
   last_repaired_detail?: string
@@ -218,6 +227,48 @@ export interface ManagedSecretsResponse {
   // — that reads as HashiCorp Vault to every DevOps reader, misleading
   // unless the configured backend genuinely is Vault.
   addon_values_secret_source: string
+}
+
+// SecretResource mirrors GET /clusters/{name}/secret/resource and
+// GET /clusters/{name}/addons/{addon}/secret/resource — the live Secret as
+// it is on the cluster right now, rendered the way ArgoCD renders one.
+//
+// EVERY VALUE IS BLANKED BY THE SERVER. The browser never receives a
+// secret value: data_keys carries key NAMES paired with a fixed mask the
+// server put there, and the response has no field a value could travel in.
+// Do not add one, do not "hide" a value in CSS, and do not ask the server
+// for one — that is a new design decision, not a refactor.
+export interface SecretResourceKey {
+  key: string
+  /** Always the server's fixed mask. Never a real value, never a length. */
+  value: string
+}
+
+export interface SecretResourceLabel {
+  key: string
+  value: string
+  /**
+   * true when the server replaced this value with the mask. Only ever set
+   * for an annotation whose value is a copy of the whole object (kubectl's
+   * last-applied-configuration), which on a Secret carries the data too.
+   */
+  blanked?: boolean
+}
+
+export interface SecretResource {
+  kind: string // "Secret"
+  api_version: string // "v1"
+  name: string
+  namespace: string
+  secret_type?: string // "Opaque", "kubernetes.io/tls", ...
+  created_at?: string // RFC3339 — the panel turns this into an age
+  labels: SecretResourceLabel[]
+  annotations: SecretResourceLabel[]
+  data_keys: SecretResourceKey[]
+  /** Plain sentence naming where this object was read from. */
+  read_from: string
+  /** Always true — the contract, stated in the body. */
+  values_blanked: boolean
 }
 
 // DoctorCheck / DoctorClusterResponse mirror POST

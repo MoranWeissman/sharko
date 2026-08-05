@@ -2324,6 +2324,15 @@ definitions:
         type: string
       secret_namespace:
         type: string
+      source:
+        description: |-
+          Source (S1) names, per row, the real backend this secret's value
+          comes from and is compared against — "AWS Secrets Manager", "a
+          Kubernetes Secret", ..., or the honest "secrets store" fallback when
+          the server cannot name a product. Per row, not per response: the row
+          is what a reader filters, sorts and groups by, so the fact has to
+          live on the row.
+        type: string
       state:
         description: |-
           State is one of "in_sync", "out_of_sync", "missing", or "unknown" —
@@ -2620,6 +2629,14 @@ definitions:
         type: string
       secret_namespace:
         type: string
+      source:
+        description: |-
+          Source (S1) names, per row, which store this secret's content is
+          compared against. A connection secret always follows git — git holds
+          the addon labels this secret is built from — so this is the constant
+          "git" here, and it is stated per row rather than assumed by the UI so
+          both kinds of row answer the same question in the same field.
+        type: string
       state:
         description: |-
           State is one of "in_sync", "out_of_sync", "missing", or "unknown" —
@@ -2820,9 +2837,14 @@ definitions:
           fallback when the configured backend has no recognizable product name
           (unconfigured, a demo/stub backend, or an unimplemented type). Never
           "the vault" — that reads as HashiCorp Vault to every DevOps reader,
-          which is misleading unless the backend genuinely IS Vault. Computed
-          once per response (one addon-secret backend serves the whole
-          server), not per row — see addonValuesSecretSourceLabel.
+          which is misleading unless the backend genuinely IS Vault.
+
+          KEPT for the whole-page copy that genuinely is about the page and not
+          about one row (the "Refresh all" hint). It is NOT what a row reads
+          anymore: every row now carries its own Source field (S1), so a reader
+          filtering, sorting or grouping by backend is reading a per-row fact,
+          and a future server that resolves a different backend per addon does
+          not need a response-shape change to say so.
         type: string
       addon_values_secrets:
         items:
@@ -3013,6 +3035,73 @@ definitions:
         type: string
       provider:
         type: string
+    type: object
+  internal_api.secretResourceKeyView:
+    properties:
+      key:
+        type: string
+      value:
+        type: string
+    type: object
+  internal_api.secretResourceLabelView:
+    properties:
+      blanked:
+        description: |-
+          Blanked is true when Value is the mask rather than the real text —
+          only ever set for an annotation that embeds a copy of the object
+          (see annotationsThatEmbedTheObject).
+        type: boolean
+      key:
+        type: string
+      value:
+        type: string
+    type: object
+  internal_api.secretResourceView:
+    properties:
+      annotations:
+        items:
+          $ref: '#/definitions/internal_api.secretResourceLabelView'
+        type: array
+      api_version:
+        description: always "v1"
+        type: string
+      created_at:
+        description: |-
+          CreatedAt is the object's creationTimestamp in RFC3339, "" when the
+          cluster did not set one. The UI turns this into an age.
+        type: string
+      data_keys:
+        items:
+          $ref: '#/definitions/internal_api.secretResourceKeyView'
+        type: array
+      kind:
+        description: always "Secret"
+        type: string
+      labels:
+        items:
+          $ref: '#/definitions/internal_api.secretResourceLabelView'
+        type: array
+      name:
+        type: string
+      namespace:
+        type: string
+      read_from:
+        description: |-
+          ReadFrom is a plain sentence naming where this object was read from,
+          so the panel never leaves a reader guessing which cluster they are
+          looking at.
+        type: string
+      secret_type:
+        description: |-
+          SecretType is the Kubernetes Secret type ("Opaque",
+          "kubernetes.io/tls", ...) — metadata, never content.
+        type: string
+      values_blanked:
+        description: |-
+          ValuesBlanked is always true. It is in the body so the contract is
+          visible to anyone reading the API, not only to anyone reading this
+          file.
+        type: boolean
     type: object
   internal_api.setAIOptOutRequest:
     properties:
@@ -5549,6 +5638,59 @@ paths:
       summary: Re-check one addon-values secret against its source
       tags:
       - secrets
+  /clusters/{name}/addons/{addon}/secret/resource:
+    get:
+      description: 'Reads one addon''s values Secret from the remote cluster it was
+        pushed to, as it is right now, and returns it for display: kind, name, namespace,
+        labels, annotations, age, secret type, and the data KEY NAMES with every value
+        blanked server-side. Values never reach the browser: the response is built
+        from key names only (see internal/api/secret_resource.go). One live read per
+        call, on click only — never while a list renders, never on a timer, never
+        fanned out.'
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Addon name
+        in: path
+        name: addon
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The live Secret, values blanked
+          schema:
+            $ref: '#/definitions/internal_api.secretResourceView'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden — requires operator role or higher
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: No values secret is defined for this addon, or it does not
+            exist on the cluster right now
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Sharko could not read the secret
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Read the live addon values Secret on a cluster, values blanked
+      tags:
+      - secrets
   /clusters/{name}/addons/{addon}/secret/sync:
     post:
       description: |-
@@ -6018,6 +6160,60 @@ paths:
       summary: Re-sync one cluster's addon labels to match git (one time)
       tags:
       - clusters
+  /clusters/{name}/secret/resource:
+    get:
+      description: 'Reads the named cluster''s ArgoCD connection Secret from the hub''s
+        argocd namespace as it is right now, and returns it for display: kind, name,
+        namespace, labels, annotations, age, secret type, and the data KEY NAMES with
+        every value blanked server-side. The addon labels are shown in full — they
+        are not secret and they are what decides which addons run on that cluster.
+        Values never reach the browser: the response is built from key names only
+        (see internal/api/secret_resource.go). One live read per call, on click only
+        — never while a list renders, never on a timer, never fanned out.'
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The live Secret, values blanked
+          schema:
+            $ref: '#/definitions/internal_api.secretResourceView'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden — requires operator role or higher
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: This secret does not exist right now
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Sharko could not read the secret
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Sharko has no Kubernetes client for its own cluster on this
+            server
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Read the live cluster connection Secret, values blanked
+      tags:
+      - secrets
   /clusters/{name}/secrets:
     get:
       description: Lists managed addon secrets on a remote cluster
