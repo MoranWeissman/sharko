@@ -157,7 +157,17 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 	}
 	srv.SetWriteAPIDeps(credProvider, addonCfg, testCfg, repoPaths, gitopsCfg)
 
-	// 6. Addon secret definitions — 2 demo definitions.
+	// 6. Addon secret definitions. datadog + vault are the ORIGINAL 2 demo
+	// definitions — kept exactly as they were so the small hand-written
+	// estate (plain `make demo`) is unchanged. A generated (non-default)
+	// estate additionally gets definitions for a handful of addons it
+	// actually enables (see demoGeneratedAddonSecretDefs), so the Managed
+	// Secrets page has real addon-values rows to show at scale (maintainer's
+	// ask). Gated behind estate != nil for the same reason step 10 gates
+	// its own additions: some of these addon names (e.g. cert-manager) are
+	// ALSO enabled on the small hand-written estate's clusters, and adding
+	// their definitions unconditionally would grow that estate's managed
+	// secrets rows too — a change, not the fix this is meant to be.
 	addonSecretDefs := map[string]orchestrator.AddonSecretDefinition{
 		"datadog": {
 			AddonName:  "datadog",
@@ -176,6 +186,11 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 				"unseal-key": "secrets/vault/unseal-key",
 			},
 		},
+	}
+	if estate != nil {
+		for name, def := range demoGeneratedAddonSecretDefs() {
+			addonSecretDefs[name] = def
+		}
 	}
 	srv.SetAddonSecretDefs(addonSecretDefs)
 
@@ -261,6 +276,39 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 			}
 		}
 		srv.SetObservationsStore(obsStore)
+
+		// 11. Managed Secrets page (maintainer's ask, folded into S1) — the
+		// page has real, believable data to show instead of 50x "unknown"
+		// and zero addon-values rows. now is captured once here (server
+		// start) and every timestamp below is relative to it — never a
+		// fixed calendar date — so the page always reads as "just
+		// happened" / "a few minutes ago" no matter when the demo is
+		// actually run.
+		now := time.Now()
+		auditLog := srv.AuditLog()
+
+		// Cluster connection secrets — a real state spread (S4), direct
+		// seeding rather than an actual reconcile pass (see
+		// buildDemoReconcileSeeds' doc comment for why).
+		reconcileSeeds := buildDemoReconcileSeeds(estate)
+		applyDemoReconcileSeeds(clusterRecon, reconcileSeeds, now)
+		seedDemoConnectionRepairHistory(auditLog, reconcileSeeds, now)
+		// A Refresh click (POST /clusters/{name}/reconcile) is a
+		// fleet-wide nudge in production too (see handleReconcileCluster's
+		// doc comment) — re-stamping every seeded record's last-checked
+		// time to "now" on every trigger call is the honest demo
+		// equivalent: it genuinely changes what the next read reports
+		// (S3), without wiring up a background loop that would drift the
+		// deterministic seed away from itself between server starts.
+		srv.SetReconcilerTrigger(func() {
+			applyDemoReconcileSeeds(clusterRecon, reconcileSeeds, time.Now())
+		})
+
+		// Addon values secrets — real rows across the generated estate
+		// (S2), a full state spread including one row that has genuinely
+		// never been checked (S3), and Refresh/Sync that actually change
+		// what the next read reports.
+		srv.SetSecretReconciler(newDemoAddonValuesReconciler(estate, addonSecretDefs, now, auditLog))
 	}
 
 	cleanup = func() {
