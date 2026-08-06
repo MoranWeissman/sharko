@@ -878,7 +878,10 @@ func TestAddonValuesSecretSourceLabel(t *testing.T) {
 		// doc comment) — never claim it's HashiCorp Vault when it isn't wired.
 		{"vault type — no real factory, falls back honestly", &providers.AddonSecretProviderConfig{Type: "vault"}, "secrets store"},
 		{"empty type", &providers.AddonSecretProviderConfig{Type: ""}, "secrets store"},
-		{"demo backend — not a real product", &providers.AddonSecretProviderConfig{Type: "demo"}, "secrets store"},
+		// G2 (gitops-proud P4-G): demo mode is a real, known backend — it
+		// gets its own honest name now instead of the generic fallback, so
+		// `make demo-big` stops showing "secrets store" on every row.
+		{"demo backend — a real, known backend, gets its own name (G2)", &providers.AddonSecretProviderConfig{Type: "demo"}, "the demo secrets store"},
 	}
 
 	for _, tc := range cases {
@@ -1205,12 +1208,12 @@ func TestBuildManagedSecretRows_MergesAndTagsEachKind(t *testing.T) {
 		t.Fatalf("expected 2 merged rows, got %d", len(rows))
 	}
 
-	// out_of_sync (rank 0) sorts before missing (rank 1) — the connection
-	// row comes first.
-	connRow, valuesRow := rows[0], rows[1]
+	// G3 (gitops-proud P4-G): missing (rank 0) now sorts before out_of_sync
+	// (rank 1) — the values row comes first.
+	valuesRow, connRow := rows[0], rows[1]
 
 	if connRow.Kind != managedSecretKindConnection {
-		t.Fatalf("rows[0].Kind = %q, want %q", connRow.Kind, managedSecretKindConnection)
+		t.Fatalf("rows[1].Kind = %q, want %q", connRow.Kind, managedSecretKindConnection)
 	}
 	if connRow.Name != "prod-eu" || connRow.Namespace != "argocd" {
 		t.Errorf("connection row name/namespace = %q/%q, want prod-eu/argocd", connRow.Name, connRow.Namespace)
@@ -1234,7 +1237,7 @@ func TestBuildManagedSecretRows_MergesAndTagsEachKind(t *testing.T) {
 	}
 
 	if valuesRow.Kind != managedSecretKindValues {
-		t.Fatalf("rows[1].Kind = %q, want %q", valuesRow.Kind, managedSecretKindValues)
+		t.Fatalf("rows[0].Kind = %q, want %q", valuesRow.Kind, managedSecretKindValues)
 	}
 	if valuesRow.Name != "datadog-secrets" || valuesRow.Namespace != "datadog" {
 		t.Errorf("values row name/namespace = %q/%q, want datadog-secrets/datadog", valuesRow.Name, valuesRow.Namespace)
@@ -1263,32 +1266,38 @@ func TestBuildManagedSecretRows_MergesAndTagsEachKind(t *testing.T) {
 // string reads as "unknown", matching toResourceStatus's own fallback.
 func TestManagedSecretStateSortRank_MatchesTheUITable(t *testing.T) {
 	cases := []struct {
-		state string
-		want  int
+		state         string
+		hasCheckError bool
+		want          int
 	}{
-		{"out_of_sync", 0},
-		{"missing", 1},
-		{"foreign", 2},
-		{"unknown", 3},
-		{"in_sync", 4},
-		{"some-state-the-server-has-never-heard-of", 3}, // falls through to "unknown"'s rank
-		{"", 3},
+		{"missing", false, 0},
+		{"out_of_sync", false, 1},
+		{"foreign", false, 2},
+		{"unknown", true, 3},                                    // a FAILED check outranks a never-checked row
+		{"unknown", false, 4},                                   // genuinely never checked
+		{"in_sync", false, 5},
+		{"some-state-the-server-has-never-heard-of", false, 4}, // falls through to "unknown"'s (not-checked) rank
+		{"some-state-the-server-has-never-heard-of", true, 3},  // ...but a check error still promotes it
+		{"", false, 4},
 	}
 	for _, tc := range cases {
-		if got := managedSecretStateSortRank(tc.state); got != tc.want {
-			t.Errorf("managedSecretStateSortRank(%q) = %d, want %d", tc.state, got, tc.want)
+		if got := managedSecretStateSortRank(tc.state, tc.hasCheckError); got != tc.want {
+			t.Errorf("managedSecretStateSortRank(%q, %v) = %d, want %d", tc.state, tc.hasCheckError, got, tc.want)
 		}
 	}
 }
 
-// TestBuildManagedSecretRows_WorstFirstOrder builds five rows, one per
-// state, in a scrambled input order, and pins that the merged array always
-// comes back in the fixed worst-first order regardless of input order or
-// which kind each row is.
+// TestBuildManagedSecretRows_WorstFirstOrder builds one row per rank
+// position — including BOTH "unknown" flavors (a failed check and a
+// genuinely never-checked row, distinguished only by LastCheckError) — in a
+// scrambled input order, and pins that the merged array always comes back
+// in the fixed worst-first order (G3, gitops-proud P4-G) regardless of
+// input order or which kind each row is.
 func TestBuildManagedSecretRows_WorstFirstOrder(t *testing.T) {
 	conn := []connectionSecretRow{
 		{Cluster: "c-in-sync", State: "in_sync"},
-		{Cluster: "c-unknown", State: "unknown"},
+		{Cluster: "c-not-checked", State: "unknown"},
+		{Cluster: "c-check-failed", State: "unknown", LastCheckError: "Sharko couldn't connect to this cluster."},
 	}
 	values := []addonValuesSecretRow{
 		{Cluster: "c-foreign", Addon: "a", State: "foreign"},
@@ -1297,15 +1306,25 @@ func TestBuildManagedSecretRows_WorstFirstOrder(t *testing.T) {
 	}
 
 	rows := buildManagedSecretRows(conn, values)
-	if len(rows) != 5 {
-		t.Fatalf("expected 5 merged rows, got %d", len(rows))
+	if len(rows) != 6 {
+		t.Fatalf("expected 6 merged rows, got %d", len(rows))
 	}
-	wantOrder := []string{"out_of_sync", "missing", "foreign", "unknown", "in_sync"}
-	for i, want := range wantOrder {
-		if rows[i].State != want {
-			t.Errorf("rows[%d].State = %q, want %q (full order: %v)", i, rows[i].State, want, statesOf(rows))
+	// c-check-failed and c-not-checked share the exact same State
+	// ("unknown"), so the order is pinned by Cluster name, not State.
+	wantClusters := []string{"c-missing", "c-out-of-sync", "c-foreign", "c-check-failed", "c-not-checked", "c-in-sync"}
+	for i, want := range wantClusters {
+		if rows[i].Cluster != want {
+			t.Errorf("rows[%d].Cluster = %q, want %q (full order: %v)", i, rows[i].Cluster, want, clustersOf(rows))
 		}
 	}
+}
+
+func clustersOf(rows []managedSecretRow) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Cluster
+	}
+	return out
 }
 
 func statesOf(rows []managedSecretRow) []string {

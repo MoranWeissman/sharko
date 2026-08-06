@@ -192,7 +192,7 @@ beforeEach(() => {
 })
 
 describe('ManagedSecrets', () => {
-  it('states its source in visible text on every row — connection rows read "cluster connection · follows git", values rows read "addon values · follows <the real backend>" (S3 honesty lock)', async () => {
+  it('states its source in visible text on every row, in the SOURCE column — connection rows read "git", values rows read the real backend (S3 honesty lock, moved into the column by G1)', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
@@ -200,13 +200,16 @@ describe('ManagedSecrets', () => {
 
     const connRow1 = screen.getByTestId('secret-row-connection-prod-eu')
     const connRow2 = screen.getByTestId('secret-row-connection-staging-us')
-    expect(within(connRow1).getByText('cluster connection · follows git')).toBeInTheDocument()
-    expect(within(connRow2).getByText('cluster connection · follows git')).toBeInTheDocument()
+    expect(within(connRow1).getByTestId('cell-source')).toHaveTextContent('git')
+    expect(within(connRow2).getByTestId('cell-source')).toHaveTextContent('git')
+    // The KIND subline stays, minus the source half it used to carry.
+    expect(within(connRow1).getByText('cluster connection')).toBeInTheDocument()
 
     const valuesRow1 = screen.getByTestId('secret-row-values-prod-eu-datadog')
     const valuesRow2 = screen.getByTestId('secret-row-values-staging-us-datadog')
-    expect(within(valuesRow1).getByText('addon values · follows AWS Secrets Manager')).toBeInTheDocument()
-    expect(within(valuesRow2).getByText('addon values · follows AWS Secrets Manager')).toBeInTheDocument()
+    expect(within(valuesRow1).getByTestId('cell-source')).toHaveTextContent('AWS Secrets Manager')
+    expect(within(valuesRow2).getByTestId('cell-source')).toHaveTextContent('AWS Secrets Manager')
+    expect(within(valuesRow1).getByText('addon values')).toBeInTheDocument()
 
     // Never the generic, misleading "the vault" wording — the server's
     // real backend name is what ships.
@@ -227,8 +230,94 @@ describe('ManagedSecrets', () => {
 
     await waitFor(() => expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument())
     expect(
-      within(screen.getByTestId('secret-row-values-prod-eu-datadog')).getByText('addon values · follows secrets store'),
-    ).toBeInTheDocument()
+      within(screen.getByTestId('secret-row-values-prod-eu-datadog')).getByTestId('cell-source'),
+    ).toHaveTextContent('secrets store')
+  })
+
+  // G1 — the ADDON column: values rows show the addon, connection rows show
+  // a plain dash (they aren't addon secrets).
+  it('shows the addon in its own column — a real addon name on values rows, a plain dash on connection rows', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    expect(within(screen.getByTestId('secret-row-connection-prod-eu')).getByTestId('cell-addon')).toHaveTextContent('—')
+    expect(within(screen.getByTestId('secret-row-values-prod-eu-datadog')).getByTestId('cell-addon')).toHaveTextContent('datadog')
+  })
+
+  // G1 — ADDON and SOURCE are sortable columns via their header buttons.
+  it('sorts by the ADDON and SOURCE columns when their headers are clicked', async () => {
+    const user = userEvent.setup()
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      cluster_connection_secrets: [],
+      addon_values_secrets: [
+        { cluster: 'c1', addon: 'zeta', state: 'in_sync', source: 'AWS Secrets Manager' },
+        { cluster: 'c2', addon: 'alpha', state: 'in_sync', source: 'a Kubernetes Secret' },
+      ],
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-values-c1-zeta')).toBeInTheDocument())
+
+    await user.click(screen.getByTestId('sort-addon'))
+    await waitFor(() => {
+      const order = screen.getAllByTestId(/^secret-row-/).map((r) => r.getAttribute('data-testid'))
+      expect(order).toEqual(['secret-row-values-c2-alpha', 'secret-row-values-c1-zeta'])
+    })
+
+    await user.click(screen.getByTestId('sort-source'))
+    await waitFor(() => {
+      const order = screen.getAllByTestId(/^secret-row-/).map((r) => r.getAttribute('data-testid'))
+      // Ascending by row.sourceLabel: "AWS Secrets Manager" (c1) sorts
+      // before "a Kubernetes Secret" (c2) — 'A' (65) < 'a' (97) by char
+      // code, exactly the same plain string compare compareRows uses.
+      expect(order).toEqual(['secret-row-values-c1-zeta', 'secret-row-values-c2-alpha'])
+    })
+  })
+
+  // G1 — ADDON and SOURCE are matched by the search box.
+  it('search matches the ADDON and SOURCE columns, not just cluster/name', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    const search = screen.getByPlaceholderText('Search by cluster, addon, or secret name...')
+
+    // "datadog" matches the addon on both values rows, no connection rows.
+    fireEvent.change(search, { target: { value: 'datadog' } })
+    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
+    expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument()
+    expect(screen.getByTestId('secret-row-values-staging-us-datadog')).toBeInTheDocument()
+
+    // "AWS Secrets Manager" (the source) matches only the values rows, never the connection rows (source "git").
+    fireEvent.change(search, { target: { value: 'aws secrets' } })
+    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
+    expect(screen.queryByTestId('secret-row-connection-prod-eu')).not.toBeInTheDocument()
+  })
+
+  // G1 — ADDON and SOURCE are filterable via their own selects.
+  it('filters the table with the Addon and Source selects', async () => {
+    const user = userEvent.setup()
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    // 4 rows total before any filter.
+    expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(4)
+
+    await user.selectOptions(screen.getByTestId('addon-filter-select'), 'datadog')
+    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
+    expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument()
+    expect(screen.queryByTestId('secret-row-connection-prod-eu')).not.toBeInTheDocument()
+
+    await user.selectOptions(screen.getByTestId('addon-filter-select'), '')
+    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(4))
+
+    await user.selectOptions(screen.getByTestId('source-filter-select'), 'git')
+    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
+    expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument()
+    expect(screen.queryByTestId('secret-row-values-prod-eu-datadog')).not.toBeInTheDocument()
   })
 
   it('sorts worst-first by default — out-of-sync rows come before in-sync rows, never alphabetically (S3)', async () => {
@@ -807,7 +896,11 @@ describe('ManagedSecrets', () => {
     )
   })
 
-  it('sorts a foreign row after out-of-sync and missing, but ahead of never-checked', async () => {
+  // G3 (gitops-proud P4-G): the rank table got more honest — missing
+  // outranks out_of_sync now (nothing exists to Sync onto, a harder stop
+  // than a wrong value Sync can overwrite), and foreign keeps its seat
+  // right after the two real comparisons.
+  it('sorts missing first, then out-of-sync, then foreign, then never-checked (G3 worst-first)', async () => {
     mockGetManagedSecrets.mockResolvedValue({
       ...baseResponse,
       cluster_connection_secrets: [],
@@ -823,11 +916,37 @@ describe('ManagedSecrets', () => {
     await screen.findByTestId('secret-row-values-c-drift-a')
     const order = screen.getAllByTestId(/^secret-row-/).map((r) => r.getAttribute('data-testid'))
     expect(order).toEqual([
-      'secret-row-values-c-drift-a',
       'secret-row-values-c-missing-a',
+      'secret-row-values-c-drift-a',
       'secret-row-values-c-foreign-a',
       'secret-row-values-c-unknown-a',
     ])
+  })
+
+  // G3: both rows are the exact same "unknown" state word — the ONLY
+  // difference between them is whether the last check actually failed
+  // (last_check_error set) — and a failed check sorts ahead of a row
+  // that's simply never been looked at.
+  it('sorts a check-failed row ahead of a genuinely never-checked row — both "unknown" (G3)', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      cluster_connection_secrets: [],
+      addon_values_secrets: [
+        { cluster: 'c-not-checked', addon: 'a', state: 'unknown', source: 'AWS Secrets Manager' },
+        {
+          cluster: 'c-check-failed',
+          addon: 'a',
+          state: 'unknown',
+          source: 'AWS Secrets Manager',
+          last_check_error: "Sharko couldn't connect to this cluster.",
+        },
+      ],
+    })
+    renderPage()
+
+    await screen.findByTestId('secret-row-values-c-not-checked-a')
+    const order = screen.getAllByTestId(/^secret-row-/).map((r) => r.getAttribute('data-testid'))
+    expect(order).toEqual(['secret-row-values-c-check-failed-a', 'secret-row-values-c-not-checked-a'])
   })
 
   // P1-A A3 — a connection row's Refresh checks every cluster, and the
@@ -956,5 +1075,23 @@ describe('ManagedSecrets', () => {
         ),
       ).toBeInTheDocument(),
     )
+  })
+
+  // G4: dark-mode "selected" stopped borrowing StatusMark's teal (which
+  // reads as "in sync" next to a row that genuinely is) — it's the house
+  // navy in both themes now, same as the pagination controls.
+  it('never uses the status-teal colour for a selected state, even in dark mode (G4)', async () => {
+    const user = userEvent.setup()
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('group-by-addon')).toBeInTheDocument())
+    expect(screen.getByTestId('group-by-none').className).not.toMatch(/teal/)
+
+    await user.click(screen.getByTestId('group-by-addon'))
+    expect(screen.getByTestId('group-by-addon').className).not.toMatch(/teal/)
+
+    await user.click(screen.getByTestId('filter-chip-in_sync'))
+    expect(screen.getByTestId('filter-chip-in_sync').className).not.toMatch(/teal/)
   })
 })

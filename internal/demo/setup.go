@@ -128,6 +128,12 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 	// demo Type so /providers + /config surface a recognizable
 	// placeholder. addonSecretCfg.RoleARN stays empty — demo
 	// orchestrator paths handle that via nil-guards in handlers.
+	//
+	// G2 (gitops-proud P4-G): this exact Type ("demo") is what
+	// (*Server).addonValuesSecretSourceLabel (internal/api/system_managed_secrets.go)
+	// resolves to "the demo secrets store" — the Managed Secrets page's
+	// SOURCE column, so `make demo-big` shows a real name on every addon-
+	// values row instead of the generic "secrets store" fallback.
 	var credProvider *MockClusterCredentialsProvider
 	if estate != nil {
 		credProvider = NewMockClusterCredentialsProviderFromEstate(estate)

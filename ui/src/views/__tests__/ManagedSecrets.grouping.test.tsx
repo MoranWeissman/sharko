@@ -111,6 +111,18 @@ const response: ManagedSecretsResponse = {
       source: 'a Kubernetes Secret',
       self_heals: true,
     },
+    // G4: a fully in-sync addon — the one group in this fixture with NO
+    // issues, so its default-open behaviour differs from every other group
+    // here.
+    {
+      cluster: 'prod-eu',
+      addon: 'grafana',
+      secret_name: 'grafana-secret',
+      secret_namespace: 'monitoring',
+      state: 'in_sync',
+      source: 'AWS Secrets Manager',
+      self_heals: true,
+    },
   ],
   engines: {
     cluster_connection: { wired: true, interval_seconds: 30, last_run: '2026-08-05T00:00:00Z' },
@@ -145,19 +157,19 @@ beforeEach(() => {
 })
 
 describe('ManagedSecrets — the backend type is a per-row fact (G1)', () => {
-  it('two rows with different backends say different things', async () => {
+  it('two rows with different backends say different things, in the SOURCE column', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument())
 
     expect(
-      within(screen.getByTestId('secret-row-values-prod-eu-datadog')).getByText('addon values · follows AWS Secrets Manager'),
-    ).toBeInTheDocument()
+      within(screen.getByTestId('secret-row-values-prod-eu-datadog')).getByTestId('cell-source'),
+    ).toHaveTextContent('AWS Secrets Manager')
     expect(
-      within(screen.getByTestId('secret-row-values-prod-eu-vault')).getByText('addon values · follows a Kubernetes Secret'),
-    ).toBeInTheDocument()
+      within(screen.getByTestId('secret-row-values-prod-eu-vault')).getByTestId('cell-source'),
+    ).toHaveTextContent('a Kubernetes Secret')
     expect(
-      within(screen.getByTestId('secret-row-connection-prod-eu')).getByText('cluster connection · follows git'),
-    ).toBeInTheDocument()
+      within(screen.getByTestId('secret-row-connection-prod-eu')).getByTestId('cell-source'),
+    ).toHaveTextContent('git')
   })
 })
 
@@ -185,14 +197,15 @@ describe('ManagedSecrets — Group by (G2)', () => {
     expect(screen.getByTestId('secret-group-addon-vault')).toBeInTheDocument()
     expect(screen.getByTestId('secret-group-__connections__')).toBeInTheDocument()
 
-    // Children are hidden until the parent is opened.
-    expect(screen.queryByTestId('secret-row-values-prod-eu-datadog')).not.toBeInTheDocument()
-
-    await user.click(datadog)
-    // Both of datadog's clusters, and nothing from another addon.
+    // datadog has an out-of-sync row (G4: has issues), so it opens itself —
+    // both of its clusters are already on screen.
     expect(await screen.findByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument()
     expect(screen.getByTestId('secret-row-values-staging-us-datadog')).toBeInTheDocument()
-    expect(screen.queryByTestId('secret-row-values-prod-eu-vault')).not.toBeInTheDocument()
+    // vault ALSO has an issue (its one row is never-checked) so it opens
+    // itself too — its row is on screen, just not under datadog's parent.
+    // grafana is the one group with no issues, so IT stays collapsed.
+    expect(screen.getByTestId('secret-row-values-prod-eu-vault')).toBeInTheDocument()
+    expect(screen.queryByTestId('secret-row-values-prod-eu-grafana')).not.toBeInTheDocument()
   })
 
   it('grouped by cluster puts both kinds of secret for that cluster under one parent', async () => {
@@ -201,14 +214,33 @@ describe('ManagedSecrets — Group by (G2)', () => {
     await waitFor(() => expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument())
 
     await user.click(screen.getByTestId('group-by-cluster'))
-    const prodEu = await screen.findByTestId('secret-group-cluster-prod-eu')
-    await user.click(prodEu)
+    // Both clusters have an issue in this fixture (prod-eu's vault row is
+    // never-checked, staging-us is out-of-sync) so BOTH groups open
+    // themselves by default (G4) — this test is about the right rows
+    // bucketing under the right parent, not the collapse state.
+    await screen.findByTestId('secret-group-cluster-prod-eu')
+    expect(screen.getByTestId('secret-group-cluster-staging-us')).toBeInTheDocument()
 
-    expect(await screen.findByTestId('secret-row-connection-prod-eu')).toBeInTheDocument()
+    expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument()
     expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument()
     expect(screen.getByTestId('secret-row-values-prod-eu-vault')).toBeInTheDocument()
-    // Nothing from the other cluster leaked in.
-    expect(screen.queryByTestId('secret-row-connection-staging-us')).not.toBeInTheDocument()
+
+    // Nothing leaked between the two groups — every row that comes after
+    // ONE group's header, up to the NEXT group header (or the end), names
+    // that same group's cluster. Groups are worst-first now (G4), so this
+    // doesn't assume which cluster's group renders first.
+    const order = screen
+      .getAllByTestId(/^secret-(group-cluster-|row-)/)
+      .map((el) => el.getAttribute('data-testid')!)
+    const headerIdxs = order
+      .map((id, i) => (id.startsWith('secret-group-cluster-') ? i : -1))
+      .filter((i) => i >= 0)
+    expect(headerIdxs).toHaveLength(2)
+    const [firstIdx, secondIdx] = headerIdxs
+    const firstCluster = order[firstIdx].replace('secret-group-cluster-', '')
+    const secondCluster = order[secondIdx].replace('secret-group-cluster-', '')
+    expect(order.slice(firstIdx + 1, secondIdx).every((id) => id.includes(firstCluster))).toBe(true)
+    expect(order.slice(secondIdx + 1).every((id) => id.includes(secondCluster))).toBe(true)
   })
 
   it('keeps the choice in the URL so a reload lands back on the same view', async () => {
@@ -232,6 +264,81 @@ describe('ManagedSecrets — Group by (G2)', () => {
   })
 })
 
+describe('ManagedSecrets — groups with issues open themselves (G4)', () => {
+  it('a group with an issue starts open; a group with none starts collapsed', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument())
+    await user.click(screen.getByTestId('group-by-addon'))
+
+    // datadog has an out-of-sync row — opens itself.
+    expect(await screen.findByTestId('secret-group-addon-datadog')).toHaveAttribute('aria-expanded', 'true')
+    // vault has only a not-checked-yet row — still an issue (it isn't
+    // in_sync) — opens itself too.
+    expect(screen.getByTestId('secret-group-addon-vault')).toHaveAttribute('aria-expanded', 'true')
+    // grafana is fully in_sync — no issues — starts collapsed.
+    expect(screen.getByTestId('secret-group-addon-grafana')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('secret-row-values-prod-eu-grafana')).not.toBeInTheDocument()
+  })
+
+  it("a click on the group header always wins over the computed default, in either direction", async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument())
+    await user.click(screen.getByTestId('group-by-addon'))
+
+    // Collapse an auto-open group.
+    const datadog = await screen.findByTestId('secret-group-addon-datadog')
+    expect(datadog).toHaveAttribute('aria-expanded', 'true')
+    await user.click(datadog)
+    expect(datadog).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('secret-row-values-prod-eu-datadog')).not.toBeInTheDocument()
+
+    // Open a collapsed, issue-free group.
+    const grafana = screen.getByTestId('secret-group-addon-grafana')
+    expect(grafana).toHaveAttribute('aria-expanded', 'false')
+    await user.click(grafana)
+    expect(grafana).toHaveAttribute('aria-expanded', 'true')
+    expect(await screen.findByTestId('secret-row-values-prod-eu-grafana')).toBeInTheDocument()
+  })
+
+  it('in addon view, the not-an-addon connections bucket always sorts last', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument())
+    await user.click(screen.getByTestId('group-by-addon'))
+
+    await screen.findByTestId('secret-group-addon-datadog')
+    const headers = screen
+      .getAllByTestId(/^secret-group-/)
+      .filter((el) => !(el.getAttribute('data-testid') ?? '').startsWith('secret-group-summary-'))
+    const order = headers.map((h) => h.getAttribute('data-testid'))
+    expect(order[order.length - 1]).toBe('secret-group-__connections__')
+  })
+
+  it('groups sort worst-first, then by name', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument())
+    await user.click(screen.getByTestId('group-by-addon'))
+
+    await screen.findByTestId('secret-group-addon-datadog')
+    const headers = screen
+      .getAllByTestId(/^secret-group-/)
+      .filter((el) => !(el.getAttribute('data-testid') ?? '').startsWith('secret-group-summary-'))
+    const order = headers.map((h) => h.getAttribute('data-testid'))
+    // datadog (worst row: out_of_sync) beats vault (worst row: unknown),
+    // grafana (all in_sync — the best) sorts after both, and the
+    // connections bucket is forced last regardless of its own state.
+    expect(order).toEqual([
+      'secret-group-addon-datadog',
+      'secret-group-addon-vault',
+      'secret-group-addon-grafana',
+      'secret-group-__connections__',
+    ])
+  })
+})
+
 describe('ManagedSecrets — group headers state plain sums only (G3)', () => {
   it('adds up the real per-row states, and says nothing else', async () => {
     const user = userEvent.setup()
@@ -239,9 +346,9 @@ describe('ManagedSecrets — group headers state plain sums only (G3)', () => {
     await waitFor(() => expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument())
     await user.click(screen.getByTestId('group-by-cluster'))
 
-    // prod-eu: connection in sync, datadog in sync, vault not checked yet.
+    // prod-eu: connection in sync, datadog in sync, grafana in sync, vault not checked yet.
     const prodSummary = await screen.findByTestId('secret-group-summary-cluster-prod-eu')
-    expect(prodSummary).toHaveTextContent('3 secrets · 1 not checked yet · 2 in sync')
+    expect(prodSummary).toHaveTextContent('4 secrets · 1 not checked yet · 3 in sync')
 
     // staging-us: connection out of sync, datadog out of sync.
     expect(screen.getByTestId('secret-group-summary-cluster-staging-us')).toHaveTextContent('2 secrets · 2 out of sync')
