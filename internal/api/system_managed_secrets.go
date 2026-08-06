@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
@@ -45,7 +46,17 @@ const connectionSecretSource = "git"
 type managedSecretsResponse struct {
 	ClusterConnectionSecrets []connectionSecretRow  `json:"cluster_connection_secrets"`
 	AddonValuesSecrets       []addonValuesSecretRow `json:"addon_values_secrets"`
-	Engines                  managedSecretsEngines  `json:"engines"`
+	// Rows (P3-E, E2) is both per-kind arrays merged into one list, shaped
+	// like what the System page's table renders, worst-first ordered, and
+	// the only part of this response that honors this request's filter
+	// (?cluster=, ?addon=, ?state=, ?kind=, ?source=) and paging (?page=,
+	// ?per_page=) query params — see buildManagedSecretRows and
+	// filterManagedSecretRows. ClusterConnectionSecrets/AddonValuesSecrets
+	// above stay full and unfiltered on every request: this field is
+	// strictly additive, so an existing caller reading the two per-kind
+	// arrays sees no change at all.
+	Rows    []managedSecretRow    `json:"rows"`
+	Engines managedSecretsEngines `json:"engines"`
 	// AddonValuesSecretSource is the real, human-readable name of the
 	// backend addon-values secrets are compared against — "AWS Secrets
 	// Manager", "a Kubernetes Secret", etc, or the generic "secrets store"
@@ -201,6 +212,213 @@ type addonValuesSecretRow struct {
 	ConsecutiveFailures int `json:"consecutive_failures,omitempty"`
 }
 
+// managedSecretRow (P3-E, E2) is one row of the merged Rows array — one
+// connectionSecretRow or addonValuesSecretRow, tagged with Kind and
+// reshaped onto a single flat struct so a caller renders one table instead
+// of merging two arrays itself (the merge the System page's own UI already
+// does in the browser — see ManagedSecrets.tsx's UnifiedRow). A field that
+// doesn't apply to this row's Kind is left empty/omitted exactly as it
+// already is on the source per-kind row — nothing here is invented:
+//
+//   - "connection" rows carry ComparedRevision/AppliedRevision/ComparedPath/
+//     DriftSource/FightCount (connectionSecretRow's own P2-C1/P2-C6/P2-D
+//     fields); Addon and ConsecutiveFailures are always empty/zero — a
+//     connection secret has no addon and no per-item consecutive-failure
+//     counter (that's FightCount's job on this kind).
+//   - "values" rows carry Addon and ConsecutiveFailures; ComparedRevision/
+//     AppliedRevision/ComparedPath/DriftSource/FightCount are always empty/
+//     zero — the values engine compares against the vault, not git, so it
+//     has no commit-revision or drift-blame facts to report this lane (see
+//     connectionDriftSource's doc comment on why values rows skip drift
+//     blame entirely).
+//
+// Name/Namespace are the k8s Secret's own name/namespace (SecretName/
+// SecretNamespace on the source row) — the identity a portal groups or
+// links by, same as the page's own row grouping.
+type managedSecretRow struct {
+	// Kind is "connection" or "values" — which engine/array this row came
+	// from. Always present.
+	Kind      string `json:"kind"`
+	Name      string `json:"name,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Cluster   string `json:"cluster"`
+	Addon     string `json:"addon,omitempty"`
+	Source    string `json:"source"`
+	State     string `json:"state"`
+
+	ComparedRevision string `json:"compared_revision,omitempty"`
+	AppliedRevision  string `json:"applied_revision,omitempty"`
+	ComparedPath     string `json:"compared_path,omitempty"`
+	DriftSource      string `json:"drift_source,omitempty"`
+
+	SelfHeals           bool `json:"self_heals"`
+	FightCount          int  `json:"fight_count,omitempty"`
+	ConsecutiveFailures int  `json:"consecutive_failures,omitempty"`
+
+	LastChecked    string `json:"last_checked,omitempty"`
+	LastCheckError string `json:"last_check_error,omitempty"`
+	LastRepaired   string `json:"last_repaired,omitempty"`
+}
+
+// managedSecretKindConnection / managedSecretKindValues are the two Kind
+// values a managedSecretRow can carry — named constants so the merge, the
+// ?kind= filter, and any test that pins one all read the same literal.
+const (
+	managedSecretKindConnection = "connection"
+	managedSecretKindValues     = "values"
+)
+
+// managedSecretStateRank is the worst-first order the System page's own
+// StatusMark.statusSortRank uses (ui/src/components/resource/StatusMark.tsx)
+// — out_of_sync first (a real, confirmed mismatch), then missing, then
+// foreign (a boundary worth knowing about but not damage), then unknown
+// (nothing proven either way), in_sync last. Kept in exact lockstep with
+// that table on purpose: the merged Rows array is meant to read in the same
+// order the page itself renders, not a server-invented ranking.
+var managedSecretStateRank = map[string]int{
+	"out_of_sync": 0,
+	"missing":     1,
+	"foreign":     2,
+	"unknown":     3,
+	"in_sync":     4,
+}
+
+// managedSecretStateSortRank returns a row's sort weight. A state the rank
+// table doesn't recognize reads as "unknown" — the same fallback
+// toResourceStatus uses in the UI for a state string it doesn't know, never
+// a crash or a silent last-place drop.
+func managedSecretStateSortRank(state string) int {
+	if rank, ok := managedSecretStateRank[state]; ok {
+		return rank
+	}
+	return managedSecretStateRank["unknown"]
+}
+
+// buildManagedSecretRows merges the two already-built per-kind arrays into
+// one flat, worst-first-sorted list (E2). Called AFTER
+// buildConnectionSecretRows/buildAddonValuesSecretRows so it never
+// recomputes state or does any I/O of its own — a pure reshape + sort.
+func buildManagedSecretRows(conn []connectionSecretRow, values []addonValuesSecretRow) []managedSecretRow {
+	rows := make([]managedSecretRow, 0, len(conn)+len(values))
+	for _, r := range conn {
+		rows = append(rows, managedSecretRow{
+			Kind:             managedSecretKindConnection,
+			Name:             r.SecretName,
+			Namespace:        r.SecretNamespace,
+			Cluster:          r.Cluster,
+			Source:           r.Source,
+			State:            r.State,
+			ComparedRevision: r.ComparedRevision,
+			AppliedRevision:  r.AppliedRevision,
+			ComparedPath:     r.ComparedPath,
+			DriftSource:      r.DriftSource,
+			SelfHeals:        r.SelfHeals,
+			FightCount:       r.FightCount,
+			LastChecked:      r.LastChecked,
+			LastCheckError:   r.LastCheckError,
+			LastRepaired:     r.LastRepaired,
+		})
+	}
+	for _, r := range values {
+		rows = append(rows, managedSecretRow{
+			Kind:                managedSecretKindValues,
+			Name:                r.SecretName,
+			Namespace:           r.SecretNamespace,
+			Cluster:             r.Cluster,
+			Addon:               r.Addon,
+			Source:              r.Source,
+			State:               r.State,
+			SelfHeals:           r.SelfHeals,
+			ConsecutiveFailures: r.ConsecutiveFailures,
+			LastChecked:         r.LastChecked,
+			LastCheckError:      r.LastCheckError,
+			LastRepaired:        r.LastRepaired,
+		})
+	}
+	sortManagedSecretRowsWorstFirst(rows)
+	return rows
+}
+
+// sortManagedSecretRowsWorstFirst orders rows worst-state-first
+// (managedSecretStateSortRank), tie-broken by cluster, then addon, then
+// name — a stable, deterministic order so paging through the same
+// unchanged data never reshuffles a row across pages.
+func sortManagedSecretRowsWorstFirst(rows []managedSecretRow) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		ri, rj := managedSecretStateSortRank(rows[i].State), managedSecretStateSortRank(rows[j].State)
+		if ri != rj {
+			return ri < rj
+		}
+		if rows[i].Cluster != rows[j].Cluster {
+			return rows[i].Cluster < rows[j].Cluster
+		}
+		if rows[i].Addon != rows[j].Addon {
+			return rows[i].Addon < rows[j].Addon
+		}
+		return rows[i].Name < rows[j].Name
+	})
+}
+
+// managedSecretRowFilters holds the E1 query-param filters — cluster,
+// addon, state, kind, source. An empty field means "no filter on this
+// field." Applied only to the merged Rows array (E2); the two per-kind
+// arrays are never filtered, keeping them additive/backward-compatible
+// (see managedSecretsResponse.Rows's doc comment).
+type managedSecretRowFilters struct {
+	Cluster string
+	Addon   string
+	State   string
+	Kind    string
+	Source  string
+}
+
+// parseManagedSecretRowFilters reads ?cluster=, ?addon=, ?state=, ?kind=,
+// ?source= off the request.
+func parseManagedSecretRowFilters(r *http.Request) managedSecretRowFilters {
+	q := r.URL.Query()
+	return managedSecretRowFilters{
+		Cluster: q.Get("cluster"),
+		Addon:   q.Get("addon"),
+		State:   q.Get("state"),
+		Kind:    q.Get("kind"),
+		Source:  q.Get("source"),
+	}
+}
+
+// filterManagedSecretRows applies every non-empty filter, AND-joined,
+// exact-match against the row's own field — case-honest (never folds or
+// normalizes case, on either side). This mirrors the house pattern the
+// existing filterClusters/filterAddons already use for a recognized filter
+// field whose value simply doesn't occur in the data: a value that matches
+// no row (an unrecognized ?state= or ?kind=, a typo'd cluster name, ...)
+// yields a documented EMPTY result, never a 400 — there is nothing invalid
+// about the request, only nothing left after filtering.
+func filterManagedSecretRows(rows []managedSecretRow, f managedSecretRowFilters) []managedSecretRow {
+	if f.Cluster == "" && f.Addon == "" && f.State == "" && f.Kind == "" && f.Source == "" {
+		return rows
+	}
+	result := make([]managedSecretRow, 0, len(rows))
+	for _, row := range rows {
+		if f.Cluster != "" && row.Cluster != f.Cluster {
+			continue
+		}
+		if f.Addon != "" && row.Addon != f.Addon {
+			continue
+		}
+		if f.State != "" && row.State != f.State {
+			continue
+		}
+		if f.Kind != "" && row.Kind != f.Kind {
+			continue
+		}
+		if f.Source != "" && row.Source != f.Source {
+			continue
+		}
+		result = append(result, row)
+	}
+	return result
+}
+
 // managedSecretsEngineInfo reports one reconciler's cadence + health.
 type managedSecretsEngineInfo struct {
 	// Wired is false when this server instance has no such reconciler
@@ -262,16 +480,29 @@ var addonValuesSecretRepairDetail = map[string]string{
 // handleGetManagedSecrets godoc
 //
 // @Summary Get every secret Sharko manages
-// @Description Aggregates cluster-connection secrets (the ArgoCD cluster Secret per managed cluster) and addon-values secrets (pushed into remote clusters), plus each reconciler engine's cadence, last run, and last error. Built entirely from data already read for the cluster list and the two reconcilers' in-memory stats — no per-row Kubernetes call. A fact the server cannot currently determine is left empty/unknown rather than approximated. Any authenticated user may read this, the same convention as /providers, /config, and /secrets/status.
+// @Description Aggregates cluster-connection secrets (the ArgoCD cluster Secret per managed cluster) and addon-values secrets (pushed into remote clusters), plus each reconciler engine's cadence, last run, and last error. Built entirely from data already read for the cluster list and the two reconcilers' in-memory stats — no per-row Kubernetes call. A fact the server cannot currently determine is left empty/unknown rather than approximated. The response also carries a merged, worst-state-first `rows` array (both kinds flattened onto one shape, P3-E) — the only part of the response that honors the query params below. The two per-kind arrays above are always returned in full, unfiltered and unpaginated, for backward compatibility. An unrecognized filter value (e.g. an unknown state or kind) matches no row rather than returning an error.
 // @Tags system
 // @Produce json
 // @Security BearerAuth
+// @Param cluster query string false "Rows filter: exact cluster name match"
+// @Param addon query string false "Rows filter: exact addon name match (values rows only — connection rows have no addon and never match a non-empty value)"
+// @Param state query string false "Rows filter: exact state match (in_sync, out_of_sync, missing, unknown, foreign)"
+// @Param kind query string false "Rows filter: exact kind match (connection, values)"
+// @Param source query string false "Rows filter: exact source match (e.g. git, AWS Secrets Manager)"
+// @Param page query int false "Rows paging: page number, default 1"
+// @Param per_page query int false "Rows paging: items per page, default 20, max 100"
 // @Success 200 {object} managedSecretsResponse "Managed secrets summary"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Router /system/managed-secrets [get]
 func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "managed-secrets.list") {
+		return
+	}
+
 	resp := managedSecretsResponse{
 		ClusterConnectionSecrets: []connectionSecretRow{},
 		AddonValuesSecrets:       []addonValuesSecretRow{},
+		Rows:                     []managedSecretRow{},
 	}
 
 	// The engines section never depends on a live Git/ArgoCD connection —
@@ -286,13 +517,13 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 		// Degrade, never 500: the two tables need the cluster list, which
 		// needs a live Git+ArgoCD connection. The engines section above
 		// still stands on its own.
-		writeJSON(w, http.StatusOK, resp)
+		s.respondManagedSecrets(w, r, resp)
 		return
 	}
 
 	listResp, err := s.clusterSvc.ListClusters(r.Context(), gp, ac)
 	if err != nil {
-		writeJSON(w, http.StatusOK, resp)
+		s.respondManagedSecrets(w, r, resp)
 		return
 	}
 
@@ -307,6 +538,27 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 
 	resp.ClusterConnectionSecrets = s.buildConnectionSecretRows(r.Context(), listResp.Clusters, auditEntries)
 	resp.AddonValuesSecrets = s.buildAddonValuesSecretRows(listResp.Clusters, auditEntries)
+
+	s.respondManagedSecrets(w, r, resp)
+}
+
+// respondManagedSecrets finishes building the response and writes it: merges
+// the two per-kind arrays into resp.Rows (E2), applies this request's E1
+// filters and paging to Rows only — the two per-kind arrays are returned
+// exactly as the caller built them, full and unfiltered — sets the
+// pagination headers (X-Total-Count/X-Page/X-Per-Page, the same envelope
+// parsePagination/setPaginationHeaders already give every other list
+// endpoint), and writes 200. Called from every return path in
+// handleGetManagedSecrets, including the two "degrade, never 500" early
+// returns, so a caller paging through this endpoint sees the same header
+// contract regardless of which path produced the response.
+func (s *Server) respondManagedSecrets(w http.ResponseWriter, r *http.Request, resp managedSecretsResponse) {
+	rows := buildManagedSecretRows(resp.ClusterConnectionSecrets, resp.AddonValuesSecrets)
+	rows = filterManagedSecretRows(rows, parseManagedSecretRowFilters(r))
+
+	p := parsePagination(r)
+	setPaginationHeaders(w, len(rows), p)
+	resp.Rows = applyPagination(rows, p)
 
 	writeJSON(w, http.StatusOK, resp)
 }

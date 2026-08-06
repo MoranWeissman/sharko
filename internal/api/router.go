@@ -1190,9 +1190,9 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// authenticated user (the register-cluster screen needs it before the
 	// user has picked a role).
 	mux.HandleFunc("GET /api/v1/system/capabilities", srv.handleGetSystemCapabilities)
-	// Managed-secrets visibility for the System page — read-tier, same
-	// no-explicit-gate convention as /providers, /config, and /secrets/status
-	// above (see handleGetManagedSecrets doc comment).
+	// Managed-secrets visibility for the System page — Viewer+ gated on
+	// "managed-secrets.list" (P3-E; previously the same no-explicit-gate
+	// convention as /providers, /config, and /secrets/status still below).
 	mux.HandleFunc("GET /api/v1/system/managed-secrets", srv.handleGetManagedSecrets)
 
 	// MARKETPLACE — what you could run. The curated list Sharko ships (plus

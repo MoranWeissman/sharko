@@ -7943,7 +7943,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Aggregates cluster-connection secrets (the ArgoCD cluster Secret per managed cluster) and addon-values secrets (pushed into remote clusters), plus each reconciler engine's cadence, last run, and last error. Built entirely from data already read for the cluster list and the two reconcilers' in-memory stats — no per-row Kubernetes call. A fact the server cannot currently determine is left empty/unknown rather than approximated. Any authenticated user may read this, the same convention as /providers, /config, and /secrets/status.",
+                "description": "Aggregates cluster-connection secrets (the ArgoCD cluster Secret per managed cluster) and addon-values secrets (pushed into remote clusters), plus each reconciler engine's cadence, last run, and last error. Built entirely from data already read for the cluster list and the two reconcilers' in-memory stats — no per-row Kubernetes call. A fact the server cannot currently determine is left empty/unknown rather than approximated. The response also carries a merged, worst-state-first ` + "`" + `rows` + "`" + ` array (both kinds flattened onto one shape, P3-E) — the only part of the response that honors the query params below. The two per-kind arrays above are always returned in full, unfiltered and unpaginated, for backward compatibility. An unrecognized filter value (e.g. an unknown state or kind) matches no row rather than returning an error.",
                 "produces": [
                     "application/json"
                 ],
@@ -7951,11 +7951,62 @@ const docTemplate = `{
                     "system"
                 ],
                 "summary": "Get every secret Sharko manages",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Rows filter: exact cluster name match",
+                        "name": "cluster",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Rows filter: exact addon name match (values rows only — connection rows have no addon and never match a non-empty value)",
+                        "name": "addon",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Rows filter: exact state match (in_sync, out_of_sync, missing, unknown, foreign)",
+                        "name": "state",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Rows filter: exact kind match (connection, values)",
+                        "name": "kind",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Rows filter: exact source match (e.g. git, AWS Secrets Manager)",
+                        "name": "source",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Rows paging: page number, default 1",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Rows paging: items per page, default 20, max 100",
+                        "name": "per_page",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "Managed secrets summary",
                         "schema": {
                             "$ref": "#/definitions/internal_api.managedSecretsResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -12530,6 +12581,63 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api.managedSecretRow": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "type": "string"
+                },
+                "applied_revision": {
+                    "type": "string"
+                },
+                "cluster": {
+                    "type": "string"
+                },
+                "compared_path": {
+                    "type": "string"
+                },
+                "compared_revision": {
+                    "type": "string"
+                },
+                "consecutive_failures": {
+                    "type": "integer"
+                },
+                "drift_source": {
+                    "type": "string"
+                },
+                "fight_count": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "description": "Kind is \"connection\" or \"values\" — which engine/array this row came\nfrom. Always present.",
+                    "type": "string"
+                },
+                "last_check_error": {
+                    "type": "string"
+                },
+                "last_checked": {
+                    "type": "string"
+                },
+                "last_repaired": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "self_heals": {
+                    "type": "boolean"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_api.managedSecretsEngineInfo": {
             "type": "object",
             "properties": {
@@ -12591,6 +12699,13 @@ const docTemplate = `{
                 },
                 "engines": {
                     "$ref": "#/definitions/internal_api.managedSecretsEngines"
+                },
+                "rows": {
+                    "description": "Rows (P3-E, E2) is both per-kind arrays merged into one list, shaped\nlike what the System page's table renders, worst-first ordered, and\nthe only part of this response that honors this request's filter\n(?cluster=, ?addon=, ?state=, ?kind=, ?source=) and paging (?page=,\n?per_page=) query params — see buildManagedSecretRows and\nfilterManagedSecretRows. ClusterConnectionSecrets/AddonValuesSecrets\nabove stay full and unfiltered on every request: this field is\nstrictly additive, so an existing caller reading the two per-kind\narrays sees no change at all.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.managedSecretRow"
+                    }
                 }
             }
         },

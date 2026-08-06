@@ -2866,6 +2866,46 @@ definitions:
           reconcile, same mechanism as the self-managed path).
         type: boolean
     type: object
+  internal_api.managedSecretRow:
+    properties:
+      addon:
+        type: string
+      applied_revision:
+        type: string
+      cluster:
+        type: string
+      compared_path:
+        type: string
+      compared_revision:
+        type: string
+      consecutive_failures:
+        type: integer
+      drift_source:
+        type: string
+      fight_count:
+        type: integer
+      kind:
+        description: |-
+          Kind is "connection" or "values" — which engine/array this row came
+          from. Always present.
+        type: string
+      last_check_error:
+        type: string
+      last_checked:
+        type: string
+      last_repaired:
+        type: string
+      name:
+        type: string
+      namespace:
+        type: string
+      self_heals:
+        type: boolean
+      source:
+        type: string
+      state:
+        type: string
+    type: object
   internal_api.managedSecretsEngineInfo:
     properties:
       interval_seconds:
@@ -2939,6 +2979,20 @@ definitions:
         type: array
       engines:
         $ref: '#/definitions/internal_api.managedSecretsEngines'
+      rows:
+        description: |-
+          Rows (P3-E, E2) is both per-kind arrays merged into one list, shaped
+          like what the System page's table renders, worst-first ordered, and
+          the only part of this response that honors this request's filter
+          (?cluster=, ?addon=, ?state=, ?kind=, ?source=) and paging (?page=,
+          ?per_page=) query params — see buildManagedSecretRows and
+          filterManagedSecretRows. ClusterConnectionSecrets/AddonValuesSecrets
+          above stay full and unfiltered on every request: this field is
+          strictly additive, so an existing caller reading the two per-kind
+          arrays sees no change at all.
+        items:
+          $ref: '#/definitions/internal_api.managedSecretRow'
+        type: array
     type: object
   internal_api.meResponse:
     properties:
@@ -9007,8 +9061,43 @@ paths:
         plus each reconciler engine's cadence, last run, and last error. Built entirely
         from data already read for the cluster list and the two reconcilers' in-memory
         stats — no per-row Kubernetes call. A fact the server cannot currently determine
-        is left empty/unknown rather than approximated. Any authenticated user may
-        read this, the same convention as /providers, /config, and /secrets/status.
+        is left empty/unknown rather than approximated. The response also carries
+        a merged, worst-state-first `rows` array (both kinds flattened onto one shape,
+        P3-E) — the only part of the response that honors the query params below.
+        The two per-kind arrays above are always returned in full, unfiltered and
+        unpaginated, for backward compatibility. An unrecognized filter value (e.g.
+        an unknown state or kind) matches no row rather than returning an error.
+      parameters:
+      - description: 'Rows filter: exact cluster name match'
+        in: query
+        name: cluster
+        type: string
+      - description: 'Rows filter: exact addon name match (values rows only — connection
+          rows have no addon and never match a non-empty value)'
+        in: query
+        name: addon
+        type: string
+      - description: 'Rows filter: exact state match (in_sync, out_of_sync, missing,
+          unknown, foreign)'
+        in: query
+        name: state
+        type: string
+      - description: 'Rows filter: exact kind match (connection, values)'
+        in: query
+        name: kind
+        type: string
+      - description: 'Rows filter: exact source match (e.g. git, AWS Secrets Manager)'
+        in: query
+        name: source
+        type: string
+      - description: 'Rows paging: page number, default 1'
+        in: query
+        name: page
+        type: integer
+      - description: 'Rows paging: items per page, default 20, max 100'
+        in: query
+        name: per_page
+        type: integer
       produces:
       - application/json
       responses:
@@ -9016,6 +9105,11 @@ paths:
           description: Managed secrets summary
           schema:
             $ref: '#/definitions/internal_api.managedSecretsResponse'
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Get every secret Sharko manages
