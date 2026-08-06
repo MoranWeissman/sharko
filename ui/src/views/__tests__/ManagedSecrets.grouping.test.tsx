@@ -47,6 +47,7 @@ const mockGetManagedSecrets = vi.fn()
 const mockGetClusterComparison = vi.fn()
 const mockGetConnectionSecretResource = vi.fn()
 const mockGetAddonValuesSecretResource = vi.fn()
+const mockFetchAuditLog = vi.fn()
 
 vi.mock('@/services/api', () => ({
   api: { getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args) },
@@ -58,6 +59,7 @@ vi.mock('@/services/api', () => ({
   resyncClusterLabels: vi.fn(),
   refreshAddonValuesSecret: vi.fn(),
   syncAddonValuesSecret: vi.fn(),
+  fetchAuditLog: (...args: unknown[]) => mockFetchAuditLog(...args),
 }))
 
 function LocationProbe() {
@@ -154,6 +156,7 @@ beforeEach(() => {
   mockGetClusterComparison.mockResolvedValue({ cluster: {} })
   mockGetConnectionSecretResource.mockResolvedValue({ ...blankedResource, name: 'prod-eu', namespace: 'argocd' })
   mockGetAddonValuesSecretResource.mockResolvedValue(blankedResource)
+  mockFetchAuditLog.mockResolvedValue({ entries: [] })
 })
 
 describe('ManagedSecrets — the backend type is a per-row fact (G1)', () => {

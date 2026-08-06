@@ -88,6 +88,7 @@ export function PageSizeSelector({
   pageSize,
   onChange,
   sizes,
+  label,
 }: {
   pageSize: PageSize;
   onChange: (size: PageSize) => void;
@@ -96,11 +97,16 @@ export function PageSizeSelector({
   // keep their current look. Callers that need a smaller option (e.g. the
   // Clusters page's 5/10/20/50/100 list) pass their own array.
   sizes?: PageSize[];
+  // Optional override for the leading word — defaults to "Show:" so every
+  // existing call site keeps its current copy. Managed Secrets (gitops-proud
+  // P4-H) passes "Rows per page:" — plainer about what the number controls,
+  // without renaming it for pages that never asked for the change.
+  label?: string;
 }) {
   const offered: PageSize[] = sizes ?? [10, 20, 50, 100];
   return (
     <div className="flex items-center gap-2">
-      <span className="text-xs text-[#2a5a7a] dark:text-gray-400">Show:</span>
+      <span className="text-xs text-[#2a5a7a] dark:text-gray-400">{label ?? 'Show:'}</span>
       <div className="flex gap-1">
         {offered.map((size) => (
           <button

@@ -47,7 +47,7 @@ describe('StatusMark', () => {
   it('keeps the word in plain dark ink for every state, colour only on the dot', () => {
     for (const state of ['in_sync', 'out_of_sync', 'missing', 'foreign', 'unknown']) {
       const { unmount } = render(<StatusMark status={state} />)
-      expect(screen.getByTestId('status-mark').className).toMatch(/text-\[#13293f\]/)
+      expect(screen.getByTestId('status-mark').className).toMatch(/text-\[#0a3a5a\]/)
       unmount()
     }
   })

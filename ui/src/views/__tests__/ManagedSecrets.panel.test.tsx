@@ -38,6 +38,8 @@ const mockGetAddonValuesSecretResource = vi.fn()
 const mockReconcileCluster = vi.fn()
 const mockRefreshAddonValuesSecret = vi.fn()
 
+const mockFetchAuditLog = vi.fn()
+
 vi.mock('@/services/api', () => ({
   api: { getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args) },
   getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
@@ -49,6 +51,7 @@ vi.mock('@/services/api', () => ({
   resyncClusterLabels: vi.fn(),
   refreshAddonValuesSecret: (...args: unknown[]) => mockRefreshAddonValuesSecret(...args),
   syncAddonValuesSecret: vi.fn(),
+  fetchAuditLog: (...args: unknown[]) => mockFetchAuditLog(...args),
 }))
 
 function authFor(role: string) {
@@ -181,6 +184,7 @@ beforeEach(() => {
   mockGetClusterComparison.mockResolvedValue({
     cluster: { name: 'prod-eu', labels: {}, last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded' } },
   })
+  mockFetchAuditLog.mockResolvedValue({ entries: [] })
 })
 
 async function openRow(key: string) {
