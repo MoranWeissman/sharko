@@ -64,12 +64,12 @@
 // configured backend genuinely is Vault — see addon_values_secret_source
 // on the API response). Never tooltip-only.
 //
-// S3/S8 (carried forward): sorting by state uses a real priority order
-// (StatusMark's statusSortRank: out_of_sync, missing, unknown, in_sync),
-// never the alphabet. A "the last check failed" reason — on BOTH kinds of
-// row since P1-B, a connection row's failed check renders unknown, not
-// out_of_sync — is a MAPPED, pre-written sentence from the server, never
-// raw error text.
+// S3/S8 (carried forward, reordered by G3): sorting by state uses a real
+// priority order (StatusMark's statusSortRank: missing, out_of_sync,
+// foreign, a FAILED check, a never-checked row, in_sync last), never the
+// alphabet. A "the last check failed" reason — on BOTH kinds of row since
+// P1-B, a connection row's failed check renders unknown, not out_of_sync —
+// is a MAPPED, pre-written sentence from the server, never raw error text.
 //
 // S5 (carried forward): the values-secret Diff makes NO server call, by
 // construction — it renders canned sentences from the row's own state
@@ -124,6 +124,42 @@
 // it was built from, whether the cluster has a key at all — all fine. The
 // value, its length, a hash of it, or a per-key "this one matches" verdict
 // the engines never actually computed — none of those, ever.
+//
+// ─────────────────────────────────────────────────────────────────────────
+// P4-G — the columns the maintainer asked for, an honest sort order, and
+// group-by fixes.
+//
+//   G1 — ADDON and SOURCE are real columns now, not a fact buried in a
+//        subline under the name: both sort, both filter (the two new
+//        selects next to Group by), and both are matched by the search
+//        box. The S3 honesty lock MOVES here — a connection row's SOURCE
+//        cell always reads its real compared-against fact ("git"), a
+//        values row's reads the real backend name — still on every row,
+//        never tooltip-only. A connection row's ADDON cell is a plain "—"
+//        (it isn't an addon secret; see kindLabel/cell-addon below).
+//
+//   G2 — see internal/api/system_managed_secrets.go's addonValuesSecretSourceLabel:
+//        the demo backend now gets its own SOURCE name ("the demo secrets
+//        store") instead of the generic "secrets store" fallback, so
+//        `make demo-big` has something real to show in the new column.
+//
+//   G3 — the rank table got more honest: missing first (nothing exists to
+//        Sync onto — a harder stop than a wrong value Sync can overwrite),
+//        then out_of_sync, then foreign, then a row whose last check
+//        actually FAILED, then a row that's simply never been checked,
+//        in_sync last. See StatusMark.tsx's statusSortRank for the exact
+//        table and the reasoning on where foreign landed.
+//
+//   G4 — group-by grows up: a group holding any row that isn't in_sync
+//        opens itself by default (groupHasIssues) — a click still toggles
+//        either way, and that click is remembered per group key for the
+//        rest of the session. Groups themselves are now explicitly ordered
+//        worst-first-then-by-name (buildRowGroups' own sort), and in addon
+//        view the "not an addon" connections bucket always sorts LAST,
+//        never mixed in by its own state. Dark-mode "selected" also
+//        stopped borrowing StatusMark's teal (it read as "in sync" next to
+//        an actually in-sync row) — it's the same navy #1a3d5c the sidebar
+//        already uses, in both themes, same as PaginationControls.
 
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -178,10 +214,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 // every keystroke.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// The four states, worst first — the order the filter chips render in and
-// the order a group header lists its sums in. Declared here because both
-// the chips (far below) and groupSummary (just below) read it.
-const CHIP_ORDER: ResourceStatus[] = ['out_of_sync', 'missing', 'foreign', 'unknown', 'in_sync']
+// The five states, worst first (G3, gitops-proud P4-G — kept in lockstep
+// with StatusMark's statusSortRank) — the order the filter chips render in
+// and the order a group header lists its sums in. Declared here because
+// both the chips (far below) and groupSummary (just below) read it.
+const CHIP_ORDER: ResourceStatus[] = ['missing', 'out_of_sync', 'foreign', 'unknown', 'in_sync']
 
 /**
  * The one sentence Sharko says about a secret somebody else created — on the
@@ -333,10 +370,41 @@ export interface RowGroup {
 const CONNECTIONS_GROUP_KEY = '__connections__'
 
 /**
- * buildRowGroups splits already-sorted rows into groups, in the order each
- * group's FIRST row appears. That is deliberate: the page's default sort
- * is worst-first, so groups with problems in them float to the top without
- * needing a second, separate rule anyone has to learn.
+ * worstRankInGroup (G4) is the best (lowest = worst) statusSortRank among a
+ * group's own rows — what "this group's worst problem" means for ordering
+ * purposes. A group with an out-of-sync row in it is a worse group than one
+ * that's all in-sync, even if the in-sync one happens to have more rows.
+ */
+function worstRankInGroup(rows: UnifiedRow[]): number {
+  let best = Infinity
+  for (const r of rows) {
+    const rank = statusSortRank(r.state, !!r.lastCheckError)
+    if (rank < best) best = rank
+  }
+  return best
+}
+
+/**
+ * groupHasIssues (G4) is the exact rule that decides whether a group opens
+ * itself by default: does ANY row in it fail to be in_sync. Foreign,
+ * missing, out_of_sync, and both "unknown" flavors all count — in_sync is
+ * the one state that means "nothing here is worth a look."
+ */
+export function groupHasIssues(group: RowGroup): boolean {
+  return group.rows.some((r) => toResourceStatus(r.state) !== 'in_sync')
+}
+
+/**
+ * buildRowGroups splits already-sorted rows into groups, then orders the
+ * GROUPS themselves worst-first, tie-broken by label (G4) — explicit,
+ * rather than relying on "whichever group's first row happened to sort
+ * highest", so the rule is the same one worstRankInGroup states and nothing
+ * about row-arrival order can silently change it. In addon view only, the
+ * "not an addon" connections bucket sorts LAST regardless of its own
+ * state — it is never really competing with the addons for attention, it's
+ * the honest leftover bucket, and burying it under an in-sync addon while a
+ * failing connection secret sat at the top would undercut the whole point
+ * of calling it out separately.
  */
 export function buildRowGroups(rows: UnifiedRow[], groupBy: GroupBy): RowGroup[] {
   if (groupBy === 'none') return []
@@ -370,7 +438,19 @@ export function buildRowGroups(rows: UnifiedRow[], groupBy: GroupBy): RowGroup[]
     group.rows.push(row)
   }
 
-  return order.map((k) => byKey.get(k)!)
+  const groups = order.map((k) => byKey.get(k)!)
+  groups.sort((a, b) => {
+    if (groupBy === 'addon') {
+      const aConn = a.key === CONNECTIONS_GROUP_KEY
+      const bConn = b.key === CONNECTIONS_GROUP_KEY
+      if (aConn !== bConn) return aConn ? 1 : -1
+    }
+    const rankA = worstRankInGroup(a.rows)
+    const rankB = worstRankInGroup(b.rows)
+    if (rankA !== rankB) return rankA - rankB
+    return a.label < b.label ? -1 : a.label > b.label ? 1 : 0
+  })
+  return groups
 }
 
 /**
@@ -397,9 +477,15 @@ export function groupSummary(rows: UnifiedRow[]): string {
   return parts.join(' · ')
 }
 
-/** The row's small grey "kind · follows source" line — the honesty lock, printed once so the row and nowhere else has to remember the exact wording. */
-function kindSourceLine(row: UnifiedRow): string {
-  return row.kind === 'connection' ? `cluster connection · follows ${row.sourceLabel}` : `addon values · follows ${row.sourceLabel}`
+/**
+ * The row's small grey KIND line under its identity — "cluster connection"
+ * or "addon values". G1 moved the "follows <source>" half of this into its
+ * own SOURCE column (see cell-source below) so the fact can sort and
+ * filter; this line now states only what it always also visually carries
+ * via the KeyRound/Lock glyph next to it.
+ */
+function kindLabel(row: UnifiedRow): string {
+  return row.kind === 'connection' ? 'cluster connection' : 'addon values'
 }
 
 function matchesSearch(row: UnifiedRow, q: string): boolean {
@@ -407,16 +493,21 @@ function matchesSearch(row: UnifiedRow, q: string): boolean {
     row.cluster.toLowerCase().includes(q) ||
     (row.addon ?? '').toLowerCase().includes(q) ||
     (row.secretName ?? '').toLowerCase().includes(q) ||
-    (row.secretNamespace ?? '').toLowerCase().includes(q)
+    (row.secretNamespace ?? '').toLowerCase().includes(q) ||
+    // G1: the SOURCE column is a real, matched fact too.
+    row.sourceLabel.toLowerCase().includes(q)
   )
 }
 
-type SortKey = 'name' | 'cluster' | 'checked' | 'state'
+type SortKey = 'name' | 'addon' | 'cluster' | 'source' | 'checked' | 'state'
 
 // compareRows never sorts state alphabetically (S3) — it defers to
 // StatusMark's statusSortRank, the same worst-first priority order ArgoCD
-// uses, so a click on the State header surfaces problems instead of
-// burying "out_of_sync" between "in_sync" and "missing".
+// uses (reordered for G3 — see StatusMark.tsx), so a click on the State
+// header surfaces problems instead of burying "missing" between "in_sync"
+// and "out_of_sync". The state comparison also passes whether EACH row's
+// last check failed, so two "unknown" rows sort the failed one first —
+// same status word, different rank.
 function compareRows(a: UnifiedRow, b: UnifiedRow, key: SortKey): number {
   switch (key) {
     case 'name': {
@@ -424,15 +515,22 @@ function compareRows(a: UnifiedRow, b: UnifiedRow, key: SortKey): number {
       const bn = `${b.secretNamespace ?? ''}/${b.secretName ?? ''}`
       return an < bn ? -1 : an > bn ? 1 : 0
     }
+    case 'addon': {
+      const aa = a.addon ?? ''
+      const ba = b.addon ?? ''
+      return aa < ba ? -1 : aa > ba ? 1 : 0
+    }
     case 'cluster':
       return a.cluster < b.cluster ? -1 : a.cluster > b.cluster ? 1 : 0
+    case 'source':
+      return a.sourceLabel < b.sourceLabel ? -1 : a.sourceLabel > b.sourceLabel ? 1 : 0
     case 'checked': {
       const ac = a.lastChecked ?? ''
       const bc = b.lastChecked ?? ''
       return ac < bc ? -1 : ac > bc ? 1 : 0
     }
     case 'state':
-      return statusSortRank(a.state) - statusSortRank(b.state)
+      return statusSortRank(a.state, !!a.lastCheckError) - statusSortRank(b.state, !!b.lastCheckError)
     default:
       return 0
   }
@@ -507,7 +605,12 @@ function FilterChip({
       data-testid={`filter-chip-${status}`}
       className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 transition-colors ${
         active
-          ? 'text-[#1a3d5c] underline decoration-2 underline-offset-4 ring-[#1a3d5c] dark:text-teal-300 dark:ring-teal-400'
+          ? // G4: the house navy in both themes (a lighter tint in dark
+            // mode for contrast against a dark surface — same family the
+            // app already uses for navy elsewhere, e.g. FirstRunWizard's
+            // icons), never StatusMark's teal — "selected" is a fact about
+            // the UI, not a claim that this state is healthy.
+            'text-[#1a3d5c] underline decoration-2 underline-offset-4 ring-[#1a3d5c] dark:text-blue-400 dark:ring-blue-400'
           : 'text-[#3a5770] ring-[#d7e2ea] hover:ring-[#b7c9d6] dark:text-gray-400 dark:ring-gray-700 dark:hover:ring-gray-600'
       }`}
     >
@@ -543,6 +646,7 @@ function SortableTh({
       <button
         type="button"
         onClick={() => onSort(sortKeyName)}
+        data-testid={`sort-${sortKeyName}`}
         className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-[#8098ac] hover:text-teal-700 dark:text-gray-500 dark:hover:text-teal-400"
       >
         {label}
@@ -1418,11 +1522,10 @@ function SecretTableRow({
       className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1a3d5c] dark:focus-visible:ring-teal-400"
     >
       {/* H6: the identity is the darkest, boldest text on the row. The
-          small grey line under it carries the S3 honesty lock (kind +
-          source) — this replaces the old separate COMPARED AGAINST
-          column, which said the same thing two columns away from the
-          kind glyph. The source now comes from the ROW (G1), not from
-          one label for the whole page.
+          small grey line under it names the KIND only now (kindLabel) —
+          the "follows <source>" half of the old combined line moved into
+          its own SOURCE column (G1) so the fact can sort and filter, not
+          just sit in a subline.
 
           The status edge strip (copied from ArgoCD's own list and tile
           views) lives on this same cell, as a left border — a `<td>`
@@ -1443,9 +1546,18 @@ function SecretTableRow({
             <div className="whitespace-nowrap font-mono text-sm font-semibold text-[#08192b] dark:text-white">
               {row.secretNamespace && row.secretName ? `${row.secretNamespace}/${row.secretName}` : '—'}
             </div>
-            <div className="text-[11px] text-[#5c7288] dark:text-gray-500">{kindSourceLine(row)}</div>
+            <div className="text-[11px] text-[#5c7288] dark:text-gray-500">{kindLabel(row)}</div>
           </div>
         </div>
+      </TableCell>
+      {/*
+        Addon (G1): values rows show the addon they carry values for.
+        Connection rows show a plain dash — they are not addon secrets,
+        matching the same "—" the identity cell above already uses for
+        "nothing here", not an invented word like "n/a" or a made-up noun.
+      */}
+      <TableCell className="py-1.5 text-sm text-[#3a5770] dark:text-gray-300" data-testid="cell-addon">
+        {row.kind === 'values' ? row.addon : '—'}
       </TableCell>
       {/*
         Cluster: connection rows leave this blank ON PURPOSE — the
@@ -1457,6 +1569,11 @@ function SecretTableRow({
       */}
       <TableCell className="py-1.5 text-sm text-[#3a5770] dark:text-gray-300">
         {row.kind === 'values' ? row.cluster : null}
+      </TableCell>
+      {/* Source (G1): the S3 honesty lock, now a real column — sortable,
+          filterable, and matched by the search box, on every row. */}
+      <TableCell className="py-1.5 text-sm text-[#3a5770] dark:text-gray-300" data-testid="cell-source">
+        {row.sourceLabel}
       </TableCell>
       <TableCell className="py-1.5">
         <TimeChip iso={row.lastChecked} />
@@ -1487,7 +1604,8 @@ function SecretTableRow({
 function GroupHeaderRow({ group, expanded, onToggle }: { group: RowGroup; expanded: boolean; onToggle: () => void }) {
   return (
     <TableRow className="hover:bg-transparent">
-      <TableCell colSpan={5} className="p-0">
+      {/* Name, Addon, Cluster, Source, Checked, State, plus the actions column (G1 added Addon + Source). */}
+      <TableCell colSpan={7} className="p-0">
         <button
           type="button"
           onClick={onToggle}
@@ -1600,12 +1718,47 @@ export function ManagedSecrets() {
     },
     [updateParams],
   )
-  // Which group parents are open. Collapsed by default — the same
-  // interaction AddonVersionList uses, which the maintainer already knows.
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
-  const toggleGroup = useCallback((key: string) => {
-    setExpandedGroups((g) => ({ ...g, [key]: !g[key] }))
+  // Which group parents are open (G4). The DEFAULT is computed, not stored:
+  // a group holding any row that isn't in_sync opens itself (see
+  // groupHasIssues); an explicit click on a group's header overrides that
+  // default for that one group key for the rest of the session — the
+  // user's own choice always wins over the computed default, in either
+  // direction (an auto-open group can be collapsed, a quiet one opened).
+  const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>({})
+  const isGroupExpanded = useCallback(
+    (group: RowGroup) => (group.key in groupOverrides ? groupOverrides[group.key] : groupHasIssues(group)),
+    [groupOverrides],
+  )
+  const toggleGroup = useCallback((group: RowGroup) => {
+    setGroupOverrides((g) => ({ ...g, [group.key]: !(group.key in g ? g[group.key] : groupHasIssues(group)) }))
   }, [])
+
+  // G1 — Addon and Source are filterable columns, same URL-persisted
+  // pattern the chip filter and search text already use. Empty string
+  // means "no filter", the same convention `search` uses, and is never
+  // written to the URL.
+  const [addonFilter, setAddonFilterState] = useState<string>(() => searchParams.get('addon') ?? '')
+  const setAddonFilter = useCallback(
+    (next: string) => {
+      setAddonFilterState(next)
+      updateParams((p) => {
+        if (next) p.set('addon', next)
+        else p.delete('addon')
+      })
+    },
+    [updateParams],
+  )
+  const [sourceFilter, setSourceFilterState] = useState<string>(() => searchParams.get('source') ?? '')
+  const setSourceFilter = useCallback(
+    (next: string) => {
+      setSourceFilterState(next)
+      updateParams((p) => {
+        if (next) p.set('source', next)
+        else p.delete('source')
+      })
+    },
+    [updateParams],
+  )
 
   const [sortKey, setSortKey] = useState<SortKey>('state')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -1654,10 +1807,28 @@ export function ManagedSecrets() {
     return c
   }, [searchFiltered])
 
+  // G1 — the option lists for the Addon/Source filter selects come off
+  // EVERY row (unifiedRows), not the search-narrowed set — an option
+  // shouldn't vanish out from under a reader mid-search just because their
+  // typing temporarily excluded every row of that addon.
+  const addonOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of unifiedRows) if (r.addon) set.add(r.addon)
+    return [...set].sort()
+  }, [unifiedRows])
+  const sourceOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of unifiedRows) set.add(r.sourceLabel)
+    return [...set].sort()
+  }, [unifiedRows])
+
   const filtered = useMemo(() => {
-    if (stateFilter === 'all') return searchFiltered
-    return searchFiltered.filter((r) => toResourceStatus(r.state) === stateFilter)
-  }, [searchFiltered, stateFilter])
+    let rows = searchFiltered
+    if (stateFilter !== 'all') rows = rows.filter((r) => toResourceStatus(r.state) === stateFilter)
+    if (addonFilter) rows = rows.filter((r) => r.addon === addonFilter)
+    if (sourceFilter) rows = rows.filter((r) => r.sourceLabel === sourceFilter)
+    return rows
+  }, [searchFiltered, stateFilter, addonFilter, sourceFilter])
 
   const sorted = useMemo(() => {
     const copy = [...filtered]
@@ -1675,7 +1846,7 @@ export function ManagedSecrets() {
 
   useEffect(() => {
     setPage(1)
-  }, [search, stateFilter, sortKey, sortDir, pageSize, groupBy])
+  }, [search, stateFilter, addonFilter, sourceFilter, sortKey, sortDir, pageSize, groupBy])
 
   const grouped = groupBy !== 'none'
   const pageUnitCount = grouped ? groups.length : sorted.length
@@ -1857,6 +2028,42 @@ export function ManagedSecrets() {
             className="w-full rounded-lg border border-[#c7d6e0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500"
           />
         </div>
+        {/* G1 — Addon and Source are filterable columns, plain <select>s
+            (their value counts can run high, unlike the fixed 5-state
+            chips above) with an explicit "All" option, options drawn from
+            every row so the list never shrinks out from under a search. */}
+        <label className="flex items-center gap-1.5 text-xs text-[#5c7288] dark:text-gray-400">
+          Addon
+          <select
+            value={addonFilter}
+            onChange={(e) => setAddonFilter(e.target.value)}
+            data-testid="addon-filter-select"
+            className="rounded-lg border border-[#c7d6e0] bg-white py-1 pl-2 pr-6 text-xs text-[#3a5770] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+          >
+            <option value="">All</option>
+            {addonOptions.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-[#5c7288] dark:text-gray-400">
+          Source
+          <select
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value)}
+            data-testid="source-filter-select"
+            className="rounded-lg border border-[#c7d6e0] bg-white py-1 pl-2 pr-6 text-xs text-[#3a5770] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+          >
+            <option value="">All</option>
+            {sourceOptions.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </label>
         {/* G2 — Group by. `None` is the default and is the flat list this
             page has always shown; the other two fold the same rows under a
             parent line you click to open. */}
@@ -1878,7 +2085,11 @@ export function ManagedSecrets() {
                 data-testid={`group-by-${value}`}
                 className={`px-2.5 py-1 text-xs font-medium ${
                   groupBy === value
-                    ? 'bg-[#1a3d5c] text-white dark:bg-teal-700'
+                    ? // G4: navy in both themes — the app's own "selected"
+                      // colour (the sidebar's #1a3d5c), never StatusMark's
+                      // teal, which reads as "in sync" next to a row that
+                      // genuinely is.
+                      'bg-[#1a3d5c] text-white'
                     : 'bg-white text-[#3a5770] hover:bg-[#f2f6f9] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
                 }`}
               >
@@ -1909,7 +2120,9 @@ export function ManagedSecrets() {
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <SortableTh label="Name" sortKeyName="name" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
+                <SortableTh label="Addon" sortKeyName="addon" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortableTh label="Cluster" sortKeyName="cluster" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
+                <SortableTh label="Source" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortableTh label="Checked" sortKeyName="checked" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortableTh label="State" sortKeyName="state" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <TableHead className="w-10" />
@@ -1921,10 +2134,10 @@ export function ManagedSecrets() {
                     <Fragment key={group.key}>
                       <GroupHeaderRow
                         group={group}
-                        expanded={!!expandedGroups[group.key]}
-                        onToggle={() => toggleGroup(group.key)}
+                        expanded={isGroupExpanded(group)}
+                        onToggle={() => toggleGroup(group)}
                       />
-                      {expandedGroups[group.key] &&
+                      {isGroupExpanded(group) &&
                         group.rows.map((row) => (
                           <SecretTableRow
                             key={row.key}

@@ -270,28 +270,49 @@ const (
 
 // managedSecretStateRank is the worst-first order the System page's own
 // StatusMark.statusSortRank uses (ui/src/components/resource/StatusMark.tsx)
-// — out_of_sync first (a real, confirmed mismatch), then missing, then
-// foreign (a boundary worth knowing about but not damage), then unknown
-// (nothing proven either way), in_sync last. Kept in exact lockstep with
-// that table on purpose: the merged Rows array is meant to read in the same
-// order the page itself renders, not a server-invented ranking.
+// — reordered for G3 (gitops-proud P4-G): missing first (nothing exists to
+// Sync onto — a harder stop than a wrong value Sync can overwrite), then
+// out_of_sync (a real, confirmed mismatch), then foreign (a boundary worth
+// knowing about but not damage — kept in the same relative seat the old
+// table gave it, right after the two real comparisons; nothing in the old
+// order argued for moving it), then a FAILED check (see
+// managedSecretCheckFailedRank below), then a genuinely never-checked row,
+// in_sync last. Kept in exact lockstep with the UI table on purpose: the
+// merged Rows array is meant to read in the same order the page itself
+// renders, not a server-invented ranking.
 var managedSecretStateRank = map[string]int{
-	"out_of_sync": 0,
-	"missing":     1,
+	"missing":     0,
+	"out_of_sync": 1,
 	"foreign":     2,
-	"unknown":     3,
-	"in_sync":     4,
+	// "unknown" WITHOUT a check error ("not checked yet") ranks here — a
+	// FAILED check outranks it by one slot, see managedSecretCheckFailedRank.
+	"unknown": 4,
+	"in_sync": 5,
 }
+
+// managedSecretCheckFailedRank is where a row whose last check genuinely
+// FAILED ranks — one slot ahead of a row that has simply never been looked
+// at, even though both carry the exact same "unknown" state word. A failed
+// check is Sharko attempting and hitting a wall; a never-checked row is
+// Sharko not having gotten to it yet — the first is the nearer, more
+// actionable "Sharko doesn't know".
+const managedSecretCheckFailedRank = 3
 
 // managedSecretStateSortRank returns a row's sort weight. A state the rank
 // table doesn't recognize reads as "unknown" — the same fallback
 // toResourceStatus uses in the UI for a state string it doesn't know, never
-// a crash or a silent last-place drop.
-func managedSecretStateSortRank(state string) int {
-	if rank, ok := managedSecretStateRank[state]; ok {
-		return rank
+// a crash or a silent last-place drop. hasCheckError promotes an "unknown"
+// (or unrecognized) row to managedSecretCheckFailedRank — pass
+// row.LastCheckError != "".
+func managedSecretStateSortRank(state string, hasCheckError bool) int {
+	rank, ok := managedSecretStateRank[state]
+	if !ok {
+		rank = managedSecretStateRank["unknown"]
 	}
-	return managedSecretStateRank["unknown"]
+	if hasCheckError && (state == "unknown" || !ok) {
+		return managedSecretCheckFailedRank
+	}
+	return rank
 }
 
 // buildManagedSecretRows merges the two already-built per-kind arrays into
@@ -345,7 +366,8 @@ func buildManagedSecretRows(conn []connectionSecretRow, values []addonValuesSecr
 // unchanged data never reshuffles a row across pages.
 func sortManagedSecretRowsWorstFirst(rows []managedSecretRow) {
 	sort.SliceStable(rows, func(i, j int) bool {
-		ri, rj := managedSecretStateSortRank(rows[i].State), managedSecretStateSortRank(rows[j].State)
+		ri := managedSecretStateSortRank(rows[i].State, rows[i].LastCheckError != "")
+		rj := managedSecretStateSortRank(rows[j].State, rows[j].LastCheckError != "")
 		if ri != rj {
 			return ri < rj
 		}
@@ -1023,10 +1045,18 @@ func (s *Server) clusterConnectionEngineInfo() managedSecretsEngineInfo {
 // factory itself reads (s.addonSecretCfg) — never a fixed, possibly-wrong
 // product name. Types with no dedicated backend implementation today
 // ("vault" — the doc comment on AddonSecretProviderConfig.Type notes "future;
-// current code has no vault factory"), no config at all, or a non-production
-// type (the demo server's synthetic "demo" backend) fall back to the
+// current code has no vault factory") or no config at all fall back to the
 // generic, lowercase, article-free "secrets store" — honest about not
 // knowing, rather than guessing a product name Sharko isn't actually using.
+//
+// G2 (gitops-proud P4-G): "demo" gets its OWN name here, not the generic
+// fallback — demo mode is a real, known backend (internal/demo/setup.go
+// sets this exact Type on every SetupDemoServer call), not an unimplemented
+// or misconfigured one, so `make demo-big`'s rows earn the same courtesy
+// every real provider above already gets, instead of showing the same
+// "secrets store" fallback on every single row. This is demo-scoped by
+// construction: the "demo" case only ever matches when demo mode itself set
+// the Type, so no production path is inventing a name here.
 func (s *Server) addonValuesSecretSourceLabel() string {
 	cfg := s.addonSecretCfg()
 	if cfg == nil {
@@ -1041,6 +1071,8 @@ func (s *Server) addonValuesSecretSourceLabel() string {
 		return "Google Secret Manager"
 	case "azure", "azure-kv", "azure-key-vault":
 		return "Azure Key Vault"
+	case "demo":
+		return "the demo secrets store"
 	default:
 		return "secrets store"
 	}

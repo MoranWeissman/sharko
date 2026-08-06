@@ -13,11 +13,19 @@ describe('StatusMark', () => {
     expect(statusLabel('foreign')).toBe('Foreign')
   })
 
-  it('sorts foreign after out-of-sync and missing, and ahead of never-checked', () => {
-    expect(statusSortRank('out_of_sync')).toBeLessThan(statusSortRank('missing'))
-    expect(statusSortRank('missing')).toBeLessThan(statusSortRank('foreign'))
+  it('sorts missing first, then out-of-sync, then foreign, then never-checked, in-sync last (G3)', () => {
+    expect(statusSortRank('missing')).toBeLessThan(statusSortRank('out_of_sync'))
+    expect(statusSortRank('out_of_sync')).toBeLessThan(statusSortRank('foreign'))
     expect(statusSortRank('foreign')).toBeLessThan(statusSortRank('unknown'))
     expect(statusSortRank('unknown')).toBeLessThan(statusSortRank('in_sync'))
+  })
+
+  it('sorts a FAILED check ahead of a genuinely never-checked row — same "unknown" word, different rank (G3)', () => {
+    expect(statusSortRank('unknown', true)).toBeLessThan(statusSortRank('unknown', false))
+    // Still behind foreign, still ahead of in_sync — a failed check doesn't
+    // jump the whole queue, it only outranks the "nobody's looked" case.
+    expect(statusSortRank('foreign')).toBeLessThan(statusSortRank('unknown', true))
+    expect(statusSortRank('unknown', true)).toBeLessThan(statusSortRank('in_sync'))
   })
 
   it('paints foreign neutral — never red, never amber', () => {

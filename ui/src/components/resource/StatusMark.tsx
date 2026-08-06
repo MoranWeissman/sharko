@@ -110,26 +110,48 @@ export function statusLabel(state: string): string {
 }
 
 /**
- * Worst-first sort rank (S3): out_of_sync, then missing, then foreign, then
- * unknown, then in_sync last. Ascending sort on this rank is "problems float
- * to the top", matching ArgoCD's own status-priority sort — NEVER sort
- * states alphabetically (that buries "out_of_sync" between "in_sync" and
- * "missing").
+ * Worst-first sort rank (S3, reordered for G3 — gitops-proud P4-G): missing
+ * first, then out_of_sync, then foreign, then a FAILED check, then a
+ * genuinely never-checked row, in_sync last. Ascending sort on this rank is
+ * "problems float to the top", matching ArgoCD's own status-priority sort —
+ * NEVER sort states alphabetically (that buries "out_of_sync" between
+ * "in_sync" and "missing").
  *
- * "Foreign" sits below the two damaged states and above "not checked yet": a
- * boundary you should know about matters more than a row nobody has looked
- * at, and less than a secret that is wrong or absent.
+ * G3's honesty call: "missing" now outranks "out_of_sync" — nothing exists
+ * to Sync onto yet, which is a harder stop than a wrong value Sync can
+ * simply overwrite. "Foreign" keeps its P1-A spot right after out_of_sync —
+ * a boundary worth knowing about, but not damage Sharko can fix — and this
+ * lane found no evidence in the old table (out_of_sync, missing, foreign,
+ * unknown, in_sync) for a stronger claim than "adjacent to the two real
+ * comparisons, ahead of the two 'Sharko doesn't know' cases", so it keeps
+ * that same relative seat.
+ *
+ * "unknown" used to be one bucket. It still is ONE STATE the server sends,
+ * but it is no longer one RANK: a row whose last check genuinely FAILED
+ * (hasCheckError) is a nearer, more actionable "Sharko doesn't know" than a
+ * row that has simply never been looked at — so it sorts one slot higher.
+ * Both stay the exact same status word, dot, and strip colour; only the
+ * ORDER changes. Pass the row's own `!!lastCheckError` — omitting it always
+ * reads as "not checked yet", the safe default when the caller has no
+ * opinion.
  */
 const STATUS_RANK: Record<ResourceStatus, number> = {
-  out_of_sync: 0,
-  missing: 1,
+  missing: 0,
+  out_of_sync: 1,
   foreign: 2,
-  unknown: 3,
-  in_sync: 4,
+  // "unknown" WITHOUT a check error ("not checked yet") sits here — a
+  // FAILED check (see CHECK_FAILED_RANK below) outranks it by one slot.
+  unknown: 4,
+  in_sync: 5,
 }
 
-export function statusSortRank(state: string): number {
-  return STATUS_RANK[toResourceStatus(state)]
+/** Where a FAILED check ("Sharko looked and the check itself broke") ranks — one slot ahead of a genuinely never-checked row, both still the "unknown" status word. */
+const CHECK_FAILED_RANK = 3
+
+export function statusSortRank(state: string, hasCheckError = false): number {
+  const s = toResourceStatus(state)
+  if (s === 'unknown' && hasCheckError) return CHECK_FAILED_RANK
+  return STATUS_RANK[s]
 }
 
 /**
