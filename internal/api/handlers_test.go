@@ -112,6 +112,10 @@ type fakeReconciler struct {
 	// consecutive-failure count, same keying/nil-means-unknown convention
 	// as itemError above.
 	itemConsecutiveFailures map[[2]string]int
+	// knownItemCount (P3-F1) is what KnownItemCount reports — the blast
+	// radius a "Refresh all" audit entry states. 0 is the real "no pass has
+	// run yet" answer, which is what most tests want.
+	knownItemCount int
 
 	// checkOutcome/checkErr and syncOutcome/syncErr (S4) are what
 	// CheckOne/SyncOne return; checkCalls/syncCalls record every
@@ -177,6 +181,10 @@ func (r *fakeReconciler) LastItemConsecutiveFailures(cluster, addon string) (int
 	}
 	c, ok := r.itemConsecutiveFailures[[2]string{cluster, addon}]
 	return c, ok
+}
+
+func (r *fakeReconciler) KnownItemCount() int {
+	return r.knownItemCount
 }
 
 func (r *fakeReconciler) CheckOne(_ context.Context, cluster, addon string) (string, error) {

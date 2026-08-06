@@ -334,6 +334,16 @@ func (r *demoAddonValuesReconciler) LastItemConsecutiveFailures(_, _ string) (in
 	return 0, false
 }
 
+// KnownItemCount (P3-F1) reports how many cluster+addon pairs this demo
+// engine has on file — the same real number the live engine reports, so
+// the audit entry a demo "Refresh all" writes states a blast radius the
+// maintainer can check against the rows on screen.
+func (r *demoAddonValuesReconciler) KnownItemCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.valid)
+}
+
 // demoForeignRefusal is the sentence a demo Sync gets back for a row whose
 // secret Sharko did not create. Kept word-for-word identical to
 // internal/secrets.ErrForeignSecret (the real engine's refusal) and to the

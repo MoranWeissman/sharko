@@ -193,10 +193,17 @@ func (s *Server) handleReconcileCluster(w http.ResponseWriter, r *http.Request) 
 
 	s.reconcilerCheckTrigger()
 
+	// P3-F1: the entry states the REAL blast radius. This endpoint takes one
+	// cluster name in its path but the check it starts covers every cluster
+	// (see the note above), and the old detail line — "read-only check of
+	// every cluster's connection secret" — left a reader with no idea
+	// whether "every" meant 3 clusters or 300. clusterCheckBlastRadius
+	// counts what the reconciler actually holds records for, and says
+	// nothing numeric when it cannot count.
 	audit.Enrich(r.Context(), audit.Fields{
 		Event:    "cluster_connection_secret_check_triggered",
 		Resource: fmt.Sprintf("cluster:%s", name),
-		Detail:   "read-only check of every cluster's connection secret",
+		Detail:   clusterCheckBlastRadius(s.clusterRecon.KnownClusterCount()),
 	})
 
 	writeJSON(w, http.StatusAccepted, map[string]string{

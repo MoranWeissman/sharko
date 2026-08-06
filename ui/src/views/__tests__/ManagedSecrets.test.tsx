@@ -647,7 +647,7 @@ describe('ManagedSecrets', () => {
     expect(within(panel).queryByTestId('detail-drift-source')).not.toBeInTheDocument()
   })
 
-  it('the values-secret Diff never makes a network call — it restates the row state, the real source, and the S8 check-failure sentence', async () => {
+  it('a values-secret row never fires the label-drift comparison — its verdict comes from the row state alone', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
@@ -657,7 +657,10 @@ describe('ManagedSecrets', () => {
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).getByText(/Carries values for addon/)).toBeInTheDocument()
     expect(within(panel).getByText('Compared against AWS Secrets Manager — git only holds a pointer to it.')).toBeInTheDocument()
-    expect(within(panel).getByText(/Does not match its source right now/)).toBeInTheDocument()
+    // P3-F2: the verdict is one of the five edge sentences.
+    expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent(
+      "These differ — Sync writes the source's version onto the cluster.",
+    )
 
     // S8: the mapped canned sentence shows, plainly labeled as a failed
     // check — never implying the state itself is the report of drift.
@@ -665,13 +668,17 @@ describe('ManagedSecrets', () => {
       "The last check failed: Sharko couldn't fetch this secret's value from the vault.",
     )
 
-    // Never a live fetch for a values-secret Diff — no content to leak.
+    // Never a label-drift fetch for a values row — that comparison is a
+    // connection-secret thing and a values secret's content must never
+    // reach the browser.
     expect(mockGetClusterComparison).not.toHaveBeenCalled()
 
-    // A different (in-sync) values row shows the matching-source sentence,
-    // still with zero network calls.
+    // A different (in-sync) values row shows the matching verdict, still
+    // with no label-drift call.
     fireEvent.click(screen.getByTestId('secret-row-values-prod-eu-datadog'))
-    await waitFor(() => expect(within(panel).getByText('Matches its source.')).toBeInTheDocument())
+    await waitFor(() =>
+      expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('These match — the cluster has what the source says.'),
+    )
     expect(mockGetClusterComparison).not.toHaveBeenCalled()
   })
 

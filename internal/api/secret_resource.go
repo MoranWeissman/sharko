@@ -14,7 +14,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
@@ -56,6 +59,16 @@ import (
 // it cannot leak a length. ArgoCD's own resource view does exactly this
 // (a Secret renders with its values replaced by asterisks), so this is a
 // known-safe shape, not a new risk being invented.
+//
+// The same rule now runs through the METADATA too (P3-F2): annotation
+// values are blanked by default and only a short, named list of Sharko's
+// own provenance keys comes through — see annotationsSafeToShow, which
+// also explains why labels are the deliberate exception.
+//
+// AUDIT (P3-F1) — opening a live secret object writes an audit entry.
+// GETs are not audited anywhere else in Sharko and this is not the start
+// of that: it is the one read where a person asks to look at a real
+// Secret. See auditSecretResourceRead.
 
 // blankedValue is what every secret data key's value renders as. A fixed
 // constant on purpose: anything derived from the real value — its length,
@@ -63,21 +76,44 @@ import (
 // whatever the value was.
 const blankedValue = "••••••••"
 
-// annotationsThatEmbedTheObject lists annotation keys whose VALUE is a
-// serialized copy of the object it is attached to — which, on a Secret,
-// means the value carries the secret data too (base64'd, but that is
-// encoding, not protection).
+// annotationsSafeToShow is an ALLOW-LIST (P3-F2), and the direction it
+// runs in is the whole point.
 //
-// kubectl writes last-applied-configuration on every `kubectl apply`, so
-// this is not a theoretical case: any Secret a human applied by hand
-// carries a full copy of itself, values included, in its own metadata.
-// Showing annotations "as they are" without this gate would hand the
-// browser every value this file exists to blank.
+// It used to be a BLOCK-list of exactly one key —
+// kubectl.kubernetes.io/last-applied-configuration, the annotation kubectl
+// writes on every `kubectl apply`, whose value is a serialized copy of the
+// object it sits on and therefore, on a Secret, a copy of the values this
+// file exists to blank. That list was right about the one key it knew
+// about and wrong about every key it didn't: an annotation is free-form
+// text a human or a controller can put anything into, and "show it unless
+// we already thought of it" means the FIRST tool that writes a value into
+// an annotation wins, silently, in production, before anyone adds it to
+// the list.
 //
-// The KEY is still shown (an operator should know the annotation is
-// there); the value is replaced with the same mask the data keys get.
-var annotationsThatEmbedTheObject = map[string]bool{
-	"kubectl.kubernetes.io/last-applied-configuration": true,
+// So: every annotation value is blanked, and only these keys pass. They
+// are all written by Sharko itself, they are all "where and when", and
+// there is no code path in this repo that can put a secret value in one —
+// see connectionProvenanceAnnotations and ValuesProvenanceAnnotations,
+// both of which take only a path, a commit, an addon name, a store NAME,
+// and a timestamp.
+//
+// The KEY is always shown, whether or not the value passes: an operator
+// should know an annotation is there, and a hidden key would be its own
+// small lie. Adding a key here is a security decision — the question to
+// answer is not "is this useful to see" but "can anything ever write a
+// secret into this key".
+//
+// (clusterreconciler.AnnotationWrittenAt and remoteclient.AnnotationWrittenAt
+// are the same key — both engines stamp sharko.dev/written-at — so it is
+// listed once, from the connection side, rather than twice.)
+var annotationsSafeToShow = map[string]bool{
+	// Connection secrets (internal/clusterreconciler/revision.go).
+	clusterreconciler.AnnotationSourceFile: true,
+	clusterreconciler.AnnotationRevision:   true,
+	clusterreconciler.AnnotationWrittenAt:  true,
+	// Addon-values secrets (internal/remoteclient/secrets.go).
+	remoteclient.AnnotationAddon:  true,
+	remoteclient.AnnotationSource: true,
 }
 
 // secretResourceKeyView is one data key of the live Secret. Value is
@@ -100,6 +136,17 @@ type secretResourceKeyView struct {
 	// desired state lives at one FILE path, already carried on the row
 	// (connectionSecretRow.ComparedPath), not per-key.
 	Path string `json:"path,omitempty"`
+	// Present (P3-F2) reports whether this key is actually on the live
+	// Secret right now. False means the key is DECLARED — the addon's
+	// catalog definition says its value comes from a store path — but the
+	// Secret on the cluster does not have it.
+	//
+	// This is the only per-key verdict this response is allowed to carry,
+	// and it is deliberately about EXISTENCE, never about content: the two
+	// engines compare whole secrets, so "does key X match its source" is a
+	// question nothing in Sharko has actually asked, and answering it here
+	// would be inventing a fact. Present/absent, and nothing else.
+	Present bool `json:"present"`
 }
 
 // secretResourceLabelView is one label or annotation, as a sorted list
@@ -107,9 +154,11 @@ type secretResourceKeyView struct {
 type secretResourceLabelView struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
-	// Blanked is true when Value is the mask rather than the real text —
-	// only ever set for an annotation that embeds a copy of the object
-	// (see annotationsThatEmbedTheObject).
+	// Blanked is true when Value is the mask rather than the real text.
+	// On annotations that is now the DEFAULT (P3-F2): every annotation
+	// value is masked except the handful of Sharko-written provenance keys
+	// in annotationsSafeToShow. On labels it is never set — see
+	// newSecretResourceView for why labels are shown in full.
 	Blanked bool `json:"blanked,omitempty"`
 }
 
@@ -167,26 +216,51 @@ func newSecretResourceView(sec *corev1.Secret, readFrom string, keyPaths map[str
 		view.CreatedAt = sec.CreationTimestamp.UTC().Format(time.RFC3339)
 	}
 
-	// Labels are shown in full and that is deliberate: on a cluster
-	// connection Secret the addon labels ARE the useful content — they
-	// decide which addons run on that cluster — and they are not secret.
+	// Labels are shown IN FULL, and that stayed a deliberate choice when
+	// the annotations flipped to an allow-list (P3-F2). The reasoning is
+	// not "labels feel safer" — it is that a label is a different kind of
+	// field from an annotation:
+	//
+	//   - Kubernetes constrains a label VALUE to at most 63 characters of
+	//     [A-Za-z0-9] with -_. in the middle. A base64 blob, a PEM block, a
+	//     kubeconfig, a serialized copy of the object — none of them fit or
+	//     validate. Annotations have no such limit, which is exactly why
+	//     kubectl puts a whole object in one.
+	//   - On a cluster connection Secret the addon labels ARE the useful
+	//     content: they decide which addons run on that cluster. Blanking
+	//     them would gut the reason this panel exists, to defend against a
+	//     shape Kubernetes will not store.
+	//
+	// A short token could in principle be pasted into a label by hand, and
+	// that residual risk is accepted knowingly. If that ever stops being
+	// acceptable, the fix is the same allow-list shape used for annotations
+	// below — not a second, softer rule.
 	for _, k := range sortedKeys(sec.Labels) {
 		view.Labels = append(view.Labels, secretResourceLabelView{Key: k, Value: sec.Labels[k]})
 	}
 
+	// Annotations: blank by default, show only the allow-listed provenance
+	// keys. See annotationsSafeToShow for why the list runs this way round.
 	for _, k := range sortedKeys(sec.Annotations) {
-		if annotationsThatEmbedTheObject[k] {
-			view.Annotations = append(view.Annotations, secretResourceLabelView{
-				Key: k, Value: blankedValue, Blanked: true,
-			})
+		if annotationsSafeToShow[k] {
+			view.Annotations = append(view.Annotations, secretResourceLabelView{Key: k, Value: sec.Annotations[k]})
 			continue
 		}
-		view.Annotations = append(view.Annotations, secretResourceLabelView{Key: k, Value: sec.Annotations[k]})
+		view.Annotations = append(view.Annotations, secretResourceLabelView{
+			Key: k, Value: blankedValue, Blanked: true,
+		})
 	}
 
 	// Key NAMES only. Both maps are walked because StringData is a valid
 	// place for a key name to appear on an object handed to us; the value
 	// side of either map is never touched.
+	//
+	// P3-F2: the DECLARED keys (keyPaths — the addon's catalog definition)
+	// are folded in too, so a key the definition declares but the live
+	// Secret does not have shows up as present=false instead of silently
+	// vanishing from the list. That is the one thing an operator staring at
+	// a half-written secret needs to see, and it costs nothing: keyPaths is
+	// a map of key name -> store PATH, no value anywhere near it.
 	names := make(map[string]struct{}, len(sec.Data)+len(sec.StringData))
 	for k := range sec.Data {
 		names[k] = struct{}{}
@@ -194,13 +268,24 @@ func newSecretResourceView(sec *corev1.Secret, readFrom string, keyPaths map[str
 	for k := range sec.StringData {
 		names[k] = struct{}{}
 	}
-	keys := make([]string, 0, len(names))
+	keys := make([]string, 0, len(names)+len(keyPaths))
 	for k := range names {
 		keys = append(keys, k)
 	}
+	for k := range keyPaths {
+		if _, onCluster := names[k]; !onCluster {
+			keys = append(keys, k)
+		}
+	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		view.DataKeys = append(view.DataKeys, secretResourceKeyView{Key: k, Value: blankedValue, Path: keyPaths[k]})
+		_, present := names[k]
+		view.DataKeys = append(view.DataKeys, secretResourceKeyView{
+			Key:     k,
+			Value:   blankedValue,
+			Path:    keyPaths[k],
+			Present: present,
+		})
 	}
 
 	return view
@@ -252,6 +337,53 @@ func readFailureSentence(step string, cluster string, err error) (int, string) {
 func logReadFailure(step, cluster, namespace, name string) {
 	slog.Warn("[secret-resource] could not read the live secret",
 		"step", step, "cluster", cluster, "namespace", namespace, "secret", name)
+}
+
+// auditSecretResourceRead records that somebody opened a live secret
+// object (P3-F1).
+//
+// WHY THIS IS A DIRECT Add AND NOT audit.Enrich. auditMiddleware skips
+// GET/HEAD/OPTIONS outright, so there is no enrichment slot on a read
+// request's context and audit.Enrich would be a silent no-op. This writes
+// its own entry instead.
+//
+// WHY ONLY HERE. "Every GET is audited" is a different product with a
+// different cost — the ring holds ~1000 entries and a page of rows would
+// flush it. These two endpoints are the exception because of what they
+// are: the only place in Sharko where a person asks to look at a live
+// Secret object. Opening one is worth a line in the log even though it
+// changes nothing. Do NOT generalise this into middleware.
+//
+// The entry never names a data key, a store path, or anything read off the
+// object — the cluster (and addon) is the whole record, which is exactly
+// the "Sharko may describe the delivery, never the secret" rule applied to
+// the audit log itself. result is "success" when the object was returned
+// and "failure" when the read did not produce one, so an operator can see
+// a run of refused or failing reads.
+func (s *Server) auditSecretResourceRead(r *http.Request, resource, detail, result string) {
+	if s == nil || s.auditLog == nil {
+		return
+	}
+	user := r.Header.Get("X-Sharko-User")
+	if user == "" {
+		user = "anonymous"
+	}
+	level := "info"
+	if result != "success" {
+		level = "warn"
+	}
+	s.auditLog.Add(audit.Entry{
+		Timestamp: time.Now().UTC(),
+		Level:     level,
+		Event:     "secret_resource_read",
+		User:      user,
+		Action:    "read",
+		Resource:  resource,
+		Source:    detectSource(r),
+		Result:    result,
+		Detail:    detail,
+		RequestID: logging.RequestID(r.Context()),
+	})
 }
 
 // remoteClientForCluster resolves a read-only Kubernetes client for one
@@ -318,13 +450,18 @@ func (s *Server) handleGetConnectionSecretResource(w http.ResponseWriter, r *htt
 	// The connection Secret's name always equals the cluster's name — the
 	// same deterministic fact buildConnectionSecretRows uses to fill in the
 	// row this panel opened from.
+	resource := fmt.Sprintf("cluster:%s", cluster)
+
 	sec, err := client.CoreV1().Secrets(ns).Get(r.Context(), cluster, metav1.GetOptions{})
 	if err != nil {
 		logReadFailure("get", cluster, ns, cluster)
 		status, msg := readFailureSentence("get", cluster, err)
+		s.auditSecretResourceRead(r, resource, "opened the live cluster connection secret", "failure")
 		writeError(w, status, msg)
 		return
 	}
+
+	s.auditSecretResourceRead(r, resource, "opened the live cluster connection secret", "success")
 
 	// A connection secret has no per-key store pointer — its desired state
 	// lives at one FILE path, already on the row (P2-C1's ComparedPath) —
@@ -372,10 +509,14 @@ func (s *Server) handleGetAddonValuesSecretResource(w http.ResponseWriter, r *ht
 		return
 	}
 
+	resource := fmt.Sprintf("cluster:%s/addon:%s", cluster, addon)
+	const readDetail = "opened the live addon values secret"
+
 	client, step, err := s.remoteClientForCluster(r.Context(), cluster)
 	if err != nil {
 		logReadFailure(step, cluster, def.Namespace, def.SecretName)
 		status, msg := readFailureSentence(step, cluster, err)
+		s.auditSecretResourceRead(r, resource, readDetail, "failure")
 		writeError(w, status, msg)
 		return
 	}
@@ -384,9 +525,12 @@ func (s *Server) handleGetAddonValuesSecretResource(w http.ResponseWriter, r *ht
 	if err != nil {
 		logReadFailure("get", cluster, def.Namespace, def.SecretName)
 		status, msg := readFailureSentence("get", cluster, err)
+		s.auditSecretResourceRead(r, resource, readDetail, "failure")
 		writeError(w, status, msg)
 		return
 	}
+
+	s.auditSecretResourceRead(r, resource, readDetail, "success")
 
 	// P2-C2: the per-key store pointer list — key name -> provider path.
 	// This is the ONE place it ever ships: this endpoint is already
@@ -408,8 +552,11 @@ func secretResourceViewHasNoValue(view secretResourceView) (field string, ok boo
 			return "data_keys[" + k.Key + "]", false
 		}
 	}
+	// P3-F2: the check follows the allow-list, so it now catches ANY
+	// annotation that came through unmasked without being on the list —
+	// not just the one key the old block-list knew about.
 	for _, a := range view.Annotations {
-		if annotationsThatEmbedTheObject[a.Key] && a.Value != blankedValue {
+		if !annotationsSafeToShow[a.Key] && a.Value != blankedValue {
 			return "annotations[" + a.Key + "]", false
 		}
 	}

@@ -102,8 +102,30 @@
 //        one, and there is no field in the response a value could arrive
 //        in. One live read per opened row, on the click that opened it;
 //        never during a list render, never on a timer, never fanned out.
+//
+// ─────────────────────────────────────────────────────────────────────────
+// P3-F2 — the panel rebuilt AROUND the resource.
+//
+// G4's live view arrived as an afterthought: it sat second-to-last in the
+// panel, below the Diff; it was OUTSIDE the role guard, so a viewer got a
+// permission error where a sentence belonged; it fired a read even for a
+// row already known to be missing, which could only ever come back 404;
+// and a failed read was a dead end with no way to try again.
+//
+// The panel now reads top to bottom the way ArgoCD lays out a resource —
+// header, state and actions, the diff, the keys, then everything else —
+// and the diff itself is two cards with ONE sentence between them: what
+// this secret should be, what is actually on the cluster, and how the two
+// relate. See SecretDetailPanel and diffVerdictFor.
+//
+// The rule that decided every call in that rebuild, and the one to hold
+// on to if it is ever extended: Sharko may describe the DELIVERY, never
+// the secret. Where a value comes from, when it was written, which commit
+// it was built from, whether the cluster has a key at all — all fine. The
+// value, its length, a hash of it, or a per-key "this one matches" verdict
+// the engines never actually computed — none of those, ever.
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   CheckCircle,
@@ -139,6 +161,7 @@ import type {
 import { PaginationControls, PageSizeSelector, type PageSize } from '@/components/PaginationControls'
 import { InfoHint } from '@/components/InfoHint'
 import { RoleGuard } from '@/components/RoleGuard'
+import { AuthContext } from '@/hooks/useAuth'
 import { RowActionsMenu, type RowAction } from '@/components/RowActionsMenu'
 import { ConfirmationModal } from '@/components/ConfirmationModal'
 import { showToast } from '@/components/ToastNotification'
@@ -664,7 +687,7 @@ function KeyValueList({
   empty,
   testId,
 }: {
-  items: { key: string; value: string; blanked?: boolean; path?: string }[]
+  items: { key: string; value: string; blanked?: boolean }[]
   empty: string
   testId: string
 }) {
@@ -677,12 +700,10 @@ function KeyValueList({
         <div key={item.key} className="flex items-baseline justify-between gap-3">
           <dt className="truncate font-mono text-xs text-[#3a5770] dark:text-gray-400" title={item.key}>
             {item.key}
-            {/* P2-C2: the store pointer this key's value comes from — a location, not a value. */}
-            {item.path && <span className="text-[#8098ac] dark:text-gray-500"> ← {item.path}</span>}
           </dt>
           <dd
             className={`shrink-0 font-mono text-xs ${item.blanked ? 'text-[#8098ac] dark:text-gray-500' : 'text-[#08192b] dark:text-gray-200'}`}
-            title={item.blanked ? 'Sharko blanked this — it holds a copy of the whole secret.' : undefined}
+            title={item.blanked ? 'Sharko blanks this on the server — only its own provenance notes are shown as written.' : undefined}
           >
             {item.value}
           </dd>
@@ -692,90 +713,346 @@ function KeyValueList({
   )
 }
 
-function ResourceSection({ row }: { row: UnifiedRow }) {
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [resource, setResource] = useState<SecretResource | null>(null)
+// ─────────────────────────────────────────────────────────────────────────────
+// The live read (P3-F2) — one hook, so the right-hand card and the key
+// table below it read the SAME fetch instead of firing two.
+//
+// Four rules this hook exists to hold:
+//
+//   1. NEVER PREFETCH. The read fires when the panel is open on a row and
+//      the reader is allowed to see it — never on a list render, never on
+//      a timer, never fanned out. The server handler's own header says the
+//      same thing; see internal/api/secret_resource.go.
+//   2. A row already known to be MISSING fires nothing. The row state
+//      already answers "is it on the cluster" — sending a read that can
+//      only come back 404 is a doomed call, and it made the panel show a
+//      red error for a secret whose absence is the ordinary, expected
+//      thing.
+//   3. A reader who is not allowed to read live secrets fires nothing.
+//      Before this, a viewer's panel fired the request anyway and rendered
+//      the 403 as an error, which is a permission dialog dressed up as a
+//      fault.
+//   4. It ends. A request that never settles used to leave a spinner
+//      turning forever; after LIVE_READ_TIMEOUT_MS the panel says so and
+//      offers Retry.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** How long the panel waits for a live read before giving up and offering Retry. */
+const LIVE_READ_TIMEOUT_MS = 15000
+
+/** What the panel says when the wait ran out. Sharko's own sentence — the request never answered, so there is no server sentence to quote. */
+const LIVE_READ_TIMEOUT_SENTENCE = 'The cluster did not answer in time.'
+
+type LiveSecretState =
+  | { status: 'skipped' }
+  | { status: 'loading' }
+  | { status: 'ready'; resource: SecretResource }
+  | { status: 'error'; message: string; notFound: boolean }
+
+function useLiveSecret(row: UnifiedRow | null, allowed: boolean) {
+  const [state, setState] = useState<LiveSecretState>({ status: 'skipped' })
+  const [attempt, setAttempt] = useState(0)
+
+  const rowKey = row?.key ?? ''
+  const kind = row?.kind
+  const cluster = row?.cluster ?? ''
+  const addon = row?.addon
+  // Rule 2 + rule 3, in one place: these are the only two reasons the read
+  // is skipped, and both are facts already in hand — no request needed to
+  // discover either.
+  const skip = !row || !allowed || row.state === 'missing'
 
   useEffect(() => {
+    if (skip) {
+      setState({ status: 'skipped' })
+      return
+    }
     let cancelled = false
-    setResource(null)
-    setError(null)
-    setLoading(true)
-    const request =
-      row.kind === 'connection' ? getConnectionSecretResource(row.cluster) : getAddonValuesSecretResource(row.cluster, row.addon!)
-    request
+    let timer: ReturnType<typeof setTimeout> | undefined
+    setState({ status: 'loading' })
+
+    const request = kind === 'connection' ? getConnectionSecretResource(cluster) : getAddonValuesSecretResource(cluster, addon!)
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(LIVE_READ_TIMEOUT_SENTENCE)), LIVE_READ_TIMEOUT_MS)
+    })
+
+    Promise.race([request, timeout])
       .then((res) => {
-        if (!cancelled) setResource(res)
+        if (!cancelled) setState({ status: 'ready', resource: res as SecretResource })
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
+        if (cancelled) return
         // Whatever the server said, verbatim — it only ever sends
         // pre-written sentences here, never raw provider or cluster text.
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Sharko could not read this secret.')
+        // The status code is read off the error rather than through an
+        // `instanceof ApiError`: a 404 is not a fault, it is the cluster
+        // saying the object is not there, and the panel says exactly that
+        // instead of painting an error.
+        const status = (err as { status?: number } | null)?.status
+        setState({
+          status: 'error',
+          message: err instanceof Error ? err.message : 'Sharko could not read this secret.',
+          notFound: status === 404,
+        })
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (timer) clearTimeout(timer)
       })
+
     return () => {
       cancelled = true
+      // Cleared here too, not only in .finally: an unmount before the race
+      // settles must not leave a timer running past the test that made it.
+      if (timer) clearTimeout(timer)
     }
+    // rowKey (a stable string) is the dependency, NOT the row object — the
+    // list re-reads itself on every Refresh/Sync and hands down a brand new
+    // object each time. Keying on the object would reload the panel's live
+    // card every time the list refreshed behind it, which is exactly the
+    // behaviour a 30-second auto-refresh would turn into a flicker.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [row.key])
+  }, [rowKey, attempt, skip, kind, cluster, addon])
 
+  return { live: state, retry: useCallback(() => setAttempt((a) => a + 1), []) }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The diff, rebuilt around the resource (P3-F2)
+//
+// Two cards and one sentence, the way ArgoCD shows a resource: on the left
+// what this secret SHOULD be (its intent — a git file and a commit, or the
+// store its values come from), on the right what IS on the cluster right
+// now. The sentence above them says how the two relate, and it is chosen
+// from exactly five, one per real row state.
+//
+// WHAT THIS DELIBERATELY DOES NOT SAY, ever: a per-key verdict. The key
+// table below lists each key, where its value comes from, and whether the
+// cluster has it — and stops there. Both engines compare WHOLE secrets, so
+// "this key matches and that one doesn't" is a fact nothing in Sharko ever
+// established; printing one would be inventing it. Do not add a tick.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type DiffVerdict = 'match' | 'differ' | 'never_created' | 'could_not_look' | 'foreign'
+
+/**
+ * diffVerdictFor picks which of the five sentences the panel says.
+ *
+ * The order of the checks is the whole logic:
+ *   - foreign first: whoever else owns this secret, that fact outranks
+ *     everything else Sharko might say about it.
+ *   - a row already known missing next: no read was fired, so there is
+ *     nothing on the right to describe.
+ *   - a live read that came back 404: the object is not there NOW, which is
+ *     fresher than whatever the last check recorded.
+ *   - any other failed read: Sharko genuinely could not look, and says so
+ *     rather than guessing from a stale state.
+ *   - otherwise the row's own state, which is a real comparison the engine
+ *     performed: in sync, out of sync, or "unknown" — and unknown IS
+ *     "could not look", because it means the last check never finished.
+ */
+function diffVerdictFor(row: UnifiedRow, live: LiveSecretState): DiffVerdict {
+  if (row.state === 'foreign') return 'foreign'
+  if (row.state === 'missing') return 'never_created'
+  if (live.status === 'error') return live.notFound ? 'never_created' : 'could_not_look'
+  if (row.state === 'in_sync') return 'match'
+  if (row.state === 'out_of_sync') return 'differ'
+  return 'could_not_look'
+}
+
+/**
+ * The five sentences. "never created" is the one that changes wording by
+ * kind, and honestly so: on a values row Sync really is what creates the
+ * secret, but on a connection row Sync is disabled for exactly this state
+ * (there is nothing to sync onto yet) — promising it there would send a
+ * reader to a button that refuses. Who fixes it is answered one line below
+ * by the self-heal promise, which already knows.
+ */
+function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
+  switch (verdict) {
+    case 'match':
+      return 'These match — the cluster has what the source says.'
+    case 'differ':
+      return "These differ — Sync writes the source's version onto the cluster."
+    case 'never_created':
+      return row.kind === 'values'
+        ? 'This secret was never created on the cluster — Sync creates it.'
+        : 'This secret was never created on the cluster.'
+    case 'foreign':
+      return 'Someone else created this secret — Sharko will not touch it.'
+    case 'could_not_look':
+      return 'Sharko could not look at the cluster just now.'
+  }
+}
+
+function DiffCard({ title, children, testId }: { title: string; children: ReactNode; testId: string }) {
   return (
-    <div>
-      <h3 className="mb-1 text-sm font-semibold text-[#08192b] dark:text-gray-100">On the cluster right now</h3>
-      <div className="space-y-3 rounded-md ring-1 ring-[#d7e2ea] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900" data-testid="detail-resource-panel">
-        {loading ? (
-          <p className="text-sm text-[#3a5770] dark:text-gray-400">Reading it from the cluster…</p>
-        ) : error ? (
+    <div className="rounded-md ring-1 ring-[#d7e2ea] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900" data-testid={testId}>
+      <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-[#8098ac] dark:text-gray-500">{title}</div>
+      {children}
+    </div>
+  )
+}
+
+/**
+ * The left card — what this secret should be. It paints the instant the
+ * panel opens, from the row the list already has: no request, nothing to
+ * wait for. That is the point of splitting the two cards apart.
+ */
+function IntentCard({ row }: { row: UnifiedRow }) {
+  if (row.kind === 'connection') {
+    return (
+      <DiffCard title="What it should be" testId="diff-intent-card">
+        {row.comparedPath ? (
+          <p className="break-all font-mono text-xs text-[#08192b] dark:text-gray-200">{row.comparedPath}</p>
+        ) : (
+          <p className="text-sm text-[#3a5770] dark:text-gray-400">Sharko hasn't compared this secret against git yet.</p>
+        )}
+        {row.comparedRevision && (
+          <p className="mt-1 text-xs text-[#5c7288] dark:text-gray-500" title={`Full commit: ${row.comparedRevision}`}>
+            at commit <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
+          </p>
+        )}
+        <p className="mt-2 text-xs text-[#5c7288] dark:text-gray-500">
+          The addon labels in this file are what this secret is built from.
+        </p>
+      </DiffCard>
+    )
+  }
+  return (
+    <DiffCard title="What it should be" testId="diff-intent-card">
+      <p className="text-sm text-[#08192b] dark:text-gray-200">The values come from {row.sourceLabel}.</p>
+      <p className="mt-2 text-xs text-[#5c7288] dark:text-gray-500">
+        Git holds a pointer to where each value lives, never the value itself. Each key's pointer is in the key list below.
+      </p>
+    </DiffCard>
+  )
+}
+
+/**
+ * The right card — what is on the cluster right now.
+ *
+ * EVERY VALUE HERE WAS BLANKED BY THE SERVER. The response carries key
+ * NAMES paired with a fixed mask the server put in; there is no field a
+ * real value could arrive in, and nothing below un-hides anything. Do not
+ * "improve" this by adding a reveal toggle, a copy button, or a request for
+ * the real content — that is a new design decision, not a refactor.
+ */
+function LiveCard({ row, live, onRetry }: { row: UnifiedRow; live: LiveSecretState; onRetry: () => void }) {
+  return (
+    <DiffCard title="What is on the cluster" testId="diff-live-card">
+      <div className="space-y-3" data-testid="detail-resource-panel">
+        {live.status === 'skipped' && row.state === 'missing' && (
+          <p className="text-sm text-[#3a5770] dark:text-gray-400" data-testid="resource-not-there">
+            Nothing is there — this secret has not been created yet.
+          </p>
+        )}
+        {live.status === 'loading' && <p className="text-sm text-[#3a5770] dark:text-gray-400">Reading it from the cluster…</p>}
+        {live.status === 'error' && (
           // A failed read says so and shows nothing else. It never falls
           // back to the last thing we saw, or to anything made up.
-          <p className="text-sm text-red-700 dark:text-red-400" data-testid="resource-error">
-            {error}
-          </p>
-        ) : resource ? (
+          <>
+            <p className="text-sm text-red-700 dark:text-red-400" data-testid="resource-error">
+              {live.message}
+            </p>
+            <button
+              type="button"
+              onClick={onRetry}
+              data-testid="resource-retry"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#c7d6e0] bg-white px-2.5 py-1 text-xs font-medium text-[#13293f] hover:bg-[#f2f6f9] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Retry
+            </button>
+          </>
+        )}
+        {live.status === 'ready' && (
           <>
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-[#5c7288] dark:text-gray-500">
-              <span className="font-mono text-sm font-semibold text-[#08192b] dark:text-white">
-                {resource.namespace}/{resource.name}
+              <span className="break-all font-mono text-sm font-semibold text-[#08192b] dark:text-white">
+                {live.resource.namespace}/{live.resource.name}
               </span>
-              <span>{resource.kind}</span>
-              {resource.secret_type && <span>type {resource.secret_type}</span>}
-              <span>
-                created <TimeChip iso={resource.created_at} />
-              </span>
+              {live.resource.secret_type && <span>type {live.resource.secret_type}</span>}
             </div>
-            <p className="text-xs text-[#5c7288] dark:text-gray-500">Read from {resource.read_from}.</p>
-
-            <div>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8098ac] dark:text-gray-500">Keys</div>
-              <KeyValueList items={resource.data_keys} empty="This secret has no keys." testId="resource-data-keys" />
-              <p className="mt-1 text-xs text-[#5c7288] dark:text-gray-500">
-                Sharko blanks every value on the server. The values never leave the cluster.
-              </p>
-            </div>
+            <p className="text-xs text-[#5c7288] dark:text-gray-500">Read from {live.resource.read_from}.</p>
 
             <div>
               <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8098ac] dark:text-gray-500">Labels</div>
-              <KeyValueList items={resource.labels} empty="No labels." testId="resource-labels" />
+              <KeyValueList items={live.resource.labels} empty="No labels." testId="resource-labels" />
             </div>
 
             <div>
               <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8098ac] dark:text-gray-500">Annotations</div>
-              <KeyValueList items={resource.annotations} empty="No annotations." testId="resource-annotations" />
+              <KeyValueList items={live.resource.annotations} empty="No annotations." testId="resource-annotations" />
             </div>
           </>
-        ) : null}
+        )}
+      </div>
+    </DiffCard>
+  )
+}
+
+/** The sentence a reader who cannot open live secrets sees where the right card would be. Calm, and about access — not an error. */
+const LIVE_READ_NEEDS_OPERATOR = 'Reading the live secret needs operator access. What Sharko already knows about it is on the left.'
+
+/**
+ * The key table — each key, where its value comes from, and whether the
+ * cluster has it. Read off the same live read the right card uses.
+ *
+ * NO PER-KEY MATCH VERDICT. See the block comment above diffVerdictFor.
+ */
+function KeyTable({ live }: { live: LiveSecretState }) {
+  if (live.status !== 'ready') return null
+  const keys = live.resource.data_keys
+  return (
+    <div data-testid="detail-key-table">
+      <h3 className="mb-1 text-sm font-semibold text-[#08192b] dark:text-gray-100">Keys</h3>
+      <div className="rounded-md ring-1 ring-[#d7e2ea] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900">
+        {keys.length === 0 ? (
+          <p className="text-xs text-[#8098ac] dark:text-gray-500">This secret has no keys.</p>
+        ) : (
+          <dl className="space-y-1" data-testid="resource-data-keys">
+            {keys.map((k) => (
+              <div key={k.key} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                <dt className="break-all font-mono text-xs text-[#3a5770] dark:text-gray-400">
+                  {k.key}
+                  {/* P2-C2: the store pointer this key's value comes from — a location, not a value. */}
+                  {k.path && <span className="text-[#8098ac] dark:text-gray-500"> ← {k.path}</span>}
+                </dt>
+                <dd className="shrink-0 text-xs">
+                  {k.present === false ? (
+                    <span className="text-amber-700 dark:text-amber-400">not on the cluster</span>
+                  ) : (
+                    <span className="font-mono text-[#8098ac] dark:text-gray-500">••••••••</span>
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        <p className="mt-2 text-xs text-[#5c7288] dark:text-gray-500">
+          Sharko blanks every value on the server. The values never leave the cluster.
+        </p>
       </div>
     </div>
   )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Detail side panel — carries everything the row no longer prints:
-// purpose, source (+ mechanism on hover), state, timestamps, the
-// check-failure sentence, Diff content, and Refresh/Sync.
+// Detail side panel — rebuilt around the RESOURCE (P3-F2), the way ArgoCD
+// lays out one, top to bottom:
+//
+//   1. the resource header: kind, the secret's own name, its cluster, its age
+//   2. state, with Refresh and Sync right next to it — the two things a
+//      reader who just opened this panel is most likely to want
+//   3. the diff: two cards and one sentence (see diffVerdictFor)
+//   4. the key table: key, where its value comes from, on the cluster or not
+//   5. everything else the panel already carried — purpose, source,
+//      timestamps, repair detail, the warnings, the link out
+//
+// Before this, the live "On the cluster right now" view was second-to-last,
+// below the Diff, outside the role guard (so a viewer got a permission
+// error where a sentence belonged), fired a doomed read on rows already
+// known to be missing, and had no way back from a failed read.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SecretDetailPanel({
@@ -826,6 +1103,14 @@ function SecretDetailPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [row?.key])
 
+  // The same role predicate RoleGuard applies below, read here so the
+  // REQUEST is gated too and not just the rendering. A viewer's panel used
+  // to fire the read anyway and paint the 403 as an error — a permission
+  // dialog dressed up as a fault.
+  const auth = useContext(AuthContext)
+  const canReadLive = auth?.role === 'admin' || auth?.role === 'operator'
+  const { live, retry } = useLiveSecret(row, canReadLive)
+
   if (!row) return null
 
   const handleRefresh = async () => {
@@ -867,33 +1152,30 @@ function SecretDetailPanel({
   const sourceSentence =
     row.kind === 'connection' ? 'Compared against git.' : `Compared against ${row.sourceLabel} — git only holds a pointer to it.`
 
-  // Diff content:
-  //  - connection: renders the fetched label-drift comparison.
-  //  - values: NEVER a server call, by construction — a values secret's
-  //    content must never reach the browser. This branch reads only the
-  //    row's own already-fetched state field. If this ever needs a server
-  //    call, that is a new design decision, not a refactor.
-  let diffBody: ReactNode
+  // The connection-secret label drift — WHICH labels differ, under the
+  // verdict sentence that already said THAT they differ. Kept as its own
+  // fetch (getClusterComparison: labels only, never credentials).
+  //
+  // Values rows have no equivalent and must never grow one: a values
+  // secret's content must never reach the browser, so "what differs" for
+  // one of those rows is answered by the row's own state field and nothing
+  // more. If that ever needs a server call, it is a new design decision,
+  // not a refactor.
+  let driftDetail: ReactNode = null
   if (row.kind === 'connection') {
     const drift = diffData?.cluster?.last_reconcile?.label_drift
     const added = drift?.added ?? []
     const removed = drift?.removed ?? []
     const changed = drift?.changed ?? []
     if (diffError) {
-      diffBody = <p className="text-sm text-red-600 dark:text-red-400">{diffError}</p>
-    } else if (diffLoading || !diffData) {
-      diffBody = <p className="text-sm text-[#3a5770] dark:text-gray-400">Loading…</p>
-    } else if (added.length === 0 && removed.length === 0 && changed.length === 0) {
-      diffBody = (
-        <div className="flex items-center gap-2">
-          <CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
-          <p className="text-sm font-medium text-green-700 dark:text-green-400">
-            No differences — this secret's addon labels match git.
-          </p>
-        </div>
-      )
-    } else {
-      diffBody = (
+      driftDetail = <p className="text-sm text-red-600 dark:text-red-400">{diffError}</p>
+    } else if (diffLoading && row.state === 'out_of_sync') {
+      // The waiting line only shows where content is actually expected. On
+      // an in-sync row this box has nothing to say once it loads, and a
+      // "Loading…" that appears and then vanishes is just a flicker.
+      driftDetail = <p className="text-sm text-[#3a5770] dark:text-gray-400">Loading…</p>
+    } else if (added.length > 0 || removed.length > 0 || changed.length > 0) {
+      driftDetail = (
         <div className="space-y-2">
           {added.length > 0 && (
             <p className="text-sm text-[#3a5770] dark:text-gray-300">
@@ -917,24 +1199,9 @@ function SecretDetailPanel({
         </div>
       )
     }
-  } else if (row.state === 'unknown') {
-    diffBody = (
-      <p className="text-sm text-[#3a5770] dark:text-gray-400">Sharko hasn't checked this secret yet — click Refresh to check now.</p>
-    )
-  } else if (row.state === 'in_sync') {
-    diffBody = (
-      <div className="flex items-center gap-2">
-        <CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
-        <p className="text-sm font-medium text-green-700 dark:text-green-400">Matches its source.</p>
-      </div>
-    )
-  } else if (row.state === 'missing') {
-    diffBody = <p className="text-sm text-[#3a5770] dark:text-gray-300">This secret does not exist yet on the cluster — click Sync to create it.</p>
-  } else {
-    diffBody = (
-      <p className="text-sm text-[#3a5770] dark:text-gray-300">Does not match its source right now — click Sync to push the current value.</p>
-    )
   }
+
+  const verdict = diffVerdictFor(row, live)
 
   return (
     <ResourceDetailSheet
@@ -943,7 +1210,89 @@ function SecretDetailPanel({
       title={identity}
       subtitle={row.kind === 'connection' ? 'Cluster connection secret' : 'Addon values secret'}
       testId="secret-detail-panel"
+      // Two cards side by side need the room; every other user of this
+      // sheet keeps the narrow default.
+      wide
     >
+      {/* ── 1. The resource header ─────────────────────────────────────── */}
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1" data-testid="detail-resource-header">
+        <span className="rounded-full bg-[#eef4f9] px-2 py-0.5 text-[11px] font-medium text-[#3a5770] dark:bg-gray-800 dark:text-gray-300">
+          Secret
+        </span>
+        <span className="break-all font-mono text-sm font-semibold text-[#08192b] dark:text-white">{identity}</span>
+        <span className="text-xs text-[#5c7288] dark:text-gray-500">on {row.cluster}</span>
+        {/* The age is a live-read fact, so it appears once the read lands
+            and stays absent otherwise — never an invented one. */}
+        {live.status === 'ready' && live.resource.created_at && (
+          <span className="text-xs text-[#5c7288] dark:text-gray-500">
+            created <TimeChip iso={live.resource.created_at} />
+          </span>
+        )}
+      </div>
+
+      {/* ── 2. State, with the two actions right beside it ─────────────── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg ring-1 ring-[#d7e2ea] bg-white p-3 dark:ring-gray-700 dark:bg-gray-800">
+        <StatusMark status={row.state} />
+        <RoleGuard roles={['admin', 'operator']}>
+          <div className="flex items-center gap-2">
+            <PanelActionButton onClick={handleRefresh} loading={refreshing} icon={RefreshCw} label="Refresh" testId="detail-refresh" />
+            <PanelActionButton
+              onClick={() => onRequestSync(row)}
+              disabled={gate.disabled}
+              icon={RotateCcw}
+              label="Sync"
+              reason={gate.reason}
+              testId="detail-sync"
+            />
+          </div>
+        </RoleGuard>
+      </div>
+
+      {/* ── 3. The diff: one sentence, two cards ───────────────────────── */}
+      <div>
+        <h3 className="mb-1 text-sm font-semibold text-[#08192b] dark:text-gray-100">Diff</h3>
+        <p
+          className={`mb-2 text-sm ${verdict === 'match' ? 'text-green-700 dark:text-green-400' : 'text-[#08192b] dark:text-gray-200'}`}
+          data-testid="diff-verdict"
+        >
+          {verdict === 'match' && <CheckCircle className="mr-1.5 inline h-4 w-4 align-text-bottom" aria-hidden="true" />}
+          {diffVerdictSentence(verdict, row)}
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <IntentCard row={row} />
+          {/* The live half sits INSIDE the role guard, so a viewer sees a
+              sentence about access rather than a permission error where a
+              card should be — and the read is never fired for them either
+              (useLiveSecret's `allowed`). */}
+          <RoleGuard
+            roles={['admin', 'operator']}
+            fallback={
+              <DiffCard title="What is on the cluster" testId="diff-live-card">
+                <p className="text-sm text-[#3a5770] dark:text-gray-400" data-testid="live-needs-operator">
+                  {LIVE_READ_NEEDS_OPERATOR}
+                </p>
+              </DiffCard>
+            }
+          >
+            <LiveCard row={row} live={live} onRetry={retry} />
+          </RoleGuard>
+        </div>
+        {driftDetail && (
+          <div
+            className="mt-3 rounded-md ring-1 ring-[#d7e2ea] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900"
+            data-testid="detail-diff-panel"
+          >
+            {driftDetail}
+          </div>
+        )}
+      </div>
+
+      {/* ── 4. The key table ───────────────────────────────────────────── */}
+      <RoleGuard roles={['admin', 'operator']}>
+        <KeyTable live={live} />
+      </RoleGuard>
+
+      {/* ── 5. Everything the panel already carried ────────────────────── */}
       <p className="text-sm text-[#08192b] dark:text-white">{purposeSentence}</p>
       <p
         className="text-xs text-[#5c7288] dark:text-gray-500"
@@ -963,11 +1312,6 @@ function SecretDetailPanel({
           )}
         </p>
       )}
-
-      <div className="flex items-center justify-between rounded-lg ring-1 ring-[#d7e2ea] bg-white p-3 dark:ring-gray-700 dark:bg-gray-800">
-        <span className="text-sm text-[#3a5770] dark:text-gray-300">State</span>
-        <StatusMark status={row.state} />
-      </div>
 
       {/* P2-C3: the one-line self-heal promise — only where it changes what the reader should do (an out-of-sync or missing row). */}
       {(row.state === 'out_of_sync' || row.state === 'missing') && (
@@ -1019,32 +1363,6 @@ function SecretDetailPanel({
         </p>
       )}
 
-      <RoleGuard roles={['admin', 'operator']}>
-        <div className="flex items-center gap-2">
-          <PanelActionButton onClick={handleRefresh} loading={refreshing} icon={RefreshCw} label="Refresh" testId="detail-refresh" />
-          <PanelActionButton
-            onClick={() => onRequestSync(row)}
-            disabled={gate.disabled}
-            icon={RotateCcw}
-            label="Sync"
-            reason={gate.reason}
-            testId="detail-sync"
-          />
-        </div>
-      </RoleGuard>
-
-      <div>
-        <h3 className="mb-1 text-sm font-semibold text-[#08192b] dark:text-gray-100">Diff</h3>
-        <div
-          className="rounded-md ring-1 ring-[#d7e2ea] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900"
-          data-testid="detail-diff-panel"
-        >
-          {diffBody}
-        </div>
-      </div>
-
-      <ResourceSection row={row} />
-
       <button
         type="button"
         onClick={() => navigate(row.kind === 'connection' ? `/clusters/${encodeURIComponent(row.cluster)}` : `/addons/${encodeURIComponent(row.addon!)}`)}
@@ -1079,8 +1397,26 @@ function SecretTableRow({
   onRefresh: () => void
   onRequestSync: () => void
 }) {
+  // P3-F2: the row opens the panel, so it has to BE a control — reachable
+  // by Tab, opened by Enter or Space, and announced as a button. Before
+  // this it was a click-only <tr>, which a keyboard reader could see and
+  // never open.
+  const openOnKey = (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    e.preventDefault() // Space would otherwise scroll the page
+    onSelect()
+  }
+
   return (
-    <TableRow data-testid={`secret-row-${row.key}`} onClick={onSelect} className="cursor-pointer">
+    <TableRow
+      data-testid={`secret-row-${row.key}`}
+      onClick={onSelect}
+      onKeyDown={openOnKey}
+      tabIndex={0}
+      role="button"
+      aria-label={`Open ${row.secretNamespace && row.secretName ? `${row.secretNamespace}/${row.secretName}` : row.cluster}`}
+      className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1a3d5c] dark:focus-visible:ring-teal-400"
+    >
       {/* H6: the identity is the darkest, boldest text on the row. The
           small grey line under it carries the S3 honesty lock (kind +
           source) — this replaces the old separate COMPARED AGAINST

@@ -162,6 +162,56 @@ func TestHandleReconcileCluster_202_TriggersCheckOnlyPass(t *testing.T) {
 	}
 }
 
+// TestHandleReconcileCluster_AuditEntryStatesTheBlastRadius pins P3-F1 on
+// the connection side. This endpoint takes ONE cluster name in its path
+// but starts a pass over every cluster, and the audit entry used to say
+// "every cluster's connection secret" and stop there — true, and useless
+// to anyone trying to work out afterwards what a click actually touched.
+func TestHandleReconcileCluster_AuditEntryStatesTheBlastRadius(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
+	}, http.StatusOK)
+	gp := &reconcileFakeGP{managedYAML: []byte("clusters:\n- name: prod-eu\n  labels: {}\n")}
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+	srv.SetReconcilerCheckTrigger(func() {})
+
+	// Give the reconciler three real per-cluster records — that map IS
+	// what a check pass covers, so 3 is the honest number here.
+	recon := clusterreconciler.New(clusterreconciler.Deps{
+		ArgoClient: fake.NewSimpleClientset(),
+		Namespace:  "argocd",
+		AuditFn:    func(audit.Entry) {},
+	})
+	for _, name := range []string{"prod-eu", "staging-us", "spoke-asia"} {
+		recon.SeedReconcileRecordForDemo(name, clusterreconciler.OutcomeSucceeded, "", time.Now(), nil)
+	}
+	srv.SetClusterReconciler(recon)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, reconcileOperatorReq("prod-eu"))
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	var entry audit.Entry
+	for _, e := range srv.AuditLog().List(0) {
+		if e.Event == "cluster_connection_secret_check_triggered" {
+			entry = e
+			break
+		}
+	}
+	if entry.Event == "" {
+		t.Fatalf("no check-triggered audit entry; got %+v", srv.AuditLog().List(0))
+	}
+	if entry.Resource != "cluster:prod-eu" {
+		t.Errorf("resource = %q, want cluster:prod-eu (the cluster the click was on)", entry.Resource)
+	}
+	want := clusterCheckBlastRadius(3)
+	if entry.Detail != want {
+		t.Errorf("detail = %q, want %q — the entry must say how many clusters the check covered", entry.Detail, want)
+	}
+}
+
 // TestHandleReconcileCluster_503_NoReconcilerWired_SkipsGitAndArgoCDRoundTrips
 // pins the L2 handler-order fix: the cheap "is a reconciler wired" 503
 // check must run BEFORE the Git/ArgoCD round-trips, so a server with no

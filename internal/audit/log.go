@@ -93,6 +93,15 @@ type AuditFilter struct {
 }
 
 // Log is a thread-safe in-memory ring buffer of audit entries.
+//
+// NOT WRITTEN TO DISK, ON PURPOSE AND STILL OPEN (P3-F1). A restart loses
+// every entry, so anything read off this log — the Managed Secrets page's
+// "last repaired" per row, the audit table itself — only ever covers the
+// window since this server started, and says so where it shows. Writing
+// the log to disk is a real gap, but it belongs with the bigger
+// "what survives a restart" design (reconciler records, applied
+// revisions, and this ring all lose their memory the same way), not with
+// a one-file change here. Do not bolt a file writer onto Add().
 type Log struct {
 	mu          sync.RWMutex
 	entries     []Entry

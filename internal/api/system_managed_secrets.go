@@ -534,10 +534,13 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 		applyLastReconcile(&listResp.Clusters[i], s.clusterRecon)
 	}
 
-	auditEntries := s.AuditLog().List(0)
+	// P3-F1: the audit ring is walked ONCE here, into a per-resource index
+	// both row builders then read in O(1). It used to be walked once per
+	// row — see buildRepairIndex's own comment.
+	repairs := buildRepairIndex(s.AuditLog().List(0))
 
-	resp.ClusterConnectionSecrets = s.buildConnectionSecretRows(r.Context(), listResp.Clusters, auditEntries)
-	resp.AddonValuesSecrets = s.buildAddonValuesSecretRows(listResp.Clusters, auditEntries)
+	resp.ClusterConnectionSecrets = s.buildConnectionSecretRows(r.Context(), listResp.Clusters, repairs)
+	resp.AddonValuesSecrets = s.buildAddonValuesSecretRows(listResp.Clusters, repairs)
 
 	s.respondManagedSecrets(w, r, resp)
 }
@@ -567,7 +570,7 @@ func (s *Server) respondManagedSecrets(w http.ResponseWriter, r *http.Request, r
 // Discovered/orphan clusters (Managed == false) are excluded — Sharko has
 // no connection secret of its own to report for a cluster it didn't
 // register.
-func (s *Server) buildConnectionSecretRows(ctx context.Context, clusters []models.Cluster, auditEntries []audit.Entry) []connectionSecretRow {
+func (s *Server) buildConnectionSecretRows(ctx context.Context, clusters []models.Cluster, repairs repairIndex) []connectionSecretRow {
 	_, ns, _ := s.k8sClientAndNamespace()
 
 	// The managed_cluster_self_heal setting is read ONCE per request (P2-C3)
@@ -602,9 +605,9 @@ func (s *Server) buildConnectionSecretRows(ctx context.Context, clusters []model
 		row.SelfHeals = connectionSelfHeals(c, row.ComparedPath, v3SelfHealOn)
 		row.DriftSource = connectionDriftSource(row.State, row.ComparedRevision, row.AppliedRevision)
 
-		if at, detail, ok := lastConnectionSecretRepair(auditEntries, c.Name); ok {
-			row.LastRepaired = at.UTC().Format(time.RFC3339)
-			row.LastRepairedDetail = detail
+		if rep, ok := repairs.lastConnectionSecretRepair(c.Name); ok {
+			row.LastRepaired = rep.At.UTC().Format(time.RFC3339)
+			row.LastRepairedDetail = rep.Detail
 		}
 		rows = append(rows, row)
 	}
@@ -734,31 +737,78 @@ func connectionSecretCheckError(rec *models.ClusterLastReconcile) string {
 	return clusterreconciler.FailureSentence(rec.Message)
 }
 
-// lastConnectionSecretRepair scans the audit log (newest-first, per
-// audit.Log.List) for the most recent successful write to this cluster's
-// connection secret. This is an existing query pattern (audit.Entry.Resource
-// already carries "cluster:<name>" for exactly these events — see
-// internal/clusterreconciler/reconciler.go's r.audit calls) read once for
-// the whole page rather than filtered per-cluster, so 50 clusters cost one
-// scan of the in-memory ring buffer, not 50.
-func lastConnectionSecretRepair(entries []audit.Entry, clusterName string) (at time.Time, detail string, ok bool) {
-	want := "cluster:" + clusterName
+// secretRepair is one row's "last repaired" fact: when Sharko last
+// successfully wrote this secret, and the canned description of what
+// changed.
+type secretRepair struct {
+	At     time.Time
+	Detail string
+}
+
+// repairIndex is the whole page's "last repaired" answer, precomputed.
+//
+// P3-F1 — WHY THIS EXISTS. The two lookups below used to each walk the
+// entire audit ring PER ROW: the comment on the old
+// lastConnectionSecretRepair claimed "one scan for the whole page", but it
+// was called once per cluster and once per cluster+addon pair, so a page
+// with 50 clusters and 200 values rows walked a 1000-entry ring 250 times
+// — a quarter of a million comparisons to fill in a column. Now the ring
+// is walked ONCE, into two maps, and every row is an O(1) lookup.
+//
+// Connection and values repairs are kept in SEPARATE maps rather than one,
+// even though their resource strings ("cluster:prod-eu" vs
+// "cluster:prod-eu/addon:datadog") can't collide today. One map would mean
+// a values event landing on a connection-shaped resource — a bug, a
+// rename, anything — could silently fill in the wrong row's "last
+// repaired". Two maps make that impossible by construction rather than by
+// the resource strings happening to stay different.
+type repairIndex struct {
+	connection map[string]secretRepair
+	values     map[string]secretRepair
+}
+
+// buildRepairIndex walks the audit entries ONCE, newest-first (the order
+// audit.Log.List returns), and keeps the FIRST match per resource — which
+// is therefore the most recent one, the same answer the old per-row scans
+// returned.
+func buildRepairIndex(entries []audit.Entry) repairIndex {
+	idx := repairIndex{
+		connection: make(map[string]secretRepair),
+		values:     make(map[string]secretRepair),
+	}
 	for _, e := range entries {
-		if e.Resource != want || e.Result != "success" {
+		if e.Result != "success" || e.Resource == "" {
 			continue
 		}
 		if d, isRepair := connectionSecretRepairDetail[e.Event]; isRepair {
-			return e.Timestamp, d, true
+			if _, seen := idx.connection[e.Resource]; !seen {
+				idx.connection[e.Resource] = secretRepair{At: e.Timestamp, Detail: d}
+			}
+			continue
+		}
+		if d, isRepair := addonValuesSecretRepairDetail[e.Event]; isRepair {
+			if _, seen := idx.values[e.Resource]; !seen {
+				idx.values[e.Resource] = secretRepair{At: e.Timestamp, Detail: d}
+			}
 		}
 	}
-	return time.Time{}, "", false
+	return idx
+}
+
+// lastConnectionSecretRepair reads one cluster's most recent successful
+// connection-secret write out of the prebuilt index. audit.Entry.Resource
+// already carries "cluster:<name>" for exactly these events — see
+// internal/clusterreconciler/reconciler.go's r.audit calls.
+func (idx repairIndex) lastConnectionSecretRepair(clusterName string) (secretRepair, bool) {
+	r, ok := idx.connection["cluster:"+clusterName]
+	return r, ok
 }
 
 // buildAddonValuesSecretRows projects one row per cluster+addon pair that
 // has both a registered secret definition AND the addon enabled on that
 // cluster (via the cluster's addon labels — already present on the Cluster
 // model from the same listing read, no extra I/O).
-func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, auditEntries []audit.Entry) []addonValuesSecretRow {
+func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, repairs repairIndex) []addonValuesSecretRow {
 	// Resolved once per request and stamped onto every row it applies to
 	// (S1). One addon-secret backend serves the whole server today, so
 	// every values row currently gets the same answer — but the ANSWER
@@ -812,9 +862,9 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, auditEntr
 					row.ConsecutiveFailures = count
 				}
 			}
-			if at, detail, ok := lastAddonValuesSecretRepair(auditEntries, c.Name, addonName); ok {
-				row.LastRepaired = at.UTC().Format(time.RFC3339)
-				row.LastRepairedDetail = detail
+			if rep, ok := repairs.lastAddonValuesSecretRepair(c.Name, addonName); ok {
+				row.LastRepaired = rep.At.UTC().Format(time.RFC3339)
+				row.LastRepairedDetail = rep.Detail
 			}
 			rows = append(rows, row)
 		}
@@ -937,24 +987,14 @@ func addonValuesSecretCheckFailureSentence(errMsg string) string {
 	}
 }
 
-// lastAddonValuesSecretRepair scans the audit log (newest-first, per
-// audit.Log.List) for the most recent successful write to this
-// cluster+addon's values secret. Mirrors lastConnectionSecretRepair's
-// one-scan-for-the-whole-page shape; Resource "cluster:<name>/addon:<addon>"
-// is written by internal/secrets.Reconciler's per-item audit callback
-// (wired in cmd/sharko/serve.go) for exactly the events in
-// addonValuesSecretRepairDetail.
-func lastAddonValuesSecretRepair(entries []audit.Entry, clusterName, addonName string) (at time.Time, detail string, ok bool) {
-	want := fmt.Sprintf("cluster:%s/addon:%s", clusterName, addonName)
-	for _, e := range entries {
-		if e.Resource != want || e.Result != "success" {
-			continue
-		}
-		if d, isRepair := addonValuesSecretRepairDetail[e.Event]; isRepair {
-			return e.Timestamp, d, true
-		}
-	}
-	return time.Time{}, "", false
+// lastAddonValuesSecretRepair reads one cluster+addon pair's most recent
+// successful values-secret write out of the prebuilt index. Resource
+// "cluster:<name>/addon:<addon>" is written by internal/secrets.
+// Reconciler's per-item audit callback (wired in cmd/sharko/serve.go) for
+// exactly the events in addonValuesSecretRepairDetail.
+func (idx repairIndex) lastAddonValuesSecretRepair(clusterName, addonName string) (secretRepair, bool) {
+	r, ok := idx.values[fmt.Sprintf("cluster:%s/addon:%s", clusterName, addonName)]
+	return r, ok
 }
 
 // clusterConnectionEngineInfo reports the cluster-secret reconciler's own

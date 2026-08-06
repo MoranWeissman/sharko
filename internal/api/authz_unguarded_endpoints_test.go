@@ -86,6 +86,10 @@ func (f *fakeSecretReconciler) LastItemConsecutiveFailures(_, _ string) (int, bo
 	return 0, false
 }
 
+func (f *fakeSecretReconciler) KnownItemCount() int {
+	return 0
+}
+
 func (f *fakeSecretReconciler) CheckOne(_ context.Context, cluster, addon string) (string, error) {
 	f.checkCalls = append(f.checkCalls, itemCallArgs{cluster, addon})
 	return f.checkOutcome, f.checkErr

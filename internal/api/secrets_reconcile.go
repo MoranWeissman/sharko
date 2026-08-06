@@ -31,8 +31,13 @@ func (s *Server) handleTriggerReconcile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.secretReconciler.Trigger()
+	// P3-F1: this entry used to carry an event name and nothing else — no
+	// resource, no blast radius. It now names the surface it acted on and
+	// says how many secrets that pass covers.
 	audit.Enrich(r.Context(), audit.Fields{
-		Event: "reconcile_triggered",
+		Event:    "reconcile_triggered",
+		Resource: resourceAddonValuesSecrets,
+		Detail:   valuesReconcileBlastRadius(s.secretReconciler.KnownItemCount()),
 	})
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "reconcile triggered"})
 }
@@ -76,9 +81,17 @@ func (s *Server) handleCheckSecrets(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// P3-F1: this is the entry the page's "Refresh all" leaves behind on
+	// this engine, and it used to be an entry about nothing — no resource
+	// at all, and a detail line that said "every" without saying how many.
+	// It now names the surface and states the real count (see
+	// audit_blast_radius.go). The count is read BEFORE the goroutine above
+	// gets anywhere, which is the honest thing to report: it is the size of
+	// the set this check was started over.
 	audit.Enrich(r.Context(), audit.Fields{
-		Event:  "addon_values_secret_check_triggered",
-		Detail: "read-only check of every addon-values secret",
+		Event:    "addon_values_secret_check_triggered",
+		Resource: resourceAddonValuesSecrets,
+		Detail:   valuesCheckBlastRadius(recon.KnownItemCount()),
 	})
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "checking every addon-values secret — nothing is written"})
 }

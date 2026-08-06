@@ -210,6 +210,13 @@ type SecretReconciler interface {
 	// LastItemOutcome. ok is false when this pair has never been checked or
 	// written on this server instance.
 	LastItemConsecutiveFailures(cluster, addon string) (count int, ok bool)
+	// KnownItemCount reports how many cluster+addon pairs this engine holds
+	// a record for right now — the real blast radius of one CheckAll
+	// (P3-F1), so the audit entry a "Refresh all" writes can state how much
+	// it actually covered. 0 means "no pass has run on this server instance
+	// yet", NOT "there is nothing to check": a caller must treat 0 as "we
+	// cannot say" and fall back to wording with no number in it.
+	KnownItemCount() int
 	// CheckOne re-checks a single addon-values secret against its source
 	// right now, WITHOUT writing anything (S4's "Refresh" row action).
 	// Returns the outcome as a plain string (see secrets.ItemOutcome); a

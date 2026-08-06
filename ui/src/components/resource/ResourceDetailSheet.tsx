@@ -20,6 +20,7 @@ export function ResourceDetailSheet({
   subtitle,
   children,
   testId,
+  wide,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -27,10 +28,26 @@ export function ResourceDetailSheet({
   subtitle?: ReactNode
   children: ReactNode
   testId?: string
+  /**
+   * Opt-in wider panel (P3-F2). The default stays `sm:max-w-lg` (512px) so
+   * nothing that already uses this sheet changes width; a panel that puts
+   * two things SIDE BY SIDE — the Managed Secrets diff, which shows what a
+   * secret should be next to what is actually on the cluster — asks for
+   * `sm:max-w-2xl` (672px) instead. Below that breakpoint the sheet is
+   * full-width either way and the caller's own grid stacks.
+   *
+   * A prop rather than a per-page override so the two sizes stay a short,
+   * named list instead of every page inventing its own width.
+   */
+  wide?: boolean
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col sm:max-w-lg" data-testid={testId}>
+      <SheetContent
+        side="right"
+        className={`flex w-full flex-col ${wide ? 'sm:max-w-2xl' : 'sm:max-w-lg'}`}
+        data-testid={testId}
+      >
         <SheetHeader>
           <SheetTitle>{title}</SheetTitle>
           {subtitle && <SheetDescription>{subtitle}</SheetDescription>}

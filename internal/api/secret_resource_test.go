@@ -16,8 +16,10 @@ import (
 	"k8s.io/client-go/kubernetes"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
 // secret_resource_test.go — the pins that matter for the live-Secret read
@@ -136,16 +138,29 @@ func TestSecretResource_NeverReturnsAValue(t *testing.T) {
 			}
 
 			// Sweep the parts of the response that could carry content —
-			// the key list, the labels, the annotations. The fixed
-			// structural fields (kind, api_version, values_blanked) are
-			// left out on purpose: "values_blanked":true would otherwise
-			// match a secret whose value happens to be the word "true",
-			// which is a false alarm about the test, not about the server.
-			content, err := json.Marshal(struct {
-				DataKeys    []secretResourceKeyView   `json:"data_keys"`
-				Labels      []secretResourceLabelView `json:"labels"`
-				Annotations []secretResourceLabelView `json:"annotations"`
-			}{view.DataKeys, view.Labels, view.Annotations})
+			// the key list, the labels, the annotations — and only the
+			// text-bearing fields of each.
+			//
+			// The booleans are left out on purpose, and this is about the
+			// TEST, not the server: "values_blanked":true, "present":true
+			// and "blanked":true all match a secret whose value happens to
+			// be the word "true", which is a false alarm every time. A bool
+			// has exactly two possible renderings and neither of them can
+			// be a secret, so there is nothing for this sweep to find in
+			// one. Every field that CAN carry text stays in.
+			type sweptPair struct {
+				Key   string `json:"key"`
+				Value string `json:"value"`
+				Path  string `json:"path,omitempty"`
+			}
+			swept := make([]sweptPair, 0, len(view.DataKeys)+len(view.Labels)+len(view.Annotations))
+			for _, k := range view.DataKeys {
+				swept = append(swept, sweptPair{Key: k.Key, Value: k.Value, Path: k.Path})
+			}
+			for _, l := range append(append([]secretResourceLabelView{}, view.Labels...), view.Annotations...) {
+				swept = append(swept, sweptPair{Key: l.Key, Value: l.Value})
+			}
+			content, err := json.Marshal(swept)
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -163,49 +178,156 @@ func TestSecretResource_NeverReturnsAValue(t *testing.T) {
 	}
 }
 
-// TestSecretResource_BlanksTheSelfCopyingAnnotation pins the one
-// annotation whose VALUE is a serialized copy of the object it sits on —
-// kubectl writes it on every `kubectl apply`, so on a hand-applied Secret
-// it carries every data value too. Showing annotations "as they are"
-// without this gate would hand the browser everything this endpoint
-// exists to blank.
-func TestSecretResource_BlanksTheSelfCopyingAnnotation(t *testing.T) {
-	const theValue = "sk-live-0000-leaked-through-an-annotation"
-	sec := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "datadog-secrets",
-			Namespace: "datadog",
-			Annotations: map[string]string{
-				"kubectl.kubernetes.io/last-applied-configuration": `{"data":{"api-key":"` + theValue + `"}}`,
-				"sharko.io/pushed-by":                              "the addon values engine",
-			},
+// TestSecretResource_AnnotationAllowList pins the P3-F2 flip: annotation
+// values are blanked by DEFAULT, and only the handful of Sharko-written
+// provenance keys come through. The key is always listed either way.
+//
+// The case that made the old block-list wrong is in the table too: an
+// annotation nobody thought of ("ops.example.com/backup-token") used to
+// sail straight through to the browser purely because it wasn't on a list
+// of one.
+func TestSecretResource_AnnotationAllowList(t *testing.T) {
+	const leaked = "sk-live-0000-leaked-through-an-annotation"
+
+	cases := []struct {
+		name      string
+		key       string
+		value     string
+		wantShown bool
+	}{
+		{
+			name:      "the connection engine's source file passes",
+			key:       clusterreconciler.AnnotationSourceFile,
+			value:     "configuration/managed-clusters.yaml",
+			wantShown: true,
 		},
-		Data: map[string][]byte{"api-key": []byte(theValue)},
+		{
+			name:      "the connection engine's revision passes",
+			key:       clusterreconciler.AnnotationRevision,
+			value:     "abcdef1234567890abcdef1234567890abcdef12",
+			wantShown: true,
+		},
+		{
+			name:      "written-at passes",
+			key:       clusterreconciler.AnnotationWrittenAt,
+			value:     "2026-08-06T00:00:00Z",
+			wantShown: true,
+		},
+		{
+			name:      "the values engine's addon passes",
+			key:       remoteclient.AnnotationAddon,
+			value:     "datadog",
+			wantShown: true,
+		},
+		{
+			name:      "the values engine's source passes",
+			key:       remoteclient.AnnotationSource,
+			value:     "AWS Secrets Manager",
+			wantShown: true,
+		},
+		{
+			name:      "kubectl's last-applied-configuration is blanked",
+			key:       "kubectl.kubernetes.io/last-applied-configuration",
+			value:     `{"data":{"api-key":"` + leaked + `"}}`,
+			wantShown: false,
+		},
+		{
+			name:      "an annotation nobody thought of is blanked",
+			key:       "ops.example.com/backup-token",
+			value:     leaked,
+			wantShown: false,
+		},
+		{
+			name:      "a sharko.io annotation is blanked — the list is sharko.dev provenance keys, not a namespace",
+			key:       "sharko.io/pushed-by",
+			value:     "the addon values engine",
+			wantShown: false,
+		},
 	}
 
-	view := newSecretResourceView(sec, "somewhere", nil)
-	body, err := json.Marshal(view)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sec := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "datadog-secrets",
+					Namespace:   "datadog",
+					Annotations: map[string]string{tc.key: tc.value},
+				},
+				Data: map[string][]byte{"api-key": []byte(leaked)},
+			}
+			view := newSecretResourceView(sec, "somewhere", nil)
+
+			if len(view.Annotations) != 1 {
+				t.Fatalf("annotations = %d, want 1 — the KEY is always listed, whatever happens to the value", len(view.Annotations))
+			}
+			got := view.Annotations[0]
+			if got.Key != tc.key {
+				t.Fatalf("annotation key = %q, want %q", got.Key, tc.key)
+			}
+
+			if tc.wantShown {
+				if got.Blanked || got.Value != tc.value {
+					t.Fatalf("allow-listed annotation must keep its real value; got %+v", got)
+				}
+				return
+			}
+
+			if !got.Blanked || got.Value != blankedValue {
+				t.Fatalf("annotation must be blanked; got %+v", got)
+			}
+			body, err := json.Marshal(view)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if strings.Contains(string(body), leaked) {
+				t.Fatalf("the annotation leaked the value; body = %s", body)
+			}
+			if field, ok := secretResourceViewHasNoValue(view); !ok {
+				t.Fatalf("view carries something other than the blank mask at %s", field)
+			}
+		})
 	}
-	if strings.Contains(string(body), theValue) {
-		t.Fatalf("the last-applied-configuration annotation leaked the value; body = %s", body)
+}
+
+// TestSecretResource_DeclaredKeyMissingOnCluster pins P3-F2's one per-key
+// verdict: a key the addon's definition declares but the live Secret does
+// not have is LISTED with present=false, rather than quietly vanishing —
+// that half-written state is the thing an operator most needs to see.
+//
+// The other half of the pin matters just as much: present is about
+// EXISTENCE only. There is no per-key "matches"/"differs" field here and
+// there must never be one — the engines compare whole secrets, so a
+// per-key verdict would be a fact Sharko never established.
+func TestSecretResource_DeclaredKeyMissingOnCluster(t *testing.T) {
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "datadog-secrets", Namespace: "datadog"},
+		Data:       map[string][]byte{"api-key": []byte("dd-api-real")},
+	}
+	keyPaths := map[string]string{
+		"api-key": "secrets/datadog/api-key",
+		"app-key": "secrets/datadog/app-key", // declared, not on the cluster
 	}
 
-	var sawBlanked, sawPlain bool
-	for _, a := range view.Annotations {
-		if a.Key == "kubectl.kubernetes.io/last-applied-configuration" {
-			sawBlanked = a.Blanked && a.Value == blankedValue
-		}
-		if a.Key == "sharko.io/pushed-by" {
-			sawPlain = a.Value == "the addon values engine"
-		}
+	view := newSecretResourceView(sec, "somewhere", keyPaths)
+
+	if len(view.DataKeys) != 2 {
+		t.Fatalf("data_keys = %d, want 2 (one live, one declared-but-absent); got %+v", len(view.DataKeys), view.DataKeys)
 	}
-	if !sawBlanked {
-		t.Error("the self-copying annotation must still be LISTED, with its value blanked")
+	byKey := map[string]secretResourceKeyView{}
+	for _, k := range view.DataKeys {
+		byKey[k.Key] = k
 	}
-	if !sawPlain {
-		t.Error("an ordinary annotation must keep its real value")
+	if !byKey["api-key"].Present {
+		t.Error("a key that IS on the cluster must be present=true")
+	}
+	if byKey["app-key"].Present {
+		t.Error("a key that is only declared must be present=false")
+	}
+	if byKey["app-key"].Path != "secrets/datadog/app-key" {
+		t.Errorf("a declared-but-absent key must still say where its value should come from; got %q", byKey["app-key"].Path)
+	}
+	if field, ok := secretResourceViewHasNoValue(view); !ok {
+		t.Fatalf("view carries something other than the blank mask at %s", field)
 	}
 }
 
@@ -457,6 +579,117 @@ func TestAddonValuesSecretResource_SecretGoneSaysSo(t *testing.T) {
 	if !strings.Contains(rw.Body.String(), "does not exist") {
 		t.Errorf("the message must say plainly that the secret is not there; body = %s", rw.Body.String())
 	}
+}
+
+// --- P3-F1: opening a live secret object is audited --------------------
+
+// TestSecretResourceRead_IsAudited pins that a live read leaves a line in
+// the audit log — this is the one read in Sharko worth recording, because
+// it is the one place a person asks to look at a real Secret object.
+//
+// It also pins what the entry does NOT say: no key name, no store path, no
+// namespace, nothing read off the object. The cluster (and addon) is the
+// whole record — "Sharko may describe the delivery, never the secret",
+// applied to the audit log itself.
+func TestSecretResourceRead_IsAudited(t *testing.T) {
+	t.Run("connection secret, success", func(t *testing.T) {
+		s := serverWithHubSecrets(t, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-eu", Namespace: "argocd"},
+			Data:       map[string][]byte{"config": []byte(`{"bearerToken":"a-real-token"}`)},
+		})
+		s.auditLog = audit.NewLog(10)
+
+		req := withRole(httptest.NewRequest(http.MethodGet, "/api/v1/clusters/prod-eu/secret/resource", nil), "operator")
+		req.SetPathValue("name", "prod-eu")
+		req.Header.Set("X-Sharko-User", "moran")
+		rw := httptest.NewRecorder()
+		s.handleGetConnectionSecretResource(rw, req)
+
+		if rw.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body = %s", rw.Code, rw.Body.String())
+		}
+		entries := s.auditLog.List(0)
+		if len(entries) != 1 {
+			t.Fatalf("audit entries = %d, want exactly 1; got %+v", len(entries), entries)
+		}
+		e := entries[0]
+		if e.Event != "secret_resource_read" {
+			t.Errorf("event = %q, want secret_resource_read", e.Event)
+		}
+		if e.Resource != "cluster:prod-eu" {
+			t.Errorf("resource = %q, want cluster:prod-eu", e.Resource)
+		}
+		if e.Result != "success" || e.Action != "read" || e.User != "moran" {
+			t.Errorf("unexpected entry: %+v", e)
+		}
+		if strings.Contains(e.Detail, "config") || strings.Contains(e.Detail, "bearerToken") {
+			t.Errorf("the entry must not describe the object's contents; detail = %q", e.Detail)
+		}
+	})
+
+	t.Run("connection secret, failed read is still recorded", func(t *testing.T) {
+		s := serverWithHubSecrets(t) // no secrets at all
+		s.auditLog = audit.NewLog(10)
+
+		req := withRole(httptest.NewRequest(http.MethodGet, "/api/v1/clusters/ghost/secret/resource", nil), "operator")
+		req.SetPathValue("name", "ghost")
+		rw := httptest.NewRecorder()
+		s.handleGetConnectionSecretResource(rw, req)
+
+		entries := s.auditLog.List(0)
+		if len(entries) != 1 {
+			t.Fatalf("audit entries = %d, want exactly 1", len(entries))
+		}
+		if entries[0].Result != "failure" || entries[0].Level != "warn" {
+			t.Errorf("a failed read must be recorded as a failure; got %+v", entries[0])
+		}
+	})
+
+	t.Run("addon values secret", func(t *testing.T) {
+		def := addonDef()
+		s := serverWithRemoteSecrets("prod-eu", def, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: def.SecretName, Namespace: def.Namespace},
+			Data:       map[string][]byte{"api-key": []byte("dd-api-real")},
+		})
+		s.auditLog = audit.NewLog(10)
+
+		req := withRole(httptest.NewRequest(http.MethodGet, "/x", nil), "operator")
+		req.SetPathValue("name", "prod-eu")
+		req.SetPathValue("addon", "datadog")
+		rw := httptest.NewRecorder()
+		s.handleGetAddonValuesSecretResource(rw, req)
+
+		if rw.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body = %s", rw.Code, rw.Body.String())
+		}
+		entries := s.auditLog.List(0)
+		if len(entries) != 1 {
+			t.Fatalf("audit entries = %d, want exactly 1", len(entries))
+		}
+		if entries[0].Resource != "cluster:prod-eu/addon:datadog" {
+			t.Errorf("resource = %q, want cluster:prod-eu/addon:datadog", entries[0].Resource)
+		}
+		for _, path := range def.Keys {
+			if strings.Contains(entries[0].Detail, path) {
+				t.Errorf("the entry must not carry a store path; detail = %q", entries[0].Detail)
+			}
+		}
+	})
+
+	t.Run("a refused read writes nothing — the role gate runs first", func(t *testing.T) {
+		s := serverWithHubSecrets(t)
+		s.auditLog = audit.NewLog(10)
+
+		req := withRole(httptest.NewRequest(http.MethodGet, "/api/v1/clusters/prod-eu/secret/resource", nil), "viewer")
+		req.SetPathValue("name", "prod-eu")
+		rw := httptest.NewRecorder()
+		s.handleGetConnectionSecretResource(rw, req)
+
+		assert403(t, rw)
+		if n := len(s.auditLog.List(0)); n != 0 {
+			t.Errorf("a 403 never reaches the read, so it writes no read entry; got %d", n)
+		}
+	})
 }
 
 func TestAddonValuesSecretResource_ViewerForbidden(t *testing.T) {

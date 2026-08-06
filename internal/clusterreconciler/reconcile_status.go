@@ -196,6 +196,24 @@ func (r *Reconciler) LastReconcile(name string) (ClusterReconcileRecord, bool) {
 	return rec, ok
 }
 
+// KnownClusterCount reports how many clusters this reconciler currently
+// holds a record for — the real blast radius of one "check everything"
+// pass (P3-F1). The record map is pruned to the live set every pass
+// (pruneStaleReconcileRecords), so after a pass has run this IS the number
+// of clusters a check covers, not a high-water mark.
+//
+// 0 means "no pass has run on this server instance yet", not "no clusters
+// exist" — a caller that wants to state a number must treat 0 as "we
+// cannot say" and fall back to wording with no number in it.
+func (r *Reconciler) KnownClusterCount() int {
+	if r == nil {
+		return 0
+	}
+	r.lastReconcileMu.RLock()
+	defer r.lastReconcileMu.RUnlock()
+	return len(r.lastReconcile)
+}
+
 // TickInterval returns the reconciler's configured poll cadence — how often
 // the background loop ticks, independent of Trigger() nudges (System-page
 // managed-secrets summary).
