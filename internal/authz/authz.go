@@ -142,10 +142,10 @@ var ActionRequirements = map[string]Role{
 	// caller, but it only ever exposes addon labels derived from git, never
 	// a live Secret, so it is the wrong precedent to copy here.
 	"secret.resource.read": RoleOperator,
-	"token.create":              RoleOperator,
-	"token.renew-own":           RoleOperator,
-	"token.revoke-own":          RoleOperator,
-	"init":                      RoleOperator,
+	"token.create":         RoleOperator,
+	"token.renew-own":      RoleOperator,
+	"token.revoke-own":     RoleOperator,
+	"init":                 RoleOperator,
 
 	// Connectivity tests (v4-wave2 review B1). These endpoints reach out to
 	// a Git host, an ArgoCD server or a secret store with real credentials —
@@ -181,6 +181,16 @@ var ActionRequirements = map[string]Role{
 	"addon-secret.list":       RoleViewer,
 	"engine.pin-check":        RoleViewer,
 	"catalog.freshness.read":  RoleViewer,
+	// Every secret Sharko manages, aggregated across both engines
+	// (GET /system/managed-secrets, gitops-proud P3-E) — no live cluster
+	// call, no secret value ever leaves the server (values stay blanked at
+	// their existing choke point). Same tier as cluster.list/addon.list:
+	// a viewer needs to SEE drift and fights to do their job, they just
+	// can't act on them (Sync/Refresh single-item actions stay Operator+,
+	// see addon-secret.refresh/addon-secret.sync above). The live per-row
+	// object read (secret.resource.read) stays Operator — unchanged by
+	// this lane.
+	"managed-secrets.list": RoleViewer,
 
 	// Read-only first-run repo-state probe (GET /api/v1/init/status). The
 	// matching write action "init" is Operator+; the probe is read-only so

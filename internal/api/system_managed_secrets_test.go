@@ -1158,3 +1158,514 @@ func TestHandleGetManagedSecrets_AddonValuesSecretRow_SelfHeals(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// P3-E — GET /api/v1/system/managed-secrets learns to back a portal:
+// query-param filters + paging (E1), a merged worst-first `rows` array
+// (E2), and a Viewer-tier authz gate (E3).
+// ---------------------------------------------------------------------------
+
+// TestBuildManagedSecretRows_MergesAndTagsEachKind pins E2's field-mapping
+// contract: a connection row and a values row both land in the merged
+// array, each tagged with its Kind, carrying its own kind-specific fields,
+// and leaving the OTHER kind's fields empty/zero rather than inventing a
+// value (connection rows have no Addon/ConsecutiveFailures; values rows
+// have no ComparedRevision/AppliedRevision/ComparedPath/DriftSource/
+// FightCount).
+func TestBuildManagedSecretRows_MergesAndTagsEachKind(t *testing.T) {
+	conn := []connectionSecretRow{{
+		Cluster:          "prod-eu",
+		SecretNamespace:  "argocd",
+		SecretName:       "prod-eu",
+		State:            "out_of_sync",
+		Source:           connectionSecretSource,
+		LastChecked:      "2026-08-01T00:00:00Z",
+		LastCheckError:   "",
+		ComparedRevision: "abc1234",
+		ComparedPath:     "configuration/managed-clusters.yaml",
+		AppliedRevision:  "def5678",
+		SelfHeals:        true,
+		DriftSource:      "git",
+		FightCount:       4,
+	}}
+	values := []addonValuesSecretRow{{
+		Cluster:             "prod-eu",
+		Addon:               "datadog",
+		SecretName:          "datadog-secrets",
+		SecretNamespace:     "datadog",
+		State:               "missing",
+		Source:              "AWS Secrets Manager",
+		LastChecked:         "2026-08-01T00:05:00Z",
+		SelfHeals:           true,
+		ConsecutiveFailures: 2,
+	}}
+
+	rows := buildManagedSecretRows(conn, values)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 merged rows, got %d", len(rows))
+	}
+
+	// out_of_sync (rank 0) sorts before missing (rank 1) — the connection
+	// row comes first.
+	connRow, valuesRow := rows[0], rows[1]
+
+	if connRow.Kind != managedSecretKindConnection {
+		t.Fatalf("rows[0].Kind = %q, want %q", connRow.Kind, managedSecretKindConnection)
+	}
+	if connRow.Name != "prod-eu" || connRow.Namespace != "argocd" {
+		t.Errorf("connection row name/namespace = %q/%q, want prod-eu/argocd", connRow.Name, connRow.Namespace)
+	}
+	if connRow.Cluster != "prod-eu" || connRow.Source != "git" || connRow.State != "out_of_sync" {
+		t.Errorf("connection row cluster/source/state = %q/%q/%q, want prod-eu/git/out_of_sync", connRow.Cluster, connRow.Source, connRow.State)
+	}
+	if connRow.ComparedRevision != "abc1234" || connRow.AppliedRevision != "def5678" || connRow.ComparedPath != "configuration/managed-clusters.yaml" || connRow.DriftSource != "git" {
+		t.Errorf("connection row lost a P2-C field: %+v", connRow)
+	}
+	if connRow.FightCount != 4 {
+		t.Errorf("connection row fight_count = %d, want 4", connRow.FightCount)
+	}
+	// Fields that only apply to a values row must stay empty/zero on a
+	// connection row — nothing invented.
+	if connRow.Addon != "" {
+		t.Errorf("connection row addon = %q, want empty (a connection secret has no addon)", connRow.Addon)
+	}
+	if connRow.ConsecutiveFailures != 0 {
+		t.Errorf("connection row consecutive_failures = %d, want 0 (FightCount is this kind's counter)", connRow.ConsecutiveFailures)
+	}
+
+	if valuesRow.Kind != managedSecretKindValues {
+		t.Fatalf("rows[1].Kind = %q, want %q", valuesRow.Kind, managedSecretKindValues)
+	}
+	if valuesRow.Name != "datadog-secrets" || valuesRow.Namespace != "datadog" {
+		t.Errorf("values row name/namespace = %q/%q, want datadog-secrets/datadog", valuesRow.Name, valuesRow.Namespace)
+	}
+	if valuesRow.Cluster != "prod-eu" || valuesRow.Addon != "datadog" || valuesRow.State != "missing" {
+		t.Errorf("values row cluster/addon/state = %q/%q/%q, want prod-eu/datadog/missing", valuesRow.Cluster, valuesRow.Addon, valuesRow.State)
+	}
+	if valuesRow.ConsecutiveFailures != 2 {
+		t.Errorf("values row consecutive_failures = %d, want 2", valuesRow.ConsecutiveFailures)
+	}
+	// Fields that only apply to a connection row must stay empty/zero on a
+	// values row — the values engine compares against the vault, not git,
+	// so it has no commit-revision or drift-blame facts (S3(a)).
+	if valuesRow.ComparedRevision != "" || valuesRow.AppliedRevision != "" || valuesRow.ComparedPath != "" || valuesRow.DriftSource != "" {
+		t.Errorf("values row invented a git-only field: %+v", valuesRow)
+	}
+	if valuesRow.FightCount != 0 {
+		t.Errorf("values row fight_count = %d, want 0 (ConsecutiveFailures is this kind's counter)", valuesRow.FightCount)
+	}
+}
+
+// TestManagedSecretStateSortRank_MatchesTheUITable pins the exact rank
+// table ui/src/components/resource/StatusMark.tsx's statusSortRank uses, so
+// the merged Rows array reads in the same order the System page renders:
+// out_of_sync, missing, foreign, unknown, in_sync. An unrecognized state
+// string reads as "unknown", matching toResourceStatus's own fallback.
+func TestManagedSecretStateSortRank_MatchesTheUITable(t *testing.T) {
+	cases := []struct {
+		state string
+		want  int
+	}{
+		{"out_of_sync", 0},
+		{"missing", 1},
+		{"foreign", 2},
+		{"unknown", 3},
+		{"in_sync", 4},
+		{"some-state-the-server-has-never-heard-of", 3}, // falls through to "unknown"'s rank
+		{"", 3},
+	}
+	for _, tc := range cases {
+		if got := managedSecretStateSortRank(tc.state); got != tc.want {
+			t.Errorf("managedSecretStateSortRank(%q) = %d, want %d", tc.state, got, tc.want)
+		}
+	}
+}
+
+// TestBuildManagedSecretRows_WorstFirstOrder builds five rows, one per
+// state, in a scrambled input order, and pins that the merged array always
+// comes back in the fixed worst-first order regardless of input order or
+// which kind each row is.
+func TestBuildManagedSecretRows_WorstFirstOrder(t *testing.T) {
+	conn := []connectionSecretRow{
+		{Cluster: "c-in-sync", State: "in_sync"},
+		{Cluster: "c-unknown", State: "unknown"},
+	}
+	values := []addonValuesSecretRow{
+		{Cluster: "c-foreign", Addon: "a", State: "foreign"},
+		{Cluster: "c-missing", Addon: "a", State: "missing"},
+		{Cluster: "c-out-of-sync", Addon: "a", State: "out_of_sync"},
+	}
+
+	rows := buildManagedSecretRows(conn, values)
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 merged rows, got %d", len(rows))
+	}
+	wantOrder := []string{"out_of_sync", "missing", "foreign", "unknown", "in_sync"}
+	for i, want := range wantOrder {
+		if rows[i].State != want {
+			t.Errorf("rows[%d].State = %q, want %q (full order: %v)", i, rows[i].State, want, statesOf(rows))
+		}
+	}
+}
+
+func statesOf(rows []managedSecretRow) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.State
+	}
+	return out
+}
+
+// TestFilterManagedSecretRows_EachParamAndCombinations pins E1's filter
+// semantics: exact-match, case-honest, AND-joined across params. An
+// unrecognized value for a param (a typo'd cluster, an addon that never
+// runs on any row, a state/kind/source the server has never produced)
+// matches nothing — a documented empty result, never an error — mirroring
+// the house pattern filterClusters/filterAddons already use for a
+// recognized filter field whose value simply doesn't occur.
+func TestFilterManagedSecretRows_EachParamAndCombinations(t *testing.T) {
+	rows := []managedSecretRow{
+		{Kind: managedSecretKindConnection, Cluster: "prod-eu", Source: "git", State: "out_of_sync"},
+		{Kind: managedSecretKindConnection, Cluster: "prod-us", Source: "git", State: "in_sync"},
+		{Kind: managedSecretKindValues, Cluster: "prod-eu", Addon: "datadog", Source: "AWS Secrets Manager", State: "missing"},
+		{Kind: managedSecretKindValues, Cluster: "prod-us", Addon: "eso", Source: "AWS Secrets Manager", State: "in_sync"},
+	}
+
+	cases := []struct {
+		name    string
+		filters managedSecretRowFilters
+		want    int
+	}{
+		{"no filters returns everything", managedSecretRowFilters{}, 4},
+		{"cluster filter", managedSecretRowFilters{Cluster: "prod-eu"}, 2},
+		{"addon filter — only values rows can match", managedSecretRowFilters{Addon: "datadog"}, 1},
+		{"state filter", managedSecretRowFilters{State: "in_sync"}, 2},
+		{"kind filter — connection", managedSecretRowFilters{Kind: managedSecretKindConnection}, 2},
+		{"kind filter — values", managedSecretRowFilters{Kind: managedSecretKindValues}, 2},
+		{"source filter", managedSecretRowFilters{Source: "AWS Secrets Manager"}, 2},
+		{"combined cluster+kind", managedSecretRowFilters{Cluster: "prod-eu", Kind: managedSecretKindValues}, 1},
+		{"combined cluster+state — no match", managedSecretRowFilters{Cluster: "prod-eu", State: "in_sync"}, 0},
+		{"unknown state value — documented empty, not an error", managedSecretRowFilters{State: "not-a-real-state"}, 0},
+		{"unknown kind value — documented empty, not an error", managedSecretRowFilters{Kind: "not-a-real-kind"}, 0},
+		{"unknown cluster value — documented empty", managedSecretRowFilters{Cluster: "does-not-exist"}, 0},
+		{"case-honest — different case never matches", managedSecretRowFilters{Cluster: "PROD-EU"}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := filterManagedSecretRows(rows, tc.filters)
+			if len(got) != tc.want {
+				t.Errorf("filterManagedSecretRows(%+v) returned %d rows, want %d (got=%+v)", tc.filters, len(got), tc.want, got)
+			}
+		})
+	}
+}
+
+// TestParseManagedSecretRowFilters_ReadsAllFiveParams pins the exact query
+// param names E1 specifies.
+func TestParseManagedSecretRowFilters_ReadsAllFiveParams(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets?cluster=prod-eu&addon=datadog&state=missing&kind=values&source=git", nil)
+	got := parseManagedSecretRowFilters(req)
+	want := managedSecretRowFilters{Cluster: "prod-eu", Addon: "datadog", State: "missing", Kind: "values", Source: "git"}
+	if got != want {
+		t.Errorf("parseManagedSecretRowFilters() = %+v, want %+v", got, want)
+	}
+
+	empty := parseManagedSecretRowFilters(httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil))
+	if empty != (managedSecretRowFilters{}) {
+		t.Errorf("parseManagedSecretRowFilters() with no query = %+v, want zero value", empty)
+	}
+}
+
+// managedSecretsFilterFixture stands up two clusters (prod-eu, prod-us),
+// each with the datadog addon enabled and a registered secret definition,
+// but deliberately does NOT start the cluster reconciler — SetClusterReconciler
+// is called on a Reconciler that has never ticked, so ClientAndNamespace()
+// resolves (giving connection rows a real secret name/namespace) while
+// LastReconcile stays nil for every cluster, landing both connection rows
+// on the honest "unknown" state without any goroutine/timing dependency.
+// The values-row states are deterministic because fakeReconciler.itemOutcome
+// is seeded directly, no reconcile pass needed either.
+func managedSecretsFilterFixture(t *testing.T) (*Server, http.Handler) {
+	t.Helper()
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
+		{"name": "prod-us", "server": "https://prod-us.example.com"},
+	}, http.StatusOK)
+	gp := &reconcileFakeGP{managedYAML: []byte(
+		"clusters:\n" +
+			"- name: prod-eu\n  labels:\n    datadog: enabled\n" +
+			"- name: prod-us\n  labels:\n    datadog: enabled\n",
+	)}
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	recon := clusterreconciler.New(clusterreconciler.Deps{
+		GitProvider:  func() gitprovider.GitProvider { return gp },
+		ArgoClient:   fake.NewSimpleClientset(),
+		Vault:        reconcileFakeVault{},
+		AuditFn:      func(audit.Entry) {},
+		Namespace:    "argocd",
+		TickInterval: time.Minute,
+	})
+	srv.SetClusterReconciler(recon)
+
+	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+		"datadog": {AddonName: "datadog", SecretName: "datadog-secrets", Namespace: "datadog", Keys: map[string]string{"api-key": "secrets/datadog/api-key"}},
+	})
+	srv.SetSecretReconciler(&fakeReconciler{
+		itemOutcome: map[[2]string]string{
+			{"prod-eu", "datadog"}: "unchanged", // -> in_sync
+			{"prod-us", "datadog"}: "missing",   // -> missing
+		},
+	})
+
+	return srv, router
+}
+
+// TestHandleGetManagedSecrets_Rows_MergedShapeWorstFirstAndOldArraysUnchanged
+// takes E1+E2+E3 through the real HTTP handler: two connection rows (both
+// "unknown", no reconcile tick) and two values rows (one "in_sync", one
+// "missing"), asserting the merged `rows` array has all four in worst-first
+// order, and that the two pre-existing per-kind arrays are returned exactly
+// as before this lane (the additive/backward-compatible contract).
+func TestHandleGetManagedSecrets_Rows_MergedShapeWorstFirstAndOldArraysUnchanged(t *testing.T) {
+	_, router := managedSecretsFilterFixture(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	// Pin: the old arrays STAY — full, unfiltered, exactly as this suite's
+	// pre-P3-E tests already pin their shape.
+	if len(body.ClusterConnectionSecrets) != 2 {
+		t.Fatalf("expected 2 connection-secret rows (unchanged by this lane), got %d", len(body.ClusterConnectionSecrets))
+	}
+	if len(body.AddonValuesSecrets) != 2 {
+		t.Fatalf("expected 2 addon-values rows (unchanged by this lane), got %d", len(body.AddonValuesSecrets))
+	}
+
+	if len(body.Rows) != 4 {
+		t.Fatalf("expected 4 merged rows, got %d (%+v)", len(body.Rows), body.Rows)
+	}
+	wantStates := []string{"missing", "unknown", "unknown", "in_sync"}
+	for i, want := range wantStates {
+		if body.Rows[i].State != want {
+			t.Errorf("rows[%d].State = %q, want %q (full: %v)", i, body.Rows[i].State, want, statesOf(body.Rows))
+		}
+	}
+	// Tie-break within the "unknown" pair is by cluster name: prod-eu < prod-us.
+	if body.Rows[1].Cluster != "prod-eu" || body.Rows[2].Cluster != "prod-us" {
+		t.Errorf("unknown-state tie-break order = %q, %q, want prod-eu, prod-us", body.Rows[1].Cluster, body.Rows[2].Cluster)
+	}
+	// The missing row is the values row for prod-us; secret identity fields
+	// must be the values definition's, not invented.
+	if body.Rows[0].Kind != managedSecretKindValues || body.Rows[0].Cluster != "prod-us" || body.Rows[0].Addon != "datadog" {
+		t.Errorf("rows[0] = %+v, want the prod-us/datadog values row", body.Rows[0])
+	}
+}
+
+// TestHandleGetManagedSecrets_Rows_FilterByKind pins ?kind= restricting the
+// merged array to one engine's rows, without touching the old per-kind
+// arrays (which never carried a kind filter to begin with — they're
+// arrays, not a mixed list).
+func TestHandleGetManagedSecrets_Rows_FilterByKind(t *testing.T) {
+	_, router := managedSecretsFilterFixture(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets?kind=values", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Rows) != 2 {
+		t.Fatalf("expected 2 values rows after ?kind=values, got %d (%+v)", len(body.Rows), body.Rows)
+	}
+	for _, row := range body.Rows {
+		if row.Kind != managedSecretKindValues {
+			t.Errorf("row kind = %q, want values (filter should have excluded it)", row.Kind)
+		}
+	}
+	// Old arrays are untouched by the filter — still both present in full.
+	if len(body.ClusterConnectionSecrets) != 2 || len(body.AddonValuesSecrets) != 2 {
+		t.Errorf("old arrays changed shape under a rows-only filter: connection=%d values=%d", len(body.ClusterConnectionSecrets), len(body.AddonValuesSecrets))
+	}
+}
+
+// TestHandleGetManagedSecrets_Rows_FilterByClusterAndState pins ?cluster=
+// and ?state= combined (AND-joined), and that an unmatched combination
+// returns a 200 with an empty rows array, never an error.
+func TestHandleGetManagedSecrets_Rows_FilterByClusterAndState(t *testing.T) {
+	_, router := managedSecretsFilterFixture(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets?cluster=prod-us&state=missing", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Rows) != 1 || body.Rows[0].Cluster != "prod-us" || body.Rows[0].State != "missing" {
+		t.Fatalf("expected exactly the prod-us/missing row, got %+v", body.Rows)
+	}
+
+	// An unmatched combination: 200 with empty rows, not an error.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets?cluster=prod-us&state=in_sync", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a filter combination with no matches, got %d", w2.Code)
+	}
+	var body2 managedSecretsResponse
+	if err := json.NewDecoder(w2.Body).Decode(&body2); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body2.Rows) != 0 {
+		t.Errorf("expected 0 rows for an unmatched filter combination, got %d", len(body2.Rows))
+	}
+}
+
+// TestHandleGetManagedSecrets_Rows_Paging pins paging via the existing
+// pagination helper (per_page/page query params, X-Total-Count/X-Page/
+// X-Per-Page response headers — the same envelope /clusters and /addons
+// already use), applied to the merged rows array. Total is 4 (2 connection
+// + 2 values); per_page=1 slices to exactly the first (worst) row while
+// X-Total-Count still reports the true unpaged total.
+func TestHandleGetManagedSecrets_Rows_Paging(t *testing.T) {
+	_, router := managedSecretsFilterFixture(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets?page=1&per_page=1", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("X-Total-Count"); got != "4" {
+		t.Errorf("X-Total-Count = %q, want 4", got)
+	}
+	if got := w.Header().Get("X-Page"); got != "1" {
+		t.Errorf("X-Page = %q, want 1", got)
+	}
+	if got := w.Header().Get("X-Per-Page"); got != "1" {
+		t.Errorf("X-Per-Page = %q, want 1", got)
+	}
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Rows) != 1 {
+		t.Fatalf("expected exactly 1 row on page 1 with per_page=1, got %d", len(body.Rows))
+	}
+	// Worst row first — the prod-us/missing values row (see the worst-first test above).
+	if body.Rows[0].State != "missing" {
+		t.Errorf("rows[0].State = %q, want missing (the worst row)", body.Rows[0].State)
+	}
+	// Old arrays are NEVER paginated — still both full.
+	if len(body.ClusterConnectionSecrets) != 2 || len(body.AddonValuesSecrets) != 2 {
+		t.Errorf("old arrays got paginated: connection=%d values=%d, want 2/2", len(body.ClusterConnectionSecrets), len(body.AddonValuesSecrets))
+	}
+
+	// Page 2 gets the next row.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets?page=2&per_page=1", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	var body2 managedSecretsResponse
+	if err := json.NewDecoder(w2.Body).Decode(&body2); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body2.Rows) != 1 {
+		t.Fatalf("expected exactly 1 row on page 2, got %d", len(body2.Rows))
+	}
+	if body2.Rows[0].Cluster == body.Rows[0].Cluster && body2.Rows[0].Kind == body.Rows[0].Kind {
+		t.Error("page 2 returned the same row as page 1")
+	}
+}
+
+// TestHandleGetManagedSecrets_Rows_PagingHeadersOnDegradedResponse pins that
+// the pagination header contract (X-Total-Count etc.) is set even on the
+// "degrade, never 500" no-connection path — a caller paging through this
+// endpoint sees a consistent header contract regardless of which internal
+// path produced the response.
+func TestHandleGetManagedSecrets_Rows_PagingHeadersOnDegradedResponse(t *testing.T) {
+	srv := newTestServer()
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("X-Total-Count"); got != "0" {
+		t.Errorf("X-Total-Count = %q, want 0 on the degraded no-connection path", got)
+	}
+	var body managedSecretsResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Rows) != 0 {
+		t.Errorf("expected empty rows on the degraded path, got %d", len(body.Rows))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// E3 — Viewer-tier authz gate
+// ---------------------------------------------------------------------------
+
+// TestHandleGetManagedSecrets_Authz_ViewerAndAboveAllowed pins that every
+// role at Viewer or above can read the list — the same tier /clusters and
+// /addons already use. The live per-row object read
+// (secret.resource.read, internal/api/secret_resource.go) stays Operator+
+// and is untouched by this lane.
+func TestHandleGetManagedSecrets_Authz_ViewerAndAboveAllowed(t *testing.T) {
+	for _, role := range []string{"viewer", "operator", "admin"} {
+		t.Run(role, func(t *testing.T) {
+			srv := newTestServer()
+			router := NewRouter(srv, nil)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+			req.Header.Set("X-Sharko-User", "someone")
+			req.Header.Set("X-Sharko-Role", role)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("role %q: expected 200, got %d (body=%s)", role, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestHandleGetManagedSecrets_Authz_NoAuthHeadersFailsOpen pins the
+// existing, deployment-wide fail-open convention (internal/authz.Require:
+// no X-Sharko-User/X-Sharko-Role headers at all means auth isn't configured
+// for this deployment, not "reject") — the SAME convention every other
+// Viewer-tier endpoint in this codebase already relies on. A request with
+// NO headers is not a below-viewer role (there is no role below Viewer;
+// RoleFromString's own zero value IS RoleViewer) — it is the
+// auth-not-configured case, and this endpoint must behave exactly like
+// every sibling Viewer-tier endpoint here, not invent a stricter rule of
+// its own.
+func TestHandleGetManagedSecrets_Authz_NoAuthHeadersFailsOpen(t *testing.T) {
+	srv := newTestServer()
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (no auth headers = auth not configured, fail-open, matches every other Viewer-tier endpoint), got %d (body=%s)", w.Code, w.Body.String())
+	}
+}
