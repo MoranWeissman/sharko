@@ -68,7 +68,7 @@ const navSections: NavSection[] = [
     label: 'Monitor',
     items: [
       { to: '/system', label: 'System', icon: Network },
-      { to: '/secrets', label: 'Managed Secrets', icon: KeyRound },
+      { to: '/secret-sync', label: 'Secret Sync', icon: KeyRound },
       { to: '/observability', label: 'Observability', icon: Activity },
       // A4: "Dashboards" read as a sibling/typo of "Dashboard" above.
       { to: '/dashboards', label: 'External Dashboards', icon: BarChart3 },
@@ -99,7 +99,11 @@ const routeLabels: Record<string, string> = {
   clusters: 'Managed Clusters',
   addons: 'Addons',
   system: 'System',
-  secrets: 'Managed Secrets',
+  // gitops-proud P4-I (D1): the page is "Secret Sync" now; 'secrets' stays
+  // mapped too so a not-yet-redirected breadcrumb frame never shows a raw
+  // path segment instead of a name.
+  'secret-sync': 'Secret Sync',
+  secrets: 'Secret Sync',
   observability: 'Observability',
   dashboards: 'External Dashboards',
   audit: 'Audit Log',
@@ -146,7 +150,8 @@ function getAIPageContext(pathname: string): string | undefined {
     '/clusters': 'the Managed Clusters page',
     '/addons': 'the Addons page (Catalog + Marketplace)',
     '/system': 'the System page (Sharko/ArgoCD → repo/clusters chain)',
-    '/secrets': 'the Managed Secrets page (every secret Sharko manages)',
+    '/secret-sync': 'the Secret Sync page (every secret Sharko manages)',
+    '/secrets': 'the Secret Sync page (every secret Sharko manages)',
     '/observability': 'the Observability page',
     '/dashboards': 'the External Dashboards page (external dashboard links)',
     '/audit': 'the Audit Log page',

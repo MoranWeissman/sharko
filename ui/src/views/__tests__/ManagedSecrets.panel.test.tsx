@@ -9,10 +9,13 @@
 //    could only come back 404);
 //  - a failed read offers Retry, and Retry actually re-reads;
 //  - a list re-read behind an open panel never reloads its live card;
+//  - the page's own 30-second self-refresh (gitops-proud P4-I I2) is the
+//    same list re-read, and holds the same guarantee, pausing while the
+//    tab is hidden and resuming once it's visible again;
 //  - a row opens from the keyboard;
 //  - there is NO per-key match/differ verdict anywhere, and must not be.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { ManagedSecrets } from '@/views/ManagedSecrets'
@@ -71,7 +74,7 @@ function authFor(role: string) {
 function renderPage(role = 'operator') {
   return render(
     <AuthContext.Provider value={authFor(role)}>
-      <MemoryRouter initialEntries={['/secrets']}>
+      <MemoryRouter initialEntries={['/secret-sync']}>
         <ManagedSecrets />
       </MemoryRouter>
     </AuthContext.Provider>,
@@ -150,8 +153,8 @@ const response: ManagedSecretsResponse = {
     },
   ],
   engines: {
-    cluster_connection: { wired: true, interval_seconds: 30, last_run: '2026-08-05T00:00:00Z' },
-    addon_values: { wired: true, interval_seconds: 300, last_run: '2026-08-04T23:55:00Z' },
+    cluster_connection: { wired: true, enabled: true, interval_seconds: 30, last_run: '2026-08-05T00:00:00Z' },
+    addon_values: { wired: true, enabled: true, interval_seconds: 300, last_run: '2026-08-04T23:55:00Z' },
   },
   addon_values_secret_source: 'AWS Secrets Manager',
 }
@@ -420,6 +423,78 @@ describe('the open panel is independent of the list', () => {
     fireEvent.click(screen.getByTestId('secret-row-values-staging-us-datadog'))
     await waitFor(() => expect(mockGetAddonValuesSecretResource).toHaveBeenCalledTimes(2))
     expect(mockGetAddonValuesSecretResource).toHaveBeenLastCalledWith('staging-us', 'datadog')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// I2 (gitops-proud P4-I) — the 30-second self-refresh
+// ─────────────────────────────────────────────────────────────────────────────
+
+// jsdom's document.visibilityState is a getter with no setter — redefine it
+// per test to flip the page between "visible" (the refresh runs) and
+// "hidden" (it pauses), then fire the real event the page listens for.
+function setDocumentVisibility(state: 'visible' | 'hidden') {
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    get: () => state,
+  })
+  document.dispatchEvent(new Event('visibilitychange'))
+}
+
+describe('the page keeps itself fresh every 30 seconds while visible', () => {
+  afterEach(() => {
+    setDocumentVisibility('visible')
+    vi.useRealTimers()
+  })
+
+  it('re-reads the list on its own after 30 seconds, and the open panel is untouched — the same hard guarantee a manual re-read already has', async () => {
+    // Fake timers go on BEFORE render — the 30s interval is armed in a
+    // useEffect at mount, so it must be the fake clock that owns it from
+    // the start (shouldAdvanceTime keeps real awaits/waitFor working).
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderPage()
+    const panel = await openRow('values-prod-eu-datadog')
+    await waitFor(() => expect(mockGetAddonValuesSecretResource).toHaveBeenCalledTimes(1))
+
+    const callsBefore = mockGetManagedSecrets.mock.calls.length
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    await waitFor(() => expect(mockGetManagedSecrets.mock.calls.length).toBeGreaterThan(callsBefore))
+    // The panel is still open on the same row, and its live card was NOT
+    // re-fetched — the exact guarantee the "list re-read" test above pins
+    // for a manual Refresh, now proven for the automatic 30s one too.
+    expect(screen.getByTestId('secret-detail-panel')).toBeInTheDocument()
+    expect(mockGetAddonValuesSecretResource).toHaveBeenCalledTimes(1)
+    expect(within(panel).getByTestId('diff-live-card')).toHaveTextContent('datadog/datadog-secrets')
+  })
+
+  it('does not re-read while the tab is hidden', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderPage()
+    await waitFor(() => expect(mockGetManagedSecrets).toHaveBeenCalledTimes(1))
+
+    setDocumentVisibility('hidden')
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(mockGetManagedSecrets).toHaveBeenCalledTimes(1)
+  })
+
+  it('resumes re-reading once the tab becomes visible again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    renderPage()
+    await waitFor(() => expect(mockGetManagedSecrets).toHaveBeenCalledTimes(1))
+
+    setDocumentVisibility('hidden')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(mockGetManagedSecrets).toHaveBeenCalledTimes(1)
+
+    setDocumentVisibility('visible')
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    await waitFor(() => expect(mockGetManagedSecrets.mock.calls.length).toBeGreaterThan(1))
   })
 })
 

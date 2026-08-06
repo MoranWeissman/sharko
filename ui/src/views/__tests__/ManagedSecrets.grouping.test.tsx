@@ -67,7 +67,7 @@ function LocationProbe() {
   return <div data-testid="location-probe">{searchParams.toString()}</div>
 }
 
-function renderPage(initialEntries: string[] = ['/secrets']) {
+function renderPage(initialEntries: string[] = ['/secret-sync']) {
   return render(
     <AuthContext.Provider value={adminAuth}>
       <MemoryRouter initialEntries={initialEntries}>
@@ -127,8 +127,8 @@ const response: ManagedSecretsResponse = {
     },
   ],
   engines: {
-    cluster_connection: { wired: true, interval_seconds: 30, last_run: '2026-08-05T00:00:00Z' },
-    addon_values: { wired: true, interval_seconds: 300, last_run: '2026-08-04T23:55:00Z' },
+    cluster_connection: { wired: true, enabled: true, interval_seconds: 30, last_run: '2026-08-05T00:00:00Z' },
+    addon_values: { wired: true, enabled: true, interval_seconds: 300, last_run: '2026-08-04T23:55:00Z' },
   },
   addon_values_secret_source: 'AWS Secrets Manager',
 }
@@ -261,7 +261,7 @@ describe('ManagedSecrets — Group by (G2)', () => {
   })
 
   it('comes up already grouped when the URL says so', async () => {
-    renderPage(['/secrets?group=addon'])
+    renderPage(['/secret-sync?group=addon'])
     expect(await screen.findByTestId('secret-group-addon-datadog')).toBeInTheDocument()
     expect(screen.getByTestId('group-by-addon')).toHaveAttribute('aria-pressed', 'true')
   })

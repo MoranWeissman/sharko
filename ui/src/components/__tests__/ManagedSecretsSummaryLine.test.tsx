@@ -1,6 +1,7 @@
 // ManagedSecretsSummaryLine — the System page's one quiet line about
 // managed secrets (S1). Covers: the "all in sync" / "N out of sync" /
-// "not managing any secrets yet" wording, and the link to /secrets.
+// "not managing any secrets yet" wording, and the link to /secret-sync
+// (gitops-proud P4-I D1 rename — the page used to be at /secrets).
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -34,7 +35,7 @@ describe('ManagedSecretsSummaryLine', () => {
     renderLine()
 
     await waitFor(() => expect(screen.getByText(/Sharko manages 2 secrets — all in sync\./)).toBeInTheDocument())
-    expect(screen.getByRole('link', { name: 'View Managed Secrets' })).toHaveAttribute('href', '/secrets')
+    expect(screen.getByRole('link', { name: 'View Secret Sync' })).toHaveAttribute('href', '/secret-sync')
   })
 
   it('counts out_of_sync and missing rows together as "out of sync"', async () => {

@@ -404,3 +404,114 @@ func TestIsManagedClusterSelfHealEnabled_ErrorBeforeAnyRead_DefaultsFalse(t *tes
 		t.Error("expected the static default (false) when no successful read has ever happened, got true")
 	}
 }
+
+// gitops-proud P4-I (D2) — addon_values_engine_enabled. Same shape as the
+// managed_cluster_self_heal block above, with the opposite default: this
+// setting defaults to true (engine ON) — an admin has to explicitly switch
+// it off, unlike self-heal which has to be explicitly switched on.
+
+func TestGetAddonValuesEngineEnabled_DefaultsToTrue(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	enabled, err := store.GetAddonValuesEngineEnabled(ctx)
+	if err != nil {
+		t.Fatalf("GetAddonValuesEngineEnabled: %v", err)
+	}
+	if !enabled {
+		t.Error("GetAddonValuesEngineEnabled = false, want default true (engine on)")
+	}
+}
+
+func TestSetAddonValuesEngineEnabled_RoundTrip(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if err := store.SetAddonValuesEngineEnabled(ctx, false); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled(false): %v", err)
+	}
+	enabled, err := store.GetAddonValuesEngineEnabled(ctx)
+	if err != nil {
+		t.Fatalf("GetAddonValuesEngineEnabled: %v", err)
+	}
+	if enabled {
+		t.Error("GetAddonValuesEngineEnabled = true after SetAddonValuesEngineEnabled(false), want false")
+	}
+
+	if err := store.SetAddonValuesEngineEnabled(ctx, true); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled(true): %v", err)
+	}
+	enabled, err = store.GetAddonValuesEngineEnabled(ctx)
+	if err != nil {
+		t.Fatalf("GetAddonValuesEngineEnabled (after revert): %v", err)
+	}
+	if !enabled {
+		t.Error("GetAddonValuesEngineEnabled (after revert) = false, want true")
+	}
+}
+
+func TestIsAddonValuesEngineEnabled(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if !store.IsAddonValuesEngineEnabled(ctx) {
+		t.Error("IsAddonValuesEngineEnabled should be true by default")
+	}
+
+	if err := store.SetAddonValuesEngineEnabled(ctx, false); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled: %v", err)
+	}
+	if store.IsAddonValuesEngineEnabled(ctx) {
+		t.Error("IsAddonValuesEngineEnabled should be false after SetAddonValuesEngineEnabled(false)")
+	}
+}
+
+func TestIsAddonValuesEngineEnabled_NilStoreIsSafe(t *testing.T) {
+	var store *Store
+	if !store.IsAddonValuesEngineEnabled(context.Background()) {
+		t.Error("IsAddonValuesEngineEnabled on a nil *Store must default to true, never panic or report false")
+	}
+}
+
+func TestIsAddonValuesEngineEnabled_ErrorAfterFalseWasRead_StaysFalse(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	// Admin turns the engine off, and it is successfully read back once —
+	// cache seeded with false.
+	if err := store.SetAddonValuesEngineEnabled(ctx, false); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled: %v", err)
+	}
+	if store.IsAddonValuesEngineEnabled(ctx) {
+		t.Fatal("expected IsAddonValuesEngineEnabled to be false before injecting any read error")
+	}
+
+	// Now every subsequent ConfigMap read fails. The setting must keep
+	// reporting false (serve from cache), never silently fail back open to
+	// the static default (true) — a transient ConfigMap outage must not
+	// turn a switched-off engine back on.
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+
+	for i := 0; i < 3; i++ {
+		if store.IsAddonValuesEngineEnabled(ctx) {
+			t.Fatalf("iteration %d: IsAddonValuesEngineEnabled must stay false (cached) on a read error after false was successfully read, got true", i)
+		}
+	}
+}
+
+func TestIsAddonValuesEngineEnabled_ErrorBeforeAnyRead_DefaultsTrue(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	// No successful read has ever happened on this Store — the cache is
+	// empty, so the static default (true, enabled) applies.
+	if !store.IsAddonValuesEngineEnabled(ctx) {
+		t.Error("expected the static default (true) when no successful read has ever happened, got false")
+	}
+}

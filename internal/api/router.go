@@ -1193,6 +1193,8 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("PUT /api/v1/settings/allow-inline-credentials", srv.handleSetAllowInlineCredentials)
 	mux.HandleFunc("GET /api/v1/settings/managed-cluster-self-heal", srv.handleGetManagedClusterSelfHeal)
 	mux.HandleFunc("PUT /api/v1/settings/managed-cluster-self-heal", srv.handleSetManagedClusterSelfHeal)
+	mux.HandleFunc("GET /api/v1/settings/addon-values-engine-enabled", srv.handleGetAddonValuesEngineEnabled)
+	mux.HandleFunc("PUT /api/v1/settings/addon-values-engine-enabled", srv.handleSetAddonValuesEngineEnabled)
 	// Capability auto-detection (V2-cleanup-88.1) — read-tier, any
 	// authenticated user (the register-cluster screen needs it before the
 	// user has picked a role).

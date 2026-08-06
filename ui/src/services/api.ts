@@ -2104,6 +2104,27 @@ export const api = {
       allow_inline_credentials,
     }),
 
+  // ─── Addon values engine off switch (gitops-proud P4-I, D2) ───────────
+
+  /**
+   * Whether the addon-values secrets engine is switched on (default true).
+   * Powers the Settings → Addon Values Engine toggle, and the setting is
+   * what the Secret Sync page's engine strip reads to decide whether it
+   * shows "Addon values engine is switched off."
+   */
+  getAddonValuesEngineEnabled: () =>
+    fetchJSON<import('./models').AddonValuesEngineEnabledResponse>('/settings/addon-values-engine-enabled'),
+
+  /**
+   * Set the server-wide addon_values_engine_enabled switch. Admin-only on
+   * the backend (403 for non-admins) — gate the control with isAdmin
+   * before calling.
+   */
+  setAddonValuesEngineEnabled: (addon_values_engine_enabled: boolean) =>
+    putJSON<import('./models').AddonValuesEngineEnabledResponse>('/settings/addon-values-engine-enabled', {
+      addon_values_engine_enabled,
+    }),
+
   // ─── Default Addons (V3-P2.2) ──────────────────────────────────────────
 
   /**

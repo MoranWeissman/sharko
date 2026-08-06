@@ -60,19 +60,20 @@ var ActionRequirements = map[string]Role{
 	// Renewing somebody ELSE's token. The own/other split mirrors revoke:
 	// pushing out the expiry of a token you do not own keeps a credential
 	// alive that only its owner should be able to keep alive.
-	"token.renew-other":                  RoleAdmin,
-	"audit.clear":                        RoleAdmin,
-	"ai.config":                          RoleAdmin,
-	"ai.provider":                        RoleAdmin,
-	"dashboard.save":                     RoleAdmin,
-	"argocd.resource-exclusions":         RoleAdmin,
-	"addon-secret.create":                RoleAdmin,
-	"addon-secret.delete":                RoleAdmin,
-	"pr.delete":                          RoleAdmin,
-	"catalog.sources.refresh":            RoleAdmin,
-	"settings.probe-mode":                RoleAdmin,
-	"settings.allow-inline-credentials":  RoleAdmin,
-	"settings.managed-cluster-self-heal": RoleAdmin,
+	"token.renew-other":                    RoleAdmin,
+	"audit.clear":                          RoleAdmin,
+	"ai.config":                            RoleAdmin,
+	"ai.provider":                          RoleAdmin,
+	"dashboard.save":                       RoleAdmin,
+	"argocd.resource-exclusions":           RoleAdmin,
+	"addon-secret.create":                  RoleAdmin,
+	"addon-secret.delete":                  RoleAdmin,
+	"pr.delete":                            RoleAdmin,
+	"catalog.sources.refresh":              RoleAdmin,
+	"settings.probe-mode":                  RoleAdmin,
+	"settings.allow-inline-credentials":    RoleAdmin,
+	"settings.managed-cluster-self-heal":   RoleAdmin,
+	"settings.addon-values-engine-enabled": RoleAdmin,
 
 	// v3 -> v4 migration (v4 Wave 2, Story 5.2). One call rewrites every
 	// data file in the connected repo, so both the preview (which renders

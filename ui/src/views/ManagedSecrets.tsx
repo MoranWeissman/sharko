@@ -1,7 +1,9 @@
-// ManagedSecrets — the /secrets page, a dense resource list built to look
-// like ArgoCD's own Application list. Every secret Sharko manages —
-// connection secrets AND addon-values secrets — is one row in one table: a
-// small kind glyph, the identity, a small grey "kind · follows source"
+// ManagedSecrets — the page now named "Secret Sync" (gitops-proud P4-I D1;
+// lives at /secret-sync, with /secrets kept as a redirect alias so old
+// links and bookmarks keep working — see App.tsx), a dense resource list
+// built to look like ArgoCD's own Application list. Every secret Sharko
+// manages — connection secrets AND addon-values secrets — is one row in
+// one table: a small kind glyph, the identity, a small grey "kind · follows source"
 // line under the identity, a cluster (when it isn't already the identity),
 // a time, a status dot + word, and a row menu. Click a row to open the
 // detail side panel; the row itself never grows.
@@ -52,10 +54,16 @@
 //        all in the URL (via useSearchParams) — reloadable, bookmarkable,
 //        back-button-safe, and the red engine error below can deep-link
 //        into a filtered view of its cluster.
-//   B4 — selection (the active page-size button, the active page number)
-//        no longer reuses the same green/teal StatusMark uses for
-//        "in sync" — it's the navy the sidebar already uses, so "selected"
-//        and "healthy" can never be confused. See PaginationControls.tsx.
+//   B4 — selection (the active group-by button, back when paging existed
+//        the active page-size button too) no longer reuses the same
+//        green/teal StatusMark uses for "in sync" — it's the navy the
+//        sidebar already uses, so "selected" and "healthy" can never be
+//        confused.
+//   I2 (gitops-proud P4-I) — paging (and B2's "Showing 1–20 of 169"
+//        footer) is gone. The chips/filters still narrow the rows; the
+//        table now scrolls over every one of them under a sticky header
+//        instead of breaking them into pages, and the footer states a
+//        plain count instead of a range.
 //
 // S3 HONESTY LOCK (carried forward, non-negotiable): every row states, in
 // visible text, what it's compared against — connection secrets read
@@ -201,6 +209,13 @@
 //        (the self-repair promise) is the same: a visible InfoHint now,
 //        not a hover-only title attribute.
 //
+//   I2 (gitops-proud P4-I) — paging is gone. "Rows per page:" above no
+//        longer applies to this page — the chips and filters still narrow
+//        which rows are in play, but once narrowed, the table shows every
+//        one of them and scrolls, with a sticky header, instead of
+//        breaking them into pages. Worst-first sort and group-by carry
+//        over unchanged; they just no longer feed a page slice.
+//
 //   H4 — one calm permanent line under the title states what Sharko does
 //        here; a grouped child row gets a thin vertical guide line so
 //        addon → cluster → secret reads as a tree; and the panel's old
@@ -245,7 +260,6 @@ import type {
   ManagedSecretsResponse,
   SecretResource,
 } from '@/services/models'
-import { PaginationControls, PageSizeSelector, type PageSize } from '@/components/PaginationControls'
 import { InfoHint } from '@/components/InfoHint'
 import { RoleGuard } from '@/components/RoleGuard'
 import { AuthContext } from '@/hooks/useAuth'
@@ -808,10 +822,20 @@ function EngineStat({
   onErrorClick?: (cluster: string) => void
 }) {
   const cadence = cadenceSentence(kind, info?.interval_seconds)
+  // gitops-proud P4-I (D2) — the values engine's off switch. `enabled` is
+  // only ever false for the addon-values engine (the connection engine has
+  // no switch and always reports true) — checked wired-and-not-enabled so
+  // "not running on this server at all" and "running, but an admin turned
+  // it off" stay two different, honest sentences.
+  const switchedOff = info?.wired && info.enabled === false
   return (
     <div className="px-5 py-1 first:pl-0">
       <div className="text-xs font-medium text-[#5a8aaa] dark:text-gray-500">{label}</div>
-      {info?.wired ? (
+      {switchedOff ? (
+        <div className="mt-0.5 text-sm text-[#5a8aaa] dark:text-gray-500" data-testid={`engine-off-${kind}`}>
+          Addon values engine is switched off.
+        </div>
+      ) : info?.wired ? (
         <div className="mt-0.5 flex items-center gap-1 text-sm text-[#0a3a5a] dark:text-gray-200">
           <span>
             Sharko last ran a check <TimeChip iso={info.last_run} />.
@@ -826,8 +850,10 @@ function EngineStat({
           real error text (which can be long and technical, and that's
           fine; error text is allowed to carry debug detail) moved into the
           InfoHint next to it, reachable by click or keyboard, not just a
-          hover. */}
-      {info?.last_error && (
+          hover. Suppressed while switched off — a stale error from before
+          the engine was turned off is not something clicking it can act
+          on, and the off sentence above is the one fact that matters now. */}
+      {!switchedOff && info?.last_error && (
         <div className="mt-1 flex flex-wrap items-center gap-1 text-xs" data-testid={`engine-error-${kind}`}>
           {info.last_error_cluster && onErrorClick ? (
             <button
@@ -1928,8 +1954,6 @@ export function ManagedSecrets() {
 
   const [sortKey, setSortKey] = useState<SortKey>('state')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState<PageSize>(20)
 
   const load = useCallback(() => {
     return getManagedSecrets()
@@ -1940,6 +1964,46 @@ export function ManagedSecrets() {
 
   useEffect(() => {
     load()
+  }, [load])
+
+  // I2 — the page keeps itself fresh: re-reads every 30 seconds while the
+  // tab is actually visible, and pauses the moment it isn't (a background
+  // tab nobody is looking at has no reason to keep hitting the API every
+  // 30s). This calls the exact same `load()` every other re-read on this
+  // page already calls (the manual "Check all now" button, a row's
+  // Refresh/Sync) — so it carries the same guarantee those already have:
+  // it can never clobber an open detail panel. useLiveSecret above keys its
+  // fetch on the row's stable key, not on the row object `load()` hands
+  // down each time, which is the exact mechanism that keeps a 30-second
+  // re-read here from turning into a flicker on the open panel's live
+  // card (see that hook's own comment).
+  useEffect(() => {
+    const REFRESH_INTERVAL_MS = 30_000
+    let intervalId: ReturnType<typeof setInterval> | undefined
+
+    const stop = () => {
+      if (intervalId !== undefined) {
+        clearInterval(intervalId)
+        intervalId = undefined
+      }
+    }
+    const start = () => {
+      if (intervalId !== undefined) return
+      intervalId = setInterval(load, REFRESH_INTERVAL_MS)
+    }
+
+    if (document.visibilityState !== 'hidden') start()
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') stop()
+      else start()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
   }, [load])
 
   const connectionRows = data?.cluster_connection_secrets ?? []
@@ -2006,45 +2070,34 @@ export function ManagedSecrets() {
   }, [filtered, sortKey, sortDir])
 
   // G2 — grouping. `none` is the default and is today's flat list,
-  // unchanged. Grouped, the page pages over GROUPS rather than rows, so a
-  // group is never split in half across a page boundary.
+  // unchanged. The chips/filters narrow which rows are in `sorted`; the
+  // table itself scrolls over every one of them (I2 — paging removed, a
+  // sticky header instead of pages), so grouping no longer has to worry
+  // about a group getting split in half across a page boundary either.
   const groups = useMemo(() => buildRowGroups(sorted, groupBy), [sorted, groupBy])
 
-  useEffect(() => {
-    setPage(1)
-  }, [search, stateFilter, addonFilter, sourceFilter, sortKey, sortDir, pageSize, groupBy])
-
   const grouped = groupBy !== 'none'
-  const pageUnitCount = grouped ? groups.length : sorted.length
-  const totalPages = Math.max(1, Math.ceil(pageUnitCount / pageSize))
-  const clampedPage = Math.min(page, totalPages)
-  const paged = useMemo(() => sorted.slice((clampedPage - 1) * pageSize, clampedPage * pageSize), [sorted, clampedPage, pageSize])
-  const pagedGroups = useMemo(
-    () => groups.slice((clampedPage - 1) * pageSize, clampedPage * pageSize),
-    [groups, clampedPage, pageSize],
-  )
 
-  // B2 — an honest "Showing X–Y of Z" line: never "169 of 169 shown" while
-  // 20 rows are on screen, and plain about it when a filter has narrowed
-  // the total below everything Sharko manages. Grouped, it counts groups
-  // and SAYS it counts groups — "1–5 of 12" with no noun would be exactly
-  // the kind of quietly-wrong number this page keeps refusing to print.
+  // B2 (carried through I2's paging removal) — an honest count line: says
+  // the real total, and says plainly when a filter has narrowed it below
+  // everything Sharko manages. Grouped, it counts groups and SAYS it
+  // counts groups — a bare number with no noun would be exactly the kind
+  // of quietly-wrong line this page keeps refusing to print.
   const hasActiveFilter = stateFilter !== 'all' || search.trim() !== ''
-  const unit = grouped ? (groupBy === 'addon' ? 'addons' : 'clusters') : ''
-  const rangeStart = pageUnitCount === 0 ? 0 : (clampedPage - 1) * pageSize + 1
-  const rangeEnd = Math.min(clampedPage * pageSize, pageUnitCount)
-  const paginationSummary =
-    pageUnitCount === 0
+  const unit = groupBy === 'addon' ? 'addons' : 'clusters'
+  const secretWord = sorted.length === 1 ? 'secret' : 'secrets'
+  const secretsSummary =
+    sorted.length === 0
       ? hasActiveFilter
         ? `No secrets match this filter (${unifiedRows.length} total)`
         : 'No secrets'
       : grouped
         ? hasActiveFilter
-          ? `Showing ${rangeStart}–${rangeEnd} of ${pageUnitCount} ${unit}, ${sorted.length} secrets (filtered from ${unifiedRows.length})`
-          : `Showing ${rangeStart}–${rangeEnd} of ${pageUnitCount} ${unit}, ${sorted.length} secrets`
+          ? `${groups.length} ${unit}, ${sorted.length} ${secretWord} (filtered from ${unifiedRows.length})`
+          : `${groups.length} ${unit}, ${sorted.length} ${secretWord}`
         : hasActiveFilter
-          ? `Showing ${rangeStart}–${rangeEnd} of ${sorted.length} (filtered from ${unifiedRows.length})`
-          : `Showing ${rangeStart}–${rangeEnd} of ${sorted.length}`
+          ? `${sorted.length} ${secretWord} (filtered from ${unifiedRows.length})`
+          : `${sorted.length} ${secretWord}`
 
   const handleSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -2150,7 +2203,9 @@ export function ManagedSecrets() {
           worried would go stale) but a fact about what Sharko does here,
           which doesn't change when the table's columns do. */}
       <div>
-        <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Managed Secrets</h1>
+        {/* gitops-proud P4-I (D1): renamed "Secret Sync" — the nav entry,
+            page title, and breadcrumb all say the same name now. */}
+        <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Secret Sync</h1>
         <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">
           Sharko applies these to the clusters itself — what should exist comes from git, values come from your
           secrets store.
@@ -2275,9 +2330,6 @@ export function ManagedSecrets() {
             ))}
           </div>
         </div>
-        <div className="ml-auto">
-          <PageSizeSelector pageSize={pageSize} onChange={setPageSize} sizes={[10, 20, 50, 100]} label="Rows per page:" />
-        </div>
       </div>
 
       {loading ? (
@@ -2295,9 +2347,16 @@ export function ManagedSecrets() {
         // ring, the pale-blue card surface, and a shadow, instead of the
         // near-grey ring + plain white this page had drifted to on its
         // own.
-        <div className="overflow-hidden rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
+        //
+        // I2 (gitops-proud P4-I): paging is gone — this outer div is now
+        // the SCROLL container (max-h + overflow-y-auto) instead of just an
+        // overflow-hidden frame, and the header inside is `sticky top-0` so
+        // it stays put while the rows underneath it scroll. Every filtered
+        // row is in the DOM at once; the chips/filters above narrow which
+        // rows exist, scrolling browses the rest.
+        <div className="max-h-[65vh] overflow-y-auto overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
           <Table>
-            <TableHeader className="border-b border-[#6aade0] bg-[#d0e8f8] dark:border-gray-700 dark:bg-gray-900">
+            <TableHeader className="sticky top-0 z-10 border-b border-[#6aade0] bg-[#d0e8f8] dark:border-gray-700 dark:bg-gray-900">
               <TableRow className="hover:bg-transparent">
                 {/* H2/H3: Status moves next to Name (ArgoCD's own habit of
                     putting a resource's health right at the start of its
@@ -2315,7 +2374,7 @@ export function ManagedSecrets() {
             </TableHeader>
             <TableBody>
               {grouped
-                ? pagedGroups.map((group) => (
+                ? groups.map((group) => (
                     <Fragment key={group.key}>
                       <GroupHeaderRow
                         group={group}
@@ -2336,7 +2395,7 @@ export function ManagedSecrets() {
                         ))}
                     </Fragment>
                   ))
-                : paged.map((row) => (
+                : sorted.map((row) => (
                     <SecretTableRow
                       key={row.key}
                       row={row}
@@ -2352,10 +2411,9 @@ export function ManagedSecrets() {
       )}
 
       <div className="flex items-center justify-between">
-        <span className="text-xs text-[#3a6a8a] dark:text-gray-400" data-testid="pagination-summary">
-          {paginationSummary}
+        <span className="text-xs text-[#3a6a8a] dark:text-gray-400" data-testid="secrets-summary">
+          {secretsSummary}
         </span>
-        <PaginationControls page={clampedPage} totalPages={totalPages} onPageChange={setPage} />
       </div>
 
       <SecretDetailPanel

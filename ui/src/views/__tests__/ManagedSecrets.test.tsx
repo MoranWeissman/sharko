@@ -1,6 +1,8 @@
-// ManagedSecrets — the /secrets page rebuilt to look like ArgoCD's own
-// Application list (maintainer's adopted design review, "shaped like
-// ArgoCD but painted like the opposite of ArgoCD"). Pins:
+// ManagedSecrets — the page now named "Secret Sync" (/secret-sync, with
+// /secrets kept as a redirect alias — gitops-proud P4-I D1), rebuilt to
+// look like ArgoCD's own Application list (maintainer's adopted design
+// review, "shaped like ArgoCD but painted like the opposite of ArgoCD").
+// Pins:
 //
 //  - S3 honesty lock: every row states, in visible text, what it's
 //    compared against ("cluster connection · follows git" /
@@ -9,9 +11,10 @@
 //  - the default sort is worst-first, never alphabetical.
 //  - B1: filter-chip counts follow the search box, not the chip filter
 //    itself (selecting a chip must not zero out the other chips' counts).
-//  - B2: the "Showing X–Y of Z" footer is honest — never "N of N shown"
-//    while a page of N-minus-something rows is on screen — and says when
-//    a filter has narrowed the total.
+//  - B2: the footer states an honest count and says when a filter has
+//    narrowed the total. (P4-I I2: paging is gone — the footer used to
+//    read "Showing X–Y of Z", now it's a plain total; every filtered row
+//    renders at once under a scrolling, sticky-header table instead.)
 //  - B3: the active chip filter, the search text, and the selected row
 //    all live in the URL and survive a reload.
 //  - H2: the status word is plain dark ink — colour lives on the status
@@ -105,7 +108,7 @@ function LocationProbe() {
   return <div data-testid="location-probe">{searchParams.toString()}</div>
 }
 
-function renderPage(initialEntries: string[] = ['/secrets']) {
+function renderPage(initialEntries: string[] = ['/secret-sync']) {
   return render(
     <AuthContext.Provider value={adminAuth}>
       <MemoryRouter initialEntries={initialEntries}>
@@ -167,8 +170,8 @@ const baseResponse: ManagedSecretsResponse = {
     },
   ],
   engines: {
-    cluster_connection: { wired: true, interval_seconds: 30, last_run: '2026-08-05T00:00:00Z' },
-    addon_values: { wired: true, interval_seconds: 300, last_run: '2026-08-04T23:55:00Z' },
+    cluster_connection: { wired: true, enabled: true, interval_seconds: 30, last_run: '2026-08-05T00:00:00Z' },
+    addon_values: { wired: true, enabled: true, interval_seconds: 300, last_run: '2026-08-04T23:55:00Z' },
   },
   addon_values_secret_source: 'AWS Secrets Manager',
 }
@@ -407,7 +410,7 @@ describe('ManagedSecrets', () => {
     expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('In sync2')
   })
 
-  it('B2: the footer says "Showing X–Y of Z" honestly — never "N of N shown" with a partial page on screen — and states when a filter narrowed the total', async () => {
+  it('B2 (carried through I2 paging removal): the footer states an honest total, and says when a filter narrowed it', async () => {
     const manyRows = Array.from({ length: 25 }, (_, i) => ({
       cluster: `cluster-${String(i).padStart(2, '0')}`,
       state: 'in_sync',
@@ -425,14 +428,14 @@ describe('ManagedSecrets', () => {
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-cluster-00')).toBeInTheDocument())
-    // Default page size is 20 of 25 total — must be an honest range, never "25 of 25".
-    expect(screen.getByTestId('pagination-summary')).toHaveTextContent('Showing 1–20 of 25')
-    expect(screen.getByTestId('pagination-summary')).not.toHaveTextContent('25 of 25')
+    // I2: no paging — every row is on screen at once, so the footer states
+    // the real total plainly, never a page range.
+    expect(screen.getByTestId('secrets-summary')).toHaveTextContent('25 secrets')
 
     // Filtering narrows the total — the summary says so explicitly.
     const search = screen.getByPlaceholderText('Search by cluster, addon, secret name, or namespace...')
     fireEvent.change(search, { target: { value: 'cluster-0' } })
-    await waitFor(() => expect(screen.getByTestId('pagination-summary')).toHaveTextContent('filtered from 25'))
+    await waitFor(() => expect(screen.getByTestId('secrets-summary')).toHaveTextContent('filtered from 25'))
   })
 
   it('B3: the active chip filter and the search text are written to the URL and restored from it on load', async () => {
@@ -449,7 +452,7 @@ describe('ManagedSecrets', () => {
 
     // A fresh render seeded with that exact URL comes up already filtered —
     // this is the "survives a reload" half of the pin.
-    renderPage(['/secrets?state=out_of_sync&q=staging'])
+    renderPage(['/secret-sync?state=out_of_sync&q=staging'])
     await waitFor(() => expect(screen.getAllByTestId('filter-chip-out_of_sync').length).toBeGreaterThan(0))
     const chips = screen.getAllByTestId('filter-chip-out_of_sync')
     expect(chips[chips.length - 1]).toHaveAttribute('aria-pressed', 'true')
@@ -466,7 +469,7 @@ describe('ManagedSecrets', () => {
     fireEvent.click(screen.getByTestId('secret-row-connection-prod-eu'))
     await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveTextContent('row=connection-prod-eu'))
 
-    renderPage(['/secrets?row=connection-prod-eu'])
+    renderPage(['/secret-sync?row=connection-prod-eu'])
     const panel = await screen.findAllByTestId('secret-detail-panel')
     expect(panel.length).toBeGreaterThan(0)
   })
@@ -1019,7 +1022,7 @@ describe('ManagedSecrets', () => {
     expect(screen.getByTestId('secret-row-values-staging-us-datadog')).toBeInTheDocument()
   })
 
-  it('paginates a long combined list', async () => {
+  it('I2: a long combined list has no pagination controls — every row renders at once under a scrolling, sticky-header table', async () => {
     const manyRows = Array.from({ length: 25 }, (_, i) => ({
       cluster: `cluster-${String(i).padStart(2, '0')}`,
       state: 'in_sync',
@@ -1037,13 +1040,29 @@ describe('ManagedSecrets', () => {
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-cluster-00')).toBeInTheDocument())
-    // Default page size is 20 — row 24 (cluster-24) is on page 2.
-    expect(screen.queryByTestId('secret-row-connection-cluster-24')).not.toBeInTheDocument()
+    // Every one of the 25 rows is in the DOM at once — no page 2 to click
+    // Next into.
+    expect(screen.getByTestId('secret-row-connection-cluster-24')).toBeInTheDocument()
+    expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(25)
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Next' })[0])
+    // No page-size selector, no Prev/Next, no page-number buttons — the
+    // shared PaginationControls/PageSizeSelector widgets are gone from
+    // this page (they stay in use elsewhere — AddonCatalog, Clusters,
+    // Observability, PullRequestsPanel).
+    expect(screen.queryByText('Rows per page:')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Prev' })).not.toBeInTheDocument()
 
-    await waitFor(() => expect(screen.getByTestId('secret-row-connection-cluster-24')).toBeInTheDocument())
-    expect(screen.queryByTestId('secret-row-connection-cluster-00')).not.toBeInTheDocument()
+    // The table lives inside a scrolling frame with a sticky header, not a
+    // plain overflow-hidden box.
+    const header = screen.getByText('Status').closest('thead')
+    expect(header).toHaveClass('sticky')
+    // The scroll frame is an ANCESTOR div of the table (possibly not the
+    // nearest one — the shared Table component wraps its own <table> in a
+    // horizontal-scroll div first), so search up by class rather than
+    // assuming a fixed nesting depth.
+    const scrollFrame = header?.closest('div.overflow-y-auto')
+    expect(scrollFrame).not.toBeNull()
   })
 
   it('the detail panel has a link to the cluster/addon page that navigates there', async () => {
@@ -1076,6 +1095,30 @@ describe('ManagedSecrets', () => {
     renderPage()
 
     await waitFor(() => expect(screen.getAllByText('Not running on this server.')).toHaveLength(2))
+  })
+
+  // I3 (gitops-proud P4-I, D2) — the values engine's off switch. `enabled`
+  // false is a DIFFERENT state from `wired` false ("not running on this
+  // server at all") — an admin turned a real, running engine off, and the
+  // strip says so plainly, in the engine's own words, not a generic
+  // "not running" line that would suggest something is broken.
+  it('says the addon values engine is switched off when an admin has turned it off — and leaves the connection engine alone', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      cluster_connection_secrets: [],
+      addon_values_secrets: [],
+      engines: {
+        cluster_connection: { wired: true, enabled: true, interval_seconds: 30, last_run: '2026-08-05T00:00:00Z' },
+        addon_values: { wired: true, enabled: false, interval_seconds: 300, last_run: '2026-08-04T23:00:00Z' },
+      },
+      addon_values_secret_source: 'secrets store',
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('engine-off-values')).toHaveTextContent('Addon values engine is switched off.'))
+    // The connection engine has no off switch — it still reports its
+    // ordinary cadence sentence, never the off sentence.
+    expect(screen.queryByTestId('engine-off-connection')).not.toBeInTheDocument()
+    expect(screen.getByText(/Sharko last ran a check/)).toBeInTheDocument()
   })
 
   // P1-A A3 — "Check all now" (renamed from "Refresh all" in the H3 word

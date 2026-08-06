@@ -103,11 +103,13 @@ describe('Layout', () => {
     expect(screen.getByText('Settings')).toBeInTheDocument()
   })
 
-  // S1 — Managed Secrets gets its own page and its own nav item under
-  // Monitor, matching "Managed Clusters"' naming under Overview.
-  it('shows the Managed Secrets nav item under Monitor', () => {
+  // S1 — the managed-secrets page gets its own page and its own nav item
+  // under Monitor, matching "Managed Clusters"' naming under Overview.
+  // Renamed "Secret Sync" in gitops-proud P4-I (D1) — the route moved to
+  // /secret-sync, with /secrets kept as a redirect alias.
+  it('shows the Secret Sync nav item under Monitor', () => {
     renderLayout()
-    expect(screen.getByText('Managed Secrets')).toBeInTheDocument()
+    expect(screen.getByText('Secret Sync')).toBeInTheDocument()
   })
 
   it('collapses sidebar when toggle button is clicked', () => {
