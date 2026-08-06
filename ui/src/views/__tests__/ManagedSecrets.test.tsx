@@ -77,6 +77,10 @@ const mockGetClusterComparison = vi.fn()
 // is pinned server-side.
 const mockGetConnectionSecretResource = vi.fn()
 const mockGetAddonValuesSecretResource = vi.fn()
+// H4-3: "Sharko's record" reads the existing audit log endpoint, scoped to
+// the opened row — mocked here the same way every other API call in this
+// suite is, defaulted to an empty list in beforeEach.
+const mockFetchAuditLog = vi.fn()
 
 vi.mock('@/services/api', () => ({
   api: {
@@ -91,6 +95,7 @@ vi.mock('@/services/api', () => ({
   resyncClusterLabels: (...args: unknown[]) => mockResyncClusterLabels(...args),
   refreshAddonValuesSecret: (...args: unknown[]) => mockRefreshAddonValuesSecret(...args),
   syncAddonValuesSecret: (...args: unknown[]) => mockSyncAddonValuesSecret(...args),
+  fetchAuditLog: (...args: unknown[]) => mockFetchAuditLog(...args),
 }))
 
 // Renders the current URL's search string into a testid'd node — B3 pins
@@ -189,10 +194,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockGetConnectionSecretResource.mockResolvedValue({ ...blankedResource, name: 'prod-eu', namespace: 'argocd' })
   mockGetAddonValuesSecretResource.mockResolvedValue(blankedResource)
+  mockFetchAuditLog.mockResolvedValue({ entries: [] })
 })
 
 describe('ManagedSecrets', () => {
-  it('states its source in visible text on every row, in the SOURCE column — connection rows read "git", values rows read the real backend (S3 honesty lock, moved into the column by G1)', async () => {
+  it('states its source in visible text on every row, in the SOURCE column, as "checked against X" — connection rows read git, values rows read the real backend (S3 honesty lock, moved into the column by G1, worded by H3)', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
@@ -200,20 +206,35 @@ describe('ManagedSecrets', () => {
 
     const connRow1 = screen.getByTestId('secret-row-connection-prod-eu')
     const connRow2 = screen.getByTestId('secret-row-connection-staging-us')
-    expect(within(connRow1).getByTestId('cell-source')).toHaveTextContent('git')
-    expect(within(connRow2).getByTestId('cell-source')).toHaveTextContent('git')
-    // The KIND subline stays, minus the source half it used to carry.
-    expect(within(connRow1).getByText('cluster connection')).toBeInTheDocument()
+    expect(within(connRow1).getByTestId('cell-source')).toHaveTextContent('checked against git')
+    expect(within(connRow2).getByTestId('cell-source')).toHaveTextContent('checked against git')
 
     const valuesRow1 = screen.getByTestId('secret-row-values-prod-eu-datadog')
     const valuesRow2 = screen.getByTestId('secret-row-values-staging-us-datadog')
-    expect(within(valuesRow1).getByTestId('cell-source')).toHaveTextContent('AWS Secrets Manager')
-    expect(within(valuesRow2).getByTestId('cell-source')).toHaveTextContent('AWS Secrets Manager')
-    expect(within(valuesRow1).getByText('addon values')).toBeInTheDocument()
+    expect(within(valuesRow1).getByTestId('cell-source')).toHaveTextContent('checked against AWS Secrets Manager')
+    expect(within(valuesRow2).getByTestId('cell-source')).toHaveTextContent('checked against AWS Secrets Manager')
 
     // Never the generic, misleading "the vault" wording — the server's
     // real backend name is what ships.
     expect(screen.queryByText(/the vault/)).not.toBeInTheDocument()
+  })
+
+  // H2 (gitops-proud P4-H): the row is one line now — the old grey KIND
+  // subline under the identity is gone, and both kinds print their
+  // cluster in its own column instead of connection rows leaving it blank.
+  it('renders one line per row: no kind subline, and the cluster column is filled in for both kinds', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+
+    expect(screen.queryByText('cluster connection')).not.toBeInTheDocument()
+    expect(screen.queryByText('addon values')).not.toBeInTheDocument()
+
+    const connRow1 = screen.getByTestId('secret-row-connection-prod-eu')
+    const valuesRow1 = screen.getByTestId('secret-row-values-prod-eu-datadog')
+    expect(within(connRow1).getByText('prod-eu')).toBeInTheDocument()
+    expect(within(valuesRow1).getByText('prod-eu')).toBeInTheDocument()
   })
 
   // G1: the backend a row follows is now a PER-ROW fact (row.source), so
@@ -282,7 +303,7 @@ describe('ManagedSecrets', () => {
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
-    const search = screen.getByPlaceholderText('Search by cluster, addon, or secret name...')
+    const search = screen.getByPlaceholderText('Search by cluster, addon, secret name, or namespace...')
 
     // "datadog" matches the addon on both values rows, no connection rows.
     fireEvent.change(search, { target: { value: 'datadog' } })
@@ -346,7 +367,7 @@ describe('ManagedSecrets', () => {
     expect(screen.getByTestId('filter-chip-all')).toHaveTextContent('All4')
     expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('In sync2')
     expect(screen.getByTestId('filter-chip-out_of_sync')).toHaveTextContent('Out of sync2')
-    expect(screen.getByTestId('filter-chip-missing')).toHaveTextContent('Missing0')
+    expect(screen.getByTestId('filter-chip-missing')).toHaveTextContent('Not on the cluster0')
     expect(screen.getByTestId('filter-chip-unknown')).toHaveTextContent('Not checked yet0')
 
     // All 4 rows visible before filtering.
@@ -369,7 +390,7 @@ describe('ManagedSecrets', () => {
     await waitFor(() => expect(screen.getByTestId('filter-chip-in_sync')).toBeInTheDocument())
 
     // Narrow to "prod" — only the two prod-eu (in_sync) rows match.
-    const search = screen.getByPlaceholderText('Search by cluster, addon, or secret name...')
+    const search = screen.getByPlaceholderText('Search by cluster, addon, secret name, or namespace...')
     fireEvent.change(search, { target: { value: 'prod' } })
 
     await waitFor(() => expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('In sync2'))
@@ -409,7 +430,7 @@ describe('ManagedSecrets', () => {
     expect(screen.getByTestId('pagination-summary')).not.toHaveTextContent('25 of 25')
 
     // Filtering narrows the total — the summary says so explicitly.
-    const search = screen.getByPlaceholderText('Search by cluster, addon, or secret name...')
+    const search = screen.getByPlaceholderText('Search by cluster, addon, secret name, or namespace...')
     fireEvent.change(search, { target: { value: 'cluster-0' } })
     await waitFor(() => expect(screen.getByTestId('pagination-summary')).toHaveTextContent('filtered from 25'))
   })
@@ -422,7 +443,7 @@ describe('ManagedSecrets', () => {
     fireEvent.click(screen.getByTestId('filter-chip-out_of_sync'))
     await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveTextContent('state=out_of_sync'))
 
-    const search = screen.getByPlaceholderText('Search by cluster, addon, or secret name...')
+    const search = screen.getByPlaceholderText('Search by cluster, addon, secret name, or namespace...')
     fireEvent.change(search, { target: { value: 'staging' } })
     await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveTextContent('q=staging'))
 
@@ -432,7 +453,7 @@ describe('ManagedSecrets', () => {
     await waitFor(() => expect(screen.getAllByTestId('filter-chip-out_of_sync').length).toBeGreaterThan(0))
     const chips = screen.getAllByTestId('filter-chip-out_of_sync')
     expect(chips[chips.length - 1]).toHaveAttribute('aria-pressed', 'true')
-    const searches = screen.getAllByPlaceholderText('Search by cluster, addon, or secret name...')
+    const searches = screen.getAllByPlaceholderText('Search by cluster, addon, secret name, or namespace...')
     expect(searches[searches.length - 1]).toHaveValue('staging')
   })
 
@@ -465,14 +486,22 @@ describe('ManagedSecrets', () => {
     })
     renderPage()
 
+    // H3: the red line is now one short sentence naming the cluster and
+    // what clicking it does — the raw server error text moved into the
+    // info hint next to it, reachable by click, not printed inline.
     const errorEl = await screen.findByTestId('engine-error-connection')
     expect(errorEl).toHaveTextContent('staging-us')
-    expect(errorEl).toHaveTextContent("Sharko couldn't reach this cluster's Kubernetes API.")
+    expect(errorEl).toHaveTextContent('click to see it')
+    expect(errorEl).not.toHaveTextContent("Sharko couldn't reach this cluster's Kubernetes API.")
 
-    fireEvent.click(errorEl)
+    fireEvent.click(within(errorEl).getByRole('button', { name: /A check failed on staging-us/ }))
     await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
     expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument()
     expect(screen.queryByTestId('secret-row-connection-prod-eu')).not.toBeInTheDocument()
+
+    // The full error text is still there, one click away.
+    fireEvent.click(within(errorEl).getByLabelText('What was the error?'))
+    await waitFor(() => expect(screen.getByText("Sharko couldn't reach this cluster's Kubernetes API.")).toBeInTheDocument())
   })
 
   // P1-B B2: the addon-values engine's red line now carries a cluster and a
@@ -496,12 +525,21 @@ describe('ManagedSecrets', () => {
 
     const errorEl = await screen.findByTestId('engine-error-values')
     expect(errorEl).toHaveTextContent('staging-us')
-    expect(errorEl).toHaveTextContent("Sharko couldn't connect to one of the clusters.")
+    expect(errorEl).toHaveTextContent('click to see it')
+    expect(errorEl).not.toHaveTextContent("Sharko couldn't connect to one of the clusters.")
 
-    fireEvent.click(errorEl)
+    fireEvent.click(within(errorEl).getByRole('button', { name: /A check failed on staging-us/ }))
     await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
     expect(screen.getByTestId('secret-row-values-staging-us-datadog')).toBeInTheDocument()
     expect(screen.queryByTestId('secret-row-values-prod-eu-datadog')).not.toBeInTheDocument()
+
+    // The full error text is still there, one click away.
+    fireEvent.click(within(errorEl).getByLabelText('What was the error?'))
+    await waitFor(() =>
+      expect(
+        screen.getByText("Sharko couldn't connect to one of the clusters. Check that Sharko can reach that cluster, then click Refresh."),
+      ).toBeInTheDocument(),
+    )
   })
 
   // P1-B B1: a connection row whose last check FAILED is not the same
@@ -681,7 +719,7 @@ describe('ManagedSecrets', () => {
 
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).getByText(/Connects/)).toBeInTheDocument()
-    expect(within(panel).getByText('Compared against git.')).toBeInTheDocument()
+    expect(within(panel).getByText('Checked against git.')).toBeInTheDocument()
 
     await waitFor(() => expect(mockGetClusterComparison).toHaveBeenCalledWith('staging-us'))
     await waitFor(() => expect(within(panel).getByText(/Missing 1 addon label/)).toBeInTheDocument())
@@ -710,7 +748,7 @@ describe('ManagedSecrets', () => {
 
     // C1: short SHA (7 chars) + full path shown; full SHA on hover (title).
     const revisionLine = within(panel).getByTestId('detail-compared-revision')
-    expect(revisionLine).toHaveTextContent('Compared against git abcdef1 · configuration/managed-clusters.yaml')
+    expect(revisionLine).toHaveTextContent('Checked against git abcdef1 · configuration/managed-clusters.yaml')
     expect(revisionLine.title).toBe('Full commit: abcdef1234567890abcdef1234567890abcdef12')
 
     // C3: self_heals: false on an out_of_sync row -> "Waiting for Sync."
@@ -745,7 +783,7 @@ describe('ManagedSecrets', () => {
 
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).getByText(/Carries values for addon/)).toBeInTheDocument()
-    expect(within(panel).getByText('Compared against AWS Secrets Manager — git only holds a pointer to it.')).toBeInTheDocument()
+    expect(within(panel).getByText('Checked against AWS Secrets Manager — git only holds a pointer to it.')).toBeInTheDocument()
     // P3-F2: the verdict is one of the five edge sentences.
     expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent(
       "These differ — Sync writes the source's version onto the cluster.",
@@ -972,7 +1010,7 @@ describe('ManagedSecrets', () => {
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
-    const search = screen.getByPlaceholderText('Search by cluster, addon, or secret name...')
+    const search = screen.getByPlaceholderText('Search by cluster, addon, secret name, or namespace...')
     fireEvent.change(search, { target: { value: 'staging' } })
 
     await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
@@ -1040,11 +1078,11 @@ describe('ManagedSecrets', () => {
     await waitFor(() => expect(screen.getAllByText('Not running on this server.')).toHaveLength(2))
   })
 
-  // P1-A A3 — "Refresh all" checks both engines and writes to neither. The
-  // second assertion is the one that matters: triggerSecretsReconcile runs
-  // the pass that CREATES and ROTATES secrets, so a button labelled Refresh
-  // must never reach it.
-  it('Refresh all checks both engines and never fires the values write pass', async () => {
+  // P1-A A3 — "Check all now" (renamed from "Refresh all" in the H3 word
+  // pass) checks both engines and writes to neither. The second assertion
+  // is the one that matters: triggerSecretsReconcile runs the pass that
+  // CREATES and ROTATES secrets, so a read-only check must never reach it.
+  it('Check all now checks both engines and never fires the values write pass', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     mockCheckAllAddonValuesSecrets.mockResolvedValue({ status: 'ok' })
     mockReconcileCluster.mockResolvedValue({ status: 'ok', message: 'triggered' })
@@ -1061,12 +1099,12 @@ describe('ManagedSecrets', () => {
   })
 
   // P1-A A3 — the help text has to describe what the button actually does.
-  it('Refresh all says plainly that it only checks', async () => {
+  it('Check all now says plainly that it only checks', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('refresh-all')).toBeInTheDocument())
-    fireEvent.click(screen.getByLabelText('What does Refresh all do?'))
+    fireEvent.click(screen.getByLabelText('What does Check all now do?'))
 
     await waitFor(() =>
       expect(
@@ -1093,5 +1131,110 @@ describe('ManagedSecrets', () => {
 
     await user.click(screen.getByTestId('filter-chip-in_sync'))
     expect(screen.getByTestId('filter-chip-in_sync').className).not.toMatch(/teal/)
+  })
+
+  // H3 (gitops-proud P4-H): the cadence sentence used to live ONLY in a
+  // hover `title` attribute — unreachable by touch or keyboard. It's a
+  // visible InfoHint now, next to "Sharko last ran a check…".
+  it('the cadence sentence is a visible InfoHint, reachable by click — not hover-only', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    const hint = screen.getByLabelText('How often does Sharko check cluster connections?')
+    fireEvent.click(hint)
+    await waitFor(() =>
+      expect(screen.getByText('Sharko re-checks it every 30 seconds, and right after each merge.')).toBeInTheDocument(),
+    )
+  })
+
+  // H3: the Sync confirm box used to read like two log-line clauses
+  // stitched together. It now opens with the one fact that matters most —
+  // this writes, right now, on the real cluster, and there's no PR to
+  // review first.
+  it('the Sync confirm box writes now, names the real cluster, and says there is no pull request', async () => {
+    const user = userEvent.setup()
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: 'Actions for staging-us' }))
+    await user.click(await screen.findByRole('menuitem', { name: /Sync/ }))
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'This writes the secret on cluster "staging-us" now. No pull request. It copies git\'s addon labels onto the cluster\'s ArgoCD secret. The self-heal setting doesn\'t change.',
+        ),
+      ).toBeInTheDocument(),
+    )
+  })
+
+  // H4-3: "Sharko's record" — a short list of this row's own recent
+  // actions, scoped to its exact resource key so a different cluster's
+  // history never leaks in.
+  it('lists recent activity for the row under "Sharko\'s record", scoped to just that row', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    mockFetchAuditLog.mockResolvedValue({
+      entries: [
+        {
+          id: '1',
+          timestamp: '2026-08-05T00:00:00Z',
+          level: 'info',
+          event: 'secret.sync',
+          user: 'admin',
+          action: 'sync',
+          resource: 'cluster:staging-us',
+          source: 'api',
+          result: 'success',
+          duration_ms: 12,
+          detail: 'Synced the connection secret',
+        },
+        {
+          id: '2',
+          timestamp: '2026-08-04T23:00:00Z',
+          level: 'info',
+          event: 'secret.reconcile',
+          user: 'admin',
+          action: 'reconcile',
+          resource: 'cluster:staging-us',
+          source: 'reconciler',
+          result: 'success',
+          duration_ms: 8,
+          detail: 'Reconciled the connection labels',
+        },
+        {
+          id: '3',
+          timestamp: '2026-08-04T22:00:00Z',
+          level: 'info',
+          event: 'secret.sync',
+          user: 'admin',
+          action: 'sync',
+          resource: 'cluster:prod-eu',
+          source: 'api',
+          result: 'success',
+          duration_ms: 9,
+          detail: 'Synced a different cluster entirely',
+        },
+      ],
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('secret-row-connection-staging-us'))
+
+    const panel = await screen.findByTestId('secret-detail-panel')
+    await waitFor(() => expect(mockFetchAuditLog).toHaveBeenCalledWith({ cluster: 'staging-us', limit: 50 }))
+
+    expect(within(panel).getByText("Sharko's record")).toBeInTheDocument()
+    const list = await within(panel).findByTestId('detail-recent-activity')
+    expect(within(list).getByText('Synced the connection secret')).toBeInTheDocument()
+    expect(within(list).getByText('Reconciled the connection labels')).toBeInTheDocument()
+    // Scoped to this row's own resource key — a different cluster's entry
+    // (which the server's own substring-matching filter would have let
+    // through) must not leak in.
+    expect(within(list).queryByText('Synced a different cluster entirely')).not.toBeInTheDocument()
+    // The honest scope note is visible, not buried.
+    expect(within(panel).getByText(/since Sharko last started/)).toBeInTheDocument()
   })
 })

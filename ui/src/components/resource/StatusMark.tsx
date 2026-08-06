@@ -5,12 +5,19 @@
 // match where it's supposed to come from?
 //
 // Exactly five states, exact words — never invent a sixth:
-//   in_sync      "In sync"          — matches its source right now
-//   out_of_sync  "Out of sync"      — checked, and it does NOT match
-//   missing      "Missing"          — checked, and there's nothing there
-//   foreign      "Foreign"          — something IS there, and Sharko did not
-//                                     create it, so Sharko leaves it alone
-//   unknown      "Not checked yet"  — Sharko has no answer at all
+//   in_sync      "In sync"            — matches its source right now
+//   out_of_sync  "Out of sync"        — checked, and it does NOT match
+//   missing      "Not on the cluster" — checked, and there's nothing there
+//   foreign      "Foreign"            — something IS there, and Sharko did
+//                                        not create it, so Sharko leaves it
+//                                        alone
+//   unknown      "Not checked yet"    — Sharko has no answer at all
+//
+// H3 word pass (gitops-proud P4-H): "missing" used to read "Missing" — a
+// one-word label that answers a different question than the one a reader
+// actually has ("missing FROM WHERE?"). "Not on the cluster" says the same
+// fact the per-key presence flag already used (see KeyTable in
+// ManagedSecrets.tsx) — one word for one fact, used consistently.
 //
 // "Foreign" is deliberately NOT red and NOT amber. Nothing is broken and
 // nothing needs fixing — somebody else owns that secret, and Sharko staying
@@ -75,7 +82,7 @@ const STATUS_META: Record<ResourceStatus, StatusMeta> = {
     mark: undefined, // exclamation mark is drawn as text — see StatusDot
   },
   missing: {
-    label: 'Missing',
+    label: 'Not on the cluster',
     dotClassName: 'bg-red-600 dark:bg-red-500',
     stripClassName: 'border-red-600 dark:border-red-500',
     mark: X,
@@ -95,7 +102,7 @@ const STATUS_META: Record<ResourceStatus, StatusMeta> = {
     // Same blue-grey as the hollow ring (line ~115 below) — "not checked
     // yet" reads as its own distinct thing everywhere it shows up, not as
     // a fainter version of "in sync".
-    stripClassName: 'border-[#8aa2b6] dark:border-gray-500',
+    stripClassName: 'border-[#5a8aaa] dark:border-gray-500',
     hollow: true,
   },
 }
@@ -184,7 +191,7 @@ export function StatusDot({ status, className }: { status: ResourceStatus; class
         data-testid="status-dot"
         data-status={status}
         data-hollow="true"
-        className={`inline-block h-3 w-3 shrink-0 rounded-full border-2 border-[#8aa2b6] dark:border-gray-500 ${className ?? ''}`}
+        className={`inline-block h-3 w-3 shrink-0 rounded-full border-2 border-[#5a8aaa] dark:border-gray-500 ${className ?? ''}`}
       />
     )
   }
@@ -217,10 +224,10 @@ export function StatusMark({ status, className }: { status: string; className?: 
       data-testid="status-mark"
       data-status={s}
       // H2: this classname is the ONLY colour carrier that ever changes
-      // per-status on the WORD — it doesn't, on purpose. text-[#13293f] /
+      // per-status on the WORD — it doesn't, on purpose. text-[#0a3a5a] /
       // dark:text-gray-200 is plain dark ink for all four states; colour
       // lives on the <StatusDot> glyph only.
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-sm font-medium text-[#13293f] dark:text-gray-200 ${className ?? ''}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-sm font-medium text-[#0a3a5a] dark:text-gray-200 ${className ?? ''}`}
     >
       <StatusDot status={s} />
       {meta.label}

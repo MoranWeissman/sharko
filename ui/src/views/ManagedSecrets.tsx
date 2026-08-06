@@ -136,7 +136,7 @@
 //        cell always reads its real compared-against fact ("git"), a
 //        values row's reads the real backend name — still on every row,
 //        never tooltip-only. A connection row's ADDON cell is a plain "—"
-//        (it isn't an addon secret; see kindLabel/cell-addon below).
+//        (it isn't an addon secret; see cell-addon below).
 //
 //   G2 — see internal/api/system_managed_secrets.go's addonValuesSecretSourceLabel:
 //        the demo backend now gets its own SOURCE name ("the demo secrets
@@ -160,6 +160,55 @@
 //        stopped borrowing StatusMark's teal (it read as "in sync" next to
 //        an actually in-sync row) — it's the same navy #1a3d5c the sidebar
 //        already uses, in both themes, same as PaginationControls.
+//
+// ─────────────────────────────────────────────────────────────────────────
+// P4-H — the face lane: Sharko blue back in the ink, one-line rows, and the
+// full words pass (maintainer's review panel).
+//
+//   H1 — the nine near-grey values this page had drifted onto its own
+//        (never used by any other of the app's 92 files) are gone, mapped
+//        onto the SAME blue set every other page already reads off (see
+//        frontend-expert.md's palette table): #0a2a4a for the darkest ink,
+//        #0a3a5a for buttons/status words, #2a5a7a for body text, #3a6a8a
+//        for muted text, #5a8aaa for labels/captions, #6aade0 for
+//        borders/rings. The title is the house 24px (text-2xl font-bold)
+//        every other list page uses, not the 16px this page had shrunk to.
+//        The table frame (ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm,
+//        pale-blue thead) now matches AddonListTable's own frame instead of
+//        a plain-white, thin-ring look this page had drifted to alone.
+//
+//   H2 — rows are one line: the grey "kind" subline under the identity is
+//        gone (the KeyRound/Lock glyph already says it), STATUS sits right
+//        next to NAME (ArgoCD's own habit), the SOURCE column reads
+//        "checked against X", the CLUSTER column fills in for both kinds
+//        now, and NAME is width-capped (with the full value in a hover
+//        title) so a long secret name can't push the rest of the row off
+//        screen. Tighter row padding (py-1, was py-1.5) on top of losing a
+//        whole text line roughly halves each row's height.
+//
+//   H3 — the full words pass: STATE → STATUS, CHECKED → LAST CHECKED,
+//        "Missing" → "Not on the cluster" (StatusMark.tsx), "Refresh all"
+//        → "Check all now" (it's been a read-only check since P1-A; the
+//        words finally match), "Show:" → "Rows per page:" (Managed
+//        Secrets only — PageSizeSelector's default stays "Show:" for the
+//        pages that never asked to change), group-by "None" → "Flat
+//        list", the search placeholder now mentions namespace (it already
+//        matched it), the empty state and the Sync confirm box read as
+//        plain sentences instead of log-line fragments, and the long red
+//        engine-error line is now one sentence about what clicking it does
+//        — the raw server text moved into a click-reachable InfoHint,
+//        never lost, never hover-only. The engine strip's cadence sentence
+//        (the self-repair promise) is the same: a visible InfoHint now,
+//        not a hover-only title attribute.
+//
+//   H4 — one calm permanent line under the title states what Sharko does
+//        here; a grouped child row gets a thin vertical guide line so
+//        addon → cluster → secret reads as a tree; and the panel's old
+//        single "Last repaired" line became a short list — Sharko's
+//        record — of this row's own recent actions (reads the existing
+//        GET /api/v1/audit endpoint, scoped to the row's exact resource
+//        key; no server change), with an honest scope note that it only
+//        covers what's happened since Sharko last started.
 
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -177,6 +226,7 @@ import {
 } from 'lucide-react'
 import {
   api,
+  fetchAuditLog,
   getAddonValuesSecretResource,
   getConnectionSecretResource,
   getManagedSecrets,
@@ -188,6 +238,7 @@ import {
 } from '@/services/api'
 import type {
   AddonValuesSecretRow,
+  AuditEntry,
   ClusterComparisonResponse,
   ConnectionSecretRow,
   ManagedSecretsEngineInfo,
@@ -229,9 +280,11 @@ const CHIP_ORDER: ResourceStatus[] = ['missing', 'out_of_sync', 'foreign', 'unkn
 const FOREIGN_SYNC_REASON = 'Someone else created this one — Sharko will not touch it.'
 
 /**
- * What "Refresh all" does, in the user's words. Both engines are checked and
+ * What "Check all now" does, in the user's words (renamed from "Refresh
+ * all" in the H3 word pass — it was always a read-only check, since P1-A;
+ * this makes the button's own name match). Both engines are checked and
  * neither is written to; the repairs are the engines' own job on their own
- * schedule, which is what makes Refresh safe to press.
+ * schedule, which is what makes this safe to press.
  */
 const REFRESH_ALL_HINT =
   "Asks Sharko to check every secret against its source — connection secrets against git, addon values against your secrets store. Checking only: nothing is written. The engines' own loops do the repairs."
@@ -477,17 +530,6 @@ export function groupSummary(rows: UnifiedRow[]): string {
   return parts.join(' · ')
 }
 
-/**
- * The row's small grey KIND line under its identity — "cluster connection"
- * or "addon values". G1 moved the "follows <source>" half of this into its
- * own SOURCE column (see cell-source below) so the fact can sort and
- * filter; this line now states only what it always also visually carries
- * via the KeyRound/Lock glyph next to it.
- */
-function kindLabel(row: UnifiedRow): string {
-  return row.kind === 'connection' ? 'cluster connection' : 'addon values'
-}
-
 function matchesSearch(row: UnifiedRow, q: string): boolean {
   return (
     row.cluster.toLowerCase().includes(q) ||
@@ -555,6 +597,23 @@ function syncGateFor(row: UnifiedRow): { disabled: boolean; reason?: string } {
   return { disabled: false }
 }
 
+/**
+ * The Sync confirm box's description (H3 word pass, gitops-proud P4-H) —
+ * used to read like two clauses stitched together with an em dash, closer
+ * to a log line than a sentence someone would say out loud. It now opens
+ * with the one fact that matters most before anyone clicks the button —
+ * this writes, right now, and there is no pull request to review first —
+ * then says what gets written, in one more plain sentence.
+ */
+function syncConfirmDescription(row: UnifiedRow | null): string {
+  if (!row) return ''
+  const opening = `This writes the secret on cluster "${row.cluster}" now. No pull request.`
+  if (row.kind === 'connection') {
+    return `${opening} It copies git's addon labels onto the cluster's ArgoCD secret. The self-heal setting doesn't change.`
+  }
+  return `${opening} It pushes the current value from ${row.sourceLabel} onto the cluster. If the secret doesn't exist yet, this creates it.`
+}
+
 function actionsForRow(row: UnifiedRow, opts: { busy: boolean; onRefresh: () => void; onRequestSync: () => void }): RowAction[] {
   const gate = syncGateFor(row)
   return [
@@ -611,12 +670,12 @@ function FilterChip({
             // icons), never StatusMark's teal — "selected" is a fact about
             // the UI, not a claim that this state is healthy.
             'text-[#1a3d5c] underline decoration-2 underline-offset-4 ring-[#1a3d5c] dark:text-blue-400 dark:ring-blue-400'
-          : 'text-[#3a5770] ring-[#d7e2ea] hover:ring-[#b7c9d6] dark:text-gray-400 dark:ring-gray-700 dark:hover:ring-gray-600'
+          : 'text-[#2a5a7a] ring-[#6aade0] hover:ring-[#5a9dd0] dark:text-gray-400 dark:ring-gray-700 dark:hover:ring-gray-600'
       }`}
     >
       {status !== 'all' && <StatusDot status={status} />}
       {label}
-      <span className={active ? 'font-semibold' : 'text-[#8098ac] dark:text-gray-500'}>{count}</span>
+      <span className={active ? 'font-semibold' : 'text-[#5a8aaa] dark:text-gray-500'}>{count}</span>
     </button>
   )
 }
@@ -647,7 +706,7 @@ function SortableTh({
         type="button"
         onClick={() => onSort(sortKeyName)}
         data-testid={`sort-${sortKeyName}`}
-        className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-[#8098ac] hover:text-teal-700 dark:text-gray-500 dark:hover:text-teal-400"
+        className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] hover:text-teal-700 dark:text-gray-500 dark:hover:text-teal-400"
       >
         {label}
         {active ? (
@@ -693,7 +752,7 @@ function PanelActionButton({
         onClick={onClick}
         disabled={disabled || loading}
         data-testid={testId}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-[#c7d6e0] bg-white px-3 py-1.5 text-sm font-medium text-[#13293f] hover:bg-[#f2f6f9] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-[#6aade0] bg-white px-3 py-1.5 text-sm font-medium text-[#0a3a5a] hover:bg-[#e0f0ff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
       >
         {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
         {label}
@@ -705,15 +764,21 @@ function PanelActionButton({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Engines quiet strip (H5 + cull) — the old boxed "Engines" card is gone:
-// no ring, no card fill, just tiny grey labels with the plain fact under
-// each, separated by a thin vertical hairline, the same shape as ArgoCD's
-// own top status strip. The cadence sentence ("re-checked every 30
-// seconds…") moved into a hover, and — this is the part that used to be a
-// lie waiting to happen — it's built from the server's own
+// no ring, no card fill, just plain labels with the plain fact under each,
+// separated by a thin vertical hairline, the same shape as ArgoCD's own top
+// status strip. "Engines" is our internal machinery, not a user-facing
+// word, so the strip is labelled by what the user is actually looking at.
+//
+// H3 word pass (gitops-proud P4-H): the label used to be forced into all
+// caps (an "ENGINES" habit this page was trying to leave behind) — it's
+// sentence case now, same as every other label on the page. The cadence
+// sentence ("re-checked every 30 seconds…") used to live ONLY in a hover
+// title — unreachable by touch or keyboard — so it's a visible InfoHint
+// now, same affordance the row's own disabled-reason hints already use. And
+// the value line reads as a sentence ("Sharko last ran a check…") instead
+// of a bare fragment. The cadence is still built from the server's own
 // interval_seconds, not a hardcoded string, so a config change can never
-// leave the page stating a cadence that isn't true anymore. "Engines" is
-// our internal machinery, not a user-facing word, so the strip is labelled
-// by what the user is actually looking at.
+// leave the page stating a cadence that isn't true anymore.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function humanizeInterval(seconds?: number): string {
@@ -728,7 +793,7 @@ function humanizeInterval(seconds?: number): string {
 function cadenceSentence(kind: 'connection' | 'values', intervalSeconds?: number): string {
   const human = humanizeInterval(intervalSeconds)
   if (!human) return ''
-  return kind === 'connection' ? `Re-checked every ${human}, and right after each merge.` : `Checked every ${human} and repaired automatically.`
+  return kind === 'connection' ? `Sharko re-checks it every ${human}, and right after each merge.` : `Sharko checks it every ${human} and repairs it automatically.`
 }
 
 function EngineStat({
@@ -745,29 +810,39 @@ function EngineStat({
   const cadence = cadenceSentence(kind, info?.interval_seconds)
   return (
     <div className="px-5 py-1 first:pl-0">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-[#8098ac] dark:text-gray-500">{label}</div>
+      <div className="text-xs font-medium text-[#5a8aaa] dark:text-gray-500">{label}</div>
       {info?.wired ? (
-        <div className="mt-0.5 text-sm text-[#13293f] dark:text-gray-200" title={cadence || undefined}>
-          Checked <TimeChip iso={info.last_run} />
+        <div className="mt-0.5 flex items-center gap-1 text-sm text-[#0a3a5a] dark:text-gray-200">
+          <span>
+            Sharko last ran a check <TimeChip iso={info.last_run} />.
+          </span>
+          {cadence && <InfoHint text={cadence} label={`How often does Sharko check ${label.toLowerCase()}?`} />}
         </div>
       ) : (
-        <div className="mt-0.5 text-sm text-[#8098ac] dark:text-gray-500">Not running on this server.</div>
+        <div className="mt-0.5 text-sm text-[#5a8aaa] dark:text-gray-500">Not running on this server.</div>
       )}
-      {info?.last_error &&
-        (info.last_error_cluster && onErrorClick ? (
-          <button
-            type="button"
-            data-testid={`engine-error-${kind}`}
-            onClick={() => onErrorClick(info.last_error_cluster!)}
-            className="mt-1 block max-w-xs text-left text-xs text-red-700 hover:underline dark:text-red-400"
-          >
-            Last error on <span className="font-medium">{info.last_error_cluster}</span> <TimeChip iso={info.last_error_at} /> — {info.last_error}
-          </button>
-        ) : (
-          <p data-testid={`engine-error-${kind}`} className="mt-1 max-w-xs text-xs text-red-700 dark:text-red-400">
-            Last error: {info.last_error}
-          </p>
-        ))}
+      {/* H3: the raw server error used to run inline as one long red
+          sentence. This line now says only what clicking it does — the
+          real error text (which can be long and technical, and that's
+          fine; error text is allowed to carry debug detail) moved into the
+          InfoHint next to it, reachable by click or keyboard, not just a
+          hover. */}
+      {info?.last_error && (
+        <div className="mt-1 flex flex-wrap items-center gap-1 text-xs" data-testid={`engine-error-${kind}`}>
+          {info.last_error_cluster && onErrorClick ? (
+            <button
+              type="button"
+              onClick={() => onErrorClick(info.last_error_cluster!)}
+              className="text-left text-red-700 hover:underline dark:text-red-400"
+            >
+              A check failed on <span className="font-medium">{info.last_error_cluster}</span> <TimeChip iso={info.last_error_at} /> — click to see it.
+            </button>
+          ) : (
+            <span className="text-red-700 dark:text-red-400">A check failed.</span>
+          )}
+          <InfoHint text={info.last_error} label="What was the error?" />
+        </div>
+      )}
     </div>
   )
 }
@@ -796,17 +871,17 @@ function KeyValueList({
   testId: string
 }) {
   if (items.length === 0) {
-    return <p className="text-xs text-[#8098ac] dark:text-gray-500">{empty}</p>
+    return <p className="text-xs text-[#5a8aaa] dark:text-gray-500">{empty}</p>
   }
   return (
     <dl className="space-y-0.5" data-testid={testId}>
       {items.map((item) => (
         <div key={item.key} className="flex items-baseline justify-between gap-3">
-          <dt className="truncate font-mono text-xs text-[#3a5770] dark:text-gray-400" title={item.key}>
+          <dt className="truncate font-mono text-xs text-[#2a5a7a] dark:text-gray-400" title={item.key}>
             {item.key}
           </dt>
           <dd
-            className={`shrink-0 font-mono text-xs ${item.blanked ? 'text-[#8098ac] dark:text-gray-500' : 'text-[#08192b] dark:text-gray-200'}`}
+            className={`shrink-0 font-mono text-xs ${item.blanked ? 'text-[#5a8aaa] dark:text-gray-500' : 'text-[#0a2a4a] dark:text-gray-200'}`}
             title={item.blanked ? 'Sharko blanks this on the server — only its own provenance notes are shown as written.' : undefined}
           >
             {item.value}
@@ -990,8 +1065,8 @@ function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
 
 function DiffCard({ title, children, testId }: { title: string; children: ReactNode; testId: string }) {
   return (
-    <div className="rounded-md ring-1 ring-[#d7e2ea] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900" data-testid={testId}>
-      <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-[#8098ac] dark:text-gray-500">{title}</div>
+    <div className="rounded-md ring-1 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900" data-testid={testId}>
+      <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">{title}</div>
       {children}
     </div>
   )
@@ -1007,16 +1082,16 @@ function IntentCard({ row }: { row: UnifiedRow }) {
     return (
       <DiffCard title="What it should be" testId="diff-intent-card">
         {row.comparedPath ? (
-          <p className="break-all font-mono text-xs text-[#08192b] dark:text-gray-200">{row.comparedPath}</p>
+          <p className="break-all font-mono text-xs text-[#0a2a4a] dark:text-gray-200">{row.comparedPath}</p>
         ) : (
-          <p className="text-sm text-[#3a5770] dark:text-gray-400">Sharko hasn't compared this secret against git yet.</p>
+          <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Sharko hasn't compared this secret against git yet.</p>
         )}
         {row.comparedRevision && (
-          <p className="mt-1 text-xs text-[#5c7288] dark:text-gray-500" title={`Full commit: ${row.comparedRevision}`}>
+          <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-500" title={`Full commit: ${row.comparedRevision}`}>
             at commit <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
           </p>
         )}
-        <p className="mt-2 text-xs text-[#5c7288] dark:text-gray-500">
+        <p className="mt-2 text-xs text-[#3a6a8a] dark:text-gray-500">
           The addon labels in this file are what this secret is built from.
         </p>
       </DiffCard>
@@ -1024,8 +1099,8 @@ function IntentCard({ row }: { row: UnifiedRow }) {
   }
   return (
     <DiffCard title="What it should be" testId="diff-intent-card">
-      <p className="text-sm text-[#08192b] dark:text-gray-200">The values come from {row.sourceLabel}.</p>
-      <p className="mt-2 text-xs text-[#5c7288] dark:text-gray-500">
+      <p className="text-sm text-[#0a2a4a] dark:text-gray-200">The values come from {row.sourceLabel}.</p>
+      <p className="mt-2 text-xs text-[#3a6a8a] dark:text-gray-500">
         Git holds a pointer to where each value lives, never the value itself. Each key's pointer is in the key list below.
       </p>
     </DiffCard>
@@ -1046,11 +1121,11 @@ function LiveCard({ row, live, onRetry }: { row: UnifiedRow; live: LiveSecretSta
     <DiffCard title="What is on the cluster" testId="diff-live-card">
       <div className="space-y-3" data-testid="detail-resource-panel">
         {live.status === 'skipped' && row.state === 'missing' && (
-          <p className="text-sm text-[#3a5770] dark:text-gray-400" data-testid="resource-not-there">
+          <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="resource-not-there">
             Nothing is there — this secret has not been created yet.
           </p>
         )}
-        {live.status === 'loading' && <p className="text-sm text-[#3a5770] dark:text-gray-400">Reading it from the cluster…</p>}
+        {live.status === 'loading' && <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Reading it from the cluster…</p>}
         {live.status === 'error' && (
           // A failed read says so and shows nothing else. It never falls
           // back to the last thing we saw, or to anything made up.
@@ -1062,7 +1137,7 @@ function LiveCard({ row, live, onRetry }: { row: UnifiedRow; live: LiveSecretSta
               type="button"
               onClick={onRetry}
               data-testid="resource-retry"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#c7d6e0] bg-white px-2.5 py-1 text-xs font-medium text-[#13293f] hover:bg-[#f2f6f9] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#6aade0] bg-white px-2.5 py-1 text-xs font-medium text-[#0a3a5a] hover:bg-[#e0f0ff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
             >
               <RefreshCw className="h-3 w-3" />
               Retry
@@ -1071,21 +1146,21 @@ function LiveCard({ row, live, onRetry }: { row: UnifiedRow; live: LiveSecretSta
         )}
         {live.status === 'ready' && (
           <>
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-[#5c7288] dark:text-gray-500">
-              <span className="break-all font-mono text-sm font-semibold text-[#08192b] dark:text-white">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-[#3a6a8a] dark:text-gray-500">
+              <span className="break-all font-mono text-sm font-semibold text-[#0a2a4a] dark:text-white">
                 {live.resource.namespace}/{live.resource.name}
               </span>
               {live.resource.secret_type && <span>type {live.resource.secret_type}</span>}
             </div>
-            <p className="text-xs text-[#5c7288] dark:text-gray-500">Read from {live.resource.read_from}.</p>
+            <p className="text-xs text-[#3a6a8a] dark:text-gray-500">Read from {live.resource.read_from}.</p>
 
             <div>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8098ac] dark:text-gray-500">Labels</div>
+              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Labels</div>
               <KeyValueList items={live.resource.labels} empty="No labels." testId="resource-labels" />
             </div>
 
             <div>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#8098ac] dark:text-gray-500">Annotations</div>
+              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Annotations</div>
               <KeyValueList items={live.resource.annotations} empty="No annotations." testId="resource-annotations" />
             </div>
           </>
@@ -1109,34 +1184,116 @@ function KeyTable({ live }: { live: LiveSecretState }) {
   const keys = live.resource.data_keys
   return (
     <div data-testid="detail-key-table">
-      <h3 className="mb-1 text-sm font-semibold text-[#08192b] dark:text-gray-100">Keys</h3>
-      <div className="rounded-md ring-1 ring-[#d7e2ea] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900">
+      <h3 className="mb-1 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Keys</h3>
+      <div className="rounded-md ring-1 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900">
         {keys.length === 0 ? (
-          <p className="text-xs text-[#8098ac] dark:text-gray-500">This secret has no keys.</p>
+          <p className="text-xs text-[#5a8aaa] dark:text-gray-500">This secret has no keys.</p>
         ) : (
           <dl className="space-y-1" data-testid="resource-data-keys">
             {keys.map((k) => (
               <div key={k.key} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                <dt className="break-all font-mono text-xs text-[#3a5770] dark:text-gray-400">
+                <dt className="break-all font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
                   {k.key}
                   {/* P2-C2: the store pointer this key's value comes from — a location, not a value. */}
-                  {k.path && <span className="text-[#8098ac] dark:text-gray-500"> ← {k.path}</span>}
+                  {k.path && <span className="text-[#5a8aaa] dark:text-gray-500"> ← {k.path}</span>}
                 </dt>
                 <dd className="shrink-0 text-xs">
                   {k.present === false ? (
                     <span className="text-amber-700 dark:text-amber-400">not on the cluster</span>
                   ) : (
-                    <span className="font-mono text-[#8098ac] dark:text-gray-500">••••••••</span>
+                    <span className="font-mono text-[#5a8aaa] dark:text-gray-500">••••••••</span>
                   )}
                 </dd>
               </div>
             ))}
           </dl>
         )}
-        <p className="mt-2 text-xs text-[#5c7288] dark:text-gray-500">
+        <p className="mt-2 text-xs text-[#3a6a8a] dark:text-gray-500">
           Sharko blanks every value on the server. The values never leave the cluster.
         </p>
       </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sharko's record (H4-3, gitops-proud P4-H) — a short list of this row's
+// own recent actions, replacing the single "Last repaired" line the panel
+// used to show. Reads the SAME audit log AuditViewer already shows
+// (GET /api/v1/audit), scoped to this one row by its resource key — no new
+// endpoint, no server change.
+//
+// The scope note is the honest part: the audit log only holds what's
+// happened since this server process last started (an in-memory log, not a
+// database), so the list says that plainly instead of implying it goes
+// back further than it does.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** How many recent entries the panel shows — enough to see a pattern, short enough to stay a glance. */
+const RECENT_ACTIVITY_LIMIT = 5
+
+function useRecentActivity(row: UnifiedRow | null) {
+  const [entries, setEntries] = useState<AuditEntry[]>([])
+  const [loading, setLoading] = useState(false)
+  const rowKey = row?.key ?? ''
+
+  useEffect(() => {
+    if (!row) {
+      setEntries([])
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    // The server's own filter only matches "cluster:NAME" as a substring of
+    // the audit entry's resource field (see internal/audit/log.go), which
+    // for a values row would also catch every OTHER addon on the same
+    // cluster — so the exact resource key is matched again here, client
+    // side, against the wider set the server hands back.
+    const wantedResource = row.kind === 'connection' ? `cluster:${row.cluster}` : `cluster:${row.cluster}/addon:${row.addon}`
+    fetchAuditLog({ cluster: row.cluster, limit: 50 })
+      .then((res) => {
+        if (cancelled) return
+        setEntries(res.entries.filter((e) => e.resource === wantedResource).slice(0, RECENT_ACTIVITY_LIMIT))
+      })
+      .catch(() => {
+        if (!cancelled) setEntries([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowKey])
+
+  return { entries, loading }
+}
+
+function RecentActivity({ row }: { row: UnifiedRow }) {
+  const { entries, loading } = useRecentActivity(row)
+  return (
+    <div>
+      <h3 className="mb-1 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Sharko's record</h3>
+      <p className="mb-1.5 text-xs text-[#5a8aaa] dark:text-gray-500">
+        Only what's happened since Sharko last started — older activity isn't kept.
+      </p>
+      {loading ? (
+        <p className="text-xs text-[#3a6a8a] dark:text-gray-400">Loading…</p>
+      ) : entries.length === 0 ? (
+        <p className="text-xs text-[#3a6a8a] dark:text-gray-400">Nothing recorded yet.</p>
+      ) : (
+        <ul className="space-y-1" data-testid="detail-recent-activity">
+          {entries.map((entry) => (
+            <li key={entry.id} className="flex items-baseline justify-between gap-3 text-xs">
+              <span className={entry.result === 'failure' ? 'text-red-700 dark:text-red-400' : 'text-[#2a5a7a] dark:text-gray-300'}>
+                {entry.detail || entry.action}
+              </span>
+              <TimeChip iso={entry.timestamp} className="shrink-0" />
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -1252,9 +1409,11 @@ function SecretDetailPanel({
 
   // S3 honesty lock, panel copy: row.sourceLabel is the real backend name
   // (or the "secrets store" fallback) resolved once server-side — never a
-  // hardcoded "the vault".
+  // hardcoded "the vault". H3: "checked against" everywhere this fact
+  // shows up (the SOURCE column, this sentence, the revision line below) —
+  // one phrase, not several near-synonyms for the same fact.
   const sourceSentence =
-    row.kind === 'connection' ? 'Compared against git.' : `Compared against ${row.sourceLabel} — git only holds a pointer to it.`
+    row.kind === 'connection' ? 'Checked against git.' : `Checked against ${row.sourceLabel} — git only holds a pointer to it.`
 
   // The connection-secret label drift — WHICH labels differ, under the
   // verdict sentence that already said THAT they differ. Kept as its own
@@ -1277,27 +1436,27 @@ function SecretDetailPanel({
       // The waiting line only shows where content is actually expected. On
       // an in-sync row this box has nothing to say once it loads, and a
       // "Loading…" that appears and then vanishes is just a flicker.
-      driftDetail = <p className="text-sm text-[#3a5770] dark:text-gray-400">Loading…</p>
+      driftDetail = <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Loading…</p>
     } else if (added.length > 0 || removed.length > 0 || changed.length > 0) {
       driftDetail = (
         <div className="space-y-2">
           {added.length > 0 && (
-            <p className="text-sm text-[#3a5770] dark:text-gray-300">
+            <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
               Missing {added.length} addon label{added.length === 1 ? '' : 's'} that git expects:{' '}
-              <span className="font-mono text-xs text-[#5c7288] dark:text-gray-500">{added.join(', ')}</span>
+              <span className="font-mono text-xs text-[#3a6a8a] dark:text-gray-500">{added.join(', ')}</span>
             </p>
           )}
           {removed.length > 0 && (
-            <p className="text-sm text-[#3a5770] dark:text-gray-300">
+            <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
               Has {removed.length} addon label{removed.length === 1 ? '' : 's'} git doesn't expect:{' '}
-              <span className="font-mono text-xs text-[#5c7288] dark:text-gray-500">{removed.join(', ')}</span>
+              <span className="font-mono text-xs text-[#3a6a8a] dark:text-gray-500">{removed.join(', ')}</span>
             </p>
           )}
           {changed.length > 0 && (
-            <p className="text-sm text-[#3a5770] dark:text-gray-300">
+            <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
               {changed.length} addon label{changed.length === 1 ? '' : 's'} {changed.length === 1 ? 'has' : 'have'} a different
               value than git:{' '}
-              <span className="font-mono text-xs text-[#5c7288] dark:text-gray-500">{changed.join(', ')}</span>
+              <span className="font-mono text-xs text-[#3a6a8a] dark:text-gray-500">{changed.join(', ')}</span>
             </p>
           )}
         </div>
@@ -1320,22 +1479,22 @@ function SecretDetailPanel({
     >
       {/* ── 1. The resource header ─────────────────────────────────────── */}
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1" data-testid="detail-resource-header">
-        <span className="rounded-full bg-[#eef4f9] px-2 py-0.5 text-[11px] font-medium text-[#3a5770] dark:bg-gray-800 dark:text-gray-300">
+        <span className="rounded-full bg-[#d0e8f8] px-2 py-0.5 text-[11px] font-medium text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-300">
           Secret
         </span>
-        <span className="break-all font-mono text-sm font-semibold text-[#08192b] dark:text-white">{identity}</span>
-        <span className="text-xs text-[#5c7288] dark:text-gray-500">on {row.cluster}</span>
+        <span className="break-all font-mono text-sm font-semibold text-[#0a2a4a] dark:text-white">{identity}</span>
+        <span className="text-xs text-[#3a6a8a] dark:text-gray-500">on {row.cluster}</span>
         {/* The age is a live-read fact, so it appears once the read lands
             and stays absent otherwise — never an invented one. */}
         {live.status === 'ready' && live.resource.created_at && (
-          <span className="text-xs text-[#5c7288] dark:text-gray-500">
+          <span className="text-xs text-[#3a6a8a] dark:text-gray-500">
             created <TimeChip iso={live.resource.created_at} />
           </span>
         )}
       </div>
 
       {/* ── 2. State, with the two actions right beside it ─────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg ring-1 ring-[#d7e2ea] bg-white p-3 dark:ring-gray-700 dark:bg-gray-800">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg ring-1 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-800">
         <StatusMark status={row.state} />
         <RoleGuard roles={['admin', 'operator']}>
           <div className="flex items-center gap-2">
@@ -1354,9 +1513,9 @@ function SecretDetailPanel({
 
       {/* ── 3. The diff: one sentence, two cards ───────────────────────── */}
       <div>
-        <h3 className="mb-1 text-sm font-semibold text-[#08192b] dark:text-gray-100">Diff</h3>
+        <h3 className="mb-1 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Diff</h3>
         <p
-          className={`mb-2 text-sm ${verdict === 'match' ? 'text-green-700 dark:text-green-400' : 'text-[#08192b] dark:text-gray-200'}`}
+          className={`mb-2 text-sm ${verdict === 'match' ? 'text-green-700 dark:text-green-400' : 'text-[#0a2a4a] dark:text-gray-200'}`}
           data-testid="diff-verdict"
         >
           {verdict === 'match' && <CheckCircle className="mr-1.5 inline h-4 w-4 align-text-bottom" aria-hidden="true" />}
@@ -1372,7 +1531,7 @@ function SecretDetailPanel({
             roles={['admin', 'operator']}
             fallback={
               <DiffCard title="What is on the cluster" testId="diff-live-card">
-                <p className="text-sm text-[#3a5770] dark:text-gray-400" data-testid="live-needs-operator">
+                <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="live-needs-operator">
                   {LIVE_READ_NEEDS_OPERATOR}
                 </p>
               </DiffCard>
@@ -1383,7 +1542,7 @@ function SecretDetailPanel({
         </div>
         {driftDetail && (
           <div
-            className="mt-3 rounded-md ring-1 ring-[#d7e2ea] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900"
+            className="mt-3 rounded-md ring-1 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900"
             data-testid="detail-diff-panel"
           >
             {driftDetail}
@@ -1397,17 +1556,17 @@ function SecretDetailPanel({
       </RoleGuard>
 
       {/* ── 5. Everything the panel already carried ────────────────────── */}
-      <p className="text-sm text-[#08192b] dark:text-white">{purposeSentence}</p>
+      <p className="text-sm text-[#0a2a4a] dark:text-white">{purposeSentence}</p>
       <p
-        className="text-xs text-[#5c7288] dark:text-gray-500"
+        className="text-xs text-[#3a6a8a] dark:text-gray-500"
         title={row.kind === 'values' ? `Git only holds a pointer to it — the value itself lives in ${row.sourceLabel}.` : undefined}
       >
         {sourceSentence}
       </p>
       {/* P2-C1: which commit and which file this row was compared against — short SHA here, full SHA on hover. Connection rows only; values rows have no commit to point at (their intent is the store, C2 covers that instead). */}
       {row.kind === 'connection' && row.comparedRevision && (
-        <p className="text-xs text-[#5c7288] dark:text-gray-500" title={`Full commit: ${row.comparedRevision}`} data-testid="detail-compared-revision">
-          Compared against git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
+        <p className="text-xs text-[#3a6a8a] dark:text-gray-500" title={`Full commit: ${row.comparedRevision}`} data-testid="detail-compared-revision">
+          Checked against git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
           {row.comparedPath && (
             <>
               {' '}
@@ -1419,13 +1578,13 @@ function SecretDetailPanel({
 
       {/* P2-C3: the one-line self-heal promise — only where it changes what the reader should do (an out-of-sync or missing row). */}
       {(row.state === 'out_of_sync' || row.state === 'missing') && (
-        <p className="text-xs text-[#5c7288] dark:text-gray-500" data-testid="detail-self-heals">
+        <p className="text-xs text-[#3a6a8a] dark:text-gray-500" data-testid="detail-self-heals">
           {row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
         </p>
       )}
       {/* P2-C6: drift blame — which side moved. Connection rows, out-of-sync only, and only when both revisions are known. */}
       {row.kind === 'connection' && row.state === 'out_of_sync' && row.driftSource && (
-        <p className="text-xs text-[#5c7288] dark:text-gray-500" data-testid="detail-drift-source">
+        <p className="text-xs text-[#3a6a8a] dark:text-gray-500" data-testid="detail-drift-source">
           {row.driftSource === 'git'
             ? 'Git moved — a newer commit changed what this secret should be.'
             : 'The cluster moved — something changed this secret outside git.'}
@@ -1434,21 +1593,17 @@ function SecretDetailPanel({
 
       <dl className="space-y-1.5 text-sm">
         <div className="flex items-center justify-between">
-          <dt className="text-[#5c7288] dark:text-gray-400">Last checked</dt>
+          <dt className="text-[#3a6a8a] dark:text-gray-400">Last checked</dt>
           <dd>
             <TimeChip iso={row.lastChecked} />
           </dd>
         </div>
-        <div className="flex items-center justify-between">
-          <dt className="text-[#5c7288] dark:text-gray-400">Last repaired</dt>
-          <dd className="text-right">
-            <TimeChip iso={row.lastRepaired} />
-            {row.lastRepairedDetail && (
-              <span className="ml-1 text-xs text-[#5c7288] dark:text-gray-500">— {row.lastRepairedDetail}</span>
-            )}
-          </dd>
-        </div>
       </dl>
+
+      {/* H4-3: "Last repaired" — a single timestamp — became this short
+          list, so a reader sees the pattern (repeated repairs, a repair
+          that stopped happening) instead of only the most recent one. */}
+      <RecentActivity row={row} />
 
       {row.lastCheckError && (
         <p className="text-sm text-red-700 dark:text-red-400" data-testid="last-check-error">
@@ -1511,6 +1666,8 @@ function SecretTableRow({
     onSelect()
   }
 
+  const identity = row.secretNamespace && row.secretName ? `${row.secretNamespace}/${row.secretName}` : '—'
+
   return (
     <TableRow
       data-testid={`secret-row-${row.key}`}
@@ -1518,37 +1675,51 @@ function SecretTableRow({
       onKeyDown={openOnKey}
       tabIndex={0}
       role="button"
-      aria-label={`Open ${row.secretNamespace && row.secretName ? `${row.secretNamespace}/${row.secretName}` : row.cluster}`}
-      className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1a3d5c] dark:focus-visible:ring-teal-400"
+      aria-label={`Open ${identity !== '—' ? identity : row.cluster}`}
+      className="cursor-pointer hover:bg-[#d6eeff] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1a3d5c] dark:hover:bg-gray-800 dark:focus-visible:ring-teal-400"
     >
-      {/* H6: the identity is the darkest, boldest text on the row. The
-          small grey line under it names the KIND only now (kindLabel) —
-          the "follows <source>" half of the old combined line moved into
-          its own SOURCE column (G1) so the fact can sort and filter, not
-          just sit in a subline.
+      {/* H2 (gitops-proud P4-H): one line, not two. The old grey subline
+          under the identity said the ROW'S KIND — the KeyRound/Lock glyph
+          right next to the name already says that, so the line was
+          repeating the icon in words. It's gone; the identity is the only
+          text in this cell now, capped to a width so a long secret name
+          can't push STATUS/ADDON/CLUSTER/SOURCE off the side of the
+          screen — the full name is always in the title attribute for
+          anyone who needs it.
+
+          H4: a grouped child row (indented) gets a thin vertical guide —
+          addon → cluster → secret should read as a tree, not just an
+          indent.
 
           The status edge strip (copied from ArgoCD's own list and tile
           views) lives on this same cell, as a left border — a `<td>`
           always wins the collapsed-border fight for its own edge, so it
           renders reliably regardless of the table's border-collapse
-          mode. Its colour is read off the exact same STATUS_META table
-          as the row's own <StatusMark> dot and the filter chips, via
-          statusStripClassName — it cannot disagree with the dot two
-          columns over. */}
-      <TableCell className={`py-1.5 ${statusStripClassName(row.state)} ${indented ? 'pl-6' : ''}`}>
-        <div className="flex items-start gap-2">
+          mode. Its colour is read off the exact same STATUS_META table as
+          the row's own <StatusMark> dot and the filter chips, via
+          statusStripClassName — it cannot disagree with the dot next to
+          it. */}
+      <TableCell className={`max-w-[240px] py-1 ${statusStripClassName(row.state)} ${indented ? 'pl-2' : ''}`}>
+        <div className="flex min-w-0 items-center gap-2">
+          {indented && <span aria-hidden="true" className="h-4 w-px shrink-0 bg-[#c0ddf0] dark:bg-gray-700" />}
           {row.kind === 'connection' ? (
-            <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#8098ac] dark:text-gray-500" aria-hidden="true" />
+            <KeyRound className="h-3.5 w-3.5 shrink-0 text-[#5a8aaa] dark:text-gray-500" aria-hidden="true" />
           ) : (
-            <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#8098ac] dark:text-gray-500" aria-hidden="true" />
+            <Lock className="h-3.5 w-3.5 shrink-0 text-[#5a8aaa] dark:text-gray-500" aria-hidden="true" />
           )}
-          <div className="leading-tight">
-            <div className="whitespace-nowrap font-mono text-sm font-semibold text-[#08192b] dark:text-white">
-              {row.secretNamespace && row.secretName ? `${row.secretNamespace}/${row.secretName}` : '—'}
-            </div>
-            <div className="text-[11px] text-[#5c7288] dark:text-gray-500">{kindLabel(row)}</div>
-          </div>
+          <span
+            className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-[#0a2a4a] dark:text-white"
+            title={identity !== '—' ? identity : undefined}
+          >
+            {identity}
+          </span>
         </div>
+      </TableCell>
+      {/* Status (H2): moved up next to the name, ArgoCD's own habit of
+          putting a resource's health right at the start of its row instead
+          of buried at the end. */}
+      <TableCell className="py-1">
+        <StatusMark status={row.state} />
       </TableCell>
       {/*
         Addon (G1): values rows show the addon they carry values for.
@@ -1556,32 +1727,27 @@ function SecretTableRow({
         matching the same "—" the identity cell above already uses for
         "nothing here", not an invented word like "n/a" or a made-up noun.
       */}
-      <TableCell className="py-1.5 text-sm text-[#3a5770] dark:text-gray-300" data-testid="cell-addon">
+      <TableCell className="py-1 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="cell-addon">
         {row.kind === 'values' ? row.addon : '—'}
       </TableCell>
-      {/*
-        Cluster: connection rows leave this blank ON PURPOSE — the
-        identity above (namespace/secretName) already IS the cluster name
-        (the same fact printed twice, side by side, was the exact
-        duplicate flagged in review). Values rows show it here because
-        it's the one thing that actually distinguishes two rows with the
-        same addon on different clusters — not a duplicate there.
-      */}
-      <TableCell className="py-1.5 text-sm text-[#3a5770] dark:text-gray-300">
-        {row.kind === 'values' ? row.cluster : null}
+      {/* Cluster (H2): both kinds print it now. It used to be left blank on
+          connection rows because the identity cell already implied the
+          cluster — but with the subline gone and STATUS now sitting
+          between the two, that implication got harder to read at a
+          glance, and grouping by addon needs a real cluster column for
+          every row it shows anyway. */}
+      <TableCell className="py-1 text-sm text-[#2a5a7a] dark:text-gray-300">{row.cluster}</TableCell>
+      {/* Source (G1/H3): the S3 honesty lock, sortable/filterable/searched
+          on every row, and read as "checked against X" — the same phrase
+          the sourceSentence in the panel already uses, so the column and
+          the panel never disagree about what to call this fact. */}
+      <TableCell className="py-1 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="cell-source">
+        checked against {row.sourceLabel}
       </TableCell>
-      {/* Source (G1): the S3 honesty lock, now a real column — sortable,
-          filterable, and matched by the search box, on every row. */}
-      <TableCell className="py-1.5 text-sm text-[#3a5770] dark:text-gray-300" data-testid="cell-source">
-        {row.sourceLabel}
-      </TableCell>
-      <TableCell className="py-1.5">
+      <TableCell className="py-1">
         <TimeChip iso={row.lastChecked} />
       </TableCell>
-      <TableCell className="py-1.5">
-        <StatusMark status={row.state} />
-      </TableCell>
-      <TableCell className="py-1.5" onClick={(e) => e.stopPropagation()}>
+      <TableCell className="py-1" onClick={(e) => e.stopPropagation()}>
         <RoleGuard roles={['admin', 'operator']}>
           <RowActionsMenu
             label={`Actions for ${row.cluster}${row.addon ? ' / ' + row.addon : ''}`}
@@ -1604,25 +1770,25 @@ function SecretTableRow({
 function GroupHeaderRow({ group, expanded, onToggle }: { group: RowGroup; expanded: boolean; onToggle: () => void }) {
   return (
     <TableRow className="hover:bg-transparent">
-      {/* Name, Addon, Cluster, Source, Checked, State, plus the actions column (G1 added Addon + Source). */}
+      {/* Name, Status, Addon, Cluster, Source, Last Checked, plus the actions column (G1 added Addon + Source; H2 moved Status next to Name). */}
       <TableCell colSpan={7} className="p-0">
         <button
           type="button"
           onClick={onToggle}
           aria-expanded={expanded}
           data-testid={`secret-group-${group.key}`}
-          className="flex w-full flex-wrap items-center justify-between gap-2 bg-[#f2f6f9] px-3 py-2 text-left hover:bg-[#e8eff5] dark:bg-gray-800/60 dark:hover:bg-gray-800"
+          className="flex w-full flex-wrap items-center justify-between gap-2 bg-[#e0f0ff] px-3 py-2 text-left hover:bg-[#d6eeff] dark:bg-gray-800/60 dark:hover:bg-gray-800"
         >
           <span className="flex items-center gap-1.5">
             {expanded ? (
-              <ChevronUp className="h-4 w-4 shrink-0 text-[#5c7288] dark:text-gray-400" aria-hidden="true" />
+              <ChevronUp className="h-4 w-4 shrink-0 text-[#3a6a8a] dark:text-gray-400" aria-hidden="true" />
             ) : (
-              <ChevronDown className="h-4 w-4 shrink-0 text-[#5c7288] dark:text-gray-400" aria-hidden="true" />
+              <ChevronDown className="h-4 w-4 shrink-0 text-[#3a6a8a] dark:text-gray-400" aria-hidden="true" />
             )}
-            <span className="font-semibold text-[#08192b] dark:text-gray-100">{group.label}</span>
-            <span className="text-[11px] text-[#8098ac] dark:text-gray-500">{group.sublabel}</span>
+            <span className="font-semibold text-[#0a2a4a] dark:text-gray-100">{group.label}</span>
+            <span className="text-[11px] text-[#5a8aaa] dark:text-gray-500">{group.sublabel}</span>
           </span>
-          <span className="text-xs text-[#3a5770] dark:text-gray-400" data-testid={`secret-group-summary-${group.key}`}>
+          <span className="text-xs text-[#2a5a7a] dark:text-gray-400" data-testid={`secret-group-summary-${group.key}`}>
             {groupSummary(group.rows)}
           </span>
         </button>
@@ -1975,14 +2141,25 @@ export function ManagedSecrets() {
 
   return (
     <div className="space-y-5">
-      {/* H5 cull: no subtitle (ArgoCD never explains its own screen — a
-          subtitle goes stale the day the layout changes), and a shrunk h1
-          — big type belongs on the data, not on the page's own name. */}
-      <h1 className="text-base font-semibold text-[#08192b] dark:text-white">Managed Secrets</h1>
+      {/* H1 word/face pass (gitops-proud P4-H): the h1 goes back to the
+          house 24px title every other list page uses (Clusters, Addons,
+          Settings, ...) — the old H5 shrink made this page read like a
+          panel inside a bigger page instead of a page of its own. H4's one
+          calm permanent line replaces the old "no subtitle" rule: it is
+          not an explanation of the layout (which the old comment rightly
+          worried would go stale) but a fact about what Sharko does here,
+          which doesn't change when the table's columns do. */}
+      <div>
+        <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Managed Secrets</h1>
+        <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">
+          Sharko applies these to the clusters itself — what should exist comes from git, values come from your
+          secrets store.
+        </p>
+      </div>
 
       {/* Engines quiet strip — see the block comment on EngineStat above. */}
-      <div className="flex flex-wrap items-start justify-between gap-3 border-y border-[#d7e2ea] py-2 dark:border-gray-800">
-        <div className="flex flex-wrap divide-x divide-[#d7e2ea] dark:divide-gray-800">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-y border-[#6aade0] py-2 dark:border-gray-800">
+        <div className="flex flex-wrap divide-x divide-[#6aade0] dark:divide-gray-800">
           <EngineStat label="Cluster connections" kind="connection" info={data?.engines.cluster_connection} onErrorClick={filterToCluster} />
           <EngineStat label="Addon values" kind="values" info={data?.engines.addon_values} onErrorClick={filterToCluster} />
         </div>
@@ -1993,12 +2170,12 @@ export function ManagedSecrets() {
               onClick={handleRefreshAll}
               disabled={refreshingAll}
               data-testid="refresh-all"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#c7d6e0] bg-white px-2.5 py-1 text-xs font-medium text-[#13293f] hover:bg-[#f2f6f9] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#6aade0] bg-white px-2.5 py-1 text-xs font-medium text-[#0a3a5a] hover:bg-[#e0f0ff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
             >
               <RefreshCw className={`h-3 w-3 ${refreshingAll ? 'animate-spin' : ''}`} />
-              Refresh all
+              Check all now
             </button>
-            <InfoHint text={REFRESH_ALL_HINT} label="What does Refresh all do?" />
+            <InfoHint text={REFRESH_ALL_HINT} label="What does Check all now do?" />
           </div>
         </RoleGuard>
       </div>
@@ -2019,26 +2196,26 @@ export function ManagedSecrets() {
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1" style={{ minWidth: 220, maxWidth: 360 }}>
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5c7288] dark:text-gray-500" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#3a6a8a] dark:text-gray-500" />
           <input
             type="text"
-            placeholder="Search by cluster, addon, or secret name..."
+            placeholder="Search by cluster, addon, secret name, or namespace..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-lg border border-[#c7d6e0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500"
+            className="w-full rounded-lg border border-[#6aade0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500"
           />
         </div>
         {/* G1 — Addon and Source are filterable columns, plain <select>s
             (their value counts can run high, unlike the fixed 5-state
             chips above) with an explicit "All" option, options drawn from
             every row so the list never shrinks out from under a search. */}
-        <label className="flex items-center gap-1.5 text-xs text-[#5c7288] dark:text-gray-400">
+        <label className="flex items-center gap-1.5 text-xs text-[#3a6a8a] dark:text-gray-400">
           Addon
           <select
             value={addonFilter}
             onChange={(e) => setAddonFilter(e.target.value)}
             data-testid="addon-filter-select"
-            className="rounded-lg border border-[#c7d6e0] bg-white py-1 pl-2 pr-6 text-xs text-[#3a5770] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+            className="rounded-lg border border-[#6aade0] bg-white py-1 pl-2 pr-6 text-xs text-[#2a5a7a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
           >
             <option value="">All</option>
             {addonOptions.map((a) => (
@@ -2048,13 +2225,13 @@ export function ManagedSecrets() {
             ))}
           </select>
         </label>
-        <label className="flex items-center gap-1.5 text-xs text-[#5c7288] dark:text-gray-400">
+        <label className="flex items-center gap-1.5 text-xs text-[#3a6a8a] dark:text-gray-400">
           Source
           <select
             value={sourceFilter}
             onChange={(e) => setSourceFilter(e.target.value)}
             data-testid="source-filter-select"
-            className="rounded-lg border border-[#c7d6e0] bg-white py-1 pl-2 pr-6 text-xs text-[#3a5770] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+            className="rounded-lg border border-[#6aade0] bg-white py-1 pl-2 pr-6 text-xs text-[#2a5a7a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
           >
             <option value="">All</option>
             {sourceOptions.map((s) => (
@@ -2068,11 +2245,11 @@ export function ManagedSecrets() {
             page has always shown; the other two fold the same rows under a
             parent line you click to open. */}
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-[#5c7288] dark:text-gray-400">Group by</span>
-          <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#d7e2ea] dark:ring-gray-700">
+          <span className="text-xs text-[#3a6a8a] dark:text-gray-400">Group by</span>
+          <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
             {(
               [
-                ['none', 'None'],
+                ['none', 'Flat list'],
                 ['addon', 'Addon'],
                 ['cluster', 'Cluster'],
               ] as [GroupBy, string][]
@@ -2090,7 +2267,7 @@ export function ManagedSecrets() {
                       // teal, which reads as "in sync" next to a row that
                       // genuinely is.
                       'bg-[#1a3d5c] text-white'
-                    : 'bg-white text-[#3a5770] hover:bg-[#f2f6f9] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+                    : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
                 }`}
               >
                 {label}
@@ -2099,32 +2276,40 @@ export function ManagedSecrets() {
           </div>
         </div>
         <div className="ml-auto">
-          <PageSizeSelector pageSize={pageSize} onChange={setPageSize} sizes={[10, 20, 50, 100]} />
+          <PageSizeSelector pageSize={pageSize} onChange={setPageSize} sizes={[10, 20, 50, 100]} label="Rows per page:" />
         </div>
       </div>
 
       {loading ? (
         <div className="flex items-center justify-center py-24">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#d7e2ea] border-t-[#1a3d5c] dark:border-gray-700 dark:border-t-teal-500" />
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#6aade0] border-t-[#1a3d5c] dark:border-gray-700 dark:border-t-teal-500" />
         </div>
       ) : sorted.length === 0 ? (
-        <div className="rounded-lg ring-1 ring-[#d7e2ea] bg-white p-6 text-center text-sm text-[#8098ac] dark:ring-gray-800 dark:bg-gray-900 dark:text-gray-500">
-          {unifiedRows.length === 0 ? 'Sharko is not managing any secrets yet.' : 'No secrets match this search.'}
+        <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 text-center text-sm text-[#3a6a8a] shadow-sm dark:ring-gray-800 dark:bg-gray-900 dark:text-gray-500">
+          {unifiedRows.length === 0 ? 'Sharko is not managing any secrets yet.' : 'No secrets match this filter.'}
         </div>
       ) : (
-        // H1/H5 — the table frame: a pale hairline ring and a near-white
-        // surface (was a thick saturated-blue ring with no fill, so the
-        // page's own blue showed straight through every row).
-        <div className="overflow-hidden rounded-lg ring-1 ring-[#d7e2ea] bg-white dark:ring-gray-800 dark:bg-gray-900">
+        // H1 word/face pass (gitops-proud P4-H): the table frame now
+        // matches the house frame every other list page uses (see
+        // AddonListTable in AddonCatalog.tsx) — a two-width Sharko-blue
+        // ring, the pale-blue card surface, and a shadow, instead of the
+        // near-grey ring + plain white this page had drifted to on its
+        // own.
+        <div className="overflow-hidden rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
           <Table>
-            <TableHeader>
+            <TableHeader className="border-b border-[#6aade0] bg-[#d0e8f8] dark:border-gray-700 dark:bg-gray-900">
               <TableRow className="hover:bg-transparent">
-                <SortableTh label="Name" sortKeyName="name" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
+                {/* H2/H3: Status moves next to Name (ArgoCD's own habit of
+                    putting a resource's health right at the start of its
+                    row); the header word is "Status", never "State" — and
+                    "Checked" becomes "Last Checked", plain about which
+                    timestamp it is. */}
+                <SortableTh label="Name" sortKeyName="name" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="max-w-[240px]" />
+                <SortableTh label="Status" sortKeyName="state" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortableTh label="Addon" sortKeyName="addon" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortableTh label="Cluster" sortKeyName="cluster" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortableTh label="Source" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <SortableTh label="Checked" sortKeyName="checked" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <SortableTh label="State" sortKeyName="state" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
+                <SortableTh label="Last Checked" sortKeyName="checked" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <TableHead className="w-10" />
               </TableRow>
             </TableHeader>
@@ -2167,7 +2352,7 @@ export function ManagedSecrets() {
       )}
 
       <div className="flex items-center justify-between">
-        <span className="text-xs text-[#5c7288] dark:text-gray-400" data-testid="pagination-summary">
+        <span className="text-xs text-[#3a6a8a] dark:text-gray-400" data-testid="pagination-summary">
           {paginationSummary}
         </span>
         <PaginationControls page={clampedPage} totalPages={totalPages} onPageChange={setPage} />
@@ -2194,11 +2379,7 @@ export function ManagedSecrets() {
               ? `Sync secret for cluster "${syncTarget.cluster}", addon "${syncTarget.addon}"?`
               : 'Sync?'
         }
-        description={
-          syncTarget?.kind === 'connection'
-            ? "Applies git's addon labels to this cluster's ArgoCD secret — one time; the self-heal setting is not changed."
-            : `Pushes the current value from ${syncTarget?.sourceLabel ?? 'its source'} to this cluster — creates the secret if missing, replaces it if the content differs.`
-        }
+        description={syncConfirmDescription(syncTarget)}
         confirmText="Sync"
         loading={syncing}
       />
