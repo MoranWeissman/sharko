@@ -435,6 +435,23 @@ func (r *Reconciler) LastItemConsecutiveFailures(cluster, addon string) (count i
 	return rec.ConsecutiveFailures, true
 }
 
+// KnownItemCount reports how many cluster+addon pairs this engine holds a
+// record for — the real blast radius of one CheckAll (P3-F1), so the audit
+// entry a "Refresh all" writes can state how much it actually covered
+// instead of saying "everything" and leaving the reader to guess.
+//
+// 0 means "no pass has run on this server instance yet", not "there is
+// nothing to check" — a caller that wants to state a number must treat 0
+// as "we cannot say" and fall back to wording with no number in it.
+func (r *Reconciler) KnownItemCount() int {
+	if r == nil {
+		return 0
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.itemRecords)
+}
+
 // GetErrors returns the error messages from the last reconcile run.
 func (r *Reconciler) GetErrors() []string {
 	r.mu.RLock()

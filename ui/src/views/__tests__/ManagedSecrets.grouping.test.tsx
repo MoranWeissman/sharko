@@ -281,8 +281,9 @@ describe('ManagedSecrets — the live resource, read-only (G4)', () => {
     expect(within(panel).getByText('datadog/datadog-secrets')).toBeInTheDocument()
     expect(within(panel).getByText('type Opaque')).toBeInTheDocument()
 
-    // Key names are listed; every value is the server's blank.
-    const keys = within(panel).getByTestId('resource-data-keys')
+    // P3-F2: the key list is its own section under the two diff cards, no
+    // longer buried inside the live card.
+    const keys = within(await screen.findByTestId('detail-key-table')).getByTestId('resource-data-keys')
     expect(within(keys).getByText('api-key')).toBeInTheDocument()
     expect(within(keys).getByText('app-key')).toBeInTheDocument()
     expect(within(keys).getAllByText('••••••••')).toHaveLength(2)

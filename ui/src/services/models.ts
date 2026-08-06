@@ -294,6 +294,18 @@ export interface SecretResourceKey {
    * response, which has no per-key pointer concept.
    */
   path?: string
+  /**
+   * (P3-F2) Whether this key is actually on the live Secret right now.
+   * false means the addon's definition DECLARES the key — it says where
+   * the value should come from — but the Secret on the cluster does not
+   * have it.
+   *
+   * This is the only per-key verdict the response carries, and it is about
+   * EXISTENCE, never content. There is no per-key "matches"/"differs" here
+   * and there must never be one: the engines compare whole secrets, so a
+   * per-key verdict would be a fact Sharko never established.
+   */
+  present?: boolean
 }
 
 export interface SecretResourceLabel {

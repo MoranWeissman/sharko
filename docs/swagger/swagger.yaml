@@ -3191,6 +3191,19 @@ definitions:
           desired state lives at one FILE path, already carried on the row
           (connectionSecretRow.ComparedPath), not per-key.
         type: string
+      present:
+        description: |-
+          Present (P3-F2) reports whether this key is actually on the live
+          Secret right now. False means the key is DECLARED — the addon's
+          catalog definition says its value comes from a store path — but the
+          Secret on the cluster does not have it.
+
+          This is the only per-key verdict this response is allowed to carry,
+          and it is deliberately about EXISTENCE, never about content: the two
+          engines compare whole secrets, so "does key X match its source" is a
+          question nothing in Sharko has actually asked, and answering it here
+          would be inventing a fact. Present/absent, and nothing else.
+        type: boolean
       value:
         type: string
     type: object
@@ -3198,9 +3211,11 @@ definitions:
     properties:
       blanked:
         description: |-
-          Blanked is true when Value is the mask rather than the real text —
-          only ever set for an annotation that embeds a copy of the object
-          (see annotationsThatEmbedTheObject).
+          Blanked is true when Value is the mask rather than the real text.
+          On annotations that is now the DEFAULT (P3-F2): every annotation
+          value is masked except the handful of Sharko-written provenance keys
+          in annotationsSafeToShow. On labels it is never set — see
+          newSecretResourceView for why labels are shown in full.
         type: boolean
       key:
         type: string

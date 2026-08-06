@@ -12910,6 +12910,10 @@
                     "description": "Path (P2-C2) is the secrets-store POINTER this key's value comes\nfrom — a location, not a value; safe to show (the whole point of\nthis endpoint's own header comment: Sharko may describe the\ndelivery, never the secret). Populated ONLY on the addon-values\nlive-read response (handleGetAddonValuesSecretResource), which is\nalready behind the operator-gated secret.resource.read action — NEVER\non the list endpoint (buildAddonValuesSecretRows), which any logged-in\nuser can reach. Empty on the connection-secret live-read response,\nwhich has no per-key store-pointer concept — a connection secret's\ndesired state lives at one FILE path, already carried on the row\n(connectionSecretRow.ComparedPath), not per-key.",
                     "type": "string"
                 },
+                "present": {
+                    "description": "Present (P3-F2) reports whether this key is actually on the live\nSecret right now. False means the key is DECLARED — the addon's\ncatalog definition says its value comes from a store path — but the\nSecret on the cluster does not have it.\n\nThis is the only per-key verdict this response is allowed to carry,\nand it is deliberately about EXISTENCE, never about content: the two\nengines compare whole secrets, so \"does key X match its source\" is a\nquestion nothing in Sharko has actually asked, and answering it here\nwould be inventing a fact. Present/absent, and nothing else.",
+                    "type": "boolean"
+                },
                 "value": {
                     "type": "string"
                 }
@@ -12919,7 +12923,7 @@
             "type": "object",
             "properties": {
                 "blanked": {
-                    "description": "Blanked is true when Value is the mask rather than the real text —\nonly ever set for an annotation that embeds a copy of the object\n(see annotationsThatEmbedTheObject).",
+                    "description": "Blanked is true when Value is the mask rather than the real text.\nOn annotations that is now the DEFAULT (P3-F2): every annotation\nvalue is masked except the handful of Sharko-written provenance keys\nin annotationsSafeToShow. On labels it is never set — see\nnewSecretResourceView for why labels are shown in full.",
                     "type": "boolean"
                 },
                 "key": {

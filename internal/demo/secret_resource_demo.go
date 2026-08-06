@@ -145,8 +145,31 @@ func buildDemoAddonValuesSecret(
 	now time.Time,
 	index int,
 ) *corev1.Secret {
+	// P3-F2: every seventh multi-key secret is left HALF-WRITTEN — the
+	// definition declares a key the cluster does not have. That is a real
+	// state (a push that got part way, a key added to the catalog since the
+	// last write) and it is the one thing the panel's key list says that a
+	// fully-written secret can never show: "not on the cluster". Without a
+	// seam like this the row exists only in a unit test, and the maintainer
+	// walking the demo never sees it.
+	//
+	// Deterministic (index and sorted key order), so a restart reproduces
+	// the same estate.
+	dropped := ""
+	if index%7 == 3 && len(def.Keys) > 1 {
+		names := make([]string, 0, len(def.Keys))
+		for key := range def.Keys {
+			names = append(names, key)
+		}
+		sort.Strings(names)
+		dropped = names[len(names)-1]
+	}
+
 	data := make(map[string][]byte, len(def.Keys))
 	for key := range def.Keys {
+		if key == dropped {
+			continue
+		}
 		data[key] = []byte(demoSecretValue)
 	}
 

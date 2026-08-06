@@ -72,11 +72,27 @@ func ValuesProvenanceAnnotations(addon, source string, at time.Time) map[string]
 		source = defaultSourceLabel
 	}
 	return map[string]string{
-		"sharko.dev/addon":      addon,
-		"sharko.dev/source":     source,
-		"sharko.dev/written-at": at.UTC().Format(time.RFC3339),
+		AnnotationAddon:     addon,
+		AnnotationSource:    source,
+		AnnotationWrittenAt: at.UTC().Format(time.RFC3339),
 	}
 }
+
+// Provenance annotation keys stamped on addon-values Secrets Sharko writes
+// (P2-C5). Exported (P3-F2) so the live-read endpoint's annotation
+// ALLOW-LIST can name the exact keys this package writes instead of
+// repeating the strings — a writer and a "safe to show" list that drift
+// apart is precisely how a value ends up rendered.
+const (
+	// AnnotationAddon names the addon this Secret carries values for.
+	AnnotationAddon = "sharko.dev/addon"
+	// AnnotationSource names the store the content was compared against —
+	// a backend NAME ("AWS Secrets Manager"), never a path and never a
+	// value.
+	AnnotationSource = "sharko.dev/source"
+	// AnnotationWrittenAt is the RFC3339 timestamp of the write itself.
+	AnnotationWrittenAt = "sharko.dev/written-at"
+)
 
 // EnsureSecret creates a K8s Secret on the remote cluster when none exists,
 // or updates one Sharko already owns. The secret is labeled with
