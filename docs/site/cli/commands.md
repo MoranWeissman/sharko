@@ -158,6 +158,7 @@ sharko add-cluster <name> [flags]
 | `--region <region>` | AWS region (for `aws-sm` provider) |
 | `--env <env>` | Environment label (`dev`, `staging`, `prod`, etc.) |
 | `--secret-path <path>` | Override the secrets provider path used to look up cluster credentials. Use when the secret key differs from the cluster name (e.g., `clusters/prod/my-cluster`). |
+| `--dry-run` | Preview the registration without making changes — prints the PR title, effective addons, secrets that would be created, the connectivity check result, and per-file the exact diff the pull request would contain |
 
 Example:
 
@@ -228,7 +229,7 @@ sharko adopt <cluster1> [cluster2] ... [flags]
 | Flag | Description |
 |------|-------------|
 | `-y`, `--yes` | Skip the confirmation prompt |
-| `--dry-run` | Preview what would happen without making changes |
+| `--dry-run` | Preview what would happen without making changes — prints per-file the exact diff the pull request would contain |
 | `--auto-merge` | Auto-merge the adoption PR (overrides the server default) |
 
 ### `sharko unadopt-cluster`
@@ -242,7 +243,7 @@ sharko unadopt-cluster <name>
 | Flag | Description |
 |------|-------------|
 | `-y`, `--yes` | Skip the confirmation prompt |
-| `--dry-run` | Preview what would happen without making changes |
+| `--dry-run` | Preview what would happen without making changes — prints per-file the exact diff the pull request would contain |
 
 ### `sharko list-clusters`
 
@@ -354,12 +355,57 @@ sharko upgrade-addon cert-manager --version 1.15.0
 sharko upgrade-addon cert-manager --version 1.15.0 --cluster staging
 ```
 
+**Repo format awareness.** Before doing anything, this command checks whether the connected repo
+is on the v3 or v4 data-file format (`GET /api/v1/migration/status`):
+
+- **v3 repo** (or the format check itself couldn't be answered) — works exactly as shown above,
+  no change in behavior.
+- **v4 repo, with `--cluster`** — v4 pins addon versions per cluster rather than in a global
+  catalog entry, so this command transparently routes the request through
+  [`sharko upgrade-clusters`](#sharko-upgrade-clusters) instead of the old (v3-only) upgrade route,
+  and says so on stdout.
+- **v4 repo, without `--cluster`** — there is no "global version" concept on a v4 repo, so the
+  command refuses with a plain-English explanation and prints the exact `sharko upgrade-clusters`
+  command to run once you've picked the clusters.
+- **Mixed repo** (both layouts present) — the server's own migration-status message is shown
+  as-is; finish the migration first.
+
 ### `sharko upgrade-addons`
 
 Batch upgrade multiple addons in a single PR.
 
 ```bash
 sharko upgrade-addons cert-manager=1.15.0,metrics-server=0.7.1
+```
+
+Same repo-format check as `upgrade-addon`. On a v4 repo there is no batch route — the command
+refuses and prints one `sharko upgrade-clusters` command per addon in the batch instead. On a
+mixed repo, the server's migration-status message is shown.
+
+### `sharko upgrade-clusters`
+
+Bump one addon's version pin on a chosen subset of clusters, in a single pull request (v4 format
+only). This is the fleet-upgrade route the UI uses. Clusters left out of `--cluster` are
+untouched — the diff is one small block per selected cluster. Every selected cluster must
+already have the addon enabled; this never enables an addon as a side effect of upgrading it.
+
+```bash
+sharko upgrade-clusters <addon> --version <ver> --cluster <name> [--cluster <name> ...] [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--version <ver>` | Target version (required) |
+| `--cluster <name>` | Cluster to upgrade (repeatable; at least one required) |
+| `--dry-run` | Preview every file the PR would change, including the diff, without making changes |
+| `-y`, `--yes` | Skip confirmation prompt |
+| `--auto-merge` | Auto-merge the PR (overrides the server default; only sent when you pass this flag) |
+
+Example:
+
+```bash
+sharko upgrade-clusters cert-manager --version 1.16.0 \
+  --cluster prod-eu --cluster staging-us -y
 ```
 
 ### `sharko list-addons`
@@ -370,6 +416,145 @@ List all addons in the catalog. Use `--show-config` to include the full catalog 
 sharko list-addons
 sharko list-addons --show-config
 ```
+
+---
+
+## v4 / Takeover Commands
+
+Sharko's v4 data-file format replaces the old global catalog with per-cluster addon files
+(`cluster-addons/<cluster>.yaml`) and lets you take over a cluster ArgoCD already manages instead
+of only registering brand-new ones. These commands only work against a v4-format repo.
+
+### `sharko takeover-preflight`
+
+Read-only. Runs the checks Sharko does before a takeover: who owns the cluster's ArgoCD
+connection today, which ApplicationSets would react to it changing owners, what is deployed
+there, and whether the name clashes with a cluster Sharko already has. Writes nothing — safe to
+run as often as you like.
+
+```bash
+sharko takeover-preflight <cluster>
+```
+
+Each finding prints with a status glyph (✓ ok, ⚠ warning, ✗ blocked) plus what it means and what
+to do about it.
+
+### `sharko takeover`
+
+Makes Sharko the owner of an existing cluster's ArgoCD connection, keeping the same name, the
+same API address and — by default — every label the previous owner left on it. Adds the cluster
+to Sharko's fleet through a pull request and creates an empty addon file for it; no addon is
+turned on.
+
+```bash
+sharko takeover <cluster> [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview the plan (files, diffs) without making changes |
+| `-y`, `--yes` | Skip confirmation prompt |
+| `--acknowledge <id>` | Finding id to acknowledge (repeatable) |
+| `--preserve-legacy-labels` | Carry the previous owner's labels over (default true — only sent when you set this flag) |
+| `--region <region>` | Region to record on the fleet entry |
+| `--auto-merge` | Auto-merge the takeover PR (overrides the server default; only sent when you set this flag) |
+
+Always fetches and prints the preflight report first. Every **warning** finding has to be named
+in `--acknowledge` before the takeover is allowed to write anything — a **blocked** finding has
+to be fixed instead, and re-running the command is how you check it turned green.
+
+If a warning wasn't acknowledged, the server refuses with a 409 naming which finding ids are
+still missing, and the CLI prints the exact rerun command to copy-paste:
+
+```
+$ sharko takeover prod-eu -y
+Preflight for prod-eu: ready
+  ⚠ [appset-deletion-safety] ApplicationSet reacts on removal
+      ...
+
+1 warning has not been read yet — look at appset-deletion-safety, then send it
+back in acknowledged_findings
+
+Rerun with: sharko takeover prod-eu -y --acknowledge appset-deletion-safety
+```
+
+A partial outcome (the pull request opened but the ArgoCD ownership swap failed) is reported
+honestly — nothing is deleted, and the takeover is safe to run again.
+
+### `sharko drop-legacy-labels`
+
+Removes the labels a takeover carried over from the previous owner. Warns first, by name, about
+any ApplicationSet that still picks clusters using one of those labels — removing it is what
+makes this cluster fall out of that ApplicationSet.
+
+```bash
+sharko drop-legacy-labels <cluster> [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--label <key>` | Label key to remove (repeatable; omit for every carried-over label) |
+| `-y`, `--yes` | Skip confirmation prompt |
+| `--dry-run` | Preview what would be removed without making changes |
+| `--acknowledge <id>` | Warning id to acknowledge (repeatable) |
+
+Same acknowledge-then-rerun pattern as `takeover`: every warning must be named in
+`--acknowledge`, and an unacknowledged warning gets you the exact rerun command back.
+
+### `sharko unregister-consequences`
+
+Read-only. Reads out, one by one, what unregistering this cluster will do — what leaves the
+repo, what happens to its ArgoCD connection, what is deployed there today, and which
+ApplicationSets may react to labels a takeover carried over. Writes nothing and deletes nothing.
+
+```bash
+sharko unregister-consequences <cluster>
+```
+
+### `sharko enable-addon`
+
+Enables an addon on a cluster (v4 format). Writes the cluster's addon-assignment entry and,
+when values are supplied, the per-cluster values file.
+
+```bash
+sharko enable-addon <cluster> <addon> [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--version <ver>` | Pin the chart version for this cluster only (omit to leave any existing pin unchanged) |
+| `--clear-version` | Clear the per-cluster version pin and follow the catalog default again |
+| `--values-json <json>` | Inline JSON object of values to deep-merge onto the cluster's values file |
+| `--dry-run` | Preview what would happen without making changes — prints per-file the exact diff the pull request would contain |
+| `-y`, `--yes` | Skip confirmation prompt |
+| `--auto-merge` | Auto-merge the PR (overrides the server default; only sent when you set this flag) |
+
+`--version` and `--clear-version` are mutually exclusive. Example:
+
+```bash
+sharko enable-addon prod-eu cert-manager \
+  --version 1.15.0 --values-json '{"installCRDs": true}' -y
+```
+
+A validation failure (missing required values, an addon not yet in the catalog, and similar)
+comes back as a 422 naming exactly what's missing — the CLI prints the server's `code` and
+`problems` list alongside the message.
+
+### `sharko disable-addon`
+
+Disables an addon on a cluster (v4 format) by setting `enabled: false` on its entry — the entry
+(and its version pin and settings) is kept by default, so re-enabling later is a one-word change.
+
+```bash
+sharko disable-addon <cluster> <addon> [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--remove` | Delete the addon's entry entirely instead of keeping it disabled |
+| `--dry-run` | Preview what would happen without making changes — prints per-file the exact diff the pull request would contain |
+| `-y`, `--yes` | Skip confirmation prompt |
+| `--auto-merge` | Auto-merge the PR (overrides the server default; only sent when you set this flag) |
 
 ---
 

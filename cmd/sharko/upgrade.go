@@ -27,6 +27,27 @@ var upgradeAddonCmd = &cobra.Command{
 		ver, _ := cmd.Flags().GetString("version")
 		cluster, _ := cmd.Flags().GetString("cluster")
 
+		// The v3 route this command has always used (POST
+		// /addons/{name}/upgrade) writes the catalog/values files a v4 repo
+		// does not read. Check the repo format first so a v4 caller gets a
+		// plain-English redirect instead of a 409 from a route with no CLI
+		// command to follow up with.
+		fs, fsErr := repoFormat()
+		if fsErr == nil {
+			switch fs.Format {
+			case "v4":
+				if cluster == "" {
+					return fmt.Errorf(
+						"this repo uses the v4 format, which pins addon versions per cluster rather than globally — pick the clusters and run:\n  %s",
+						upgradeClustersCommand(name, ver, []string{"<cluster>"}))
+				}
+				fmt.Printf("Repo format is v4 — routing through 'upgrade-clusters' for cluster %s.\n", cluster)
+				return runUpgradeClusters(name, ver, []string{cluster})
+			case "mixed":
+				return fmt.Errorf("%s", fs.Message)
+			}
+		}
+
 		body := map[string]string{
 			"version": ver,
 		}
@@ -90,6 +111,24 @@ var upgradeAddonsCmd = &cobra.Command{
 			upgrades[parts[0]] = parts[1]
 		}
 
+		// Same v3-route check as upgrade-addon: POST /addons/upgrade-batch
+		// writes the v3 catalog shape, which a v4 repo does not read.
+		fs, fsErr := repoFormat()
+		if fsErr == nil {
+			switch fs.Format {
+			case "v4":
+				var lines []string
+				for addon, version := range upgrades {
+					lines = append(lines, "  "+upgradeClustersCommand(addon, version, []string{"<cluster>"}))
+				}
+				return fmt.Errorf(
+					"this repo uses the v4 format, which pins addon versions per cluster rather than globally — there is no single batch call for that. Run one 'upgrade-clusters' per addon instead:\n%s",
+					strings.Join(lines, "\n"))
+			case "mixed":
+				return fmt.Errorf("%s", fs.Message)
+			}
+		}
+
 		body := map[string]interface{}{
 			"upgrades": upgrades,
 		}
@@ -125,4 +164,41 @@ var upgradeAddonsCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+// runUpgradeClusters posts the v4 fleet-upgrade call for a single addon and
+// prints the result the same way upgrade-clusters does. Shared by
+// upgrade-addon's transparent v4 redirect (--cluster given, one cluster)
+// and the upgrade-clusters command itself would use the same route, but
+// keeps its own RunE for the multi-cluster, flag-driven case — this helper
+// is just for the redirect.
+func runUpgradeClusters(addon, version string, clusters []string) error {
+	body := map[string]interface{}{
+		"version":  version,
+		"clusters": clusters,
+		"yes":      true,
+	}
+	path := "/api/v1/addons/" + url.PathEscape(addon) + "/upgrade-clusters"
+	respBody, status, err := apiPost(path, body)
+	if err != nil {
+		fmt.Println("failed")
+		return err
+	}
+	if status != 200 {
+		fmt.Println("failed")
+		return printAPIError(respBody, status)
+	}
+	fmt.Println("done")
+
+	unwrapped, note := unwrapAttribution(respBody)
+	var result cliGitResult
+	if err := json.Unmarshal(unwrapped, &result); err != nil {
+		return fmt.Errorf("invalid response: %w", err)
+	}
+	fmt.Println()
+	printGitResult(&result)
+	if note != "" {
+		fmt.Printf("  Note: %s\n", note)
+	}
+	return nil
 }

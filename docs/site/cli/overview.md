@@ -45,23 +45,31 @@ Log in once per server:
 sharko login --server https://sharko.your-domain.com
 ```
 
-You will be prompted for username and password. The CLI stores a session token locally (in `~/.sharko/config.yaml`). Session tokens expire; re-run `sharko login` when prompted.
+You will be prompted for username and password. The CLI stores the server URL and session token locally in `~/.sharko/config` (a plain YAML file, no extension — not `config.yaml`). Session tokens expire; re-run `sharko login` when prompted.
 
-For non-interactive use (CI/CD), use an API key:
+`sharko login` always exchanges a username and password for a session token — there is no CLI flow that trades an API key for one. For non-interactive use (CI/CD), create an API key with `sharko token create` (see [Commands](commands.md#sharko-token-create)) and write it straight into the config file the CLI reads, instead of running `login`:
 
 ```bash
-export SHARKO_TOKEN=sharko_a1b2c3d4...
-sharko status  # token read from env var
+mkdir -p ~/.sharko
+cat > ~/.sharko/config <<EOF
+server: https://sharko.your-domain.com
+token: sharko_a1b2c3d4...
+EOF
 ```
+
+Every command reads the token from that file — there is no `SHARKO_TOKEN` environment variable read at request time. `SHARKO_CONFIG_DIR` overrides where the CLI looks for it (`~/.sharko` is the default), which is useful for pointing a CI job at a config file it wrote to a different path.
 
 ## Global Flags
 
+Every command inherits these two persistent flags from the root command:
+
 | Flag | Description |
 |------|-------------|
-| `--server <url>` | Override the server URL |
-| `--token <token>` | Override the auth token |
-| `--output json` | Output as JSON (useful for scripting) |
+| `--server <url>` | Override the server URL from the saved config for this call |
+| `--insecure` | Skip TLS certificate verification (for self-signed certs) |
 | `--help` | Show help for any command |
+
+There is no `--token` flag and no `--output json` flag. The token always comes from the saved config (`sharko login` writes it), and every command prints plain text — there is no JSON output mode.
 
 ## Usage Pattern
 
