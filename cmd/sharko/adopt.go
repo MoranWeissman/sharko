@@ -16,8 +16,9 @@ func init() {
 }
 
 var adoptCmd = &cobra.Command{
-	Use:   "adopt <cluster1> [cluster2] ...",
-	Short: "Adopt existing ArgoCD clusters under Sharko management",
+	Use:     "adopt <cluster1> [cluster2] ...",
+	Aliases: []string{"adopt-cluster"},
+	Short:   "Adopt existing ArgoCD clusters under Sharko management",
 	Long: `Adopt one or more existing ArgoCD clusters. This creates GitOps
 configuration (values file + managed-clusters.yaml entry) for clusters
 that are already registered in ArgoCD but not yet managed by Sharko.`,

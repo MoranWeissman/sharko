@@ -634,6 +634,9 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 
 // GetConfigDiff returns the diff between a cluster's addon values and global defaults.
 func (s *ClusterService) GetConfigDiff(ctx context.Context, clusterName string, gp gitprovider.GitProvider) (*models.ConfigDiffResponse, error) {
+	if isV4Repo(ctx, gp, s.branch()) {
+		return s.getConfigDiffV4(ctx, clusterName, gp)
+	}
 	log := logging.LoggerFromContext(ctx)
 	// Fetch cluster values file
 	clusterValuesPath := fmt.Sprintf("configuration/addons-clusters-values/%s.yaml", clusterName)
@@ -704,6 +707,82 @@ func (s *ClusterService) GetConfigDiff(ctx context.Context, clusterName string, 
 	return resp, nil
 }
 
+// getConfigDiffV4 is GetConfigDiff's v4 branch (v4 closing wave, final fix
+// row). v3 keeps every addon's cluster override in one combined file
+// (configuration/addons-clusters-values/<cluster>.yaml, one top-level key
+// per addon plus a clusterGlobalValues scratch block); v4 gives each addon
+// its own file at values/clusters/<cluster>/<addon>.yaml, with fleet-wide
+// defaults at values/global/<addon>.yaml (design doc §2.2) instead of
+// configuration/addons-global-values/<addon>.yaml. This mirrors GetClusterDetail
+// and GetClusterComparison's existing isV4Repo dispatch in this same file.
+//
+// v3's clusterGlobalValues block is deliberately not carried into the v4
+// response: migration_v3v4.go's splitV3ClusterValuesFile drops it during
+// the v3-to-v4 migration with the note "nothing ever read it (it was a
+// scratch area for YAML shortcuts)" — so there is nothing to surface as
+// resp.GlobalValues on a v4 repo, and it stays unset (the field carries
+// `omitempty`).
+//
+// A missing values/clusters/<cluster>/ directory means the cluster has no
+// overrides for any addon yet — the ordinary state for a freshly-enabled
+// cluster — and yields an empty AddonDiffs list, not an error, matching the
+// "missing means empty" rule the v4 format uses everywhere else (design
+// doc D16).
+func (s *ClusterService) getConfigDiffV4(ctx context.Context, clusterName string, gp gitprovider.GitProvider) (*models.ConfigDiffResponse, error) {
+	log := logging.LoggerFromContext(ctx)
+	resp := &models.ConfigDiffResponse{
+		ClusterName: clusterName,
+		AddonDiffs:  []models.ConfigDiffEntry{},
+	}
+
+	clusterDir := fmt.Sprintf("%s/%s", orchestrator.V4ClusterValuesDir, clusterName)
+	entries, err := gp.ListDirectory(ctx, clusterDir, s.branch())
+	if err != nil {
+		if !isGitFileNotFound(err) {
+			return nil, fmt.Errorf("listing %s: %w", clusterDir, err)
+		}
+		entries = nil
+	}
+
+	addonNames := make([]string, 0, len(entries))
+	for _, name := range entries {
+		if strings.HasSuffix(name, ".yaml") {
+			addonNames = append(addonNames, strings.TrimSuffix(name, ".yaml"))
+		}
+	}
+	sort.Strings(addonNames)
+
+	for _, addonName := range addonNames {
+		clusterValuesPath := fmt.Sprintf("%s/%s.yaml", clusterDir, addonName)
+		clusterData, cErr := gp.GetFileContent(ctx, clusterValuesPath, s.branch())
+		if cErr != nil {
+			log.Warn("could not read cluster values for addon", "addon", addonName, "cluster", clusterName, "error", cErr)
+			continue
+		}
+
+		globalPath := fmt.Sprintf("%s/%s.yaml", orchestrator.V4GlobalValuesDir, addonName)
+		globalData, gErr := gp.GetFileContent(ctx, globalPath, s.branch())
+		globalYAML := ""
+		if gErr != nil {
+			log.Info("no global defaults found for addon", "addon", addonName, "error", gErr)
+		} else {
+			globalYAML = string(globalData)
+		}
+
+		clusterYAMLStr := string(clusterData)
+		hasOverrides := strings.TrimSpace(clusterYAMLStr) != strings.TrimSpace(globalYAML)
+
+		resp.AddonDiffs = append(resp.AddonDiffs, models.ConfigDiffEntry{
+			AddonName:     addonName,
+			HasOverrides:  hasOverrides,
+			GlobalValues:  globalYAML,
+			ClusterValues: clusterYAMLStr,
+		})
+	}
+
+	return resp, nil
+}
+
 func (s *ClusterService) computeHealthStats(gitClusters []models.Cluster, notInGit []models.Cluster) *models.ClusterHealthStats {
 	stats := &models.ClusterHealthStats{
 		TotalInGit: len(gitClusters),
@@ -750,6 +829,9 @@ func isInfrastructureApp(appName string) bool {
 
 // GetClusterValues returns the raw cluster-specific values YAML.
 func (s *ClusterService) GetClusterValues(ctx context.Context, clusterName string, gp gitprovider.GitProvider) (*models.ClusterValuesResponse, error) {
+	if isV4Repo(ctx, gp, s.branch()) {
+		return s.getClusterValuesV4(ctx, clusterName, gp)
+	}
 	path := fmt.Sprintf("configuration/addons-clusters-values/%s.yaml", clusterName)
 	data, err := gp.GetFileContent(ctx, path, s.branch())
 	if err != nil {
@@ -759,6 +841,70 @@ func (s *ClusterService) GetClusterValues(ctx context.Context, clusterName strin
 	return &models.ClusterValuesResponse{
 		ClusterName: clusterName,
 		ValuesYAML:  string(data),
+	}, nil
+}
+
+// getClusterValuesV4 is GetClusterValues' v4 branch (v4 closing wave, final
+// fix row). v3 keeps one combined file per cluster
+// (configuration/addons-clusters-values/<cluster>.yaml) with one top-level
+// key per addon; v4 splits that into one file per addon at
+// values/clusters/<cluster>/<addon>.yaml (design doc §2.2). This combines
+// every addon file back into the same shape — one top-level key per addon —
+// so ValuesYAML keeps returning the same kind of document for either repo
+// layout, and callers of this response never need to know which layout the
+// repo uses.
+//
+// A missing values/clusters/<cluster>/ directory (cluster has no overrides
+// yet) yields an empty ValuesYAML string, matching v3's own "no cluster
+// file yet" behaviour for a brand-new cluster written straight to Git by
+// hand outside Sharko.
+func (s *ClusterService) getClusterValuesV4(ctx context.Context, clusterName string, gp gitprovider.GitProvider) (*models.ClusterValuesResponse, error) {
+	log := logging.LoggerFromContext(ctx)
+	clusterDir := fmt.Sprintf("%s/%s", orchestrator.V4ClusterValuesDir, clusterName)
+	entries, err := gp.ListDirectory(ctx, clusterDir, s.branch())
+	if err != nil {
+		if !isGitFileNotFound(err) {
+			return nil, fmt.Errorf("listing %s: %w", clusterDir, err)
+		}
+		entries = nil
+	}
+
+	var yamlNames []string
+	for _, name := range entries {
+		if strings.HasSuffix(name, ".yaml") {
+			yamlNames = append(yamlNames, name)
+		}
+	}
+	sort.Strings(yamlNames)
+
+	combined := make(map[string]interface{}, len(yamlNames))
+	for _, name := range yamlNames {
+		addonName := strings.TrimSuffix(name, ".yaml")
+		data, rErr := gp.GetFileContent(ctx, fmt.Sprintf("%s/%s", clusterDir, name), s.branch())
+		if rErr != nil {
+			log.Warn("could not read cluster values file for addon", "addon", addonName, "cluster", clusterName, "error", rErr)
+			continue
+		}
+		var val interface{}
+		if uErr := yaml.Unmarshal(data, &val); uErr != nil {
+			log.Warn("could not parse cluster values file for addon", "addon", addonName, "cluster", clusterName, "error", uErr)
+			continue
+		}
+		combined[addonName] = val
+	}
+
+	valuesYAML := ""
+	if len(combined) > 0 {
+		marshalled, mErr := yaml.Marshal(combined)
+		if mErr != nil {
+			return nil, fmt.Errorf("marshalling combined cluster values for %s: %w", clusterName, mErr)
+		}
+		valuesYAML = string(marshalled)
+	}
+
+	return &models.ClusterValuesResponse{
+		ClusterName: clusterName,
+		ValuesYAML:  valuesYAML,
 	}, nil
 }
 

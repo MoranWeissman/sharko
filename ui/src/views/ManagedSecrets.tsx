@@ -257,12 +257,15 @@ import {
   ChevronsUpDown,
   ChevronUp,
   KeyRound,
+  LayoutGrid,
+  List,
   Loader2,
   Lock,
   RefreshCw,
   RotateCcw,
   Search,
   Trash2,
+  X,
 } from 'lucide-react'
 import {
   api,
@@ -297,6 +300,7 @@ import { StatusDot, StatusMark, statusLabel, statusSortRank, statusStripClassNam
 import { TimeChip } from '@/components/resource/TimeChip'
 import { ResourceDetailSheet } from '@/components/resource/ResourceDetailSheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { SecretTiles } from './SecretTiles'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Unified row model — one shape for both secret kinds, hoisted at module
@@ -311,7 +315,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 // statusSortRank) — the order the filter chips render in and the order a
 // group header lists its sums in. Declared here because both the chips
 // (far below) and groupSummary (just below) read it.
-const CHIP_ORDER: ResourceStatus[] = ['missing', 'out_of_sync', 'orphaned', 'foreign', 'unknown', 'in_sync']
+export const CHIP_ORDER: ResourceStatus[] = ['missing', 'out_of_sync', 'orphaned', 'foreign', 'unknown', 'in_sync']
 
 /**
  * The Delete confirm body (leftover-secrets S1.2, locked wording) — the
@@ -369,7 +373,7 @@ function consecutiveFailuresSentence(count: number): string {
   return `The last ${count} checks of this secret failed in a row.`
 }
 
-interface UnifiedRow {
+export interface UnifiedRow {
   kind: 'connection' | 'values'
   key: string
   cluster: string
@@ -503,7 +507,7 @@ export interface RowGroup {
 /** The bucket connection secrets land in when grouping by addon: they are
  *  not an addon, and pretending otherwise would be the kind of tidy lie
  *  this page keeps refusing to tell. */
-const CONNECTIONS_GROUP_KEY = '__connections__'
+export const CONNECTIONS_GROUP_KEY = '__connections__'
 
 /**
  * worstRankInGroup (G4) is the best (lowest = worst) statusSortRank among a
@@ -518,6 +522,29 @@ function worstRankInGroup(rows: UnifiedRow[]): number {
     if (rank < best) best = rank
   }
   return best
+}
+
+/**
+ * worstStateInGroup (design-secret-sync-visual-pass, section 3) — same
+ * worst-of-the-group rule as worstRankInGroup, but returns the STATE the
+ * winning rank belongs to, not just the number. The tiles view's per-card
+ * left-edge strip (statusStripClassName) and status-mix bar need the actual
+ * state, not its rank, and empty groups default to 'in_sync' — the state
+ * that paints nothing (no group in this page is ever actually empty, but a
+ * function that returns a real ResourceStatus for every input is safer than
+ * one that can't).
+ */
+export function worstStateInGroup(rows: UnifiedRow[]): ResourceStatus {
+  let best = Infinity
+  let worst: ResourceStatus = 'in_sync'
+  for (const r of rows) {
+    const rank = statusSortRank(r.state, !!r.lastCheckError)
+    if (rank < best) {
+      best = rank
+      worst = toResourceStatus(r.state)
+    }
+  }
+  return worst
 }
 
 /**
@@ -624,7 +651,21 @@ function matchesSearch(row: UnifiedRow, q: string): boolean {
   )
 }
 
-type SortKey = 'name' | 'namespace' | 'addon' | 'cluster' | 'source' | 'checked' | 'state'
+type SortKey = 'name' | 'namespace' | 'addon' | 'cluster' | 'source' | 'state'
+
+/**
+ * sourceShortLabel (design-secret-sync-visual-pass, section 2) — the SOURCE
+ * column used to repeat the sentence "checked against X" on every one of
+ * 170 rows (~137px of pure waste per row, measured). The relation
+ * ("checked against") now lives once in the sticky column header
+ * ("Checked against"); this cell shows just the place name. Strips a
+ * leading "the " so "the demo secrets store" reads as "demo secrets
+ * store" — display-only, never touches the server string itself (the
+ * Source/"Checked against" filter <select> and the search box still match
+ * on the full sourceLabel, only the visible option text runs through
+ * this).
+ */
+const sourceShortLabel = (l: string) => l.replace(/^the /i, '')
 
 // compareRows never sorts state alphabetically (S3) — it defers to
 // StatusMark's statusSortRank, the same worst-first priority order ArgoCD
@@ -658,11 +699,6 @@ function compareRows(a: UnifiedRow, b: UnifiedRow, key: SortKey): number {
       return a.cluster < b.cluster ? -1 : a.cluster > b.cluster ? 1 : 0
     case 'source':
       return a.sourceLabel < b.sourceLabel ? -1 : a.sourceLabel > b.sourceLabel ? 1 : 0
-    case 'checked': {
-      const ac = a.lastChecked ?? ''
-      const bc = b.lastChecked ?? ''
-      return ac < bc ? -1 : ac > bc ? 1 : 0
-    }
     case 'state':
       return statusSortRank(a.state, !!a.lastCheckError) - statusSortRank(b.state, !!b.lastCheckError)
     default:
@@ -1236,9 +1272,14 @@ function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
   }
 }
 
+// design-secret-sync-visual-pass, section 4/item 21 — DiffCard used to be
+// its own boxed ring card; now it's a plain pane inside the ONE ring
+// container Zone B builds around the pair (an interior hairline divides
+// them instead of two separate rings). The label + testid stay exactly as
+// they were — only the box is gone.
 function DiffCard({ title, children, testId }: { title: string; children: ReactNode; testId: string }) {
   return (
-    <div className="rounded-md ring-1 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900" data-testid={testId}>
+    <div className="p-3" data-testid={testId}>
       <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">{title}</div>
       {children}
     </div>
@@ -1304,7 +1345,21 @@ function IntentCard({ row }: { row: UnifiedRow }) {
  * "improve" this by adding a reveal toggle, a copy button, or a request for
  * the real content — that is a new design decision, not a refactor.
  */
-function LiveCard({ row, live, onRetry }: { row: UnifiedRow; live: LiveSecretState; onRetry: () => void }) {
+function LiveCard({
+  row,
+  live,
+  onRetry,
+  driftDetail,
+}: {
+  row: UnifiedRow
+  live: LiveSecretState
+  onRetry: () => void
+  /** design-secret-sync-visual-pass item 23: the connection-drift detail
+   *  used to have its own standalone ring box below the two cards; it's
+   *  part of the comparison, not a sibling of it, so it renders here now —
+   *  inside the cluster pane, under Annotations. */
+  driftDetail?: ReactNode
+}) {
   return (
     <DiffCard title="What is on the cluster" testId="diff-live-card">
       <div className="space-y-3" data-testid="detail-resource-panel">
@@ -1344,10 +1399,11 @@ function LiveCard({ row, live, onRetry }: { row: UnifiedRow; live: LiveSecretSta
         )}
         {live.status === 'ready' && (
           <>
+            {/* design-secret-sync-visual-pass item 22: the {namespace}/{name}
+                identity line is gone — Zone A's header above already says
+                it, and repeating it here was the panel stating the same
+                fact twice. */}
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-[#3a6a8a] dark:text-gray-500">
-              <span className="break-all font-mono text-sm font-semibold text-[#0a2a4a] dark:text-white">
-                {live.resource.namespace}/{live.resource.name}
-              </span>
               {live.resource.secret_type && <span>type {live.resource.secret_type}</span>}
             </div>
             <p className="text-xs text-[#3a6a8a] dark:text-gray-500">Read from {live.resource.read_from}.</p>
@@ -1362,6 +1418,14 @@ function LiveCard({ row, live, onRetry }: { row: UnifiedRow; live: LiveSecretSta
               <KeyValueList items={live.resource.annotations} empty="No annotations." testId="resource-annotations" />
             </div>
           </>
+        )}
+        {/* design-secret-sync-visual-pass item 23: the connection-drift
+            detail, part of the comparison rather than a sibling of it. */}
+        {driftDetail && (
+          <div data-testid="detail-diff-panel">
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Differences</div>
+            {driftDetail}
+          </div>
         )}
       </div>
     </DiffCard>
@@ -1697,7 +1761,11 @@ function SecretDetailPanel({
       // sheet keeps the narrow default.
       wide
     >
-      {/* ── 1. The resource header ─────────────────────────────────────── */}
+      {/* ── Zone A — identity (no box) ───────────────────────────────────
+          design-secret-sync-visual-pass, section 4. The header markup is
+          unchanged; purposeSentence moved up here from the old tail
+          section — what this thing IS belongs before everything else, not
+          buried after the diff and the keys. */}
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1" data-testid="detail-resource-header">
         <span className="rounded-full bg-[#d0e8f8] px-2 py-0.5 text-[11px] font-medium text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-300">
           Secret
@@ -1713,8 +1781,12 @@ function SecretDetailPanel({
         )}
       </div>
 
-      {/* ── 2. State, with the actions right beside it ──────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg ring-1 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-800">
+      <p className="text-sm text-[#2a5a7a] dark:text-gray-300">{purposeSentence}</p>
+
+      {/* Status + actions: the ring box is gone (design-secret-sync-visual-
+          pass item 19) — a hairline under the row is enough now that it
+          isn't competing with four other equal-weight boxes below it. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#6aade0]/40 pb-3 dark:border-gray-700">
         <StatusMark status={row.state} />
         <RoleGuard roles={['admin', 'operator']}>
           <div className="flex items-center gap-2">
@@ -1747,110 +1819,15 @@ function SecretDetailPanel({
         </RoleGuard>
       </div>
 
-      {/* ── 3. The diff: one sentence, two cards ───────────────────────── */}
-      <div>
-        <h3 className="mb-1 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Diff</h3>
-        <p
-          className={`mb-2 text-sm ${verdict === 'match' ? 'text-green-700 dark:text-green-400' : 'text-[#0a2a4a] dark:text-gray-200'}`}
-          data-testid="diff-verdict"
-        >
-          {verdict === 'match' && <CheckCircle className="mr-1.5 inline h-4 w-4 align-text-bottom" aria-hidden="true" />}
-          {diffVerdictSentence(verdict, row)}
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <IntentCard row={row} />
-          {/* The live half sits INSIDE the role guard, so a viewer sees a
-              sentence about access rather than a permission error where a
-              card should be — and the read is never fired for them either
-              (useLiveSecret's `allowed`). */}
-          <RoleGuard
-            roles={['admin', 'operator']}
-            fallback={
-              <DiffCard title="What is on the cluster" testId="diff-live-card">
-                <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="live-needs-operator">
-                  {LIVE_READ_NEEDS_OPERATOR}
-                </p>
-              </DiffCard>
-            }
-          >
-            <LiveCard row={row} live={live} onRetry={retry} />
-          </RoleGuard>
-        </div>
-        {driftDetail && (
-          <div
-            className="mt-3 rounded-md ring-1 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900"
-            data-testid="detail-diff-panel"
-          >
-            {driftDetail}
-          </div>
-        )}
-      </div>
-
-      {/* ── 4. The key table ───────────────────────────────────────────── */}
-      <RoleGuard roles={['admin', 'operator']}>
-        <KeyTable live={live} />
-      </RoleGuard>
-
-      {/* ── 5. Everything the panel already carried ────────────────────── */}
-      <p className="text-sm text-[#0a2a4a] dark:text-white">{purposeSentence}</p>
-      <p
-        className="text-xs text-[#3a6a8a] dark:text-gray-500"
-        title={
-          row.kind === 'values' && row.state !== 'orphaned'
-            ? `Git only holds a pointer to it — the value itself lives in ${row.sourceLabel}.`
-            : undefined
-        }
-      >
-        {sourceSentence}
-      </p>
-      {/* P2-C1: which commit and which file this row was compared against — short SHA here, full SHA on hover. Connection rows only; values rows have no commit to point at (their intent is the store, C2 covers that instead). */}
-      {row.kind === 'connection' && row.comparedRevision && (
-        <p className="text-xs text-[#3a6a8a] dark:text-gray-500" title={`Full commit: ${row.comparedRevision}`} data-testid="detail-compared-revision">
-          Checked against git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
-          {row.comparedPath && (
-            <>
-              {' '}
-              · <span className="font-mono">{row.comparedPath}</span>
-            </>
-          )}
-        </p>
-      )}
-
-      {/* P2-C3: the one-line self-heal promise — only where it changes what the reader should do (an out-of-sync or missing row). */}
-      {(row.state === 'out_of_sync' || row.state === 'missing') && (
-        <p className="text-xs text-[#3a6a8a] dark:text-gray-500" data-testid="detail-self-heals">
-          {row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
-        </p>
-      )}
-      {/* P2-C6: drift blame — which side moved. Connection rows, out-of-sync only, and only when both revisions are known. */}
-      {row.kind === 'connection' && row.state === 'out_of_sync' && row.driftSource && (
-        <p className="text-xs text-[#3a6a8a] dark:text-gray-500" data-testid="detail-drift-source">
-          {row.driftSource === 'git'
-            ? 'Git moved — a newer commit changed what this secret should be.'
-            : 'The cluster moved — something changed this secret outside git.'}
-        </p>
-      )}
-
-      <dl className="space-y-1.5 text-sm">
-        <div className="flex items-center justify-between">
-          <dt className="text-[#3a6a8a] dark:text-gray-400">Last checked</dt>
-          <dd>
-            <TimeChip iso={row.lastChecked} />
-          </dd>
-        </div>
-      </dl>
-
-      {/* H4-3: "Last repaired" — a single timestamp — became this short
-          list, so a reader sees the pattern (repeated repairs, a repair
-          that stopped happening) instead of only the most recent one. */}
-      <RecentActivity row={row} />
-
+      {/* design-secret-sync-visual-pass item 20: the most actionable lines
+          in the old panel were buried at the bottom — they sit right under
+          the status row now, where a reader who just opened the panel
+          actually looks first. */}
       {row.lastCheckError && (
         <p className="text-sm text-red-700 dark:text-red-400" data-testid="last-check-error">
           The last check failed: {row.lastCheckError}
         </p>
       )}
-
       {row.kind === 'connection' && (row.fightCount ?? 0) >= ROW_WARNING_THRESHOLD && (
         <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="fight-warning">
           {fightWarningSentence(row.fightCount ?? 0)}
@@ -1861,6 +1838,128 @@ function SecretDetailPanel({
           {consecutiveFailuresSentence(row.consecutiveFailures ?? 0)}
         </p>
       )}
+
+      {/* ── Zone B — the comparison (one box, two panes) ─────────────────
+          design-secret-sync-visual-pass, section 4. The two separate ring
+          cards become one container with an interior hairline — same
+          content, same testids, half the visual weight. */}
+      <div>
+        <h3 className="mb-1 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Diff</h3>
+        <p
+          className={`mb-2 text-sm ${verdict === 'match' ? 'text-green-700 dark:text-green-400' : 'text-[#0a2a4a] dark:text-gray-200'}`}
+          data-testid="diff-verdict"
+        >
+          {verdict === 'match' && <CheckCircle className="mr-1.5 inline h-4 w-4 align-text-bottom" aria-hidden="true" />}
+          {diffVerdictSentence(verdict, row)}
+        </p>
+        <div className="rounded-md ring-1 ring-[#6aade0] bg-white dark:ring-gray-700 dark:bg-gray-900">
+          <div className="grid sm:grid-cols-2 sm:divide-x divide-[#6aade0]/40 dark:divide-gray-700 max-sm:divide-y">
+            <IntentCard row={row} />
+            {/* The live half sits INSIDE the role guard, so a viewer sees a
+                sentence about access rather than a permission error where a
+                card should be — and the read is never fired for them either
+                (useLiveSecret's `allowed`). */}
+            <RoleGuard
+              roles={['admin', 'operator']}
+              fallback={
+                <DiffCard title="What is on the cluster" testId="diff-live-card">
+                  <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="live-needs-operator">
+                    {LIVE_READ_NEEDS_OPERATOR}
+                  </p>
+                </DiffCard>
+              }
+            >
+              <LiveCard row={row} live={live} onRetry={retry} driftDetail={driftDetail} />
+            </RoleGuard>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Zone C — keys (kept as the one remaining box) ────────────────
+          design-secret-sync-visual-pass, section 4: unchanged content, the
+          no-per-key-verdict rule, and the blanking sentence — verbatim. */}
+      <RoleGuard roles={['admin', 'operator']}>
+        <KeyTable live={live} />
+      </RoleGuard>
+
+      {/* ── Zone D — the record (one grouped block, secondary by design) ──
+          design-secret-sync-visual-pass, section 4. The loose tail of six
+          single-line paragraphs at three font sizes becomes one <dl>, all
+          text-xs, under one heading — no sentence changes, only placement
+          and a shared type scale. */}
+      <div className="border-t border-[#6aade0]/40 pt-3 dark:border-gray-700">
+        <h3 className="mb-1.5 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Details</h3>
+        <dl className="space-y-1.5 text-xs">
+          <div className="flex justify-between gap-3">
+            <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Checked against</dt>
+            <dd
+              className="text-right text-[#2a5a7a] dark:text-gray-400"
+              title={
+                row.kind === 'values' && row.state !== 'orphaned'
+                  ? `Git only holds a pointer to it — the value itself lives in ${row.sourceLabel}.`
+                  : undefined
+              }
+            >
+              {sourceSentence}
+            </dd>
+          </div>
+          {/* P2-C1: which commit and which file this row was compared
+              against — short SHA here, full SHA on hover. Connection rows
+              only; values rows have no commit to point at (their intent is
+              the store, C2 covers that instead). */}
+          {row.kind === 'connection' && row.comparedRevision && (
+            <div className="flex justify-between gap-3">
+              <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Commit</dt>
+              <dd
+                className="text-right text-[#2a5a7a] dark:text-gray-400"
+                title={`Full commit: ${row.comparedRevision}`}
+                data-testid="detail-compared-revision"
+              >
+                Checked against git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
+                {row.comparedPath && (
+                  <>
+                    {' '}
+                    · <span className="font-mono">{row.comparedPath}</span>
+                  </>
+                )}
+              </dd>
+            </div>
+          )}
+          <div className="flex justify-between gap-3">
+            <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Last checked</dt>
+            <dd className="text-right text-[#2a5a7a] dark:text-gray-400">
+              <TimeChip iso={row.lastChecked} />
+            </dd>
+          </div>
+          {/* P2-C3: the one-line self-heal promise — only where it changes
+              what the reader should do (an out-of-sync or missing row). */}
+          {(row.state === 'out_of_sync' || row.state === 'missing') && (
+            <div className="flex justify-between gap-3">
+              <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Self-heal</dt>
+              <dd className="text-right text-[#2a5a7a] dark:text-gray-400" data-testid="detail-self-heals">
+                {row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
+              </dd>
+            </div>
+          )}
+          {/* P2-C6: drift blame — which side moved. Connection rows,
+              out-of-sync only, and only when both revisions are known. */}
+          {row.kind === 'connection' && row.state === 'out_of_sync' && row.driftSource && (
+            <div className="flex justify-between gap-3">
+              <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Drift</dt>
+              <dd className="text-right text-[#2a5a7a] dark:text-gray-400" data-testid="detail-drift-source">
+                {row.driftSource === 'git'
+                  ? 'Git moved — a newer commit changed what this secret should be.'
+                  : 'The cluster moved — something changed this secret outside git.'}
+              </dd>
+            </div>
+          )}
+        </dl>
+      </div>
+
+      {/* H4-3: "Last repaired" — a single timestamp — became this short
+          list, so a reader sees the pattern (repeated repairs, a repair
+          that stopped happening) instead of only the most recent one. */}
+      <RecentActivity row={row} />
 
       {/* leftover-secrets S1.2: an orphaned row's addon is best-effort (read
           off its provenance annotation) and can be absent — falls back to
@@ -1958,8 +2057,8 @@ function SecretTableRow({
           the row's own <StatusMark> dot and the filter chips, via
           statusStripClassName — it cannot disagree with the dot next to
           it. */}
-      <TableCell className={`max-w-[200px] py-1 ${statusStripClassName(row.state)} ${indented ? 'pl-2' : ''}`}>
-        <div className="flex min-w-0 items-center gap-2">
+      <TableCell className={`py-1 px-1.5 ${statusStripClassName(row.state)} ${indented ? 'pl-2' : ''}`}>
+        <div className="flex min-w-0 items-center gap-1.5">
           {indented && <span aria-hidden="true" className="h-4 w-px shrink-0 bg-[#c0ddf0] dark:bg-gray-700" />}
           {row.kind === 'connection' ? (
             <KeyRound className="h-3.5 w-3.5 shrink-0 text-[#5a8aaa] dark:text-gray-500" aria-hidden="true" />
@@ -1982,7 +2081,7 @@ function SecretTableRow({
           hover title is enough here — no need for NAME's front-truncate
           trick. */}
       <TableCell
-        className="max-w-[140px] truncate py-1 text-sm text-[#2a5a7a] dark:text-gray-300"
+        className="truncate py-1 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
         title={row.secretNamespace || undefined}
         data-testid="cell-namespace"
       >
@@ -1991,7 +2090,7 @@ function SecretTableRow({
       {/* Status (H2): moved up next to the name, ArgoCD's own habit of
           putting a resource's health right at the start of its row instead
           of buried at the end. */}
-      <TableCell className="py-1">
+      <TableCell className="py-1 px-1.5">
         <StatusMark status={row.state} />
       </TableCell>
       {/*
@@ -2000,7 +2099,11 @@ function SecretTableRow({
         matching the same "—" the identity cell above already uses for
         "nothing here", not an invented word like "n/a" or a made-up noun.
       */}
-      <TableCell className="py-1 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="cell-addon">
+      <TableCell
+        className="truncate py-1 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
+        title={row.kind === 'values' ? row.addon : undefined}
+        data-testid="cell-addon"
+      >
         {row.kind === 'values' ? (row.addon ?? '—') : '—'}
       </TableCell>
       {/* Cluster (H2): both kinds print it now. It used to be left blank on
@@ -2009,18 +2112,28 @@ function SecretTableRow({
           between the two, that implication got harder to read at a
           glance, and grouping by addon needs a real cluster column for
           every row it shows anyway. */}
-      <TableCell className="py-1 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="cell-cluster">{row.cluster}</TableCell>
-      {/* Source (G1/H3): the S3 honesty lock, sortable/filterable/searched
-          on every row, and read as "checked against X" — the same phrase
-          the sourceSentence in the panel already uses, so the column and
-          the panel never disagree about what to call this fact. */}
-      <TableCell className="py-1 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="cell-source">
-        checked against {row.sourceLabel}
+      <TableCell
+        className="truncate py-1 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
+        title={row.cluster}
+        data-testid="cell-cluster"
+      >
+        {row.cluster}
       </TableCell>
-      <TableCell className="py-1">
-        <TimeChip iso={row.lastChecked} />
+      {/* Checked against (G1/H3, design-secret-sync-visual-pass section 2):
+          the S3 honesty lock, sortable/filterable/searched on every row.
+          The RELATION ("checked against") now lives once in the sticky
+          column header — this cell states just the place name, so the
+          longest demo name (kube-prometheus-stack-grafana-admin, 35
+          chars) can render uncut at 1280px. The full sentence — the same
+          one the panel's Zone D says — is one hover away. */}
+      <TableCell
+        className="truncate py-1 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
+        data-testid="cell-source"
+        title={row.kind === 'connection' ? 'Checked against git.' : `Checked against ${row.sourceLabel} — git only holds a pointer to it.`}
+      >
+        {sourceShortLabel(row.sourceLabel)}
       </TableCell>
-      <TableCell className="py-1" onClick={(e) => e.stopPropagation()}>
+      <TableCell className="py-1 px-1.5" onClick={(e) => e.stopPropagation()}>
         <RoleGuard roles={['admin', 'operator']}>
           <RowActionsMenu
             label={`Actions for ${row.cluster}${row.addon ? ' / ' + row.addon : ''}`}
@@ -2043,8 +2156,12 @@ function SecretTableRow({
 function GroupHeaderRow({ group, expanded, onToggle }: { group: RowGroup; expanded: boolean; onToggle: () => void }) {
   return (
     <TableRow className="hover:bg-transparent">
-      {/* Name, Namespace, Status, Addon, Cluster, Source, Last Checked, plus the actions column (G1 added Addon + Source; H2 moved Status next to Name; walk finding #140 added Namespace). */}
-      <TableCell colSpan={8} className="p-0">
+      {/* Name, Namespace, Status, Addon, Cluster, Checked against, plus the
+          actions column (G1 added Addon + Source; H2 moved Status next to
+          Name; walk finding #140 added Namespace; design-secret-sync-
+          visual-pass removed the LAST CHECKED column — the fact lives in
+          the engine strip + panel now). */}
+      <TableCell colSpan={7} className="p-0">
         <button
           type="button"
           onClick={onToggle}
@@ -2096,13 +2213,28 @@ export function ManagedSecrets() {
   // and so the back button actually goes back to the previous filter
   // instead of out of the page.
   const [searchParams, setSearchParams] = useSearchParams()
+  // design-secret-sync-visual-pass bug fix: a tile's click-through has to
+  // change TWO params in one handler (e.g. clear `view` and set `addon`
+  // together — section 3's click-through). Building the next
+  // URLSearchParams off the outer `searchParams` closure broke that: two
+  // updateParams calls in the same synchronous handler both read the SAME
+  // stale snapshot, so the second call's setSearchParams overwrote the
+  // first call's change instead of building on it. setSearchParams'
+  // functional-updater form (same shape as React's setState updater) reads
+  // the router's own up-to-date params on each call, so sequential calls
+  // in one handler compose correctly instead of racing each other.
   const updateParams = useCallback(
     (mutate: (p: URLSearchParams) => void) => {
-      const params = new URLSearchParams(searchParams.toString())
-      mutate(params)
-      setSearchParams(params, { replace: true })
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev)
+          mutate(params)
+          return params
+        },
+        { replace: true },
+      )
     },
-    [searchParams, setSearchParams],
+    [setSearchParams],
   )
 
   const [stateFilter, setStateFilterState] = useState<ResourceStatus | 'all'>(() => {
@@ -2199,6 +2331,52 @@ export function ManagedSecrets() {
       updateParams((p) => {
         if (next) p.set('source', next)
         else p.delete('source')
+      })
+    },
+    [updateParams],
+  )
+
+  // design-secret-sync-visual-pass, section 3 — the List | Tiles toggle.
+  // URL param `view` wins when present (same B3 pattern as every other
+  // control on this page — reloadable, bookmarkable, back-button-safe);
+  // `sharko-secret-sync-view` in localStorage is read ONLY when the URL has
+  // no `view` param, so the page reopens the way he left it while a shared
+  // link with an explicit `?view=` still shows exactly what was shared.
+  // `list` is the default and is never written to the URL or localStorage.
+  const VIEW_STORAGE_KEY = 'sharko-secret-sync-view'
+  const [view, setViewState] = useState<'list' | 'tiles'>(() => {
+    const v = searchParams.get('view')
+    if (v === 'tiles' || v === 'list') return v
+    return window.localStorage.getItem(VIEW_STORAGE_KEY) === 'tiles' ? 'tiles' : 'list'
+  })
+  const setView = useCallback(
+    (next: 'list' | 'tiles') => {
+      setViewState(next)
+      window.localStorage.setItem(VIEW_STORAGE_KEY, next)
+      updateParams((p) => {
+        if (next === 'list') p.delete('view')
+        else p.set('view', next)
+      })
+    },
+    [updateParams],
+  )
+
+  // design-secret-sync-visual-pass, section 3 — the tiles view's
+  // "Cluster connections" card click-through. No select control (unlike
+  // addon/source) — it renders as one dismissible pill instead, same as
+  // every other single-value filter this page has never needed a <select>
+  // for. Applied in the `filtered` memo below, same as addonFilter/
+  // sourceFilter.
+  const [kindFilter, setKindFilterState] = useState<'' | 'connection' | 'values'>(() => {
+    const v = searchParams.get('kind')
+    return v === 'connection' || v === 'values' ? v : ''
+  })
+  const setKindFilter = useCallback(
+    (next: '' | 'connection' | 'values') => {
+      setKindFilterState(next)
+      updateParams((p) => {
+        if (next) p.set('kind', next)
+        else p.delete('kind')
       })
     },
     [updateParams],
@@ -2327,8 +2505,9 @@ export function ManagedSecrets() {
     if (stateFilter !== 'all') rows = rows.filter((r) => toResourceStatus(r.state) === stateFilter)
     if (addonFilter) rows = rows.filter((r) => r.addon === addonFilter)
     if (sourceFilter) rows = rows.filter((r) => r.sourceLabel === sourceFilter)
+    if (kindFilter) rows = rows.filter((r) => r.kind === kindFilter)
     return rows
-  }, [searchFiltered, stateFilter, addonFilter, sourceFilter])
+  }, [searchFiltered, stateFilter, addonFilter, sourceFilter, kindFilter])
 
   const sorted = useMemo(() => {
     const copy = [...filtered]
@@ -2348,23 +2527,33 @@ export function ManagedSecrets() {
 
   const grouped = groupBy !== 'none'
 
+  // design-secret-sync-visual-pass, section 3 — the tiles view's cards,
+  // built from the SAME buckets (worst-first-then-name, connections bucket
+  // always last, the honest "—" addon-less bucket) buildRowGroups already
+  // produces for the list view's Group by addon — no new grouping logic.
+  const tileGroups = useMemo(() => buildRowGroups(filtered, 'addon'), [filtered])
+
   // B2 (carried through I2's paging removal) — an honest count line: says
   // the real total, and says plainly when a filter has narrowed it below
   // everything Sharko manages. Grouped, it counts groups and SAYS it
   // counts groups — a bare number with no noun would be exactly the kind
-  // of quietly-wrong line this page keeps refusing to print.
+  // of quietly-wrong line this page keeps refusing to print. Tiles view
+  // counts as grouped too (unit "addons", section 3's `7 addons, 170
+  // secrets` example) — the cards ARE the addon grouping.
   const hasActiveFilter = stateFilter !== 'all' || search.trim() !== ''
-  const unit = groupBy === 'addon' ? 'addons' : 'clusters'
+  const summaryGrouped = view === 'tiles' || grouped
+  const unit = view === 'tiles' || groupBy === 'addon' ? 'addons' : 'clusters'
+  const summaryGroupCount = view === 'tiles' ? tileGroups.length : groups.length
   const secretWord = sorted.length === 1 ? 'secret' : 'secrets'
   const secretsSummary =
     sorted.length === 0
       ? hasActiveFilter
         ? `No secrets match this filter (${unifiedRows.length} total)`
         : 'No secrets'
-      : grouped
+      : summaryGrouped
         ? hasActiveFilter
-          ? `${groups.length} ${unit}, ${sorted.length} ${secretWord} (filtered from ${unifiedRows.length})`
-          : `${groups.length} ${unit}, ${sorted.length} ${secretWord}`
+          ? `${summaryGroupCount} ${unit}, ${sorted.length} ${secretWord} (filtered from ${unifiedRows.length})`
+          : `${summaryGroupCount} ${unit}, ${sorted.length} ${secretWord}`
         : hasActiveFilter
           ? `${sorted.length} ${secretWord} (filtered from ${unifiedRows.length})`
           : `${sorted.length} ${secretWord}`
@@ -2381,6 +2570,42 @@ export function ManagedSecrets() {
   const handleChipClick = (status: ResourceStatus) => {
     setStateFilter(stateFilter === status ? 'all' : status)
   }
+
+  // design-secret-sync-visual-pass, section 3 — a tile's click-through.
+  // An addon card narrows the list to that addon (?addon=<name>); the
+  // connections card narrows it to ?kind=connection (its own dismissible
+  // pill, not a select). Either way the view switches back to list, which
+  // arrives already narrowed — the active filter stays visible in the
+  // Addon select / the pill, same as any other filter on this page.
+  const handleTileClick = useCallback(
+    (group: RowGroup) => {
+      const toConnections = group.key === CONNECTIONS_GROUP_KEY
+      // Two URL params change here (view + addon, or view + kind) — they
+      // have to land in ONE updateParams call. setView/setAddonFilter/
+      // setKindFilter each call updateParams independently, and two calls
+      // in the same synchronous handler both build off the same
+      // pre-click params snapshot, so the second call's write silently
+      // drops the first's change. Setting the local view/filter state
+      // directly (mirroring what setView/setAddonFilter/setKindFilter do)
+      // and mutating the URL once avoids the race.
+      setViewState('list')
+      window.localStorage.setItem(VIEW_STORAGE_KEY, 'list')
+      if (toConnections) {
+        setKindFilterState('connection')
+      } else if (group.label !== '—') {
+        setAddonFilterState(group.label)
+      }
+      updateParams((p) => {
+        p.delete('view')
+        if (toConnections) {
+          p.set('kind', 'connection')
+        } else if (group.label !== '—') {
+          p.set('addon', group.label)
+        }
+      })
+    },
+    [updateParams],
+  )
 
   // The red engine error names a cluster — clicking it clears any state
   // filter and searches for that cluster, so the table narrows down to
@@ -2552,10 +2777,30 @@ export function ManagedSecrets() {
             className="w-full rounded-lg border border-[#6aade0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500"
           />
         </div>
-        {/* G1 — Addon and Source are filterable columns, plain <select>s
-            (their value counts can run high, unlike the fixed 5-state
-            chips above) with an explicit "All" option, options drawn from
-            every row so the list never shrinks out from under a search. */}
+        {/* design-secret-sync-visual-pass, section 3 — the tiles view's
+            "Cluster connections" card has no select control; it narrows the
+            list the same way the addon/source selects do, but shows itself
+            as one dismissible pill (the FilterChip visual, navy active
+            style) rather than a third <select>. Clicking × clears it. */}
+        {kindFilter === 'connection' && (
+          <button
+            type="button"
+            onClick={() => setKindFilter('')}
+            data-testid="kind-filter-pill"
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 text-[#1a3d5c] underline decoration-2 underline-offset-4 ring-[#1a3d5c] dark:text-blue-400 dark:ring-blue-400"
+          >
+            Cluster connections
+            <X className="h-3 w-3" aria-hidden="true" />
+          </button>
+        )}
+        {/* G1 — Addon and Checked against are filterable columns, plain
+            <select>s (their value counts can run high, unlike the fixed
+            5-state chips above) with an explicit "All" option, options
+            drawn from every row so the list never shrinks out from under a
+            search. design-secret-sync-visual-pass section 2: the label and
+            each option's visible text match the column header/cell — the
+            option's real VALUE stays the full sourceLabel so the filter
+            keeps matching the exact server string. */}
         <label className="flex items-center gap-1.5 text-xs text-[#3a6a8a] dark:text-gray-400">
           Addon
           <select
@@ -2573,7 +2818,7 @@ export function ManagedSecrets() {
           </select>
         </label>
         <label className="flex items-center gap-1.5 text-xs text-[#3a6a8a] dark:text-gray-400">
-          Source
+          Checked against
           <select
             value={sourceFilter}
             onChange={(e) => setSourceFilter(e.target.value)}
@@ -2583,43 +2828,83 @@ export function ManagedSecrets() {
             <option value="">All</option>
             {sourceOptions.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {sourceShortLabel(s)}
               </option>
             ))}
           </select>
         </label>
         {/* G2 — Group by. `None` is the default and is the flat list this
             page has always shown; the other two fold the same rows under a
-            parent line you click to open. */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-[#3a6a8a] dark:text-gray-400">Group by</span>
+            parent line you click to open. design-secret-sync-visual-pass
+            section 3: hidden in tiles view — the tiles themselves ARE the
+            addon grouping, so a second grouping control would just repeat
+            the same choice a different way. */}
+        {view === 'list' && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-[#3a6a8a] dark:text-gray-400">Group by</span>
+            <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
+              {(
+                [
+                  ['none', 'Flat list'],
+                  ['addon', 'Addon'],
+                  ['cluster', 'Cluster'],
+                ] as [GroupBy, string][]
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setGroupBy(value)}
+                  aria-pressed={groupBy === value}
+                  data-testid={`group-by-${value}`}
+                  className={`px-2.5 py-1 text-xs font-medium ${
+                    groupBy === value
+                      ? // G4: navy in both themes — the app's own "selected"
+                        // colour (the sidebar's #1a3d5c), never StatusMark's
+                        // teal, which reads as "in sync" next to a row that
+                        // genuinely is.
+                        'bg-[#1a3d5c] text-white'
+                      : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {/* design-secret-sync-visual-pass, section 3 — the List | Tiles
+            toggle, far right of the toolbar row, same segmented-pill
+            pattern as Group by above. */}
+        <div className="ml-auto flex items-center gap-1.5">
           <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
-            {(
-              [
-                ['none', 'Flat list'],
-                ['addon', 'Addon'],
-                ['cluster', 'Cluster'],
-              ] as [GroupBy, string][]
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setGroupBy(value)}
-                aria-pressed={groupBy === value}
-                data-testid={`group-by-${value}`}
-                className={`px-2.5 py-1 text-xs font-medium ${
-                  groupBy === value
-                    ? // G4: navy in both themes — the app's own "selected"
-                      // colour (the sidebar's #1a3d5c), never StatusMark's
-                      // teal, which reads as "in sync" next to a row that
-                      // genuinely is.
-                      'bg-[#1a3d5c] text-white'
-                    : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+            <button
+              type="button"
+              onClick={() => setView('list')}
+              aria-pressed={view === 'list'}
+              aria-label="List view"
+              data-testid="view-list"
+              className={`p-1.5 ${
+                view === 'list'
+                  ? 'bg-[#1a3d5c] text-white'
+                  : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+              }`}
+            >
+              <List className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('tiles')}
+              aria-pressed={view === 'tiles'}
+              aria-label="Tiles view"
+              data-testid="view-tiles"
+              className={`p-1.5 ${
+                view === 'tiles'
+                  ? 'bg-[#1a3d5c] text-white'
+                  : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+              }`}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
           </div>
         </div>
       </div>
@@ -2632,6 +2917,8 @@ export function ManagedSecrets() {
         <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 text-center text-sm text-[#3a6a8a] shadow-sm dark:ring-gray-800 dark:bg-gray-900 dark:text-gray-500">
           {unifiedRows.length === 0 ? 'Sharko is not managing any secrets yet.' : 'No secrets match this filter.'}
         </div>
+      ) : view === 'tiles' ? (
+        <SecretTiles groups={tileGroups} onCardClick={handleTileClick} />
       ) : (
         // H1 word/face pass (gitops-proud P4-H): the table frame now
         // matches the house frame every other list page uses (see
@@ -2647,23 +2934,33 @@ export function ManagedSecrets() {
         // row is in the DOM at once; the chips/filters above narrow which
         // rows exist, scrolling browses the rest.
         <div className="max-h-[65vh] overflow-y-auto overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
-          <Table>
+          {/* design-secret-sync-visual-pass, section 1/5: the table is
+              table-fixed with explicit column widths on every column except
+              NAME, which absorbs all remaining width — the only way the
+              longest demo secret name (kube-prometheus-stack-grafana-admin,
+              35 chars, 295px) renders uncut at 1280px instead of truncating
+              on every wide row. min-w-[1000px] keeps sub-1280 windows
+              scrolling (the frame's own overflow-x-auto) instead of
+              crushing the fixed columns below their measured widths. */}
+          <Table className="table-fixed min-w-[1000px]">
             <TableHeader className="sticky top-0 z-10 border-b border-[#6aade0] bg-[#d0e8f8] dark:border-gray-700 dark:bg-gray-900">
               <TableRow className="hover:bg-transparent">
                 {/* H2/H3: Status moves next to Name (ArgoCD's own habit of
                     putting a resource's health right at the start of its
-                    row); the header word is "Status", never "State" — and
-                    "Checked" becomes "Last Checked", plain about which
-                    timestamp it is. Walk finding #140: Namespace is now its
-                    own sortable column right after Name. */}
-                <SortableTh label="Name" sortKeyName="name" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="max-w-[200px]" />
-                <SortableTh label="Namespace" sortKeyName="namespace" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="max-w-[140px]" />
-                <SortableTh label="Status" sortKeyName="state" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <SortableTh label="Addon" sortKeyName="addon" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <SortableTh label="Cluster" sortKeyName="cluster" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <SortableTh label="Source" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <SortableTh label="Last Checked" sortKeyName="checked" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <TableHead className="w-10" />
+                    row); the header word is "Status", never "State". Walk
+                    finding #140: Namespace is now its own sortable column
+                    right after Name. design-secret-sync-visual-pass: the
+                    LAST CHECKED column is gone (the fact lives in the
+                    engine strip above and the panel's Zone D); SOURCE
+                    became CHECKED AGAINST (section 2); every column but
+                    NAME carries an explicit width (section 1). */}
+                <SortableTh label="Name" sortKeyName="name" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="px-1.5" />
+                <SortableTh label="Namespace" sortKeyName="namespace" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[124px] px-1.5" />
+                <SortableTh label="Status" sortKeyName="state" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[140px] px-1.5" />
+                <SortableTh label="Addon" sortKeyName="addon" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[124px] px-1.5" />
+                <SortableTh label="Cluster" sortKeyName="cluster" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[108px] px-1.5" />
+                <SortableTh label="Checked against" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[144px] px-1.5" />
+                <TableHead className="w-9 px-1.5" />
               </TableRow>
             </TableHeader>
             <TableBody>

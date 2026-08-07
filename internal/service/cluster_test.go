@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -47,8 +49,29 @@ func (f *fakeGP) GetFileContent(_ context.Context, path, _ string) ([]byte, erro
 	return nil, fmt.Errorf("fakeGP: %s: %w", path, gitprovider.ErrFileNotFound)
 }
 
-func (f *fakeGP) ListDirectory(_ context.Context, _, _ string) ([]string, error) {
-	return nil, nil
+// ListDirectory returns the basenames of entries directly under dir,
+// derived from the keys of f.files (immediate children only — no nested
+// path segments), the same convention fakeGitProvider uses in
+// addon_test.go. A canned error keyed by dir in f.err takes priority, so
+// tests can exercise a real listing failure (not just a not-found) the
+// same way GetFileContent already can.
+func (f *fakeGP) ListDirectory(_ context.Context, dir, _ string) ([]string, error) {
+	if e, ok := f.err[dir]; ok {
+		return nil, e
+	}
+	prefix := strings.TrimSuffix(dir, "/") + "/"
+	var names []string
+	for p := range f.files {
+		if !strings.HasPrefix(p, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(p, prefix)
+		if rest == "" || strings.Contains(rest, "/") {
+			continue
+		}
+		names = append(names, rest)
+	}
+	return names, nil
 }
 func (f *fakeGP) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
 	return nil, nil
@@ -1030,4 +1053,225 @@ func TestClusterService_GetClusterComparison_WarnsOnMissingCatalog(t *testing.T)
 	if !strings.Contains(logOut, `"branch":"main"`) {
 		t.Errorf("expected the WARN log to name the branch read, got:\n%s", logOut)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// v4 closing wave, final fix row: GetConfigDiff and GetClusterValues never
+// got a v4 branch. On a v4 repo both read
+// configuration/addons-clusters-values/<cluster>.yaml unconditionally,
+// which never exists on a v4 repo, so both 500'd for every cluster. This
+// mirrors the v4-branch tests above for GetClusterDetail/GetClusterComparison.
+// ---------------------------------------------------------------------------
+
+// TestClusterService_GetConfigDiff_V3AndV4 is table-driven across both repo
+// layouts: v3's single combined
+// configuration/addons-clusters-values/<cluster>.yaml (one key per addon,
+// plus the clusterGlobalValues scratch block) versus v4's one file per
+// addon at values/clusters/<cluster>/<addon>.yaml, diffed against
+// values/global/<addon>.yaml (design doc §2.2). Both cases exercise the
+// same two addons — one with a real override, one whose cluster file has
+// no matching global defaults file at all — so the HasOverrides logic is
+// proven identically on both layouts.
+func TestClusterService_GetConfigDiff_V3AndV4(t *testing.T) {
+	t.Run("v3", func(t *testing.T) {
+		svc := NewClusterService("")
+		gp := &fakeGP{files: map[string][]byte{
+			"configuration/addons-clusters-values/prod-eu.yaml": []byte(
+				"clusterGlobalValues:\n  foo: bar\ncert-manager:\n  replicaCount: 3\nmetrics-server:\n  args:\n    - --foo\n",
+			),
+			"configuration/addons-global-values/cert-manager.yaml": []byte("replicaCount: 2\n"),
+			// metrics-server has no global defaults file — GlobalValues
+			// stays "" and HasOverrides is still true (non-empty cluster
+			// values vs empty global).
+		}}
+
+		resp, err := svc.GetConfigDiff(context.Background(), "prod-eu", gp)
+		if err != nil {
+			t.Fatalf("GetConfigDiff returned error: %v", err)
+		}
+		if resp.ClusterName != "prod-eu" {
+			t.Errorf("ClusterName = %q, want prod-eu", resp.ClusterName)
+		}
+		if got, want := resp.GlobalValues["foo"], "bar"; got != want {
+			t.Errorf("GlobalValues[foo] = %v, want %v (from clusterGlobalValues)", got, want)
+		}
+		if len(resp.AddonDiffs) != 2 {
+			t.Fatalf("expected 2 addon diffs, got %d: %+v", len(resp.AddonDiffs), resp.AddonDiffs)
+		}
+		// Sorted by addon name.
+		cm, ms := resp.AddonDiffs[0], resp.AddonDiffs[1]
+		if cm.AddonName != "cert-manager" || ms.AddonName != "metrics-server" {
+			t.Fatalf("expected sorted [cert-manager, metrics-server], got [%s, %s]", cm.AddonName, ms.AddonName)
+		}
+		if !cm.HasOverrides {
+			t.Error("cert-manager: expected HasOverrides=true (replicaCount 3 vs global 2)")
+		}
+		if strings.TrimSpace(cm.GlobalValues) != "replicaCount: 2" {
+			t.Errorf("cert-manager GlobalValues = %q", cm.GlobalValues)
+		}
+		if !ms.HasOverrides {
+			t.Error("metrics-server: expected HasOverrides=true (has cluster values, no global file)")
+		}
+		if ms.GlobalValues != "" {
+			t.Errorf("metrics-server GlobalValues = %q, want empty (no global defaults file)", ms.GlobalValues)
+		}
+	})
+
+	t.Run("v4", func(t *testing.T) {
+		svc := NewClusterService("")
+		gp := &fakeGP{files: map[string][]byte{
+			orchestrator.EnginePinPath:                    []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			"values/clusters/prod-eu/cert-manager.yaml":   []byte("replicaCount: 3\n"),
+			"values/global/cert-manager.yaml":             []byte("replicaCount: 2\n"),
+			"values/clusters/prod-eu/metrics-server.yaml": []byte("args:\n  - --foo\n"),
+			// values/global/metrics-server.yaml intentionally absent.
+		}}
+
+		resp, err := svc.GetConfigDiff(context.Background(), "prod-eu", gp)
+		if err != nil {
+			t.Fatalf("GetConfigDiff returned error: %v", err)
+		}
+		if resp.ClusterName != "prod-eu" {
+			t.Errorf("ClusterName = %q, want prod-eu", resp.ClusterName)
+		}
+		if resp.GlobalValues != nil {
+			t.Errorf("GlobalValues = %+v, want nil — v4 never carries the v3 clusterGlobalValues scratch block", resp.GlobalValues)
+		}
+		if len(resp.AddonDiffs) != 2 {
+			t.Fatalf("expected 2 addon diffs, got %d: %+v", len(resp.AddonDiffs), resp.AddonDiffs)
+		}
+		cm, ms := resp.AddonDiffs[0], resp.AddonDiffs[1]
+		if cm.AddonName != "cert-manager" || ms.AddonName != "metrics-server" {
+			t.Fatalf("expected sorted [cert-manager, metrics-server], got [%s, %s]", cm.AddonName, ms.AddonName)
+		}
+		if !cm.HasOverrides {
+			t.Error("cert-manager: expected HasOverrides=true (replicaCount 3 vs global 2)")
+		}
+		if strings.TrimSpace(cm.GlobalValues) != "replicaCount: 2" {
+			t.Errorf("cert-manager GlobalValues = %q", cm.GlobalValues)
+		}
+		if strings.TrimSpace(cm.ClusterValues) != "replicaCount: 3" {
+			t.Errorf("cert-manager ClusterValues = %q", cm.ClusterValues)
+		}
+		if !ms.HasOverrides {
+			t.Error("metrics-server: expected HasOverrides=true (has cluster values, no global file)")
+		}
+		if ms.GlobalValues != "" {
+			t.Errorf("metrics-server GlobalValues = %q, want empty (no values/global/metrics-server.yaml)", ms.GlobalValues)
+		}
+	})
+
+	t.Run("v4_no_overrides_yet_is_empty_not_error", func(t *testing.T) {
+		// A cluster registered but with no per-addon override files yet —
+		// values/clusters/<cluster>/ does not exist. Design doc D16:
+		// "missing means empty", never an error.
+		svc := NewClusterService("")
+		gp := &fakeGP{files: map[string][]byte{
+			orchestrator.EnginePinPath: []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+		}}
+
+		resp, err := svc.GetConfigDiff(context.Background(), "prod-eu", gp)
+		if err != nil {
+			t.Fatalf("GetConfigDiff returned error: %v", err)
+		}
+		if len(resp.AddonDiffs) != 0 {
+			t.Errorf("expected 0 addon diffs for a cluster with no override files, got %+v", resp.AddonDiffs)
+		}
+	})
+}
+
+// TestClusterService_GetClusterValues_V3AndV4 is table-driven across both
+// repo layouts. v3 returns the combined per-cluster file's raw bytes
+// unchanged; v4 combines every values/clusters/<cluster>/<addon>.yaml file
+// (design doc §2.2) back into one document keyed by addon name, so the
+// response shape (one YAML string, one top-level key per addon) is the
+// same for either layout.
+func TestClusterService_GetClusterValues_V3AndV4(t *testing.T) {
+	t.Run("v3", func(t *testing.T) {
+		svc := NewClusterService("")
+		raw := "cert-manager:\n  replicaCount: 3\nmetrics-server:\n  args:\n    - --foo\n"
+		gp := &fakeGP{files: map[string][]byte{
+			"configuration/addons-clusters-values/prod-eu.yaml": []byte(raw),
+		}}
+
+		resp, err := svc.GetClusterValues(context.Background(), "prod-eu", gp)
+		if err != nil {
+			t.Fatalf("GetClusterValues returned error: %v", err)
+		}
+		if resp.ClusterName != "prod-eu" {
+			t.Errorf("ClusterName = %q, want prod-eu", resp.ClusterName)
+		}
+		if resp.ValuesYAML != raw {
+			t.Errorf("ValuesYAML = %q, want the raw file content %q unchanged", resp.ValuesYAML, raw)
+		}
+	})
+
+	t.Run("v3_missing_file_is_an_error", func(t *testing.T) {
+		// Unchanged v3 behavior: GetClusterValues has always hard-errored
+		// on a missing combined file, unlike GetConfigDiff/ListClusters'
+		// "missing means empty" treatment elsewhere in this file. This
+		// case pins that existing behavior so the v4 branch added
+		// alongside it cannot accidentally change it.
+		svc := NewClusterService("")
+		gp := &fakeGP{files: map[string][]byte{}}
+
+		if _, err := svc.GetClusterValues(context.Background(), "prod-eu", gp); err == nil {
+			t.Fatal("expected an error for a missing v3 cluster values file")
+		}
+	})
+
+	t.Run("v4", func(t *testing.T) {
+		svc := NewClusterService("")
+		gp := &fakeGP{files: map[string][]byte{
+			orchestrator.EnginePinPath:                    []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			"values/clusters/prod-eu/cert-manager.yaml":   []byte("replicaCount: 3\n"),
+			"values/clusters/prod-eu/metrics-server.yaml": []byte("args:\n  - --foo\n"),
+		}}
+
+		resp, err := svc.GetClusterValues(context.Background(), "prod-eu", gp)
+		if err != nil {
+			t.Fatalf("GetClusterValues returned error: %v", err)
+		}
+		if resp.ClusterName != "prod-eu" {
+			t.Errorf("ClusterName = %q, want prod-eu", resp.ClusterName)
+		}
+
+		// Parse the combined YAML back rather than comparing strings —
+		// yaml.Marshal's key order is an implementation detail, the
+		// combined *shape* (one top-level key per addon) is the contract.
+		var combined map[string]interface{}
+		if err := yaml.Unmarshal([]byte(resp.ValuesYAML), &combined); err != nil {
+			t.Fatalf("ValuesYAML did not parse as YAML: %v\n%s", err, resp.ValuesYAML)
+		}
+		cm, ok := combined["cert-manager"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("combined[cert-manager] = %#v, want a map", combined["cert-manager"])
+		}
+		if cm["replicaCount"] != 3 {
+			t.Errorf("combined[cert-manager][replicaCount] = %v, want 3", cm["replicaCount"])
+		}
+		if _, ok := combined["metrics-server"]; !ok {
+			t.Errorf("combined has no metrics-server key: %#v", combined)
+		}
+	})
+
+	t.Run("v4_no_overrides_yet_is_empty_not_error", func(t *testing.T) {
+		// No values/clusters/<cluster>/ directory at all — a cluster with
+		// no per-addon overrides yet. Design doc D16: "missing means
+		// empty", never an error, and (unlike v3's hard error above) v4
+		// has a real "nothing here" state to fall back to instead of one
+		// combined file that either exists or doesn't.
+		svc := NewClusterService("")
+		gp := &fakeGP{files: map[string][]byte{
+			orchestrator.EnginePinPath: []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+		}}
+
+		resp, err := svc.GetClusterValues(context.Background(), "prod-eu", gp)
+		if err != nil {
+			t.Fatalf("GetClusterValues returned error: %v", err)
+		}
+		if resp.ValuesYAML != "" {
+			t.Errorf("ValuesYAML = %q, want empty for a cluster with no override files", resp.ValuesYAML)
+		}
+	})
 }

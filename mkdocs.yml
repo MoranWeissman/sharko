@@ -46,6 +46,7 @@ nav:
     - First Run: getting-started/first-run.md
   - User Guide:
     - Why Sharko?: user-guide/why-sharko.md
+    - 'Sharko vs. the Alternatives': user-guide/comparison.md
     - Managing Connections: user-guide/connections.md
     - Secrets Provider: user-guide/secrets-provider.md
     - Managing Clusters: user-guide/clusters.md
@@ -86,6 +87,7 @@ nav:
     - 'Reference — Audit Log Retention Model': operator/audit-log.md
     - 'Reference — Perf Baselines': operator/perf-baselines.md
     - 'Reference — SLOs': operator/slos.md
+    - 'Reference — Metrics, Alerts, and Grafana Dashboard': operator/metrics.md
     - 'Reference — Metrics Naming': operator/metrics-naming.md
     - Catalog Trust Policy: operator/catalog-trust-policy.md
     - 'AWS IAM Cluster Auth — Sharko Identity Needed': operator/aws-iam-cluster-auth.md
