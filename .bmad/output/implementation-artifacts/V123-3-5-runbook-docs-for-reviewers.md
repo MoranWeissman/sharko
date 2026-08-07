@@ -275,7 +275,7 @@ add a new scanner plugin.
    mkdocs-git-revision-date-localized-plugin mkdocs-redirects` —
    one-time install. If pip itself isn't on PATH, use `python3 -m
    pip install ...`.
-2. `cd /Users/weissmmo/projects/github-moran/sharko && mkdocs build --strict`
+2. `mkdocs build --strict`
    — must pass with NO warnings (this is the AC). On warning:
    read the warning, fix it, retry.
 3. **Skip Go/UI/JS gates** — story doesn't touch any of those.
@@ -475,9 +475,9 @@ Quality gates per the brief's documented order:
    Last 5 lines of the strict build:
    ```
    INFO    -  Cleaning site directory
-   INFO    -  Building documentation to directory: /Users/weissmmo/projects/github-moran/sharko/site
-   [git-revision-date-localized-plugin] '/Users/weissmmo/projects/github-moran/sharko/docs/site/developer-guide/catalog-scan-runbook.md' has no git logs, using current timestamp
-   [git-revision-date-localized-plugin] '/Users/weissmmo/projects/github-moran/sharko/docs/site/developer-guide/catalog-scan-runbook.md' has no git logs, using current timestamp
+   INFO    -  Building documentation to directory: site
+   [git-revision-date-localized-plugin] 'docs/site/developer-guide/catalog-scan-runbook.md' has no git logs, using current timestamp
+   [git-revision-date-localized-plugin] 'docs/site/developer-guide/catalog-scan-runbook.md' has no git logs, using current timestamp
    INFO    -  Documentation built in 9.24 seconds
    ```
 

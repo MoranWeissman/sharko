@@ -355,7 +355,12 @@ for AI-assisted commits, please do **not** carry that habit here.
 ## AI-Agent Collaborators
 
 Sharko is developed with help from AI coding agents (Claude Code,
-specifically). The project documents this collaboration explicitly:
+specifically). The project documents this collaboration explicitly. For
+the full picture — the team role files, the planning-to-review workflow,
+worktree-isolated agent dispatch, and the quality gates every change must
+pass — see
+[Developing with AI](docs/site/developer-guide/developing-with-ai.md).
+Short version:
 
 - **Role files in `.claude/team/`** — each role (tech-lead,
   go-expert, k8s-expert, frontend-expert, test-engineer,
@@ -366,6 +371,17 @@ specifically). The project documents this collaboration explicitly:
   project-specific constraints (the orchestrator pattern, the
   ownership-label gate, the schema-envelope discipline, the
   PR-only Git flow, etc.).
+- **Planning skills in `.claude/skills/bmad-*`** — committed in this repo
+  (MIT license, from the [BMAD-METHOD](https://github.com/bmad-code-org/BMAD-METHOD)
+  project — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)). These
+  drive the plan-before-you-build workflow: breaking work into stories with
+  the decisions already locked in, before any code gets written. The
+  engine that runs these skills (`_bmad/`) is a separate install, not
+  shipped in this repo — see the
+  [BMAD-METHOD project](https://github.com/bmad-code-org/BMAD-METHOD) for
+  setup. If a skill isn't available in your session, the `.claude/team/`
+  role files above are the fallback — proceed by hand with the same
+  role-file context.
 - **Planning artifacts in `.bmad/output/`** — sprint plans, epics,
   story breakdowns, and post-implementation reviews live here. They
   are intentionally version-controlled so the planning history is

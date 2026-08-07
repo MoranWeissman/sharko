@@ -337,6 +337,8 @@ Sharko is an open project that follows CNCF-style governance and community conve
 
 GitHub Discussions is not turned on for this repo yet, so for now, project Q&A, design discussion, bug reports, and feature requests all go through the [issue tracker](https://github.com/MoranWeissman/sharko/issues/new/choose). For security issues, follow [SECURITY.md](SECURITY.md) — please do not file security reports as public issues.
 
+This project is built with the help of AI coding agents — see [Developing with AI](docs/site/developer-guide/developing-with-ai.md) and [CONTRIBUTING.md](CONTRIBUTING.md#ai-agent-collaborators). The AI workflow skills under `.claude/skills/bmad-*` come from the [BMAD-METHOD](https://github.com/bmad-code-org/BMAD-METHOD) project (MIT license, BMad Code, LLC) — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
 ## License
 
 [Apache-2.0](LICENSE)
