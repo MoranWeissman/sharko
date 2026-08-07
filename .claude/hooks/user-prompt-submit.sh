@@ -11,7 +11,13 @@
 set -euo pipefail
 
 # Read the user's prompt from stdin (Claude Code pipes the prompt to the hook).
-prompt=$(cat)
+# Claude Code pipes a JSON payload here, not the bare message. Read ONLY the
+# `prompt` field: the payload also carries `cwd` and `transcript_path`, so a
+# folder named "design" or "planning" would match a trigger word on EVERY
+# message and leave this reminder permanently on.
+raw=$(cat)
+prompt=$(printf '%s' "$raw" | jq -r '.prompt // empty' 2>/dev/null || true)
+[ -z "$prompt" ] && prompt="$raw"   # plain text piped in (manual test, older client)
 
 # Fast-path: if prompt is very short (<5 chars), skip — it's probably "yes" /
 # "ok" / a greenlight for prior work, not a new feature kickoff.
