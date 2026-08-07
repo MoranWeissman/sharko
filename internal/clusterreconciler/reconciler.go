@@ -58,6 +58,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
+	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
@@ -258,6 +259,14 @@ type Deps struct {
 	// applyV4AddonLabels. This setting still governs everything else,
 	// including every v3 repo, exactly as it did before.
 	SelfHealFn func(ctx context.Context) bool
+
+	// EventRecorder (V3 E1) emits Kubernetes events for reconciler-detected
+	// conditions an operator should see via `kubectl get events` — currently
+	// just the label-fight warning (see recordFightCheck). nil means "no
+	// in-cluster K8s client at boot" (local/dev mode); every emit call must
+	// tolerate nil the same way *events.EventRecorder's own methods do
+	// (nil-receiver-safe), so this field is never required to be set.
+	EventRecorder *events.EventRecorder
 }
 
 // Reconciler is a background reconciler that converges ArgoCD cluster Secret
@@ -342,6 +351,14 @@ type Reconciler struct {
 	// Pruned alongside lastReconcile/fightState in pruneStaleReconcileRecords.
 	appliedRevMu    sync.RWMutex
 	appliedRevision map[string]string
+
+	// eventRecorder (V3 E1) is promoted from deps.EventRecorder the same
+	// way tickInterval/namespace/branch are promoted from their Deps
+	// counterparts — a single field call sites reach for directly instead
+	// of going through r.deps. May be nil (local/dev mode, no in-cluster
+	// K8s client); every call site treats that the same as the recorder's
+	// own nil-receiver no-op methods do.
+	eventRecorder *events.EventRecorder
 }
 
 // New constructs a Reconciler with the given dependencies. It does NOT start
@@ -380,6 +397,7 @@ func New(deps Deps) *Reconciler {
 		stopCh:              make(chan struct{}),
 		nowFn:               time.Now,
 		lastReconcile:       make(map[string]ClusterReconcileRecord),
+		eventRecorder:       deps.EventRecorder,
 	}
 	r.pollFn = r.pollOnce
 	r.checkFn = r.checkOnce

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 )
 
@@ -552,6 +553,16 @@ type clusterFightState struct {
 	// NOT move it) come back with a live value different from what Sharko
 	// wrote last time. Reset to 0 the instant a tick shows no revert.
 	reverts int
+	// fightEventEmitted is true once recordFightCheck has emitted a
+	// DriftDetected Kubernetes event for the CURRENT fight (reverts >=
+	// fightRevertThreshold) — set the first tick the threshold is crossed,
+	// so a fight that stays above threshold for many ticks emits exactly
+	// one event instead of one per tick. Reset to false whenever reverts
+	// drops back to 0 (recordFightCheck), so a fresh fight later gets its
+	// own fresh event. Entries are also wiped wholesale by
+	// resetFightStreak and pruneStaleReconcileRecords, which clears this
+	// implicitly along with the rest of the cluster's fight state.
+	fightEventEmitted bool
 }
 
 // resetFightStreak clears all label-fight tracking state for one cluster
@@ -641,6 +652,10 @@ func (r *Reconciler) recordFightCheck(name string, desired, observedLive map[str
 		state.reverts++
 	} else {
 		state.reverts = 0
+		// The fight (if there was one) is over — a fresh fight starting
+		// later must get its own event, not be silenced by a flag left
+		// over from a previous, now-resolved fight.
+		state.fightEventEmitted = false
 	}
 
 	// Snapshot desired as the new baseline for the NEXT tick's comparison.
@@ -658,11 +673,21 @@ func (r *Reconciler) recordFightCheck(name string, desired, observedLive map[str
 			"something else keeps overwriting Sharko's addon labels on this cluster's self-managed ArgoCD secret (reverted %d checks in a row) — likely the ArgoCD application that renders this secret from Git fighting with Sharko over it. Sharko will keep re-applying its labels every tick; see https://sharko.readthedocs.io/en/latest/operator/self-managed-connections/.",
 			state.reverts,
 		)
-		// TODO(V3 E1 follow-up): Emit events.ReasonDriftDetected Warning event
-		// here once the reconciler has access to an EventRecorder. The event
-		// should be emitted at most once per fight (not every tick) — track
-		// state.fightEventEmitted to avoid spam. Clear the flag when reverts
-		// drops back to 0.
+		// V3 E1: emit a DriftDetected Warning event once per fight — the
+		// first tick the threshold is crossed, not every tick after. The
+		// recorder itself is nil-safe (no-op outside a cluster), but the
+		// fightEventEmitted check also saves building the message when
+		// there is nothing new to say.
+		if !state.fightEventEmitted && r.eventRecorder != nil {
+			r.eventRecorder.Eventf(
+				events.ReasonDriftDetected,
+				"Cluster %s: something else keeps overwriting Sharko's addon labels on its self-managed ArgoCD secret (reverted %d checks in a row). See https://sharko.readthedocs.io/en/latest/operator/self-managed-connections/.",
+				events.EventTypeWarning,
+				name, state.reverts,
+			)
+			state.fightEventEmitted = true
+		}
 	}
+	r.fightState[name] = state
 	return warning
 }

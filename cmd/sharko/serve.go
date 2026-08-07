@@ -1194,6 +1194,7 @@ var serveCmd = &cobra.Command{
 					DisableConnectivityCheck: connectivityCheckDisabled(getEnvDefault("SHARKO_CONNECTIVITY_CHECK", "true")),
 					ProbeModeFn:              probeModeFn,
 					SelfHealFn:               selfHealFn,
+					EventRecorder:            eventRecorder,
 				})
 				// Wire the trigger onto the Server BEFORE Start() so the
 				// first request to the per-request orchestrator helper
