@@ -224,6 +224,30 @@
 //        GET /api/v1/audit endpoint, scoped to the row's exact resource
 //        key; no server change), with an honest scope note that it only
 //        covers what's happened since Sharko last started.
+//
+// ─────────────────────────────────────────────────────────────────────────
+// Walk finding #140 — NAMESPACE becomes its own column, and the two status
+// words that read least like ArgoCD get renamed.
+//
+//   The old NAME cell rendered "namespace/name" as one string capped at
+//   240px. In the demo estate, several rows share a namespace and differ
+//   only in the secret name, so the capped cell truncated exactly where the
+//   rows differ ("external-secrets/externa…" three times over) — the one
+//   part that told the rows apart was the part that got cut.
+//
+//   NAMESPACE is now its own sortable column — namespaces repeat and are
+//   recognizable even truncated, so it stays narrow with a hover title.
+//   NAME shows only the secret's name and takes the room NAMESPACE gave
+//   up; its own hover title still carries the full name, and if it still
+//   has to truncate at a narrow width, the truncation eats the FRONT of
+//   the string (a `direction: rtl` cell, same trick file browsers use for
+//   long paths) so the tail — the part that actually tells rows apart —
+//   stays visible instead of the prefix.
+//
+//   "In sync" → "Synced", "Not on the cluster" → "Missing" (StatusMark.tsx)
+//   — ArgoCD-professional words, maintainer-locked. See StatusMark.tsx's
+//   own note for the reasoning; nothing else in the five-word status table
+//   moved, and the plain-English panel sentences are untouched.
 
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -555,7 +579,7 @@ function matchesSearch(row: UnifiedRow, q: string): boolean {
   )
 }
 
-type SortKey = 'name' | 'addon' | 'cluster' | 'source' | 'checked' | 'state'
+type SortKey = 'name' | 'namespace' | 'addon' | 'cluster' | 'source' | 'checked' | 'state'
 
 // compareRows never sorts state alphabetically (S3) — it defers to
 // StatusMark's statusSortRank, the same worst-first priority order ArgoCD
@@ -564,11 +588,20 @@ type SortKey = 'name' | 'addon' | 'cluster' | 'source' | 'checked' | 'state'
 // and "out_of_sync". The state comparison also passes whether EACH row's
 // last check failed, so two "unknown" rows sort the failed one first —
 // same status word, different rank.
+//
+// name/namespace sort independently of each other (walk finding #140) —
+// each is its own column now, so each sorts on its own field instead of the
+// old combined "namespace/name" string.
 function compareRows(a: UnifiedRow, b: UnifiedRow, key: SortKey): number {
   switch (key) {
     case 'name': {
-      const an = `${a.secretNamespace ?? ''}/${a.secretName ?? ''}`
-      const bn = `${b.secretNamespace ?? ''}/${b.secretName ?? ''}`
+      const an = a.secretName ?? ''
+      const bn = b.secretName ?? ''
+      return an < bn ? -1 : an > bn ? 1 : 0
+    }
+    case 'namespace': {
+      const an = a.secretNamespace ?? ''
+      const bn = b.secretNamespace ?? ''
       return an < bn ? -1 : an > bn ? 1 : 0
     }
     case 'addon': {
@@ -1707,11 +1740,17 @@ function SecretTableRow({
       {/* H2 (gitops-proud P4-H): one line, not two. The old grey subline
           under the identity said the ROW'S KIND — the KeyRound/Lock glyph
           right next to the name already says that, so the line was
-          repeating the icon in words. It's gone; the identity is the only
-          text in this cell now, capped to a width so a long secret name
-          can't push STATUS/ADDON/CLUSTER/SOURCE off the side of the
-          screen — the full name is always in the title attribute for
-          anyone who needs it.
+          repeating the icon in words. It's gone.
+
+          Walk finding #140: NAME shows only the secret's NAME now — the
+          namespace moved into its own column, right after this one, so a
+          demo estate where several rows share a namespace and differ only
+          in name is no longer truncated exactly where they differ. This
+          cell still caps its width so a long name can't push
+          STATUS/ADDON/CLUSTER/SOURCE off the side of the screen, but if it
+          does truncate, `direction: rtl` makes the cut land at the FRONT of
+          the string, not the tail — the tail is the part that actually
+          tells rows apart. The full name is always in the title attribute.
 
           H4: a grouped child row (indented) gets a thin vertical guide —
           addon → cluster → secret should read as a tree, not just an
@@ -1725,7 +1764,7 @@ function SecretTableRow({
           the row's own <StatusMark> dot and the filter chips, via
           statusStripClassName — it cannot disagree with the dot next to
           it. */}
-      <TableCell className={`max-w-[240px] py-1 ${statusStripClassName(row.state)} ${indented ? 'pl-2' : ''}`}>
+      <TableCell className={`max-w-[200px] py-1 ${statusStripClassName(row.state)} ${indented ? 'pl-2' : ''}`}>
         <div className="flex min-w-0 items-center gap-2">
           {indented && <span aria-hidden="true" className="h-4 w-px shrink-0 bg-[#c0ddf0] dark:bg-gray-700" />}
           {row.kind === 'connection' ? (
@@ -1735,11 +1774,25 @@ function SecretTableRow({
           )}
           <span
             className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-[#0a2a4a] dark:text-white"
-            title={identity !== '—' ? identity : undefined}
+            style={{ direction: 'rtl', textAlign: 'left' }}
+            title={row.secretName || undefined}
+            data-testid="cell-name"
           >
-            {identity}
+            {row.secretName ?? '—'}
           </span>
         </div>
+      </TableCell>
+      {/* Namespace (walk finding #140): its own sortable column, freed from
+          the old combined "namespace/name" cell. Namespaces repeat across
+          rows and are recognizable even truncated, so a plain truncate +
+          hover title is enough here — no need for NAME's front-truncate
+          trick. */}
+      <TableCell
+        className="max-w-[140px] truncate py-1 text-sm text-[#2a5a7a] dark:text-gray-300"
+        title={row.secretNamespace || undefined}
+        data-testid="cell-namespace"
+      >
+        {row.secretNamespace ?? '—'}
       </TableCell>
       {/* Status (H2): moved up next to the name, ArgoCD's own habit of
           putting a resource's health right at the start of its row instead
@@ -1762,7 +1815,7 @@ function SecretTableRow({
           between the two, that implication got harder to read at a
           glance, and grouping by addon needs a real cluster column for
           every row it shows anyway. */}
-      <TableCell className="py-1 text-sm text-[#2a5a7a] dark:text-gray-300">{row.cluster}</TableCell>
+      <TableCell className="py-1 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="cell-cluster">{row.cluster}</TableCell>
       {/* Source (G1/H3): the S3 honesty lock, sortable/filterable/searched
           on every row, and read as "checked against X" — the same phrase
           the sourceSentence in the panel already uses, so the column and
@@ -1796,8 +1849,8 @@ function SecretTableRow({
 function GroupHeaderRow({ group, expanded, onToggle }: { group: RowGroup; expanded: boolean; onToggle: () => void }) {
   return (
     <TableRow className="hover:bg-transparent">
-      {/* Name, Status, Addon, Cluster, Source, Last Checked, plus the actions column (G1 added Addon + Source; H2 moved Status next to Name). */}
-      <TableCell colSpan={7} className="p-0">
+      {/* Name, Namespace, Status, Addon, Cluster, Source, Last Checked, plus the actions column (G1 added Addon + Source; H2 moved Status next to Name; walk finding #140 added Namespace). */}
+      <TableCell colSpan={8} className="p-0">
         <button
           type="button"
           onClick={onToggle}
@@ -2362,8 +2415,10 @@ export function ManagedSecrets() {
                     putting a resource's health right at the start of its
                     row); the header word is "Status", never "State" — and
                     "Checked" becomes "Last Checked", plain about which
-                    timestamp it is. */}
-                <SortableTh label="Name" sortKeyName="name" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="max-w-[240px]" />
+                    timestamp it is. Walk finding #140: Namespace is now its
+                    own sortable column right after Name. */}
+                <SortableTh label="Name" sortKeyName="name" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="max-w-[200px]" />
+                <SortableTh label="Namespace" sortKeyName="namespace" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="max-w-[140px]" />
                 <SortableTh label="Status" sortKeyName="state" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortableTh label="Addon" sortKeyName="addon" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortableTh label="Cluster" sortKeyName="cluster" activeKey={sortKey} dir={sortDir} onSort={handleSort} />

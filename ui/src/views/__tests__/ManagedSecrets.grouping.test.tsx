@@ -349,9 +349,9 @@ describe('ManagedSecrets — group headers state plain sums only (G3)', () => {
     await waitFor(() => expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument())
     await user.click(screen.getByTestId('group-by-cluster'))
 
-    // prod-eu: connection in sync, datadog in sync, grafana in sync, vault not checked yet.
+    // prod-eu: connection synced, datadog synced, grafana synced, vault not checked yet.
     const prodSummary = await screen.findByTestId('secret-group-summary-cluster-prod-eu')
-    expect(prodSummary).toHaveTextContent('4 secrets · 1 not checked yet · 3 in sync')
+    expect(prodSummary).toHaveTextContent('4 secrets · 1 not checked yet · 3 synced')
 
     // staging-us: connection out of sync, datadog out of sync.
     expect(screen.getByTestId('secret-group-summary-cluster-staging-us')).toHaveTextContent('2 secrets · 2 out of sync')

@@ -5,9 +5,9 @@
 // match where it's supposed to come from?
 //
 // Exactly five states, exact words — never invent a sixth:
-//   in_sync      "In sync"            — matches its source right now
+//   in_sync      "Synced"             — matches its source right now
 //   out_of_sync  "Out of sync"        — checked, and it does NOT match
-//   missing      "Not on the cluster" — checked, and there's nothing there
+//   missing      "Missing"            — checked, and there's nothing there
 //   foreign      "Foreign"            — something IS there, and Sharko did
 //                                        not create it, so Sharko leaves it
 //                                        alone
@@ -15,9 +15,19 @@
 //
 // H3 word pass (gitops-proud P4-H): "missing" used to read "Missing" — a
 // one-word label that answers a different question than the one a reader
-// actually has ("missing FROM WHERE?"). "Not on the cluster" says the same
+// actually has ("missing FROM WHERE?"). "Not on the cluster" said the same
 // fact the per-key presence flag already used (see KeyTable in
 // ManagedSecrets.tsx) — one word for one fact, used consistently.
+//
+// Walk finding #140 (maintainer-approved, supersedes H3 directly above):
+// once NAME and NAMESPACE became their own columns, this row reads like an
+// ArgoCD Application list on purpose — and ArgoCD's own status words are
+// "Synced" and "Missing", not a sentence fragment squeezed into a status
+// column. "In sync" → "Synced", "Not on the cluster" → "Missing". The other
+// three words are untouched, and so is the plain-English sentence in the
+// detail panel ("This secret was never created on the cluster — Sync
+// creates it.") — the short word on the row and the full sentence in the
+// panel are still the intended pairing, only the row word changed.
 //
 // "Foreign" is deliberately NOT red and NOT amber. Nothing is broken and
 // nothing needs fixing — somebody else owns that secret, and Sharko staying
@@ -70,7 +80,7 @@ interface StatusMeta {
 
 const STATUS_META: Record<ResourceStatus, StatusMeta> = {
   in_sync: {
-    label: 'In sync',
+    label: 'Synced',
     dotClassName: 'bg-green-600 dark:bg-green-500',
     stripClassName: 'border-green-600 dark:border-green-500',
     mark: Check,
@@ -82,7 +92,7 @@ const STATUS_META: Record<ResourceStatus, StatusMeta> = {
     mark: undefined, // exclamation mark is drawn as text — see StatusDot
   },
   missing: {
-    label: 'Not on the cluster',
+    label: 'Missing',
     dotClassName: 'bg-red-600 dark:bg-red-500',
     stripClassName: 'border-red-600 dark:border-red-500',
     mark: X,
