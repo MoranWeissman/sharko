@@ -31,23 +31,41 @@ If you already have a tool that delivers secrets into your clusters (External Se
 
 Every row, every card, every audit entry on this page and everywhere else in Sharko describes what happened to a secret — where it came from, when it was checked, whether it matches — and never what a secret contains. That split is not a UI choice that could change later; it's load-bearing everywhere Sharko talks about secrets, in code and in words. Sharko says *"Sharko applies the value"* — never *"Sharko rotates the secret"* — because applying is the delivery fact Sharko actually knows, and rotation is something it doesn't do and doesn't track.
 
-Concretely, Sharko will **never**:
+Concretely, Sharko will **never, on its own or automatically**:
 
 - Create, edit, or delete a secret from the UI.
 - Show a secret's value, its length, or a hash of it.
 - Browse the secrets store — Sharko reads exactly the keys a catalog entry names, nothing more, nothing exploratory.
 - Rotate a secret, or track when one is due to expire.
 
+There is exactly one exception: an operator's explicit, confirmed **Delete** of an **orphaned** leftover — see below. Even that only ever touches a secret carrying Sharko's own ownership markers, and it never happens without a person reading a confirm dialog that names the exact secret and clicking through it.
+
 What Sharko *does* show — a secret's name, namespace, the commit or store key it's checked against, when it was last checked, whether it matches, and a plain-English record of when Sharko itself last wrote to it — is the delivery record. That's the whole boundary: the delivery is Sharko's story to tell; the secret itself never is.
+
+## Orphaned leftovers
+
+An **orphaned** row is a secret Sharko wrote to a cluster at some point, whose source someone later deleted from git — the addon definition (or cluster registration) that once asked for this secret is gone, but the secret itself is still sitting on the cluster, still carrying Sharko's own labels. Nothing asks for it anymore.
+
+Sharko never deletes an orphaned secret on its own. It shows up on Secret Sync with its own **Orphaned** status (a violet dot, distinct from every other state on the page) so you know it's there, and it stays there — same as any other row — until you decide what to do with it.
+
+**Delete** is the one action an orphaned row offers, and it's operator-or-admin only. Clicking it opens a confirm dialog that names exactly what's about to happen — the secret's namespace and name, the cluster it's on, and that this cannot be undone — before anything happens. Cancel does nothing at all; no request is made unless you confirm.
+
+Delete carries its own safety gates, checked again at the moment you confirm, not just when the row was last refreshed:
+
+- Only a secret that still carries **Sharko's own ownership label and provenance marker** is eligible — the same labels that make a row show up as Sharko-managed anywhere else on this page.
+- The secret is **re-checked against git right then** — if something in git has started asking for it again since the row last loaded, or if its ownership marker changed, the delete is refused and nothing is touched.
+- The action is **audited**, the same as every other write Sharko makes.
+
+If a delete is refused, the UI shows the server's plain-English reason — never a raw error — so you know exactly why nothing happened.
 
 ## Why there's no separate delete-lock
 
-Nothing on this page will ever delete a live secret out from under you, but that protection isn't a special lock this page adds — it's the two protections Sharko already has everywhere:
+Nothing on this page will ever delete a live secret out from under you *automatically*, but that protection isn't a special lock this page adds — it's the two protections Sharko already has everywhere, plus the one explicit, human-confirmed exception described above:
 
-1. **The pull request gate.** Every change to what Sharko manages goes through Git as a PR — nothing is removed from a cluster because someone clicked something in the UI without that change first landing in a reviewed commit.
-2. **ArgoCD's `preserveResourcesOnDeletion`.** Sharko's ArgoCD Applications are configured so that removing an addon from Git does not delete the Kubernetes Secrets that addon's values live in — the Secret is orphaned from Sharko's bookkeeping, not deleted from the cluster.
+1. **The pull request gate.** Every change to what Sharko manages goes through Git as a PR — nothing is removed from a cluster because someone clicked something in the UI without that change first landing in a reviewed commit. (Deleting an orphaned leftover is the one action on this page that doesn't go through this gate, precisely because there's no git file left to open a PR against — that's the whole reason it needs its own confirm dialog and its own re-check at delete time.)
+2. **ArgoCD's `preserveResourcesOnDeletion`.** Sharko's ArgoCD Applications are configured so that removing an addon from Git does not delete the Kubernetes Secrets that addon's values live in — the Secret is orphaned from Sharko's bookkeeping, not deleted from the cluster. This is exactly how an orphaned row comes to exist in the first place.
 
-Both of those are deliberate, existing GitOps behavior — not something bolted onto Secret Sync specifically. This page just shows you the result: a secret that's no longer in Git's plan shows up honestly (as **not on the cluster**, or drops off the list once you tell Sharko to stop tracking it), never as a surprise deletion Sharko performed on its own.
+Both of those are deliberate, existing GitOps behavior — not something bolted onto Secret Sync specifically. This page just shows you the result: a secret that's no longer in Git's plan shows up honestly (as **orphaned**, or **not on the cluster** once Sharko itself stops tracking it), never as a surprise deletion Sharko performed on its own.
 
 ## Related pages
 
