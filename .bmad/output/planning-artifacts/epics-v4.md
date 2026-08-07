@@ -67,7 +67,7 @@ FR40: Every change is traceable: who asked, through which door, which PR, what m
 FR41: Malformed or broken input never crashes Sharko and never half-applies — every change lands all-or-nothing.
 FR42: Sharko syncs addon secrets from the user's vault to the remote clusters that need them, and repairs/rotates them automatically on its stated schedule.
 FR43: Secret values never appear in logs, git files, API responses, previews, or events.
-FR44: With an AI key, a user can work through a chat assistant that uses the same permissions and the same PR gate as every other door; without a key, the feature is absent, not broken.
+FR44 *(amended 2026-08-08)*: With an AI key, a user can work through a chat assistant that uses the same permissions and the same PR gate as the three doors; without a key, the feature is absent, not broken.
 
 ### NonFunctional Requirements
 
@@ -176,7 +176,7 @@ Sharko's ApplicationSet logic becomes a versioned, signed, public OCI chart. The
 **FRs:** FR3, FR6, FR23, FR24, FR25, FR33 · AR2. **Wave 1. THE elephant: pre-named ~6-7 stories, format/settings-schema design story FIRST.**
 
 ### Epic 3: Catalog — approved-list model, internal addons, contribution path *(amended 2026-08-08; originally the delta model — see the decision-history note at the top)*
-Curated catalog maintained + versioned by Sharko; the user's file holds only their entries and overrides, and wins on conflict. Extended entries (required values, needed secrets, quirks). In-house charts first-class. Freshness + "last checked." Contributor PR template.
+*(amended 2026-08-08)* The org's catalog file is the full approved list — complete, self-contained entries; the curated list is a read-only discovery window supplying display knowledge only. Extended entries (required values, needed secrets, quirks). In-house charts first-class. Freshness + "last checked." Contributor PR template.
 **FRs:** FR17, FR18, FR19, FR20, FR21 · NFR3. **Wave 1.**
 
 ### Epic 4: Day Zero — install, bootstrap, doors
