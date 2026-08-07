@@ -109,6 +109,129 @@ jobs:
           kind get clusters 2>/dev/null | grep "^sharko-e2e-" | \
             xargs -I{} kind delete cluster --name {} || true
 
+  # v4 closing wave / task #65 — live-Gitea E2E write loop.
+  #
+  # Every other GiteaProvider exercise in the repo (internal/gitprovider,
+  # the helm-mode gitfake primitive) talks to a fake. This job is the one
+  # place that drives TestGiteaLiveWriteLoop
+  # (tests/e2e/lifecycle/gitea_live_test.go) against a REAL Gitea server
+  # via a `gitea/gitea` service container, so drift between the fakes'
+  # stub shapes and the real Gitea REST API gets caught. No kind, no
+  # docker-in-docker, no Sharko boot — just the harness's GiteaProvider
+  # talking straight to the service container over localhost. Keeps this
+  # job small and fast (well under the shared timeout).
+  live-gitea:
+    name: Go E2E (live Gitea)
+    # Same opt-in gate as the other two jobs in this workflow.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'e2e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      gitea:
+        image: gitea/gitea:1.23.5
+        ports:
+          - 3000:3000
+        env:
+          GITEA__security__INSTALL_LOCK: "true"
+          GITEA__database__DB_TYPE: sqlite3
+          GITEA__server__DOMAIN: localhost
+          GITEA__server__ROOT_URL: http://localhost:3000/
+          GITEA__server__DISABLE_SSH: "true"
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:3000/api/healthz || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+          --health-start-period 10s
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Belt-and-suspenders on top of the service's own healthcheck — the
+      # healthcheck can go green a moment before the API is fully able to
+      # take writes (first-boot DB migration tail).
+      - name: Wait for Gitea API to answer
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/healthz >/dev/null 2>&1; then
+              echo "gitea API is up (attempt $i)"
+              exit 0
+            fi
+            echo "waiting for gitea API... (attempt $i)"
+            sleep 2
+          done
+          echo "gitea API never came up" >&2
+          exit 1
+
+      # Provisioning talks to the Gitea container two ways:
+      #   - `docker exec` into it to run the `gitea admin user create` CLI
+      #     (the only way to create the first admin once INSTALL_LOCK has
+      #     skipped the setup wizard).
+      #   - plain HTTP against localhost:3000 (the published service port)
+      #     for everything else — token + repo creation.
+      # ${{ job.services.gitea.id }} is the container ID GitHub Actions
+      # assigns this service; it's stable for the life of the job.
+      - name: Provision admin user, API token, and test repo
+        id: provision
+        env:
+          GITEA_CONTAINER: ${{ job.services.gitea.id }}
+          GITEA_ADMIN_USER: sharko-e2e
+          GITEA_ADMIN_PASS: Sharko-E2E-CI-Passw0rd!
+          GITEA_REPO: sharko-e2e-live
+        run: |
+          set -euo pipefail
+
+          docker exec "$GITEA_CONTAINER" gitea admin user create \
+            --admin \
+            --username "$GITEA_ADMIN_USER" \
+            --password "$GITEA_ADMIN_PASS" \
+            --email "sharko-e2e@example.invalid" \
+            --must-change-password=false
+
+          token_json=$(curl -sf -u "$GITEA_ADMIN_USER:$GITEA_ADMIN_PASS" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"sharko-e2e-ci","scopes":["write:repository","write:issue"]}' \
+            "http://localhost:3000/api/v1/users/$GITEA_ADMIN_USER/tokens")
+          token=$(echo "$token_json" | jq -r '.sha1 // empty')
+          if [ -z "$token" ]; then
+            echo "failed to create API token: $token_json" >&2
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+          curl -sf -u "$GITEA_ADMIN_USER:$GITEA_ADMIN_PASS" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"$GITEA_REPO\",\"auto_init\":true,\"default_branch\":\"main\",\"private\":false}" \
+            "http://localhost:3000/api/v1/user/repos" >/dev/null
+
+          echo "provisioned admin=$GITEA_ADMIN_USER repo=$GITEA_ADMIN_USER/$GITEA_REPO"
+
+      - name: Run live-Gitea E2E suite
+        env:
+          GOTMPDIR: /tmp
+          SHARKO_E2E_GITEA_URL: http://localhost:3000
+          SHARKO_E2E_GITEA_TOKEN: ${{ steps.provision.outputs.token }}
+          SHARKO_E2E_GITEA_OWNER: sharko-e2e
+          SHARKO_E2E_GITEA_REPO: sharko-e2e-live
+          SHARKO_E2E_GITEA_BASE: main
+        run: |
+          go test -tags=e2e -timeout=10m -v -run '^TestGiteaLiveWriteLoop$' ./tests/e2e/lifecycle/...
+
+      - name: Dump Gitea container logs on failure
+        if: failure()
+        env:
+          GITEA_CONTAINER: ${{ job.services.gitea.id }}
+        run: docker logs --tail=200 "$GITEA_CONTAINER" || true
+
   # Helm-mode E2E subset. Unlike the heavyweight `e2e` job above
   # (label-gated, ~10-15 min, full suite), this lane runs the
   # Helm-install tests so the real boot path (docker build → kind load →
