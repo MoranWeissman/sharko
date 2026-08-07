@@ -1115,7 +1115,7 @@ The script intentionally does NOT automate B.7 (ArgoCD UI) or B.8 (the deep Git 
 # Cross-reference
 
 - [Testing Guide](testing-guide.md) — the reference doc this runbook complements (test layers, patterns, command cheatsheet)
-- [Catalog Scan Runbook](catalog-scan-runbook.md) — the operational doc for the daily scanner bot
+- [Catalog Scan Runbook](catalog-scan-runbook.md) — the operational doc for the manual-only scanner bot
 - `scripts/sharko-dev.sh` — single-entry local-dev dispatcher (V124-8.1, canonical)
 - `scripts/dev-rebuild.sh` and `scripts/smoke.sh` — the underlying helper scripts (V124-5; still callable directly for back-compat)
 - `scripts/upgrade.sh` — the released-Helm-chart upgrade verifier (different flow, do not confuse)

@@ -35,7 +35,7 @@ Sharko Server (in-cluster):
 - The server holds all credentials (ArgoCD token, Git token, secrets provider access). No credentials on developer laptops.
 - One `sharko login` replaces configuring ArgoCD + Git + AWS locally.
 - Every consumer (UI, CLI, Backstage, Terraform, CI/CD) talks to the same API.
-- A Kubernetes operator (CRDs, reconcile loop) is a potential v2 evolution if adoption justifies it.
+- Sharko already behaves like an operator whose desired state lives in Git, not in a CustomResource — a CRD-based build was tried and shelved (see "Future Directions" below); there's no plan to bring it back.
 
 ---
 
@@ -272,43 +272,49 @@ The UI uses a sky-blue color palette with hardcoded hex values. This was chosen 
 
 ---
 
-## Notification System (PLANNED)
+## Notification System
 
-A notification system is planned to provide proactive alerts about cluster and addon state changes.
+Sharko ships a notification system (`internal/notifications/`) that gives proactive alerts about addon version state and connection health.
 
 ### Architecture
 
 ```
-NotificationChecker (goroutine)
+Checker (goroutine, internal/notifications/checker.go)
   |
-  +-- Runs every N minutes
+  +-- Runs on a configurable interval
   +-- Checks Helm repo index for new addon versions (semver comparison)
   +-- Compares version matrix for drift across clusters
-  +-- Checks ArgoCD sync status for failures
   |
   v
-NotificationStore (in-memory)
+ConnectionPoller (goroutine, internal/notifications/connection_poller.go)
+  |
+  +-- Runs on a 60-second interval (DefaultConnectionCheckInterval)
+  +-- Probes Sharko's own Git connection and ArgoCD's repo/auth health
+  |
+  v
+Store (in-memory, internal/notifications/store.go)
   |
   +-- Stores notifications with read/unread state
   +-- Exposes via GET /api/v1/notifications
-  +-- POST /api/v1/notifications/read-all to mark all as read
+  +-- POST /api/v1/notifications/read-all and POST /api/v1/notifications/{id}/read
   |
   v
-UI NotificationBell (already implemented)
+UI NotificationBell
   |
   +-- Shows unread count badge
-  +-- Dropdown list with notification items
-  +-- Currently uses mock data, will connect to API
+  +-- Dropdown list with notification items, backed by the live API
 ```
 
 ### Notification Types
 
 | Type | Trigger |
 |------|---------|
-| `upgrade_available` | New version found in Helm repo index for a catalog addon |
-| `version_drift` | Same addon has different versions across clusters |
-| `sync_failure` | ArgoCD reports sync failure for an addon on a cluster |
-| `security_advisory` | (Future) Security vulnerability in an addon version |
+| `upgrade` | New minor/major version found in the Helm repo index for a catalog addon |
+| `security` | Major-version bump detected for a catalog addon (flagged as potentially security-relevant, since major bumps often carry CVE fixes) |
+| `drift` | Same addon has a different version on a cluster than the catalog version |
+| `connection` | Sharko's Git connection or ArgoCD's repo/auth health goes unhealthy (raised by the ConnectionPoller, with a specific title per failure kind — e.g. "ArgoCD can't sync the repo" vs. "ArgoCD rejected Sharko's token") |
+
+Separately, real per-version CVE and breaking-change data (`internal/advisories/`, sourced from ArtifactHub with a local Helm-repo-annotation fallback) feeds the Upgrade Advisor's recommendation cards — this is a different mechanism from the notification types above, and it ships today.
 
 ---
 
@@ -591,14 +597,11 @@ Connections (ArgoCD + Git) are managed exclusively through the Settings UI and s
 
 ## Future Directions
 
-### V2: Kubernetes Operator
+### Kubernetes Operator: tried, shelved, not coming back
 
-If adoption justifies it, Sharko could evolve into a Kubernetes operator:
+An earlier build added a CRD-based operator mode — a `ClusterAddons` CRD, a controller, RBAC, and a values-driven Helm chart. It went through several build phases and worked, then was removed from the product before v4 shipped. The code still exists on a branch (`operator-shelf`), but it does not run in the product today, and there is no current plan to bring it back.
 
-- `SharkoConfig` CRD for global configuration
-- `ManagedCluster` CRD for per-cluster lifecycle with status reporting
-- Continuous credential rotation via reconcile loop
-- `ValidatingAdmissionWebhook` for GitOps-only enforcement (block direct `kubectl` writes)
+The reason: an operator's desired state lives in a `CustomResource` that Kubernetes stores — but Sharko's real desired state (which addons, at which versions, on which clusters) is something a person reviews and approves in a pull request first, and a Kubernetes object isn't the natural place for that review step. Git already is that place. So the settled position is: **Sharko is an operator whose desired state lives in Git, not in a CustomResource.** The reconcile loop is real — the in-process cluster reconciler (`internal/clusterreconciler/`) and the ApplicationSet generators do the reconciling — only the "state lives in a CRD" part was tried and dropped. No CRDs are planned.
 
 ### Async Operations
 

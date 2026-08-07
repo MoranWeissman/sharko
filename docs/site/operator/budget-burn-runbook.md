@@ -410,8 +410,8 @@ breaks addon discovery for every operator. Page on-call.
     `list_addons`, and `sources_refresh` per
     [`metrics-naming.md`](metrics-naming.md#catalog_scan).
 
-2. **Catalog scanner runs.** Sharko ships a daily catalog scanner
-   detailed in
+2. **Catalog scanner runs.** Sharko ships a catalog scanner (manual-only,
+   run via `workflow_dispatch`) detailed in
    [`../developer-guide/catalog-scan-runbook.md`](../developer-guide/catalog-scan-runbook.md);
    surface recent failures with:
 

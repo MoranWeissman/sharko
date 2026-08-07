@@ -1,9 +1,9 @@
 # Catalog Scan — trusted-source scanning bot.
 #
-# Runs the catalog-scan plugins daily at 04:00 UTC, edits
-# `catalog/addons.yaml`, and opens ONE draft PR per scan run with
-# the labels `catalog-scan` + `needs-review`. Draft-to-main + label
-# gating + NEVER auto-merge (human review is required for every
+# Manual-only (run via workflow_dispatch when you want a scan). Runs the
+# catalog-scan plugins, edits `catalog/addons.yaml`, and opens ONE draft PR
+# per scan run with the labels `catalog-scan` + `needs-review`. Draft-to-main
+# + label gating + NEVER auto-merge (human review is required for every
 # proposed catalog change).
 #
 # ## Required one-time setup before the first run
@@ -25,9 +25,7 @@
 name: Catalog Scan
 
 on:
-  schedule:
-    - cron: '0 4 * * *'   # daily 04:00 UTC
-  workflow_dispatch:       # manual trigger for first-run + ad-hoc tests
+  workflow_dispatch:       # manual trigger only — run when you want a scan
 
 permissions:
   contents: write

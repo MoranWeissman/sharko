@@ -4,7 +4,7 @@
 
 The single canonical reference for testing Sharko — what we have, what we don't, the exact commands to run, and which tool fits which layer. Use this when you want to verify a release candidate, when you add a feature and need to know what tests to write, or when you're about to copy a pattern from somewhere else and want to check that we already have one.
 
-It is paired with the [Catalog Scan Runbook](catalog-scan-runbook.md) (operational doc for the daily scanner) — same voice, same level of detail, same "every command is copy-pasteable" rule.
+It is paired with the [Catalog Scan Runbook](catalog-scan-runbook.md) (operational doc for the manual-only scanner bot) — same voice, same level of detail, same "every command is copy-pasteable" rule.
 
 ---
 
