@@ -7615,6 +7615,15 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "409": {
+                        "description": "The addon-values engine is switched off — nothing to check",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "503": {
                         "description": "Secrets reconciler not configured",
                         "schema": {

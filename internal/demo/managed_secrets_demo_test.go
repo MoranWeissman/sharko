@@ -547,3 +547,72 @@ func TestBigEstate_ConnectionReconcileTrigger_RefreshesRows(t *testing.T) {
 		t.Fatalf("cluster %q not found after reconcile trigger", target.Cluster)
 	}
 }
+
+// TestBigEstate_CheckAll_HonorsAddonValuesEngineOffSwitch is M5's pin (code
+// review): before this fix, the demo reconciler's CheckAll ignored the
+// settings store entirely — flipping Settings -> Addon Values Engine off
+// changed the REAL engine's "Check all now" behaviour but left
+// `make demo-big`'s demo reconciler running exactly as before, so a walk
+// through the demo taught the wrong lesson about the off switch. Turning
+// the setting off (the same PUT the Settings page uses) must now make
+// POST /api/v1/secrets/check refuse with a 409 — the same synchronous
+// IsEnabled pre-check M6 added to handleCheckSecrets fires here too, since
+// the demo reconciler now implements IsEnabled honestly (M5) instead of
+// always reporting enabled. See
+// TestHandleCheckSecrets_EngineDisabled_Returns409NoAuditEntry in
+// internal/api for the same contract against a fake (non-demo) reconciler.
+func TestBigEstate_CheckAll_HonorsAddonValuesEngineOffSwitch(t *testing.T) {
+	srv := newTestServer(t)
+	cleanup, err := SetupDemoServer(srv, BigScaleConfig)
+	if err != nil {
+		t.Fatalf("SetupDemoServer: %v", err)
+	}
+	defer cleanup()
+
+	router := api.NewRouter(srv, nil)
+	token := demoLoginToken(t, router)
+
+	setEngine := func(enabled bool) {
+		t.Helper()
+		body, marshalErr := json.Marshal(map[string]bool{"addon_values_engine_enabled": enabled})
+		if marshalErr != nil {
+			t.Fatalf("marshal settings body: %v", marshalErr)
+		}
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/addon-values-engine-enabled", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rw := httptest.NewRecorder()
+		router.ServeHTTP(rw, req)
+		if rw.Code != http.StatusOK {
+			t.Fatalf("PUT addon-values-engine-enabled(%v) status = %d, want 200; body = %s", enabled, rw.Code, rw.Body.String())
+		}
+	}
+
+	checkAll := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/check", bytes.NewReader(nil))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rw := httptest.NewRecorder()
+		router.ServeHTTP(rw, req)
+		return rw
+	}
+
+	// Engine on (default) — Check all now proceeds normally.
+	if rw := checkAll(); rw.Code != http.StatusAccepted {
+		t.Fatalf("engine on: POST /secrets/check status = %d, want 202; body = %s", rw.Code, rw.Body.String())
+	}
+
+	// Engine off — the same demo reconciler that just accepted a check must
+	// now refuse, honestly, instead of running the check anyway.
+	setEngine(false)
+	rw := checkAll()
+	if rw.Code != http.StatusConflict {
+		t.Fatalf("engine off: POST /secrets/check status = %d, want 409 — the demo reconciler's off switch is not wired (M5); body = %s", rw.Code, rw.Body.String())
+	}
+
+	// Turning it back on restores normal behaviour — proves this is the
+	// live setting, not a one-way trip.
+	setEngine(true)
+	if rw := checkAll(); rw.Code != http.StatusAccepted {
+		t.Fatalf("engine back on: POST /secrets/check status = %d, want 202; body = %s", rw.Code, rw.Body.String())
+	}
+}

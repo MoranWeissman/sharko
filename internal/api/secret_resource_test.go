@@ -289,6 +289,54 @@ func TestSecretResource_AnnotationAllowList(t *testing.T) {
 	}
 }
 
+// TestAnnotationsSafeToShow_MatchesProvenanceWriterUnion is L9's set-
+// equality pin: annotationsSafeToShow must be EXACTLY the union of keys the
+// two provenance writers actually write —
+// clusterreconciler.connectionProvenanceAnnotations (AnnotationSourceFile,
+// AnnotationRevision, AnnotationWrittenAt) and
+// remoteclient.ValuesProvenanceAnnotations (AnnotationAddon,
+// AnnotationSource, AnnotationWrittenAt — the same "sharko.dev/written-at"
+// string as the connection engine's, which is exactly why the allow-list
+// only lists it once). Built from the exported consts, never a hand-typed
+// string, so a future annotation either writer starts stamping — without
+// someone also updating the allow-list — fails this test instead of
+// silently being blanked (annoying, safe) or, the real danger, silently
+// falling through the allow-list's OWN typo (unsafe).
+func TestAnnotationsSafeToShow_MatchesProvenanceWriterUnion(t *testing.T) {
+	// clusterreconciler.AnnotationWrittenAt and remoteclient.AnnotationWrittenAt
+	// are the SAME string ("sharko.dev/written-at") — a compile-time
+	// duplicate-map-key error if both are listed, and the reason
+	// annotationsSafeToShow's own doc comment says it is listed once, "from
+	// the connection side, rather than twice". This asserts that equality
+	// explicitly, then builds the union from one of the two.
+	if clusterreconciler.AnnotationWrittenAt != remoteclient.AnnotationWrittenAt {
+		t.Fatalf("the two engines' written-at annotation keys have diverged: %q vs %q — annotationsSafeToShow must list both",
+			clusterreconciler.AnnotationWrittenAt, remoteclient.AnnotationWrittenAt)
+	}
+	union := map[string]bool{
+		clusterreconciler.AnnotationSourceFile: true,
+		clusterreconciler.AnnotationRevision:   true,
+		clusterreconciler.AnnotationWrittenAt:  true,
+		remoteclient.AnnotationAddon:           true,
+		remoteclient.AnnotationSource:          true,
+	}
+
+	if len(annotationsSafeToShow) != len(union) {
+		t.Fatalf("annotationsSafeToShow has %d keys, the provenance writers' union has %d — annotationsSafeToShow: %v, union: %v",
+			len(annotationsSafeToShow), len(union), annotationsSafeToShow, union)
+	}
+	for k := range union {
+		if !annotationsSafeToShow[k] {
+			t.Errorf("a provenance writer stamps %q but annotationsSafeToShow does not list it — this annotation would render blanked (safe but wrong), or worse, expose provenance the allow-list forgot", k)
+		}
+	}
+	for k := range annotationsSafeToShow {
+		if !union[k] {
+			t.Errorf("annotationsSafeToShow allows %q, but no provenance writer actually stamps it — dead entry, or a real leak risk if something else starts writing this key", k)
+		}
+	}
+}
+
 // TestSecretResource_DeclaredKeyMissingOnCluster pins P3-F2's one per-key
 // verdict: a key the addon's definition declares but the live Secret does
 // not have is LISTED with present=false, rather than quietly vanishing —

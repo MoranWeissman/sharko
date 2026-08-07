@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -117,6 +118,40 @@ func TestRefreshAddonValuesSecret_HonestFailure(t *testing.T) {
 	}
 }
 
+// TestRefreshAddonValuesSecret_NeverEchoesRawProviderError is H1's pin
+// (code review): before this fix, the handler passed CheckOne's error
+// straight through via err.Error() — a provider-style error (the "near
+// miss" shape system_managed_secrets_test.go already pins for the row
+// path) would have reached the response body verbatim. Refresh must go
+// through the same canned-sentence mapping the row path uses.
+func TestRefreshAddonValuesSecret_NeverEchoesRawProviderError(t *testing.T) {
+	srv := newTestServer()
+	rawErr := `fetching "secrets/datadog/api-key" from provider: secret value was "sk_live_abc123..."`
+	rec := &fakeSecretReconciler{checkErr: errors.New(rawErr)}
+	srv.SetSecretReconciler(rec)
+	router := NewRouter(srv, nil)
+
+	req := withRole(refreshReq("prod-eu", "datadog"), "operator")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body = %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "sk_live_abc123") || strings.Contains(body, "secrets/datadog/api-key") {
+		t.Fatalf("response body leaked the raw provider error text: %s", body)
+	}
+	var decoded map[string]string
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&decoded); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	want := "Sharko couldn't fetch this secret's value from the vault."
+	if decoded["error"] != want {
+		t.Errorf("error = %q, want the canned sentence %q", decoded["error"], want)
+	}
+}
+
 func TestRefreshAddonValuesSecret_AuditEntryWritten(t *testing.T) {
 	srv := newTestServer()
 	srv.SetSecretReconciler(&fakeSecretReconciler{checkOutcome: "unchanged"})
@@ -218,6 +253,36 @@ func TestSyncAddonValuesSecret_HonestFailure(t *testing.T) {
 	}
 	if body["error"] == "" {
 		t.Error("expected a non-empty, plain-words error message — never a silent success")
+	}
+}
+
+// TestSyncAddonValuesSecret_NeverEchoesRawProviderError is Sync's half of
+// H1's pin — same fix, sync-side sentence mapper.
+func TestSyncAddonValuesSecret_NeverEchoesRawProviderError(t *testing.T) {
+	srv := newTestServer()
+	rawErr := `updating secret: Operation cannot be fulfilled on secrets "datadog-secret": the object has been modified`
+	rec := &fakeSecretReconciler{syncErr: errors.New(rawErr)}
+	srv.SetSecretReconciler(rec)
+	router := NewRouter(srv, nil)
+
+	req := withRole(syncReq("prod-eu", "datadog"), "operator")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body = %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "Operation cannot be fulfilled") || strings.Contains(body, "the object has been modified") {
+		t.Fatalf("response body leaked the raw Kubernetes error text: %s", body)
+	}
+	var decoded map[string]string
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&decoded); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	want := "Sharko couldn't update this secret on the cluster."
+	if decoded["error"] != want {
+		t.Errorf("error = %q, want the canned sentence %q", decoded["error"], want)
 	}
 }
 

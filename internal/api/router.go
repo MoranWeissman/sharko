@@ -223,14 +223,27 @@ type SecretReconciler interface {
 	// Returns the outcome as a plain string (see secrets.ItemOutcome); a
 	// non-nil error means the check itself could not run (no Git
 	// connection, no credentials, cluster unreachable, incomplete catalog
-	// definition, or the pair does not resolve to any known secret) — the
-	// error text is safe to show the caller verbatim.
+	// definition, or the pair does not resolve to any known secret).
+	//
+	// H1 (code review): UNLIKE this interface's older doc comment used to
+	// claim, this error text is NOT safe to show a caller verbatim — the
+	// underlying checkWork call wraps credentials/connect/secrets-provider
+	// errors the same way the periodic pass's reconcileSecret does (see
+	// LastItemError's own doc comment above), and a misbehaving provider SDK
+	// could in principle echo a fragment of a value into its own error text.
+	// Callers must map it through addonValuesSecretCheckFailureSentence
+	// (internal/api/system_managed_secrets.go) before returning it in a
+	// response body — see handleRefreshAddonValuesSecret.
 	CheckOne(ctx context.Context, clusterName, addonName string) (outcome string, err error)
 	// SyncOne re-pushes a single addon-values secret (S4's "Sync" row
 	// action) — the single-item counterpart to Trigger()'s fleet-wide pass.
 	// Returns the outcome as a plain string (see secrets.ItemOutcome); a
-	// non-nil error means the push itself failed or could not run, and the
-	// error text is safe to show the caller verbatim.
+	// non-nil error means the push itself failed or could not run.
+	//
+	// H1 (code review): same caveat as CheckOne above — this error text is
+	// NOT safe to show a caller verbatim. Callers must map it through
+	// addonValuesSecretSyncFailureSentence (internal/api/system_managed_secrets.go)
+	// first — see handleSyncAddonValuesSecret.
 	SyncOne(ctx context.Context, clusterName, addonName string) (outcome string, err error)
 	// CheckAll re-checks EVERY addon-values secret against its source right
 	// now, WITHOUT writing anything (P1-A A3 — what the page's "Refresh
@@ -262,6 +275,13 @@ type SecretReconciler interface {
 	// ErrOrphanRefused for the specific refusal reasons the handler maps to
 	// status codes).
 	DeleteOrphanedSecret(ctx context.Context, cluster, namespace, name string) error
+	// IsEnabled reports whether the addon-values engine is currently
+	// switched on (M6, code review) — checked synchronously by
+	// handleCheckSecrets BEFORE it 202s and writes an audit entry, so a
+	// disabled engine gets a 409 with no audit entry claiming a check
+	// happened, instead of the 202/audit landing before the background
+	// goroutine discovers the engine is off and only logs it.
+	IsEnabled(ctx context.Context) bool
 }
 
 // Server holds the HTTP handlers and their dependencies.

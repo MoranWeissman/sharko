@@ -10,7 +10,7 @@ Secret Sync exists to make Sharko's own GitOps behavior legible, row by row. The
 
 | Principle | Where it shows up on the page |
 |-----------|-------------------------------|
-| **Declarative** | The **Source** column states what a row is checked against — connection rows read `cluster connection · follows git`, addon-values rows read `addon values · follows <the real backend name>` (AWS Secrets Manager, a Kubernetes Secret, and so on). Opening a row shows the exact file path in Git (for a connection) or the store key/pointer path (for a values secret) — the desired state always has one named, checkable location, never an implied one. |
+| **Declarative** | The **Source** column states what a row is checked against — connection rows read `checked against git`, addon-values rows read `checked against <the real backend name>` (AWS Secrets Manager, a Kubernetes Secret, and so on). Opening a row shows the exact file path in Git (for a connection) or the store key/pointer path (for a values secret) — the desired state always has one named, checkable location, never an implied one. |
 | **Versioned** | Every connection row's detail card shows the Git commit it was last checked against — a short hash with the full commit available on hover, next to the file path in the repo. Nothing about what Sharko applied is undocumented history; it's a specific commit you can look up. |
 | **Pulled automatically** | The engine strip at the top of the page states each engine's cadence in plain words ("Sharko re-checks it every 30 seconds, and right after each merge" / "Sharko checks it every 5 minutes and repairs it automatically") and the last time a check actually ran. Nothing is pushed to Sharko — it pulls on its own schedule, and the page says what that schedule is. |
 | **Continuously reconciled** | Sharko treats **drift** and **a failed check** as two different facts, never conflated. A connection row that's out of sync says plainly whether *git moved* (a newer commit changed what the secret should be) or *the cluster moved* (something changed it outside git) — that's drift, a real mismatch Sharko can act on. A row whose `last_check_error` is set is a different fact entirely: the check itself didn't finish, so there's nothing yet to compare. And reconciliation itself is scoped: Sharko only repairs a row that carries its own label (`app.kubernetes.io/managed-by: sharko`) — a secret it created or was handed ownership of. A secret somebody else owns shows as **foreign** and Sharko never touches it, reconcile tick or not. |
@@ -21,7 +21,7 @@ Secret Sync's **addon values** engine applies secret values from your secrets st
 
 If you already have a tool that delivers secrets into your clusters (External Secrets Operator, Sealed Secrets, a vault agent, and others), you may prefer to leave this engine off and let that tool keep doing it. These are named only as examples of the category — this isn't a comparison against any one of them, and Sharko has no opinion on which one you use.
 
-**Turning it off**: **Settings → Addon Values Engine** has a switch, admin-only. Off, the engine runs no passes at all — it stops both checking values against the store and applying them to clusters. Rows on this page keep showing whatever they last knew (their last check, their last state) — they don't go blank and they don't lie about being current. The engine strip says plainly: *"Addon values engine is switched off."*
+**Turning it off**: **Settings → Addon Values Engine** has a switch, admin-only. Off, the engine runs no passes at all — it stops both checking values against the store and applying them to clusters. Rows on this page keep showing whatever they last knew (their last check, their last state) — they don't go blank and they don't lie about being current. The engine strip says plainly: *"Addon values engine is switched off."* One exception: a single row's own **Refresh** and **Sync** buttons still work even with the engine off — that's an explicit action you took on one secret, not a pass, and Sharko treats it that way.
 
 **Connection secrets get no such caveat.** The cluster-connection engine — the one that tells ArgoCD a cluster exists and which addons it runs — has no off switch, on purpose. That delivery is Sharko's own job, not something another tool would already be doing, so there's no "maybe you don't want this" question to ask.
 
@@ -33,7 +33,7 @@ Every row, every card, every audit entry on this page and everywhere else in Sha
 
 Concretely, Sharko will **never, on its own or automatically**:
 
-- Create, edit, or delete a secret from the UI.
+- Let you type, paste, or otherwise set a secret's contents through the UI — there's no field for a value anywhere on this page. Sync does write a secret on the cluster once you confirm it (that's the delivery job this whole page exists for), but it always pushes the value **from** the secrets store — never from anything typed into Sharko.
 - Show a secret's value, its length, or a hash of it.
 - Browse the secrets store — Sharko reads exactly the keys a catalog entry names, nothing more, nothing exploratory.
 - Rotate a secret, or track when one is due to expire.
