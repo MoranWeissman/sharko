@@ -330,52 +330,44 @@ func TestClusterLifecycle(t *testing.T) {
 		// doc §1, "v4 repos never get a combined values file"; confirmed
 		// in internal/orchestrator/cluster.go's RegisterCluster, the
 		// `if !v4Repo { ... valuesContent = generateClusterValues(...) }`
-		// branch). GetConfigDiff (internal/service/cluster.go) still
-		// unconditionally reads configuration/addons-clusters-values/
-		// <cluster>.yaml with no v4 branch — unlike its sibling read
-		// methods in the same file (which do check isV4Repo) — so it
-		// 500s with "file not found" on every v4-registered cluster.
-		// That is a real production gap (the read side was never
-		// re-pointed at v4), not a fixture bug, so this accepts the
-		// documented 500 rather than papering over it — same pattern
-		// ai_test.go's AISummary/dashboard_test.go's embedded-dashboards
-		// subtests already use for other known, named gaps.
+		// branch). GetConfigDiff (internal/service/cluster.go) now has a
+		// v4 branch (getConfigDiffV4, v4 closing wave): it lists
+		// values/clusters/<cluster>/ instead of reading the v3 combined
+		// file, and a missing directory (no overrides yet, the normal
+		// state right after registration) yields an empty AddonDiffs list
+		// with 200, not an error. So a v4-registered cluster must get a
+		// decodable 200 here, same as its isV4Repo-dispatching siblings
+		// GetClusterDetail and GetClusterComparison.
 		resp := admin.Do(t, http.MethodGet, "/api/v1/clusters/"+managedClusterName+"/config-diff", nil)
 		defer resp.Body.Close()
-		switch resp.StatusCode {
-		case http.StatusOK:
-			var body map[string]any
-			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-				t.Fatalf("config-diff: decode: %v", err)
-			}
-			t.Logf("config-diff body keys: %v", mapKeys(body))
-		case http.StatusInternalServerError:
-			t.Logf("config-diff: 500 (known gap — GetConfigDiff is v3-only, has no v4 branch; internal/service/cluster.go)")
-		default:
+		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("config-diff: unexpected status=%d", resp.StatusCode)
 		}
+		var body map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("config-diff: decode: %v", err)
+		}
+		t.Logf("config-diff body keys: %v", mapKeys(body))
 	})
 
 	t.Run("Values", func(t *testing.T) {
-		// Same v4-registration gap as ConfigDiff above: GetClusterValues
-		// (internal/service/cluster.go) unconditionally reads the v3
-		// combined values file with no v4 branch, so it 500s on a
-		// v4-registered cluster. Documented product gap, not a fixture
-		// bug — accepted the same way ConfigDiff is above.
+		// Same v4-registration shape as ConfigDiff above: GetClusterValues
+		// now has a v4 branch (getClusterValuesV4, v4 closing wave) that
+		// lists values/clusters/<cluster>/ and combines the per-addon
+		// files back into one YAML document; a missing directory (no
+		// overrides yet) yields an empty ValuesYAML with 200, not an
+		// error. So a v4-registered cluster must get a decodable 200
+		// here too.
 		resp := admin.Do(t, http.MethodGet, "/api/v1/clusters/"+managedClusterName+"/values", nil)
 		defer resp.Body.Close()
-		switch resp.StatusCode {
-		case http.StatusOK:
-			var body map[string]any
-			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-				t.Fatalf("values: decode: %v", err)
-			}
-			t.Logf("values body keys: %v", mapKeys(body))
-		case http.StatusInternalServerError:
-			t.Logf("values: 500 (known gap — GetClusterValues is v3-only, has no v4 branch; internal/service/cluster.go)")
-		default:
+		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("values: unexpected status=%d", resp.StatusCode)
 		}
+		var body map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("values: decode: %v", err)
+		}
+		t.Logf("values body keys: %v", mapKeys(body))
 	})
 
 	t.Run("Secrets", func(t *testing.T) {
