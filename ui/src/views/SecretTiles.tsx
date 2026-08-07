@@ -1,28 +1,90 @@
-// SecretTiles — the tiles view of Secret Sync (design-secret-sync-visual-
-// pass, section 3): "where is view types i asked". One card per addon,
-// plus one "Cluster connections" card, built from the exact same buckets
-// (buildRowGroups(filtered, 'addon')) the list view's Group by addon
-// already uses — no new grouping logic, no new honesty rules. His original
-// mental model ("datadog → cluster → secret") starts at the addon; a
-// per-cluster grid would have been a wall of 50 near-identical cards in
-// the demo estate, so cluster-first reading stays available inside list
-// view's own Group by cluster instead.
+// SecretTiles v2 — one BOX per SECRET, ArgoCD's own applications-grid
+// mental model. Supersedes the addon-summary-card tiles from the earlier
+// visual pass (one card per addon, click narrowed the list). Moran, after
+// seeing that version: "in argocd each resource or application are
+// represented as a box, and when u click on it you get all the stats. i
+// want going in my mind for something similar."
 //
-// Per card: a title row (kind glyph + addon/"Cluster connections" name), a
-// status-mix bar (one segment per state present, worst-first, width
-// proportional to count), and groupSummary()'s own plain-sums line — the
-// G3 lock (no verdicts, no percentages, no group-level time) comes free by
-// reusing the same function the list view's group headers already call.
-// The only colour on the card is the worst-state left-edge strip and the
-// bar segments — H2 holds here too: colour lives on marks, words stay ink.
+// A box carries exactly what a list row carries, stacked instead of
+// columned: the kind glyph (KeyRound for a connection secret, Lock for a
+// values secret) + the secret NAME (truncate + full name in the hover
+// title — a box doesn't fight five neighbour columns for width the way the
+// list's NAME cell does, so no front-truncate trick is needed here), the
+// same <StatusMark> word+dot the list row shows, and a small muted
+// addon/cluster line — "—" for a connection row's addon, the same dash
+// rule the list's cell-addon column already uses. The colored left-edge
+// strip reads off statusStripClassName, the SAME STATUS_META table the
+// list row's own strip and dot use, so a box can never disagree with the
+// row it stands for.
+//
+// Clicking a box calls onRowClick with THAT box's row — ManagedSecrets
+// hands both the list rows and these boxes the exact same handler
+// (`(row) => selectRow(row.key)`), so a box opens the identical detail
+// panel a list row opens. No new panel code, no navigation, no filter
+// jump — the old card's "switch back to list, narrowed" click-through is
+// gone; that behavior belonged to a card that stood for a whole addon; a
+// box stands for one secret and just opens it.
+//
+// Sections: boxes render under the SAME group-by control the list view
+// uses. ManagedSecrets builds `groups` once (buildRowGroups(sorted,
+// groupBy)) and hands it to both views — group-by "None" makes
+// buildRowGroups return an empty array by its own rule, so this component
+// falls back to one flat grid of `rows` with no headings, pure
+// applications-grid style. When groups is non-empty, each one gets a
+// heading carrying what the old per-addon card carried on its own: the
+// group label + sublabel, groupSummary()'s plain-sums line (G3 — no
+// verdicts, no percentages, no group-level time), and the worst-first
+// status-mix bar (statusBarClassName) — unchanged, just moved from "the
+// whole card" to "the heading above a row of boxes."
 
 import { KeyRound, Lock } from 'lucide-react'
-import { statusBarClassName, statusStripClassName, toResourceStatus } from '@/components/resource/StatusMark'
-import { CHIP_ORDER, CONNECTIONS_GROUP_KEY, groupSummary, worstStateInGroup, type RowGroup } from './ManagedSecrets'
+import { StatusMark, statusBarClassName, statusStripClassName, toResourceStatus } from '@/components/resource/StatusMark'
+import { CHIP_ORDER, groupSummary, type RowGroup, type UnifiedRow } from './ManagedSecrets'
 
-function SecretTileCard({ group, onClick }: { group: RowGroup; onClick: () => void }) {
-  const isConnections = group.key === CONNECTIONS_GROUP_KEY
-  const worst = worstStateInGroup(group.rows)
+// ~4-6 boxes per row at 1280px — a box carries one secret, not a whole
+// addon, so it's meant to sit noticeably smaller than the old addon card.
+const GRID_CLASS = 'grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-6'
+
+function SecretBox({ row, onClick }: { row: UnifiedRow; onClick: () => void }) {
+  const name = row.secretName ?? '—'
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={`secret-box-${row.key}`}
+      className={`text-left rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm p-3 ${statusStripClassName(row.state)} hover:bg-[#e0f0ff] focus-visible:ring-[#1a3d5c] dark:ring-gray-700 dark:bg-gray-800 dark:hover:bg-gray-750`}
+    >
+      <div className="flex min-w-0 items-center gap-1.5">
+        {row.kind === 'connection' ? (
+          <KeyRound className="h-3.5 w-3.5 shrink-0 text-[#5a8aaa]" aria-hidden="true" />
+        ) : (
+          <Lock className="h-3.5 w-3.5 shrink-0 text-[#5a8aaa]" aria-hidden="true" />
+        )}
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-[#0a2a4a] dark:text-gray-100" title={name}>
+          {name}
+        </span>
+      </div>
+      <div className="mt-1.5">
+        <StatusMark status={row.state} />
+      </div>
+      {/* The addon/cluster line — same dash rule the list's cell-addon
+          column uses ("—" on a connection row, it isn't an addon secret). */}
+      <p className="mt-1.5 truncate text-[11px] text-[#5a8aaa] dark:text-gray-500">
+        {row.kind === 'values' ? (row.addon ?? '—') : '—'} · {row.cluster}
+      </p>
+    </button>
+  )
+}
+
+/**
+ * TileSection — a group-by heading plus the grid of boxes under it. The
+ * heading is what the old per-addon card used to carry on its own: label +
+ * sublabel, groupSummary()'s plain-sums line, and the worst-first
+ * status-mix bar. Both come from the exact same functions the list view's
+ * GroupHeaderRow already calls, so a heading here can never say something
+ * different than the equivalent group header in list view would.
+ */
+function TileSection({ group, onRowClick }: { group: RowGroup; onRowClick: (row: UnifiedRow) => void }) {
   const total = group.rows.length
 
   const counts: Partial<Record<string, number>> = {}
@@ -32,30 +94,23 @@ function SecretTileCard({ group, onClick }: { group: RowGroup; onClick: () => vo
   }
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      data-testid={`secret-tile-${group.key}`}
-      className={`text-left rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm p-4 ${statusStripClassName(worst)} hover:bg-[#e0f0ff] focus-visible:ring-[#1a3d5c] dark:ring-gray-700 dark:bg-gray-800 dark:hover:bg-gray-750`}
-    >
-      <div className="flex items-center gap-2">
-        {isConnections ? (
-          <KeyRound className="h-4 w-4 shrink-0 text-[#5a8aaa]" aria-hidden="true" />
-        ) : (
-          <Lock className="h-4 w-4 shrink-0 text-[#5a8aaa]" aria-hidden="true" />
-        )}
-        <span className="truncate font-semibold text-[#0a2a4a] dark:text-gray-100" title={group.label}>
-          {group.label}
+    <section data-testid={`tile-section-${group.key}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="flex items-baseline gap-1.5">
+          <span className="font-semibold text-[#0a2a4a] dark:text-gray-100">{group.label}</span>
+          <span className="text-[11px] text-[#5a8aaa] dark:text-gray-500">{group.sublabel}</span>
+        </span>
+        <span className="text-xs text-[#2a5a7a] dark:text-gray-400" data-testid={`tile-section-summary-${group.key}`}>
+          {groupSummary(group.rows)}
         </span>
       </div>
-      {isConnections && <p className="mt-0.5 text-[11px] text-[#5a8aaa] dark:text-gray-500">{group.sublabel}</p>}
       {/* The status-mix bar: one segment per state PRESENT, worst-first
-          (CHIP_ORDER), width proportional to the group's own row count.
-          min-w-[6px] keeps a 1-of-50 segment visible instead of vanishing
-          to a sliver. Reads statusBarClassName off the SAME STATUS_META
-          fill table the row dot, the row strip, and the filter chip all
-          use — the bar can never disagree with any of them about colour. */}
-      <div className="mt-3 flex h-1.5 w-full overflow-hidden rounded-full" data-testid={`tile-bar-${group.key}`}>
+          (CHIP_ORDER), width proportional to the group's own row count —
+          identical rule the old per-addon card's bar used. min-w-[6px]
+          keeps a 1-of-many segment visible instead of vanishing to a
+          sliver. Reads statusBarClassName off the SAME STATUS_META fill
+          table the box's own strip/dot and the filter chips all use. */}
+      <div className="mt-1.5 flex h-1.5 w-full overflow-hidden rounded-full" data-testid={`tile-bar-${group.key}`}>
         {CHIP_ORDER.filter((status) => (counts[status] ?? 0) > 0).map((status) => (
           <div
             key={status}
@@ -65,16 +120,40 @@ function SecretTileCard({ group, onClick }: { group: RowGroup; onClick: () => vo
           />
         ))}
       </div>
-      <p className="mt-2 text-xs text-[#2a5a7a] dark:text-gray-400">{groupSummary(group.rows)}</p>
-    </button>
+      <div className={`mt-2 ${GRID_CLASS}`}>
+        {group.rows.map((row) => (
+          <SecretBox key={row.key} row={row} onClick={() => onRowClick(row)} />
+        ))}
+      </div>
+    </section>
   )
 }
 
-export function SecretTiles({ groups, onCardClick }: { groups: RowGroup[]; onCardClick: (group: RowGroup) => void }) {
+export function SecretTiles({
+  rows,
+  groups,
+  onRowClick,
+}: {
+  /** The already filtered-and-sorted rows — used directly for the flat grid when group-by is "None". */
+  rows: UnifiedRow[]
+  /** The SAME groups the list view's Group by builds (empty array when group-by is "None" — buildRowGroups' own rule). */
+  groups: RowGroup[]
+  /** Reused verbatim from list view — the exact handler that opens the detail panel for a row. */
+  onRowClick: (row: UnifiedRow) => void
+}) {
+  if (groups.length === 0) {
+    return (
+      <div className={GRID_CLASS} data-testid="secret-tiles">
+        {rows.map((row) => (
+          <SecretBox key={row.key} row={row} onClick={() => onRowClick(row)} />
+        ))}
+      </div>
+    )
+  }
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4" data-testid="secret-tiles">
+    <div className="space-y-5" data-testid="secret-tiles">
       {groups.map((group) => (
-        <SecretTileCard key={group.key} group={group} onClick={() => onCardClick(group)} />
+        <TileSection key={group.key} group={group} onRowClick={onRowClick} />
       ))}
     </div>
   )
