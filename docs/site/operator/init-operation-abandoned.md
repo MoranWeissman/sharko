@@ -10,8 +10,8 @@
 > the session entry stays in `operations.StatusInProgress` after the
 > server abandons polling (no terminal-state transition; the audit log
 > shows `init_run` start with no completion). Currently logged at
-> `Info` level; will be reclassified to `Warn` per the
-> [logging audit punch list](../developer-guide/logging-audit-punchlist.md).
+> `Info` level; will be reclassified to `Warn` per the V2-2.3 logging
+> audit.
 > Re-verify after the level reclassification ships, after the
 > heartbeat window changes, or after the session-state model is
 > updated.
@@ -421,8 +421,6 @@ levers:
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
 - [`../developer-guide/logging.md`](../developer-guide/logging.md) —
   `request_id` correlation pattern.
-- [`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md)
-  — flags this log line for reclassification from `Info` to `Warn`.
 
 ## Escalation
 

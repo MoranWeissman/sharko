@@ -252,8 +252,9 @@ Resource **names** are not sensitive. `"secret_name": "argocd-cluster-prod-eu"`
 is fine — it's the name of a K8s Secret resource, not the secret body.
 The redaction wrapper currently has false positives on the field name
 `secret` when the value is just a name; the call site should rename the
-field to `secret_name` to be both clearer and not-redacted. See the
-[audit punch list](logging-audit-punchlist.md) for the open items.
+field to `secret_name` to be both clearer and not-redacted. The V2-2.3
+audit that found this and the other level-discipline gaps below is
+tracked as a GitHub issue, not a file in this repo.
 
 ---
 
@@ -500,8 +501,6 @@ The wrapper saves you; fix the call site anyway.
 
 - `internal/logging/request_id.go` — correlation-ID helpers
 - `internal/logging/redact.go` — RedactHandler implementation + detector heuristics
-- [Logging audit punch list](logging-audit-punchlist.md) — open items
-  from the V2-2.3 audit; deleted as items get fixed
 - `cmd/sharko/serve.go` — slog wiring at process start
 - `internal/api/router.go` — `requestIDMiddleware` and the access-log
   middleware

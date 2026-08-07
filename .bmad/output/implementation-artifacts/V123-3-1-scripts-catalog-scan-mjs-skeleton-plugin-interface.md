@@ -309,7 +309,7 @@ deps; ships with Node ≥18). Test files live next to the modules with
 
 ### Quality gates (run order)
 
-1. `cd /Users/weissmmo/projects/github-moran/sharko && npm install --prefix scripts --silent`
+1. `npm install --prefix scripts --silent`
 2. `node --check scripts/catalog-scan.mjs` — syntax check (catches
    parse errors before tests).
 3. `node --test scripts/catalog-scan/` — full unit + integration suite
@@ -501,7 +501,7 @@ surface added).
 
 Quality gates run in the brief's documented order:
 
-1. `cd /Users/weissmmo/projects/github-moran/sharko && npm install --prefix scripts --silent`
+1. `npm install --prefix scripts --silent`
    — clean install. 1 dep (`yaml@^2.8.2`).
 2. `node --check scripts/catalog-scan.mjs` — syntax OK.
 3. `node --check scripts/catalog-scan/lib/{diff,changeset,http,logger}.mjs`

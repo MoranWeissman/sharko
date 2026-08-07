@@ -68,6 +68,9 @@ __pycache__/
 # Internal planning docs (not for public repo)
 docs/superpowers/
 
+# Maintainer's private sprint bookkeeping (not for public repo)
+.bmad/output/implementation-artifacts/sprint-status.yaml
+
 # Local maintainer scratch (kind-target kubeconfigs with bearer tokens, etc.)
 .local/
 

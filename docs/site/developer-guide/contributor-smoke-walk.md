@@ -1,8 +1,8 @@
-# Personal Smoke Runbook
+# Contributor Smoke Walk
 
 > **Verified:** The mechanical Track A + Track B B.1–B.6 portions were last executed end-to-end on 2026-05-08 by `./scripts/sharko-dev.sh smoke` (which forwards to `scripts/smoke.sh` after auto-extracting credentials) against image `sharko:e2e` built from commit `96567f0e` (dev/v1.24-cleanup tip — V124-8.1 + V124-8.2 merged). 47/47 PASS in 14 s of script time, including the auto-extract of `$ADMIN_PW` and `$TOKEN`. The `argocd-token` subcommand (V124-9) was end-to-end validated on 2026-05-09 against the same `kind-sharko-e2e` cluster: cold-start (apiKey patch + argocd-server restart + port-forward recovery + login + token generate), eval-via-pipe `--export`, quiet mode, idempotency (1.7 s second-run vs 34 s cold), `--service-account` (patches `accounts.sharko` + `argocd-rbac-cm` policy.csv + token generate), and bearer-token usability against `https://localhost:18080/api/v1/account`. The hand-walked baseline that the scripts encode was last executed end-to-end on 2026-05-06 against image `sharko:runbook-verify` built locally from commit `95b51cad` (dev/v1.24-cleanup, V124-3.6+3.7+3.8 merged); Track B B.7 (ArgoCD UI) was walked manually then. Track B B.8 (Git connect → init → register cluster → addon → ArgoCD sync) requires a real GitHub PAT and remains script-exempt — it is marked with a warning in the section itself.
 
-A hands-on, checkbox-driven smoke pass for the Sharko maintainer. This is **not** a reference doc — it's a list you literally check off, top to bottom, while running the product yourself.
+A hands-on, checkbox-driven smoke pass for anyone contributing to Sharko. This is **not** a reference doc — it's a list you literally check off, top to bottom, while running the product yourself.
 
 If you want background on the test pyramid and what each layer is for, read [Testing Guide](testing-guide.md). This runbook is the in-the-moment companion: open it in one window, terminal + browser in the others, and walk it.
 
@@ -10,7 +10,7 @@ If you want background on the test pyramid and what each layer is for, read [Tes
 
 ## Quick reference — `sharko-dev.sh` subcommand cheatsheet
 
-The maintainer-DX automation is a single entry point with subcommand dispatch (V124-8.1). The `ready` subcommand (V124-12.1) is the canonical first step for a smoke pass: from any state (no cluster, partial install, dead port-forwards) it brings everything up and prints a unified credential summary in one go.
+The `sharko-dev.sh` automation is a single entry point with subcommand dispatch (V124-8.1). The `ready` subcommand (V124-12.1) is the canonical first step for a smoke pass: from any state (no cluster, partial install, dead port-forwards) it brings everything up and prints a unified credential summary in one go.
 
 | Scenario | Command |
 |---|---|
@@ -51,13 +51,13 @@ The maintainer-DX automation is a single entry point with subcommand dispatch (V
 
 ## Why this exists
 
-You've shipped 23 versions of Sharko. You've never personally driven the product end-to-end. The only way to find the ten-thousand-paper-cut bugs that unit tests and CI cannot catch is to be the user for two hours.
+Unit tests and CI catch a lot, but not everything. The ten-thousand-paper-cut bugs — a button that does nothing, a page that blanks after 30 seconds, a version string nobody wired up — mostly show up only when a real person drives the product end-to-end. This walk is that: be the user for a couple of hours and write down everything that feels wrong.
 
 The goal of one full pass:
 
 - One pass through **Track A** (Docker demo mode, Layer 5) — about 30 minutes.
 - One pass through **Track B** (kind + ArgoCD, Layer 6) — about 60–90 minutes.
-- File every rough edge into the [Bug Log](#bug-log-template) at the bottom. You're seeding the v1.24 hotfix bundle.
+- File every rough edge into the [Bug Log](#bug-log-template) at the bottom, or open it directly as a GitHub issue.
 
 !!! note "Bugs found in the first smoke pass (2026-05-01) — historical reference"
     These were the three bugs found in the very first hands-on smoke pass and are listed here for context. Keep an eye out for regressions, but do not expect to reproduce them as-is.
@@ -1036,11 +1036,11 @@ Pre-seeded entries from today's pass — verify these and update status:
 
 # Automation scripts
 
-The maintainer-DX tooling is built around a single subcommand dispatcher with two underlying helper scripts. All three live in `scripts/` and are intentionally distinct from `scripts/upgrade.sh` (which targets the released-Helm-chart flow, not the local-build flow).
+The local dev-experience tooling is built around a single subcommand dispatcher with two underlying helper scripts. All three live in `scripts/` and are intentionally distinct from `scripts/upgrade.sh` (which targets the released-Helm-chart flow, not the local-build flow).
 
 ## `scripts/sharko-dev.sh` — single entry, 12 subcommands (V124-8.1 + V124-9, canonical)
 
-The maintainer's primary entry point. Subcommand dispatch (like `git` / `kubectl`) so each scenario gets its own one-liner with `--help`:
+The primary entry point for local development. Subcommand dispatch (like `git` / `kubectl`) so each scenario gets its own one-liner with `--help`:
 
 ```bash
 ./scripts/sharko-dev.sh help              # full subcommand list
@@ -1057,7 +1057,7 @@ The maintainer's primary entry point. Subcommand dispatch (like `git` / `kubectl
 ./scripts/sharko-dev.sh down --yes        # full teardown
 ```
 
-The `creds` subcommand has a five-path fallback chain (V124-6.3 secret → cache → current pod logs → previous pod logs → error with recovery hints) so the password is retrievable in every state the maintainer hits during V124-3 through V124-7. The `rotate` subcommand also asserts V124-7's secret-rotation behavior — the new password must land in `sharko-initial-admin-secret` or the command exits non-zero.
+The `creds` subcommand has a five-path fallback chain (V124-6.3 secret → cache → current pod logs → previous pod logs → error with recovery hints) so the password is retrievable in every state a contributor hits while working through local setup. The `rotate` subcommand also asserts V124-7's secret-rotation behavior — the new password must land in `sharko-initial-admin-secret` or the command exits non-zero.
 
 The `argocd-token` subcommand (V124-9) codifies the 8-command apiKey gauntlet for Sharko's wizard step 3: it reuses any live port-forward to `argocd-server`, patches `argocd-cm` to enable the `apiKey` capability if missing, restarts `argocd-server` and re-establishes the port-forward, runs `argocd login` against `localhost:18080` with the bootstrap admin password, then `argocd account generate-token` for either `admin` (default) or a dedicated `sharko` service account (`--service-account`). Idempotent — second run skips the patch+restart and finishes in ~1–2 s.
 
@@ -1116,7 +1116,7 @@ The script intentionally does NOT automate B.7 (ArgoCD UI) or B.8 (the deep Git 
 
 - [Testing Guide](testing-guide.md) — the reference doc this runbook complements (test layers, patterns, command cheatsheet)
 - [Catalog Scan Runbook](catalog-scan-runbook.md) — the operational doc for the daily scanner bot
-- `scripts/sharko-dev.sh` — single-entry maintainer DX dispatcher (V124-8.1, canonical)
+- `scripts/sharko-dev.sh` — single-entry local-dev dispatcher (V124-8.1, canonical)
 - `scripts/dev-rebuild.sh` and `scripts/smoke.sh` — the underlying helper scripts (V124-5; still callable directly for back-compat)
 - `scripts/upgrade.sh` — the released-Helm-chart upgrade verifier (different flow, do not confuse)
 - `tests/e2e/setup.sh` and `tests/e2e/teardown.sh` — the scripts Track B leans on for cluster bringup/teardown

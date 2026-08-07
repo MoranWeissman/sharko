@@ -63,10 +63,8 @@ What an operator sees when this fires:
   {"time":"...","level":"INFO","msg":"init operation abandoned — no heartbeat from client","session_id":"<op-id>"}
   ```
 
-  (Per
-  [`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md),
-  this should be reclassified to `Warn` — but the message itself is the
-  signal regardless of level.)
+  (Per the V2-2.3 logging audit, this should be reclassified to `Warn`
+  — but the message itself is the signal regardless of level.)
 
 - **Audit-log entry**: `event=init_run` with `result=started` exists
   but no corresponding `result=success` or `result=failed` entry.
@@ -431,8 +429,8 @@ For Mitigation step 5 (manual bootstrap):
   than indefinite hangs.
 
 - **Code change — promote the abandonment log to `Warn` level.** Per
-  [`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md),
-  the abandonment line at `init.go:384` should be `Warn`, not
+  the V2-2.3 logging audit, the abandonment line at `init.go:384`
+  should be `Warn`, not
   `Info` — it's an operator-actionable event, not informational. The
   change is one line; tracked as a V2-4.x follow-up.
 
@@ -465,9 +463,6 @@ For Mitigation step 5 (manual bootstrap):
   that init automates. Falls back to manual when init wedges.
 - [`../developer-guide/logging.md`](../developer-guide/logging.md) —
   `session_id` (init-specific) and `request_id` correlation patterns.
-- [`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md) —
-  audit-log discipline that flagged the Info-vs-Warn classification of
-  the abandonment line.
 
 ## Escalation
 
