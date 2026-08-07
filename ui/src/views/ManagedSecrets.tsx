@@ -1131,6 +1131,12 @@ function useLiveSecret(row: UnifiedRow | null, allowed: boolean) {
   // allowed/missing/orphaned facts at the instant it actually decides
   // whether to fetch — not as a reason, on its own, to run again.
   const skipRef = useRef(true)
+  // Deliberate: this ref is latched during render on purpose (see the L12
+  // comment above) so the effect below can read the CURRENT skip facts
+  // without them being reactive dependencies. The write is idempotent
+  // (same computation every render) and only ever read inside the effect,
+  // never during render.
+  // eslint-disable-next-line react-hooks/refs -- see comment above
   skipRef.current = !row || !allowed || row.state === 'missing' || row.state === 'orphaned'
 
   useEffect(() => {
@@ -1183,7 +1189,6 @@ function useLiveSecret(row: UnifiedRow | null, allowed: boolean) {
     // behaviour a 30-second auto-refresh would turn into a flicker.
     // skip is deliberately excluded — see skipRef's own comment above; it
     // must never be a reason for this effect to re-run on its own.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowKey, attempt, kind, cluster, addon])
 
   return { live: state, retry: useCallback(() => setAttempt((a) => a + 1), []) }
@@ -2453,21 +2458,32 @@ export function ManagedSecrets() {
     }
   }, [load])
 
-  const connectionRows = data?.cluster_connection_secrets ?? []
-  const addonRows = data?.addon_values_secrets ?? []
-  const orphanedRows = data?.orphaned_secrets ?? []
   const valuesSourceLabel = data?.addon_values_secret_source || 'secrets store'
+  // connectionRows/addonRows/orphanedRows are read straight off `data`
+  // inside the memo callback (not hoisted to their own `?? []` consts) —
+  // a `?? []` literal outside a useMemo creates a fresh array reference
+  // every render, which would defeat memoizing unifiedRows on them.
   const unifiedRows = useMemo(
-    () => buildUnifiedRows(connectionRows, addonRows, orphanedRows, valuesSourceLabel),
-    [connectionRows, addonRows, orphanedRows, valuesSourceLabel],
+    () =>
+      buildUnifiedRows(
+        data?.cluster_connection_secrets ?? [],
+        data?.addon_values_secrets ?? [],
+        data?.orphaned_secrets ?? [],
+        valuesSourceLabel,
+      ),
+    [data, valuesSourceLabel],
   )
 
   const selectedRow = useMemo(() => unifiedRows.find((r) => r.key === selectedRowKey) ?? null, [unifiedRows, selectedRowKey])
   // Keeps the last-opened row visible while the sheet's close animation
   // plays — the row itself is cleared immediately on close, but the panel
-  // shouldn't visibly go blank mid-slide-out.
-  const lastRowRef = useRef<UnifiedRow | null>(null)
-  if (selectedRow) lastRowRef.current = selectedRow
+  // shouldn't visibly go blank mid-slide-out. State (not a ref) on
+  // purpose: React disallows reading/writing a ref during render, and this
+  // value feeds directly into what gets rendered below.
+  const [lastRow, setLastRow] = useState<UnifiedRow | null>(null)
+  useEffect(() => {
+    if (selectedRow) setLastRow(selectedRow)
+  }, [selectedRow])
 
   // B1 fix: search narrows the rows chip COUNTS are computed over — the
   // chip filter itself must NOT be part of that computation, or selecting
@@ -2615,8 +2631,9 @@ export function ManagedSecrets() {
     setRefreshingAll(true)
     try {
       const tasks: Promise<unknown>[] = [checkAllAddonValuesSecrets()]
-      if (connectionRows.length > 0) {
-        tasks.push(reconcileCluster(connectionRows[0].cluster))
+      const firstConnectionRow = data?.cluster_connection_secrets?.[0]
+      if (firstConnectionRow) {
+        tasks.push(reconcileCluster(firstConnectionRow.cluster))
       }
       await Promise.allSettled(tasks)
     } finally {
@@ -2667,7 +2684,7 @@ export function ManagedSecrets() {
     }
   }
 
-  const displayRow = selectedRow ?? lastRowRef.current
+  const displayRow = selectedRow ?? lastRow
 
   return (
     <div className="space-y-5">
@@ -2960,6 +2977,13 @@ export function ManagedSecrets() {
                       row={row}
                       busy={!!busyRows[row.key]}
                       onSelect={() => selectRow(row.key)}
+                      // `row` here is a plain element of `sorted` (a
+                      // useMemo'd array, no ref involved); the identical
+                      // grouped branch above (group.rows.map, same
+                      // handler, same shape) isn't flagged, so this reads
+                      // as a rule false-positive tied to the ternary/JSX
+                      // shape here.
+                      // eslint-disable-next-line react-hooks/refs -- see comment above
                       onRefresh={() => handleRefreshRow(row)}
                       onRequestSync={() => setSyncTarget(row)}
                       onRequestDelete={() => setDeleteTarget(row)}

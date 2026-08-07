@@ -314,7 +314,11 @@ export function useAddonState(
     healthStatus: 'Healthy',
     syncStatus: 'Synced',
     displayState: 'healthy',
-    lastSeen: Date.now(),
+    // 0, not Date.now() — nothing reads lastSeen on this fallback path
+    // today, and Date.now() is an impure call React disallows during
+    // render (it would also make this synthetic object non-deterministic
+    // between renders for no benefit).
+    lastSeen: 0,
   }
 }
 

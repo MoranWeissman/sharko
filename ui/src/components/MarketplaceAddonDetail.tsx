@@ -413,10 +413,10 @@ export function MarketplaceAddonDetail({
   useEffect(() => {
     if (!entry) return
     void loadVersions(entry)
-    // loadVersions is intentionally left out of the deps — it is stable
-    // across renders except when `source` changes, and `entry` changing is
-    // already the trigger this effect cares about.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // loadVersions is listed below because it's already memoized on
+    // [source] — it only actually changes identity when source does, so
+    // including it doesn't cause any extra re-runs beyond what `source`
+    // changing already triggers.
     return () => {
       // Bump the sequence on unmount (and on every re-run) too, not just
       // at the start of the next loadVersions call — otherwise a mock/
@@ -429,7 +429,7 @@ export function MarketplaceAddonDetail({
       // parallel guard mechanism.
       versionLoadSeqRef.current += 1
     }
-  }, [entry, source])
+  }, [entry, source, loadVersions])
 
   const retryLoadVersions = useCallback(() => {
     if (entry) void loadVersions(entry)

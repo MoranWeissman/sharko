@@ -577,7 +577,6 @@ export function ClustersOverview() {
     } else {
       void fetchData();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchData]);
 
   // V3-D5: clear the removalPR state from the router after reading it on mount

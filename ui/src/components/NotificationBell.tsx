@@ -28,6 +28,11 @@ export function NotificationBell() {
   // for free from Radix.
   const [open, setOpen] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
+  // "Now" for the timeAgo() labels below, held in state instead of read
+  // via Date.now() during render (React disallows impure calls in render).
+  // Ticks on the same 60s cadence as the notification poll, which is
+  // frequent enough for "Xm/Xh/Xd ago" text.
+  const [now, setNow] = useState(() => Date.now())
   const navigate = useNavigate()
 
   // Fetch notifications from API
@@ -46,6 +51,11 @@ export function NotificationBell() {
     const interval = setInterval(fetchNotifications, 60000) // poll every 60s
     return () => clearInterval(interval)
   }, [fetchNotifications])
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 60000) // keep timeAgo() fresh
+    return () => clearInterval(interval)
+  }, [])
 
   const unreadCount = notifications.filter(n => !n.read).length
 
@@ -67,7 +77,7 @@ export function NotificationBell() {
   }
 
   const timeAgo = (ts: string) => {
-    const secs = Math.floor((Date.now() - new Date(ts).getTime()) / 1000)
+    const secs = Math.floor((now - new Date(ts).getTime()) / 1000)
     if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
     if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`
     return `${Math.floor(secs / 86400)}d ago`
