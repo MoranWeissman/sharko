@@ -17,7 +17,12 @@ Most Sharko configuration is managed via Helm values, documented on this page. A
 | `config.connectionSecretName` | string | `"sharko-connections"` | Name of the Kubernetes Secret where connections are stored (encrypted) |
 | `config.nodeAccess` | bool | `false` | Grant Sharko read access to Kubernetes Nodes (get/list). Opt-in — adds a ClusterRole rule |
 | `config.environments` | string | `""` | Comma-separated keywords extracted from cluster names to infer environment. Example: `"dev,qa,staging,prod"` — cluster `"my-app-prod-eks"` → env `"prod"` |
-| `config.repoURL` | string | `""` | Git repo URL for the addons repository. Falls back to the active connection's repo URL if empty |
+
+There is no `config.repoURL` value. The real key for the addons repo URL is
+`connection.git.repoURL`, one of the non-secret connection fields documented
+in [Git-Native Server Configuration](git-native-config.md) — set it and
+Sharko keeps the connection's repo URL pinned to it (a runtime edit in the
+UI gets reverted back). Leave it empty and the UI-set value is left alone.
 
 ### Dev mode (credential env var fallback)
 
@@ -52,15 +57,19 @@ SHARKO_AUTH_USER=admin
 SHARKO_AUTH_PASSWORD=mypassword
 ```
 
-## Secrets
+## Git Token
 
-| Value | Type | Default | Description |
-|-------|------|---------|-------------|
-| `existingSecret` | string | `""` | Name of an existing Secret containing env vars. When set, the chart does **not** create a secret |
-| `secrets.GITHUB_TOKEN` | string | `""` | GitHub PAT for Git operations (used when `existingSecret` is empty) |
+There is no Helm value for the GitHub PAT (or Azure DevOps / Gitea token) —
+Sharko never takes it as a chart value at all. You enter it after install,
+either in **Settings → Connection** in the UI or with `sharko connect
+--git-token ...` on the CLI. Sharko stores it encrypted in the
+`sharko-connections` Kubernetes Secret and never writes it into a Helm
+values file, so it never shows up in `helm get values`. See
+[Connections](../user-guide/connections.md#connection) for the full steps.
 
-!!! warning "Production recommendation"
-    Use `existingSecret` with Sealed Secrets or External Secrets Operator rather than passing tokens as Helm values. Helm values are stored in cluster secrets and visible via `helm get values`.
+The only Helm-adjacent path around this is `SHARKO_DEV_MODE` (see
+[Dev mode](#dev-mode-credential-env-var-fallback) above) — a local-dev-only
+env var fallback, not something you'd use in production.
 
 ## GitOps Actions
 

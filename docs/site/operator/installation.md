@@ -18,9 +18,14 @@ This guide is for platform engineers and cluster operators installing Sharko in 
 
 ```bash
 helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
-  --namespace sharko --create-namespace \
-  --set secrets.GITHUB_TOKEN=<github-pat>
+  --namespace sharko --create-namespace
 ```
+
+There is no Helm value for the GitHub PAT (or Azure DevOps PAT). Sharko never
+takes a Git token as a chart value — you give it one after the pod is up, via
+the Settings UI (or `sharko connect` from the CLI). Sharko stores it encrypted
+in the `sharko-connections` Kubernetes Secret. See
+[Connections](../user-guide/connections.md#connection) for the steps.
 
 ### Recommended Production Install
 
@@ -28,9 +33,6 @@ Use a values file for production deployments:
 
 ```yaml
 # sharko-values.yaml
-secrets:
-  GITHUB_TOKEN: "<github-pat>"
-
 config:
   connectionSecretName: "sharko-connections"
 
