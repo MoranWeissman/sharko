@@ -258,9 +258,22 @@ func TestPerClusterAddonLifecycle(t *testing.T) {
 			!strings.Contains(got.DryRun.PRTitle, target1Name) {
 			t.Errorf("EnableAddon dry_run: PRTitle=%q must mention metrics-server + %s", got.DryRun.PRTitle, target1Name)
 		}
-		// Negative isolation: target-2 was never written to in the mock.
-		if ghmock.FileExists("main", pathClusterValues+"/"+target2Name+".yaml") {
-			t.Errorf("EnableAddon dry_run leaked to target-2 (file appeared on main)")
+		// Negative isolation: target-2's values file must be UNCHANGED by
+		// this dry-run.
+		//
+		// Round-3 fix: this used to assert the file was ABSENT on main,
+		// which broke the moment round-2's seedMockGit fix started
+		// seeding target-2's values file under its real cluster name —
+		// MultiClusterIsolation (below) needs that file to already exist,
+		// because EnableAddon (internal/orchestrator/addon_ops.go) reads
+		// the cluster's values file unconditionally, dry-run or not, and
+		// hard-errors if it's missing. So target-2 legitimately has a
+		// seeded file on main by the time this subtest runs; "existence"
+		// stopped being the right isolation signal. "Unchanged content"
+		// still is: a dry-run must never write anything, so target-2's
+		// file has to stay byte-identical to what seedMockGit put there.
+		if got := ghmock.FileAt("main", pathClusterValues+"/"+target2Name+".yaml"); got != target2ValuesYAML {
+			t.Errorf("EnableAddon dry_run leaked to target-2 (file changed on main): got=%q want=%q", got, target2ValuesYAML)
 		}
 		t.Logf("EnableAddon dry_run on %s: PR title=%q files=%d", target1Name, got.DryRun.PRTitle, len(got.DryRun.FilesToWrite))
 	})
