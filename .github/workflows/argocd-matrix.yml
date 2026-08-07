@@ -252,12 +252,11 @@ jobs:
 
       - name: Configure git author
         if: steps.json.outputs.changed == 'true'
-        # Every commit is authored by the repo owner; the PR itself is
-        # opened by github-actions[bot] (gh CLI default) — same
-        # convention as catalog-scan.yml.
+        # Every commit and the PR are attributed to github-actions[bot] —
+        # same convention as catalog-scan.yml.
         run: |
-          git config user.name 'Moran Weissman'
-          git config user.email 'moran.weissman@gmail.com'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
       - name: Open PR
         if: steps.json.outputs.changed == 'true'
