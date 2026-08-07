@@ -209,13 +209,22 @@ describe('ManagedSecrets', () => {
 
     const connRow1 = screen.getByTestId('secret-row-connection-prod-eu')
     const connRow2 = screen.getByTestId('secret-row-connection-staging-us')
-    expect(within(connRow1).getByTestId('cell-source')).toHaveTextContent('checked against git')
-    expect(within(connRow2).getByTestId('cell-source')).toHaveTextContent('checked against git')
+    // design-secret-sync-visual-pass, section 2: the "checked against"
+    // relation lives once in the sticky column header now — the cell
+    // states just the place name, and the full sentence is one hover away
+    // (title attribute), never printed inline on every one of 170 rows.
+    expect(within(connRow1).getByTestId('cell-source')).toHaveTextContent('git')
+    expect(within(connRow1).getByTestId('cell-source')).toHaveAttribute('title', 'Checked against git.')
+    expect(within(connRow2).getByTestId('cell-source')).toHaveTextContent('git')
 
     const valuesRow1 = screen.getByTestId('secret-row-values-prod-eu-datadog')
     const valuesRow2 = screen.getByTestId('secret-row-values-staging-us-datadog')
-    expect(within(valuesRow1).getByTestId('cell-source')).toHaveTextContent('checked against AWS Secrets Manager')
-    expect(within(valuesRow2).getByTestId('cell-source')).toHaveTextContent('checked against AWS Secrets Manager')
+    expect(within(valuesRow1).getByTestId('cell-source')).toHaveTextContent('AWS Secrets Manager')
+    expect(within(valuesRow1).getByTestId('cell-source')).toHaveAttribute(
+      'title',
+      'Checked against AWS Secrets Manager — git only holds a pointer to it.',
+    )
+    expect(within(valuesRow2).getByTestId('cell-source')).toHaveTextContent('AWS Secrets Manager')
 
     // Never the generic, misleading "the vault" wording — the server's
     // real backend name is what ships.
