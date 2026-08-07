@@ -525,14 +525,15 @@ function worstRankInGroup(rows: UnifiedRow[]): number {
 }
 
 /**
- * worstStateInGroup (design-secret-sync-visual-pass, section 3) — same
- * worst-of-the-group rule as worstRankInGroup, but returns the STATE the
- * winning rank belongs to, not just the number. The tiles view's per-card
- * left-edge strip (statusStripClassName) and status-mix bar need the actual
- * state, not its rank, and empty groups default to 'in_sync' — the state
- * that paints nothing (no group in this page is ever actually empty, but a
- * function that returns a real ResourceStatus for every input is safer than
- * one that can't).
+ * worstStateInGroup — same worst-of-the-group rule as worstRankInGroup, but
+ * returns the STATE the winning rank belongs to, not just the number.
+ * Kept as a public export (secret tiles v2 no longer calls it directly —
+ * each box now paints its OWN state's strip, not a group-level one — but
+ * the rank-to-state lookup stays useful wherever "what's the worst thing
+ * in this group" needs a real ResourceStatus, not just a rank). Empty
+ * groups default to 'in_sync' — the state that paints nothing (no group in
+ * this page is ever actually empty, but a function that returns a real
+ * ResourceStatus for every input is safer than one that can't).
  */
 export function worstStateInGroup(rows: UnifiedRow[]): ResourceStatus {
   let best = Infinity
@@ -2213,12 +2214,11 @@ export function ManagedSecrets() {
   // and so the back button actually goes back to the previous filter
   // instead of out of the page.
   const [searchParams, setSearchParams] = useSearchParams()
-  // design-secret-sync-visual-pass bug fix: a tile's click-through has to
-  // change TWO params in one handler (e.g. clear `view` and set `addon`
-  // together — section 3's click-through). Building the next
-  // URLSearchParams off the outer `searchParams` closure broke that: two
-  // updateParams calls in the same synchronous handler both read the SAME
-  // stale snapshot, so the second call's setSearchParams overwrote the
+  // design-secret-sync-visual-pass bug fix: a handler that changes TWO
+  // params at once (e.g. clear one filter while setting another) used to
+  // build the next URLSearchParams off the outer `searchParams` closure —
+  // two updateParams calls in the same synchronous handler both read the
+  // SAME stale snapshot, so the second call's setSearchParams overwrote the
   // first call's change instead of building on it. setSearchParams'
   // functional-updater form (same shape as React's setState updater) reads
   // the router's own up-to-date params on each call, so sequential calls
@@ -2361,12 +2361,12 @@ export function ManagedSecrets() {
     [updateParams],
   )
 
-  // design-secret-sync-visual-pass, section 3 — the tiles view's
-  // "Cluster connections" card click-through. No select control (unlike
+  // The connection-vs-values narrowing. No select control (unlike
   // addon/source) — it renders as one dismissible pill instead, same as
   // every other single-value filter this page has never needed a <select>
   // for. Applied in the `filtered` memo below, same as addonFilter/
-  // sourceFilter.
+  // sourceFilter. Reached via a bookmarked/shared ?kind= link (secret
+  // tiles v2 removed the box click-through that used to set it).
   const [kindFilter, setKindFilterState] = useState<'' | 'connection' | 'values'>(() => {
     const v = searchParams.get('kind')
     return v === 'connection' || v === 'values' ? v : ''
@@ -2527,23 +2527,19 @@ export function ManagedSecrets() {
 
   const grouped = groupBy !== 'none'
 
-  // design-secret-sync-visual-pass, section 3 — the tiles view's cards,
-  // built from the SAME buckets (worst-first-then-name, connections bucket
-  // always last, the honest "—" addon-less bucket) buildRowGroups already
-  // produces for the list view's Group by addon — no new grouping logic.
-  const tileGroups = useMemo(() => buildRowGroups(filtered, 'addon'), [filtered])
-
   // B2 (carried through I2's paging removal) — an honest count line: says
   // the real total, and says plainly when a filter has narrowed it below
   // everything Sharko manages. Grouped, it counts groups and SAYS it
   // counts groups — a bare number with no noun would be exactly the kind
-  // of quietly-wrong line this page keeps refusing to print. Tiles view
-  // counts as grouped too (unit "addons", section 3's `7 addons, 170
-  // secrets` example) — the cards ARE the addon grouping.
+  // of quietly-wrong line this page keeps refusing to print. Secret tiles
+  // v2: tiles now shares `groups`/`groupBy` with list view instead of
+  // forcing its own addon grouping, so this line reads the same whichever
+  // view is on screen — "None" means neither view is grouped, "Addon"/
+  // "Cluster" means both are, together.
   const hasActiveFilter = stateFilter !== 'all' || search.trim() !== ''
-  const summaryGrouped = view === 'tiles' || grouped
-  const unit = view === 'tiles' || groupBy === 'addon' ? 'addons' : 'clusters'
-  const summaryGroupCount = view === 'tiles' ? tileGroups.length : groups.length
+  const summaryGrouped = grouped
+  const unit = groupBy === 'addon' ? 'addons' : 'clusters'
+  const summaryGroupCount = groups.length
   const secretWord = sorted.length === 1 ? 'secret' : 'secrets'
   const secretsSummary =
     sorted.length === 0
@@ -2570,42 +2566,6 @@ export function ManagedSecrets() {
   const handleChipClick = (status: ResourceStatus) => {
     setStateFilter(stateFilter === status ? 'all' : status)
   }
-
-  // design-secret-sync-visual-pass, section 3 — a tile's click-through.
-  // An addon card narrows the list to that addon (?addon=<name>); the
-  // connections card narrows it to ?kind=connection (its own dismissible
-  // pill, not a select). Either way the view switches back to list, which
-  // arrives already narrowed — the active filter stays visible in the
-  // Addon select / the pill, same as any other filter on this page.
-  const handleTileClick = useCallback(
-    (group: RowGroup) => {
-      const toConnections = group.key === CONNECTIONS_GROUP_KEY
-      // Two URL params change here (view + addon, or view + kind) — they
-      // have to land in ONE updateParams call. setView/setAddonFilter/
-      // setKindFilter each call updateParams independently, and two calls
-      // in the same synchronous handler both build off the same
-      // pre-click params snapshot, so the second call's write silently
-      // drops the first's change. Setting the local view/filter state
-      // directly (mirroring what setView/setAddonFilter/setKindFilter do)
-      // and mutating the URL once avoids the race.
-      setViewState('list')
-      window.localStorage.setItem(VIEW_STORAGE_KEY, 'list')
-      if (toConnections) {
-        setKindFilterState('connection')
-      } else if (group.label !== '—') {
-        setAddonFilterState(group.label)
-      }
-      updateParams((p) => {
-        p.delete('view')
-        if (toConnections) {
-          p.set('kind', 'connection')
-        } else if (group.label !== '—') {
-          p.set('addon', group.label)
-        }
-      })
-    },
-    [updateParams],
-  )
 
   // The red engine error names a cluster — clicking it clears any state
   // filter and searches for that cluster, so the table narrows down to
@@ -2777,11 +2737,14 @@ export function ManagedSecrets() {
             className="w-full rounded-lg border border-[#6aade0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500"
           />
         </div>
-        {/* design-secret-sync-visual-pass, section 3 — the tiles view's
-            "Cluster connections" card has no select control; it narrows the
-            list the same way the addon/source selects do, but shows itself
-            as one dismissible pill (the FilterChip visual, navy active
-            style) rather than a third <select>. Clicking × clears it. */}
+        {/* The connection-vs-values narrowing (?kind=connection) has no
+            select control; it shows itself as one dismissible pill (the
+            FilterChip visual, navy active style) rather than a third
+            <select>, same B3 pattern (reloadable, bookmarkable) as every
+            other filter here. Clicking × clears it. Secret tiles v2: a box
+            click no longer sets this — a box just opens the row it stands
+            for — so this pill is reached only via a shared/bookmarked
+            ?kind= link now. */}
         {kindFilter === 'connection' && (
           <button
             type="button"
@@ -2835,43 +2798,44 @@ export function ManagedSecrets() {
         </label>
         {/* G2 — Group by. `None` is the default and is the flat list this
             page has always shown; the other two fold the same rows under a
-            parent line you click to open. design-secret-sync-visual-pass
-            section 3: hidden in tiles view — the tiles themselves ARE the
-            addon grouping, so a second grouping control would just repeat
-            the same choice a different way. */}
-        {view === 'list' && (
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-[#3a6a8a] dark:text-gray-400">Group by</span>
-            <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
-              {(
-                [
-                  ['none', 'Flat list'],
-                  ['addon', 'Addon'],
-                  ['cluster', 'Cluster'],
-                ] as [GroupBy, string][]
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setGroupBy(value)}
-                  aria-pressed={groupBy === value}
-                  data-testid={`group-by-${value}`}
-                  className={`px-2.5 py-1 text-xs font-medium ${
-                    groupBy === value
-                      ? // G4: navy in both themes — the app's own "selected"
-                        // colour (the sidebar's #1a3d5c), never StatusMark's
-                        // teal, which reads as "in sync" next to a row that
-                        // genuinely is.
-                        'bg-[#1a3d5c] text-white'
-                      : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            parent line (list view) or a heading (tiles view — secret tiles
+            v2) you click/scroll past. Shared by BOTH views now: tiles used
+            to force its own addon grouping and hide this control, but a box
+            stands for one secret, not a whole addon, so tiles reads the
+            same control list view does — "None" gives a flat grid of boxes,
+            "Addon"/"Cluster" give the same headings list view's group
+            parents would show. */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-[#3a6a8a] dark:text-gray-400">Group by</span>
+          <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
+            {(
+              [
+                ['none', 'Flat list'],
+                ['addon', 'Addon'],
+                ['cluster', 'Cluster'],
+              ] as [GroupBy, string][]
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setGroupBy(value)}
+                aria-pressed={groupBy === value}
+                data-testid={`group-by-${value}`}
+                className={`px-2.5 py-1 text-xs font-medium ${
+                  groupBy === value
+                    ? // G4: navy in both themes — the app's own "selected"
+                      // colour (the sidebar's #1a3d5c), never StatusMark's
+                      // teal, which reads as "in sync" next to a row that
+                      // genuinely is.
+                      'bg-[#1a3d5c] text-white'
+                    : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-        )}
+        </div>
         {/* design-secret-sync-visual-pass, section 3 — the List | Tiles
             toggle, far right of the toolbar row, same segmented-pill
             pattern as Group by above. */}
@@ -2918,7 +2882,10 @@ export function ManagedSecrets() {
           {unifiedRows.length === 0 ? 'Sharko is not managing any secrets yet.' : 'No secrets match this filter.'}
         </div>
       ) : view === 'tiles' ? (
-        <SecretTiles groups={tileGroups} onCardClick={handleTileClick} />
+        // Secret tiles v2 — the SAME `sorted` rows and `groups` list view
+        // reads, and the SAME open-panel handler list rows call
+        // (selectRow). Zero new panel code, no navigation, no filter jump.
+        <SecretTiles rows={sorted} groups={groups} onRowClick={(row) => selectRow(row.key)} />
       ) : (
         // H1 word/face pass (gitops-proud P4-H): the table frame now
         // matches the house frame every other list page uses (see

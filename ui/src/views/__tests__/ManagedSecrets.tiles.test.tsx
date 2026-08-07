@@ -1,15 +1,19 @@
-// ManagedSecrets.tiles — the List | Tiles toggle and the tiles view itself
-// (design-secret-sync-visual-pass, section 3 — "where is view types i
-// asked"). Pins:
+// ManagedSecrets.tiles — secret tiles v2 (2026-08-08): one BOX per SECRET,
+// ArgoCD's own applications-grid mental model ("in argocd each resource or
+// application are represented as a box, and when u click on it you get all
+// the stats"). Supersedes the addon-summary-card tiles from the earlier
+// visual pass. Pins:
 //
-//  - the tiles view renders one card per addon plus one "Cluster
-//    connections" card, built from the same buildRowGroups(filtered,
-//    'addon') buckets the list view's Group by addon already uses;
-//  - each card's status-mix bar renders one segment per state PRESENT,
-//    worst-first (CHIP_ORDER order), never alphabetically or by count;
-//  - clicking an addon card switches back to list, narrowed to that addon;
-//    clicking the connections card switches back to list with the
-//    dismissible "Cluster connections" pill active;
+//  - the tiles view renders one box per SECRET, never one box per addon;
+//  - group-by "addon" gives each addon a heading (label + groupSummary()
+//    line + the worst-first status-mix bar), same as list view's group
+//    parents, with each addon's secrets as boxes underneath;
+//  - group-by "None" gives a flat grid of boxes, no headings;
+//  - clicking a box opens the SAME detail panel a list row opens — same
+//    test-id, same content, no navigation, no filter change;
+//  - filters/search/status chips narrow the boxes exactly as they narrow
+//    list rows (same underlying rows array feeds both views);
+//  - a long secret name truncates with the full name in the hover title;
 //  - the view choice persists across a reload — the URL wins over
 //    localStorage when both are present, and localStorage is only the
 //    fallback when the URL has no `view` param at all.
@@ -79,9 +83,11 @@ function renderPage(initialEntries: string[] = ['/secret-sync']) {
 }
 
 // Demo-shaped: two clusters' connection secrets (one in_sync, one
-// out_of_sync — the worst-case for the connections card's bar) plus three
-// addons with a deliberate mix of states, so every card has something real
-// to add up and the bar has more than one segment to order.
+// out_of_sync — the worst-case for the connections group's bar) plus three
+// addons with a deliberate mix of states, so every group has something
+// real to add up and the bar has more than one segment to order. One
+// secret name is deliberately long to exercise the truncate/hover-title
+// rule.
 const response: ManagedSecretsResponse = {
   cluster_connection_secrets: [
     { cluster: 'prod-eu', secret_namespace: 'argocd', secret_name: 'prod-eu', state: 'in_sync', source: 'git', self_heals: true },
@@ -118,7 +124,7 @@ const response: ManagedSecretsResponse = {
     {
       cluster: 'prod-eu',
       addon: 'grafana',
-      secret_name: 'grafana-secret',
+      secret_name: 'kube-prometheus-stack-grafana-admin-credentials-extra-long',
       secret_namespace: 'monitoring',
       state: 'in_sync',
       source: 'AWS Secrets Manager',
@@ -137,10 +143,17 @@ beforeEach(() => {
   window.localStorage.clear()
   mockGetManagedSecrets.mockResolvedValue(response)
   mockFetchAuditLog.mockResolvedValue({ entries: [] })
+  // A connection-secret box's panel fires the same getClusterComparison
+  // diff fetch a connection list row's panel already does — give it a
+  // resolved value so opening a connection box in the click-through tests
+  // below doesn't hang on an unmocked call.
+  mockGetClusterComparison.mockResolvedValue({
+    cluster: { name: 'prod-eu', labels: {}, last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded' } },
+  })
 })
 
-describe('the tiles view renders one card per addon plus the connections card', () => {
-  it('shows a card for every addon in the fixture and one for cluster connections, none for individual rows', async () => {
+describe('group-by "None" — a flat grid of boxes, one per secret', () => {
+  it('renders one box per secret and no section headings', async () => {
     const user = userEvent.setup()
     renderPage()
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
@@ -148,29 +161,72 @@ describe('the tiles view renders one card per addon plus the connections card', 
     await user.click(screen.getByTestId('view-tiles'))
 
     const grid = await screen.findByTestId('secret-tiles')
-    expect(within(grid).getByTestId('secret-tile-addon-datadog')).toBeInTheDocument()
-    expect(within(grid).getByTestId('secret-tile-addon-vault')).toBeInTheDocument()
-    expect(within(grid).getByTestId('secret-tile-addon-grafana')).toBeInTheDocument()
-    expect(within(grid).getByTestId('secret-tile-__connections__')).toBeInTheDocument()
-    // Exactly 4 cards — 3 addons + 1 connections bucket, never one per row.
-    expect(within(grid).getAllByRole('button')).toHaveLength(4)
+    // 2 connection secrets + 4 addon-values secrets = 6 boxes, never one
+    // per addon.
+    expect(within(grid).getAllByRole('button')).toHaveLength(6)
+    expect(within(grid).getByTestId('secret-box-connection-prod-eu')).toBeInTheDocument()
+    expect(within(grid).getByTestId('secret-box-values-prod-eu-datadog')).toBeInTheDocument()
+    expect(within(grid).getByTestId('secret-box-values-staging-us-datadog')).toBeInTheDocument()
 
-    // The connections card carries its own honest sublabel and the summary
-    // line groupSummary() already produces for the list view's group
-    // headers — no new wording invented for the card.
-    const connectionsCard = within(grid).getByTestId('secret-tile-__connections__')
-    expect(connectionsCard).toHaveTextContent('Cluster connections')
-    expect(connectionsCard).toHaveTextContent('not an addon — one secret per cluster')
-    expect(connectionsCard).toHaveTextContent('2 secrets')
-    expect(connectionsCard).toHaveTextContent('1 out of sync')
-    expect(connectionsCard).toHaveTextContent('1 synced')
+    // No section headings in the flat grid.
+    expect(screen.queryByTestId('tile-section-addon-datadog')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('tile-section-__connections__')).not.toBeInTheDocument()
 
-    // The list view's own rows are gone while tiles is active — the table
-    // itself doesn't render.
+    // The list view's own rows are gone while tiles is active.
     expect(screen.queryByTestId('secret-row-connection-prod-eu')).not.toBeInTheDocument()
 
-    // Group by is hidden in tiles view — the cards ARE the addon grouping.
-    expect(screen.queryByTestId('group-by-addon')).not.toBeInTheDocument()
+    // Group by is now shared with list view — visible and defaulted to
+    // Flat list, matching the flat grid on screen.
+    expect(screen.getByTestId('group-by-none')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('the footer states a plain secret count, not a grouped count, while flat', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    await user.click(screen.getByTestId('view-tiles'))
+
+    await screen.findByTestId('secret-tiles')
+    expect(screen.getByTestId('secrets-summary')).toHaveTextContent('6 secrets')
+  })
+})
+
+describe('group-by "addon" — a heading per addon, boxes underneath', () => {
+  it('each addon gets a heading with the summary line and status-mix bar, secrets as boxes underneath', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    await user.click(screen.getByTestId('view-tiles'))
+    await user.click(screen.getByTestId('group-by-addon'))
+
+    const grid = await screen.findByTestId('secret-tiles')
+    const datadogSection = within(grid).getByTestId('tile-section-addon-datadog')
+    expect(datadogSection).toHaveTextContent('datadog')
+    expect(datadogSection).toHaveTextContent('2 secrets')
+    expect(datadogSection).toHaveTextContent('1 out of sync')
+    expect(datadogSection).toHaveTextContent('1 synced')
+    expect(within(datadogSection).getByTestId('secret-box-values-prod-eu-datadog')).toBeInTheDocument()
+    expect(within(datadogSection).getByTestId('secret-box-values-staging-us-datadog')).toBeInTheDocument()
+
+    const connectionsSection = within(grid).getByTestId('tile-section-__connections__')
+    expect(connectionsSection).toHaveTextContent('Cluster connections')
+    expect(connectionsSection).toHaveTextContent('2 secrets')
+    expect(within(connectionsSection).getByTestId('secret-box-connection-prod-eu')).toBeInTheDocument()
+    expect(within(connectionsSection).getByTestId('secret-box-connection-staging-us')).toBeInTheDocument()
+  })
+
+  it('the datadog heading\'s status-mix bar orders segments out_of_sync before in_sync, never alphabetically or by count', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    await user.click(screen.getByTestId('view-tiles'))
+    await user.click(screen.getByTestId('group-by-addon'))
+
+    const datadogSection = await screen.findByTestId('tile-section-addon-datadog')
+    const bar = within(datadogSection).getByTestId('tile-bar-addon-datadog')
+    const segments = within(bar).getAllByTestId(/^tile-bar-segment-/)
+    const order = segments.map((s) => s.getAttribute('data-testid'))
+    expect(order).toEqual(['tile-bar-segment-addon-datadog-out_of_sync', 'tile-bar-segment-addon-datadog-in_sync'])
   })
 
   it('the footer states the addon-unit count in tiles view, same wording the list view uses when grouped', async () => {
@@ -178,84 +234,120 @@ describe('the tiles view renders one card per addon plus the connections card', 
     renderPage()
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
     await user.click(screen.getByTestId('view-tiles'))
+    await user.click(screen.getByTestId('group-by-addon'))
 
     await screen.findByTestId('secret-tiles')
     // 3 addons + the connections bucket = 4 "addons" units, 6 secrets total.
     expect(screen.getByTestId('secrets-summary')).toHaveTextContent('4 addons, 6 secrets')
   })
-})
 
-describe('the status-mix bar renders segments worst-first', () => {
-  it('orders the datadog card\'s segments out_of_sync before in_sync, never alphabetically or by count', async () => {
+  it('switching back to list view keeps the same group-by choice and headings', async () => {
     const user = userEvent.setup()
     renderPage()
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
     await user.click(screen.getByTestId('view-tiles'))
+    await user.click(screen.getByTestId('group-by-addon'))
+    await screen.findByTestId('secret-tiles')
 
-    const datadogCard = await screen.findByTestId('secret-tile-addon-datadog')
-    const bar = within(datadogCard).getByTestId('tile-bar-addon-datadog')
-    const segments = within(bar).getAllByTestId(/^tile-bar-segment-/)
-    const order = segments.map((s) => s.getAttribute('data-testid'))
-    // datadog has one out_of_sync row and one in_sync row — CHIP_ORDER puts
-    // out_of_sync well ahead of in_sync, so the worse segment renders
-    // first regardless of which row arrived first in the fixture.
-    expect(order).toEqual(['tile-bar-segment-addon-datadog-out_of_sync', 'tile-bar-segment-addon-datadog-in_sync'])
-  })
-
-  it('a card with only one state present renders exactly one full-width segment', async () => {
-    const user = userEvent.setup()
-    renderPage()
-    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
-    await user.click(screen.getByTestId('view-tiles'))
-
-    const grafanaCard = await screen.findByTestId('secret-tile-addon-grafana')
-    const bar = within(grafanaCard).getByTestId('tile-bar-addon-grafana')
-    expect(within(bar).getAllByTestId(/^tile-bar-segment-/)).toHaveLength(1)
-    expect(within(bar).getByTestId('tile-bar-segment-addon-grafana-in_sync')).toBeInTheDocument()
+    await user.click(screen.getByTestId('view-list'))
+    expect(screen.getByTestId('group-by-addon')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('secret-group-addon-datadog')).toBeInTheDocument()
   })
 })
 
-describe('card click-through', () => {
-  it('an addon card switches back to list, narrowed to that addon', async () => {
+const blankedResource = {
+  kind: 'Secret',
+  api_version: 'v1',
+  name: 'datadog-secrets',
+  namespace: 'datadog',
+  secret_type: 'Opaque',
+  created_at: '2026-07-01T00:00:00Z',
+  labels: [],
+  annotations: [],
+  data_keys: [],
+  read_from: 'cluster "prod-eu", namespace "datadog"',
+  values_blanked: true,
+}
+
+describe('clicking a box opens the same detail panel a list row opens', () => {
+  it('opens the panel for that exact secret — no navigation, no filter change', async () => {
     const user = userEvent.setup()
+    mockGetAddonValuesSecretResource.mockResolvedValue(blankedResource)
     renderPage()
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
     await user.click(screen.getByTestId('view-tiles'))
 
-    await user.click(await screen.findByTestId('secret-tile-addon-datadog'))
+    const box = await screen.findByTestId('secret-box-values-prod-eu-datadog')
+    await user.click(box)
 
-    // Back to the list, narrowed — the addon filter select shows it, and
-    // only datadog's two rows are on screen.
-    expect(screen.getByTestId('view-list')).toHaveAttribute('aria-pressed', 'true')
-    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveTextContent('addon=datadog'))
-    expect(screen.getByTestId('location-probe')).not.toHaveTextContent('view=')
-    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
-    expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument()
-    expect(screen.getByTestId('secret-row-values-staging-us-datadog')).toBeInTheDocument()
-    expect(screen.getByTestId('addon-filter-select')).toHaveValue('datadog')
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(panel).toBeInTheDocument()
+    expect(panel).toHaveTextContent('datadog-secrets')
+
+    // Still on tiles — the click opened the panel, it did not switch view
+    // or narrow anything.
+    expect(screen.getByTestId('view-tiles')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('location-probe')).not.toHaveTextContent('addon=')
+    expect(screen.getByTestId('location-probe')).not.toHaveTextContent('kind=')
+    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveTextContent(`row=values-prod-eu-datadog`))
   })
 
-  it('the connections card switches back to list with the dismissible "Cluster connections" pill active', async () => {
+  it('opens the same panel a connection-secret box stands for', async () => {
+    const user = userEvent.setup()
+    mockGetConnectionSecretResource.mockResolvedValue({ ...blankedResource, name: 'prod-eu', namespace: 'argocd' })
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    await user.click(screen.getByTestId('view-tiles'))
+
+    const box = await screen.findByTestId('secret-box-connection-prod-eu')
+    await user.click(box)
+
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(panel).toHaveTextContent('prod-eu')
+  })
+})
+
+describe('filters and search narrow the boxes exactly as they narrow list rows', () => {
+  it('a status chip narrows the flat grid to matching boxes only', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    await user.click(screen.getByTestId('view-tiles'))
+    await screen.findByTestId('secret-tiles')
+
+    await user.click(screen.getByTestId('filter-chip-out_of_sync'))
+
+    const grid = await screen.findByTestId('secret-tiles')
+    expect(within(grid).getAllByRole('button')).toHaveLength(2)
+    expect(within(grid).getByTestId('secret-box-connection-staging-us')).toBeInTheDocument()
+    expect(within(grid).getByTestId('secret-box-values-staging-us-datadog')).toBeInTheDocument()
+  })
+
+  it('search text narrows the boxes the same way it narrows list rows', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    await user.click(screen.getByTestId('view-tiles'))
+    await screen.findByTestId('secret-tiles')
+
+    await user.type(screen.getByPlaceholderText(/search by cluster/i), 'vault')
+
+    const grid = await screen.findByTestId('secret-tiles')
+    expect(within(grid).getAllByRole('button')).toHaveLength(1)
+    expect(within(grid).getByTestId('secret-box-values-prod-eu-vault')).toBeInTheDocument()
+  })
+})
+
+describe('a long secret name truncates with the full name in the hover title', () => {
+  it('the box carries the full name in a title attribute', async () => {
     const user = userEvent.setup()
     renderPage()
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
     await user.click(screen.getByTestId('view-tiles'))
 
-    await user.click(await screen.findByTestId('secret-tile-__connections__'))
-
-    expect(screen.getByTestId('view-list')).toHaveAttribute('aria-pressed', 'true')
-    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveTextContent('kind=connection'))
-    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
-    expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument()
-    expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument()
-    expect(screen.queryByTestId('secret-row-values-prod-eu-datadog')).not.toBeInTheDocument()
-
-    // The pill is there, and dismissing it clears the filter.
-    const pill = screen.getByTestId('kind-filter-pill')
-    expect(pill).toHaveTextContent('Cluster connections')
-    await user.click(pill)
-    await waitFor(() => expect(screen.getByTestId('location-probe')).not.toHaveTextContent('kind='))
-    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(6))
+    const box = await screen.findByTestId('secret-box-values-prod-eu-grafana')
+    const nameEl = within(box).getByTitle('kube-prometheus-stack-grafana-admin-credentials-extra-long')
+    expect(nameEl).toHaveClass('truncate')
   })
 })
 
