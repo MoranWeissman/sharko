@@ -4,6 +4,16 @@ If you already run ArgoCD for GitOps workload deployment, you might wonder: **Wh
 
 The short answer is **no** — Sharko and ArgoCD are complementary, not redundant. They run two distinct GitOps loops on different objects, driven by one Git source of truth. This page explains what Sharko actually does, how it fits alongside ArgoCD, and why you'd choose it over building the same thing yourself with ArgoCD ApplicationSets and External Secrets Operator.
 
+For a look at how Sharko compares to specific tool categories — GitOps promoters, secret-delivery tools, cluster-fleet managers — see [Sharko vs. the Alternatives](comparison.md).
+
+## The engine is Sharko's, the repo is yours
+
+Sharko's deploy logic — the part that turns "which addons go where" into real ArgoCD `ApplicationSet`s — is not scattered across scripts or something you hand-maintain. It's one thing: [`sharko-engine`](https://github.com/MoranWeissman/sharko/tree/main/charts/sharko-engine), a versioned, signed Helm chart published to the same OCI registry as the Sharko server image. Your repo pins one version of it in `sharko-engine.yaml`. When Sharko ships new deploy logic, you review and merge a small pin-bump pull request — you never run a live migration to get it.
+
+Everything else in your repo is data, not code: `catalog.yaml` lists the addons your org has approved, `cluster-addons/<cluster-name>.yaml` says which of those addons run on which cluster, and a `values/` folder holds the Helm values layered on top. None of these files carry template logic — that's what the engine chart is for. Your repo, Sharko's format: you can read it any time, but you write to it through Sharko.
+
+Two doors lead to the same pipeline: the UI, for a person clicking through a change, and the REST API, for a portal, a pipeline, or a tool like Backstage acting on someone's behalf. Whichever door you use, every write does the same three things — validate the change, show a preview, then open a Git pull request. **Sharko proposes, ArgoCD enforces:** Sharko is never the thing that touches a cluster. It writes to Git, and ArgoCD, watching that repo, does the actual deploying.
+
 ## The two GitOps loops
 
 Sharko and ArgoCD each own a different layer of the fleet-addon deployment flow. They never touch the same Kubernetes object.
