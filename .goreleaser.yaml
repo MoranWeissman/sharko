@@ -21,6 +21,16 @@ archives:
   - format: tar.gz
     name_template: "sharko_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
+# HONESTY PASS: one CycloneDX SBOM per released archive, made with syft
+# (installed onto PATH by release.yml's goreleaser job before this
+# runs). GoReleaser uploads these to the GitHub release the same way it
+# uploads the archives and checksums.txt — no extra_files entry needed.
+sboms:
+  - id: archive
+    artifacts: archive
+    cmd: syft
+    args: ["$artifact", "--output", "cyclonedx-json=$document"]
+
 checksum:
   name_template: 'checksums.txt'
 

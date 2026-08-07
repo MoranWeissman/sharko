@@ -152,9 +152,11 @@ jobs:
 
       - name: Set up QEMU (cross-arch emulation)
         # buildx needs QEMU registered to cross-compile the alpine
-        # final stage for arm64 on an amd64 runner. Go itself
-        # cross-compiles natively (CGO_ENABLED=0) and doesn't need
-        # emulation, but the alpine RUN apk does — so we register
+        # final stage for arm64 on an amd64 runner. The heavy stages
+        # (npm build, go build) cross-compile natively via
+        # --platform=$BUILDPLATFORM in the Dockerfile and don't need
+        # emulation; only the final alpine stage's `apk add` still runs
+        # per-arch, which is cheap even under emulation — so we register
         # all standard binfmt handlers up front.
         uses: docker/setup-qemu-action@v3
         with:
@@ -177,7 +179,15 @@ jobs:
             CACHE_BUST=${{ github.event.workflow_run.head_sha }}
             VERSION=${{ steps.version.outputs.VERSION }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # ignore-error=true: on run 30956764008 (2026-08-04) the image
+          # itself pushed fine (manifest push done, 9.1s) but the cache
+          # export step then failed with "token has no writable scopes"
+          # and buildx treated that as a hard build failure, skipping
+          # every downstream release job (helm charts, CLI binaries)
+          # even though the image was already live in the registry.
+          # ignore-error keeps the speed-up when the cache write works
+          # and stops the whole release from dying when it doesn't.
+          cache-to: type=gha,mode=max,ignore-error=true
 
       # cosign keyless signing of the published image. Pins the OIDC
       # issuer + repo-scoped certificate identity so a future
@@ -467,6 +477,12 @@ jobs:
         uses: sigstore/cosign-installer@v3
         with:
           cosign-release: 'v2.4.1'
+
+      # HONESTY PASS: puts syft on PATH so .goreleaser.yaml's `sboms:`
+      # block can shell out to it. GoReleaser doesn't bundle an SBOM
+      # generator itself — it just calls whatever `cmd:` names.
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
 
       # V2-cleanup-57.1 — release notes carry the CI-verified ArgoCD
       # compatibility claim. The weekly argocd-matrix workflow maintains
