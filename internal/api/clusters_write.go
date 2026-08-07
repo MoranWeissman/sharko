@@ -353,8 +353,11 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 
 	result, orchErr := orch.RemoveCluster(ctx, req)
 	if orchErr != nil {
+		// Removal stays refused on a v4 repo (out of scope for this lane) —
+		// same coded shape as the rest of the repo-layout family so a
+		// caller can branch on `code` instead of English text.
 		if orchestrator.IsV4RepoUnsupported(orchErr) {
-			writeError(w, http.StatusConflict, orchErr.Error())
+			writeCodedError(w, http.StatusConflict, CodeRepoLayout, orchErr.Error(), nil)
 			return
 		}
 		// Check for confirmation error.
@@ -392,7 +395,8 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 // handleUpdateClusterAddons godoc
 //
 // @Summary Update cluster addons or settings
-// @Description Updates the addon selections (enabled/disabled) and/or cluster settings (secret_path) for a specific cluster
+// @Description Updates the addon selections (enabled/disabled) and/or cluster settings (secret_path) for a specific cluster.
+// @Description On a v4 repo, the addon selections are written to cluster-addons/{name}.yaml (every addon named in the request must already be in catalog.yaml) in one pull request — PR-only, the cluster reconciler applies the resulting labels to the ArgoCD cluster Secret from git once it merges. secret_path is written to the v4 root managed-clusters.yaml instead of the v3 configuration/managed-clusters.yaml.
 // @Tags clusters
 // @Accept json
 // @Produce json
@@ -403,10 +407,10 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 // @Success 207 {object} map[string]interface{} "Partial success"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 404 {object} map[string]interface{} "Cluster not found"
+// @Failure 404 {object} map[string]interface{} "Cluster not found (code cluster_not_found on a v4 repo)"
 // @Failure 422 {object} map[string]interface{} "Addon not in catalog"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
-// @Failure 409 {object} map[string]interface{} "This endpoint writes v3 addon labels; on a v4 repo use POST or DELETE /v4/clusters/{name}/addons/{addon}"
+// @Failure 409 {object} map[string]interface{} "The repo carries both the old and the new layout (code repo_layout)"
 // @Router /clusters/{name} [patch]
 // handleUpdateClusterAddons handles PATCH /api/v1/clusters/{name} — update addon labels.
 func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Request) {
@@ -468,13 +472,32 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	// tracking, and post-merge branch cleanup all come from the one shared
 	// code path via the prMeta builder.
 	if req.SecretPath != nil {
-		managedPath := s.repoPaths.ManagedClusters
-		if managedPath == "" {
-			managedPath = "configuration/managed-clusters.yaml"
+		// Fail closed: this write PICKS A PATH between the v3 registry
+		// (configuration/managed-clusters.yaml) and the v4 one
+		// (managed-clusters.yaml at the repo root) — the same class of
+		// decision refuseOnV4Repo / RegisterCluster's v4 probe guard, and
+		// for the identical reason. Guessing "not v4" on a repo the probe
+		// simply could not read would open a pull request creating a rival
+		// v3 registry file on a v4 repo: a second file the cluster
+		// reconciler prefers over managed-clusters.yaml whenever both
+		// exist, orphaning every v4-registered cluster and deleting its
+		// ArgoCD connection Secret. Costing a retry beats that.
+		v4Repo, v4ProbeErr := orch.IsV4Repo(ctx)
+		if v4ProbeErr != nil {
+			writeCodedError(w, http.StatusBadGateway, CodeRepoLayout,
+				"Sharko stopped before updating secret_path: "+v4ProbeErr.Error(), nil)
+			return
+		}
+		managedPath := orchestrator.V4ManagedClustersPath
+		if !v4Repo {
+			managedPath = s.repoPaths.ManagedClusters
+			if managedPath == "" {
+				managedPath = "configuration/managed-clusters.yaml"
+			}
 		}
 		mcData, err := git.GetFileContent(ctx, managedPath, s.gitopsConfig().BaseBranch)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "reading managed-clusters.yaml: "+err.Error())
+			writeError(w, http.StatusBadGateway, "reading "+managedPath+": "+err.Error())
 			return
 		}
 		updated, err := gitops.UpdateClusterSecretPath(mcData, name, *req.SecretPath)
@@ -543,15 +566,17 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	// commitChangesWithMeta via PRMetadata.AutoMergeOverride.
 	result, err := orch.UpdateClusterAddons(ctx, name, serverURL, "", req.Addons, req.AutoMerge, req.DryRun)
 	if err != nil {
-		if orchestrator.IsV4RepoUnsupported(err) {
-			writeError(w, http.StatusConflict, err.Error())
-			return
-		}
+		// v3's referential-integrity error type — writeV4OrchestratorError
+		// below does not know about it, so it is checked first.
 		if orchestrator.IsAddonNotInCatalog(err) {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
-		writeError(w, http.StatusBadGateway, err.Error())
+		// Everything else — including the v4 branch's ErrV4ClusterNotFound
+		// (404), ErrV4AddonNotInCatalog (422, code not_in_catalog),
+		// ErrMixedRepoLayout / IsV4RepoUnsupported (409, code repo_layout)
+		// — shares the same coded mapping addon_ops_v4.go's handlers use.
+		writeV4OrchestratorError(w, err)
 		return
 	}
 

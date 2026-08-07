@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -175,6 +176,12 @@ type mockGitProvider struct {
 	prErr           error
 	mergeErr        error
 	deleteBranchErr error // BUG-032: simulate gitprovider.DeleteBranch failure (e.g. AzureDevOps not-yet-implemented)
+
+	// listDirErr, when non-nil, is what ListDirectory returns for ANY
+	// directory instead of a real listing — the "the git host would not
+	// answer" case a fail-closed caller must abort on (v4-coherence-closure
+	// lane D: UnadoptCluster's per-cluster values-folder enumeration).
+	listDirErr error
 }
 
 func newMockGitProvider() *mockGitProvider {
@@ -239,8 +246,37 @@ func (m *mockGitProvider) GetFileContent(_ context.Context, path, _ string) ([]b
 	return nil, fmt.Errorf("file not found: %s: %w", path, gitprovider.ErrFileNotFound)
 }
 
-func (m *mockGitProvider) ListDirectory(_ context.Context, _, _ string) ([]string, error) {
-	return nil, nil
+// ListDirectory reflects m.files by prefix match (one level deep, like the
+// real providers) so tests that seed values/clusters/<cluster>/*.yaml files
+// can exercise real enumeration — rather than the old always-(nil, nil)
+// stub, which made every caller of ListDirectory see an empty repo
+// regardless of what was seeded. A genuinely empty match returns
+// gitprovider.ErrFileNotFound, matching the real providers' "no such
+// directory" answer; set listDirErr to simulate an unrelated transport
+// failure a fail-closed caller must abort on instead of treating as empty.
+func (m *mockGitProvider) ListDirectory(_ context.Context, dir, _ string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.listDirErr != nil {
+		return nil, m.listDirErr
+	}
+	prefix := strings.TrimSuffix(dir, "/") + "/"
+	var out []string
+	for p := range m.files {
+		if !strings.HasPrefix(p, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(p, prefix)
+		if strings.Contains(rest, "/") {
+			continue // one level only, like the real providers
+		}
+		out = append(out, rest)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("directory not found: %s: %w", dir, gitprovider.ErrFileNotFound)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func (m *mockGitProvider) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {

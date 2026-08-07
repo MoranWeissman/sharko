@@ -55,6 +55,72 @@ type ArgoSecretManager interface {
 	// secrets backend the reconciler reads from, so the reconciler can never
 	// create the Secret for them. Returns (changed, error).
 	Ensure(ctx context.Context, spec ArgoSecretSpec) (bool, error)
+
+	// GetClusterSecretDetail reads the live ArgoCD cluster Secret's metadata
+	// (never its credential material) so a v4 write can run the takeover
+	// preflight before it touches anything. Mirrors
+	// argosecrets.Manager.GetClusterSecretDetail; the api-layer adapter
+	// converts argosecrets.ClusterSecretDetail to ClusterSecretDetail.
+	GetClusterSecretDetail(ctx context.Context, name string) (ClusterSecretDetail, error)
+
+	// TakeOverClusterSecret makes Sharko the owner of an ArgoCD cluster
+	// Secret somebody else (or nobody) set up — the same in-place relabel
+	// TakeoverClusterGit's Git write pairs with, and what AdoptClusters'
+	// v4 branch uses for the ownership swap after its adoption PR merges.
+	// Mirrors argosecrets.Manager.TakeOverClusterSecret; the api-layer
+	// adapter converts argosecrets.TakeOverResult to TakeOverResult.
+	TakeOverClusterSecret(ctx context.Context, name string, preserveLegacyLabels bool, takenOverAt string, legacyKeyFn func(key string) bool) (TakeOverResult, error)
+}
+
+// ClusterSecretDetail mirrors argosecrets.ClusterSecretDetail (the
+// read-only view of a live ArgoCD cluster Secret the takeover preflight
+// works from) but is defined locally so the orchestrator stays free of an
+// argosecrets import — same pattern as ArgoSecretSpec mirrors
+// argosecrets.ClusterSecretSpec. Credential material ("config" in the
+// Secret's Data) is never read into this type, only metadata.
+type ClusterSecretDetail struct {
+	// Found is false when no Secret with that name exists.
+	Found bool
+	// Name / Server are the cluster's identity as ArgoCD records it.
+	Name   string
+	Server string
+	// Labels / Annotations are the live metadata, copied.
+	Labels      map[string]string
+	Annotations map[string]string
+	// ManagedBy is the app.kubernetes.io/managed-by value ("" when unset).
+	ManagedBy string
+	// Adopted reports whether the Secret carries an adopted marker under
+	// any of the three historical key spellings.
+	Adopted bool
+	// ForeignOwner* mirror argosecrets.DetectForeignOwner for this same
+	// object. Confidence is "hard" or "soft" (plain string here — the
+	// orchestrator cannot import argosecrets.OwnerConfidence).
+	ForeignOwnerAppName    string
+	ForeignOwnerConfidence string
+	ForeignOwnerFound      bool
+}
+
+// TakeOverResult mirrors argosecrets.TakeOverResult — what the ownership
+// swap on a live ArgoCD cluster Secret actually did.
+type TakeOverResult struct {
+	// Found is false when there is no Secret to take over.
+	Found bool
+	// AlreadyOwned is true when Sharko already owned the connection, so the
+	// call did nothing. Re-running is safe.
+	AlreadyOwned bool
+	// Changed is true when a write was issued.
+	Changed bool
+	// PreservedLabels are the previous owner's labels carried over verbatim.
+	PreservedLabels map[string]string
+	// DroppedLabels are the previous owner's labels removed because the
+	// caller explicitly asked not to preserve them.
+	DroppedLabels map[string]string
+	// ProtectionRepaired is true when Sharko already owned the connection
+	// but the record of which labels came from the previous owner was
+	// missing, and this call wrote it back.
+	ProtectionRepaired bool
+	// Server is the cluster's API address, unchanged by the swap.
+	Server string
 }
 
 // ArgoSecretSpec mirrors argosecrets.ClusterSecretSpec but is defined locally

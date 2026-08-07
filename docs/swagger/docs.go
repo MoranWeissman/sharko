@@ -2733,7 +2733,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Adopts one or more existing ArgoCD clusters under Sharko management.\nPhase 1 verifies connectivity per cluster, Phase 2 creates GitOps config via PR.",
+                "description": "Adopts one or more existing ArgoCD clusters under Sharko management.\nPhase 1 verifies connectivity per cluster, Phase 2 creates GitOps config via PR.\nOn a v4 repo, phase 1 is replaced per cluster by the same takeover preflight the brownfield-takeover door runs: a cluster the preflight blocks fails with the preflight's summary as its error (the batch continues with the rest); a cluster it only warns about proceeds, and the warnings are listed on that cluster's result. The write is the same two v4 files a takeover writes (managed-clusters.yaml plus an empty cluster-addons/{name}.yaml), followed by the ArgoCD connection ownership swap and the adopted annotation once the pull request merges — no separate confirmation step beyond dry_run.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2790,7 +2790,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Adoption still writes the v3 cluster registry and is not supported on a v4 repo yet",
+                        "description": "The repo carries both the old and the new layout (code repo_layout)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3265,7 +3265,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates the addon selections (enabled/disabled) and/or cluster settings (secret_path) for a specific cluster",
+                "description": "Updates the addon selections (enabled/disabled) and/or cluster settings (secret_path) for a specific cluster.\nOn a v4 repo, the addon selections are written to cluster-addons/{name}.yaml (every addon named in the request must already be in catalog.yaml) in one pull request — PR-only, the cluster reconciler applies the resulting labels to the ArgoCD cluster Secret from git once it merges. secret_path is written to the v4 root managed-clusters.yaml instead of the v3 configuration/managed-clusters.yaml.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3325,14 +3325,14 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Cluster not found",
+                        "description": "Cluster not found (code cluster_not_found on a v4 repo)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "409": {
-                        "description": "This endpoint writes v3 addon labels; on a v4 repo use POST or DELETE /v4/clusters/{name}/addons/{addon}",
+                        "description": "The repo carries both the old and the new layout (code repo_layout)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -5000,7 +5000,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.\nThe cluster must have been adopted (has sharko.sharko.dev/adopted annotation).",
+                "description": "Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.\nThe cluster must have been adopted (has sharko.sharko.dev/adopted annotation).\nOn a v4 repo, the pull request removes the cluster from managed-clusters.yaml and deletes cluster-addons/{name}.yaml plus every Helm values file under values/clusters/{name}/ — everything this cluster owns in the repo.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5064,7 +5064,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Cluster was not adopted",
+                        "description": "Cluster was not adopted, or the repo carries both the old and the new layout (code repo_layout)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

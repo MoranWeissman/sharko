@@ -879,13 +879,19 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 		Cluster: ClusterResult{Name: name, Server: serverURL, Addons: addons},
 	}
 
-	// v4 repos record addon on/off in cluster-addons/<name>.yaml, not as labels
-	// in the cluster registry — this handler writes the v3 registry, which
-	// on a v4 repo would create a rival file and orphan the fleet (see
-	// ErrV4RepoUnsupported). The v4 route for the same intent is
-	// POST/DELETE /api/v1/v4/clusters/{name}/addons/{addon}.
-	if err := o.refuseOnV4Repo(ctx, "changing a cluster's addons through this endpoint"); err != nil {
-		return nil, err
+	// v4 repos record addon on/off in cluster-addons/<name>.yaml, not as
+	// labels in the cluster registry — writing the v3 registry on a v4
+	// repo would create a rival file and orphan the fleet (see
+	// ErrV4RepoUnsupported). Fail closed: everything below this line can
+	// write, and answering "not v4" wrongly recreates
+	// configuration/managed-clusters.yaml on a v4 repo. Same stance as
+	// AdoptClusters' / RegisterCluster's / UnadoptCluster's v4 probes.
+	v4Repo, v4ProbeErr := o.isV4Repo(ctx)
+	if v4ProbeErr != nil {
+		return nil, fmt.Errorf("Sharko stopped before changing a cluster's addons: %w", v4ProbeErr)
+	}
+	if v4Repo {
+		return o.updateClusterAddonsV4(ctx, name, addons, autoMergeOverride, dryRun, result)
 	}
 
 	// Referential-integrity guard (V2-cleanup-32): every addon name in the
