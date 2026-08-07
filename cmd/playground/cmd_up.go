@@ -553,14 +553,19 @@ spec:
 
 	fmt.Println("    Bootstrapping Gitea (creating admin user)...")
 
-	// Create admin user (idempotent — ignore "user already exists" error)
+	// Create admin user (idempotent — ignore "user already exists" error).
 	// Run as the 'git' user (uid 1000) because Gitea CLI refuses to run as root.
+	//
+	// Re-running over a half-built playground (a previous run created the
+	// user, then got interrupted before finishing bootstrap) hits this on
+	// every fresh run — execGiteaCmd itself recognizes gitea's "already
+	// exists" outcome and fails fast (no 10-attempt retry loop) rather than
+	// treating it like the DB-not-ready race the retry loop is for. We
+	// still classify the error here and treat it as success — the user is
+	// there, which is what we need.
 	createUserCmd := fmt.Sprintf("gitea admin user create --admin --username %s --password %s --email %s --must-change-password=false",
 		GiteaAdminUser, GiteaAdminPassword, GiteaAdminEmail)
 	_, createErr := execGiteaCmd(kubeconfigPath, Namespace, ContextHub, createUserCmd)
-	// The retry helper already absorbed the race, but the create command may still
-	// report "already exists" on a re-run (fresh clusters won't hit this).
-	// We treat that as success — the user is there, which is what we need.
 	if createErr != nil {
 		// Check if it's the idempotent "already exists" case
 		errStr := createErr.Error()
@@ -573,6 +578,14 @@ spec:
 	// Generate API token
 	fmt.Println("    Generating Gitea API token...")
 	// Run as the 'git' user (uid 1000) because Gitea CLI refuses to run as root.
+	//
+	// Unlike admin user create above, a token-name collision on a re-run is
+	// NOT treated as success: gitea only ever shows a token's raw value at
+	// creation time, so an "already exists" error here means the earlier
+	// run's token is unrecoverable, not redundant. execGiteaCmd's fail-fast
+	// on "already exists" output still helps this step (a real name clash
+	// surfaces immediately instead of after 10 retries), it just can't be
+	// swallowed into a success the way the idempotent create-user case can.
 	generateTokenCmd := fmt.Sprintf("gitea admin user generate-access-token --username %s --token-name sharko-playground --scopes 'write:repository,write:user' --raw",
 		GiteaAdminUser)
 	tokenOut, tokenErr := execGiteaCmd(kubeconfigPath, Namespace, ContextHub, generateTokenCmd)

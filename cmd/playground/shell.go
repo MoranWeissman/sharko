@@ -228,9 +228,34 @@ func isLocalPortInUse(port int) bool {
 	return false
 }
 
+// isAlreadyExistsOutput reports whether the combined stdout/stderr of a
+// gitea CLI command signals that the thing it tried to create already
+// exists (e.g. re-running admin-user bootstrap over a half-built
+// playground). That is a deterministic business-logic outcome from gitea
+// itself, not the DB-not-ready startup race execGiteaCmd's retry loop
+// exists for — retrying it can never turn "already exists" into "doesn't
+// exist" — so callers use this to fail fast instead of burning through the
+// retry budget.
+//
+// Matched loosely (case-insensitive "already exist" rather than one exact
+// sentence) because different gitea subcommands phrase it slightly
+// differently — e.g. gitea's own admin-user error is "user already exists
+// [name: ...]".
+func isAlreadyExistsOutput(stdout, stderr string) bool {
+	combined := strings.ToLower(stdout + " " + stderr)
+	return strings.Contains(combined, "already exist")
+}
+
 // execGiteaCmd runs a gitea CLI command inside the gitea pod as the git user,
 // retrying to absorb the DB-not-ready startup race (sqlite single-writer vs the
 // server's own boot-time init). Returns stdout on success.
+//
+// A command that fails because the resource it tried to create already
+// exists (isAlreadyExistsOutput) is NOT retried — that's not the transient
+// race this loop is for, and retrying it just burns ~10*6s for a result
+// that can't change. It's still returned as an error; callers that treat
+// "already exists" as an idempotent success (e.g. admin user create)
+// classify it themselves from the returned error text.
 func execGiteaCmd(kubeconfigPath, namespace, kubectlContext, giteaCmd string) (string, error) {
 	const maxAttempts = 10
 	const delay = 6 * time.Second
@@ -244,9 +269,12 @@ func execGiteaCmd(kubeconfigPath, namespace, kubectlContext, giteaCmd string) (s
 			return stdout, nil
 		}
 		lastStdout, lastStderr, lastErr = stdout, stderr, err
+		if isAlreadyExistsOutput(stdout, stderr) {
+			return stdout, fmt.Errorf("gitea exec: %w (stdout=%s stderr=%s)", err, stdout, stderr)
+		}
 		// stderr from kubectl exec is often empty on a swallowed pod error, so log attempt.
 		fmt.Printf("      gitea exec attempt %d/%d failed (retrying in %s): %v %s\n", attempt, maxAttempts, delay, err, stderr)
 		time.Sleep(delay)
 	}
-	return lastStdout, fmt.Errorf("gitea exec failed after %d attempts: %w (stderr=%s)", maxAttempts, lastErr, lastStderr)
+	return lastStdout, fmt.Errorf("gitea exec failed after %d attempts: %w (stdout=%s stderr=%s)", maxAttempts, lastErr, lastStdout, lastStderr)
 }
