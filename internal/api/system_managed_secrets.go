@@ -57,6 +57,17 @@ type managedSecretsResponse struct {
 	// arrays sees no change at all.
 	Rows    []managedSecretRow    `json:"rows"`
 	Engines managedSecretsEngines `json:"engines"`
+	// OrphanedSecrets (leftover-secrets S1) is every leftover values secret
+	// the addon-values engine's own scan passes have found: a live secret
+	// carrying BOTH Sharko's managed-by label AND the sharko.dev/addon
+	// provenance annotation, that no current desired-state plan claims any
+	// more. Built purely from SecretReconciler.OrphanedSecrets() — an
+	// in-memory read, no K8s call of its own, and not gated on a live
+	// Git/ArgoCD connection the way ClusterConnectionSecrets/
+	// AddonValuesSecrets are (the scan that found these already ran
+	// separately, on the engine's own schedule). Also merged into Rows
+	// (State "orphaned", Kind "values") like every other row kind.
+	OrphanedSecrets []orphanedSecretRow `json:"orphaned_secrets"`
 	// AddonValuesSecretSource is the real, human-readable name of the
 	// backend addon-values secrets are compared against — "AWS Secrets
 	// Manager", "a Kubernetes Secret", etc, or the generic "secrets store"
@@ -212,6 +223,34 @@ type addonValuesSecretRow struct {
 	ConsecutiveFailures int `json:"consecutive_failures,omitempty"`
 }
 
+// orphanedSecretRow (leftover-secrets S1) is one row of orphaned_secrets —
+// one row per leftover values secret the addon-values engine's own scan
+// found: on the cluster, carrying Sharko's labels, but claimed by nothing
+// in the current desired-state plan.
+type orphanedSecretRow struct {
+	Cluster         string `json:"cluster"`
+	SecretName      string `json:"secret_name,omitempty"`
+	SecretNamespace string `json:"secret_namespace,omitempty"`
+	// Addon is the addon name read off the secret's own provenance
+	// annotation at scan time — omitted only if a future scan somehow
+	// produces a record with an empty Addon, which the scan itself never
+	// does (a secret with no addon annotation is never reported in the
+	// first place — see internal/secrets/orphans.go's header comment).
+	Addon string `json:"addon,omitempty"`
+	// State is always the literal "orphaned" — its own row kind carries no
+	// other state; the field exists so a caller reading Rows (which merges
+	// every kind onto one shape) never has to special-case this kind to
+	// find its state.
+	State string `json:"state"`
+	// Source (S1) names the real backend addon-values secrets are compared
+	// against — same field, same meaning, as addonValuesSecretRow.Source.
+	Source string `json:"source"`
+	// LastChecked is RFC3339 — when the scan that most recently confirmed
+	// this secret is still an orphan ran. Never omitted in practice: a
+	// record only exists because a scan found it.
+	LastChecked string `json:"last_checked,omitempty"`
+}
+
 // managedSecretRow (P3-E, E2) is one row of the merged Rows array — one
 // connectionSecretRow or addonValuesSecretRow, tagged with Kind and
 // reshaped onto a single flat struct so a caller renders one table instead
@@ -270,12 +309,14 @@ const (
 
 // managedSecretStateRank is the worst-first order the System page's own
 // StatusMark.statusSortRank uses (ui/src/components/resource/StatusMark.tsx)
-// — reordered for G3 (gitops-proud P4-G): missing first (nothing exists to
-// Sync onto — a harder stop than a wrong value Sync can overwrite), then
-// out_of_sync (a real, confirmed mismatch), then foreign (a boundary worth
-// knowing about but not damage — kept in the same relative seat the old
-// table gave it, right after the two real comparisons; nothing in the old
-// order argued for moving it), then a FAILED check (see
+// — reordered for G3 (gitops-proud P4-G) and again for leftover-secrets S1:
+// missing first (nothing exists to Sync onto — a harder stop than a wrong
+// value Sync can overwrite), then out_of_sync (a real, confirmed mismatch),
+// then orphaned (a real, confirmed leftover — Sharko found a secret nothing
+// claims any more; ranked right after the two real comparisons, ahead of
+// foreign, because an orphan has a concrete fix Sharko can offer — delete
+// it — where a foreign row has none), then foreign (a boundary worth
+// knowing about but not damage), then a FAILED check (see
 // managedSecretCheckFailedRank below), then a genuinely never-checked row,
 // in_sync last. Kept in exact lockstep with the UI table on purpose: the
 // merged Rows array is meant to read in the same order the page itself
@@ -283,11 +324,12 @@ const (
 var managedSecretStateRank = map[string]int{
 	"missing":     0,
 	"out_of_sync": 1,
-	"foreign":     2,
+	"orphaned":    2,
+	"foreign":     3,
 	// "unknown" WITHOUT a check error ("not checked yet") ranks here — a
 	// FAILED check outranks it by one slot, see managedSecretCheckFailedRank.
-	"unknown": 4,
-	"in_sync": 5,
+	"unknown": 5,
+	"in_sync": 6,
 }
 
 // managedSecretCheckFailedRank is where a row whose last check genuinely
@@ -296,7 +338,7 @@ var managedSecretStateRank = map[string]int{
 // check is Sharko attempting and hitting a wall; a never-checked row is
 // Sharko not having gotten to it yet — the first is the nearer, more
 // actionable "Sharko doesn't know".
-const managedSecretCheckFailedRank = 3
+const managedSecretCheckFailedRank = 4
 
 // managedSecretStateSortRank returns a row's sort weight. A state the rank
 // table doesn't recognize reads as "unknown" — the same fallback
@@ -315,12 +357,13 @@ func managedSecretStateSortRank(state string, hasCheckError bool) int {
 	return rank
 }
 
-// buildManagedSecretRows merges the two already-built per-kind arrays into
-// one flat, worst-first-sorted list (E2). Called AFTER
-// buildConnectionSecretRows/buildAddonValuesSecretRows so it never
-// recomputes state or does any I/O of its own — a pure reshape + sort.
-func buildManagedSecretRows(conn []connectionSecretRow, values []addonValuesSecretRow) []managedSecretRow {
-	rows := make([]managedSecretRow, 0, len(conn)+len(values))
+// buildManagedSecretRows merges the three already-built per-kind arrays
+// into one flat, worst-first-sorted list (E2, extended for leftover-secrets
+// S1). Called AFTER buildConnectionSecretRows/buildAddonValuesSecretRows/
+// buildOrphanedSecretRows so it never recomputes state or does any I/O of
+// its own — a pure reshape + sort.
+func buildManagedSecretRows(conn []connectionSecretRow, values []addonValuesSecretRow, orphaned []orphanedSecretRow) []managedSecretRow {
+	rows := make([]managedSecretRow, 0, len(conn)+len(values)+len(orphaned))
 	for _, r := range conn {
 		rows = append(rows, managedSecretRow{
 			Kind:             managedSecretKindConnection,
@@ -354,6 +397,22 @@ func buildManagedSecretRows(conn []connectionSecretRow, values []addonValuesSecr
 			LastChecked:         r.LastChecked,
 			LastCheckError:      r.LastCheckError,
 			LastRepaired:        r.LastRepaired,
+		})
+	}
+	for _, r := range orphaned {
+		rows = append(rows, managedSecretRow{
+			Kind:      managedSecretKindValues,
+			Name:      r.SecretName,
+			Namespace: r.SecretNamespace,
+			Cluster:   r.Cluster,
+			Addon:     r.Addon,
+			Source:    r.Source,
+			State:     r.State,
+			// An orphan never self-heals — there is no plan claiming it, so
+			// there is nothing for the engine to converge it back toward.
+			// The only future it has is the operator-gated delete.
+			SelfHeals:   false,
+			LastChecked: r.LastChecked,
 		})
 	}
 	sortManagedSecretRowsWorstFirst(rows)
@@ -517,7 +576,7 @@ var addonValuesSecretRepairDetail = map[string]string{
 // @Security BearerAuth
 // @Param cluster query string false "Rows filter: exact cluster name match"
 // @Param addon query string false "Rows filter: exact addon name match (values rows only — connection rows have no addon and never match a non-empty value)"
-// @Param state query string false "Rows filter: exact state match (in_sync, out_of_sync, missing, unknown, foreign)"
+// @Param state query string false "Rows filter: exact state match (in_sync, out_of_sync, missing, unknown, foreign, orphaned)"
 // @Param kind query string false "Rows filter: exact kind match (connection, values)"
 // @Param source query string false "Rows filter: exact source match (e.g. git, AWS Secrets Manager)"
 // @Param page query int false "Rows paging: page number, default 1"
@@ -533,6 +592,7 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 	resp := managedSecretsResponse{
 		ClusterConnectionSecrets: []connectionSecretRow{},
 		AddonValuesSecrets:       []addonValuesSecretRow{},
+		OrphanedSecrets:          []orphanedSecretRow{},
 		Rows:                     []managedSecretRow{},
 	}
 
@@ -541,6 +601,11 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 	resp.Engines.ClusterConnection = s.clusterConnectionEngineInfo()
 	resp.Engines.AddonValues = s.addonValuesEngineInfo(r.Context())
 	resp.AddonValuesSecretSource = s.addonValuesSecretSourceLabel()
+	// Orphaned secrets (leftover-secrets S1) are a pure in-memory read on
+	// the reconciler's OWN scan results — no K8s call, no dependency on a
+	// live Git/ArgoCD connection, so this is built here alongside the
+	// engines section rather than gated behind the cluster-list read below.
+	resp.OrphanedSecrets = s.buildOrphanedSecretRows()
 
 	gp, gpErr := s.connSvc.GetActiveGitProvider()
 	ac, acErr := s.connSvc.GetActiveArgocdClient()
@@ -587,7 +652,7 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 // returns, so a caller paging through this endpoint sees the same header
 // contract regardless of which path produced the response.
 func (s *Server) respondManagedSecrets(w http.ResponseWriter, r *http.Request, resp managedSecretsResponse) {
-	rows := buildManagedSecretRows(resp.ClusterConnectionSecrets, resp.AddonValuesSecrets)
+	rows := buildManagedSecretRows(resp.ClusterConnectionSecrets, resp.AddonValuesSecrets, resp.OrphanedSecrets)
 	rows = filterManagedSecretRows(rows, parseManagedSecretRowFilters(r))
 
 	p := parsePagination(r)
@@ -1026,6 +1091,32 @@ func addonValuesSecretCheckFailureSentence(errMsg string) string {
 func (idx repairIndex) lastAddonValuesSecretRepair(clusterName, addonName string) (secretRepair, bool) {
 	r, ok := idx.values[fmt.Sprintf("cluster:%s/addon:%s", clusterName, addonName)]
 	return r, ok
+}
+
+// buildOrphanedSecretRows projects the addon-values engine's in-memory
+// orphan-scan snapshot (leftover-secrets S1) into the response shape — no
+// K8s call, no dependency on a live Git/ArgoCD connection: this reads what
+// the reconciler's own scan passes already found (internal/secrets/
+// orphans.go), the same "list is a pure in-memory read" rule
+// buildAddonValuesSecretRows follows for the reconciler's item records.
+func (s *Server) buildOrphanedSecretRows() []orphanedSecretRow {
+	rows := make([]orphanedSecretRow, 0)
+	if s.secretReconciler == nil {
+		return rows
+	}
+	source := s.addonValuesSecretSourceLabel()
+	for _, o := range s.secretReconciler.OrphanedSecrets() {
+		rows = append(rows, orphanedSecretRow{
+			Cluster:         o.Cluster,
+			SecretName:      o.Name,
+			SecretNamespace: o.Namespace,
+			Addon:           o.Addon,
+			State:           "orphaned",
+			Source:          source,
+			LastChecked:     o.LastChecked.UTC().Format(time.RFC3339),
+		})
+	}
+	return rows
 }
 
 // clusterConnectionEngineInfo reports the cluster-secret reconciler's own

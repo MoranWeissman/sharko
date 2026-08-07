@@ -139,7 +139,17 @@ type fakeReconciler struct {
 	lastError        string
 	lastErrorCluster string
 	lastErrorAt      time.Time
+
+	// orphanedSecrets / deleteOrphanErr / deleteOrphanCalls (leftover-
+	// secrets S1) let tests seed OrphanedSecrets' return value and
+	// configure/assert DeleteOrphanedSecret calls.
+	orphanedSecrets   []models.OrphanedSecret
+	deleteOrphanErr   error
+	deleteOrphanCalls []orphanDeleteCallArgs
 }
+
+// orphanDeleteCallArgs records one DeleteOrphanedSecret call for assertions.
+type orphanDeleteCallArgs struct{ cluster, namespace, name string }
 
 func (r *fakeReconciler) Trigger() { r.triggered = true }
 
@@ -202,6 +212,15 @@ func (r *fakeReconciler) CheckAll(_ context.Context) error {
 	defer r.checkAllMu.Unlock()
 	r.checkedAll++
 	return nil
+}
+
+func (r *fakeReconciler) OrphanedSecrets() []models.OrphanedSecret {
+	return r.orphanedSecrets
+}
+
+func (r *fakeReconciler) DeleteOrphanedSecret(_ context.Context, cluster, namespace, name string) error {
+	r.deleteOrphanCalls = append(r.deleteOrphanCalls, orphanDeleteCallArgs{cluster, namespace, name})
+	return r.deleteOrphanErr
 }
 
 // ---------------------------------------------------------------------------

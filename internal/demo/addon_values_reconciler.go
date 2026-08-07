@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
@@ -81,6 +82,13 @@ type demoAddonValuesReconciler struct {
 	lastErrorCluster string
 	lastErrorMsg     string
 	lastErrorAt      time.Time
+
+	// orphans (leftover-secrets S1) holds the seeded leftover-secret
+	// records, keyed by cluster — mirrors secrets.Reconciler.orphanRecords'
+	// shape so this demo exercises the same OrphanedSecrets/
+	// DeleteOrphanedSecret contract the real engine does. Guarded by mu,
+	// same as items/valid above — a small demo struct, one lock is enough.
+	orphans map[string][]models.OrphanedSecret
 }
 
 // addonValuesAgeOffsets is the "how long ago was this last checked" spread
@@ -225,6 +233,32 @@ func newDemoAddonValuesReconciler(estate *GeneratedEstate, defs map[string]orche
 			}
 
 			i++
+		}
+	}
+
+	// leftover-secrets S1 — seed one believable leftover secret so the
+	// Managed Secrets page has a real "orphaned" row to show, not zero.
+	// The story: "redis-ha" used to be an addon in the catalog with its own
+	// push definition; the catalog entry was removed (or hand-deleted) at
+	// some point, but nobody ever asked Sharko to clean up the Secret it
+	// had already written — it is still sitting on the first cluster,
+	// still carrying Sharko's labels. "redis-ha" deliberately appears
+	// nowhere in demoGeneratedAddonSecretDefs or any cluster's Addons map,
+	// so it reads the same way a real hand-deleted catalog entry would.
+	// Deterministic (first cluster in sorted order, fixed namespace/name/
+	// age), not random, matching every other seed in this function.
+	if len(clusters) > 0 {
+		orphanCluster := clusters[0].Name
+		r.orphans = map[string][]models.OrphanedSecret{
+			orphanCluster: {
+				{
+					Cluster:     orphanCluster,
+					Namespace:   "data",
+					Name:        "redis-ha-auth",
+					Addon:       "redis-ha",
+					LastChecked: now.Add(-47 * time.Minute),
+				},
+			},
 		}
 	}
 
@@ -456,4 +490,68 @@ func (r *demoAddonValuesReconciler) SyncOne(_ context.Context, cluster, addon st
 	}
 
 	return outcome, nil
+}
+
+// OrphanedSecrets (leftover-secrets S1) returns a deterministic, sorted
+// snapshot of every seeded leftover-secret record — the demo counterpart to
+// secrets.Reconciler.OrphanedSecrets, same sort order (cluster, then
+// namespace, then name).
+func (r *demoAddonValuesReconciler) OrphanedSecrets() []models.OrphanedSecret {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]models.OrphanedSecret, 0)
+	for _, list := range r.orphans {
+		out = append(out, list...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Cluster != out[j].Cluster {
+			return out[i].Cluster < out[j].Cluster
+		}
+		if out[i].Namespace != out[j].Namespace {
+			return out[i].Namespace < out[j].Namespace
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// DeleteOrphanedSecret (leftover-secrets S1) is the demo counterpart to
+// secrets.Reconciler.DeleteOrphanedSecret: removes the seeded record — so
+// the row genuinely disappears from the next read, exactly like a real
+// delete (S3's "actions genuinely change what the next read reports" rule,
+// applied to this new one too) — and writes the SAME audit entry shape the
+// real handler produces (event orphaned_secret_deleted, resource
+// "cluster:<name>", detail "deleted leftover secret <ns>/<name>"), so a
+// walk through demo mode teaches the real audit trail, not a
+// demo-only approximation of it.
+func (r *demoAddonValuesReconciler) DeleteOrphanedSecret(_ context.Context, cluster, namespace, name string) error {
+	r.mu.Lock()
+	list := r.orphans[cluster]
+	idx := -1
+	for i, rec := range list {
+		if rec.Namespace == namespace && rec.Name == name {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		r.mu.Unlock()
+		return fmt.Errorf("no leftover secret is on record for cluster %q, namespace %q, name %q", cluster, namespace, name)
+	}
+	r.orphans[cluster] = append(list[:idx:idx], list[idx+1:]...)
+	r.mu.Unlock()
+
+	if r.auditLog != nil {
+		r.auditLog.Add(audit.Entry{
+			Level:    "info",
+			Event:    "orphaned_secret_deleted",
+			User:     "sharko",
+			Action:   "delete",
+			Resource: fmt.Sprintf("cluster:%s", cluster),
+			Source:   "reconciler",
+			Result:   "success",
+			Detail:   fmt.Sprintf("deleted leftover secret %s/%s", namespace, name),
+		})
+	}
+	return nil
 }

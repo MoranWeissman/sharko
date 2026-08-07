@@ -4013,6 +4013,96 @@
                 }
             }
         },
+        "/clusters/{name}/orphaned-secrets/{namespace}/{secret}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Deletes one leftover values secret the addon-values engine found on a cluster — a Secret Sharko once wrote whose catalog push definition no longer exists. Never auto-deleted: this is the only path that removes one, and it re-verifies the secret is still an unclaimed, Sharko-owned orphan (against a fresh read of the catalog and the live secret's own labels/annotations) immediately before deleting — a reclaim or an ownership-marker change since the last scan refuses the delete instead of guessing.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "secrets"
+                ],
+                "summary": "Delete a leftover addon-values secret",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Namespace the secret lives in",
+                        "name": "namespace",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Secret name",
+                        "name": "secret",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deleted",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.orphanedSecretDeleteResult"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — requires operator role or higher",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "No leftover secret is on record for that cluster, namespace, and name",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "This secret is claimed by the catalog again, or its ownership marker changed since it was found — nothing was deleted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "Could not delete — no Git connection, cluster unreachable, or the delete itself failed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "The addon-values secrets engine is not running on this server",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/clusters/{name}/reconcile": {
             "post": {
                 "security": [
@@ -8057,7 +8147,7 @@
                     },
                     {
                         "type": "string",
-                        "description": "Rows filter: exact state match (in_sync, out_of_sync, missing, unknown, foreign)",
+                        "description": "Rows filter: exact state match (in_sync, out_of_sync, missing, unknown, foreign, orphaned)",
                         "name": "state",
                         "in": "query"
                     },
@@ -12804,6 +12894,13 @@
                 "engines": {
                     "$ref": "#/definitions/internal_api.managedSecretsEngines"
                 },
+                "orphaned_secrets": {
+                    "description": "OrphanedSecrets (leftover-secrets S1) is every leftover values secret\nthe addon-values engine's own scan passes have found: a live secret\ncarrying BOTH Sharko's managed-by label AND the sharko.dev/addon\nprovenance annotation, that no current desired-state plan claims any\nmore. Built purely from SecretReconciler.OrphanedSecrets() — an\nin-memory read, no K8s call of its own, and not gated on a live\nGit/ArgoCD connection the way ClusterConnectionSecrets/\nAddonValuesSecrets are (the scan that found these already ran\nseparately, on the engine's own schedule). Also merged into Rows\n(State \"orphaned\", Kind \"values\") like every other row kind.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.orphanedSecretRow"
+                    }
+                },
                 "rows": {
                     "description": "Rows (P3-E, E2) is both per-kind arrays merged into one list, shaped\nlike what the System page's table renders, worst-first ordered, and\nthe only part of this response that honors this request's filter\n(?cluster=, ?addon=, ?state=, ?kind=, ?source=) and paging (?page=,\n?per_page=) query params — see buildManagedSecretRows and\nfilterManagedSecretRows. ClusterConnectionSecrets/AddonValuesSecrets\nabove stay full and unfiltered on every request: this field is\nstrictly additive, so an existing caller reading the two per-kind\narrays sees no change at all.",
                     "type": "array",
@@ -12838,6 +12935,56 @@
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_api.orphanedSecretDeleteResult": {
+            "type": "object",
+            "properties": {
+                "cluster": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.orphanedSecretRow": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "description": "Addon is the addon name read off the secret's own provenance\nannotation at scan time — omitted only if a future scan somehow\nproduces a record with an empty Addon, which the scan itself never\ndoes (a secret with no addon annotation is never reported in the\nfirst place — see internal/secrets/orphans.go's header comment).",
+                    "type": "string"
+                },
+                "cluster": {
+                    "type": "string"
+                },
+                "last_checked": {
+                    "description": "LastChecked is RFC3339 — when the scan that most recently confirmed\nthis secret is still an orphan ran. Never omitted in practice: a\nrecord only exists because a scan found it.",
+                    "type": "string"
+                },
+                "secret_name": {
+                    "type": "string"
+                },
+                "secret_namespace": {
+                    "type": "string"
+                },
+                "source": {
+                    "description": "Source (S1) names the real backend addon-values secrets are compared\nagainst — same field, same meaning, as addonValuesSecretRow.Source.",
+                    "type": "string"
+                },
+                "state": {
+                    "description": "State is always the literal \"orphaned\" — its own row kind carries no\nother state; the field exists so a caller reading Rows (which merges\nevery kind onto one shape) never has to special-case this kind to\nfind its state.",
+                    "type": "string"
                 }
             }
         },
