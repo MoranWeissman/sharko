@@ -214,8 +214,10 @@ func TestPerClusterAddonLifecycle(t *testing.T) {
 
 	// Pre-seed the mock so the upgrade subtest has a parseable catalog
 	// and the disable dry-run preview matches what a real workflow would
-	// see (file already present → action=update).
-	seedMockGit(t, ghmock)
+	// see (file already present → action=update). Seed under the REAL
+	// kind cluster names (target1Name/target2Name), not literal
+	// "target-1"/"target-2" — see seedMockGit's doc comment.
+	seedMockGit(t, ghmock, target1Name, target2Name)
 
 	// ----------------------------------------------------------------------
 	// Subtests share the topology + sharko above. Run sequentially because
@@ -451,16 +453,29 @@ func registerConnection(t *testing.T, sharko *harness.Sharko, admin *harness.Cli
 // UpgradeAddonGlobally subtest (which reads the catalog from main) and
 // for any future live enable/disable path.
 //
+// target1Name/target2Name MUST be the real kind cluster names
+// (clusters[1].Name / clusters[2].Name from ProvisionTopology — e.g.
+// "sharko-e2e-target-1-<runID>"), not the literal strings "target-1" /
+// "target-2". EnableAddon/DisableAddon (internal/orchestrator/
+// addon_ops.go) read configuration/addons-clusters-values/<req.Cluster>.
+// yaml using the cluster name the caller actually sent, which is
+// target1Name/target2Name — a fixture seeded under the literal
+// "target-1.yaml" never matches that path, so every non-preview read
+// 404s. This was a pre-existing mismatch masked by the earlier v3
+// migration-gate 409 (which fired before the code ever got far enough
+// to read this file); fixing the gate surfaced it (kind CI run
+// 31213996319).
+//
 // Deliberately does NOT seed managed-clusters.yaml — see the fixtures
 // const block above for why: that exact path doubles as the v3-format
 // marker the v4 migration gate checks for, and none of this test's
 // subtests actually need the file to exist.
-func seedMockGit(t *testing.T, mock *harness.MockGitProvider) {
+func seedMockGit(t *testing.T, mock *harness.MockGitProvider, target1Name, target2Name string) {
 	t.Helper()
 	files := map[string][]byte{
-		pathCatalog:                          []byte(addonsCatalogYAML),
-		pathClusterValues + "/target-1.yaml": []byte(target1ValuesYAML),
-		pathClusterValues + "/target-2.yaml": []byte(target2ValuesYAML),
+		pathCatalog: []byte(addonsCatalogYAML),
+		pathClusterValues + "/" + target1Name + ".yaml": []byte(target1ValuesYAML),
+		pathClusterValues + "/" + target2Name + ".yaml": []byte(target2ValuesYAML),
 	}
 	if err := mock.BatchCreateFiles(t.Context(), files, "main", "seed: e2e fixtures"); err != nil {
 		t.Fatalf("seedMockGit: %v", err)
