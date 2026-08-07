@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
@@ -63,7 +64,16 @@ func (s *Server) handleRefreshAddonValuesSecret(w http.ResponseWriter, r *http.R
 
 	outcome, err := s.secretReconciler.CheckOne(r.Context(), cluster, addon)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		// H1 (code review): CheckOne can return a wrapped stage error
+		// (credentials, connect, provider fetch, ...) whose text comes from
+		// a credentials or secrets-provider SDK — the reconciler's own doc
+		// on LastItemError already says callers MUST NOT render that text.
+		// This used to pass err.Error() straight to writeError. The raw
+		// detail is logged here, server-side only; the response body gets
+		// the canned sentence.
+		slog.Warn("[secrets] could not check one addon-values secret",
+			"cluster", cluster, "addon", addon, "error", err, "component", "api")
+		writeError(w, http.StatusUnprocessableEntity, addonValuesSecretCheckFailureSentence(err.Error()))
 		return
 	}
 
@@ -115,7 +125,12 @@ func (s *Server) handleSyncAddonValuesSecret(w http.ResponseWriter, r *http.Requ
 
 	outcome, err := s.secretReconciler.SyncOne(r.Context(), cluster, addon)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		// H1 (code review): same fix as Refresh above, sync-side twin
+		// sentence — SyncOne's wrapped errors are never safe to render
+		// straight to the browser. Raw detail goes to the server log only.
+		slog.Warn("[secrets] could not sync one addon-values secret",
+			"cluster", cluster, "addon", addon, "error", err, "component", "api")
+		writeError(w, http.StatusUnprocessableEntity, addonValuesSecretSyncFailureSentence(err.Error()))
 		return
 	}
 

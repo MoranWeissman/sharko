@@ -389,13 +389,12 @@ levers:
   `app.kubernetes.io/managed-by` discipline.
 - [`secret-push-silently-failed.md`](secret-push-silently-failed.md)
   — the P0 sibling "Warn-but-proceed silently" pattern. Different
-  surface, related discipline. Both are flagged in the
-  [logging audit punch list](../developer-guide/logging-audit-punchlist.md).
+  surface, related discipline. Both are flagged by the V2-2.3 logging
+  audit.
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
 - [`../developer-guide/logging.md`](../developer-guide/logging.md) —
-  `request_id` correlation pattern.
-- [`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md)
-  — flags this and other Warn-but-proceed patterns for audit-entry
+  `request_id` correlation pattern. Flags this and other
+  Warn-but-proceed patterns for audit-entry
   emission.
 
 ## Escalation

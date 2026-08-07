@@ -139,9 +139,27 @@ type fakeReconciler struct {
 	lastError        string
 	lastErrorCluster string
 	lastErrorAt      time.Time
+
+	// orphanedSecrets / deleteOrphanErr / deleteOrphanCalls (leftover-
+	// secrets S1) let tests seed OrphanedSecrets' return value and
+	// configure/assert DeleteOrphanedSecret calls.
+	orphanedSecrets   []models.OrphanedSecret
+	deleteOrphanErr   error
+	deleteOrphanCalls []orphanDeleteCallArgs
+
+	// disabled (M6, code review) lets a test simulate the addon-values
+	// engine's off switch. Zero value false means IsEnabled reports true —
+	// every existing test that never sets this keeps seeing an enabled
+	// engine, matching the real Reconciler's nil-enabledFn default.
+	disabled bool
 }
 
+// orphanDeleteCallArgs records one DeleteOrphanedSecret call for assertions.
+type orphanDeleteCallArgs struct{ cluster, namespace, name string }
+
 func (r *fakeReconciler) Trigger() { r.triggered = true }
+
+func (r *fakeReconciler) IsEnabled(_ context.Context) bool { return !r.disabled }
 
 func (r *fakeReconciler) GetStats() interface{} { return r.stats }
 
@@ -202,6 +220,15 @@ func (r *fakeReconciler) CheckAll(_ context.Context) error {
 	defer r.checkAllMu.Unlock()
 	r.checkedAll++
 	return nil
+}
+
+func (r *fakeReconciler) OrphanedSecrets() []models.OrphanedSecret {
+	return r.orphanedSecrets
+}
+
+func (r *fakeReconciler) DeleteOrphanedSecret(_ context.Context, cluster, namespace, name string) error {
+	r.deleteOrphanCalls = append(r.deleteOrphanCalls, orphanDeleteCallArgs{cluster, namespace, name})
+	return r.deleteOrphanErr
 }
 
 // ---------------------------------------------------------------------------
@@ -615,6 +642,43 @@ func TestHandleCheckSecrets_NotConfigured(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", w.Code)
+	}
+}
+
+// TestHandleCheckSecrets_EngineDisabled_Returns409NoAuditEntry is M6's pin
+// (code review): before this fix, a disabled engine still got a 202 and an
+// audit entry claiming a check started (written BEFORE the goroutine ran),
+// and the goroutine's own ErrReconcilerDisabled only reached a log line.
+// Now the engine's enabled state is checked SYNCHRONOUSLY, before either
+// the response or the audit entry: disabled means 409, no CheckAll call,
+// and no audit entry saying a check happened.
+func TestHandleCheckSecrets_EngineDisabled_Returns409NoAuditEntry(t *testing.T) {
+	srv := newTestServer()
+	rec := &fakeReconciler{disabled: true}
+	srv.SetSecretReconciler(rec)
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/check", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", w.Code, w.Body.String())
+	}
+
+	// Give any stray goroutine a moment to prove it did NOT run.
+	time.Sleep(20 * time.Millisecond)
+	rec.checkAllMu.Lock()
+	n := rec.checkedAll
+	rec.checkAllMu.Unlock()
+	if n != 0 {
+		t.Errorf("CheckAll called %d times on a disabled engine, want 0", n)
+	}
+
+	for _, e := range srv.AuditLog().List(0) {
+		if e.Event == "addon_values_secret_check_triggered" {
+			t.Errorf("an audit entry claims a check started on a disabled engine: %+v", e)
+		}
 	}
 }
 

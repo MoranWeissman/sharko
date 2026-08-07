@@ -209,8 +209,8 @@ brief includes a §Documentation update task.
      2. `actions/setup-node@v4` with `node-version: 20` + `cache: 'npm'`
         + `cache-dependency-path: 'scripts/package-lock.json'`.
      3. `npm ci --prefix scripts`
-     4. **Configure git author:** `git config user.name 'Moran Weissman'` +
-        `git config user.email 'moran.weissman@gmail.com'` — matches
+     4. **Configure git author:** `git config user.name 'Your Name'` +
+        `git config user.email 'you@example.com'` — matches
         the repo's git-author convention (CLAUDE.md).
      5. **Run scanner** with `GITHUB_TOKEN` set:
         ```yaml
@@ -345,7 +345,7 @@ brief includes a §Documentation update task.
 
 ### Quality gates (run order)
 
-1. `cd /Users/weissmmo/projects/github-moran/sharko && npm install --prefix scripts --silent` — clean.
+1. `npm install --prefix scripts --silent` — clean.
 2. `node --check scripts/catalog-scan/pr-open.mjs` + 2 lib files — syntax OK.
 3. `node --test 'scripts/catalog-scan/**/*.test.mjs' 'scripts/catalog-scan.test.mjs'`
    — existing 33 + new ~17 = ~50 tests pass.
@@ -560,8 +560,8 @@ scanner plugin. Closes Epic V123-3.
      Concurrency `group: catalog-scan, cancel-in-progress: false`.
      Steps: actions/checkout@v4 (`fetch-depth: 0`), actions/setup-node@v4
      (Node 20, npm cache keyed on `scripts/package-lock.json`), `npm
-     ci --prefix scripts`, git config `Moran Weissman <moran.weissman@
-     gmail.com>`, scanner with `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN
+     ci --prefix scripts`, git config `Your Name <you@example.com>`,
+     scanner with `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN
      }}`, conditional `pr-open.mjs` only when `_dist/catalog-scan/
      changeset.json` exists. Top comment block documents the one-
      time label-creation step + first-run validation note.
@@ -621,8 +621,8 @@ rules).
 
 Quality gates run in the brief's documented order:
 
-1. `cd /Users/weissmmo/projects/github-moran/sharko && npm install
-   --prefix scripts --silent` — clean, no new deps, lock unchanged.
+1. `npm install --prefix scripts --silent` — clean, no new deps, lock
+   unchanged.
 2. `node --check` on the three new source files
    (`scripts/catalog-scan/pr-open.mjs`,
    `scripts/catalog-scan/lib/signals.mjs`,

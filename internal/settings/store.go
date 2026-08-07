@@ -493,3 +493,76 @@ func (s *Store) IsAddonValuesEngineEnabled(ctx context.Context) bool {
 	}
 	return defaultAddonValuesEngineEnabled
 }
+
+// ManagedSecretsSettings is the pair of settings GET /system/managed-secrets
+// needs (L14, code review): managed_cluster_self_heal and
+// addon_values_engine_enabled. Two different flags, but they live in the
+// SAME ConfigMap object — before GetManagedSecretsSettings existed, that
+// handler called IsManagedClusterSelfHealEnabled and
+// IsAddonValuesEngineEnabled separately, each doing its own live
+// s.cm.Read(ctx), which meant two full ConfigMap GETs against the
+// Kubernetes API for the identical object on every single request (this
+// endpoint's own 30-second auto-refresh, times however many browser tabs
+// have the page open).
+type ManagedSecretsSettings struct {
+	SelfHealEnabled          bool
+	AddonValuesEngineEnabled bool
+}
+
+// GetManagedSecretsSettings reads the ConfigMap ONCE and returns both
+// flags — same nil-safe, cache-on-error fallback contract as
+// IsManagedClusterSelfHealEnabled/IsAddonValuesEngineEnabled individually
+// (a read failure falls back to each flag's own last successfully-read
+// value, or the static default before any successful read has ever
+// happened). This does not add a new caching mechanism — it reuses the
+// existing per-field cache-on-error state these two settings already keep,
+// just seeded from one Read instead of two.
+func (s *Store) GetManagedSecretsSettings(ctx context.Context) ManagedSecretsSettings {
+	if s == nil {
+		return ManagedSecretsSettings{
+			SelfHealEnabled:          defaultManagedClusterSelfHeal,
+			AddonValuesEngineEnabled: defaultAddonValuesEngineEnabled,
+		}
+	}
+
+	data, err := s.cm.Read(ctx)
+	if err != nil {
+		s.cacheMu.RLock()
+		selfHeal, selfHealValid := s.cachedManagedClusterSelfHeal, s.cachedManagedClusterSelfHealValid
+		engine, engineValid := s.cachedAddonValuesEngineEnabled, s.cachedAddonValuesEngineEnabledValid
+		s.cacheMu.RUnlock()
+
+		out := ManagedSecretsSettings{
+			SelfHealEnabled:          defaultManagedClusterSelfHeal,
+			AddonValuesEngineEnabled: defaultAddonValuesEngineEnabled,
+		}
+		if selfHealValid {
+			out.SelfHealEnabled = selfHeal
+		}
+		if engineValid {
+			out.AddonValuesEngineEnabled = engine
+		}
+		slog.Warn("managed secrets settings: settings read failed, serving last-known values from cache",
+			"error", err, "cached_managed_cluster_self_heal", out.SelfHealEnabled,
+			"cached_addon_values_engine_enabled", out.AddonValuesEngineEnabled)
+		return out
+	}
+
+	selfHeal, ok := data[keyManagedClusterSelfHeal].(bool)
+	if !ok {
+		selfHeal = defaultManagedClusterSelfHeal
+	}
+	engine, ok := data[keyAddonValuesEngineEnabled].(bool)
+	if !ok {
+		engine = defaultAddonValuesEngineEnabled
+	}
+
+	s.cacheMu.Lock()
+	s.cachedManagedClusterSelfHeal = selfHeal
+	s.cachedManagedClusterSelfHealValid = true
+	s.cachedAddonValuesEngineEnabled = engine
+	s.cachedAddonValuesEngineEnabledValid = true
+	s.cacheMu.Unlock()
+
+	return ManagedSecretsSettings{SelfHealEnabled: selfHeal, AddonValuesEngineEnabled: engine}
+}

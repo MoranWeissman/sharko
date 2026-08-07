@@ -10,7 +10,7 @@
 > in [`../developer-guide/logging.md`](../developer-guide/logging.md)).
 > The bootstrap-admin-password emission site at
 > `internal/auth/store.go:634` is the canonical "headline finding" from
-> [`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md).
+> the V2-2.3 logging audit.
 > Re-verify when handler-chain order changes or new auth init call sites
 > appear in `internal/auth/`.
 
@@ -29,10 +29,8 @@ share the same diagnosis + mitigation:
    logs as plain-text during the bootstrap-init code path at
    `internal/auth/store.go:634`. The `RedactHandler` (V2-2.4) now
    collapses the value to `[REDACTED]`, but the call site is still
-   wrong (per the
-   [`logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md)
-   headline finding); a regression in the wrapper would re-expose admin
-   credentials.
+   wrong (per the V2-2.3 logging audit's headline finding); a
+   regression in the wrapper would re-expose admin credentials.
 2. **Kubeconfig / bearer-token / generic credential leak** — any
    credential-shaped value that bypasses the `RedactHandler`'s three
    detectors (attribute name patterns, JWT shape, base64 shape).
@@ -159,10 +157,9 @@ Common call sites by attribute key:
 | `"secret"` | `internal/orchestrator/secrets.go` | Addon secret value leaked |
 | `"data"` | various (Helm chart values, secret payloads) | Generic credential |
 
-Verify the call site against
-[`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md)
-to see whether the leak is the known headline finding (bootstrap admin
-password) or a new instance.
+Verify the call site against the known headline finding (bootstrap
+admin password, `internal/auth/store.go:634`) to see whether this is
+that same finding or a new instance.
 
 ### 3. Verify the `RedactHandler` is wired
 
@@ -485,9 +482,6 @@ back rotations on a credential whose log presence isn't fully purged.
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
 - [`../developer-guide/logging.md`](../developer-guide/logging.md) —
   V2-2.4 RedactHandler architecture and the slog handler chain order.
-- [`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md) —
-  the engineering punchlist that flagged the bootstrap admin password
-  emission as the headline finding.
 
 ## Escalation
 

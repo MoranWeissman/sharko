@@ -60,6 +60,9 @@ var HandlerTier = map[string]audit.Tier{
 	// operational, reaches a live remote cluster with real credentials.
 	"handleRefreshAddonValuesSecret": audit.Tier1,
 	"handleSyncAddonValuesSecret":    audit.Tier1,
+	// Leftover-secret delete (leftover-secrets S1) — same bucket: reaches a
+	// live remote cluster with real credentials, scoped to one secret.
+	"handleDeleteOrphanedSecret": audit.Tier1,
 
 	// Connection CRUD — Tier 1 because it manages Sharko-internal credentials, not values
 	"handleCreateConnection":    audit.Tier1,

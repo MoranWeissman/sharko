@@ -23,6 +23,7 @@ import type {
   DropLegacyLabelsResponse,
   DryRunResult,
   ManagedSecretsResponse,
+  OrphanedSecretDeleteResult,
   MigrateResult,
   MigrationMigrateRequest,
   MigrationPlan,
@@ -572,6 +573,23 @@ export async function syncAddonValuesSecret(cluster: string, addon: string) {
   return postJSON<AddonValuesSecretActionResult>(
     `/clusters/${encodeURIComponent(cluster)}/addons/${encodeURIComponent(addon)}/secret/sync`,
     {},
+  )
+}
+
+/**
+ * deleteOrphanedSecret — DELETE
+ * /clusters/{name}/orphaned-secrets/{namespace}/{secret} (leftover-secrets
+ * S1.2). Operator-or-higher only. Deletes ONE orphaned leftover secret
+ * Sharko once wrote — never automatic, only this explicit call behind the
+ * UI's confirm dialog. On success the body echoes the server's own
+ * `message`. On failure (404 not on record, 409 reclaimed by the catalog
+ * or its ownership marker changed — nothing deleted, 422, 503) the shared
+ * fetch helper throws an ApiError carrying the server's plain-English
+ * `error` sentence, safe to show verbatim.
+ */
+export async function deleteOrphanedSecret(cluster: string, namespace: string, name: string) {
+  return deleteJSON<OrphanedSecretDeleteResult>(
+    `/clusters/${encodeURIComponent(cluster)}/orphaned-secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`,
   )
 }
 

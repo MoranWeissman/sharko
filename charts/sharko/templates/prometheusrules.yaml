@@ -367,10 +367,24 @@ spec:
       # mirror DefaultTickInterval (30s, clusterreconciler) and the
       # secrets reconciler's default interval (5m) directly. If either
       # default ever changes, update the matching threshold here.
+      # M7 (code review): each half is guarded with its OWN
+      # `unless on(engine) sharko_reconciler_enabled{engine="..."} == 0` —
+      # not one shared guard after the `or` — so a switched-off addon_values
+      # engine cannot suppress the cluster_connection half (which has no off
+      # switch and always reports enabled) or vice versa. A gauge that does
+      # not exist yet (server just started, before either engine's first
+      # Start()/pass) has nothing for `unless` to subtract, so the alert
+      # behaves exactly as it did before this metric existed.
       expr: |
-        (time() - sharko_reconciler_last_success_timestamp{engine="cluster_connection"} > 300)
+        (
+          (time() - sharko_reconciler_last_success_timestamp{engine="cluster_connection"} > 300)
+          unless on(engine) sharko_reconciler_enabled{engine="cluster_connection"} == 0
+        )
         or
-        (time() - sharko_reconciler_last_success_timestamp{engine="addon_values"} > 1800)
+        (
+          (time() - sharko_reconciler_last_success_timestamp{engine="addon_values"} > 1800)
+          unless on(engine) sharko_reconciler_enabled{engine="addon_values"} == 0
+        )
       for: 2m
       labels:
         severity: warning
@@ -389,7 +403,15 @@ spec:
           connection and Kubernetes access are both healthy.
         runbook_url: "https://moranweissman.github.io/sharko/operator/reconciler-crash-loop/"
     - alert: SharkoManagedSecretsSustainedBadState
-      expr: sharko_managed_secrets_state{state=~"missing|out_of_sync"} > 0
+      # M7 (code review): `sharko_managed_secrets_state` and
+      # `sharko_reconciler_enabled` share the "engine" label, so `on(engine)`
+      # joins them directly — a row stuck missing/out_of_sync while its
+      # engine is deliberately switched off must not page anybody, since
+      # nothing is going to repair it until an admin turns the engine back
+      # on (that's the whole point of the switch).
+      expr: |
+        sharko_managed_secrets_state{state=~"missing|out_of_sync"} > 0
+        unless on(engine) sharko_reconciler_enabled == 0
       for: 30m
       labels:
         severity: warning

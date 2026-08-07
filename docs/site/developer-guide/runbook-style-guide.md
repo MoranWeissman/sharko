@@ -71,7 +71,7 @@ Both audiences want the same shape (symptoms → diagnosis → mitigation
 | Severity field | Required (P0/P1/P2) | Optional (most are not pager-shaped) |
 
 This guide focuses on **operator** runbooks. The developer-guide runbooks
-in this repo (`catalog-scan-runbook.md`, `personal-smoke-runbook.md`,
+in this repo (`catalog-scan-runbook.md`, `contributor-smoke-walk.md`,
 `e2e-testing.md`) follow the same skeleton but skip severity and adopt a
 slightly more explanatory tone.
 

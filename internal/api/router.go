@@ -44,6 +44,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/notifications"
 	"github.com/MoranWeissman/sharko/internal/observations"
 	"github.com/MoranWeissman/sharko/internal/operations"
@@ -222,14 +223,27 @@ type SecretReconciler interface {
 	// Returns the outcome as a plain string (see secrets.ItemOutcome); a
 	// non-nil error means the check itself could not run (no Git
 	// connection, no credentials, cluster unreachable, incomplete catalog
-	// definition, or the pair does not resolve to any known secret) — the
-	// error text is safe to show the caller verbatim.
+	// definition, or the pair does not resolve to any known secret).
+	//
+	// H1 (code review): UNLIKE this interface's older doc comment used to
+	// claim, this error text is NOT safe to show a caller verbatim — the
+	// underlying checkWork call wraps credentials/connect/secrets-provider
+	// errors the same way the periodic pass's reconcileSecret does (see
+	// LastItemError's own doc comment above), and a misbehaving provider SDK
+	// could in principle echo a fragment of a value into its own error text.
+	// Callers must map it through addonValuesSecretCheckFailureSentence
+	// (internal/api/system_managed_secrets.go) before returning it in a
+	// response body — see handleRefreshAddonValuesSecret.
 	CheckOne(ctx context.Context, clusterName, addonName string) (outcome string, err error)
 	// SyncOne re-pushes a single addon-values secret (S4's "Sync" row
 	// action) — the single-item counterpart to Trigger()'s fleet-wide pass.
 	// Returns the outcome as a plain string (see secrets.ItemOutcome); a
-	// non-nil error means the push itself failed or could not run, and the
-	// error text is safe to show the caller verbatim.
+	// non-nil error means the push itself failed or could not run.
+	//
+	// H1 (code review): same caveat as CheckOne above — this error text is
+	// NOT safe to show a caller verbatim. Callers must map it through
+	// addonValuesSecretSyncFailureSentence (internal/api/system_managed_secrets.go)
+	// first — see handleSyncAddonValuesSecret.
 	SyncOne(ctx context.Context, clusterName, addonName string) (outcome string, err error)
 	// CheckAll re-checks EVERY addon-values secret against its source right
 	// now, WITHOUT writing anything (P1-A A3 — what the page's "Refresh
@@ -240,6 +254,34 @@ type SecretReconciler interface {
 	// (no Git connection, catalog unreadable); a single unreachable cluster
 	// is isolated inside the pass and does not surface here.
 	CheckAll(ctx context.Context) error
+	// OrphanedSecrets (leftover-secrets S1) returns a snapshot of every
+	// leftover values secret this engine's own passes have found: a live
+	// secret that carries BOTH Sharko's managed-by label AND the
+	// sharko.dev/addon provenance annotation, that no current desired-state
+	// plan claims any more (see secrets.Reconciler.scanOrphans for the full
+	// safety rule). Pure in-memory read — GET /system/managed-secrets never
+	// triggers a K8s call to build this. Sorted deterministically (cluster,
+	// then namespace, then name).
+	OrphanedSecrets() []models.OrphanedSecret
+	// DeleteOrphanedSecret deletes one leftover secret found by
+	// OrphanedSecrets — the operator-gated, human-confirmed action behind
+	// DELETE /clusters/{name}/orphaned-secrets/{namespace}/{secret}. Never
+	// trusts the scan record as proof on its own: re-verifies the record is
+	// still known, that a FRESH plan still does not claim it, and that the
+	// live secret still passes both the provenance-annotation check and the
+	// managed-by label gate before deleting anything. A non-nil error means
+	// nothing was deleted; the error text is safe to show the caller
+	// verbatim (see secrets.ErrOrphanUnknown / ErrOrphanReclaimed /
+	// ErrOrphanRefused for the specific refusal reasons the handler maps to
+	// status codes).
+	DeleteOrphanedSecret(ctx context.Context, cluster, namespace, name string) error
+	// IsEnabled reports whether the addon-values engine is currently
+	// switched on (M6, code review) — checked synchronously by
+	// handleCheckSecrets BEFORE it 202s and writes an audit entry, so a
+	// disabled engine gets a 409 with no audit entry claiming a check
+	// happened, instead of the 202/audit landing before the background
+	// goroutine discovers the engine is off and only logs it.
+	IsEnabled(ctx context.Context) bool
 }
 
 // Server holds the HTTP handlers and their dependencies.
@@ -1162,6 +1204,11 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Cluster secrets (remote cluster operations)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/secrets", srv.handleListClusterSecrets)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/secrets/refresh", srv.handleRefreshClusterSecrets)
+
+	// Leftover addon-values secrets (leftover-secrets S1) — a values secret
+	// the catalog no longer claims, found by the addon-values engine's own
+	// scan passes (never at list time), operator-gated delete only.
+	mux.HandleFunc("DELETE /api/v1/clusters/{name}/orphaned-secrets/{namespace}/{secret}", srv.handleDeleteOrphanedSecret)
 
 	// Secrets reconciler
 	mux.HandleFunc("POST /api/v1/secrets/reconcile", srv.handleTriggerReconcile)

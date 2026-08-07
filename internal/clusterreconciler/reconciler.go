@@ -60,6 +60,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
@@ -397,6 +398,17 @@ func New(deps Deps) *Reconciler {
 // now out of date and is corrected here).
 func (r *Reconciler) Start(ctx context.Context) {
 	r.startOnce.Do(func() {
+		// M7 (code review): this engine has no off switch, on purpose (see
+		// clusterConnectionEngineInfo's own comment in
+		// internal/api/system_managed_secrets.go) — it always reports
+		// enabled=1, written once here rather than every pass since the
+		// value never changes for this engine's whole lifetime. Read by
+		// charts/sharko/templates/prometheusrules.yaml's alert guards, which
+		// gate on sharko_reconciler_enabled for BOTH engines generically —
+		// this keeps the connection engine's alerts firing normally exactly
+		// as before M7, since a gauge that never exists reads as "unknown",
+		// not "off", to a PromQL `unless` clause.
+		metrics.ReconcilerEnabled.WithLabelValues(engineClusterConnection).Set(1)
 		go r.run(ctx)
 	})
 }
@@ -1891,6 +1903,23 @@ func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, 
 		})
 		return
 	}
+	// L11 (code review): should be impossible — this cluster reached
+	// clearRegistrationPending because the pre-tick snapshot considered it
+	// Sharko-managed — but the invariant is too important to trust a
+	// snapshot that can be stale by the time this pass re-Gets the Secret
+	// (the exact race deleteOne already guards against for delete; this is
+	// the same guard for the write below, which would otherwise re-stamp
+	// the ownership label onto a Secret that lost it between listing and
+	// this write).
+	if !IsManagedBySharko(fresh) {
+		log.Warn("[clusterreconciler] fresh secret missing sharko label before annotation clear — skipping (invariant guard)",
+			"cluster", name, "namespace", r.namespace,
+		)
+		r.recordReconcile(name, OutcomeSkipped,
+			"This cluster's ArgoCD secret unexpectedly lost Sharko's ownership label before Sharko could clear its registration-pending annotation — left in place as a safety measure.", nil)
+		return
+	}
+
 	updated := fresh.DeepCopy()
 	delete(updated.Annotations, models.AnnotationRegistrationPending)
 	// A registration that was in flight across the V2-cleanup-59 upgrade

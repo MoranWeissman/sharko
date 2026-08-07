@@ -46,6 +46,7 @@ nav:
     - First Run: getting-started/first-run.md
   - User Guide:
     - Why Sharko?: user-guide/why-sharko.md
+    - 'Sharko vs. the Alternatives': user-guide/comparison.md
     - Managing Connections: user-guide/connections.md
     - Secrets Provider: user-guide/secrets-provider.md
     - Managing Clusters: user-guide/clusters.md
@@ -86,6 +87,7 @@ nav:
     - 'Reference — Audit Log Retention Model': operator/audit-log.md
     - 'Reference — Perf Baselines': operator/perf-baselines.md
     - 'Reference — SLOs': operator/slos.md
+    - 'Reference — Metrics, Alerts, and Grafana Dashboard': operator/metrics.md
     - 'Reference — Metrics Naming': operator/metrics-naming.md
     - Catalog Trust Policy: operator/catalog-trust-policy.md
     - 'AWS IAM Cluster Auth — Sharko Identity Needed': operator/aws-iam-cluster-auth.md
@@ -140,6 +142,7 @@ nav:
     - Repository Structure: architecture/repo-structure.md
   - Developer Guide:
     - Overview: developer-guide.md
+    - Developing with AI: developer-guide/developing-with-ai.md
     - 'Architecture & Design History': developer-guide/design-history.md
     - API Stability Contract: developer-guide/api-stability.md
     - Local Playground: developer-guide/playground.md
@@ -149,9 +152,8 @@ nav:
     - Testing Guide: developer-guide/testing-guide.md
     - End-to-End Testing: developer-guide/e2e-testing.md
     - Perf Harness: developer-guide/perf-harness.md
-    - Personal Smoke Runbook: developer-guide/personal-smoke-runbook.md
+    - Contributor Smoke Walk: developer-guide/contributor-smoke-walk.md
     - Logging: developer-guide/logging.md
-    - Logging Audit Punch List: developer-guide/logging-audit-punchlist.md
     - Runbook Style Guide: developer-guide/runbook-style-guide.md
   - Community:
     - Roadmap: community/roadmap.md

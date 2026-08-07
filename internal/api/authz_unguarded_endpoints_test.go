@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/operations"
 )
 
@@ -57,14 +58,19 @@ type fakeSecretReconciler struct {
 	lastError        string
 	lastErrorCluster string
 	lastErrorAt      time.Time
+
+	// disabled (M6, code review) — zero value false means IsEnabled reports
+	// true, same nil-enabledFn default the real Reconciler uses.
+	disabled bool
 }
 
 type itemCallArgs struct{ cluster, addon string }
 
-func (f *fakeSecretReconciler) Trigger()               { f.triggered++ }
-func (f *fakeSecretReconciler) GetStats() interface{}  { return map[string]int{} }
-func (f *fakeSecretReconciler) LastRunTime() time.Time { return time.Time{} }
-func (f *fakeSecretReconciler) LastError() string      { return f.lastError }
+func (f *fakeSecretReconciler) Trigger()                         { f.triggered++ }
+func (f *fakeSecretReconciler) IsEnabled(_ context.Context) bool { return !f.disabled }
+func (f *fakeSecretReconciler) GetStats() interface{}            { return map[string]int{} }
+func (f *fakeSecretReconciler) LastRunTime() time.Time           { return time.Time{} }
+func (f *fakeSecretReconciler) LastError() string                { return f.lastError }
 func (f *fakeSecretReconciler) LastErrorCluster() string {
 	return f.lastErrorCluster
 }
@@ -112,6 +118,12 @@ func (f *fakeSecretReconciler) checkAllCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.checkedAll
+}
+
+func (f *fakeSecretReconciler) OrphanedSecrets() []models.OrphanedSecret { return nil }
+
+func (f *fakeSecretReconciler) DeleteOrphanedSecret(_ context.Context, _, _, _ string) error {
+	return nil
 }
 
 // assert403 decodes the body and asserts a clean JSON 403.

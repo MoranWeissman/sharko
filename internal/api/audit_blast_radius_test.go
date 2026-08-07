@@ -239,7 +239,7 @@ func TestBuildRowsUseTheIndex(t *testing.T) {
 	})
 
 	srv := newTestServer()
-	rows := srv.buildConnectionSecretRows(t.Context(), []models.Cluster{{Name: "prod-eu", Managed: true}}, idx)
+	rows := srv.buildConnectionSecretRows(t.Context(), []models.Cluster{{Name: "prod-eu", Managed: true}}, idx, false)
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}

@@ -209,13 +209,22 @@ describe('ManagedSecrets', () => {
 
     const connRow1 = screen.getByTestId('secret-row-connection-prod-eu')
     const connRow2 = screen.getByTestId('secret-row-connection-staging-us')
-    expect(within(connRow1).getByTestId('cell-source')).toHaveTextContent('checked against git')
-    expect(within(connRow2).getByTestId('cell-source')).toHaveTextContent('checked against git')
+    // design-secret-sync-visual-pass, section 2: the "checked against"
+    // relation lives once in the sticky column header now — the cell
+    // states just the place name, and the full sentence is one hover away
+    // (title attribute), never printed inline on every one of 170 rows.
+    expect(within(connRow1).getByTestId('cell-source')).toHaveTextContent('git')
+    expect(within(connRow1).getByTestId('cell-source')).toHaveAttribute('title', 'Checked against git.')
+    expect(within(connRow2).getByTestId('cell-source')).toHaveTextContent('git')
 
     const valuesRow1 = screen.getByTestId('secret-row-values-prod-eu-datadog')
     const valuesRow2 = screen.getByTestId('secret-row-values-staging-us-datadog')
-    expect(within(valuesRow1).getByTestId('cell-source')).toHaveTextContent('checked against AWS Secrets Manager')
-    expect(within(valuesRow2).getByTestId('cell-source')).toHaveTextContent('checked against AWS Secrets Manager')
+    expect(within(valuesRow1).getByTestId('cell-source')).toHaveTextContent('AWS Secrets Manager')
+    expect(within(valuesRow1).getByTestId('cell-source')).toHaveAttribute(
+      'title',
+      'Checked against AWS Secrets Manager — git only holds a pointer to it.',
+    )
+    expect(within(valuesRow2).getByTestId('cell-source')).toHaveTextContent('AWS Secrets Manager')
 
     // Never the generic, misleading "the vault" wording — the server's
     // real backend name is what ships.
@@ -236,8 +245,11 @@ describe('ManagedSecrets', () => {
 
     const connRow1 = screen.getByTestId('secret-row-connection-prod-eu')
     const valuesRow1 = screen.getByTestId('secret-row-values-prod-eu-datadog')
-    expect(within(connRow1).getByText('prod-eu')).toBeInTheDocument()
-    expect(within(valuesRow1).getByText('prod-eu')).toBeInTheDocument()
+    // Walk finding #140 split NAME out of the old combined identity cell, so
+    // "prod-eu" now legitimately appears twice on the connection row (its
+    // secret name AND its cluster) — check each column by its own testid.
+    expect(within(connRow1).getByTestId('cell-cluster')).toHaveTextContent('prod-eu')
+    expect(within(valuesRow1).getByTestId('cell-cluster')).toHaveTextContent('prod-eu')
   })
 
   // G1: the backend a row follows is now a PER-ROW fact (row.source), so
@@ -298,6 +310,126 @@ describe('ManagedSecrets', () => {
       // code, exactly the same plain string compare compareRows uses.
       expect(order).toEqual(['secret-row-values-c1-zeta', 'secret-row-values-c2-alpha'])
     })
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Walk finding #140 — NAMESPACE becomes its own column, and the status
+  // words go ArgoCD-professional.
+  // ───────────────────────────────────────────────────────────────────────
+
+  // Before this, NAME rendered "namespace/name" in one capped cell, so rows
+  // sharing a namespace and differing only in name truncated exactly where
+  // they differed. NAME now shows only the name; NAMESPACE is its own cell.
+  it('splits NAME and NAMESPACE into their own columns, each carrying its full value on hover', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      cluster_connection_secrets: [],
+      addon_values_secrets: [
+        {
+          cluster: 'prod-eu',
+          addon: 'eso',
+          secret_name: 'eso-creds-primary',
+          secret_namespace: 'external-secrets',
+          state: 'in_sync',
+          source: 'AWS Secrets Manager',
+        },
+        {
+          cluster: 'staging-us',
+          addon: 'eso',
+          secret_name: 'eso-creds-replica',
+          secret_namespace: 'external-secrets',
+          state: 'in_sync',
+          source: 'AWS Secrets Manager',
+        },
+      ],
+    })
+    renderPage()
+
+    const row1 = await screen.findByTestId('secret-row-values-prod-eu-eso')
+    const row2 = screen.getByTestId('secret-row-values-staging-us-eso')
+
+    // NAME shows only the secret name — two rows that share a namespace and
+    // would have truncated identically before still read apart.
+    expect(within(row1).getByTestId('cell-name')).toHaveTextContent('eso-creds-primary')
+    expect(within(row1).getByTestId('cell-name')).not.toHaveTextContent('external-secrets')
+    expect(within(row2).getByTestId('cell-name')).toHaveTextContent('eso-creds-replica')
+
+    // NAMESPACE is its own cell, present on both rows.
+    expect(within(row1).getByTestId('cell-namespace')).toHaveTextContent('external-secrets')
+    expect(within(row2).getByTestId('cell-namespace')).toHaveTextContent('external-secrets')
+
+    // Full values sit in the title attribute for when either cell truncates
+    // at a narrow width.
+    expect(within(row1).getByTestId('cell-name')).toHaveAttribute('title', 'eso-creds-primary')
+    expect(within(row1).getByTestId('cell-namespace')).toHaveAttribute('title', 'external-secrets')
+  })
+
+  // NAMESPACE sorts like every other column.
+  it('sorts by the NAMESPACE column when its header is clicked', async () => {
+    const user = userEvent.setup()
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      cluster_connection_secrets: [],
+      addon_values_secrets: [
+        { cluster: 'c1', addon: 'a', secret_name: 's1', secret_namespace: 'zeta', state: 'in_sync', source: 'AWS Secrets Manager' },
+        { cluster: 'c2', addon: 'b', secret_name: 's2', secret_namespace: 'alpha', state: 'in_sync', source: 'AWS Secrets Manager' },
+      ],
+    })
+    renderPage()
+
+    await screen.findByTestId('secret-row-values-c1-a')
+
+    await user.click(screen.getByTestId('sort-namespace'))
+    await waitFor(() => {
+      const order = screen.getAllByTestId(/^secret-row-/).map((r) => r.getAttribute('data-testid'))
+      expect(order).toEqual(['secret-row-values-c2-b', 'secret-row-values-c1-a'])
+    })
+  })
+
+  // ArgoCD-professional status words (maintainer-locked): "In sync" →
+  // "Synced", "Not on the cluster" → "Missing". Checked on the row chip, the
+  // panel's chip, and confirmed gone from the page entirely — plus the
+  // panel's plain-English sentence, which does not change.
+  it('renders "Synced" and "Missing" everywhere a status word shows, with the old wording gone from the page', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      ...baseResponse,
+      cluster_connection_secrets: [],
+      addon_values_secrets: [
+        {
+          cluster: 'prod-eu',
+          addon: 'datadog',
+          secret_name: 'datadog-secrets',
+          secret_namespace: 'datadog',
+          state: 'in_sync',
+          source: 'AWS Secrets Manager',
+        },
+        {
+          cluster: 'staging-us',
+          addon: 'datadog',
+          secret_name: 'datadog-secrets',
+          secret_namespace: 'datadog',
+          state: 'missing',
+          source: 'AWS Secrets Manager',
+        },
+      ],
+    })
+    renderPage()
+
+    const syncedRow = await screen.findByTestId('secret-row-values-prod-eu-datadog')
+    const missingRow = screen.getByTestId('secret-row-values-staging-us-datadog')
+
+    expect(within(syncedRow).getByTestId('status-mark')).toHaveTextContent('Synced')
+    expect(within(missingRow).getByTestId('status-mark')).toHaveTextContent('Missing')
+
+    expect(screen.queryByText('In sync')).not.toBeInTheDocument()
+    expect(screen.queryByText('Not on the cluster')).not.toBeInTheDocument()
+
+    // The panel's status chip reads the same word, and the plain-English
+    // sentence underneath it is exactly what it was before this pass.
+    fireEvent.click(missingRow)
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(within(panel).getByTestId('status-mark')).toHaveTextContent('Missing')
+    expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('This secret was never created on the cluster — Sync creates it.')
   })
 
   // G1 — ADDON and SOURCE are matched by the search box.
@@ -368,9 +500,9 @@ describe('ManagedSecrets', () => {
     await waitFor(() => expect(screen.getByTestId('filter-chip-in_sync')).toBeInTheDocument())
 
     expect(screen.getByTestId('filter-chip-all')).toHaveTextContent('All4')
-    expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('In sync2')
+    expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('Synced2')
     expect(screen.getByTestId('filter-chip-out_of_sync')).toHaveTextContent('Out of sync2')
-    expect(screen.getByTestId('filter-chip-missing')).toHaveTextContent('Not on the cluster0')
+    expect(screen.getByTestId('filter-chip-missing')).toHaveTextContent('Missing0')
     expect(screen.getByTestId('filter-chip-unknown')).toHaveTextContent('Not checked yet0')
 
     // All 4 rows visible before filtering.
@@ -396,7 +528,7 @@ describe('ManagedSecrets', () => {
     const search = screen.getByPlaceholderText('Search by cluster, addon, secret name, or namespace...')
     fireEvent.change(search, { target: { value: 'prod' } })
 
-    await waitFor(() => expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('In sync2'))
+    await waitFor(() => expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('Synced2'))
     expect(screen.getByTestId('filter-chip-out_of_sync')).toHaveTextContent('Out of sync0')
     expect(screen.getByTestId('filter-chip-all')).toHaveTextContent('All2')
 
@@ -407,7 +539,7 @@ describe('ManagedSecrets', () => {
     fireEvent.click(screen.getByTestId('filter-chip-in_sync'))
     await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
     expect(screen.getByTestId('filter-chip-out_of_sync')).toHaveTextContent('Out of sync0')
-    expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('In sync2')
+    expect(screen.getByTestId('filter-chip-in_sync')).toHaveTextContent('Synced2')
   })
 
   it('B2 (carried through I2 paging removal): the footer states an honest total, and says when a filter narrowed it', async () => {

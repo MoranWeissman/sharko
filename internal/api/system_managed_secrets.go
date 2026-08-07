@@ -57,6 +57,17 @@ type managedSecretsResponse struct {
 	// arrays sees no change at all.
 	Rows    []managedSecretRow    `json:"rows"`
 	Engines managedSecretsEngines `json:"engines"`
+	// OrphanedSecrets (leftover-secrets S1) is every leftover values secret
+	// the addon-values engine's own scan passes have found: a live secret
+	// carrying BOTH Sharko's managed-by label AND the sharko.dev/addon
+	// provenance annotation, that no current desired-state plan claims any
+	// more. Built purely from SecretReconciler.OrphanedSecrets() — an
+	// in-memory read, no K8s call of its own, and not gated on a live
+	// Git/ArgoCD connection the way ClusterConnectionSecrets/
+	// AddonValuesSecrets are (the scan that found these already ran
+	// separately, on the engine's own schedule). Also merged into Rows
+	// (State "orphaned", Kind "values") like every other row kind.
+	OrphanedSecrets []orphanedSecretRow `json:"orphaned_secrets"`
 	// AddonValuesSecretSource is the real, human-readable name of the
 	// backend addon-values secrets are compared against — "AWS Secrets
 	// Manager", "a Kubernetes Secret", etc, or the generic "secrets store"
@@ -212,6 +223,34 @@ type addonValuesSecretRow struct {
 	ConsecutiveFailures int `json:"consecutive_failures,omitempty"`
 }
 
+// orphanedSecretRow (leftover-secrets S1) is one row of orphaned_secrets —
+// one row per leftover values secret the addon-values engine's own scan
+// found: on the cluster, carrying Sharko's labels, but claimed by nothing
+// in the current desired-state plan.
+type orphanedSecretRow struct {
+	Cluster         string `json:"cluster"`
+	SecretName      string `json:"secret_name,omitempty"`
+	SecretNamespace string `json:"secret_namespace,omitempty"`
+	// Addon is the addon name read off the secret's own provenance
+	// annotation at scan time — omitted only if a future scan somehow
+	// produces a record with an empty Addon, which the scan itself never
+	// does (a secret with no addon annotation is never reported in the
+	// first place — see internal/secrets/orphans.go's header comment).
+	Addon string `json:"addon,omitempty"`
+	// State is always the literal "orphaned" — its own row kind carries no
+	// other state; the field exists so a caller reading Rows (which merges
+	// every kind onto one shape) never has to special-case this kind to
+	// find its state.
+	State string `json:"state"`
+	// Source (S1) names the real backend addon-values secrets are compared
+	// against — same field, same meaning, as addonValuesSecretRow.Source.
+	Source string `json:"source"`
+	// LastChecked is RFC3339 — when the scan that most recently confirmed
+	// this secret is still an orphan ran. Never omitted in practice: a
+	// record only exists because a scan found it.
+	LastChecked string `json:"last_checked,omitempty"`
+}
+
 // managedSecretRow (P3-E, E2) is one row of the merged Rows array — one
 // connectionSecretRow or addonValuesSecretRow, tagged with Kind and
 // reshaped onto a single flat struct so a caller renders one table instead
@@ -270,12 +309,14 @@ const (
 
 // managedSecretStateRank is the worst-first order the System page's own
 // StatusMark.statusSortRank uses (ui/src/components/resource/StatusMark.tsx)
-// — reordered for G3 (gitops-proud P4-G): missing first (nothing exists to
-// Sync onto — a harder stop than a wrong value Sync can overwrite), then
-// out_of_sync (a real, confirmed mismatch), then foreign (a boundary worth
-// knowing about but not damage — kept in the same relative seat the old
-// table gave it, right after the two real comparisons; nothing in the old
-// order argued for moving it), then a FAILED check (see
+// — reordered for G3 (gitops-proud P4-G) and again for leftover-secrets S1:
+// missing first (nothing exists to Sync onto — a harder stop than a wrong
+// value Sync can overwrite), then out_of_sync (a real, confirmed mismatch),
+// then orphaned (a real, confirmed leftover — Sharko found a secret nothing
+// claims any more; ranked right after the two real comparisons, ahead of
+// foreign, because an orphan has a concrete fix Sharko can offer — delete
+// it — where a foreign row has none), then foreign (a boundary worth
+// knowing about but not damage), then a FAILED check (see
 // managedSecretCheckFailedRank below), then a genuinely never-checked row,
 // in_sync last. Kept in exact lockstep with the UI table on purpose: the
 // merged Rows array is meant to read in the same order the page itself
@@ -283,11 +324,12 @@ const (
 var managedSecretStateRank = map[string]int{
 	"missing":     0,
 	"out_of_sync": 1,
-	"foreign":     2,
+	"orphaned":    2,
+	"foreign":     3,
 	// "unknown" WITHOUT a check error ("not checked yet") ranks here — a
 	// FAILED check outranks it by one slot, see managedSecretCheckFailedRank.
-	"unknown": 4,
-	"in_sync": 5,
+	"unknown": 5,
+	"in_sync": 6,
 }
 
 // managedSecretCheckFailedRank is where a row whose last check genuinely
@@ -296,7 +338,7 @@ var managedSecretStateRank = map[string]int{
 // check is Sharko attempting and hitting a wall; a never-checked row is
 // Sharko not having gotten to it yet — the first is the nearer, more
 // actionable "Sharko doesn't know".
-const managedSecretCheckFailedRank = 3
+const managedSecretCheckFailedRank = 4
 
 // managedSecretStateSortRank returns a row's sort weight. A state the rank
 // table doesn't recognize reads as "unknown" — the same fallback
@@ -315,12 +357,13 @@ func managedSecretStateSortRank(state string, hasCheckError bool) int {
 	return rank
 }
 
-// buildManagedSecretRows merges the two already-built per-kind arrays into
-// one flat, worst-first-sorted list (E2). Called AFTER
-// buildConnectionSecretRows/buildAddonValuesSecretRows so it never
-// recomputes state or does any I/O of its own — a pure reshape + sort.
-func buildManagedSecretRows(conn []connectionSecretRow, values []addonValuesSecretRow) []managedSecretRow {
-	rows := make([]managedSecretRow, 0, len(conn)+len(values))
+// buildManagedSecretRows merges the three already-built per-kind arrays
+// into one flat, worst-first-sorted list (E2, extended for leftover-secrets
+// S1). Called AFTER buildConnectionSecretRows/buildAddonValuesSecretRows/
+// buildOrphanedSecretRows so it never recomputes state or does any I/O of
+// its own — a pure reshape + sort.
+func buildManagedSecretRows(conn []connectionSecretRow, values []addonValuesSecretRow, orphaned []orphanedSecretRow) []managedSecretRow {
+	rows := make([]managedSecretRow, 0, len(conn)+len(values)+len(orphaned))
 	for _, r := range conn {
 		rows = append(rows, managedSecretRow{
 			Kind:             managedSecretKindConnection,
@@ -354,6 +397,22 @@ func buildManagedSecretRows(conn []connectionSecretRow, values []addonValuesSecr
 			LastChecked:         r.LastChecked,
 			LastCheckError:      r.LastCheckError,
 			LastRepaired:        r.LastRepaired,
+		})
+	}
+	for _, r := range orphaned {
+		rows = append(rows, managedSecretRow{
+			Kind:      managedSecretKindValues,
+			Name:      r.SecretName,
+			Namespace: r.SecretNamespace,
+			Cluster:   r.Cluster,
+			Addon:     r.Addon,
+			Source:    r.Source,
+			State:     r.State,
+			// An orphan never self-heals — there is no plan claiming it, so
+			// there is nothing for the engine to converge it back toward.
+			// The only future it has is the operator-gated delete.
+			SelfHeals:   false,
+			LastChecked: r.LastChecked,
 		})
 	}
 	sortManagedSecretRowsWorstFirst(rows)
@@ -517,7 +576,7 @@ var addonValuesSecretRepairDetail = map[string]string{
 // @Security BearerAuth
 // @Param cluster query string false "Rows filter: exact cluster name match"
 // @Param addon query string false "Rows filter: exact addon name match (values rows only — connection rows have no addon and never match a non-empty value)"
-// @Param state query string false "Rows filter: exact state match (in_sync, out_of_sync, missing, unknown, foreign)"
+// @Param state query string false "Rows filter: exact state match (in_sync, out_of_sync, missing, unknown, foreign, orphaned)"
 // @Param kind query string false "Rows filter: exact kind match (connection, values)"
 // @Param source query string false "Rows filter: exact source match (e.g. git, AWS Secrets Manager)"
 // @Param page query int false "Rows paging: page number, default 1"
@@ -533,14 +592,31 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 	resp := managedSecretsResponse{
 		ClusterConnectionSecrets: []connectionSecretRow{},
 		AddonValuesSecrets:       []addonValuesSecretRow{},
+		OrphanedSecrets:          []orphanedSecretRow{},
 		Rows:                     []managedSecretRow{},
 	}
 
 	// The engines section never depends on a live Git/ArgoCD connection —
 	// build it first so a connection outage still reports engine health.
+	//
+	// L14 (code review): both settings this endpoint needs — self-heal and
+	// addon-values-engine-enabled — are read ONCE here via
+	// GetManagedSecretsSettings, which does a single ConfigMap Read for
+	// both, and the two bools are threaded down from here instead of
+	// addonValuesEngineInfo/buildConnectionSecretRows each reading the
+	// settings store independently. Before this, those two calls meant TWO
+	// separate live K8s API GETs of the identical ConfigMap object on every
+	// hit of this endpoint (this page's own 30-second auto-refresh, times
+	// however many tabs have it open).
+	managedSecretsSettings := s.settingsStore.GetManagedSecretsSettings(r.Context())
 	resp.Engines.ClusterConnection = s.clusterConnectionEngineInfo()
-	resp.Engines.AddonValues = s.addonValuesEngineInfo(r.Context())
+	resp.Engines.AddonValues = s.addonValuesEngineInfo(r.Context(), managedSecretsSettings.AddonValuesEngineEnabled)
 	resp.AddonValuesSecretSource = s.addonValuesSecretSourceLabel()
+	// Orphaned secrets (leftover-secrets S1) are a pure in-memory read on
+	// the reconciler's OWN scan results — no K8s call, no dependency on a
+	// live Git/ArgoCD connection, so this is built here alongside the
+	// engines section rather than gated behind the cluster-list read below.
+	resp.OrphanedSecrets = s.buildOrphanedSecretRows()
 
 	gp, gpErr := s.connSvc.GetActiveGitProvider()
 	ac, acErr := s.connSvc.GetActiveArgocdClient()
@@ -570,8 +646,12 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 	// row — see buildRepairIndex's own comment.
 	repairs := buildRepairIndex(s.AuditLog().List(0))
 
-	resp.ClusterConnectionSecrets = s.buildConnectionSecretRows(r.Context(), listResp.Clusters, repairs)
-	resp.AddonValuesSecrets = s.buildAddonValuesSecretRows(listResp.Clusters, repairs)
+	resp.ClusterConnectionSecrets = s.buildConnectionSecretRows(r.Context(), listResp.Clusters, repairs, managedSecretsSettings.SelfHealEnabled)
+	// M4 (code review): resp.Engines.AddonValues.Enabled is already computed
+	// above (addonValuesEngineInfo) — reused here instead of re-reading the
+	// settings store a second time, so the row-level SelfHeals promise and
+	// the engine strip can never disagree about whether the engine is on.
+	resp.AddonValuesSecrets = s.buildAddonValuesSecretRows(listResp.Clusters, repairs, resp.Engines.AddonValues.Enabled)
 
 	s.respondManagedSecrets(w, r, resp)
 }
@@ -587,7 +667,7 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 // returns, so a caller paging through this endpoint sees the same header
 // contract regardless of which path produced the response.
 func (s *Server) respondManagedSecrets(w http.ResponseWriter, r *http.Request, resp managedSecretsResponse) {
-	rows := buildManagedSecretRows(resp.ClusterConnectionSecrets, resp.AddonValuesSecrets)
+	rows := buildManagedSecretRows(resp.ClusterConnectionSecrets, resp.AddonValuesSecrets, resp.OrphanedSecrets)
 	rows = filterManagedSecretRows(rows, parseManagedSecretRowFilters(r))
 
 	p := parsePagination(r)
@@ -601,16 +681,17 @@ func (s *Server) respondManagedSecrets(w http.ResponseWriter, r *http.Request, r
 // Discovered/orphan clusters (Managed == false) are excluded — Sharko has
 // no connection secret of its own to report for a cluster it didn't
 // register.
-func (s *Server) buildConnectionSecretRows(ctx context.Context, clusters []models.Cluster, repairs repairIndex) []connectionSecretRow {
+// selfHealOn is the managed_cluster_self_heal setting (P2-C3) — a single,
+// repo-wide server setting, not a per-cluster fact. L14 (code review): the
+// CALLER reads it once per request (GetManagedSecretsSettings, alongside
+// the addon-values engine's own setting, in one ConfigMap Read) and passes
+// it down here instead of this function reading the settings store itself
+// — this used to be its own s.settingsStore.IsManagedClusterSelfHealEnabled
+// call, a second live K8s API GET of the same ConfigMap object
+// handleGetManagedSecrets's addonValuesEngineInfo call also reads.
+func (s *Server) buildConnectionSecretRows(ctx context.Context, clusters []models.Cluster, repairs repairIndex, selfHealOn bool) []connectionSecretRow {
 	_, ns, _ := s.k8sClientAndNamespace()
-
-	// The managed_cluster_self_heal setting is read ONCE per request (P2-C3)
-	// — it is a single, repo-wide server setting, not a per-cluster fact,
-	// so there is no reason to ask the settings store once per row. A nil
-	// settingsStore (out-of-cluster mode) reads as "off", matching
-	// clusterreconciler.Deps.SelfHealFn's own "nil means default OFF"
-	// contract.
-	v3SelfHealOn := s.settingsStore != nil && s.settingsStore.IsManagedClusterSelfHealEnabled(ctx)
+	v3SelfHealOn := selfHealOn
 
 	rows := make([]connectionSecretRow, 0, len(clusters))
 	for _, c := range clusters {
@@ -742,7 +823,14 @@ func connectionSecretState(rec *models.ClusterLastReconcile) (state, lastChecked
 	}
 	lastChecked = rec.Time
 	switch {
-	case rec.Outcome == string(clusterreconciler.OutcomeSkipped) && rec.Message == clusterreconciler.SelfManagedSecretNotCreatedMessage:
+	// M8 (code review): matched against RawMessage, not Message — Message
+	// is now the FailureSentence-mapped, safe-for-a-browser text
+	// (applyLastReconcile in clusters_reconcile.go), which no longer
+	// carries this exact sentinel string verbatim. RawMessage still does;
+	// SelfManagedSecretNotCreatedMessage is a fixed sentence this package
+	// itself writes, never wrapped error text, so comparing against it
+	// directly is safe.
+	case rec.Outcome == string(clusterreconciler.OutcomeSkipped) && rec.RawMessage == clusterreconciler.SelfManagedSecretNotCreatedMessage:
 		return "missing", lastChecked
 	case rec.Outcome == string(clusterreconciler.OutcomeSucceeded) && rec.LabelDrift == nil:
 		return "in_sync", lastChecked
@@ -765,7 +853,14 @@ func connectionSecretCheckError(rec *models.ClusterLastReconcile) string {
 	if rec == nil || rec.Outcome != string(clusterreconciler.OutcomeFailed) {
 		return ""
 	}
-	return clusterreconciler.FailureSentence(rec.Message)
+	// M8 (code review): mapped from RawMessage, not Message. Message is
+	// already FailureSentence-mapped by applyLastReconcile — running an
+	// already-mapped sentence through FailureSentence a second time matches
+	// none of its fixed-prefix cases (the canned sentences don't contain
+	// the raw stage prefixes) and collapses every specific reason into the
+	// generic "The last check didn't finish" fallback. RawMessage still
+	// carries the one-and-only-mapping-needed raw text.
+	return clusterreconciler.FailureSentence(rec.RawMessage)
 }
 
 // secretRepair is one row's "last repaired" fact: when Sharko last
@@ -839,7 +934,7 @@ func (idx repairIndex) lastConnectionSecretRepair(clusterName string) (secretRep
 // has both a registered secret definition AND the addon enabled on that
 // cluster (via the cluster's addon labels — already present on the Cluster
 // model from the same listing read, no extra I/O).
-func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, repairs repairIndex) []addonValuesSecretRow {
+func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, repairs repairIndex, engineEnabled bool) []addonValuesSecretRow {
 	// Resolved once per request and stamped onto every row it applies to
 	// (S1). One addon-secret backend serves the whole server today, so
 	// every values row currently gets the same answer — but the ANSWER
@@ -883,7 +978,14 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, repairs r
 				// P2-C3: the values engine always repairs what it owns
 				// (P1-A's ownership gate) — the one exception is a foreign
 				// row, which Sharko will never touch.
-				SelfHeals: state != "foreign",
+				//
+				// M4 (code review): a row must not also promise self-heal
+				// when an admin has switched the engine off (Settings ->
+				// Addon Values Engine) — the locked decision that single-row
+				// Check/Sync stay ungated is not a promise that the periodic
+				// pass will also fix this row, and with the engine off there
+				// is no periodic pass.
+				SelfHeals: engineEnabled && state != "foreign",
 			}
 			if s.secretReconciler != nil {
 				if checkedAt, ok := s.secretReconciler.LastItemChecked(c.Name, addonName); ok {
@@ -999,6 +1101,19 @@ func addonValuesSecretCheckFailureSentence(errMsg string) string {
 	switch {
 	case errMsg == "":
 		return ""
+	// H1 (code review): CheckOne (internal/api/addon_secret_single.go's
+	// handleRefreshAddonValuesSecret) now routes its error through this
+	// function too, not just LastItemError — so the two extra shapes
+	// findWork can return (no Git connection configured, and the catalog
+	// itself couldn't be read) need their own cases here, checked before the
+	// generic stage cases below so they don't fall through to the vaguer
+	// default.
+	case strings.Contains(errMsg, "no Git connection is configured"):
+		return "Sharko has no Git connection configured — there is nothing to check."
+	case strings.Contains(errMsg, "could not read the addon catalog or managed clusters list"):
+		return "Sharko couldn't read the addon catalog or managed-clusters file in git. Check that Sharko can reach your git host, then try again."
+	case strings.Contains(errMsg, "no addon-values secret is defined for"):
+		return "No addon-values secret is defined for this cluster and addon — check that the cluster is registered, the addon is enabled on it, and the addon's catalog entry defines a secret to push."
 	case strings.Contains(errMsg, "the secret definition in the catalog has no"):
 		return "The secret definition in the catalog is incomplete — fill in the missing fields."
 	case strings.Contains(errMsg, "getting credentials"):
@@ -1018,6 +1133,56 @@ func addonValuesSecretCheckFailureSentence(errMsg string) string {
 	}
 }
 
+// addonValuesSecretSyncFailureSentence is addonValuesSecretCheckFailureSentence's
+// sync-side twin (H1, code review). handleSyncAddonValuesSecret
+// (internal/api/addon_secret_single.go) used to pass SyncOne's error
+// straight through to writeError as err.Error() — the same raw-reconciler-
+// text leak CheckOne had, plus SyncOne can additionally fail on the two
+// write-only stages (creating/updating a secret) that a pure check never
+// reaches. Kept as its own function, not a shared one, because the wording
+// says "sync", not "check" — a person who clicked Sync and got told "the
+// last CHECK didn't finish" would be looking at the wrong verb for the
+// button they pressed.
+func addonValuesSecretSyncFailureSentence(errMsg string) string {
+	switch {
+	case errMsg == "":
+		return ""
+	case strings.Contains(errMsg, "Someone else created this one"):
+		// Passed through UNCHANGED, deliberately — the one exception to
+		// "never echo the raw string" in this function. secrets.
+		// ErrForeignSecret is not wrapped provider/K8s error text; it is
+		// Sharko's own fixed, safe, complete sentence, and demo mode's
+		// demoForeignRefusal (internal/demo/addon_values_reconciler.go) is
+		// kept word-for-word identical to it on purpose — a Sync refusal on
+		// a foreign secret must read exactly the same whether it came from
+		// the real engine or the demo one. Rewording it here would break
+		// that pinned contract for no safety gain.
+		return errMsg
+	case strings.Contains(errMsg, "no Git connection is configured"):
+		return "Sharko has no Git connection configured — there is nothing to sync."
+	case strings.Contains(errMsg, "could not read the addon catalog or managed clusters list"):
+		return "Sharko couldn't read the addon catalog or managed-clusters file in git. Check that Sharko can reach your git host, then try again."
+	case strings.Contains(errMsg, "no addon-values secret is defined for"):
+		return "No addon-values secret is defined for this cluster and addon — check that the cluster is registered, the addon is enabled on it, and the addon's catalog entry defines a secret to push."
+	case strings.Contains(errMsg, "the secret definition in the catalog has no"):
+		return "The secret definition in the catalog is incomplete — fill in the missing fields."
+	case strings.Contains(errMsg, "getting credentials"):
+		return "Sharko couldn't get credentials for this cluster."
+	case strings.Contains(errMsg, "connecting to cluster"):
+		return "Sharko couldn't connect to this cluster."
+	case strings.Contains(errMsg, "provider"):
+		return "Sharko couldn't fetch this secret's value from the vault."
+	case strings.Contains(errMsg, "existing secret"):
+		return "Sharko couldn't read the existing secret on this cluster."
+	case strings.Contains(errMsg, "creating secret"):
+		return "Sharko couldn't create this secret on the cluster."
+	case strings.Contains(errMsg, "updating secret"):
+		return "Sharko couldn't update this secret on the cluster."
+	default:
+		return "The last sync didn't finish."
+	}
+}
+
 // lastAddonValuesSecretRepair reads one cluster+addon pair's most recent
 // successful values-secret write out of the prebuilt index. Resource
 // "cluster:<name>/addon:<addon>" is written by internal/secrets.
@@ -1026,6 +1191,32 @@ func addonValuesSecretCheckFailureSentence(errMsg string) string {
 func (idx repairIndex) lastAddonValuesSecretRepair(clusterName, addonName string) (secretRepair, bool) {
 	r, ok := idx.values[fmt.Sprintf("cluster:%s/addon:%s", clusterName, addonName)]
 	return r, ok
+}
+
+// buildOrphanedSecretRows projects the addon-values engine's in-memory
+// orphan-scan snapshot (leftover-secrets S1) into the response shape — no
+// K8s call, no dependency on a live Git/ArgoCD connection: this reads what
+// the reconciler's own scan passes already found (internal/secrets/
+// orphans.go), the same "list is a pure in-memory read" rule
+// buildAddonValuesSecretRows follows for the reconciler's item records.
+func (s *Server) buildOrphanedSecretRows() []orphanedSecretRow {
+	rows := make([]orphanedSecretRow, 0)
+	if s.secretReconciler == nil {
+		return rows
+	}
+	source := s.addonValuesSecretSourceLabel()
+	for _, o := range s.secretReconciler.OrphanedSecrets() {
+		rows = append(rows, orphanedSecretRow{
+			Cluster:         o.Cluster,
+			SecretName:      o.Name,
+			SecretNamespace: o.Namespace,
+			Addon:           o.Addon,
+			State:           "orphaned",
+			Source:          source,
+			LastChecked:     o.LastChecked.UTC().Format(time.RFC3339),
+		})
+	}
+	return rows
 }
 
 // clusterConnectionEngineInfo reports the cluster-secret reconciler's own
@@ -1101,22 +1292,24 @@ func (s *Server) addonValuesSecretSourceLabel() string {
 // name a cluster and a time exactly like the connection one does — and so
 // its click-to-filter behaviour (EngineStat in ManagedSecrets.tsx, already
 // generic over both engines) has something to filter to.
-func (s *Server) addonValuesEngineInfo(ctx context.Context) managedSecretsEngineInfo {
+// engineEnabled is the addon_values_engine_enabled setting (gitops-proud
+// P4-I, D2) — a single, repo-wide server setting, not a per-cluster fact.
+// L14 (code review): the CALLER reads it once per request
+// (GetManagedSecretsSettings, alongside managed_cluster_self_heal, in one
+// ConfigMap Read) and passes it down here instead of this function reading
+// the settings store itself — this used to be its own
+// s.settingsStore.IsAddonValuesEngineEnabled call, a second live K8s API
+// GET of the same ConfigMap object buildConnectionSecretRows's self-heal
+// read also hits.
+func (s *Server) addonValuesEngineInfo(ctx context.Context, engineEnabled bool) managedSecretsEngineInfo {
 	if s.secretReconciler == nil {
 		return managedSecretsEngineInfo{}
 	}
-	// gitops-proud P4-I (D2) — the engine's own off switch. Read directly
-	// off the settings store, same as v3SelfHealOn in
-	// buildConnectionSecretRows: a single, repo-wide server setting, not a
-	// per-cluster fact, and a nil settingsStore (out-of-cluster/dev mode)
-	// reads as enabled — the engine stays on by default, same as any
-	// install that never touches this setting.
-	enabled := s.settingsStore == nil || s.settingsStore.IsAddonValuesEngineEnabled(ctx)
 	info := managedSecretsEngineInfo{
 		Wired:           true,
 		IntervalSeconds: int(s.secretReconciler.Interval().Seconds()),
 		LastError:       s.secretReconciler.LastError(),
-		Enabled:         enabled,
+		Enabled:         engineEnabled,
 	}
 	if t := s.secretReconciler.LastRunTime(); !t.IsZero() {
 		info.LastRun = t.UTC().Format(time.RFC3339)

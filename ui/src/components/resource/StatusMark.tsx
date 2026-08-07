@@ -4,10 +4,14 @@
 // addon rows) that has this same one-question shape: does the live thing
 // match where it's supposed to come from?
 //
-// Exactly five states, exact words — never invent a sixth:
-//   in_sync      "In sync"            — matches its source right now
+// Six states, exact words — never invent a seventh:
+//   in_sync      "Synced"             — matches its source right now
 //   out_of_sync  "Out of sync"        — checked, and it does NOT match
-//   missing      "Not on the cluster" — checked, and there's nothing there
+//   missing      "Missing"            — checked, and there's nothing there
+//   orphaned     "Orphaned"           — Sharko wrote this once, but its
+//                                        source in git is gone; nothing
+//                                        asks for it anymore, and Sharko
+//                                        never deletes it on its own
 //   foreign      "Foreign"            — something IS there, and Sharko did
 //                                        not create it, so Sharko leaves it
 //                                        alone
@@ -15,14 +19,33 @@
 //
 // H3 word pass (gitops-proud P4-H): "missing" used to read "Missing" — a
 // one-word label that answers a different question than the one a reader
-// actually has ("missing FROM WHERE?"). "Not on the cluster" says the same
+// actually has ("missing FROM WHERE?"). "Not on the cluster" said the same
 // fact the per-key presence flag already used (see KeyTable in
 // ManagedSecrets.tsx) — one word for one fact, used consistently.
+//
+// Walk finding #140 (maintainer-approved, supersedes H3 directly above):
+// once NAME and NAMESPACE became their own columns, this row reads like an
+// ArgoCD Application list on purpose — and ArgoCD's own status words are
+// "Synced" and "Missing", not a sentence fragment squeezed into a status
+// column. "In sync" → "Synced", "Not on the cluster" → "Missing". The other
+// three words are untouched, and so is the plain-English sentence in the
+// detail panel ("This secret was never created on the cluster — Sync
+// creates it.") — the short word on the row and the full sentence in the
+// panel are still the intended pairing, only the row word changed.
 //
 // "Foreign" is deliberately NOT red and NOT amber. Nothing is broken and
 // nothing needs fixing — somebody else owns that secret, and Sharko staying
 // off it is the system working correctly. It gets a neutral slate dot: its
 // own thing, calm, and impossible to mistake for damage.
+//
+// leftover-secrets S1.2 adds "orphaned" — maintainer-locked word, never
+// softened. Distinct from "foreign": a foreign secret is something Sharko
+// never owned; an orphaned secret is something SHARKO WROTE whose source
+// definition someone later deleted from git. It gets its own violet dot —
+// not red (nothing is broken), not amber (there's no fix Sharko is waiting
+// on), not slate (unlike foreign, this one is Sharko's own past delivery,
+// worth calling out on its own) — with a Ghost mark, the one state where
+// the mark itself carries a hint of what the word already says.
 //
 // Two rules that matter more than they look like they do:
 //
@@ -42,14 +65,15 @@
 //    screen was the bug; ArgoCD's own "Healthy"/"Synced" are black text
 //    next to a small coloured mark, and this rule keeps the same honesty
 //    ("state has a word, not just a colour") without the colour-noise.
-//  - H3: ONE dot shape (a filled circle) for all three "checked" states —
-//    only the fill colour and the mark inside change (check / "!" / cross).
-//    "Not checked yet" stays its own shape (a hollow ring) ON PURPOSE — it
-//    must never be mistaken for a filled, checked state at a glance.
+//  - H3: ONE dot shape (a filled circle) for every "checked" state — only
+//    the fill colour and the mark inside change (check / "!" / cross /
+//    dash / ghost). "Not checked yet" stays its own shape (a hollow ring)
+//    ON PURPOSE — it must never be mistaken for a filled, checked state at
+//    a glance.
 
-import { Check, Minus, X, type LucideIcon } from 'lucide-react'
+import { Check, Ghost, Minus, X, type LucideIcon } from 'lucide-react'
 
-export type ResourceStatus = 'in_sync' | 'out_of_sync' | 'missing' | 'foreign' | 'unknown'
+export type ResourceStatus = 'in_sync' | 'out_of_sync' | 'missing' | 'orphaned' | 'foreign' | 'unknown'
 
 interface StatusMeta {
   label: string
@@ -70,7 +94,7 @@ interface StatusMeta {
 
 const STATUS_META: Record<ResourceStatus, StatusMeta> = {
   in_sync: {
-    label: 'In sync',
+    label: 'Synced',
     dotClassName: 'bg-green-600 dark:bg-green-500',
     stripClassName: 'border-green-600 dark:border-green-500',
     mark: Check,
@@ -82,10 +106,22 @@ const STATUS_META: Record<ResourceStatus, StatusMeta> = {
     mark: undefined, // exclamation mark is drawn as text — see StatusDot
   },
   missing: {
-    label: 'Not on the cluster',
+    label: 'Missing',
     dotClassName: 'bg-red-600 dark:bg-red-500',
     stripClassName: 'border-red-600 dark:border-red-500',
     mark: X,
+  },
+  orphaned: {
+    label: 'Orphaned',
+    // Violet/purple, on purpose — distinct from every other fill on this
+    // page (green/amber/red/slate). Not red or amber: nothing is broken
+    // and there's no fix Sharko is waiting on. Not slate like foreign:
+    // unlike a foreign secret (never Sharko's), this one WAS Sharko's own
+    // delivery, which is worth its own colour rather than blending into
+    // "not my problem" slate.
+    dotClassName: 'bg-violet-600 dark:bg-violet-500',
+    stripClassName: 'border-violet-600 dark:border-violet-500',
+    mark: Ghost,
   },
   foreign: {
     label: 'Foreign',
@@ -107,7 +143,7 @@ const STATUS_META: Record<ResourceStatus, StatusMeta> = {
   },
 }
 
-/** Normalizes any string the server sends into one of the four known states — an unrecognized value reads as "not checked yet" rather than crashing or rendering nothing. */
+/** Normalizes any string the server sends into one of the six known states — an unrecognized value reads as "not checked yet" rather than crashing or rendering nothing. */
 export function toResourceStatus(state: string): ResourceStatus {
   return state in STATUS_META ? (state as ResourceStatus) : 'unknown'
 }
@@ -117,12 +153,13 @@ export function statusLabel(state: string): string {
 }
 
 /**
- * Worst-first sort rank (S3, reordered for G3 — gitops-proud P4-G): missing
- * first, then out_of_sync, then foreign, then a FAILED check, then a
- * genuinely never-checked row, in_sync last. Ascending sort on this rank is
- * "problems float to the top", matching ArgoCD's own status-priority sort —
- * NEVER sort states alphabetically (that buries "out_of_sync" between
- * "in_sync" and "missing").
+ * Worst-first sort rank (S3, reordered for G3 — gitops-proud P4-G, then
+ * again for leftover-secrets S1.2): missing first, then out_of_sync, then
+ * orphaned, then foreign, then a FAILED check, then a genuinely
+ * never-checked row, in_sync last. Ascending sort on this rank is "problems
+ * float to the top", matching ArgoCD's own status-priority sort — NEVER
+ * sort states alphabetically (that buries "out_of_sync" between "in_sync"
+ * and "missing").
  *
  * G3's honesty call: "missing" now outranks "out_of_sync" — nothing exists
  * to Sync onto yet, which is a harder stop than a wrong value Sync can
@@ -132,6 +169,12 @@ export function statusLabel(state: string): string {
  * unknown, in_sync) for a stronger claim than "adjacent to the two real
  * comparisons, ahead of the two 'Sharko doesn't know' cases", so it keeps
  * that same relative seat.
+ *
+ * leftover-secrets S1.2 inserts "orphaned" right after out_of_sync, ahead
+ * of foreign: an orphaned row is a real leftover from Sharko's OWN past
+ * delivery (worth a look, even though nothing is actively broken), which
+ * outranks foreign — a boundary Sharko was never going to cross regardless.
+ * Every rank at or after foreign shifted down one slot to make room.
  *
  * "unknown" used to be one bucket. It still is ONE STATE the server sends,
  * but it is no longer one RANK: a row whose last check genuinely FAILED
@@ -145,15 +188,16 @@ export function statusLabel(state: string): string {
 const STATUS_RANK: Record<ResourceStatus, number> = {
   missing: 0,
   out_of_sync: 1,
-  foreign: 2,
+  orphaned: 2,
+  foreign: 3,
   // "unknown" WITHOUT a check error ("not checked yet") sits here — a
   // FAILED check (see CHECK_FAILED_RANK below) outranks it by one slot.
-  unknown: 4,
-  in_sync: 5,
+  unknown: 5,
+  in_sync: 6,
 }
 
 /** Where a FAILED check ("Sharko looked and the check itself broke") ranks — one slot ahead of a genuinely never-checked row, both still the "unknown" status word. */
-const CHECK_FAILED_RANK = 3
+const CHECK_FAILED_RANK = 4
 
 export function statusSortRank(state: string, hasCheckError = false): number {
   const s = toResourceStatus(state)
@@ -174,6 +218,25 @@ export function statusSortRank(state: string, hasCheckError = false): number {
  */
 export function statusStripClassName(state: string): string {
   return `border-l-[3px] ${STATUS_META[toResourceStatus(state)].stripClassName}`
+}
+
+/**
+ * statusBarClassName (design-secret-sync-visual-pass, section 3) — the
+ * tiles view's per-card status-mix bar reads off this, the SAME
+ * STATUS_META fill each row's own <StatusDot> uses (dotClassName), so the
+ * bar segment, the dot, the strip, and the filter chip can never disagree
+ * about what colour a state is. "unknown" has no fill of its own (it's a
+ * hollow ring everywhere else it appears) — the bar still needs a solid
+ * segment colour for it, so this returns the same blue-grey the hollow
+ * ring's border uses, as a `bg-*` class.
+ */
+export function statusBarClassName(state: string): string {
+  const s = toResourceStatus(state)
+  const meta = STATUS_META[s]
+  if (meta.dotClassName) return meta.dotClassName
+  // "unknown" — no fill in STATUS_META (the dot is a hollow ring instead).
+  // Same blue-grey family as its ring/strip, as a background fill.
+  return 'bg-[#5a8aaa] dark:bg-gray-500'
 }
 
 /**

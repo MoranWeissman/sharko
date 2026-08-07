@@ -456,6 +456,23 @@ type ClusterLastReconcile struct {
 	Message    string                          `json:"message,omitempty"`     // plain-English detail; set on failed/skipped
 	LabelDrift *ClusterLastReconcileLabelDrift `json:"label_drift,omitempty"` // V3 G1 — drift detection
 
+	// RawMessage (M8, code review) carries the reconciler's UNMAPPED Message
+	// text — never serialized (json:"-"), internal use only. Message above
+	// is now the safe, canned-sentence version
+	// (clusterreconciler.FailureSentence-mapped by applyLastReconcile in
+	// internal/api/clusters_reconcile.go), since it used to copy the raw
+	// text — which can carry a wrapped git/K8s error verbatim — straight
+	// into the GET /clusters response. Two internal call sites in
+	// internal/api/system_managed_secrets.go still need the exact raw text
+	// though: connectionSecretState's self-managed "missing" state is an
+	// exact-string match against clusterreconciler.
+	// SelfManagedSecretNotCreatedMessage (a fixed sentinel, never wrapped
+	// error text — safe to compare against directly), and
+	// connectionSecretCheckError maps the raw text through FailureSentence
+	// itself; mapping an already-mapped sentence a second time collapses
+	// every specific reason into the generic fallback sentence.
+	RawMessage string `json:"-"`
+
 	// ComparedRevision (P2-C1) is the full branch head commit SHA the pass
 	// that produced this record read git at. Empty when the active git
 	// provider cannot say (see clusterreconciler.BranchRevisioner) — never
