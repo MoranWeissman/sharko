@@ -942,7 +942,7 @@ function EngineStat({
       <div className="text-xs font-medium text-[#5a8aaa] dark:text-gray-500">{label}</div>
       {switchedOff ? (
         <div className="mt-0.5 text-sm text-[#5a8aaa] dark:text-gray-500" data-testid={`engine-off-${kind}`}>
-          Addon values engine is switched off.
+          Addon values engine is switched off. Refresh and Sync still work row by row.
         </div>
       ) : info?.wired ? (
         <div className="mt-0.5 flex items-center gap-1 text-sm text-[#0a3a5a] dark:text-gray-200">
@@ -1081,10 +1081,23 @@ function useLiveSecret(row: UnifiedRow | null, allowed: boolean) {
   // registered addon definition, and an orphan by definition no longer has
   // one — firing the read would be exactly the same doomed call a
   // known-missing row's read would be.
-  const skip = !row || !allowed || row.state === 'missing' || row.state === 'orphaned'
+  //
+  // L12 (code review): kept OUT of the effect's own dependency array on
+  // purpose and latched into a ref instead. row.state can flip to/from
+  // 'missing' (or 'orphaned') on its own — driven by the page's 30-second
+  // background refresh — while this panel is sitting open with the SAME row
+  // (rowKey unchanged). If `skip` were a reactive dependency, that flip
+  // would re-fire the live read exactly like a timer would, which is the
+  // one thing rule 4 in this file's own header comment exists to forbid:
+  // only an explicit open (rowKey changes) or Retry (attempt changes) may
+  // start a request. The ref lets the effect read the CURRENT
+  // allowed/missing/orphaned facts at the instant it actually decides
+  // whether to fetch — not as a reason, on its own, to run again.
+  const skipRef = useRef(true)
+  skipRef.current = !row || !allowed || row.state === 'missing' || row.state === 'orphaned'
 
   useEffect(() => {
-    if (skip) {
+    if (skipRef.current) {
       setState({ status: 'skipped' })
       return
     }
@@ -1131,8 +1144,10 @@ function useLiveSecret(row: UnifiedRow | null, allowed: boolean) {
     // object each time. Keying on the object would reload the panel's live
     // card every time the list refreshed behind it, which is exactly the
     // behaviour a 30-second auto-refresh would turn into a flicker.
+    // skip is deliberately excluded — see skipRef's own comment above; it
+    // must never be a reason for this effect to re-run on its own.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rowKey, attempt, skip, kind, cluster, addon])
+  }, [rowKey, attempt, kind, cluster, addon])
 
   return { live: state, retry: useCallback(() => setAttempt((a) => a + 1), []) }
 }
@@ -2192,11 +2207,28 @@ export function ManagedSecrets() {
   const [sortKey, setSortKey] = useState<SortKey>('state')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
+  // L13 (code review): latest-wins request sequencing. Two load() calls can
+  // be in flight at the same time — the 30-second background tick and an
+  // explicit post-Sync/post-Refresh-all reload a click just triggered are
+  // the real case — and nothing guarantees responses arrive in the order
+  // the requests were sent. Without this, a slow background tick started
+  // BEFORE a Sync click could still resolve AFTER the post-Sync reload and
+  // paint the page back to pre-Sync state, right after the user watched it
+  // update. loadSeqRef is bumped on every call; a response only gets
+  // applied if it's still the most recently STARTED one when it resolves.
+  const loadSeqRef = useRef(0)
   const load = useCallback(() => {
+    const seq = ++loadSeqRef.current
     return getManagedSecrets()
-      .then((res) => setData(res))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false))
+      .then((res) => {
+        if (loadSeqRef.current === seq) setData(res)
+      })
+      .catch(() => {
+        if (loadSeqRef.current === seq) setData(null)
+      })
+      .finally(() => {
+        if (loadSeqRef.current === seq) setLoading(false)
+      })
   }, [])
 
   useEffect(() => {

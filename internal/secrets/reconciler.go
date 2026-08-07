@@ -293,6 +293,17 @@ func (r *Reconciler) isEnabled(ctx context.Context) bool {
 	return r.enabledFn(ctx)
 }
 
+// IsEnabled exports isEnabled (M6, code review) — the same answer CheckAll
+// checks internally before it does anything else, but reachable
+// synchronously BEFORE a caller commits to a response. Before this existed,
+// handleCheckSecrets (internal/api/secrets_reconcile.go) always 202'd and
+// wrote a "checked N secrets" audit entry, then started a goroutine that
+// called CheckAll — which discovered ErrReconcilerDisabled and only logged
+// it. The audit trail said a check ran; nothing did.
+func (r *Reconciler) IsEnabled(ctx context.Context) bool {
+	return r.isEnabled(ctx)
+}
+
 // SetSourceType records the real secrets-provider backend type this
 // reconciler pushes addon-values secrets from, for the sharko.dev/source
 // provenance annotation stamped on every write (P2-C5). Pass the same
@@ -585,8 +596,14 @@ func (r *Reconciler) reconcile() {
 	// showing their last-known facts from whichever pass ran last.
 	if !r.isEnabled(ctx) {
 		log.Info("[secrets] addon-values engine is switched off — skipping reconcile")
+		// M7 (code review): the pass-age and sustained-bad-state alerts key
+		// off this gauge to stay silent while an admin has deliberately
+		// turned the engine off — see the gauge's own doc comment in
+		// internal/metrics/metrics.go.
+		metrics.ReconcilerEnabled.WithLabelValues(engineAddonValues).Set(0)
 		return
 	}
+	metrics.ReconcilerEnabled.WithLabelValues(engineAddonValues).Set(1)
 
 	log.Info("[secrets] reconcile started")
 
@@ -1327,6 +1344,17 @@ func (r *Reconciler) findWork(ctx context.Context, clusterName, addonName string
 // here for exactly one key instead. ChangedAt is always carried forward
 // from whatever it already was: only a real write (see SyncOne) ever
 // advances it, never a read-only check.
+//
+// ConsecutiveFailures (L10, code review) is carried forward the same way the
+// periodic pass's own loop does it (see the "err != nil" branch in
+// reconcile()): errMsg != "" means this call is reporting a real check
+// failure (checkWork only ever passes a non-empty errMsg on its error and
+// skip-due-to-incomplete-definition paths), so the streak increments; any
+// real finding — unchanged, out_of_sync, missing, foreign — passes errMsg =
+// "" and resets it to 0. Before this, every call here built a fresh
+// ItemRecord with ConsecutiveFailures left at its zero value, so a row
+// stuck failing on manual Refresh (or on CheckAll — see checkWork) never
+// crossed the fight-detection threshold the periodic pass uses.
 func (r *Reconciler) recordItemCheck(cluster, addon string, outcome ItemOutcome, errMsg string) {
 	key := ItemKey{Cluster: cluster, Addon: addon}
 	r.mu.Lock()
@@ -1335,12 +1363,16 @@ func (r *Reconciler) recordItemCheck(cluster, addon string, outcome ItemOutcome,
 		r.itemRecords = make(map[ItemKey]ItemRecord)
 	}
 	prev := r.itemRecords[key]
-	r.itemRecords[key] = ItemRecord{
+	rec := ItemRecord{
 		LastChecked: time.Now(),
 		Outcome:     outcome,
 		ChangedAt:   prev.ChangedAt,
 		Error:       errMsg,
 	}
+	if errMsg != "" {
+		rec.ConsecutiveFailures = prev.ConsecutiveFailures + 1
+	}
+	r.itemRecords[key] = rec
 }
 
 // CheckOne re-checks a single addon-values secret (one cluster+addon pair)
@@ -1385,14 +1417,21 @@ func (r *Reconciler) CheckOne(ctx context.Context, clusterName, addonName string
 // the catalog could not be read).
 func (r *Reconciler) CheckAll(ctx context.Context) error {
 	log := logging.LoggerFromContext(ctx)
+	start := time.Now()
 
 	// gitops-proud P4-I (D2) — the off switch stops BOTH passes: the write
 	// pass above (reconcile) and this check pass. "Check all now" on a
 	// switched-off engine has nothing to check with — same shape as
 	// ErrNoGitConnection, a real error for this single request-driven call.
 	if !r.isEnabled(ctx) {
+		// M7 (code review): same gauge write as reconcile()'s own disabled
+		// branch — a CheckAll call is a real, request-driven attempt to run
+		// this engine, and it belongs in the same "is this engine even on"
+		// signal the periodic pass keeps up to date.
+		metrics.ReconcilerEnabled.WithLabelValues(engineAddonValues).Set(0)
 		return ErrReconcilerDisabled
 	}
+	metrics.ReconcilerEnabled.WithLabelValues(engineAddonValues).Set(1)
 
 	gr := r.gitReader()
 	if gr == nil {
@@ -1403,10 +1442,31 @@ func (r *Reconciler) CheckAll(ctx context.Context) error {
 		return fmt.Errorf("could not read the addon catalog or managed clusters list: %w", err)
 	}
 
+	// H2 (code review): before this, a failure here was counted only in the
+	// local checked/failed variables below and logged once — CheckAll then
+	// returned nil regardless of how many (or how few) items actually
+	// succeeded, so a vault outage during "Check all now" looked identical
+	// to a clean pass to everything outside this function: the engine's own
+	// LastError/LastRun kept reporting whatever the LAST successful pass
+	// found, and the audit entry the handler writes said "N checked" with no
+	// hint that every one of them failed. stats + errs mirror reconcile()'s
+	// own bookkeeping so recordRun below can publish a real run record for
+	// this check pass, exactly like the periodic write pass does for
+	// itself.
+	stats := ReconcileStats{}
+	var errs []string
+	var errCluster string
 	checked, failed := 0, 0
 	for _, w := range plan.work {
+		stats.Checked++
 		if _, checkErr := r.checkWork(ctx, w); checkErr != nil {
 			failed++
+			stats.Errors++
+			errs = append(errs, fmt.Sprintf("cluster=%s addon=%s secret=%s: %v",
+				w.clusterName, w.addon, w.push.SecretName, checkErr))
+			if errCluster == "" {
+				errCluster = w.clusterName
+			}
 			log.Warn("[secrets] could not check this addon-values secret — carrying on with the rest",
 				"cluster", w.clusterName, "addon", w.addon, "secret", w.push.SecretName, "error", checkErr)
 			continue
@@ -1418,6 +1478,21 @@ func (r *Reconciler) CheckAll(ctx context.Context) error {
 	// scan is itself read-only (a LIST call, never a write) — it belongs
 	// here on exactly the same terms it belongs at the end of reconcile().
 	r.scanOrphans(ctx, plan)
+
+	r.recordRun(start, stats, errs, errCluster)
+
+	outcome := "success"
+	if stats.Errors > 0 {
+		outcome = "partial"
+	}
+	metrics.ReconcilerRuns.WithLabelValues(engineAddonValues, outcome).Inc()
+	metrics.ReconcilerDuration.WithLabelValues(engineAddonValues).Observe(time.Since(start).Seconds())
+	now := float64(time.Now().Unix())
+	metrics.ReconcilerLastRun.WithLabelValues(engineAddonValues).Set(now)
+	if outcome == "success" {
+		metrics.ReconcilerLastSuccess.WithLabelValues(engineAddonValues).Set(now)
+	}
+	metrics.ReconcilerItemsChecked.WithLabelValues(engineAddonValues).Add(float64(stats.Checked))
 
 	log.Info("[secrets] check-only pass complete — nothing was written",
 		"layout", plan.layout, "checked", checked, "could_not_check", failed)
@@ -1446,11 +1521,22 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 
 	creds, err := r.credProvider.GetCredentials(w.credLookup)
 	if err != nil {
-		return "", fmt.Errorf("getting credentials for cluster %q: %w", clusterName, err)
+		checkErr := fmt.Errorf("getting credentials for cluster %q: %w", clusterName, err)
+		// H2 (code review): every failure path below used to return before
+		// recordItemCheck ever ran — CheckAll counted the failure locally and
+		// moved on, but the ROW never learned about it, so a vault outage
+		// left every row still saying whatever its last successful check
+		// found. recordItemCheck(..., ItemOutcomeError, ...) is what makes
+		// this failure visible on the page and to LastItemConsecutiveFailures
+		// (L10), same as a periodic-pass failure already is.
+		r.recordItemCheck(clusterName, addonName, ItemOutcomeError, checkErr.Error())
+		return "", checkErr
 	}
 	client, err := r.remoteClientFn(creds.Raw)
 	if err != nil {
-		return "", fmt.Errorf("connecting to cluster %q: %w", clusterName, err)
+		checkErr := fmt.Errorf("connecting to cluster %q: %w", clusterName, err)
+		r.recordItemCheck(clusterName, addonName, ItemOutcomeError, checkErr.Error())
+		return "", checkErr
 	}
 
 	existing, err := client.CoreV1().Secrets(w.push.Namespace).Get(ctx, w.push.SecretName, metav1.GetOptions{})
@@ -1459,7 +1545,9 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 			r.recordItemCheck(clusterName, addonName, ItemOutcomeMissing, "")
 			return ItemOutcomeMissing, nil
 		}
-		return "", fmt.Errorf("checking the existing secret on cluster %q: %w", clusterName, err)
+		checkErr := fmt.Errorf("checking the existing secret on cluster %q: %w", clusterName, err)
+		r.recordItemCheck(clusterName, addonName, ItemOutcomeError, checkErr.Error())
+		return "", checkErr
 	}
 
 	// Ownership gate (P1-A), asked BEFORE anything is pulled out of the
@@ -1474,7 +1562,9 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 	for key, providerPath := range w.push.Keys {
 		val, valErr := r.secretProvider.GetSecretValue(ctx, providerPath)
 		if valErr != nil {
-			return "", fmt.Errorf("fetching %q from the secrets provider: %w", providerPath, valErr)
+			checkErr := fmt.Errorf("fetching %q from the secrets provider: %w", providerPath, valErr)
+			r.recordItemCheck(clusterName, addonName, ItemOutcomeError, checkErr.Error())
+			return "", checkErr
 		}
 		desiredData[key] = val
 	}
@@ -1528,6 +1618,18 @@ func (r *Reconciler) SyncOne(ctx context.Context, clusterName, addonName string)
 	rec := ItemRecord{LastChecked: time.Now(), Outcome: outcome, Error: errMsg, ChangedAt: prev.ChangedAt}
 	if outcome == ItemOutcomeCreated || outcome == ItemOutcomeUpdated {
 		rec.ChangedAt = rec.LastChecked
+	}
+	// L10 (code review): same carry-forward rule recordItemCheck now
+	// applies to CheckOne/CheckAll — a real sync failure (syncErr != nil)
+	// extends the streak the periodic pass would also be building on this
+	// pair; any real outcome (created/updated/unchanged/foreign) resets it,
+	// including the refused-foreign case, which is a boundary, not a
+	// failure. Before this, every manual Sync on an already-failing row
+	// reset its ConsecutiveFailures to 0, so a row a human kept retrying by
+	// hand could never cross the fight-detection threshold the periodic
+	// pass uses.
+	if syncErr != nil {
+		rec.ConsecutiveFailures = prev.ConsecutiveFailures + 1
 	}
 	r.itemRecords[key] = rec
 	r.mu.Unlock()

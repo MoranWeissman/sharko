@@ -71,6 +71,15 @@ type demoAddonValuesReconciler struct {
 
 	auditLog *audit.Log
 
+	// enabledFn (M5, code review) mirrors secrets.Reconciler.enabledFn/
+	// SetEnabledFn exactly — wired from the same settings.Store CheckAll
+	// (internal/api/system_managed_secrets.go's addonValuesEngineInfo) reads
+	// for the real engine, so `make demo-big` demonstrates the true
+	// behavior of the off switch instead of a "Check all now" that always
+	// ran. nil reads as enabled, same nil-safe default the real reconciler
+	// uses when no settings store is wired at all.
+	enabledFn func(ctx context.Context) bool
+
 	// lastErrorCluster/lastErrorMsg/lastErrorAt (P1-B B3) seed the
 	// engine-level error the page's top strip shows for this engine —
 	// mirrors what a real reconcile() pass with at least one failing item
@@ -386,10 +395,56 @@ func (r *demoAddonValuesReconciler) KnownItemCount() int {
 // than imported to keep this package free of an internal/secrets dependency.
 const demoForeignRefusal = "Someone else created this one — Sharko will not touch it."
 
+// demoAddonValuesEngineDisabled is CheckAll's refusal sentence when the
+// engine is switched off (M5, code review) — kept word-for-word identical
+// to secrets.ErrReconcilerDisabled so the demo teaches the same sentence
+// the real engine gives. Copied rather than imported, same reasoning as
+// demoForeignRefusal above (keeps this package free of an internal/secrets
+// dependency).
+const demoAddonValuesEngineDisabled = "the addon-values engine is switched off"
+
+// SetEnabledFn wires the addon-values engine's off switch into demo mode
+// (M5, code review) — mirrors secrets.Reconciler.SetEnabledFn exactly.
+// Before this, demo's CheckAll had no seam at all: flipping Settings ->
+// Addon Values Engine off changed what the real engine's "Check all now"
+// did but left the demo one running exactly as before, so `make demo-big`
+// could not demonstrate the off switch's real behavior.
+func (r *demoAddonValuesReconciler) SetEnabledFn(fn func(ctx context.Context) bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.enabledFn = fn
+}
+
+// isEnabled mirrors secrets.Reconciler.isEnabled — nil enabledFn (no
+// settings store wired) reads as enabled, matching every other nil-safe
+// wrapper in this codebase's settings pattern.
+func (r *demoAddonValuesReconciler) isEnabled(ctx context.Context) bool {
+	r.mu.RLock()
+	fn := r.enabledFn
+	r.mu.RUnlock()
+	if fn == nil {
+		return true
+	}
+	return fn(ctx)
+}
+
+// IsEnabled exports isEnabled (M6, code review) — mirrors
+// secrets.Reconciler.IsEnabled, reachable synchronously the same way.
+func (r *demoAddonValuesReconciler) IsEnabled(ctx context.Context) bool {
+	return r.isEnabled(ctx)
+}
+
 // CheckAll is the page's "Refresh all" on this engine — re-stamps every
 // known row's last-checked time and leaves every outcome exactly where it
 // was. Same rule as CheckOne below: a check looks, it never fixes.
-func (r *demoAddonValuesReconciler) CheckAll(_ context.Context) error {
+//
+// M5 (code review): gated on the same off switch the real engine's CheckAll
+// checks first — a switched-off engine has nothing to check with in demo
+// mode either.
+func (r *demoAddonValuesReconciler) CheckAll(ctx context.Context) error {
+	if !r.isEnabled(ctx) {
+		return errors.New(demoAddonValuesEngineDisabled)
+	}
 	now := time.Now()
 	r.mu.Lock()
 	defer r.mu.Unlock()

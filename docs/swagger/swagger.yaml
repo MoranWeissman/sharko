@@ -8943,6 +8943,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "409":
+          description: The addon-values engine is switched off — nothing to check
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "503":
           description: Secrets reconciler not configured
           schema:

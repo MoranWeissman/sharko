@@ -346,15 +346,24 @@ func TestAddonValuesEngineInfo_ReflectsAddonValuesEngineEnabled(t *testing.T) {
 	srv.SetSettingsStore(store)
 	ctx := t.Context()
 
+	// L14 (code review): addonValuesEngineInfo now takes the enabled flag as
+	// a parameter — handleGetManagedSecrets reads it once via
+	// GetManagedSecretsSettings and passes it down, instead of this
+	// function reading the settings store itself (which used to mean a
+	// second live ConfigMap GET alongside buildConnectionSecretRows' own
+	// self-heal read). Reading the store here, the same way the handler
+	// now does, still proves the setting's real value ends up in the
+	// response shape end-to-end.
+	//
 	// Default (true) — the setting was never touched.
-	if info := srv.addonValuesEngineInfo(ctx); !info.Enabled {
+	if info := srv.addonValuesEngineInfo(ctx, store.GetManagedSecretsSettings(ctx).AddonValuesEngineEnabled); !info.Enabled {
 		t.Error("addonValuesEngineInfo().Enabled = false, want default true before the setting is ever touched")
 	}
 
 	if err := store.SetAddonValuesEngineEnabled(ctx, false); err != nil {
 		t.Fatalf("SetAddonValuesEngineEnabled: %v", err)
 	}
-	if info := srv.addonValuesEngineInfo(ctx); info.Enabled {
+	if info := srv.addonValuesEngineInfo(ctx, store.GetManagedSecretsSettings(ctx).AddonValuesEngineEnabled); info.Enabled {
 		t.Error("addonValuesEngineInfo().Enabled = true, want false after SetAddonValuesEngineEnabled(false)")
 	}
 }

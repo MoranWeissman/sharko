@@ -7,7 +7,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -157,6 +159,86 @@ func TestPollOnce_ClusterBecomesManaged_ClearsPendingAnnotation_KeepsSecret(t *t
 	entries := audits.Snapshot()
 	if !hasEventForResource(entries, "cluster_secret_clear_pending", "cluster:now-managed") {
 		t.Fatalf("expected a cluster_secret_clear_pending audit; got %v", entries)
+	}
+}
+
+// TestPollOnce_ClearPending_RaceStrippedLabelBetweenListAndGet is L11's pin
+// (code review): clearRegistrationPending re-Gets the Secret fresh before
+// writing (by design — see its own doc comment), but until this fix it
+// never re-checked ownership on that fresh copy. If something else (kubectl,
+// another controller) stripped the app.kubernetes.io/managed-by=sharko
+// label in the window between the tick's earlier listManagedSecrets
+// snapshot (what put this cluster in the "convert pending -> managed" loop
+// in the first place) and this pass's own re-Get, the old code would
+// DeepCopy the fresh object, blindly re-stamp the ownership label via
+// ApplyManagedBySharkoLabel, and Update — silently re-taking ownership of a
+// Secret that is no longer Sharko's. deleteOne already guards the
+// equivalent race for delete; this pins the same guard now exists here.
+func TestPollOnce_ClearPending_RaceStrippedLabelBetweenListAndGet(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	now := time.Date(2026, 6, 7, 12, 30, 0, 0, time.UTC)
+	secret := pendingSecret("race-cluster", now.Add(-30*time.Second))
+
+	body := envelopedManagedClusters("race-cluster") // the registration PR just merged
+	vault := &fakeVault{
+		creds: map[string]*providers.Kubeconfig{
+			"race-cluster": {Server: "https://race-cluster.example.com", CAData: []byte("ca"), Token: "tk"},
+		},
+	}
+	k8sClient := fake.NewSimpleClientset(secret)
+
+	// The tick reaches this cluster's connectivity-check label sync BEFORE
+	// clearRegistrationPending runs (clearRegistrationPending's own doc
+	// comment: it runs LAST among a tick's per-cluster label writes) — that
+	// earlier read must see the real, labeled object so its own unrelated
+	// write proceeds normally. Only the SECOND and later "get" of this
+	// Secret (clearRegistrationPending's own fresh re-Get) sees the
+	// ownership label already stripped — simulating something else
+	// (kubectl, another controller) removing it in the window between the
+	// tick's earlier listManagedSecrets snapshot and this pass's re-Get.
+	gets := 0
+	k8sClient.PrependReactor("get", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		getAction, ok := action.(k8stesting.GetAction)
+		if !ok || getAction.GetName() != "race-cluster" {
+			return false, nil, nil
+		}
+		gets++
+		if gets == 1 {
+			return false, nil, nil // let the tracker answer normally
+		}
+		stripped := secret.DeepCopy()
+		delete(stripped.Labels, LabelManagedBy)
+		return true, stripped, nil
+	})
+
+	audits := &auditCollector{}
+	r := newReconcilerForTest(t, nil, k8sClient, vault, audits, body)
+	r.nowFn = func() time.Time { return now }
+	r.pollOnce(ctx)
+
+	// clearRegistrationPending's write, if it happened, is the ONE update
+	// that both applies the ownership label AND deletes the
+	// registration-pending annotation — no other write this tick touches
+	// that annotation. Its absence among the recorded actions is the guard
+	// actually holding.
+	for _, action := range k8sClient.Actions() {
+		if action.GetVerb() != "update" || action.GetResource().Resource != "secrets" {
+			continue
+		}
+		updated, ok := action.(k8stesting.UpdateAction).GetObject().(*corev1.Secret)
+		if !ok {
+			continue
+		}
+		if _, stillPending := updated.Annotations[models.AnnotationRegistrationPending]; !stillPending {
+			t.Fatalf("clearRegistrationPending's write landed on a Secret that lost its ownership label between listing and this write: %v", updated)
+		}
+	}
+
+	rec, ok := r.LastReconcile("race-cluster")
+	if !ok || rec.Outcome != OutcomeSkipped {
+		t.Errorf("LastReconcile outcome = (%+v, %v), want OutcomeSkipped", rec, ok)
 	}
 }
 

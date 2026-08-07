@@ -211,7 +211,14 @@ func TestConnectionSecretState_FailedOutcomeIsUnknownNotOutOfSync(t *testing.T) 
 			"self-managed secret not created yet -> missing",
 			&models.ClusterLastReconcile{
 				Outcome: string(clusterreconciler.OutcomeSkipped),
-				Message: clusterreconciler.SelfManagedSecretNotCreatedMessage,
+				// M8 (code review): connectionSecretState now matches on
+				// RawMessage, not Message — Message is the
+				// FailureSentence-mapped, safe-for-a-browser text
+				// (applyLastReconcile), which no longer carries this exact
+				// sentinel string. RawMessage is what applyLastReconcile
+				// actually populates from the reconciler's own unmapped
+				// Message, so that's what the fixture sets here.
+				RawMessage: clusterreconciler.SelfManagedSecretNotCreatedMessage,
 			},
 			"missing",
 		},
@@ -277,7 +284,9 @@ func TestConnectionSecretCheckError_OnlyFailedRecordsCarryASentence(t *testing.T
 	}
 
 	raw := "reconciler pass aborted: git read failed: dial tcp: i/o timeout"
-	failed := &models.ClusterLastReconcile{Outcome: string(clusterreconciler.OutcomeFailed), Message: raw}
+	// M8 (code review): connectionSecretCheckError now maps RawMessage, not
+	// Message — see that function's own comment.
+	failed := &models.ClusterLastReconcile{Outcome: string(clusterreconciler.OutcomeFailed), RawMessage: raw}
 	got := connectionSecretCheckError(failed)
 	if got == "" {
 		t.Fatal("failed record: last_check_error is empty, want the mapped sentence")

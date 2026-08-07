@@ -58,14 +58,19 @@ type fakeSecretReconciler struct {
 	lastError        string
 	lastErrorCluster string
 	lastErrorAt      time.Time
+
+	// disabled (M6, code review) — zero value false means IsEnabled reports
+	// true, same nil-enabledFn default the real Reconciler uses.
+	disabled bool
 }
 
 type itemCallArgs struct{ cluster, addon string }
 
-func (f *fakeSecretReconciler) Trigger()               { f.triggered++ }
-func (f *fakeSecretReconciler) GetStats() interface{}  { return map[string]int{} }
-func (f *fakeSecretReconciler) LastRunTime() time.Time { return time.Time{} }
-func (f *fakeSecretReconciler) LastError() string      { return f.lastError }
+func (f *fakeSecretReconciler) Trigger()                         { f.triggered++ }
+func (f *fakeSecretReconciler) IsEnabled(_ context.Context) bool { return !f.disabled }
+func (f *fakeSecretReconciler) GetStats() interface{}            { return map[string]int{} }
+func (f *fakeSecretReconciler) LastRunTime() time.Time           { return time.Time{} }
+func (f *fakeSecretReconciler) LastError() string                { return f.lastError }
 func (f *fakeSecretReconciler) LastErrorCluster() string {
 	return f.lastErrorCluster
 }

@@ -175,6 +175,21 @@ var (
 		Name: "sharko_reconciler_fights",
 		Help: "Count of items currently in a fight or consecutive-failure state (>=3 in a row), by engine",
 	}, []string{"engine"})
+
+	// ReconcilerEnabled (M7, code review) is 1 when an engine is currently
+	// switched on, 0 when an admin has deliberately turned it off (Settings
+	// -> Addon Values Engine — the only engine with an off switch today; the
+	// cluster-connection engine has none, on purpose, and always reports 1).
+	// Written on Start(), on every settings toggle, and at the end of every
+	// pass — so the value is never more than one tick stale. This is the
+	// gauge charts/sharko/templates/prometheusrules.yaml's pass-age and
+	// sustained-bad-state alerts gate on: a deliberately-off engine must not
+	// page anybody for having gone quiet, since going quiet is exactly what
+	// turning it off was for.
+	ReconcilerEnabled = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "sharko_reconciler_enabled",
+		Help: "1 when this engine is switched on, 0 when an admin has turned it off",
+	}, []string{"engine"})
 )
 
 // PR metrics

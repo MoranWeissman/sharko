@@ -598,8 +598,19 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 
 	// The engines section never depends on a live Git/ArgoCD connection —
 	// build it first so a connection outage still reports engine health.
+	//
+	// L14 (code review): both settings this endpoint needs — self-heal and
+	// addon-values-engine-enabled — are read ONCE here via
+	// GetManagedSecretsSettings, which does a single ConfigMap Read for
+	// both, and the two bools are threaded down from here instead of
+	// addonValuesEngineInfo/buildConnectionSecretRows each reading the
+	// settings store independently. Before this, those two calls meant TWO
+	// separate live K8s API GETs of the identical ConfigMap object on every
+	// hit of this endpoint (this page's own 30-second auto-refresh, times
+	// however many tabs have it open).
+	managedSecretsSettings := s.settingsStore.GetManagedSecretsSettings(r.Context())
 	resp.Engines.ClusterConnection = s.clusterConnectionEngineInfo()
-	resp.Engines.AddonValues = s.addonValuesEngineInfo(r.Context())
+	resp.Engines.AddonValues = s.addonValuesEngineInfo(r.Context(), managedSecretsSettings.AddonValuesEngineEnabled)
 	resp.AddonValuesSecretSource = s.addonValuesSecretSourceLabel()
 	// Orphaned secrets (leftover-secrets S1) are a pure in-memory read on
 	// the reconciler's OWN scan results — no K8s call, no dependency on a
@@ -635,8 +646,12 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 	// row — see buildRepairIndex's own comment.
 	repairs := buildRepairIndex(s.AuditLog().List(0))
 
-	resp.ClusterConnectionSecrets = s.buildConnectionSecretRows(r.Context(), listResp.Clusters, repairs)
-	resp.AddonValuesSecrets = s.buildAddonValuesSecretRows(listResp.Clusters, repairs)
+	resp.ClusterConnectionSecrets = s.buildConnectionSecretRows(r.Context(), listResp.Clusters, repairs, managedSecretsSettings.SelfHealEnabled)
+	// M4 (code review): resp.Engines.AddonValues.Enabled is already computed
+	// above (addonValuesEngineInfo) — reused here instead of re-reading the
+	// settings store a second time, so the row-level SelfHeals promise and
+	// the engine strip can never disagree about whether the engine is on.
+	resp.AddonValuesSecrets = s.buildAddonValuesSecretRows(listResp.Clusters, repairs, resp.Engines.AddonValues.Enabled)
 
 	s.respondManagedSecrets(w, r, resp)
 }
@@ -666,16 +681,17 @@ func (s *Server) respondManagedSecrets(w http.ResponseWriter, r *http.Request, r
 // Discovered/orphan clusters (Managed == false) are excluded — Sharko has
 // no connection secret of its own to report for a cluster it didn't
 // register.
-func (s *Server) buildConnectionSecretRows(ctx context.Context, clusters []models.Cluster, repairs repairIndex) []connectionSecretRow {
+// selfHealOn is the managed_cluster_self_heal setting (P2-C3) — a single,
+// repo-wide server setting, not a per-cluster fact. L14 (code review): the
+// CALLER reads it once per request (GetManagedSecretsSettings, alongside
+// the addon-values engine's own setting, in one ConfigMap Read) and passes
+// it down here instead of this function reading the settings store itself
+// — this used to be its own s.settingsStore.IsManagedClusterSelfHealEnabled
+// call, a second live K8s API GET of the same ConfigMap object
+// handleGetManagedSecrets's addonValuesEngineInfo call also reads.
+func (s *Server) buildConnectionSecretRows(ctx context.Context, clusters []models.Cluster, repairs repairIndex, selfHealOn bool) []connectionSecretRow {
 	_, ns, _ := s.k8sClientAndNamespace()
-
-	// The managed_cluster_self_heal setting is read ONCE per request (P2-C3)
-	// — it is a single, repo-wide server setting, not a per-cluster fact,
-	// so there is no reason to ask the settings store once per row. A nil
-	// settingsStore (out-of-cluster mode) reads as "off", matching
-	// clusterreconciler.Deps.SelfHealFn's own "nil means default OFF"
-	// contract.
-	v3SelfHealOn := s.settingsStore != nil && s.settingsStore.IsManagedClusterSelfHealEnabled(ctx)
+	v3SelfHealOn := selfHealOn
 
 	rows := make([]connectionSecretRow, 0, len(clusters))
 	for _, c := range clusters {
@@ -807,7 +823,14 @@ func connectionSecretState(rec *models.ClusterLastReconcile) (state, lastChecked
 	}
 	lastChecked = rec.Time
 	switch {
-	case rec.Outcome == string(clusterreconciler.OutcomeSkipped) && rec.Message == clusterreconciler.SelfManagedSecretNotCreatedMessage:
+	// M8 (code review): matched against RawMessage, not Message — Message
+	// is now the FailureSentence-mapped, safe-for-a-browser text
+	// (applyLastReconcile in clusters_reconcile.go), which no longer
+	// carries this exact sentinel string verbatim. RawMessage still does;
+	// SelfManagedSecretNotCreatedMessage is a fixed sentence this package
+	// itself writes, never wrapped error text, so comparing against it
+	// directly is safe.
+	case rec.Outcome == string(clusterreconciler.OutcomeSkipped) && rec.RawMessage == clusterreconciler.SelfManagedSecretNotCreatedMessage:
 		return "missing", lastChecked
 	case rec.Outcome == string(clusterreconciler.OutcomeSucceeded) && rec.LabelDrift == nil:
 		return "in_sync", lastChecked
@@ -830,7 +853,14 @@ func connectionSecretCheckError(rec *models.ClusterLastReconcile) string {
 	if rec == nil || rec.Outcome != string(clusterreconciler.OutcomeFailed) {
 		return ""
 	}
-	return clusterreconciler.FailureSentence(rec.Message)
+	// M8 (code review): mapped from RawMessage, not Message. Message is
+	// already FailureSentence-mapped by applyLastReconcile — running an
+	// already-mapped sentence through FailureSentence a second time matches
+	// none of its fixed-prefix cases (the canned sentences don't contain
+	// the raw stage prefixes) and collapses every specific reason into the
+	// generic "The last check didn't finish" fallback. RawMessage still
+	// carries the one-and-only-mapping-needed raw text.
+	return clusterreconciler.FailureSentence(rec.RawMessage)
 }
 
 // secretRepair is one row's "last repaired" fact: when Sharko last
@@ -904,7 +934,7 @@ func (idx repairIndex) lastConnectionSecretRepair(clusterName string) (secretRep
 // has both a registered secret definition AND the addon enabled on that
 // cluster (via the cluster's addon labels — already present on the Cluster
 // model from the same listing read, no extra I/O).
-func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, repairs repairIndex) []addonValuesSecretRow {
+func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, repairs repairIndex, engineEnabled bool) []addonValuesSecretRow {
 	// Resolved once per request and stamped onto every row it applies to
 	// (S1). One addon-secret backend serves the whole server today, so
 	// every values row currently gets the same answer — but the ANSWER
@@ -948,7 +978,14 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, repairs r
 				// P2-C3: the values engine always repairs what it owns
 				// (P1-A's ownership gate) — the one exception is a foreign
 				// row, which Sharko will never touch.
-				SelfHeals: state != "foreign",
+				//
+				// M4 (code review): a row must not also promise self-heal
+				// when an admin has switched the engine off (Settings ->
+				// Addon Values Engine) — the locked decision that single-row
+				// Check/Sync stay ungated is not a promise that the periodic
+				// pass will also fix this row, and with the engine off there
+				// is no periodic pass.
+				SelfHeals: engineEnabled && state != "foreign",
 			}
 			if s.secretReconciler != nil {
 				if checkedAt, ok := s.secretReconciler.LastItemChecked(c.Name, addonName); ok {
@@ -1064,6 +1101,19 @@ func addonValuesSecretCheckFailureSentence(errMsg string) string {
 	switch {
 	case errMsg == "":
 		return ""
+	// H1 (code review): CheckOne (internal/api/addon_secret_single.go's
+	// handleRefreshAddonValuesSecret) now routes its error through this
+	// function too, not just LastItemError — so the two extra shapes
+	// findWork can return (no Git connection configured, and the catalog
+	// itself couldn't be read) need their own cases here, checked before the
+	// generic stage cases below so they don't fall through to the vaguer
+	// default.
+	case strings.Contains(errMsg, "no Git connection is configured"):
+		return "Sharko has no Git connection configured — there is nothing to check."
+	case strings.Contains(errMsg, "could not read the addon catalog or managed clusters list"):
+		return "Sharko couldn't read the addon catalog or managed-clusters file in git. Check that Sharko can reach your git host, then try again."
+	case strings.Contains(errMsg, "no addon-values secret is defined for"):
+		return "No addon-values secret is defined for this cluster and addon — check that the cluster is registered, the addon is enabled on it, and the addon's catalog entry defines a secret to push."
 	case strings.Contains(errMsg, "the secret definition in the catalog has no"):
 		return "The secret definition in the catalog is incomplete — fill in the missing fields."
 	case strings.Contains(errMsg, "getting credentials"):
@@ -1080,6 +1130,56 @@ func addonValuesSecretCheckFailureSentence(errMsg string) string {
 		return "Sharko couldn't update this secret on the cluster."
 	default:
 		return "The last check didn't finish."
+	}
+}
+
+// addonValuesSecretSyncFailureSentence is addonValuesSecretCheckFailureSentence's
+// sync-side twin (H1, code review). handleSyncAddonValuesSecret
+// (internal/api/addon_secret_single.go) used to pass SyncOne's error
+// straight through to writeError as err.Error() — the same raw-reconciler-
+// text leak CheckOne had, plus SyncOne can additionally fail on the two
+// write-only stages (creating/updating a secret) that a pure check never
+// reaches. Kept as its own function, not a shared one, because the wording
+// says "sync", not "check" — a person who clicked Sync and got told "the
+// last CHECK didn't finish" would be looking at the wrong verb for the
+// button they pressed.
+func addonValuesSecretSyncFailureSentence(errMsg string) string {
+	switch {
+	case errMsg == "":
+		return ""
+	case strings.Contains(errMsg, "Someone else created this one"):
+		// Passed through UNCHANGED, deliberately — the one exception to
+		// "never echo the raw string" in this function. secrets.
+		// ErrForeignSecret is not wrapped provider/K8s error text; it is
+		// Sharko's own fixed, safe, complete sentence, and demo mode's
+		// demoForeignRefusal (internal/demo/addon_values_reconciler.go) is
+		// kept word-for-word identical to it on purpose — a Sync refusal on
+		// a foreign secret must read exactly the same whether it came from
+		// the real engine or the demo one. Rewording it here would break
+		// that pinned contract for no safety gain.
+		return errMsg
+	case strings.Contains(errMsg, "no Git connection is configured"):
+		return "Sharko has no Git connection configured — there is nothing to sync."
+	case strings.Contains(errMsg, "could not read the addon catalog or managed clusters list"):
+		return "Sharko couldn't read the addon catalog or managed-clusters file in git. Check that Sharko can reach your git host, then try again."
+	case strings.Contains(errMsg, "no addon-values secret is defined for"):
+		return "No addon-values secret is defined for this cluster and addon — check that the cluster is registered, the addon is enabled on it, and the addon's catalog entry defines a secret to push."
+	case strings.Contains(errMsg, "the secret definition in the catalog has no"):
+		return "The secret definition in the catalog is incomplete — fill in the missing fields."
+	case strings.Contains(errMsg, "getting credentials"):
+		return "Sharko couldn't get credentials for this cluster."
+	case strings.Contains(errMsg, "connecting to cluster"):
+		return "Sharko couldn't connect to this cluster."
+	case strings.Contains(errMsg, "provider"):
+		return "Sharko couldn't fetch this secret's value from the vault."
+	case strings.Contains(errMsg, "existing secret"):
+		return "Sharko couldn't read the existing secret on this cluster."
+	case strings.Contains(errMsg, "creating secret"):
+		return "Sharko couldn't create this secret on the cluster."
+	case strings.Contains(errMsg, "updating secret"):
+		return "Sharko couldn't update this secret on the cluster."
+	default:
+		return "The last sync didn't finish."
 	}
 }
 
@@ -1192,22 +1292,24 @@ func (s *Server) addonValuesSecretSourceLabel() string {
 // name a cluster and a time exactly like the connection one does — and so
 // its click-to-filter behaviour (EngineStat in ManagedSecrets.tsx, already
 // generic over both engines) has something to filter to.
-func (s *Server) addonValuesEngineInfo(ctx context.Context) managedSecretsEngineInfo {
+// engineEnabled is the addon_values_engine_enabled setting (gitops-proud
+// P4-I, D2) — a single, repo-wide server setting, not a per-cluster fact.
+// L14 (code review): the CALLER reads it once per request
+// (GetManagedSecretsSettings, alongside managed_cluster_self_heal, in one
+// ConfigMap Read) and passes it down here instead of this function reading
+// the settings store itself — this used to be its own
+// s.settingsStore.IsAddonValuesEngineEnabled call, a second live K8s API
+// GET of the same ConfigMap object buildConnectionSecretRows's self-heal
+// read also hits.
+func (s *Server) addonValuesEngineInfo(ctx context.Context, engineEnabled bool) managedSecretsEngineInfo {
 	if s.secretReconciler == nil {
 		return managedSecretsEngineInfo{}
 	}
-	// gitops-proud P4-I (D2) — the engine's own off switch. Read directly
-	// off the settings store, same as v3SelfHealOn in
-	// buildConnectionSecretRows: a single, repo-wide server setting, not a
-	// per-cluster fact, and a nil settingsStore (out-of-cluster/dev mode)
-	// reads as enabled — the engine stays on by default, same as any
-	// install that never touches this setting.
-	enabled := s.settingsStore == nil || s.settingsStore.IsAddonValuesEngineEnabled(ctx)
 	info := managedSecretsEngineInfo{
 		Wired:           true,
 		IntervalSeconds: int(s.secretReconciler.Interval().Seconds()),
 		LastError:       s.secretReconciler.LastError(),
-		Enabled:         enabled,
+		Enabled:         engineEnabled,
 	}
 	if t := s.secretReconciler.LastRunTime(); !t.IsZero() {
 		info.LastRun = t.UTC().Format(time.RFC3339)
