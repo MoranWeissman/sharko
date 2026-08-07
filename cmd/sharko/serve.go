@@ -1109,6 +1109,16 @@ var serveCmd = &cobra.Command{
 				srv.SetSettingsStore(settingsStore)
 				probeModeFn = settingsStore.IsAPITest
 				selfHealFn = settingsStore.IsManagedClusterSelfHealEnabled
+				// gitops-proud P4-I (D2) — wires the addon-values engine's
+				// off switch. secretRecon is hoisted to function scope above
+				// (mirrors clusterRecon) and is already constructed by this
+				// point; nil-guarded the same way clusterRecon's own
+				// wiring below is, since secretRecon can be nil when its own
+				// preconditions (git connection, remote client factory)
+				// weren't available at construction time.
+				if secretRecon != nil {
+					secretRecon.SetEnabledFn(settingsStore.IsAddonValuesEngineEnabled)
+				}
 				slog.Info("server settings persisted via configmap", "namespace", prNamespace, "name", "sharko-server-settings")
 
 				// V3 C1: boot reconcile — resolve desired state from env

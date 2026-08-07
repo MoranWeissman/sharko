@@ -253,6 +253,12 @@ export interface ManagedSecretsEngineInfo {
   // last_error_at is the RFC3339 timestamp of last_error — an error with no
   // "since when" isn't actionable. Absent exactly when last_error is absent.
   last_error_at?: string
+  // enabled (gitops-proud P4-I, D2) is false only when an admin has
+  // switched this engine off via its settings toggle — distinct from
+  // `wired` ("does this server have the reconciler at all"). The
+  // cluster-connection engine has no off switch on purpose and always
+  // reports true here.
+  enabled: boolean
 }
 
 export interface ManagedSecretsEngines {
@@ -486,6 +492,15 @@ export interface ProbeModeResponse {
 // the Register dialog's Connection source select.
 export interface AllowInlineCredentialsResponse {
   allow_inline_credentials: boolean
+}
+
+// Server-wide admin off switch for the addon-values secrets engine
+// (gitops-proud P4-I, D2). Defaults to true (today's behavior, unchanged).
+// When false, internal/secrets.Reconciler runs no check or write passes —
+// rows keep rendering their last-known facts, and the Secret Sync page's
+// engine strip says so plainly.
+export interface AddonValuesEngineEnabledResponse {
+  addon_values_engine_enabled: boolean
 }
 
 export interface ClusterHealthStats {

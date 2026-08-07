@@ -3,7 +3,9 @@
 // how Sharko itself is set up and doing — a resource list of every secret
 // doesn't belong bolted onto that, the same way Managed Clusters and
 // Addons each get their own page. This line states the one fact that
-// matters and links to the full page (/secrets, see ManagedSecrets.tsx).
+// matters and links to the full page (/secret-sync, see ManagedSecrets.tsx —
+// the page's own component file name is unchanged; only the route + nav
+// name became "Secret Sync", gitops-proud P4-I D1).
 //
 // Reuses the same GET /api/v1/system/managed-secrets call the full page
 // makes — a cheap, already-in-memory read (see internal/api/system_managed_secrets.go),
@@ -50,10 +52,10 @@ export function ManagedSecretsSummaryLine() {
     <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
       {text}{' '}
       <Link
-        to="/secrets"
+        to="/secret-sync"
         className="font-medium text-[#1a4a6a] underline-offset-2 hover:underline dark:text-blue-300"
       >
-        View Managed Secrets
+        View Secret Sync
       </Link>
     </p>
   )

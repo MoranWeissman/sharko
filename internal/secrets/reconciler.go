@@ -128,6 +128,14 @@ var ErrForeignSecret = errors.New("Someone else created this one — Sharko will
 // answer, so it gets a real error instead.
 var ErrNoGitConnection = errors.New("no Git connection is configured — nothing to check or push")
 
+// ErrReconcilerDisabled is returned by CheckAll when an admin has switched
+// the addon-values engine off (gitops-proud P4-I, D2 — see SetEnabledFn).
+// Mirrors ErrNoGitConnection's shape: a real error for a single
+// request-driven call with a caller waiting on an answer. The periodic
+// pass treats "disabled" the same quiet way it treats "no Git connection
+// yet" — see reconcile().
+var ErrReconcilerDisabled = errors.New("the addon-values engine is switched off")
+
 // ItemKey identifies one addon-values secret row: a single cluster+addon
 // pair. Matches the granularity internal/api's addon_values_secrets table
 // already reads at (one row per cluster+addon — see
@@ -242,6 +250,34 @@ type Reconciler struct {
 	// honest generic label — see remoteclient.ValuesProvenanceAnnotations),
 	// never guessed.
 	sourceType string
+
+	// enabledFn (gitops-proud P4-I, D2) is the live reader consulted at the
+	// top of both reconcile() and CheckAll() — the engine's off switch. Set
+	// via SetEnabledFn. nil means "no settings store wired" (out-of-cluster
+	// / dev mode, or no setter ever called) — the engine stays ON by
+	// default in that case, same as every install that never touches the
+	// setting; see isEnabled.
+	enabledFn func(ctx context.Context) bool
+}
+
+// SetEnabledFn registers the live reader this reconciler consults, at the
+// top of every pass, to decide whether it should run at all (gitops-proud
+// P4-I, D2 — the addon-values engine's off switch). Pass nil to clear an
+// existing callback and fall back to "always on". Wire
+// settings.Store.IsAddonValuesEngineEnabled here — see cmd/sharko/serve.go.
+func (r *Reconciler) SetEnabledFn(fn func(ctx context.Context) bool) {
+	r.enabledFn = fn
+}
+
+// isEnabled reports whether a pass should run right now. nil enabledFn (no
+// settings store wired) reads as enabled — the engine must not go silently
+// dark just because it is running out-of-cluster/dev, matching every other
+// nil-safe wrapper in this codebase's settings pattern.
+func (r *Reconciler) isEnabled(ctx context.Context) bool {
+	if r.enabledFn == nil {
+		return true
+	}
+	return r.enabledFn(ctx)
 }
 
 // SetSourceType records the real secrets-provider backend type this
@@ -528,6 +564,16 @@ func (r *Reconciler) reconcile() {
 	defer cancel()
 	ctx = logging.WithRequestID(ctx, fmt.Sprintf("secrets-%d", time.Now().Unix()))
 	log := logging.LoggerFromContext(ctx)
+
+	// gitops-proud P4-I (D2) — the engine's off switch. Checked BEFORE the
+	// "no Git connection" bail below, and treated the exact same way: a
+	// silent no-op, not a failure. An admin turning this off is a deliberate
+	// choice, not something a run should report as broken — rows keep
+	// showing their last-known facts from whichever pass ran last.
+	if !r.isEnabled(ctx) {
+		log.Info("[secrets] addon-values engine is switched off — skipping reconcile")
+		return
+	}
 
 	log.Info("[secrets] reconcile started")
 
@@ -1273,6 +1319,14 @@ func (r *Reconciler) CheckOne(ctx context.Context, clusterName, addonName string
 // the catalog could not be read).
 func (r *Reconciler) CheckAll(ctx context.Context) error {
 	log := logging.LoggerFromContext(ctx)
+
+	// gitops-proud P4-I (D2) — the off switch stops BOTH passes: the write
+	// pass above (reconcile) and this check pass. "Check all now" on a
+	// switched-off engine has nothing to check with — same shape as
+	// ErrNoGitConnection, a real error for this single request-driven call.
+	if !r.isEnabled(ctx) {
+		return ErrReconcilerDisabled
+	}
 
 	gr := r.gitReader()
 	if gr == nil {

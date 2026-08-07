@@ -270,3 +270,83 @@ func (s *Server) handleSetManagedClusterSelfHeal(w http.ResponseWriter, r *http.
 
 	writeJSON(w, http.StatusOK, managedClusterSelfHealResponse{ManagedClusterSelfHeal: req.ManagedClusterSelfHeal})
 }
+
+// addonValuesEngineEnabledResponse is the response/request body shape for
+// the addon-values-engine-enabled setting endpoints (gitops-proud P4-I, D2).
+type addonValuesEngineEnabledResponse struct {
+	// AddonValuesEngineEnabled is true (the default) when the addon-values
+	// secrets engine runs its normal periodic/webhook/manual check and
+	// write passes. An admin sets this to false to turn the engine off —
+	// both the check pass and the write pass stop; rows keep showing their
+	// last-known facts. The cluster-connection engine has no matching
+	// switch — it is Sharko's own job, not something another tool might
+	// already be doing.
+	AddonValuesEngineEnabled bool `json:"addon_values_engine_enabled"`
+}
+
+// handleGetAddonValuesEngineEnabled godoc
+//
+// @Summary Get addon-values engine enabled setting
+// @Description Returns whether the addon-values secrets engine is switched on (gitops-proud P4-I D2, default true)
+// @Tags system
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} addonValuesEngineEnabledResponse "Current setting"
+// @Failure 503 {object} map[string]interface{} "Settings store not available"
+// @Router /settings/addon-values-engine-enabled [get]
+func (s *Server) handleGetAddonValuesEngineEnabled(w http.ResponseWriter, r *http.Request) {
+	if s.settingsStore == nil {
+		writeJSON(w, http.StatusOK, addonValuesEngineEnabledResponse{AddonValuesEngineEnabled: true})
+		return
+	}
+	enabled, err := s.settingsStore.GetAddonValuesEngineEnabled(r.Context())
+	if err != nil {
+		writeServerError(w, http.StatusInternalServerError, "get_addon_values_engine_enabled", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, addonValuesEngineEnabledResponse{AddonValuesEngineEnabled: enabled})
+}
+
+// handleSetAddonValuesEngineEnabled godoc
+//
+// @Summary Set addon-values engine enabled setting
+// @Description Sets whether the addon-values secrets engine is switched on (gitops-proud P4-I D2). When turned off, the engine runs no check or write passes. Admin only.
+// @Tags system
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body addonValuesEngineEnabledResponse true "Desired setting"
+// @Success 200 {object} addonValuesEngineEnabledResponse "Setting saved"
+// @Failure 400 {object} map[string]interface{} "Invalid request body"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden — admin role required"
+// @Failure 503 {object} map[string]interface{} "Settings store not available"
+// @Router /settings/addon-values-engine-enabled [put]
+func (s *Server) handleSetAddonValuesEngineEnabled(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "settings.addon-values-engine-enabled") {
+		return
+	}
+	if s.settingsStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "settings store is not available (no in-cluster ConfigMap access)")
+		return
+	}
+
+	var req addonValuesEngineEnabledResponse
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	if err := s.settingsStore.SetAddonValuesEngineEnabled(r.Context(), req.AddonValuesEngineEnabled); err != nil {
+		writeServerError(w, http.StatusInternalServerError, "set_addon_values_engine_enabled", err)
+		return
+	}
+
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "addon_values_engine_enabled_updated",
+		Resource: "settings:addon_values_engine_enabled",
+		Detail:   fmt.Sprintf("%t", req.AddonValuesEngineEnabled),
+	})
+
+	writeJSON(w, http.StatusOK, addonValuesEngineEnabledResponse{AddonValuesEngineEnabled: req.AddonValuesEngineEnabled})
+}

@@ -2270,6 +2270,19 @@ definitions:
       summary:
         type: string
     type: object
+  internal_api.addonValuesEngineEnabledResponse:
+    properties:
+      addon_values_engine_enabled:
+        description: |-
+          AddonValuesEngineEnabled is true (the default) when the addon-values
+          secrets engine runs its normal periodic/webhook/manual check and
+          write passes. An admin sets this to false to turn the engine off —
+          both the check pass and the write pass stop; rows keep showing their
+          last-known facts. The cluster-connection engine has no matching
+          switch — it is Sharko's own job, not something another tool might
+          already be doing.
+        type: boolean
+    type: object
   internal_api.addonValuesSecretActionResult:
     properties:
       addon:
@@ -2908,6 +2921,17 @@ definitions:
     type: object
   internal_api.managedSecretsEngineInfo:
     properties:
+      enabled:
+        description: |-
+          Enabled (gitops-proud P4-I, D2) is true unless an admin has switched
+          this engine off via its settings toggle. Distinct from Wired: Wired
+          asks "does this server process have the reconciler object at all",
+          Enabled asks "is it allowed to run its passes right now". The
+          cluster-connection engine has no off switch on purpose (it is
+          Sharko's own job) and always reports true here. Defaults to true so
+          an install that never touches the setting, or a response built
+          before this field existed, reads as "on" rather than "off".
+        type: boolean
       interval_seconds:
         description: IntervalSeconds is the configured tick cadence, 0 when not wired.
         type: integer
@@ -8859,6 +8883,72 @@ paths:
       summary: Get secret reconciliation status
       tags:
       - secrets
+  /settings/addon-values-engine-enabled:
+    get:
+      description: Returns whether the addon-values secrets engine is switched on
+        (gitops-proud P4-I D2, default true)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Current setting
+          schema:
+            $ref: '#/definitions/internal_api.addonValuesEngineEnabledResponse'
+        "503":
+          description: Settings store not available
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get addon-values engine enabled setting
+      tags:
+      - system
+    put:
+      consumes:
+      - application/json
+      description: Sets whether the addon-values secrets engine is switched on (gitops-proud
+        P4-I D2). When turned off, the engine runs no check or write passes. Admin
+        only.
+      parameters:
+      - description: Desired setting
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.addonValuesEngineEnabledResponse'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Setting saved
+          schema:
+            $ref: '#/definitions/internal_api.addonValuesEngineEnabledResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden — admin role required
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Settings store not available
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set addon-values engine enabled setting
+      tags:
+      - system
   /settings/allow-inline-credentials:
     get:
       description: Returns whether the "Paste a kubeconfig" registration path is enabled

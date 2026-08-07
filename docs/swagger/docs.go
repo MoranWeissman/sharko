@@ -7627,6 +7627,103 @@ const docTemplate = `{
                 }
             }
         },
+        "/settings/addon-values-engine-enabled": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns whether the addon-values secrets engine is switched on (gitops-proud P4-I D2, default true)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Get addon-values engine enabled setting",
+                "responses": {
+                    "200": {
+                        "description": "Current setting",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.addonValuesEngineEnabledResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Settings store not available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets whether the addon-values secrets engine is switched on (gitops-proud P4-I D2). When turned off, the engine runs no check or write passes. Admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Set addon-values engine enabled setting",
+                "parameters": [
+                    {
+                        "description": "Desired setting",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.addonValuesEngineEnabledResponse"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Setting saved",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.addonValuesEngineEnabledResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — admin role required",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Settings store not available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/settings/allow-inline-credentials": {
             "get": {
                 "security": [
@@ -11927,6 +12024,15 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api.addonValuesEngineEnabledResponse": {
+            "type": "object",
+            "properties": {
+                "addon_values_engine_enabled": {
+                    "description": "AddonValuesEngineEnabled is true (the default) when the addon-values\nsecrets engine runs its normal periodic/webhook/manual check and\nwrite passes. An admin sets this to false to turn the engine off —\nboth the check pass and the write pass stop; rows keep showing their\nlast-known facts. The cluster-connection engine has no matching\nswitch — it is Sharko's own job, not something another tool might\nalready be doing.",
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_api.addonValuesSecretActionResult": {
             "type": "object",
             "properties": {
@@ -12641,6 +12747,10 @@ const docTemplate = `{
         "internal_api.managedSecretsEngineInfo": {
             "type": "object",
             "properties": {
+                "enabled": {
+                    "description": "Enabled (gitops-proud P4-I, D2) is true unless an admin has switched\nthis engine off via its settings toggle. Distinct from Wired: Wired\nasks \"does this server process have the reconciler object at all\",\nEnabled asks \"is it allowed to run its passes right now\". The\ncluster-connection engine has no off switch on purpose (it is\nSharko's own job) and always reports true here. Defaults to true so\nan install that never touches the setting, or a response built\nbefore this field existed, reads as \"on\" rather than \"off\".",
+                    "type": "boolean"
+                },
                 "interval_seconds": {
                     "description": "IntervalSeconds is the configured tick cadence, 0 when not wired.",
                     "type": "integer"

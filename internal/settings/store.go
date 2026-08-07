@@ -41,10 +41,11 @@ const (
 )
 
 const (
-	configMapName             = "sharko-server-settings"
-	keyProbeMode              = "probe_mode"
-	keyAllowInlineCredentials = "allow_inline_credentials"
-	keyManagedClusterSelfHeal = "managed_cluster_self_heal"
+	configMapName               = "sharko-server-settings"
+	keyProbeMode                = "probe_mode"
+	keyAllowInlineCredentials   = "allow_inline_credentials"
+	keyManagedClusterSelfHeal   = "managed_cluster_self_heal"
+	keyAddonValuesEngineEnabled = "addon_values_engine_enabled"
 )
 
 // Store persists server-wide settings in a ConfigMap via cmstore.
@@ -73,6 +74,9 @@ type Store struct {
 
 	cachedManagedClusterSelfHeal      bool
 	cachedManagedClusterSelfHealValid bool
+
+	cachedAddonValuesEngineEnabled      bool
+	cachedAddonValuesEngineEnabledValid bool
 }
 
 // NewStore creates a new settings store backed by a ConfigMap named
@@ -408,4 +412,84 @@ func (s *Store) IsManagedClusterSelfHealEnabled(ctx context.Context) bool {
 		return cached
 	}
 	return defaultManagedClusterSelfHeal
+}
+
+// addon_values_engine_enabled (gitops-proud P4-I, D2) — the addon-values
+// secrets engine's own off switch. Defaults to true (today's behavior,
+// unchanged): the engine keeps checking and pushing addon-values secrets
+// exactly as it always has, until an admin explicitly turns it off. When
+// set to false, internal/secrets.Reconciler runs no passes at all — neither
+// the periodic/webhook/manual WRITE pass (reconcile()) nor the read-only
+// CHECK pass (CheckAll()) — while rows keep rendering their last-known
+// facts from the previous run. The cluster-CONNECTION engine
+// (internal/clusterreconciler) has no matching switch, on purpose: it is
+// Sharko's own job, never something another tool might already be doing.
+//
+// This follows managed_cluster_self_heal's own shape exactly (same store,
+// same nil-safe/cache-on-error contract) — see that setting's doc comment
+// above for why the wrapper falls back to the cache rather than the static
+// default on a transient read error.
+const defaultAddonValuesEngineEnabled = true
+
+// GetAddonValuesEngineEnabled returns the persisted addon_values_engine_enabled
+// value, defaulting to true (engine on) when the ConfigMap does not exist
+// yet, the key was never set, or the stored value is not a bool.
+func (s *Store) GetAddonValuesEngineEnabled(ctx context.Context) (bool, error) {
+	data, err := s.cm.Read(ctx)
+	if err != nil {
+		return defaultAddonValuesEngineEnabled, err
+	}
+	enabled, ok := data[keyAddonValuesEngineEnabled].(bool)
+	if !ok {
+		enabled = defaultAddonValuesEngineEnabled
+	}
+	s.cacheMu.Lock()
+	s.cachedAddonValuesEngineEnabled = enabled
+	s.cachedAddonValuesEngineEnabledValid = true
+	s.cacheMu.Unlock()
+	return enabled, nil
+}
+
+// SetAddonValuesEngineEnabled persists the setting. On a successful write it
+// also seeds the read cache (same pattern as SetManagedClusterSelfHeal).
+func (s *Store) SetAddonValuesEngineEnabled(ctx context.Context, enabled bool) error {
+	err := s.cm.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
+		data[keyAddonValuesEngineEnabled] = enabled
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	s.cacheMu.Lock()
+	s.cachedAddonValuesEngineEnabled = enabled
+	s.cachedAddonValuesEngineEnabledValid = true
+	s.cacheMu.Unlock()
+	return nil
+}
+
+// IsAddonValuesEngineEnabled is a nil-safe convenience wrapper for the
+// reconciler's non-HTTP passes. On a read error it falls back to the last
+// successfully-read value; only before any successful read has ever
+// happened, or when s is nil (settings store not wired, e.g. out-of-cluster
+// dev mode), does it fall back to the static default (true, enabled) — so
+// the engine stays on, exactly like today, for any install that never
+// touches this setting or runs without a settings store.
+func (s *Store) IsAddonValuesEngineEnabled(ctx context.Context) bool {
+	if s == nil {
+		return defaultAddonValuesEngineEnabled
+	}
+	enabled, err := s.GetAddonValuesEngineEnabled(ctx)
+	if err == nil {
+		return enabled
+	}
+
+	s.cacheMu.RLock()
+	cached, valid := s.cachedAddonValuesEngineEnabled, s.cachedAddonValuesEngineEnabledValid
+	s.cacheMu.RUnlock()
+	if valid {
+		slog.Warn("addon_values_engine_enabled: settings read failed, serving last-known value from cache",
+			"error", err, "cached_addon_values_engine_enabled", cached)
+		return cached
+	}
+	return defaultAddonValuesEngineEnabled
 }

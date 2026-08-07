@@ -264,7 +264,12 @@ export function ConnectedApp() {
           <Route path="version-matrix" element={<RedirectPreservingQuery to="/addons" />} />
           <Route path="observability" element={<Observability />} />
           <Route path="system" element={<SystemView />} />
-          <Route path="secrets" element={<ManagedSecrets />} />
+          <Route path="secret-sync" element={<ManagedSecrets />} />
+          {/* gitops-proud P4-I (D1): the page was renamed "Secret Sync" —
+              /secrets keeps working as a plain alias (bookmarks and old
+              links must not break), same RedirectPreservingQuery pattern
+              /version-matrix and /upgrade already use below. */}
+          <Route path="secrets" element={<RedirectPreservingQuery to="/secret-sync" />} />
           {/* V2-cleanup-61.4 (F2): the standalone Upgrade Checker page
               duplicated AddonDetail's Upgrade tab (per-addon analysis,
               conflicts, AI summary, downgrade guard, per-cluster upgrade —

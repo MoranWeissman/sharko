@@ -50,6 +50,7 @@ nav:
     - Secrets Provider: user-guide/secrets-provider.md
     - Managing Clusters: user-guide/clusters.md
     - Drift Detection and Sync: user-guide/drift-and-sync.md
+    - Secret Sync: user-guide/secret-sync.md
     - Managing Addons: user-guide/addons.md
     - Marketplace: user-guide/marketplace.md
     - Editing Values: user-guide/values-editing.md

@@ -174,3 +174,187 @@ func TestHandleSetAllowInlineCredentials_BadBody_400(t *testing.T) {
 		t.Fatalf("expected 400 for a malformed body, got %d (body=%s)", w.Code, w.Body.String())
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// gitops-proud P4-I (D2) — addon-values-engine-enabled. Mirrors the
+// allow-inline-credentials HTTP tests above, opposite default (true).
+// ─────────────────────────────────────────────────────────────────────────
+
+func addonValuesEngineAdminReq(method, body string) *http.Request {
+	var r io.Reader
+	if body != "" {
+		r = bytes.NewBufferString(body)
+	}
+	req := httptest.NewRequest(method, "/api/v1/settings/addon-values-engine-enabled", r)
+	req.Header.Set("X-Sharko-User", "admin")
+	req.Header.Set("X-Sharko-Role", "admin")
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
+func TestHandleGetAddonValuesEngineEnabled_HappyPath(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	client := fake.NewSimpleClientset()
+	store := settings.NewStore(client, "sharko")
+	if err := store.SetAddonValuesEngineEnabled(t.Context(), false); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled: %v", err)
+	}
+	srv.SetSettingsStore(store)
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/addon-values-engine-enabled", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body addonValuesEngineEnabledResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.AddonValuesEngineEnabled {
+		t.Errorf("addon_values_engine_enabled = true, want false (the value persisted before the GET)")
+	}
+}
+
+func TestHandleGetAddonValuesEngineEnabled_NilStore_ReturnsDefaultTrue(t *testing.T) {
+	// A Server with no SetSettingsStore call at all — matches an
+	// out-of-cluster / local dev deployment. Pinned status: 200 with the
+	// static default (true, engine on), NOT an error — the engine must not
+	// go silently dark just because it's running without a settings store.
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/addon-values-engine-enabled", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with no settings store wired, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body addonValuesEngineEnabledResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !body.AddonValuesEngineEnabled {
+		t.Errorf("addon_values_engine_enabled = false, want default true when no settings store is wired")
+	}
+}
+
+func TestHandleSetAddonValuesEngineEnabled_Admin_HappyPath(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	client := fake.NewSimpleClientset()
+	store := settings.NewStore(client, "sharko")
+	srv.SetSettingsStore(store)
+	router := NewRouter(srv, nil)
+
+	req := addonValuesEngineAdminReq(http.MethodPut, `{"addon_values_engine_enabled": false}`)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body addonValuesEngineEnabledResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.AddonValuesEngineEnabled {
+		t.Errorf("response addon_values_engine_enabled = true, want false")
+	}
+
+	// Persisted — a follow-up GET must see the same value.
+	enabled, err := store.GetAddonValuesEngineEnabled(t.Context())
+	if err != nil {
+		t.Fatalf("GetAddonValuesEngineEnabled: %v", err)
+	}
+	if enabled {
+		t.Error("expected the setting to be persisted as false")
+	}
+}
+
+func TestHandleSetAddonValuesEngineEnabled_NonAdmin_403(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	client := fake.NewSimpleClientset()
+	store := settings.NewStore(client, "sharko")
+	srv.SetSettingsStore(store)
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/addon-values-engine-enabled", bytes.NewBufferString(`{"addon_values_engine_enabled": false}`))
+	req.Header.Set("X-Sharko-User", "bob")
+	req.Header.Set("X-Sharko-Role", "operator")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for a non-admin role, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	// The setting must be untouched — still the default.
+	enabled, err := store.GetAddonValuesEngineEnabled(t.Context())
+	if err != nil {
+		t.Fatalf("GetAddonValuesEngineEnabled: %v", err)
+	}
+	if !enabled {
+		t.Error("a rejected PUT must not have changed the setting")
+	}
+}
+
+func TestHandleSetAddonValuesEngineEnabled_NilStore_Returns503(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	req := addonValuesEngineAdminReq(http.MethodPut, `{"addon_values_engine_enabled": false}`)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 with no settings store wired, got %d (body=%s)", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleSetAddonValuesEngineEnabled_BadBody_400(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	client := fake.NewSimpleClientset()
+	store := settings.NewStore(client, "sharko")
+	srv.SetSettingsStore(store)
+	router := NewRouter(srv, nil)
+
+	req := addonValuesEngineAdminReq(http.MethodPut, `{not valid json`)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a malformed body, got %d (body=%s)", w.Code, w.Body.String())
+	}
+}
+
+// TestAddonValuesEngineInfo_ReflectsAddonValuesEngineEnabled proves the
+// wiring end-to-end: system_managed_secrets.go's addonValuesEngineInfo()
+// actually reads the live setting, not just whether a reconciler is wired.
+func TestAddonValuesEngineInfo_ReflectsAddonValuesEngineEnabled(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	// A reconciler must be wired for addonValuesEngineInfo to report
+	// anything beyond the zero value (Wired gates every other field) — the
+	// fake's own stats/errors are irrelevant here, only Enabled is under
+	// test.
+	srv.SetSecretReconciler(&fakeReconciler{stats: map[string]int{}})
+	client := fake.NewSimpleClientset()
+	store := settings.NewStore(client, "sharko")
+	srv.SetSettingsStore(store)
+	ctx := t.Context()
+
+	// Default (true) — the setting was never touched.
+	if info := srv.addonValuesEngineInfo(ctx); !info.Enabled {
+		t.Error("addonValuesEngineInfo().Enabled = false, want default true before the setting is ever touched")
+	}
+
+	if err := store.SetAddonValuesEngineEnabled(ctx, false); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled: %v", err)
+	}
+	if info := srv.addonValuesEngineInfo(ctx); info.Enabled {
+		t.Error("addonValuesEngineInfo().Enabled = true, want false after SetAddonValuesEngineEnabled(false)")
+	}
+}

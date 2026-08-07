@@ -467,6 +467,15 @@ type managedSecretsEngineInfo struct {
 	// LastErrorAt is the RFC3339 timestamp of LastError — an error with no
 	// "since when" is not actionable. Empty exactly when LastError is empty.
 	LastErrorAt string `json:"last_error_at,omitempty"`
+	// Enabled (gitops-proud P4-I, D2) is true unless an admin has switched
+	// this engine off via its settings toggle. Distinct from Wired: Wired
+	// asks "does this server process have the reconciler object at all",
+	// Enabled asks "is it allowed to run its passes right now". The
+	// cluster-connection engine has no off switch on purpose (it is
+	// Sharko's own job) and always reports true here. Defaults to true so
+	// an install that never touches the setting, or a response built
+	// before this field existed, reads as "on" rather than "off".
+	Enabled bool `json:"enabled"`
 }
 
 type managedSecretsEngines struct {
@@ -530,7 +539,7 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 	// The engines section never depends on a live Git/ArgoCD connection —
 	// build it first so a connection outage still reports engine health.
 	resp.Engines.ClusterConnection = s.clusterConnectionEngineInfo()
-	resp.Engines.AddonValues = s.addonValuesEngineInfo()
+	resp.Engines.AddonValues = s.addonValuesEngineInfo(r.Context())
 	resp.AddonValuesSecretSource = s.addonValuesSecretSourceLabel()
 
 	gp, gpErr := s.connSvc.GetActiveGitProvider()
@@ -1028,6 +1037,10 @@ func (s *Server) clusterConnectionEngineInfo() managedSecretsEngineInfo {
 	info := managedSecretsEngineInfo{
 		Wired:           true,
 		IntervalSeconds: int(s.clusterRecon.TickInterval().Seconds()),
+		// This engine has no off switch, on purpose (gitops-proud P4-I,
+		// D2 — it is Sharko's own job, never something another tool might
+		// already be doing) — always reports enabled.
+		Enabled: true,
 	}
 	if t := s.clusterRecon.LastRunTime(); !t.IsZero() {
 		info.LastRun = t.UTC().Format(time.RFC3339)
@@ -1088,14 +1101,22 @@ func (s *Server) addonValuesSecretSourceLabel() string {
 // name a cluster and a time exactly like the connection one does — and so
 // its click-to-filter behaviour (EngineStat in ManagedSecrets.tsx, already
 // generic over both engines) has something to filter to.
-func (s *Server) addonValuesEngineInfo() managedSecretsEngineInfo {
+func (s *Server) addonValuesEngineInfo(ctx context.Context) managedSecretsEngineInfo {
 	if s.secretReconciler == nil {
 		return managedSecretsEngineInfo{}
 	}
+	// gitops-proud P4-I (D2) — the engine's own off switch. Read directly
+	// off the settings store, same as v3SelfHealOn in
+	// buildConnectionSecretRows: a single, repo-wide server setting, not a
+	// per-cluster fact, and a nil settingsStore (out-of-cluster/dev mode)
+	// reads as enabled — the engine stays on by default, same as any
+	// install that never touches this setting.
+	enabled := s.settingsStore == nil || s.settingsStore.IsAddonValuesEngineEnabled(ctx)
 	info := managedSecretsEngineInfo{
 		Wired:           true,
 		IntervalSeconds: int(s.secretReconciler.Interval().Seconds()),
 		LastError:       s.secretReconciler.LastError(),
+		Enabled:         enabled,
 	}
 	if t := s.secretReconciler.LastRunTime(); !t.IsZero() {
 		info.LastRun = t.UTC().Format(time.RFC3339)

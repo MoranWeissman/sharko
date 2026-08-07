@@ -596,9 +596,9 @@ export function SystemView() {
       {/* Managed secrets — S1: this used to be two full tables bolted onto
         * the bottom of this page. The System page's job is how Sharko
         * itself is set up and doing, not a resource list — so, same as
-        * Managed Clusters and Addons, every secret now has its own page
-        * (/secrets). This stays a single quiet line with the headline fact
-        * and a link. */}
+        * Managed Clusters and Addons, every secret now has its own page —
+        * "Secret Sync" (/secret-sync, gitops-proud P4-I D1). This stays a
+        * single quiet line with the headline fact and a link. */}
       <section>
         <div className="mb-3 flex items-center gap-2">
           <KeyRound className="h-4 w-4 text-[#3a6a8a] dark:text-gray-400" aria-hidden="true" />

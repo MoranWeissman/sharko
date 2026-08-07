@@ -24,6 +24,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
+	"github.com/MoranWeissman/sharko/internal/settings"
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
 
@@ -214,6 +215,22 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 	if err := srv.AddDemoUser("qa", "sharko", "viewer"); err != nil {
 		slog.Warn("demo: could not create qa user", "error", err, "component", "demo")
 	}
+
+	// 8b. Server settings (gitops-proud P4-I, D2) — GET/PUT
+	// /api/v1/settings/addon-values-engine-enabled (Settings → Addon Values
+	// Engine, and the Secret Sync page's engine strip) both need a real,
+	// working settings.Store. Without one, s.settingsStore stays nil: the
+	// GET still answers (nil-safe, static default true), but the PUT
+	// 503s — the off switch would be unreachable in demo, which is exactly
+	// what the demo rule for this feature says not to ship. Backed by its
+	// own small fake Kubernetes clientset, same "cmstore.Store just needs
+	// SOMETHING implementing kubernetes.Interface" reasoning as prCMStore
+	// below — nothing here ever talks to a real cluster, and the setting
+	// persists in-memory for the life of this demo process, the same way a
+	// real install's ConfigMap persists for the life of the pod. Wired
+	// unconditionally (not inside the `if estate != nil` block below) so
+	// it's reachable from plain `make demo` too, not just `make demo-big`.
+	srv.SetSettingsStore(settings.NewStore(k8sfake.NewSimpleClientset(), "sharko"))
 
 	// 9. PR tracker — /api/v1/prs reads from srv.prTracker, which is nil
 	// unless something wires it up. The real (non-demo) path only does
