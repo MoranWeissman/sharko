@@ -5,9 +5,9 @@ This file is not a subagent. It is the playbook for the main conversation (Claud
 ## Session Startup (always, before anything else)
 
 ```
-1. Read memory:  .claude/projects/.../memory/MEMORY.md → relevant memory files
-                 (project_sharko_current_state, project_sharko_roadmap,
-                  feedback_always_use_bmad, feedback_agent_dispatch_worktree_isolation)
+1. Read checkpoint: .claude/checkpoints/LATEST.md if present, else orient from
+                 `git log` and open PRs (no private memory folder to read — this
+                  repo's session state lives in-repo, not in a local user profile)
 2. Read state:   git status, git log --oneline -5, git branch
 3. Read PM:      .claude/team/project-manager.md (sprint status table)
 4. Read CLAUDE.md: confirm MANDATORY BMAD FLOW + Agent Team rules
@@ -174,13 +174,13 @@ Include this in every dispatch prompt:
 
 ### Edit-to-Main-Repo Drift Protocol (mandatory)
 
-The Edit/Write tools take the literal filesystem path you give them. An absolute path under
-`/Users/weissmmo/projects/github-moran/sharko/...` lands in the MAIN repo, NOT in your worktree.
-This bit 4 of 11 agents in a single recent session. **Mandatory protocol:**
+The Edit/Write tools take the literal filesystem path you give them. An absolute path under the
+main repo checkout (not your worktree) lands in the MAIN repo, NOT in your worktree. This bit 4
+of 11 agents in a single recent session. **Mandatory protocol:**
 
 - Use `$(git rev-parse --show-toplevel)/<relative>` prefix OR relative paths from the worktree —
   never bare main-repo absolute paths.
-- After every batch of writes: `cd /Users/weissmmo/projects/github-moran/sharko && git status -s`
+- After every batch of writes: `cd <path-to-main-checkout> && git status -s`
   — the main repo must be clean.
 - If main got polluted: `cd <main> && git checkout -- <files>` then re-apply inside the worktree.
 

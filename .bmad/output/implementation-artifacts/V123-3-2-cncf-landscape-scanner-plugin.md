@@ -284,7 +284,7 @@ storage, autoscaling, gitops, database, backup, chaos, developer-tools)
 
 ### Quality gates (run order)
 
-1. `cd /Users/weissmmo/projects/github-moran/sharko && npm install --prefix scripts --silent` — clean.
+1. `npm install --prefix scripts --silent` — clean.
 2. `node --check scripts/catalog-scan/plugins/cncf-landscape.mjs` —
    syntax OK.
 3. `node --test 'scripts/catalog-scan/**/*.test.mjs' 'scripts/catalog-scan.test.mjs'`
@@ -509,7 +509,7 @@ already pinned by V123-3.1).
 
 Quality gates run in the brief's documented order:
 
-1. `cd /Users/weissmmo/projects/github-moran/sharko && npm install --prefix scripts --silent`
+1. `npm install --prefix scripts --silent`
    — clean. No new deps, lock unchanged.
 2. `node --check scripts/catalog-scan/plugins/cncf-landscape.mjs` —
    syntax OK.

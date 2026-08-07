@@ -6,8 +6,9 @@
 > line `"[secrets] failed to create secret, continuing"` and the
 > `result.Failed` accumulator are verified verbatim against
 > `internal/orchestrator/secrets.go:110` as shipped. The "continuing"
-> path is the canonical silent-data-loss surface flagged in
-> [`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md).
+> path is the canonical silent-data-loss surface flagged by the
+> V2-2.3 logging audit (see [`../developer-guide/logging.md`](../developer-guide/logging.md)
+> for the discipline this failure mode violates).
 > Re-verify before changing the `"continuing"` log string or the
 > `result.Failed` accumulator shape — both are anchors for log greps
 > and audit-log correlation.
@@ -28,8 +29,8 @@ as `result=success`. The addon's failure shows up minutes-to-hours later
 when ArgoCD syncs, and the operator has to trace the failure backwards
 to the secret push — a slow, error-prone diagnosis.
 
-The canonical reference for the underlying bug shape is
-[`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md)
+The canonical reference for the underlying bug shape is the V2-2.3
+logging audit's finding on
 "continuing on error" — this runbook is the operator-facing companion.
 
 ---
@@ -411,8 +412,7 @@ For Mitigation step 5 (catalog-level addon removal):
 ## Prevention
 
 - **Code change — turn "continuing" into a hard failure**, or surface
-  it explicitly in the HTTP response. Per the
-  [`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md),
+  it explicitly in the HTTP response. Per the V2-2.3 logging audit,
   the `"continuing"` path in
   `internal/orchestrator/secrets.go:110` is the canonical
   silent-data-loss surface. The fix is one of:
@@ -452,8 +452,6 @@ For Mitigation step 5 (catalog-level addon removal):
   doesn't agree). When the symptom is "addon Application is Degraded"
   rather than "ArgoCD didn't see the merge."
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
-- [`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md) —
-  the engineering punchlist that flagged this failure mode.
 - [`../developer-guide/logging.md`](../developer-guide/logging.md) —
   `request_id` correlation pattern.
 

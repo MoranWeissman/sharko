@@ -25,10 +25,10 @@ refs outside your branch. Orchestrator cherry-picks + opens PR + auto-merges per
 `feedback_auto_merge_when_green`.
 
 **Edit-to-main-repo drift protocol** (mandatory): the Edit/Write tools take the literal
-filesystem path. An absolute path under `/Users/weissmmo/projects/github-moran/sharko/...` lands
+filesystem path. An absolute path under the main repo checkout (not your worktree) lands
 in MAIN, not your worktree. Use `$(git rev-parse --show-toplevel)/<relative>` prefix OR
 relative paths from the worktree. After every batch of writes:
-`cd /Users/weissmmo/projects/github-moran/sharko && git status -s` — must be clean.
+`cd <path-to-main-checkout> && git status -s` — must be clean.
 
 ## Actual File Inventory
 
@@ -520,6 +520,15 @@ chatty, "silly childish explanations", conversational headers ArgoCD would never
    sounds human, not a system dump.
 5. Never let internal design vocabulary (layers, tiers, waves, coordinates) render as user-facing
    copy — check comments don't leak into JSX text nodes.
+6. Info text vs error text (maintainer's standing rule, 2026-08-02): informational text (labels,
+   status lines, descriptions, banners) states the user-visible fact in the user's terms only —
+   "Degraded on spoke-eu — started 1m ago" — and NEVER explains Sharko's internal mechanics
+   (grace windows, reconcilers, feeds, selectors). A mechanism explanation may live in an opt-in
+   hover tooltip at most, phrased around what the user sees. ERROR text is the exception: errors
+   get studied and debugged, so technical detail (file, reason, upstream response) is welcome
+   there. Maintainer-locked vocabulary: the noun is "issues" (never "needs attention"), no
+   "settling", no "fleet" in visible text ("Managed Clusters" is the word) — but "orphan" STAYS
+   (rejected rename: it is the precise term).
 
 ## Update This File When
 - New views or components are added
