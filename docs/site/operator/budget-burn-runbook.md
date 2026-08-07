@@ -651,7 +651,7 @@ during business hours.
 4. **Replicas + cache** — read-heavy dashboard load on a single
    Sharko replica with cold caches can drag p99 into error territory.
    Scaling and warming the cache via the
-   [personal-smoke runbook](../developer-guide/personal-smoke-runbook.md)
+   [contributor smoke walk](../developer-guide/contributor-smoke-walk.md)
    pattern resolves both.
 
 ### Root-cause patterns

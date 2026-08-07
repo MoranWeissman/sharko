@@ -18,8 +18,7 @@ You handle CI/CD, Makefiles, Docker, Helm chart packaging, GitHub Actions, relea
 
 ## Rules
 - Go module: `github.com/MoranWeissman/sharko`
-- Never add Co-Authored-By trailers to commits
-- Git user: Moran Weissman <moran.weissman@gmail.com>
+- Use your own git identity for commits; NEVER add a Co-Authored-By trailer
 - Push to feature branches only, never to main
 - All CI must be idempotent — re-running produces the same result
 - Helm templates must pass `helm template` without errors

@@ -1,13 +1,24 @@
-# Stage 1: Build UI
-FROM node:22-alpine AS ui-build
+# Both build stages run on the build machine's own architecture
+# (--platform=$BUILDPLATFORM), then cross-compile their output for the
+# target architecture. This avoids QEMU emulation for the two heavy
+# stages (npm install/build, go build) — only the small final alpine
+# stage below still runs per-arch (its `apk add` is cheap even under
+# emulation). BUILDPLATFORM/TARGETOS/TARGETARCH are buildx's automatic
+# platform args; no need to declare BUILDPLATFORM, it's predefined.
+
+# Stage 1: Build UI (output is a static bundle — arch-independent, so
+# build it once natively regardless of the final image's target arch)
+FROM --platform=$BUILDPLATFORM node:22-alpine AS ui-build
 WORKDIR /app/ui
 COPY ui/package*.json ./
 RUN npm ci --legacy-peer-deps
 COPY ui/ .
 RUN npm run build
 
-# Stage 2: Build Go binary
-FROM golang:1.25.8-alpine AS go-build
+# Stage 2: Build Go binary, cross-compiled for the target arch
+FROM --platform=$BUILDPLATFORM golang:1.25.8-alpine AS go-build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -22,7 +33,7 @@ COPY version.txt ./
 # - go build layer is always invalidated when CACHE_BUST changes (set to git SHA in CI)
 ARG CACHE_BUST=dev
 ARG COMMIT=dev
-RUN CGO_ENABLED=0 go build \
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 go build \
 	-ldflags "-X main.version=$(cat version.txt) -X main.commit=${COMMIT}" \
 	-o sharko ./cmd/sharko
 

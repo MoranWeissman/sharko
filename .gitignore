@@ -31,7 +31,12 @@ secrets.env
 *.key
 
 # AI workspaces (local config, not project conventions)
-.claude/
+# .claude/ itself is NOT blanket-ignored: skills, team role files, hooks, and
+# settings.json are project conventions and are tracked normally. Only the
+# per-session / per-machine state under .claude/ is ignored below.
+.claude/checkpoints/
+.claude/worktrees/
+.claude/settings.local.json
 .serena/
 .cursor/
 .copilot/
@@ -41,8 +46,6 @@ secrets.env
 _bmad/
 .bmad/
 # CLAUDE.md is intentionally tracked — it contains project conventions for AI sessions
-# .claude/checkpoints/ is auto-generated session state (force-tracked .claude paths shouldn't include it)
-.claude/checkpoints/
 
 # Docker
 aap-server
@@ -55,12 +58,18 @@ coverage/
 # Build
 *.tar.gz
 .superpowers/
+# Stray local binaries/caches that sometimes land at repo root
+/playground
+__pycache__/
 
 # MkDocs build output
 /site/
 
 # Internal planning docs (not for public repo)
 docs/superpowers/
+
+# Maintainer's private sprint bookkeeping (not for public repo)
+.bmad/output/implementation-artifacts/sprint-status.yaml
 
 # Local maintainer scratch (kind-target kubeconfigs with bearer tokens, etc.)
 .local/

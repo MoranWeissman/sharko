@@ -230,7 +230,8 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 	// real install's ConfigMap persists for the life of the pod. Wired
 	// unconditionally (not inside the `if estate != nil` block below) so
 	// it's reachable from plain `make demo` too, not just `make demo-big`.
-	srv.SetSettingsStore(settings.NewStore(k8sfake.NewSimpleClientset(), "sharko"))
+	demoSettingsStore := settings.NewStore(k8sfake.NewSimpleClientset(), "sharko")
+	srv.SetSettingsStore(demoSettingsStore)
 
 	// 9. PR tracker — /api/v1/prs reads from srv.prTracker, which is nil
 	// unless something wires it up. The real (non-demo) path only does
@@ -341,6 +342,12 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 		// never been checked (S3), and Refresh/Sync that actually change
 		// what the next read reports.
 		valuesRecon := newDemoAddonValuesReconciler(estate, addonSecretDefs, now, auditLog)
+		// M5 (code review): same settings.Store the real engine's off switch
+		// reads (SetEnabledFn/isEnabled — internal/secrets/reconciler.go),
+		// wired here so `make demo-big`'s "Check all now" honestly refuses
+		// once Settings -> Addon Values Engine is turned off, instead of
+		// running regardless.
+		valuesRecon.SetEnabledFn(demoSettingsStore.IsAddonValuesEngineEnabled)
 		srv.SetSecretReconciler(valuesRecon)
 
 		// 12. "Show me the actual Secret on the cluster" (S3). The read

@@ -224,6 +224,30 @@
 //        GET /api/v1/audit endpoint, scoped to the row's exact resource
 //        key; no server change), with an honest scope note that it only
 //        covers what's happened since Sharko last started.
+//
+// ─────────────────────────────────────────────────────────────────────────
+// Walk finding #140 — NAMESPACE becomes its own column, and the two status
+// words that read least like ArgoCD get renamed.
+//
+//   The old NAME cell rendered "namespace/name" as one string capped at
+//   240px. In the demo estate, several rows share a namespace and differ
+//   only in the secret name, so the capped cell truncated exactly where the
+//   rows differ ("external-secrets/externa…" three times over) — the one
+//   part that told the rows apart was the part that got cut.
+//
+//   NAMESPACE is now its own sortable column — namespaces repeat and are
+//   recognizable even truncated, so it stays narrow with a hover title.
+//   NAME shows only the secret's name and takes the room NAMESPACE gave
+//   up; its own hover title still carries the full name, and if it still
+//   has to truncate at a narrow width, the truncation eats the FRONT of
+//   the string (a `direction: rtl` cell, same trick file browsers use for
+//   long paths) so the tail — the part that actually tells rows apart —
+//   stays visible instead of the prefix.
+//
+//   "In sync" → "Synced", "Not on the cluster" → "Missing" (StatusMark.tsx)
+//   — ArgoCD-professional words, maintainer-locked. See StatusMark.tsx's
+//   own note for the reasoning; nothing else in the five-word status table
+//   moved, and the plain-English panel sentences are untouched.
 
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -233,14 +257,19 @@ import {
   ChevronsUpDown,
   ChevronUp,
   KeyRound,
+  LayoutGrid,
+  List,
   Loader2,
   Lock,
   RefreshCw,
   RotateCcw,
   Search,
+  Trash2,
+  X,
 } from 'lucide-react'
 import {
   api,
+  deleteOrphanedSecret,
   fetchAuditLog,
   getAddonValuesSecretResource,
   getConnectionSecretResource,
@@ -258,6 +287,7 @@ import type {
   ConnectionSecretRow,
   ManagedSecretsEngineInfo,
   ManagedSecretsResponse,
+  OrphanedSecretRow,
   SecretResource,
 } from '@/services/models'
 import { InfoHint } from '@/components/InfoHint'
@@ -270,6 +300,7 @@ import { StatusDot, StatusMark, statusLabel, statusSortRank, statusStripClassNam
 import { TimeChip } from '@/components/resource/TimeChip'
 import { ResourceDetailSheet } from '@/components/resource/ResourceDetailSheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { SecretTiles } from './SecretTiles'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Unified row model — one shape for both secret kinds, hoisted at module
@@ -279,11 +310,26 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 // every keystroke.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// The five states, worst first (G3, gitops-proud P4-G — kept in lockstep
-// with StatusMark's statusSortRank) — the order the filter chips render in
-// and the order a group header lists its sums in. Declared here because
-// both the chips (far below) and groupSummary (just below) read it.
-const CHIP_ORDER: ResourceStatus[] = ['missing', 'out_of_sync', 'foreign', 'unknown', 'in_sync']
+// The six states, worst first (G3, gitops-proud P4-G; leftover-secrets
+// S1.2 inserts "orphaned" — kept in lockstep with StatusMark's
+// statusSortRank) — the order the filter chips render in and the order a
+// group header lists its sums in. Declared here because both the chips
+// (far below) and groupSummary (just below) read it.
+export const CHIP_ORDER: ResourceStatus[] = ['missing', 'out_of_sync', 'orphaned', 'foreign', 'unknown', 'in_sync']
+
+/**
+ * The Delete confirm body (leftover-secrets S1.2, locked wording) — the
+ * exact sentence the confirm dialog shows before an operator deletes one
+ * orphaned leftover. Names the blast radius (namespace/name, cluster),
+ * says plainly this is Sharko's own past write with nothing in git asking
+ * for it anymore, and that it cannot be undone.
+ */
+function deleteConfirmDescription(row: UnifiedRow | null): string {
+  if (!row) return ''
+  const ns = row.secretNamespace ?? ''
+  const name = row.secretName ?? ''
+  return `This permanently deletes secret "${ns}/${name}" from cluster "${row.cluster}". Sharko wrote it once, but nothing in git asks for it anymore. This cannot be undone.`
+}
 
 /**
  * The one sentence Sharko says about a secret somebody else created — on the
@@ -327,7 +373,7 @@ function consecutiveFailuresSentence(count: number): string {
   return `The last ${count} checks of this secret failed in a row.`
 }
 
-interface UnifiedRow {
+export interface UnifiedRow {
   kind: 'connection' | 'values'
   key: string
   cluster: string
@@ -375,7 +421,12 @@ interface UnifiedRow {
   driftSource?: 'git' | 'cluster'
 }
 
-function buildUnifiedRows(connectionRows: ConnectionSecretRow[], addonRows: AddonValuesSecretRow[], valuesSourceLabel: string): UnifiedRow[] {
+function buildUnifiedRows(
+  connectionRows: ConnectionSecretRow[],
+  addonRows: AddonValuesSecretRow[],
+  orphanedRows: OrphanedSecretRow[],
+  valuesSourceLabel: string,
+): UnifiedRow[] {
   const conn: UnifiedRow[] = connectionRows.map((r) => ({
     kind: 'connection',
     key: `connection-${r.cluster}`,
@@ -414,7 +465,29 @@ function buildUnifiedRows(connectionRows: ConnectionSecretRow[], addonRows: Addo
     sourceLabel: r.source || valuesSourceLabel,
     selfHeals: r.self_heals,
   }))
-  return [...conn, ...values]
+  // leftover-secrets S1.2 — orphaned rows fold in as kind 'values' on
+  // purpose: they have no live secret Sharko compares against a store (the
+  // whole point is the source is gone), but sharing 'values' means
+  // group-by-addon already handles an orphan the same way it handles any
+  // other addon-shaped row — including the "addon unknown" case, which
+  // falls into the same '—' bucket a values row without an addon would.
+  const orphaned: UnifiedRow[] = orphanedRows.map((r) => ({
+    kind: 'values',
+    key: `orphaned-${r.cluster}-${r.secret_namespace}-${r.secret_name}`,
+    cluster: r.cluster,
+    addon: r.addon,
+    secretNamespace: r.secret_namespace,
+    secretName: r.secret_name,
+    state: r.state,
+    lastChecked: r.last_checked,
+    // The row's own real source — never the addon-values fallback label,
+    // which describes a comparison this row doesn't make.
+    sourceLabel: r.source,
+    // Sharko never repairs an orphaned row on its own — the whole point of
+    // the state is that nothing asks for it anymore.
+    selfHeals: false,
+  }))
+  return [...conn, ...values, ...orphaned]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -434,7 +507,7 @@ export interface RowGroup {
 /** The bucket connection secrets land in when grouping by addon: they are
  *  not an addon, and pretending otherwise would be the kind of tidy lie
  *  this page keeps refusing to tell. */
-const CONNECTIONS_GROUP_KEY = '__connections__'
+export const CONNECTIONS_GROUP_KEY = '__connections__'
 
 /**
  * worstRankInGroup (G4) is the best (lowest = worst) statusSortRank among a
@@ -449,6 +522,29 @@ function worstRankInGroup(rows: UnifiedRow[]): number {
     if (rank < best) best = rank
   }
   return best
+}
+
+/**
+ * worstStateInGroup (design-secret-sync-visual-pass, section 3) — same
+ * worst-of-the-group rule as worstRankInGroup, but returns the STATE the
+ * winning rank belongs to, not just the number. The tiles view's per-card
+ * left-edge strip (statusStripClassName) and status-mix bar need the actual
+ * state, not its rank, and empty groups default to 'in_sync' — the state
+ * that paints nothing (no group in this page is ever actually empty, but a
+ * function that returns a real ResourceStatus for every input is safer than
+ * one that can't).
+ */
+export function worstStateInGroup(rows: UnifiedRow[]): ResourceStatus {
+  let best = Infinity
+  let worst: ResourceStatus = 'in_sync'
+  for (const r of rows) {
+    const rank = statusSortRank(r.state, !!r.lastCheckError)
+    if (rank < best) {
+      best = rank
+      worst = toResourceStatus(r.state)
+    }
+  }
+  return worst
 }
 
 /**
@@ -535,7 +631,7 @@ export function buildRowGroups(rows: UnifiedRow[], groupBy: GroupBy): RowGroup[]
  *     must say that in words.
  */
 export function groupSummary(rows: UnifiedRow[]): string {
-  const counts: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, foreign: 0, unknown: 0 }
+  const counts: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, orphaned: 0, foreign: 0, unknown: 0 }
   for (const r of rows) counts[toResourceStatus(r.state)]++
   const parts = [`${rows.length} secret${rows.length === 1 ? '' : 's'}`]
   for (const status of CHIP_ORDER) {
@@ -555,7 +651,21 @@ function matchesSearch(row: UnifiedRow, q: string): boolean {
   )
 }
 
-type SortKey = 'name' | 'addon' | 'cluster' | 'source' | 'checked' | 'state'
+type SortKey = 'name' | 'namespace' | 'addon' | 'cluster' | 'source' | 'state'
+
+/**
+ * sourceShortLabel (design-secret-sync-visual-pass, section 2) — the SOURCE
+ * column used to repeat the sentence "checked against X" on every one of
+ * 170 rows (~137px of pure waste per row, measured). The relation
+ * ("checked against") now lives once in the sticky column header
+ * ("Checked against"); this cell shows just the place name. Strips a
+ * leading "the " so "the demo secrets store" reads as "demo secrets
+ * store" — display-only, never touches the server string itself (the
+ * Source/"Checked against" filter <select> and the search box still match
+ * on the full sourceLabel, only the visible option text runs through
+ * this).
+ */
+const sourceShortLabel = (l: string) => l.replace(/^the /i, '')
 
 // compareRows never sorts state alphabetically (S3) — it defers to
 // StatusMark's statusSortRank, the same worst-first priority order ArgoCD
@@ -564,11 +674,20 @@ type SortKey = 'name' | 'addon' | 'cluster' | 'source' | 'checked' | 'state'
 // and "out_of_sync". The state comparison also passes whether EACH row's
 // last check failed, so two "unknown" rows sort the failed one first —
 // same status word, different rank.
+//
+// name/namespace sort independently of each other (walk finding #140) —
+// each is its own column now, so each sorts on its own field instead of the
+// old combined "namespace/name" string.
 function compareRows(a: UnifiedRow, b: UnifiedRow, key: SortKey): number {
   switch (key) {
     case 'name': {
-      const an = `${a.secretNamespace ?? ''}/${a.secretName ?? ''}`
-      const bn = `${b.secretNamespace ?? ''}/${b.secretName ?? ''}`
+      const an = a.secretName ?? ''
+      const bn = b.secretName ?? ''
+      return an < bn ? -1 : an > bn ? 1 : 0
+    }
+    case 'namespace': {
+      const an = a.secretNamespace ?? ''
+      const bn = b.secretNamespace ?? ''
       return an < bn ? -1 : an > bn ? 1 : 0
     }
     case 'addon': {
@@ -580,11 +699,6 @@ function compareRows(a: UnifiedRow, b: UnifiedRow, key: SortKey): number {
       return a.cluster < b.cluster ? -1 : a.cluster > b.cluster ? 1 : 0
     case 'source':
       return a.sourceLabel < b.sourceLabel ? -1 : a.sourceLabel > b.sourceLabel ? 1 : 0
-    case 'checked': {
-      const ac = a.lastChecked ?? ''
-      const bc = b.lastChecked ?? ''
-      return ac < bc ? -1 : ac > bc ? 1 : 0
-    }
     case 'state':
       return statusSortRank(a.state, !!a.lastCheckError) - statusSortRank(b.state, !!b.lastCheckError)
     default:
@@ -596,6 +710,12 @@ function compareRows(a: UnifiedRow, b: UnifiedRow, key: SortKey): number {
 // row right now, and why not when it doesn't — shared by the row's ⋯ menu
 // and the detail panel's own Sync button so the two never disagree.
 function syncGateFor(row: UnifiedRow): { disabled: boolean; reason?: string } {
+  // leftover-secrets S1.2: an orphaned row has no source left to sync
+  // FROM — Delete is the only action it offers. actionsForRow and the
+  // panel both branch on row.state === 'orphaned' before ever reaching
+  // this gate, but it stays a safe "no" here too rather than falling
+  // through to a kind-based default that would say otherwise.
+  if (row.state === 'orphaned') return { disabled: true, reason: 'This secret is orphaned — Delete is the only action.' }
   // Checked first, and for both kinds of row: a secret Sharko did not create
   // is never Sharko's to write, whatever else is true about it (P1-A).
   if (row.state === 'foreign') return { disabled: true, reason: FOREIGN_SYNC_REASON }
@@ -628,7 +748,25 @@ function syncConfirmDescription(row: UnifiedRow | null): string {
   return `${opening} It pushes the current value from ${row.sourceLabel} onto the cluster. If the secret doesn't exist yet, this creates it.`
 }
 
-function actionsForRow(row: UnifiedRow, opts: { busy: boolean; onRefresh: () => void; onRequestSync: () => void }): RowAction[] {
+function actionsForRow(
+  row: UnifiedRow,
+  opts: { busy: boolean; onRefresh: () => void; onRequestSync: () => void; onRequestDelete: () => void },
+): RowAction[] {
+  // leftover-secrets S1.2: an orphaned row gets exactly one action —
+  // Delete. No Refresh (there is nothing left to check it against), no
+  // Sync (syncGateFor above already refuses it). Destructive, so it
+  // renders red and grouped below any safe action (RowActionsMenu's own
+  // convention — see its `destructive` handling).
+  if (row.state === 'orphaned') {
+    return [
+      {
+        label: 'Delete',
+        icon: <Trash2 className="h-3.5 w-3.5" />,
+        onSelect: opts.onRequestDelete,
+        destructive: true,
+      },
+    ]
+  }
   const gate = syncGateFor(row)
   return [
     {
@@ -750,6 +888,7 @@ function PanelActionButton({
   label,
   reason,
   testId,
+  destructive,
 }: {
   onClick: () => void
   disabled?: boolean
@@ -758,6 +897,8 @@ function PanelActionButton({
   label: string
   reason?: string
   testId?: string
+  /** leftover-secrets S1.2 — the panel's Delete button reads red, matching ConfirmationModal's own destructive styling, never the neutral Refresh/Sync look. */
+  destructive?: boolean
 }) {
   return (
     <span className="inline-flex items-center gap-1">
@@ -766,7 +907,11 @@ function PanelActionButton({
         onClick={onClick}
         disabled={disabled || loading}
         data-testid={testId}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-[#6aade0] bg-white px-3 py-1.5 text-sm font-medium text-[#0a3a5a] hover:bg-[#e0f0ff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+          destructive
+            ? 'border-red-300 bg-white text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-700 dark:text-red-400 dark:hover:bg-red-950'
+            : 'border-[#6aade0] bg-white text-[#0a3a5a] hover:bg-[#e0f0ff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+        }`}
       >
         {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
         {label}
@@ -833,7 +978,7 @@ function EngineStat({
       <div className="text-xs font-medium text-[#5a8aaa] dark:text-gray-500">{label}</div>
       {switchedOff ? (
         <div className="mt-0.5 text-sm text-[#5a8aaa] dark:text-gray-500" data-testid={`engine-off-${kind}`}>
-          Addon values engine is switched off.
+          Addon values engine is switched off. Refresh and Sync still work row by row.
         </div>
       ) : info?.wired ? (
         <div className="mt-0.5 flex items-center gap-1 text-sm text-[#0a3a5a] dark:text-gray-200">
@@ -932,7 +1077,10 @@ function KeyValueList({
 //      already answers "is it on the cluster" — sending a read that can
 //      only come back 404 is a doomed call, and it made the panel show a
 //      red error for a secret whose absence is the ordinary, expected
-//      thing.
+//      thing. leftover-secrets S1.2 extends this to an ORPHANED row for a
+//      different reason: the live-read endpoint is keyed by a registered
+//      addon definition, and an orphan by definition no longer has one —
+//      firing it would be the same doomed call for a different cause.
 //   3. A reader who is not allowed to read live secrets fires nothing.
 //      Before this, a viewer's panel fired the request anyway and rendered
 //      the 403 as an error, which is a permission dialog dressed up as a
@@ -962,13 +1110,30 @@ function useLiveSecret(row: UnifiedRow | null, allowed: boolean) {
   const kind = row?.kind
   const cluster = row?.cluster ?? ''
   const addon = row?.addon
-  // Rule 2 + rule 3, in one place: these are the only two reasons the read
-  // is skipped, and both are facts already in hand — no request needed to
-  // discover either.
-  const skip = !row || !allowed || row.state === 'missing'
+  // Rule 2 + rule 3, in one place: these are the only reasons the read is
+  // skipped, and all are facts already in hand — no request needed to
+  // discover any of them. leftover-secrets S1.2 extends rule 2 to
+  // 'orphaned': the endpoint a live read would hit is keyed by a
+  // registered addon definition, and an orphan by definition no longer has
+  // one — firing the read would be exactly the same doomed call a
+  // known-missing row's read would be.
+  //
+  // L12 (code review): kept OUT of the effect's own dependency array on
+  // purpose and latched into a ref instead. row.state can flip to/from
+  // 'missing' (or 'orphaned') on its own — driven by the page's 30-second
+  // background refresh — while this panel is sitting open with the SAME row
+  // (rowKey unchanged). If `skip` were a reactive dependency, that flip
+  // would re-fire the live read exactly like a timer would, which is the
+  // one thing rule 4 in this file's own header comment exists to forbid:
+  // only an explicit open (rowKey changes) or Retry (attempt changes) may
+  // start a request. The ref lets the effect read the CURRENT
+  // allowed/missing/orphaned facts at the instant it actually decides
+  // whether to fetch — not as a reason, on its own, to run again.
+  const skipRef = useRef(true)
+  skipRef.current = !row || !allowed || row.state === 'missing' || row.state === 'orphaned'
 
   useEffect(() => {
-    if (skip) {
+    if (skipRef.current) {
       setState({ status: 'skipped' })
       return
     }
@@ -1015,8 +1180,10 @@ function useLiveSecret(row: UnifiedRow | null, allowed: boolean) {
     // object each time. Keying on the object would reload the panel's live
     // card every time the list refreshed behind it, which is exactly the
     // behaviour a 30-second auto-refresh would turn into a flicker.
+    // skip is deliberately excluded — see skipRef's own comment above; it
+    // must never be a reason for this effect to re-run on its own.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rowKey, attempt, skip, kind, cluster, addon])
+  }, [rowKey, attempt, kind, cluster, addon])
 
   return { live: state, retry: useCallback(() => setAttempt((a) => a + 1), []) }
 }
@@ -1037,13 +1204,26 @@ function useLiveSecret(row: UnifiedRow | null, allowed: boolean) {
 // established; printing one would be inventing it. Do not add a tick.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type DiffVerdict = 'match' | 'differ' | 'never_created' | 'could_not_look' | 'foreign'
+type DiffVerdict = 'match' | 'differ' | 'never_created' | 'could_not_look' | 'foreign' | 'orphaned'
 
 /**
- * diffVerdictFor picks which of the five sentences the panel says.
+ * The locked panel sentence (leftover-secrets S1.2, maintainer wording,
+ * verbatim — do not paraphrase): what an orphaned row's verdict line says.
+ */
+const ORPHANED_PANEL_SENTENCE =
+  'Orphaned — its source in git is gone. Sharko wrote this secret once, but nothing asks for it anymore.'
+
+/**
+ * diffVerdictFor picks which of the six sentences the panel says.
  *
  * The order of the checks is the whole logic:
- *   - foreign first: whoever else owns this secret, that fact outranks
+ *   - orphaned first: leftover-secrets S1.2's own state, and it doesn't
+ *     overlap with any of the checks below (an orphaned row never carries
+ *     foreign/missing/in_sync/out_of_sync at the same time), but it's
+ *     checked ahead of everything else because there is nothing left to
+ *     compare — no live read was fired for it either (useLiveSecret's skip
+ *     rule), so none of the live-read branches below apply.
+ *   - foreign next: whoever else owns this secret, that fact outranks
  *     everything else Sharko might say about it.
  *   - a row already known missing next: no read was fired, so there is
  *     nothing on the right to describe.
@@ -1056,6 +1236,7 @@ type DiffVerdict = 'match' | 'differ' | 'never_created' | 'could_not_look' | 'fo
  *     "could not look", because it means the last check never finished.
  */
 function diffVerdictFor(row: UnifiedRow, live: LiveSecretState): DiffVerdict {
+  if (row.state === 'orphaned') return 'orphaned'
   if (row.state === 'foreign') return 'foreign'
   if (row.state === 'missing') return 'never_created'
   if (live.status === 'error') return live.notFound ? 'never_created' : 'could_not_look'
@@ -1065,7 +1246,7 @@ function diffVerdictFor(row: UnifiedRow, live: LiveSecretState): DiffVerdict {
 }
 
 /**
- * The five sentences. "never created" is the one that changes wording by
+ * The six sentences. "never created" is the one that changes wording by
  * kind, and honestly so: on a values row Sync really is what creates the
  * secret, but on a connection row Sync is disabled for exactly this state
  * (there is nothing to sync onto yet) — promising it there would send a
@@ -1086,12 +1267,19 @@ function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
       return 'Someone else created this secret — Sharko will not touch it.'
     case 'could_not_look':
       return 'Sharko could not look at the cluster just now.'
+    case 'orphaned':
+      return ORPHANED_PANEL_SENTENCE
   }
 }
 
+// design-secret-sync-visual-pass, section 4/item 21 — DiffCard used to be
+// its own boxed ring card; now it's a plain pane inside the ONE ring
+// container Zone B builds around the pair (an interior hairline divides
+// them instead of two separate rings). The label + testid stay exactly as
+// they were — only the box is gone.
 function DiffCard({ title, children, testId }: { title: string; children: ReactNode; testId: string }) {
   return (
-    <div className="rounded-md ring-1 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900" data-testid={testId}>
+    <div className="p-3" data-testid={testId}>
       <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">{title}</div>
       {children}
     </div>
@@ -1104,6 +1292,21 @@ function DiffCard({ title, children, testId }: { title: string; children: ReactN
  * wait for. That is the point of splitting the two cards apart.
  */
 function IntentCard({ row }: { row: UnifiedRow }) {
+  // leftover-secrets S1.2 — an orphaned row's "should be" is nothing: its
+  // source definition is the thing that's gone. Checked before the
+  // kind-based branches below, since an orphaned row is kind 'values' but
+  // must never say "the values come from X" — that source no longer
+  // exists to compare against.
+  if (row.state === 'orphaned') {
+    return (
+      <DiffCard title="What it should be" testId="diff-intent-card">
+        <p className="text-sm text-[#0a2a4a] dark:text-gray-200">Nothing — its source in git is gone.</p>
+        <p className="mt-2 text-xs text-[#3a6a8a] dark:text-gray-500">
+          Sharko wrote this secret once, but nothing in git asks for it anymore.
+        </p>
+      </DiffCard>
+    )
+  }
   if (row.kind === 'connection') {
     return (
       <DiffCard title="What it should be" testId="diff-intent-card">
@@ -1142,13 +1345,37 @@ function IntentCard({ row }: { row: UnifiedRow }) {
  * "improve" this by adding a reveal toggle, a copy button, or a request for
  * the real content — that is a new design decision, not a refactor.
  */
-function LiveCard({ row, live, onRetry }: { row: UnifiedRow; live: LiveSecretState; onRetry: () => void }) {
+function LiveCard({
+  row,
+  live,
+  onRetry,
+  driftDetail,
+}: {
+  row: UnifiedRow
+  live: LiveSecretState
+  onRetry: () => void
+  /** design-secret-sync-visual-pass item 23: the connection-drift detail
+   *  used to have its own standalone ring box below the two cards; it's
+   *  part of the comparison, not a sibling of it, so it renders here now —
+   *  inside the cluster pane, under Annotations. */
+  driftDetail?: ReactNode
+}) {
   return (
     <DiffCard title="What is on the cluster" testId="diff-live-card">
       <div className="space-y-3" data-testid="detail-resource-panel">
         {live.status === 'skipped' && row.state === 'missing' && (
           <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="resource-not-there">
             Nothing is there — this secret has not been created yet.
+          </p>
+        )}
+        {/* leftover-secrets S1.2 — the calm sentence where the live card
+            would be for an orphaned row. No read was fired (useLiveSecret's
+            skip rule): the live-read endpoint is keyed by a registered
+            addon definition an orphan no longer has, so this is a stated
+            fact, not a failed lookup. */}
+        {live.status === 'skipped' && row.state === 'orphaned' && (
+          <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="resource-orphaned-live">
+            Sharko still sees it on the cluster.
           </p>
         )}
         {live.status === 'loading' && <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Reading it from the cluster…</p>}
@@ -1172,10 +1399,11 @@ function LiveCard({ row, live, onRetry }: { row: UnifiedRow; live: LiveSecretSta
         )}
         {live.status === 'ready' && (
           <>
+            {/* design-secret-sync-visual-pass item 22: the {namespace}/{name}
+                identity line is gone — Zone A's header above already says
+                it, and repeating it here was the panel stating the same
+                fact twice. */}
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-[#3a6a8a] dark:text-gray-500">
-              <span className="break-all font-mono text-sm font-semibold text-[#0a2a4a] dark:text-white">
-                {live.resource.namespace}/{live.resource.name}
-              </span>
               {live.resource.secret_type && <span>type {live.resource.secret_type}</span>}
             </div>
             <p className="text-xs text-[#3a6a8a] dark:text-gray-500">Read from {live.resource.read_from}.</p>
@@ -1190,6 +1418,14 @@ function LiveCard({ row, live, onRetry }: { row: UnifiedRow; live: LiveSecretSta
               <KeyValueList items={live.resource.annotations} empty="No annotations." testId="resource-annotations" />
             </div>
           </>
+        )}
+        {/* design-secret-sync-visual-pass item 23: the connection-drift
+            detail, part of the comparison rather than a sibling of it. */}
+        {driftDetail && (
+          <div data-testid="detail-diff-panel">
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Differences</div>
+            {driftDetail}
+          </div>
         )}
       </div>
     </DiffCard>
@@ -1347,12 +1583,15 @@ function SecretDetailPanel({
   open,
   onOpenChange,
   onRequestSync,
+  onRequestDelete,
   onChanged,
 }: {
   row: UnifiedRow | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onRequestSync: (row: UnifiedRow) => void
+  /** leftover-secrets S1.2 — opens the page-level Delete confirm for an orphaned row. */
+  onRequestDelete: (row: UnifiedRow) => void
   onChanged: () => void
 }) {
   const navigate = useNavigate()
@@ -1422,7 +1661,18 @@ function SecretDetailPanel({
   const identity = row.secretNamespace && row.secretName ? `${row.secretNamespace}/${row.secretName}` : '—'
 
   const purposeSentence: ReactNode =
-    row.kind === 'connection' ? (
+    row.state === 'orphaned' ? (
+      <>
+        Orphaned secret on cluster <span className="font-medium">{row.cluster}</span>
+        {row.addon ? (
+          <>
+            {' '}
+            — was for addon <span className="font-medium">{row.addon}</span>
+          </>
+        ) : null}
+        .
+      </>
+    ) : row.kind === 'connection' ? (
       <>
         Connects <span className="font-medium">{row.cluster}</span> to ArgoCD.
       </>
@@ -1438,8 +1688,16 @@ function SecretDetailPanel({
   // hardcoded "the vault". H3: "checked against" everywhere this fact
   // shows up (the SOURCE column, this sentence, the revision line below) —
   // one phrase, not several near-synonyms for the same fact.
+  //
+  // leftover-secrets S1.2: an orphaned row gets its own sentence instead —
+  // "checked against X" would contradict the verdict line right above it,
+  // which already says the source in git is gone.
   const sourceSentence =
-    row.kind === 'connection' ? 'Checked against git.' : `Checked against ${row.sourceLabel} — git only holds a pointer to it.`
+    row.state === 'orphaned'
+      ? 'No source in git anymore — Sharko is not comparing this against anything.'
+      : row.kind === 'connection'
+        ? 'Checked against git.'
+        : `Checked against ${row.sourceLabel} — git only holds a pointer to it.`
 
   // The connection-secret label drift — WHICH labels differ, under the
   // verdict sentence that already said THAT they differ. Kept as its own
@@ -1503,7 +1761,11 @@ function SecretDetailPanel({
       // sheet keeps the narrow default.
       wide
     >
-      {/* ── 1. The resource header ─────────────────────────────────────── */}
+      {/* ── Zone A — identity (no box) ───────────────────────────────────
+          design-secret-sync-visual-pass, section 4. The header markup is
+          unchanged; purposeSentence moved up here from the old tail
+          section — what this thing IS belongs before everything else, not
+          buried after the diff and the keys. */}
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1" data-testid="detail-resource-header">
         <span className="rounded-full bg-[#d0e8f8] px-2 py-0.5 text-[11px] font-medium text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-300">
           Secret
@@ -1519,124 +1781,53 @@ function SecretDetailPanel({
         )}
       </div>
 
-      {/* ── 2. State, with the two actions right beside it ─────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg ring-1 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-800">
+      <p className="text-sm text-[#2a5a7a] dark:text-gray-300">{purposeSentence}</p>
+
+      {/* Status + actions: the ring box is gone (design-secret-sync-visual-
+          pass item 19) — a hairline under the row is enough now that it
+          isn't competing with four other equal-weight boxes below it. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#6aade0]/40 pb-3 dark:border-gray-700">
         <StatusMark status={row.state} />
         <RoleGuard roles={['admin', 'operator']}>
           <div className="flex items-center gap-2">
-            <PanelActionButton onClick={handleRefresh} loading={refreshing} icon={RefreshCw} label="Refresh" testId="detail-refresh" />
-            <PanelActionButton
-              onClick={() => onRequestSync(row)}
-              disabled={gate.disabled}
-              icon={RotateCcw}
-              label="Sync"
-              reason={gate.reason}
-              testId="detail-sync"
-            />
+            {/* leftover-secrets S1.2: an orphaned row gets exactly one
+                action — Delete, red, opening the page-level confirm. No
+                Refresh (there's nothing left to check it against), no
+                Sync (there's no source to sync from). */}
+            {row.state === 'orphaned' ? (
+              <PanelActionButton
+                onClick={() => onRequestDelete(row)}
+                icon={Trash2}
+                label="Delete"
+                testId="detail-delete"
+                destructive
+              />
+            ) : (
+              <>
+                <PanelActionButton onClick={handleRefresh} loading={refreshing} icon={RefreshCw} label="Refresh" testId="detail-refresh" />
+                <PanelActionButton
+                  onClick={() => onRequestSync(row)}
+                  disabled={gate.disabled}
+                  icon={RotateCcw}
+                  label="Sync"
+                  reason={gate.reason}
+                  testId="detail-sync"
+                />
+              </>
+            )}
           </div>
         </RoleGuard>
       </div>
 
-      {/* ── 3. The diff: one sentence, two cards ───────────────────────── */}
-      <div>
-        <h3 className="mb-1 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Diff</h3>
-        <p
-          className={`mb-2 text-sm ${verdict === 'match' ? 'text-green-700 dark:text-green-400' : 'text-[#0a2a4a] dark:text-gray-200'}`}
-          data-testid="diff-verdict"
-        >
-          {verdict === 'match' && <CheckCircle className="mr-1.5 inline h-4 w-4 align-text-bottom" aria-hidden="true" />}
-          {diffVerdictSentence(verdict, row)}
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <IntentCard row={row} />
-          {/* The live half sits INSIDE the role guard, so a viewer sees a
-              sentence about access rather than a permission error where a
-              card should be — and the read is never fired for them either
-              (useLiveSecret's `allowed`). */}
-          <RoleGuard
-            roles={['admin', 'operator']}
-            fallback={
-              <DiffCard title="What is on the cluster" testId="diff-live-card">
-                <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="live-needs-operator">
-                  {LIVE_READ_NEEDS_OPERATOR}
-                </p>
-              </DiffCard>
-            }
-          >
-            <LiveCard row={row} live={live} onRetry={retry} />
-          </RoleGuard>
-        </div>
-        {driftDetail && (
-          <div
-            className="mt-3 rounded-md ring-1 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900"
-            data-testid="detail-diff-panel"
-          >
-            {driftDetail}
-          </div>
-        )}
-      </div>
-
-      {/* ── 4. The key table ───────────────────────────────────────────── */}
-      <RoleGuard roles={['admin', 'operator']}>
-        <KeyTable live={live} />
-      </RoleGuard>
-
-      {/* ── 5. Everything the panel already carried ────────────────────── */}
-      <p className="text-sm text-[#0a2a4a] dark:text-white">{purposeSentence}</p>
-      <p
-        className="text-xs text-[#3a6a8a] dark:text-gray-500"
-        title={row.kind === 'values' ? `Git only holds a pointer to it — the value itself lives in ${row.sourceLabel}.` : undefined}
-      >
-        {sourceSentence}
-      </p>
-      {/* P2-C1: which commit and which file this row was compared against — short SHA here, full SHA on hover. Connection rows only; values rows have no commit to point at (their intent is the store, C2 covers that instead). */}
-      {row.kind === 'connection' && row.comparedRevision && (
-        <p className="text-xs text-[#3a6a8a] dark:text-gray-500" title={`Full commit: ${row.comparedRevision}`} data-testid="detail-compared-revision">
-          Checked against git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
-          {row.comparedPath && (
-            <>
-              {' '}
-              · <span className="font-mono">{row.comparedPath}</span>
-            </>
-          )}
-        </p>
-      )}
-
-      {/* P2-C3: the one-line self-heal promise — only where it changes what the reader should do (an out-of-sync or missing row). */}
-      {(row.state === 'out_of_sync' || row.state === 'missing') && (
-        <p className="text-xs text-[#3a6a8a] dark:text-gray-500" data-testid="detail-self-heals">
-          {row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
-        </p>
-      )}
-      {/* P2-C6: drift blame — which side moved. Connection rows, out-of-sync only, and only when both revisions are known. */}
-      {row.kind === 'connection' && row.state === 'out_of_sync' && row.driftSource && (
-        <p className="text-xs text-[#3a6a8a] dark:text-gray-500" data-testid="detail-drift-source">
-          {row.driftSource === 'git'
-            ? 'Git moved — a newer commit changed what this secret should be.'
-            : 'The cluster moved — something changed this secret outside git.'}
-        </p>
-      )}
-
-      <dl className="space-y-1.5 text-sm">
-        <div className="flex items-center justify-between">
-          <dt className="text-[#3a6a8a] dark:text-gray-400">Last checked</dt>
-          <dd>
-            <TimeChip iso={row.lastChecked} />
-          </dd>
-        </div>
-      </dl>
-
-      {/* H4-3: "Last repaired" — a single timestamp — became this short
-          list, so a reader sees the pattern (repeated repairs, a repair
-          that stopped happening) instead of only the most recent one. */}
-      <RecentActivity row={row} />
-
+      {/* design-secret-sync-visual-pass item 20: the most actionable lines
+          in the old panel were buried at the bottom — they sit right under
+          the status row now, where a reader who just opened the panel
+          actually looks first. */}
       {row.lastCheckError && (
         <p className="text-sm text-red-700 dark:text-red-400" data-testid="last-check-error">
           The last check failed: {row.lastCheckError}
         </p>
       )}
-
       {row.kind === 'connection' && (row.fightCount ?? 0) >= ROW_WARNING_THRESHOLD && (
         <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="fight-warning">
           {fightWarningSentence(row.fightCount ?? 0)}
@@ -1648,13 +1839,145 @@ function SecretDetailPanel({
         </p>
       )}
 
+      {/* ── Zone B — the comparison (one box, two panes) ─────────────────
+          design-secret-sync-visual-pass, section 4. The two separate ring
+          cards become one container with an interior hairline — same
+          content, same testids, half the visual weight. */}
+      <div>
+        <h3 className="mb-1 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Diff</h3>
+        <p
+          className={`mb-2 text-sm ${verdict === 'match' ? 'text-green-700 dark:text-green-400' : 'text-[#0a2a4a] dark:text-gray-200'}`}
+          data-testid="diff-verdict"
+        >
+          {verdict === 'match' && <CheckCircle className="mr-1.5 inline h-4 w-4 align-text-bottom" aria-hidden="true" />}
+          {diffVerdictSentence(verdict, row)}
+        </p>
+        <div className="rounded-md ring-1 ring-[#6aade0] bg-white dark:ring-gray-700 dark:bg-gray-900">
+          <div className="grid sm:grid-cols-2 sm:divide-x divide-[#6aade0]/40 dark:divide-gray-700 max-sm:divide-y">
+            <IntentCard row={row} />
+            {/* The live half sits INSIDE the role guard, so a viewer sees a
+                sentence about access rather than a permission error where a
+                card should be — and the read is never fired for them either
+                (useLiveSecret's `allowed`). */}
+            <RoleGuard
+              roles={['admin', 'operator']}
+              fallback={
+                <DiffCard title="What is on the cluster" testId="diff-live-card">
+                  <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="live-needs-operator">
+                    {LIVE_READ_NEEDS_OPERATOR}
+                  </p>
+                </DiffCard>
+              }
+            >
+              <LiveCard row={row} live={live} onRetry={retry} driftDetail={driftDetail} />
+            </RoleGuard>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Zone C — keys (kept as the one remaining box) ────────────────
+          design-secret-sync-visual-pass, section 4: unchanged content, the
+          no-per-key-verdict rule, and the blanking sentence — verbatim. */}
+      <RoleGuard roles={['admin', 'operator']}>
+        <KeyTable live={live} />
+      </RoleGuard>
+
+      {/* ── Zone D — the record (one grouped block, secondary by design) ──
+          design-secret-sync-visual-pass, section 4. The loose tail of six
+          single-line paragraphs at three font sizes becomes one <dl>, all
+          text-xs, under one heading — no sentence changes, only placement
+          and a shared type scale. */}
+      <div className="border-t border-[#6aade0]/40 pt-3 dark:border-gray-700">
+        <h3 className="mb-1.5 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Details</h3>
+        <dl className="space-y-1.5 text-xs">
+          <div className="flex justify-between gap-3">
+            <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Checked against</dt>
+            <dd
+              className="text-right text-[#2a5a7a] dark:text-gray-400"
+              title={
+                row.kind === 'values' && row.state !== 'orphaned'
+                  ? `Git only holds a pointer to it — the value itself lives in ${row.sourceLabel}.`
+                  : undefined
+              }
+            >
+              {sourceSentence}
+            </dd>
+          </div>
+          {/* P2-C1: which commit and which file this row was compared
+              against — short SHA here, full SHA on hover. Connection rows
+              only; values rows have no commit to point at (their intent is
+              the store, C2 covers that instead). */}
+          {row.kind === 'connection' && row.comparedRevision && (
+            <div className="flex justify-between gap-3">
+              <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Commit</dt>
+              <dd
+                className="text-right text-[#2a5a7a] dark:text-gray-400"
+                title={`Full commit: ${row.comparedRevision}`}
+                data-testid="detail-compared-revision"
+              >
+                Checked against git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
+                {row.comparedPath && (
+                  <>
+                    {' '}
+                    · <span className="font-mono">{row.comparedPath}</span>
+                  </>
+                )}
+              </dd>
+            </div>
+          )}
+          <div className="flex justify-between gap-3">
+            <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Last checked</dt>
+            <dd className="text-right text-[#2a5a7a] dark:text-gray-400">
+              <TimeChip iso={row.lastChecked} />
+            </dd>
+          </div>
+          {/* P2-C3: the one-line self-heal promise — only where it changes
+              what the reader should do (an out-of-sync or missing row). */}
+          {(row.state === 'out_of_sync' || row.state === 'missing') && (
+            <div className="flex justify-between gap-3">
+              <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Self-heal</dt>
+              <dd className="text-right text-[#2a5a7a] dark:text-gray-400" data-testid="detail-self-heals">
+                {row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
+              </dd>
+            </div>
+          )}
+          {/* P2-C6: drift blame — which side moved. Connection rows,
+              out-of-sync only, and only when both revisions are known. */}
+          {row.kind === 'connection' && row.state === 'out_of_sync' && row.driftSource && (
+            <div className="flex justify-between gap-3">
+              <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Drift</dt>
+              <dd className="text-right text-[#2a5a7a] dark:text-gray-400" data-testid="detail-drift-source">
+                {row.driftSource === 'git'
+                  ? 'Git moved — a newer commit changed what this secret should be.'
+                  : 'The cluster moved — something changed this secret outside git.'}
+              </dd>
+            </div>
+          )}
+        </dl>
+      </div>
+
+      {/* H4-3: "Last repaired" — a single timestamp — became this short
+          list, so a reader sees the pattern (repeated repairs, a repair
+          that stopped happening) instead of only the most recent one. */}
+      <RecentActivity row={row} />
+
+      {/* leftover-secrets S1.2: an orphaned row's addon is best-effort (read
+          off its provenance annotation) and can be absent — falls back to
+          the cluster page rather than building a broken /addons/undefined
+          link. */}
       <button
         type="button"
-        onClick={() => navigate(row.kind === 'connection' ? `/clusters/${encodeURIComponent(row.cluster)}` : `/addons/${encodeURIComponent(row.addon!)}`)}
+        onClick={() =>
+          navigate(
+            row.kind === 'connection' || !row.addon
+              ? `/clusters/${encodeURIComponent(row.cluster)}`
+              : `/addons/${encodeURIComponent(row.addon)}`,
+          )
+        }
         data-testid="detail-view-page-link"
         className="text-sm text-teal-700 hover:underline dark:text-teal-400"
       >
-        {row.kind === 'connection' ? 'View cluster page' : 'View addon page'}
+        {row.kind === 'connection' || !row.addon ? 'View cluster page' : 'View addon page'}
       </button>
     </ResourceDetailSheet>
   )
@@ -1673,6 +1996,7 @@ function SecretTableRow({
   onSelect,
   onRefresh,
   onRequestSync,
+  onRequestDelete,
 }: {
   row: UnifiedRow
   /** true when the row sits under a group parent — a small left inset, nothing else changes. */
@@ -1681,6 +2005,8 @@ function SecretTableRow({
   onSelect: () => void
   onRefresh: () => void
   onRequestSync: () => void
+  /** leftover-secrets S1.2 — opens the page-level Delete confirm for an orphaned row. */
+  onRequestDelete: () => void
 }) {
   // P3-F2: the row opens the panel, so it has to BE a control — reachable
   // by Tab, opened by Enter or Space, and announced as a button. Before
@@ -1707,11 +2033,17 @@ function SecretTableRow({
       {/* H2 (gitops-proud P4-H): one line, not two. The old grey subline
           under the identity said the ROW'S KIND — the KeyRound/Lock glyph
           right next to the name already says that, so the line was
-          repeating the icon in words. It's gone; the identity is the only
-          text in this cell now, capped to a width so a long secret name
-          can't push STATUS/ADDON/CLUSTER/SOURCE off the side of the
-          screen — the full name is always in the title attribute for
-          anyone who needs it.
+          repeating the icon in words. It's gone.
+
+          Walk finding #140: NAME shows only the secret's NAME now — the
+          namespace moved into its own column, right after this one, so a
+          demo estate where several rows share a namespace and differ only
+          in name is no longer truncated exactly where they differ. This
+          cell still caps its width so a long name can't push
+          STATUS/ADDON/CLUSTER/SOURCE off the side of the screen, but if it
+          does truncate, `direction: rtl` makes the cut land at the FRONT of
+          the string, not the tail — the tail is the part that actually
+          tells rows apart. The full name is always in the title attribute.
 
           H4: a grouped child row (indented) gets a thin vertical guide —
           addon → cluster → secret should read as a tree, not just an
@@ -1725,8 +2057,8 @@ function SecretTableRow({
           the row's own <StatusMark> dot and the filter chips, via
           statusStripClassName — it cannot disagree with the dot next to
           it. */}
-      <TableCell className={`max-w-[240px] py-1 ${statusStripClassName(row.state)} ${indented ? 'pl-2' : ''}`}>
-        <div className="flex min-w-0 items-center gap-2">
+      <TableCell className={`py-1 px-1.5 ${statusStripClassName(row.state)} ${indented ? 'pl-2' : ''}`}>
+        <div className="flex min-w-0 items-center gap-1.5">
           {indented && <span aria-hidden="true" className="h-4 w-px shrink-0 bg-[#c0ddf0] dark:bg-gray-700" />}
           {row.kind === 'connection' ? (
             <KeyRound className="h-3.5 w-3.5 shrink-0 text-[#5a8aaa] dark:text-gray-500" aria-hidden="true" />
@@ -1735,16 +2067,30 @@ function SecretTableRow({
           )}
           <span
             className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-[#0a2a4a] dark:text-white"
-            title={identity !== '—' ? identity : undefined}
+            style={{ direction: 'rtl', textAlign: 'left' }}
+            title={row.secretName || undefined}
+            data-testid="cell-name"
           >
-            {identity}
+            {row.secretName ?? '—'}
           </span>
         </div>
+      </TableCell>
+      {/* Namespace (walk finding #140): its own sortable column, freed from
+          the old combined "namespace/name" cell. Namespaces repeat across
+          rows and are recognizable even truncated, so a plain truncate +
+          hover title is enough here — no need for NAME's front-truncate
+          trick. */}
+      <TableCell
+        className="truncate py-1 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
+        title={row.secretNamespace || undefined}
+        data-testid="cell-namespace"
+      >
+        {row.secretNamespace ?? '—'}
       </TableCell>
       {/* Status (H2): moved up next to the name, ArgoCD's own habit of
           putting a resource's health right at the start of its row instead
           of buried at the end. */}
-      <TableCell className="py-1">
+      <TableCell className="py-1 px-1.5">
         <StatusMark status={row.state} />
       </TableCell>
       {/*
@@ -1753,8 +2099,12 @@ function SecretTableRow({
         matching the same "—" the identity cell above already uses for
         "nothing here", not an invented word like "n/a" or a made-up noun.
       */}
-      <TableCell className="py-1 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="cell-addon">
-        {row.kind === 'values' ? row.addon : '—'}
+      <TableCell
+        className="truncate py-1 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
+        title={row.kind === 'values' ? row.addon : undefined}
+        data-testid="cell-addon"
+      >
+        {row.kind === 'values' ? (row.addon ?? '—') : '—'}
       </TableCell>
       {/* Cluster (H2): both kinds print it now. It used to be left blank on
           connection rows because the identity cell already implied the
@@ -1762,22 +2112,32 @@ function SecretTableRow({
           between the two, that implication got harder to read at a
           glance, and grouping by addon needs a real cluster column for
           every row it shows anyway. */}
-      <TableCell className="py-1 text-sm text-[#2a5a7a] dark:text-gray-300">{row.cluster}</TableCell>
-      {/* Source (G1/H3): the S3 honesty lock, sortable/filterable/searched
-          on every row, and read as "checked against X" — the same phrase
-          the sourceSentence in the panel already uses, so the column and
-          the panel never disagree about what to call this fact. */}
-      <TableCell className="py-1 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="cell-source">
-        checked against {row.sourceLabel}
+      <TableCell
+        className="truncate py-1 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
+        title={row.cluster}
+        data-testid="cell-cluster"
+      >
+        {row.cluster}
       </TableCell>
-      <TableCell className="py-1">
-        <TimeChip iso={row.lastChecked} />
+      {/* Checked against (G1/H3, design-secret-sync-visual-pass section 2):
+          the S3 honesty lock, sortable/filterable/searched on every row.
+          The RELATION ("checked against") now lives once in the sticky
+          column header — this cell states just the place name, so the
+          longest demo name (kube-prometheus-stack-grafana-admin, 35
+          chars) can render uncut at 1280px. The full sentence — the same
+          one the panel's Zone D says — is one hover away. */}
+      <TableCell
+        className="truncate py-1 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
+        data-testid="cell-source"
+        title={row.kind === 'connection' ? 'Checked against git.' : `Checked against ${row.sourceLabel} — git only holds a pointer to it.`}
+      >
+        {sourceShortLabel(row.sourceLabel)}
       </TableCell>
-      <TableCell className="py-1" onClick={(e) => e.stopPropagation()}>
+      <TableCell className="py-1 px-1.5" onClick={(e) => e.stopPropagation()}>
         <RoleGuard roles={['admin', 'operator']}>
           <RowActionsMenu
             label={`Actions for ${row.cluster}${row.addon ? ' / ' + row.addon : ''}`}
-            actions={actionsForRow(row, { busy, onRefresh, onRequestSync })}
+            actions={actionsForRow(row, { busy, onRefresh, onRequestSync, onRequestDelete })}
           />
         </RoleGuard>
       </TableCell>
@@ -1796,7 +2156,11 @@ function SecretTableRow({
 function GroupHeaderRow({ group, expanded, onToggle }: { group: RowGroup; expanded: boolean; onToggle: () => void }) {
   return (
     <TableRow className="hover:bg-transparent">
-      {/* Name, Status, Addon, Cluster, Source, Last Checked, plus the actions column (G1 added Addon + Source; H2 moved Status next to Name). */}
+      {/* Name, Namespace, Status, Addon, Cluster, Checked against, plus the
+          actions column (G1 added Addon + Source; H2 moved Status next to
+          Name; walk finding #140 added Namespace; design-secret-sync-
+          visual-pass removed the LAST CHECKED column — the fact lives in
+          the engine strip + panel now). */}
       <TableCell colSpan={7} className="p-0">
         <button
           type="button"
@@ -1836,6 +2200,11 @@ export function ManagedSecrets() {
   const [busyRows, setBusyRows] = useState<Record<string, boolean>>({})
   const [syncTarget, setSyncTarget] = useState<UnifiedRow | null>(null)
   const [syncing, setSyncing] = useState(false)
+  // leftover-secrets S1.2 — the orphaned-row Delete confirm target, same
+  // pattern as syncTarget above: set it to open the ConfirmationModal,
+  // null it to close.
+  const [deleteTarget, setDeleteTarget] = useState<UnifiedRow | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   // B3 — the active chip filter, the search text, and the selected row all
   // live in the URL (?state=, ?q=, ?row=) so the page can be reloaded,
@@ -1844,13 +2213,28 @@ export function ManagedSecrets() {
   // and so the back button actually goes back to the previous filter
   // instead of out of the page.
   const [searchParams, setSearchParams] = useSearchParams()
+  // design-secret-sync-visual-pass bug fix: a tile's click-through has to
+  // change TWO params in one handler (e.g. clear `view` and set `addon`
+  // together — section 3's click-through). Building the next
+  // URLSearchParams off the outer `searchParams` closure broke that: two
+  // updateParams calls in the same synchronous handler both read the SAME
+  // stale snapshot, so the second call's setSearchParams overwrote the
+  // first call's change instead of building on it. setSearchParams'
+  // functional-updater form (same shape as React's setState updater) reads
+  // the router's own up-to-date params on each call, so sequential calls
+  // in one handler compose correctly instead of racing each other.
   const updateParams = useCallback(
     (mutate: (p: URLSearchParams) => void) => {
-      const params = new URLSearchParams(searchParams.toString())
-      mutate(params)
-      setSearchParams(params, { replace: true })
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev)
+          mutate(params)
+          return params
+        },
+        { replace: true },
+      )
     },
-    [searchParams, setSearchParams],
+    [setSearchParams],
   )
 
   const [stateFilter, setStateFilterState] = useState<ResourceStatus | 'all'>(() => {
@@ -1952,14 +2336,77 @@ export function ManagedSecrets() {
     [updateParams],
   )
 
+  // design-secret-sync-visual-pass, section 3 — the List | Tiles toggle.
+  // URL param `view` wins when present (same B3 pattern as every other
+  // control on this page — reloadable, bookmarkable, back-button-safe);
+  // `sharko-secret-sync-view` in localStorage is read ONLY when the URL has
+  // no `view` param, so the page reopens the way he left it while a shared
+  // link with an explicit `?view=` still shows exactly what was shared.
+  // `list` is the default and is never written to the URL or localStorage.
+  const VIEW_STORAGE_KEY = 'sharko-secret-sync-view'
+  const [view, setViewState] = useState<'list' | 'tiles'>(() => {
+    const v = searchParams.get('view')
+    if (v === 'tiles' || v === 'list') return v
+    return window.localStorage.getItem(VIEW_STORAGE_KEY) === 'tiles' ? 'tiles' : 'list'
+  })
+  const setView = useCallback(
+    (next: 'list' | 'tiles') => {
+      setViewState(next)
+      window.localStorage.setItem(VIEW_STORAGE_KEY, next)
+      updateParams((p) => {
+        if (next === 'list') p.delete('view')
+        else p.set('view', next)
+      })
+    },
+    [updateParams],
+  )
+
+  // design-secret-sync-visual-pass, section 3 — the tiles view's
+  // "Cluster connections" card click-through. No select control (unlike
+  // addon/source) — it renders as one dismissible pill instead, same as
+  // every other single-value filter this page has never needed a <select>
+  // for. Applied in the `filtered` memo below, same as addonFilter/
+  // sourceFilter.
+  const [kindFilter, setKindFilterState] = useState<'' | 'connection' | 'values'>(() => {
+    const v = searchParams.get('kind')
+    return v === 'connection' || v === 'values' ? v : ''
+  })
+  const setKindFilter = useCallback(
+    (next: '' | 'connection' | 'values') => {
+      setKindFilterState(next)
+      updateParams((p) => {
+        if (next) p.set('kind', next)
+        else p.delete('kind')
+      })
+    },
+    [updateParams],
+  )
+
   const [sortKey, setSortKey] = useState<SortKey>('state')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
+  // L13 (code review): latest-wins request sequencing. Two load() calls can
+  // be in flight at the same time — the 30-second background tick and an
+  // explicit post-Sync/post-Refresh-all reload a click just triggered are
+  // the real case — and nothing guarantees responses arrive in the order
+  // the requests were sent. Without this, a slow background tick started
+  // BEFORE a Sync click could still resolve AFTER the post-Sync reload and
+  // paint the page back to pre-Sync state, right after the user watched it
+  // update. loadSeqRef is bumped on every call; a response only gets
+  // applied if it's still the most recently STARTED one when it resolves.
+  const loadSeqRef = useRef(0)
   const load = useCallback(() => {
+    const seq = ++loadSeqRef.current
     return getManagedSecrets()
-      .then((res) => setData(res))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false))
+      .then((res) => {
+        if (loadSeqRef.current === seq) setData(res)
+      })
+      .catch(() => {
+        if (loadSeqRef.current === seq) setData(null)
+      })
+      .finally(() => {
+        if (loadSeqRef.current === seq) setLoading(false)
+      })
   }, [])
 
   useEffect(() => {
@@ -2008,10 +2455,11 @@ export function ManagedSecrets() {
 
   const connectionRows = data?.cluster_connection_secrets ?? []
   const addonRows = data?.addon_values_secrets ?? []
+  const orphanedRows = data?.orphaned_secrets ?? []
   const valuesSourceLabel = data?.addon_values_secret_source || 'secrets store'
   const unifiedRows = useMemo(
-    () => buildUnifiedRows(connectionRows, addonRows, valuesSourceLabel),
-    [connectionRows, addonRows, valuesSourceLabel],
+    () => buildUnifiedRows(connectionRows, addonRows, orphanedRows, valuesSourceLabel),
+    [connectionRows, addonRows, orphanedRows, valuesSourceLabel],
   )
 
   const selectedRow = useMemo(() => unifiedRows.find((r) => r.key === selectedRowKey) ?? null, [unifiedRows, selectedRowKey])
@@ -2032,7 +2480,7 @@ export function ManagedSecrets() {
   }, [unifiedRows, search])
 
   const counts = useMemo(() => {
-    const c: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, foreign: 0, unknown: 0 }
+    const c: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, orphaned: 0, foreign: 0, unknown: 0 }
     for (const r of searchFiltered) c[toResourceStatus(r.state)]++
     return c
   }, [searchFiltered])
@@ -2057,8 +2505,9 @@ export function ManagedSecrets() {
     if (stateFilter !== 'all') rows = rows.filter((r) => toResourceStatus(r.state) === stateFilter)
     if (addonFilter) rows = rows.filter((r) => r.addon === addonFilter)
     if (sourceFilter) rows = rows.filter((r) => r.sourceLabel === sourceFilter)
+    if (kindFilter) rows = rows.filter((r) => r.kind === kindFilter)
     return rows
-  }, [searchFiltered, stateFilter, addonFilter, sourceFilter])
+  }, [searchFiltered, stateFilter, addonFilter, sourceFilter, kindFilter])
 
   const sorted = useMemo(() => {
     const copy = [...filtered]
@@ -2078,23 +2527,33 @@ export function ManagedSecrets() {
 
   const grouped = groupBy !== 'none'
 
+  // design-secret-sync-visual-pass, section 3 — the tiles view's cards,
+  // built from the SAME buckets (worst-first-then-name, connections bucket
+  // always last, the honest "—" addon-less bucket) buildRowGroups already
+  // produces for the list view's Group by addon — no new grouping logic.
+  const tileGroups = useMemo(() => buildRowGroups(filtered, 'addon'), [filtered])
+
   // B2 (carried through I2's paging removal) — an honest count line: says
   // the real total, and says plainly when a filter has narrowed it below
   // everything Sharko manages. Grouped, it counts groups and SAYS it
   // counts groups — a bare number with no noun would be exactly the kind
-  // of quietly-wrong line this page keeps refusing to print.
+  // of quietly-wrong line this page keeps refusing to print. Tiles view
+  // counts as grouped too (unit "addons", section 3's `7 addons, 170
+  // secrets` example) — the cards ARE the addon grouping.
   const hasActiveFilter = stateFilter !== 'all' || search.trim() !== ''
-  const unit = groupBy === 'addon' ? 'addons' : 'clusters'
+  const summaryGrouped = view === 'tiles' || grouped
+  const unit = view === 'tiles' || groupBy === 'addon' ? 'addons' : 'clusters'
+  const summaryGroupCount = view === 'tiles' ? tileGroups.length : groups.length
   const secretWord = sorted.length === 1 ? 'secret' : 'secrets'
   const secretsSummary =
     sorted.length === 0
       ? hasActiveFilter
         ? `No secrets match this filter (${unifiedRows.length} total)`
         : 'No secrets'
-      : grouped
+      : summaryGrouped
         ? hasActiveFilter
-          ? `${groups.length} ${unit}, ${sorted.length} ${secretWord} (filtered from ${unifiedRows.length})`
-          : `${groups.length} ${unit}, ${sorted.length} ${secretWord}`
+          ? `${summaryGroupCount} ${unit}, ${sorted.length} ${secretWord} (filtered from ${unifiedRows.length})`
+          : `${summaryGroupCount} ${unit}, ${sorted.length} ${secretWord}`
         : hasActiveFilter
           ? `${sorted.length} ${secretWord} (filtered from ${unifiedRows.length})`
           : `${sorted.length} ${secretWord}`
@@ -2111,6 +2570,42 @@ export function ManagedSecrets() {
   const handleChipClick = (status: ResourceStatus) => {
     setStateFilter(stateFilter === status ? 'all' : status)
   }
+
+  // design-secret-sync-visual-pass, section 3 — a tile's click-through.
+  // An addon card narrows the list to that addon (?addon=<name>); the
+  // connections card narrows it to ?kind=connection (its own dismissible
+  // pill, not a select). Either way the view switches back to list, which
+  // arrives already narrowed — the active filter stays visible in the
+  // Addon select / the pill, same as any other filter on this page.
+  const handleTileClick = useCallback(
+    (group: RowGroup) => {
+      const toConnections = group.key === CONNECTIONS_GROUP_KEY
+      // Two URL params change here (view + addon, or view + kind) — they
+      // have to land in ONE updateParams call. setView/setAddonFilter/
+      // setKindFilter each call updateParams independently, and two calls
+      // in the same synchronous handler both build off the same
+      // pre-click params snapshot, so the second call's write silently
+      // drops the first's change. Setting the local view/filter state
+      // directly (mirroring what setView/setAddonFilter/setKindFilter do)
+      // and mutating the URL once avoids the race.
+      setViewState('list')
+      window.localStorage.setItem(VIEW_STORAGE_KEY, 'list')
+      if (toConnections) {
+        setKindFilterState('connection')
+      } else if (group.label !== '—') {
+        setAddonFilterState(group.label)
+      }
+      updateParams((p) => {
+        p.delete('view')
+        if (toConnections) {
+          p.set('kind', 'connection')
+        } else if (group.label !== '—') {
+          p.set('addon', group.label)
+        }
+      })
+    },
+    [updateParams],
+  )
 
   // The red engine error names a cluster — clicking it clears any state
   // filter and searches for that cluster, so the table narrows down to
@@ -2190,6 +2685,28 @@ export function ManagedSecrets() {
     }
   }
 
+  // leftover-secrets S1.2 — the orphaned-row Delete, confirmed. Deletion is
+  // never automatic: this only ever runs after the ConfirmationModal's
+  // explicit confirm, naming the exact secret being deleted. Closes the
+  // panel first if it's showing the row just deleted (a panel open on a
+  // secret that no longer exists is a dead end), then refetches the list —
+  // the same `load()` every other write on this page already calls.
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      const result = await deleteOrphanedSecret(deleteTarget.cluster, deleteTarget.secretNamespace ?? '', deleteTarget.secretName ?? '')
+      showToast(result.message || 'Secret deleted.', 'success')
+      if (selectedRowKey === deleteTarget.key) selectRow(null)
+      setDeleteTarget(null)
+      load()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to delete secret', 'error')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const displayRow = selectedRow ?? lastRowRef.current
 
   return (
@@ -2260,10 +2777,30 @@ export function ManagedSecrets() {
             className="w-full rounded-lg border border-[#6aade0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500"
           />
         </div>
-        {/* G1 — Addon and Source are filterable columns, plain <select>s
-            (their value counts can run high, unlike the fixed 5-state
-            chips above) with an explicit "All" option, options drawn from
-            every row so the list never shrinks out from under a search. */}
+        {/* design-secret-sync-visual-pass, section 3 — the tiles view's
+            "Cluster connections" card has no select control; it narrows the
+            list the same way the addon/source selects do, but shows itself
+            as one dismissible pill (the FilterChip visual, navy active
+            style) rather than a third <select>. Clicking × clears it. */}
+        {kindFilter === 'connection' && (
+          <button
+            type="button"
+            onClick={() => setKindFilter('')}
+            data-testid="kind-filter-pill"
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 text-[#1a3d5c] underline decoration-2 underline-offset-4 ring-[#1a3d5c] dark:text-blue-400 dark:ring-blue-400"
+          >
+            Cluster connections
+            <X className="h-3 w-3" aria-hidden="true" />
+          </button>
+        )}
+        {/* G1 — Addon and Checked against are filterable columns, plain
+            <select>s (their value counts can run high, unlike the fixed
+            5-state chips above) with an explicit "All" option, options
+            drawn from every row so the list never shrinks out from under a
+            search. design-secret-sync-visual-pass section 2: the label and
+            each option's visible text match the column header/cell — the
+            option's real VALUE stays the full sourceLabel so the filter
+            keeps matching the exact server string. */}
         <label className="flex items-center gap-1.5 text-xs text-[#3a6a8a] dark:text-gray-400">
           Addon
           <select
@@ -2281,7 +2818,7 @@ export function ManagedSecrets() {
           </select>
         </label>
         <label className="flex items-center gap-1.5 text-xs text-[#3a6a8a] dark:text-gray-400">
-          Source
+          Checked against
           <select
             value={sourceFilter}
             onChange={(e) => setSourceFilter(e.target.value)}
@@ -2291,43 +2828,83 @@ export function ManagedSecrets() {
             <option value="">All</option>
             {sourceOptions.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {sourceShortLabel(s)}
               </option>
             ))}
           </select>
         </label>
         {/* G2 — Group by. `None` is the default and is the flat list this
             page has always shown; the other two fold the same rows under a
-            parent line you click to open. */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-[#3a6a8a] dark:text-gray-400">Group by</span>
+            parent line you click to open. design-secret-sync-visual-pass
+            section 3: hidden in tiles view — the tiles themselves ARE the
+            addon grouping, so a second grouping control would just repeat
+            the same choice a different way. */}
+        {view === 'list' && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-[#3a6a8a] dark:text-gray-400">Group by</span>
+            <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
+              {(
+                [
+                  ['none', 'Flat list'],
+                  ['addon', 'Addon'],
+                  ['cluster', 'Cluster'],
+                ] as [GroupBy, string][]
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setGroupBy(value)}
+                  aria-pressed={groupBy === value}
+                  data-testid={`group-by-${value}`}
+                  className={`px-2.5 py-1 text-xs font-medium ${
+                    groupBy === value
+                      ? // G4: navy in both themes — the app's own "selected"
+                        // colour (the sidebar's #1a3d5c), never StatusMark's
+                        // teal, which reads as "in sync" next to a row that
+                        // genuinely is.
+                        'bg-[#1a3d5c] text-white'
+                      : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {/* design-secret-sync-visual-pass, section 3 — the List | Tiles
+            toggle, far right of the toolbar row, same segmented-pill
+            pattern as Group by above. */}
+        <div className="ml-auto flex items-center gap-1.5">
           <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
-            {(
-              [
-                ['none', 'Flat list'],
-                ['addon', 'Addon'],
-                ['cluster', 'Cluster'],
-              ] as [GroupBy, string][]
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setGroupBy(value)}
-                aria-pressed={groupBy === value}
-                data-testid={`group-by-${value}`}
-                className={`px-2.5 py-1 text-xs font-medium ${
-                  groupBy === value
-                    ? // G4: navy in both themes — the app's own "selected"
-                      // colour (the sidebar's #1a3d5c), never StatusMark's
-                      // teal, which reads as "in sync" next to a row that
-                      // genuinely is.
-                      'bg-[#1a3d5c] text-white'
-                    : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+            <button
+              type="button"
+              onClick={() => setView('list')}
+              aria-pressed={view === 'list'}
+              aria-label="List view"
+              data-testid="view-list"
+              className={`p-1.5 ${
+                view === 'list'
+                  ? 'bg-[#1a3d5c] text-white'
+                  : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+              }`}
+            >
+              <List className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('tiles')}
+              aria-pressed={view === 'tiles'}
+              aria-label="Tiles view"
+              data-testid="view-tiles"
+              className={`p-1.5 ${
+                view === 'tiles'
+                  ? 'bg-[#1a3d5c] text-white'
+                  : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+              }`}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
           </div>
         </div>
       </div>
@@ -2340,6 +2917,8 @@ export function ManagedSecrets() {
         <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 text-center text-sm text-[#3a6a8a] shadow-sm dark:ring-gray-800 dark:bg-gray-900 dark:text-gray-500">
           {unifiedRows.length === 0 ? 'Sharko is not managing any secrets yet.' : 'No secrets match this filter.'}
         </div>
+      ) : view === 'tiles' ? (
+        <SecretTiles groups={tileGroups} onCardClick={handleTileClick} />
       ) : (
         // H1 word/face pass (gitops-proud P4-H): the table frame now
         // matches the house frame every other list page uses (see
@@ -2355,21 +2934,33 @@ export function ManagedSecrets() {
         // row is in the DOM at once; the chips/filters above narrow which
         // rows exist, scrolling browses the rest.
         <div className="max-h-[65vh] overflow-y-auto overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
-          <Table>
+          {/* design-secret-sync-visual-pass, section 1/5: the table is
+              table-fixed with explicit column widths on every column except
+              NAME, which absorbs all remaining width — the only way the
+              longest demo secret name (kube-prometheus-stack-grafana-admin,
+              35 chars, 295px) renders uncut at 1280px instead of truncating
+              on every wide row. min-w-[1000px] keeps sub-1280 windows
+              scrolling (the frame's own overflow-x-auto) instead of
+              crushing the fixed columns below their measured widths. */}
+          <Table className="table-fixed min-w-[1000px]">
             <TableHeader className="sticky top-0 z-10 border-b border-[#6aade0] bg-[#d0e8f8] dark:border-gray-700 dark:bg-gray-900">
               <TableRow className="hover:bg-transparent">
                 {/* H2/H3: Status moves next to Name (ArgoCD's own habit of
                     putting a resource's health right at the start of its
-                    row); the header word is "Status", never "State" — and
-                    "Checked" becomes "Last Checked", plain about which
-                    timestamp it is. */}
-                <SortableTh label="Name" sortKeyName="name" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="max-w-[240px]" />
-                <SortableTh label="Status" sortKeyName="state" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <SortableTh label="Addon" sortKeyName="addon" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <SortableTh label="Cluster" sortKeyName="cluster" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <SortableTh label="Source" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <SortableTh label="Last Checked" sortKeyName="checked" activeKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <TableHead className="w-10" />
+                    row); the header word is "Status", never "State". Walk
+                    finding #140: Namespace is now its own sortable column
+                    right after Name. design-secret-sync-visual-pass: the
+                    LAST CHECKED column is gone (the fact lives in the
+                    engine strip above and the panel's Zone D); SOURCE
+                    became CHECKED AGAINST (section 2); every column but
+                    NAME carries an explicit width (section 1). */}
+                <SortableTh label="Name" sortKeyName="name" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="px-1.5" />
+                <SortableTh label="Namespace" sortKeyName="namespace" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[124px] px-1.5" />
+                <SortableTh label="Status" sortKeyName="state" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[140px] px-1.5" />
+                <SortableTh label="Addon" sortKeyName="addon" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[124px] px-1.5" />
+                <SortableTh label="Cluster" sortKeyName="cluster" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[108px] px-1.5" />
+                <SortableTh label="Checked against" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[144px] px-1.5" />
+                <TableHead className="w-9 px-1.5" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -2391,6 +2982,7 @@ export function ManagedSecrets() {
                             onSelect={() => selectRow(row.key)}
                             onRefresh={() => handleRefreshRow(row)}
                             onRequestSync={() => setSyncTarget(row)}
+                            onRequestDelete={() => setDeleteTarget(row)}
                           />
                         ))}
                     </Fragment>
@@ -2403,6 +2995,7 @@ export function ManagedSecrets() {
                       onSelect={() => selectRow(row.key)}
                       onRefresh={() => handleRefreshRow(row)}
                       onRequestSync={() => setSyncTarget(row)}
+                      onRequestDelete={() => setDeleteTarget(row)}
                     />
                   ))}
             </TableBody>
@@ -2423,6 +3016,7 @@ export function ManagedSecrets() {
           if (!open) selectRow(null)
         }}
         onRequestSync={(row) => setSyncTarget(row)}
+        onRequestDelete={(row) => setDeleteTarget(row)}
         onChanged={load}
       />
 
@@ -2440,6 +3034,25 @@ export function ManagedSecrets() {
         description={syncConfirmDescription(syncTarget)}
         confirmText="Sync"
         loading={syncing}
+      />
+
+      {/* leftover-secrets S1.2 — the orphaned-row Delete confirm. Same
+          pattern as Sync above: a page-level target state, a destructive
+          ConfirmationModal, and cancel does nothing at all — no request is
+          made unless this confirms. */}
+      <ConfirmationModal
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+        title={
+          deleteTarget
+            ? `Delete secret "${deleteTarget.secretNamespace ?? ''}/${deleteTarget.secretName ?? ''}"?`
+            : 'Delete?'
+        }
+        description={deleteConfirmDescription(deleteTarget)}
+        confirmText="Delete"
+        destructive
+        loading={deleting}
       />
     </div>
   )

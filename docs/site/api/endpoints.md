@@ -84,7 +84,7 @@ All write endpoints require the `admin` role.
 | `POST` | `/api/v1/clusters/{name}/refresh` | Refresh cluster credentials |
 | `POST` | `/api/v1/clusters/{name}/secrets/refresh` | Refresh managed secrets on a cluster |
 | `POST` | `/api/v1/clusters/{name}/test` | Test cluster connectivity (returns `{"reachable": bool, "version": "..."}`) |
-| `POST` | `/api/v1/clusters/{name}/adopt` | Adopt a discovered ArgoCD cluster into Sharko management |
+| `POST` | `/api/v1/clusters/adopt` | Adopt one or more discovered ArgoCD clusters into Sharko management (body: `{"clusters": [...]}`) |
 | `POST` | `/api/v1/clusters/{name}/doctor` | Run the [connection doctor](../operator/connection-doctor.md) — five real-attempt checks with plain-English fixes |
 | `POST` | `/api/v1/clusters/{name}/reconcile` | Trigger a manual cluster-secret reconcile ("Sync now") — returns `202`, read the result from `last_reconcile` on the next `GET`. This is a fleet-wide reconcile pass, not scoped to just the named cluster. |
 
@@ -96,7 +96,7 @@ All write endpoints require the `admin` role.
 | `DELETE` | `/api/v1/addons/{name}?confirm=true` | Remove addon from catalog and all clusters |
 | `POST` | `/api/v1/addons/{name}/upgrade` | Upgrade addon (global or per-cluster) |
 | `POST` | `/api/v1/addons/upgrade-batch` | Upgrade multiple addons in one PR |
-| `POST` | `/api/v1/addons/{name}/ai-summary` | Generate (or regenerate) an AI summary for an addon's release notes |
+| `POST` | `/api/v1/upgrade/ai-summary` | Generate an AI summary of an addon's upgrade impact (body: `{"addon_name": "...", "target_version": "..."}`) |
 
 ### Addon Secrets
 
@@ -362,11 +362,11 @@ curl -X POST https://sharko.your-domain.com/api/v1/clusters/prod-eu/test \
 ### Adopt a Discovered Cluster
 
 ```bash
-curl -X POST https://sharko.your-domain.com/api/v1/clusters/prod-eu/adopt \
+curl -X POST https://sharko.your-domain.com/api/v1/clusters/adopt \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"addons": ["cert-manager", "metrics-server"]}'
-# Response: {"pr_url": "https://github.com/.../pull/55", "cluster": "prod-eu"}
+  -d '{"clusters": ["prod-eu"]}'
+# Response: {"results": [{"name": "prod-eu", "status": "success", "git": {"pr_url": "https://github.com/.../pull/55"}}]}
 ```
 
 ### List Notifications

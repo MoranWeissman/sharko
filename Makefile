@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo demo-big dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas generate-engine-version build-gitfake-image playground-up playground-status playground-tunnels playground-down operator-playground-up operator-playground-status operator-playground-tunnels operator-playground-down
+.PHONY: help demo demo-big dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-gitea test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas generate-engine-version build-gitfake-image playground-up playground-status playground-tunnels playground-down operator-playground-up operator-playground-status operator-playground-tunnels operator-playground-down
 
 PORT ?= 8080
 DEMO_BIG_PORT ?= 8090
@@ -24,6 +24,7 @@ help: ## Show available targets
 	@echo "    make test-e2e              Full e2e suite (kind + real argocd, ~10-15 min)"
 	@echo "    make test-e2e-domain       Run a single domain (DOMAIN=Cluster|Catalog|...)"
 	@echo "    make test-e2e-helm         Wave-D Helm-mode subset (~5-8 min, requires docker+kind+helm)"
+	@echo "    make test-e2e-gitea        Live-Gitea write loop (task #65, requires SHARKO_E2E_GITEA_URL/TOKEN)"
 	@echo "    make test-e2e-perf         V2-1 perf baselines (~2-5 min in-process; cluster path needs kind)"
 	@echo "    make test-e2e-perf-capture Run perf harness + capture timings to _dist/perf-timings.jsonl (CI)"
 	@echo "    make test-e2e-perf-compare Compare captured timings against baselines YAML — exits 2 on >20% p99 regression"
@@ -234,6 +235,21 @@ test-e2e-helm: ## Run the Wave-D Helm-mode E2E subset (~5-8 min, requires docker
 	 go test -tags=e2e -timeout=20m -v \
 	 -run '^(TestClusterTest_ArgoCDProvider|TestClusterTest_ProviderAutoDefault_HappyPath|TestClusterTest_ProviderCrossContamination_NamespaceSwitch)$$' \
 	 ./tests/e2e/lifecycle/...
+
+# v4 closing wave / task #65 — live-Gitea E2E write loop.
+#
+# TestGiteaLiveWriteLoop (tests/e2e/lifecycle/gitea_live_test.go) drives
+# internal/gitprovider.GiteaProvider against a REAL Gitea server — CI runs
+# it with a `gitea/gitea` service container (see .github/workflows/e2e.yml,
+# job `live-gitea`); this target is the local equivalent, so you need a
+# Gitea instance of your own (e.g. `docker run -p 3000:3000 gitea/gitea`,
+# then create an admin user + token + an auto-inited repo) and to export
+# SHARKO_E2E_GITEA_URL + SHARKO_E2E_GITEA_TOKEN before running this. See
+# docs/site/developer-guide/e2e-testing.md for the full local recipe.
+# With the env vars unset, the test just skips — this target still exits 0.
+test-e2e-gitea: ## Run the live-Gitea write loop (task #65; requires SHARKO_E2E_GITEA_URL/TOKEN, else it skips).
+	@echo "==> Running live-Gitea E2E write loop"
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=10m -v -run '^TestGiteaLiveWriteLoop$$' ./tests/e2e/lifecycle/...
 
 # V2-1.1 + V2-1.2 — perf baseline harness.
 #

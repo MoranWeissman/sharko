@@ -144,7 +144,10 @@ the order can shift.
 - **Multi-ArgoCD.** Support for multiple ArgoCD instances per Sharko
   install (e.g. one ArgoCD per environment or per business unit),
   with connection multiplexing routing each operation to the right
-  ArgoCD. v2.x assumes a single ArgoCD per Sharko.
+  ArgoCD. v2.x assumes a single ArgoCD per Sharko. The same theme
+  covers multiple Git connections per install — today Sharko manages
+  one active Git connection at a time, edit-in-place rather than
+  add/remove a list.
 - **Rule-based auto-merge.** Conditions for the auto-merge decision:
   label-based, environment-based, time-of-day-based, with
   [`CODEOWNERS`](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)
@@ -174,6 +177,22 @@ the order can shift.
   surface scaffolded (`POST /webhooks/git`); v3 expands it into a
   full GitHub / Azure DevOps push-event receiver that triggers
   immediate reconcile rather than waiting for the safety-net tick.
+- **Outbound addon-change events.** The webhook surface above is
+  inbound only (Sharko receiving Git pushes). A companion outbound
+  piece — emitting an event when an addon is added, removed, or
+  upgraded — would let external systems (chat bots, other automation)
+  react to Sharko changes without polling the audit log.
+- **Backup / restore.** Export the full Sharko configuration
+  (connections minus secrets, catalog, cluster list) to a single file
+  and restore it into a fresh install. Useful for disaster recovery
+  and for standing up a second environment from a known-good
+  baseline.
+- **GitOps-only External Secrets Operator reference template.** A
+  reference `ClusterSecretStore` / `ExternalSecret` template for teams
+  that want their cluster credentials to flow through ESO instead of
+  Sharko's own secrets reconciler. Sharko's built-in reconciler
+  (5-minute poll + webhook + manual trigger) stays the default; this
+  is an alternative wiring for teams already standardized on ESO.
 - **Cluster templates, addon marketplace contributions, upgrade
   planner, rollback UI, cost visibility, cluster
   decommissioning.** Adjacent advanced features grouped here because

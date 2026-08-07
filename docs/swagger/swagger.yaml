@@ -3003,6 +3003,21 @@ definitions:
         type: array
       engines:
         $ref: '#/definitions/internal_api.managedSecretsEngines'
+      orphaned_secrets:
+        description: |-
+          OrphanedSecrets (leftover-secrets S1) is every leftover values secret
+          the addon-values engine's own scan passes have found: a live secret
+          carrying BOTH Sharko's managed-by label AND the sharko.dev/addon
+          provenance annotation, that no current desired-state plan claims any
+          more. Built purely from SecretReconciler.OrphanedSecrets() — an
+          in-memory read, no K8s call of its own, and not gated on a live
+          Git/ArgoCD connection the way ClusterConnectionSecrets/
+          AddonValuesSecrets are (the scan that found these already ran
+          separately, on the engine's own schedule). Also merged into Rows
+          (State "orphaned", Kind "values") like every other row kind.
+        items:
+          $ref: '#/definitions/internal_api.orphanedSecretRow'
+        type: array
       rows:
         description: |-
           Rows (P3-E, E2) is both per-kind arrays merged into one list, shaped
@@ -3035,6 +3050,54 @@ definitions:
         type: array
       total:
         type: integer
+    type: object
+  internal_api.orphanedSecretDeleteResult:
+    properties:
+      cluster:
+        type: string
+      message:
+        type: string
+      name:
+        type: string
+      namespace:
+        type: string
+      status:
+        type: string
+    type: object
+  internal_api.orphanedSecretRow:
+    properties:
+      addon:
+        description: |-
+          Addon is the addon name read off the secret's own provenance
+          annotation at scan time — omitted only if a future scan somehow
+          produces a record with an empty Addon, which the scan itself never
+          does (a secret with no addon annotation is never reported in the
+          first place — see internal/secrets/orphans.go's header comment).
+        type: string
+      cluster:
+        type: string
+      last_checked:
+        description: |-
+          LastChecked is RFC3339 — when the scan that most recently confirmed
+          this secret is still an orphan ran. Never omitted in practice: a
+          record only exists because a scan found it.
+        type: string
+      secret_name:
+        type: string
+      secret_namespace:
+        type: string
+      source:
+        description: |-
+          Source (S1) names the real backend addon-values secrets are compared
+          against — same field, same meaning, as addonValuesSecretRow.Source.
+        type: string
+      state:
+        description: |-
+          State is always the literal "orphaned" — its own row kind carries no
+          other state; the field exists so a caller reading Rows (which merges
+          every kind onto one shape) never has to special-case this kind to
+          find its state.
+        type: string
     type: object
   internal_api.previewMergeResponse:
     properties:
@@ -6206,6 +6269,76 @@ paths:
       summary: Delete an orphan cluster
       tags:
       - clusters
+  /clusters/{name}/orphaned-secrets/{namespace}/{secret}:
+    delete:
+      description: 'Deletes one leftover values secret the addon-values engine found
+        on a cluster — a Secret Sharko once wrote whose catalog push definition no
+        longer exists. Never auto-deleted: this is the only path that removes one,
+        and it re-verifies the secret is still an unclaimed, Sharko-owned orphan (against
+        a fresh read of the catalog and the live secret''s own labels/annotations)
+        immediately before deleting — a reclaim or an ownership-marker change since
+        the last scan refuses the delete instead of guessing.'
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Namespace the secret lives in
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Secret name
+        in: path
+        name: secret
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Deleted
+          schema:
+            $ref: '#/definitions/internal_api.orphanedSecretDeleteResult'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden — requires operator role or higher
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: No leftover secret is on record for that cluster, namespace,
+            and name
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: This secret is claimed by the catalog again, or its ownership
+            marker changed since it was found — nothing was deleted
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Could not delete — no Git connection, cluster unreachable,
+            or the delete itself failed
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: The addon-values secrets engine is not running on this server
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a leftover addon-values secret
+      tags:
+      - secrets
   /clusters/{name}/reconcile:
     post:
       description: |-
@@ -8810,6 +8943,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "409":
+          description: The addon-values engine is switched off — nothing to check
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "503":
           description: Secrets reconciler not configured
           schema:
@@ -9183,7 +9322,7 @@ paths:
         name: addon
         type: string
       - description: 'Rows filter: exact state match (in_sync, out_of_sync, missing,
-          unknown, foreign)'
+          unknown, foreign, orphaned)'
         in: query
         name: state
         type: string

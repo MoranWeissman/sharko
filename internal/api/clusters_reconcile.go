@@ -43,9 +43,22 @@ func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) 
 		return
 	}
 	lastRec := &models.ClusterLastReconcile{
-		Time:             rec.Time.Format(time.RFC3339),
-		Outcome:          string(rec.Outcome),
-		Message:          rec.Message,
+		Time:    rec.Time.Format(time.RFC3339),
+		Outcome: string(rec.Outcome),
+		// M8 (code review): rec.Message can carry a wrapped git/K8s error
+		// verbatim (several call sites in clusterreconciler build it by
+		// appending err.Error() onto a fixed English prefix — see
+		// clusterreconciler.FailureSentence's own doc comment). This used to
+		// be copied straight into the GET /clusters response. Mapped through
+		// the SAME choke point system_managed_secrets.go's
+		// connectionSecretCheckError already uses for the Managed Secrets
+		// page's per-row error — the two surfaces now agree on what a
+		// cluster's last-reconcile failure is allowed to say. The raw text
+		// is not lost: it stays in rec.Message server-side (clusterreconciler
+		// still logs it in full), and RawMessage below carries it forward
+		// internally too — never returned here as Message.
+		Message:          clusterreconciler.FailureSentence(rec.Message),
+		RawMessage:       rec.Message,
 		ComparedRevision: rec.ComparedRevision,
 		ComparedPath:     rec.ComparedPath,
 		AppliedRevision:  rec.AppliedRevision,

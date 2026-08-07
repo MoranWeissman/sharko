@@ -474,8 +474,6 @@ However:
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
 - [`../developer-guide/logging.md`](../developer-guide/logging.md) —
   audit-event codes referenced in this runbook.
-- [`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md) —
-  the V2-2 audit-trail discipline that makes this diagnosis possible.
 
 ## Escalation
 

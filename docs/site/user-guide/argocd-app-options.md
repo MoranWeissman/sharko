@@ -47,7 +47,6 @@ Splitting them keeps each tab's diff focused and makes PR reviews easier — Dep
 A few addon fields aren't editable from the Deployment Options tab yet — they live in the catalog file but are driven by other flows:
 
 - **Version** — edited via the **Upgrade** tab (which runs an upgrade analysis first).
-- **Dependencies (`dependsOn`)** — not yet surfaced in the UI. Edit the catalog file directly via the repo.
 - **Namespace** — set at addon-add time.
 
 If you need to change one of the read-only fields, edit `addons-catalog.yaml` in GitHub or your Git client. Surfacing these in the UI is on the roadmap.

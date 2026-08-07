@@ -20,7 +20,7 @@ Sharko's docs and UI say it supports EKS clusters via IAM/STS tokens (`eks-token
 
 ## Before you start
 
-- **You drive every UI step.** This runbook tells you what to click and what to paste, but you're the one opening the browser and doing it — the script never touches the Sharko UI (see the [standing rule](personal-smoke-runbook.md) about the maintainer driving test flows; the same applies here).
+- **You drive every UI step.** This runbook tells you what to click and what to paste, but you're the one opening the browser and doing it — the script never touches the Sharko UI (see the [standing rule](contributor-smoke-walk.md) about a person driving test flows; the same applies here).
 - **This spends real money.** Rough estimate: EKS control plane ~$0.10/hr + one small node ~$0.02/hr ≈ $0.12/hr. A half-day pass (create, test, teardown within a few hours) costs roughly $1-2 total. `teardown` is not automatic — you run it yourself when you're done, and the script scans for anything still billing afterward.
 - **One throwaway spoke, not a fleet.** The script refuses to create a second cluster if one already exists under the same name.
 
@@ -230,6 +230,6 @@ One honest caveat about **Parts 1–2**, so this runbook doesn't overclaim: the 
 
 ## Related pages
 
-- [Personal Smoke Runbook](personal-smoke-runbook.md) — the local kind + ArgoCD smoke pass this test complements; same "you drive the UI" rule applies.
+- [Contributor Smoke Walk](contributor-smoke-walk.md) — the local kind + ArgoCD smoke pass this test complements; same "you drive the UI" rule applies.
 - [Cluster Connectivity Model](../operator/cluster-connectivity-model.md) — reference for the auth shapes Sharko supports.
 - [AWS IAM Cluster Auth Test Unsupported](../operator/aws-iam-cluster-auth.md) — the adjacent v1.x IAM-auth limitation for the **Test connection** button specifically (different code path from the `eks-token` registration path this runbook exercises).

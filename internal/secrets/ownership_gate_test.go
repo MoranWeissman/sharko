@@ -282,6 +282,17 @@ func TestCheckAll_NoGitConnection(t *testing.T) {
 
 // TestCheckAll_IsolatesOneUnreachableCluster — one broken cluster must not
 // stop the rest being checked.
+//
+// H2 (code review): CheckAll returning nil used to be the whole story —
+// checkWork's failure paths never called recordItemCheck, so a vault-down
+// pass left every row still saying whatever its LAST SUCCESSFUL check
+// found (rows kept reading "Synced" while nothing was actually checkable),
+// and CheckAll published no run record at all (the engine's own
+// LastError/GetStats kept reporting a stale, unrelated pass). This test now
+// asserts what the ROW says afterward, not just that the call didn't
+// error: the item outcome is "error", LastItemError carries something,
+// ConsecutiveFailures moved off zero, and GetStats' Errors count reflects
+// the failed item.
 func TestCheckAll_IsolatesOneUnreachableCluster(t *testing.T) {
 	r := newReconciler(
 		standardGitReader(catalogWithSecrets),
@@ -292,6 +303,53 @@ func TestCheckAll_IsolatesOneUnreachableCluster(t *testing.T) {
 
 	if err := r.CheckAll(context.Background()); err != nil {
 		t.Fatalf("one unreachable cluster must not fail the whole check: %v", err)
+	}
+
+	outcome, ok := r.LastItemOutcome("prod-cluster", "datadog")
+	if !ok || outcome != string(ItemOutcomeError) {
+		t.Errorf("LastItemOutcome = (%q, %v), want (%q, true) — a failed check must be recorded on the row, not silently dropped",
+			outcome, ok, ItemOutcomeError)
+	}
+
+	errMsg, hasErr := r.LastItemError("prod-cluster", "datadog")
+	if !hasErr || errMsg == "" {
+		t.Error("LastItemError has nothing recorded — a row that failed to check must say so")
+	}
+
+	if count, ok := r.LastItemConsecutiveFailures("prod-cluster", "datadog"); !ok || count != 1 {
+		t.Errorf("LastItemConsecutiveFailures = (%d, %v), want (1, true) — L10's carry-forward must count this failure", count, ok)
+	}
+
+	stats := r.GetStats().(ReconcileStats)
+	if stats.Errors == 0 {
+		t.Error("GetStats().Errors = 0 after CheckAll failed on every item — CheckAll must publish a real run record, same as the periodic pass")
+	}
+	if stats.Checked == 0 {
+		t.Error("GetStats().Checked = 0 — CheckAll attempted at least one item and must say so")
+	}
+}
+
+// TestCheckAll_AllFailures_EngineLevelErrorIsVisible pins the other half of
+// H2: when CheckAll fails on every item, the engine-level LastError (what
+// the Managed Secrets page's top strip reads) must say so too — not stay
+// empty as if the pass had never run or had nothing to report.
+func TestCheckAll_AllFailures_EngineLevelErrorIsVisible(t *testing.T) {
+	r := newReconciler(
+		standardGitReader(catalogWithSecrets),
+		&mockCredProvider{err: errors.New("credentials unavailable")},
+		&mockSecretProvider{},
+		fakeRemoteClientFn(fake.NewSimpleClientset()),
+	)
+
+	if err := r.CheckAll(context.Background()); err != nil {
+		t.Fatalf("one unreachable cluster must not fail the whole check: %v", err)
+	}
+
+	if got := r.LastError(); got == "" {
+		t.Error("LastError() is empty after CheckAll failed on every item — the engine strip would show nothing was wrong")
+	}
+	if got := r.LastErrorCluster(); got != "prod-cluster" {
+		t.Errorf("LastErrorCluster() = %q, want %q", got, "prod-cluster")
 	}
 }
 

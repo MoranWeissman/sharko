@@ -54,6 +54,7 @@ func (s *Server) handleTriggerReconcile(w http.ResponseWriter, r *http.Request) 
 // @Success 202 {object} map[string]string "Check started"
 // @Failure 401 {object} map[string]string "Unauthorized"
 // @Failure 403 {object} map[string]string "Forbidden — requires operator role or higher"
+// @Failure 409 {object} map[string]string "The addon-values engine is switched off — nothing to check"
 // @Failure 503 {object} map[string]string "Secrets reconciler not configured"
 // @Router /secrets/check [post]
 //
@@ -69,6 +70,18 @@ func (s *Server) handleCheckSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.secretReconciler == nil {
 		writeError(w, http.StatusServiceUnavailable, "secrets reconciler not configured")
+		return
+	}
+
+	// M6 (code review): checked synchronously, BEFORE the 202 and BEFORE the
+	// audit entry below. This used to 202 and write a "checked N secrets"
+	// audit entry unconditionally, then start the goroutine that called
+	// CheckAll — which discovered ErrReconcilerDisabled and only logged a
+	// warning. The audit trail said a check ran on every addon-values secret
+	// when the engine was off and nothing was checked at all.
+	if !s.secretReconciler.IsEnabled(r.Context()) {
+		writeError(w, http.StatusConflict,
+			"Sharko has the addon-values engine switched off — there is nothing to check. Turn it on in Settings, then try again.")
 		return
 	}
 

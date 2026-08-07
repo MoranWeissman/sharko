@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
@@ -70,6 +71,15 @@ type demoAddonValuesReconciler struct {
 
 	auditLog *audit.Log
 
+	// enabledFn (M5, code review) mirrors secrets.Reconciler.enabledFn/
+	// SetEnabledFn exactly — wired from the same settings.Store CheckAll
+	// (internal/api/system_managed_secrets.go's addonValuesEngineInfo) reads
+	// for the real engine, so `make demo-big` demonstrates the true
+	// behavior of the off switch instead of a "Check all now" that always
+	// ran. nil reads as enabled, same nil-safe default the real reconciler
+	// uses when no settings store is wired at all.
+	enabledFn func(ctx context.Context) bool
+
 	// lastErrorCluster/lastErrorMsg/lastErrorAt (P1-B B3) seed the
 	// engine-level error the page's top strip shows for this engine —
 	// mirrors what a real reconcile() pass with at least one failing item
@@ -81,6 +91,13 @@ type demoAddonValuesReconciler struct {
 	lastErrorCluster string
 	lastErrorMsg     string
 	lastErrorAt      time.Time
+
+	// orphans (leftover-secrets S1) holds the seeded leftover-secret
+	// records, keyed by cluster — mirrors secrets.Reconciler.orphanRecords'
+	// shape so this demo exercises the same OrphanedSecrets/
+	// DeleteOrphanedSecret contract the real engine does. Guarded by mu,
+	// same as items/valid above — a small demo struct, one lock is enough.
+	orphans map[string][]models.OrphanedSecret
 }
 
 // addonValuesAgeOffsets is the "how long ago was this last checked" spread
@@ -228,6 +245,32 @@ func newDemoAddonValuesReconciler(estate *GeneratedEstate, defs map[string]orche
 		}
 	}
 
+	// leftover-secrets S1 — seed one believable leftover secret so the
+	// Managed Secrets page has a real "orphaned" row to show, not zero.
+	// The story: "redis-ha" used to be an addon in the catalog with its own
+	// push definition; the catalog entry was removed (or hand-deleted) at
+	// some point, but nobody ever asked Sharko to clean up the Secret it
+	// had already written — it is still sitting on the first cluster,
+	// still carrying Sharko's labels. "redis-ha" deliberately appears
+	// nowhere in demoGeneratedAddonSecretDefs or any cluster's Addons map,
+	// so it reads the same way a real hand-deleted catalog entry would.
+	// Deterministic (first cluster in sorted order, fixed namespace/name/
+	// age), not random, matching every other seed in this function.
+	if len(clusters) > 0 {
+		orphanCluster := clusters[0].Name
+		r.orphans = map[string][]models.OrphanedSecret{
+			orphanCluster: {
+				{
+					Cluster:     orphanCluster,
+					Namespace:   "data",
+					Name:        "redis-ha-auth",
+					Addon:       "redis-ha",
+					LastChecked: now.Add(-47 * time.Minute),
+				},
+			},
+		}
+	}
+
 	return r
 }
 
@@ -352,10 +395,56 @@ func (r *demoAddonValuesReconciler) KnownItemCount() int {
 // than imported to keep this package free of an internal/secrets dependency.
 const demoForeignRefusal = "Someone else created this one — Sharko will not touch it."
 
+// demoAddonValuesEngineDisabled is CheckAll's refusal sentence when the
+// engine is switched off (M5, code review) — kept word-for-word identical
+// to secrets.ErrReconcilerDisabled so the demo teaches the same sentence
+// the real engine gives. Copied rather than imported, same reasoning as
+// demoForeignRefusal above (keeps this package free of an internal/secrets
+// dependency).
+const demoAddonValuesEngineDisabled = "the addon-values engine is switched off"
+
+// SetEnabledFn wires the addon-values engine's off switch into demo mode
+// (M5, code review) — mirrors secrets.Reconciler.SetEnabledFn exactly.
+// Before this, demo's CheckAll had no seam at all: flipping Settings ->
+// Addon Values Engine off changed what the real engine's "Check all now"
+// did but left the demo one running exactly as before, so `make demo-big`
+// could not demonstrate the off switch's real behavior.
+func (r *demoAddonValuesReconciler) SetEnabledFn(fn func(ctx context.Context) bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.enabledFn = fn
+}
+
+// isEnabled mirrors secrets.Reconciler.isEnabled — nil enabledFn (no
+// settings store wired) reads as enabled, matching every other nil-safe
+// wrapper in this codebase's settings pattern.
+func (r *demoAddonValuesReconciler) isEnabled(ctx context.Context) bool {
+	r.mu.RLock()
+	fn := r.enabledFn
+	r.mu.RUnlock()
+	if fn == nil {
+		return true
+	}
+	return fn(ctx)
+}
+
+// IsEnabled exports isEnabled (M6, code review) — mirrors
+// secrets.Reconciler.IsEnabled, reachable synchronously the same way.
+func (r *demoAddonValuesReconciler) IsEnabled(ctx context.Context) bool {
+	return r.isEnabled(ctx)
+}
+
 // CheckAll is the page's "Refresh all" on this engine — re-stamps every
 // known row's last-checked time and leaves every outcome exactly where it
 // was. Same rule as CheckOne below: a check looks, it never fixes.
-func (r *demoAddonValuesReconciler) CheckAll(_ context.Context) error {
+//
+// M5 (code review): gated on the same off switch the real engine's CheckAll
+// checks first — a switched-off engine has nothing to check with in demo
+// mode either.
+func (r *demoAddonValuesReconciler) CheckAll(ctx context.Context) error {
+	if !r.isEnabled(ctx) {
+		return errors.New(demoAddonValuesEngineDisabled)
+	}
 	now := time.Now()
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -456,4 +545,68 @@ func (r *demoAddonValuesReconciler) SyncOne(_ context.Context, cluster, addon st
 	}
 
 	return outcome, nil
+}
+
+// OrphanedSecrets (leftover-secrets S1) returns a deterministic, sorted
+// snapshot of every seeded leftover-secret record — the demo counterpart to
+// secrets.Reconciler.OrphanedSecrets, same sort order (cluster, then
+// namespace, then name).
+func (r *demoAddonValuesReconciler) OrphanedSecrets() []models.OrphanedSecret {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]models.OrphanedSecret, 0)
+	for _, list := range r.orphans {
+		out = append(out, list...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Cluster != out[j].Cluster {
+			return out[i].Cluster < out[j].Cluster
+		}
+		if out[i].Namespace != out[j].Namespace {
+			return out[i].Namespace < out[j].Namespace
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// DeleteOrphanedSecret (leftover-secrets S1) is the demo counterpart to
+// secrets.Reconciler.DeleteOrphanedSecret: removes the seeded record — so
+// the row genuinely disappears from the next read, exactly like a real
+// delete (S3's "actions genuinely change what the next read reports" rule,
+// applied to this new one too) — and writes the SAME audit entry shape the
+// real handler produces (event orphaned_secret_deleted, resource
+// "cluster:<name>", detail "deleted leftover secret <ns>/<name>"), so a
+// walk through demo mode teaches the real audit trail, not a
+// demo-only approximation of it.
+func (r *demoAddonValuesReconciler) DeleteOrphanedSecret(_ context.Context, cluster, namespace, name string) error {
+	r.mu.Lock()
+	list := r.orphans[cluster]
+	idx := -1
+	for i, rec := range list {
+		if rec.Namespace == namespace && rec.Name == name {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		r.mu.Unlock()
+		return fmt.Errorf("no leftover secret is on record for cluster %q, namespace %q, name %q", cluster, namespace, name)
+	}
+	r.orphans[cluster] = append(list[:idx:idx], list[idx+1:]...)
+	r.mu.Unlock()
+
+	if r.auditLog != nil {
+		r.auditLog.Add(audit.Entry{
+			Level:    "info",
+			Event:    "orphaned_secret_deleted",
+			User:     "sharko",
+			Action:   "delete",
+			Resource: fmt.Sprintf("cluster:%s", cluster),
+			Source:   "reconciler",
+			Result:   "success",
+			Detail:   fmt.Sprintf("deleted leftover secret %s/%s", namespace, name),
+		})
+	}
+	return nil
 }

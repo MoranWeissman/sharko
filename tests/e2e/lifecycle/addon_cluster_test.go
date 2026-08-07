@@ -68,22 +68,22 @@ applicationsets:
     version: 5.20.0
 `
 
-	// Initial managed-clusters.yaml with both target clusters and both
-	// addons disabled. Enable/disable subtests use dry_run so the file
-	// itself is never rewritten — but the orchestrator's dry-run path
-	// returns the same FilesToWrite preview regardless of file presence,
-	// so seeding it keeps the upgrade subtest's commit graph realistic.
-	managedClustersYAML = `# Managed clusters
-clusters:
-  - name: target-1
-    labels:
-      metrics-server: disabled
-      kube-state-metrics: disabled
-  - name: target-2
-    labels:
-      metrics-server: disabled
-      kube-state-metrics: disabled
-`
+	// managed-clusters.yaml is deliberately NOT seeded here (v4 closing
+	// wave finding): none of this test's subtests need it to exist —
+	// enable/disable run dry_run (the orchestrator's dry-run preview
+	// tolerates a missing file, EnableAddon/DisableAddon just skip the
+	// label-file entry in FilesToWrite) and the upgrade subtest only
+	// touches the catalog. Seeding it bought nothing but cost everything:
+	// managed-clusters.yaml at this exact path is also
+	// orchestrator.V3SecondaryMarkerPath, the v3-format marker the v4
+	// migration gate (internal/orchestrator/v3_migration_gate.go) checks
+	// for. Pre-seeding it made this repo look like an established v3
+	// repo before the first request ever landed, so every write in this
+	// suite 409'd with "this repo uses the v3 format — migrate to
+	// continue". Leaving the file absent keeps the repo in the gate's
+	// "empty, nothing to migrate" bucket, which is what an ordinary
+	// fresh v3 connection actually looks like before any cluster is
+	// registered.
 
 	// Per-cluster values files — required by the live disable path
 	// (existingValues read from git). Empty stanzas are sufficient for
@@ -214,8 +214,10 @@ func TestPerClusterAddonLifecycle(t *testing.T) {
 
 	// Pre-seed the mock so the upgrade subtest has a parseable catalog
 	// and the disable dry-run preview matches what a real workflow would
-	// see (file already present → action=update).
-	seedMockGit(t, ghmock)
+	// see (file already present → action=update). Seed under the REAL
+	// kind cluster names (target1Name/target2Name), not literal
+	// "target-1"/"target-2" — see seedMockGit's doc comment.
+	seedMockGit(t, ghmock, target1Name, target2Name)
 
 	// ----------------------------------------------------------------------
 	// Subtests share the topology + sharko above. Run sequentially because
@@ -256,9 +258,22 @@ func TestPerClusterAddonLifecycle(t *testing.T) {
 			!strings.Contains(got.DryRun.PRTitle, target1Name) {
 			t.Errorf("EnableAddon dry_run: PRTitle=%q must mention metrics-server + %s", got.DryRun.PRTitle, target1Name)
 		}
-		// Negative isolation: target-2 was never written to in the mock.
-		if ghmock.FileExists("main", pathClusterValues+"/"+target2Name+".yaml") {
-			t.Errorf("EnableAddon dry_run leaked to target-2 (file appeared on main)")
+		// Negative isolation: target-2's values file must be UNCHANGED by
+		// this dry-run.
+		//
+		// Round-3 fix: this used to assert the file was ABSENT on main,
+		// which broke the moment round-2's seedMockGit fix started
+		// seeding target-2's values file under its real cluster name —
+		// MultiClusterIsolation (below) needs that file to already exist,
+		// because EnableAddon (internal/orchestrator/addon_ops.go) reads
+		// the cluster's values file unconditionally, dry-run or not, and
+		// hard-errors if it's missing. So target-2 legitimately has a
+		// seeded file on main by the time this subtest runs; "existence"
+		// stopped being the right isolation signal. "Unchanged content"
+		// still is: a dry-run must never write anything, so target-2's
+		// file has to stay byte-identical to what seedMockGit put there.
+		if got := ghmock.FileAt("main", pathClusterValues+"/"+target2Name+".yaml"); got != target2ValuesYAML {
+			t.Errorf("EnableAddon dry_run leaked to target-2 (file changed on main): got=%q want=%q", got, target2ValuesYAML)
 		}
 		t.Logf("EnableAddon dry_run on %s: PR title=%q files=%d", target1Name, got.DryRun.PRTitle, len(got.DryRun.FilesToWrite))
 	})
@@ -447,16 +462,33 @@ func registerConnection(t *testing.T, sharko *harness.Sharko, admin *harness.Cli
 }
 
 // seedMockGit pre-populates the in-memory git mock with the addons
-// catalog, managed-clusters.yaml, and per-target values files. Required
-// for the live UpgradeAddonGlobally subtest (which reads the catalog
-// from main) and for any future live enable/disable path.
-func seedMockGit(t *testing.T, mock *harness.MockGitProvider) {
+// catalog and per-target values files. Required for the live
+// UpgradeAddonGlobally subtest (which reads the catalog from main) and
+// for any future live enable/disable path.
+//
+// target1Name/target2Name MUST be the real kind cluster names
+// (clusters[1].Name / clusters[2].Name from ProvisionTopology — e.g.
+// "sharko-e2e-target-1-<runID>"), not the literal strings "target-1" /
+// "target-2". EnableAddon/DisableAddon (internal/orchestrator/
+// addon_ops.go) read configuration/addons-clusters-values/<req.Cluster>.
+// yaml using the cluster name the caller actually sent, which is
+// target1Name/target2Name — a fixture seeded under the literal
+// "target-1.yaml" never matches that path, so every non-preview read
+// 404s. This was a pre-existing mismatch masked by the earlier v3
+// migration-gate 409 (which fired before the code ever got far enough
+// to read this file); fixing the gate surfaced it (kind CI run
+// 31213996319).
+//
+// Deliberately does NOT seed managed-clusters.yaml — see the fixtures
+// const block above for why: that exact path doubles as the v3-format
+// marker the v4 migration gate checks for, and none of this test's
+// subtests actually need the file to exist.
+func seedMockGit(t *testing.T, mock *harness.MockGitProvider, target1Name, target2Name string) {
 	t.Helper()
 	files := map[string][]byte{
-		pathCatalog:                          []byte(addonsCatalogYAML),
-		pathManagedClusters:                  []byte(managedClustersYAML),
-		pathClusterValues + "/target-1.yaml": []byte(target1ValuesYAML),
-		pathClusterValues + "/target-2.yaml": []byte(target2ValuesYAML),
+		pathCatalog: []byte(addonsCatalogYAML),
+		pathClusterValues + "/" + target1Name + ".yaml": []byte(target1ValuesYAML),
+		pathClusterValues + "/" + target2Name + ".yaml": []byte(target2ValuesYAML),
 	}
 	if err := mock.BatchCreateFiles(t.Context(), files, "main", "seed: e2e fixtures"); err != nil {
 		t.Fatalf("seedMockGit: %v", err)

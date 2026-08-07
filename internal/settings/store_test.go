@@ -515,3 +515,76 @@ func TestIsAddonValuesEngineEnabled_ErrorBeforeAnyRead_DefaultsTrue(t *testing.T
 		t.Error("expected the static default (true) when no successful read has ever happened, got false")
 	}
 }
+
+// TestGetManagedSecretsSettings_OneConfigMapReadForBothFlags is L14's core
+// pin (code review): GetManagedSecretsSettings must fetch the ConfigMap
+// exactly ONCE per call, not once per flag. Before this method existed,
+// GET /system/managed-secrets read managed_cluster_self_heal and
+// addon_values_engine_enabled through two separate calls
+// (IsManagedClusterSelfHealEnabled, IsAddonValuesEngineEnabled), each doing
+// its own live "get configmaps" against the identical object — two API
+// round trips for one request, times however many tabs poll this endpoint
+// every 30 seconds.
+func TestGetManagedSecretsSettings_OneConfigMapReadForBothFlags(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	gets := 0
+	client.PrependReactor("get", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		gets++
+		return false, nil, nil // let the default reactor chain answer
+	})
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if err := store.SetManagedClusterSelfHeal(ctx, true); err != nil {
+		t.Fatalf("SetManagedClusterSelfHeal: %v", err)
+	}
+	if err := store.SetAddonValuesEngineEnabled(ctx, false); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled: %v", err)
+	}
+	gets = 0 // only the read under test counts
+
+	got := store.GetManagedSecretsSettings(ctx)
+	if got.SelfHealEnabled != true {
+		t.Errorf("SelfHealEnabled = %v, want true", got.SelfHealEnabled)
+	}
+	if got.AddonValuesEngineEnabled != false {
+		t.Errorf("AddonValuesEngineEnabled = %v, want false", got.AddonValuesEngineEnabled)
+	}
+	if gets != 1 {
+		t.Errorf("GetManagedSecretsSettings made %d \"get configmaps\" calls, want exactly 1 (one ConfigMap, both flags)", gets)
+	}
+}
+
+func TestGetManagedSecretsSettings_NilStoreIsSafe(t *testing.T) {
+	var store *Store
+	got := store.GetManagedSecretsSettings(context.Background())
+	if got.SelfHealEnabled != defaultManagedClusterSelfHeal {
+		t.Errorf("SelfHealEnabled = %v, want the static default %v on a nil store", got.SelfHealEnabled, defaultManagedClusterSelfHeal)
+	}
+	if got.AddonValuesEngineEnabled != defaultAddonValuesEngineEnabled {
+		t.Errorf("AddonValuesEngineEnabled = %v, want the static default %v on a nil store", got.AddonValuesEngineEnabled, defaultAddonValuesEngineEnabled)
+	}
+}
+
+func TestGetManagedSecretsSettings_ReadErrorFallsBackToLastKnownPerFlag(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if err := store.SetManagedClusterSelfHeal(ctx, true); err != nil {
+		t.Fatalf("SetManagedClusterSelfHeal: %v", err)
+	}
+	if err := store.SetAddonValuesEngineEnabled(ctx, false); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled: %v", err)
+	}
+
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+
+	got := store.GetManagedSecretsSettings(ctx)
+	if got.SelfHealEnabled != true {
+		t.Errorf("SelfHealEnabled = %v, want the cached true (last successful read), not the static default", got.SelfHealEnabled)
+	}
+	if got.AddonValuesEngineEnabled != false {
+		t.Errorf("AddonValuesEngineEnabled = %v, want the cached false (last successful read), not the static default", got.AddonValuesEngineEnabled)
+	}
+}

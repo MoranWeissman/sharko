@@ -266,9 +266,46 @@ export interface ManagedSecretsEngines {
   addon_values: ManagedSecretsEngineInfo
 }
 
+// OrphanedSecretRow mirrors one entry in GET /api/v1/system/managed-secrets'
+// orphaned_secrets array (leftover-secrets S1.2) — a secret Sharko once
+// wrote to a cluster whose source definition someone later hand-deleted
+// from Sharko's git. Nothing asks for it anymore, but it still sits on the
+// cluster carrying Sharko's own labels. Sharko never deletes it on its
+// own — this is visibility only, until an operator confirms a delete via
+// DELETE /clusters/{name}/orphaned-secrets/{namespace}/{secret}.
+export interface OrphanedSecretRow {
+  cluster: string
+  secret_name: string
+  secret_namespace: string
+  // The addon name the secret's provenance annotation names — absent when
+  // Sharko can't resolve one.
+  addon?: string
+  // Always the literal "orphaned" — its own StatusMark state, distinct
+  // from the five states a connection/values row can carry.
+  state: 'orphaned'
+  source: string
+  last_checked?: string // RFC3339, absent = unknown
+}
+
+// OrphanedSecretDeleteResult mirrors the 200 body of DELETE
+// /clusters/{name}/orphaned-secrets/{namespace}/{secret} — the operator-only,
+// explicitly-confirmed delete of one orphaned leftover. Failures (404/409/
+// 422/503) carry `{error: "<plain sentence>"}` instead, surfaced through the
+// ApiError thrown by the shared fetch helpers.
+export interface OrphanedSecretDeleteResult {
+  status: string // "deleted"
+  cluster: string
+  namespace: string
+  name: string
+  message: string
+}
+
 export interface ManagedSecretsResponse {
   cluster_connection_secrets: ConnectionSecretRow[]
   addon_values_secrets: AddonValuesSecretRow[]
+  // Orphaned leftovers (leftover-secrets S1.2) — additive; absent on an
+  // older server that predates this field.
+  orphaned_secrets?: OrphanedSecretRow[]
   engines: ManagedSecretsEngines
   // addon_values_secret_source is the real, human-readable backend name
   // addon-values secrets are compared against ("AWS Secrets Manager", "a
