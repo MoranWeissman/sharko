@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: GitHub Discussions
-    url: https://github.com/MoranWeissman/sharko/discussions
-    about: For Q&A, design discussion, roadmap input, and general project conversation. Discussions are the preferred starting point for anything that isn't a confirmed bug or a concrete feature proposal. (Once Discussions are enabled by the maintainers.)
+  - name: Questions and design discussion
+    url: https://github.com/MoranWeissman/sharko/issues/new/choose
+    about: GitHub Discussions is not enabled on this repo yet. For now, Q&A, design discussion, and roadmap input go through the issue tracker like everything else.
   - name: Security disclosure (SECURITY.md)
     url: https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md
     about: Found a security vulnerability? Please do NOT file a public issue. Follow the responsible disclosure process in SECURITY.md instead.

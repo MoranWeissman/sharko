@@ -20,7 +20,7 @@ file security issues as public GitHub issues.
 - [AI-Agent Collaborators](#ai-agent-collaborators)
 - [Documentation](#documentation)
 - [Release Process](#release-process)
-- [Discussions and Response Cadence](#discussions-and-response-cadence)
+- [Response Cadence](#response-cadence)
 
 ## Filing Issues
 
@@ -33,9 +33,9 @@ Use the issue forms in the
 - **Security** — redirects you to [SECURITY.md](SECURITY.md); do
   **not** file security issues publicly
 
-Before filing, please search existing issues and the
-[discussions](https://github.com/MoranWeissman/sharko/discussions)
-(once enabled) for prior reports.
+Before filing, please search the existing
+[issues](https://github.com/MoranWeissman/sharko/issues) for prior
+reports.
 
 When filing, include:
 
@@ -429,26 +429,31 @@ Releases are cut by maintainers. The process is documented in
 - **Version bumps** — patch for fixes, minor for features, major for
   breaking changes. **Never retag** an existing version
   (see [CLAUDE.md](CLAUDE.md) "Git Rules").
-- **Pre-release line** — `v1.x` is pre-release; production launch
-  is `v2.0.0` (see
+- **Release line** — Sharko reached production GA with `v2.0.0`
+  (2026-06-03); the current release line is `v3.x` (latest tag:
+  `v3.0.0`), with `v4` in active development (see
   [`.claude/team/product-manager.md`](.claude/team/product-manager.md)).
 - **Release cadence** — fixes are bundled on a working branch and
   cut as a release at a real milestone, not per-fix.
+- **Keep version claims in sync** — when a new major version is
+  tagged, update the version statements in README.md, GOVERNANCE.md,
+  MAINTAINERS.md, CONTRIBUTING.md (this bullet list), and
+  `.claude/team/product-manager.md` in the same PR.
 
-## Discussions and Response Cadence
+## Response Cadence
 
-Once GitHub Discussions are enabled on the repository
-([admin step in progress — see GOVERNANCE.md](GOVERNANCE.md)),
-project Q&A, design discussion, and roadmap input belong there
-rather than in the issue tracker.
+GitHub Discussions is not enabled on this repository yet. Until it
+is, project Q&A, design discussion, and roadmap input all go through
+the [issue tracker](https://github.com/MoranWeissman/sharko/issues/new/choose),
+the same as bug reports and feature requests.
 
 **Response cadence:**
 
-- **Best-effort response within 5 business days** on Discussions
-  threads and non-urgent issues.
+- **Best-effort response within 5 business days** on non-urgent
+  issues.
 - For **urgent issues** (production-blocking bugs, security
   questions), use the issue tracker — security disclosures go to
-  the email in [SECURITY.md](SECURITY.md), not to Discussions.
+  the email in [SECURITY.md](SECURITY.md), not a public issue.
 - The maintainer team is small (currently a single lead maintainer
   — see [MAINTAINERS.md](MAINTAINERS.md)). Responses may be slower
   during release cycles; please be patient.
