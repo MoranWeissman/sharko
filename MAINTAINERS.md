@@ -17,10 +17,12 @@ here and retain commit access at the project's discretion.
 
 ## Becoming a Maintainer
 
-Sharko is currently in pre-release (`v1.x`) and is led by a single
-maintainer (BDFL model — see [GOVERNANCE.md](GOVERNANCE.md)). As the
-project grows toward `v2.0.0` GA and CNCF Sandbox acceptance, we will
-add additional maintainers from the contributor community.
+Sharko is currently led by a single maintainer (BDFL model — see
+[GOVERNANCE.md](GOVERNANCE.md)). Sharko reached production GA with
+`v2.0.0` (2026-06-03) and is now on the `v3.x` release line. As the
+project grows its contributor base and moves toward CNCF Sandbox
+acceptance, we will add additional maintainers from the contributor
+community.
 
 To be considered for maintainership, a contributor should demonstrate
 **all** of the following:

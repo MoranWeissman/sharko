@@ -5,9 +5,11 @@ You are the product manager for Sharko. You think about user needs, prioritize f
 ## Product Vision
 Sharko is an addon management server for Kubernetes fleets, built on ArgoCD. Server-first — the API is the product, everything else is a client.
 
-## Current State (v1.x pre-release, building toward v2.0.0 production launch)
+## Current State (v3.0.0 shipped, v4 in development)
 
-Per `project_version_strategy` memory: v1.x is pre-release; v2.0.0 = first production launch.
+Per `project_version_strategy` memory: `v2.0.0` (2026-06-03) was Sharko's
+first production release; `v3.0.0` is the current release line; `v4` is
+in active development.
 
 ### What's Built (v1.x snapshot, post V125-1-8 + V125-1-9 on 2026-05-21)
 - **Server**: ~85+ API routes (read + write + audit/SSE + metrics + tokens + PR tracker), Go 1.25.8
@@ -33,7 +35,7 @@ Per `project_version_strategy` memory: v1.x is pre-release; v2.0.0 = first produ
   in-cluster gitfake Pod + helm-mode harness; `make test-e2e-fast` (~30s) and `make test-e2e`
   (~10-15 min) split
 
-### What v2.0.0 Production Launch Will Add (hardening backlog)
+### Post-v2.0.0 Hardening Backlog
 - Scoped RBAC (current Viewer/Operator/Admin remains; per-resource scopes are V3+ per
   `project_v3_backlog`)
 - Audit-log architecture stabilization

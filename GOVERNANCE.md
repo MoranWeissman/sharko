@@ -6,19 +6,18 @@ This document describes how the Sharko project is governed. It complements
 
 ## Current Model: BDFL (Benevolent Dictator For Now)
 
-Sharko is in **pre-release** (`v1.x`) and is led by a single maintainer,
-Moran Weissman, who acts as Benevolent Dictator For Now (BDFL). The
-BDFL has final say on technical direction, scope, release timing, and
-maintainer additions.
+Sharko is led by a single maintainer, Moran Weissman, who acts as
+Benevolent Dictator For Now (BDFL). The BDFL has final say on
+technical direction, scope, release timing, and maintainer additions.
 
-This model is intentional and appropriate for the project's current
-stage:
+Sharko reached production GA with `v2.0.0` (2026-06-03) and is
+currently on the `v3.x` release line (latest tag: `v3.0.0`), with `v4`
+in development. This model is intentional and appropriate for the
+project's current stage:
 
-- The project is **pre-`v2.0.0`** — the API surface, architecture, and
-  scope are still solidifying. A single architectural voice keeps the
-  product coherent.
-- The contributor community is small. A heavyweight governance
-  structure would impose overhead without proportional benefit.
+- The contributor community is still small, with a single maintainer
+  doing the day-to-day work. A heavyweight governance structure would
+  impose overhead without proportional benefit.
 - Settled decisions (see
   [`.claude/team/product-manager.md`](.claude/team/product-manager.md))
   are tracked explicitly so contributors know what is up for debate
@@ -50,8 +49,9 @@ least three** of the following conditions are met:
    **two distinct organizations** (per CNCF maintainer-diversity
    guidance).
 3. The project has shipped **`v2.0.0` GA** (the first production
-   release — see
+   release, shipped 2026-06-03 — see
    [`.claude/team/product-manager.md`](.claude/team/product-manager.md)).
+   This condition is already met.
 4. There are at least **five organizations listed in
    [ADOPTERS.md](ADOPTERS.md)** running Sharko in production or
    staging.
@@ -112,10 +112,11 @@ Release cadence and version numbering follow the rules in
 [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [Sharko version strategy](.claude/team/product-manager.md):
 
-- `v1.x` — pre-release; new features ship as minor bumps, fixes as
-  patch bumps; expect breaking changes between minors until GA.
-- `v2.0.0` — first production-ready release; SemVer applies strictly
-  from this point forward.
+- `v2.0.0` (2026-06-03) was Sharko's first production-ready release.
+  SemVer has applied strictly since then: patch for fixes, minor for
+  features, major for breaking changes.
+- The current release line is `v3.x` (latest tag: `v3.0.0`); `v4` is
+  in active development.
 
 The BDFL (or, post-transition, the steering committee) decides when a
 release is ready.
