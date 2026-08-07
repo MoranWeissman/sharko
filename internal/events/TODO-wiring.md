@@ -8,7 +8,8 @@ This file documents where Kubernetes events are emitted, and what remains.
 - ✅ **EventRecorder attached to Server** via `srv.SetEventRecorder()` and accessible via `s.EventRecorder()`
 - ✅ **RBAC permissions granted** (`events` create in release namespace)
 - ✅ **Handler-level event emissions WIRED** for all four surfaces (see "Wired Emissions" below)
-- ⏸️ **Reconciler drift events** — deferred to EPIC-1 G1/G3 (TODO in reconcile_status.go)
+- ✅ **Reconciler drift events** — wired (V3 E1 follow-up): `Reconciler.Deps.EventRecorder` +
+  `recordFightCheck` in `reconcile_status.go`, one `DriftDetected` Warning event per fight
 
 ## Wired Emissions (live today — visible via `kubectl get events -n <ns>`)
 
@@ -21,6 +22,7 @@ This file documents where Kubernetes events are emitted, and what remains.
 | Host ArgoCD auth failure | `ReasonArgoCDAuthFailed` | `internal/api/clusters_discover.go` `handleDiscoverClusters` |
 | Remote-cluster connectivity test failure | `ReasonClusterTestFailed` | `internal/api/clusters_discover.go` `handleTestCluster` (Stage1 fail) |
 | PR-open failure | `ReasonPROpenFailed` | `internal/orchestrator/git_helpers.go` `commitChangesWithMeta` |
+| Sustained label-fight on a self-managed cluster secret | `ReasonDriftDetected` | `internal/clusterreconciler/reconcile_status.go` `recordFightCheck` (once per fight) |
 
 How the recorder is reached at each site:
 - **API handlers** — `s.emitWarning(reason, msg)` on `*Server` (nil-safe; recorder set at boot).
@@ -116,14 +118,20 @@ if result.Status == verify.StatusFailed {
 
 **Pattern**: Orchestrator would need EventRecorder injected. Alternatively, emit from handlers that call orchestrator and check the GitResult.
 
-### 5. Reconciler Drift Detection (FUTURE — EPIC-1 G1/G3)
+### 5. Reconciler Drift Detection — DONE (V3 E1 follow-up)
 
-**Where**: `internal/clusterreconciler/reconcile_status.go:307` (already has TODO comment)
+**Where**: `internal/clusterreconciler/reconcile_status.go` `recordFightCheck`
 
-**Event to emit**:
-- `ReasonDriftDetected` — Drift detected between Git and ArgoCD
+**Event emitted**:
+- `ReasonDriftDetected` — a self-managed cluster's ArgoCD secret keeps reverting Sharko's addon
+  labels (`fightRevertThreshold` consecutive reverted ticks)
 
-**Pattern**: Inject EventRecorder into Reconciler.Deps, emit once per fight (track `fightEventEmitted` flag to avoid spam).
+**Wiring**: `EventRecorder` added to `clusterreconciler.Deps` and `Reconciler`, wired from the
+same recorder `cmd/sharko/serve.go` already builds for the rest of Sharko
+(`eventRecorder := events.NewRecorder(...)`, passed into the `Deps{}` literal). Emitted at most
+once per fight via `clusterFightState.fightEventEmitted`, cleared when `reverts` drops back to 0
+so a later, separate fight gets its own event. Message names the cluster and the revert count
+only — no secret values or label values. Tests: `internal/clusterreconciler/drift_event_test.go`.
 
 ### 6. Success Events (EMIT SPARINGLY)
 
