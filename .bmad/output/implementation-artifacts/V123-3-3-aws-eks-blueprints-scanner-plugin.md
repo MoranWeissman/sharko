@@ -299,7 +299,7 @@ But naming varies across addons. Defensive extractor:
 
 ### Quality gates (run order)
 
-1. `cd /Users/weissmmo/projects/github-moran/sharko && npm install --prefix scripts --silent` — clean.
+1. `npm install --prefix scripts --silent` — clean.
 2. `node --check scripts/catalog-scan/plugins/aws-eks-blueprints.mjs` — syntax OK.
 3. `node --test 'scripts/catalog-scan/**/*.test.mjs' 'scripts/catalog-scan.test.mjs'` —
    all pass. Existing 21 + ~7-9 new = ~28-30 tests.
@@ -537,7 +537,7 @@ which parses JSON).
 
 Quality gates run in the brief's documented order:
 
-1. `cd /Users/weissmmo/projects/github-moran/sharko && npm install --prefix scripts --silent`
+1. `npm install --prefix scripts --silent`
    — clean. No new deps, lock unchanged.
 2. `node --check scripts/catalog-scan/plugins/aws-eks-blueprints.mjs`
    — syntax OK. Same for the test file and the modified

@@ -449,15 +449,12 @@ levers:
   the adopt.
 - [`secret-push-silently-failed.md`](secret-push-silently-failed.md)
   — the P0 sibling "Warn-but-proceed silently" pattern in the
-  orchestrator. Both flagged in the logging audit punch list.
+  orchestrator. Both flagged by the V2-2.3 logging audit.
 - [`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md)
   — if the adopt PR doesn't merge at all, this isn't the runbook.
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
 - [`../developer-guide/logging.md`](../developer-guide/logging.md) —
   `request_id` correlation pattern.
-- [`../developer-guide/logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md)
-  — flags this Error-but-proceed pattern for proper fail-stop
-  control flow.
 
 ## Escalation
 

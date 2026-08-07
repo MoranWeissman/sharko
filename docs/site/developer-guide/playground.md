@@ -180,7 +180,7 @@ make playground-down && make playground-up
 ```
 
 Or use the faster `scripts/dev-rebuild.sh` flow (see
-`docs/site/developer-guide/personal-smoke-runbook.md`) if you're iterating
+`docs/site/developer-guide/contributor-smoke-walk.md`) if you're iterating
 against a persistent cluster rather than the throwaway playground.
 
 ## Further Reading
