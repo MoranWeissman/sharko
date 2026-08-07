@@ -689,7 +689,7 @@ Run each step individually so you can see exactly where it breaks. Substitute `s
 !!! info "How bootstrap credentials work in real K8s (V124-3.8)"
     On first install with no operator-supplied password, Sharko auto-generates a 16-character bootstrap password. As of V124-3.8 the credential is **logged ONCE to the pod's stdout** in a clearly-marked block, and **the `admin.initialPassword` key is then removed from the Secret** so a pod restart does not re-emit it.
 
-    This means: **`kubectl get secret sharko -o jsonpath='{.data.admin\.initialPassword}'` returns empty.** That command was valid in earlier Sharko versions and is still in stale third-party docs — don't trust it. The only retrieval path is `kubectl logs`. If you missed the log line (e.g. log retention rolled it off), you must `helm uninstall && helm install` for a fresh password, OR use one of the operator-supplied paths in the [Initial Credentials](../operator/installation.md#initial-credentials) section of the operator install guide.
+    This means: **`kubectl get secret sharko -o jsonpath='{.data.admin\.initialPassword}'` returns empty.** That command was valid in earlier Sharko versions and is still in stale third-party docs — don't trust it. Retrieve the password from the dedicated `sharko-initial-admin-secret` Secret instead (`kubectl get secret sharko-initial-admin-secret -n sharko -o jsonpath='{.data.password}' | base64 -d`), or from `kubectl logs` if you set `SHARKO_WRITE_INITIAL_ADMIN_SECRET=false`. If neither has it, use one of the operator-supplied paths in the [Initial Credentials](../operator/installation.md#initial-credentials) section of the operator install guide.
 
 - [ ] Pull the bootstrap credential out of the pod logs
 

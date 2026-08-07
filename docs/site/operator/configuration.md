@@ -43,11 +43,11 @@ Authentication is managed via Kubernetes-native resources:
 - **ConfigMap `sharko-users`** — user accounts (auto-created by Helm)
 - **Secret** — bcrypt password hashes (auto-generated on first install)
 
-On first install, an admin account is created with a random password. Retrieve it:
+On first install, an admin account is created with a random password. Retrieve it from the `sharko-initial-admin-secret` Secret (the same pattern ArgoCD uses):
 
 ```bash
-kubectl get secret sharko -n sharko \
-  -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
+kubectl get secret sharko-initial-admin-secret -n sharko \
+  -o jsonpath='{.data.password}' | base64 -d
 ```
 
 For local development outside Kubernetes, set these environment variables instead of using the K8s resources:

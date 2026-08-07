@@ -198,7 +198,7 @@ func takeoverTestServer(t *testing.T, gp gitprovider.GitProvider, secrets []*cor
 	dashboardSvc := service.NewDashboardService(connSvc, "")
 	observabilitySvc := service.NewObservabilityService(clusterSvc)
 	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}), nil, "")
-	srv := NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, ai.NewClient(ai.Config{}))
+	srv := withLegacyOpenAuthForTests(NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, ai.NewClient(ai.Config{})))
 
 	if err := connSvc.Create(models.CreateConnectionRequest{
 		Name:   "takeover-test",

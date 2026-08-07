@@ -4867,8 +4867,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Generates a bcrypt hash from a plaintext password. Only available
-        when auth is disabled.
+      description: Generates a bcrypt hash from a plaintext password, for operators
+        who manage user accounts by hand in the users ConfigMap and Secret. Requires
+        authentication.
       parameters:
       - description: Password to hash
         in: body
@@ -4890,11 +4891,13 @@ paths:
           schema:
             additionalProperties: true
             type: object
-        "403":
-          description: Forbidden when auth is enabled
+        "401":
+          description: Not authenticated
           schema:
             additionalProperties: true
             type: object
+      security:
+      - BearerAuth: []
       summary: Hash password
       tags:
       - auth

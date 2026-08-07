@@ -34,11 +34,11 @@ This lets the Sharko pod assume the IAM role via IRSA and read secrets from AWS 
 
 ## Get the Admin Password
 
-Sharko generates a random admin password on first install:
+Sharko generates a random admin password on first install and stores it in the `sharko-initial-admin-secret` Secret (the same pattern ArgoCD uses):
 
 ```bash
-kubectl get secret sharko -n sharko \
-  -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
+kubectl get secret sharko-initial-admin-secret -n sharko \
+  -o jsonpath='{.data.password}' | base64 -d
 ```
 
 Save this password — you will use it to log in for the first time.

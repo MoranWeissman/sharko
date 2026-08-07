@@ -38,7 +38,7 @@ func newTestServer() *Server {
 	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}), nil, "")
 
 	aiClient := ai.NewClient(ai.Config{})
-	return NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
+	return withLegacyOpenAuthForTests(NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient))
 }
 
 func TestHealthEndpoint(t *testing.T) {

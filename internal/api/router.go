@@ -487,6 +487,14 @@ type Server struct {
 	doctorAddonSecretProviderOnce sync.Once
 	doctorAddonSecretProviderFn   func(cfg providers.AddonSecretProviderConfig) (providers.SecretProvider, error)
 
+	// authDisabledForTests reproduces the historical "zero users = open"
+	// router behavior for this package's unit tests ONLY (they drive
+	// handlers through the full router without logging in). Unexported on
+	// purpose: the only writers live in _test.go files, so no production
+	// build can ever set it. Even when set, adding a user re-arms auth —
+	// basicAuthMiddleware checks HasUsers() on every request.
+	authDisabledForTests bool
+
 	// startTime records when the server was created (used for uptime reporting).
 	startTime time.Time
 
@@ -553,7 +561,12 @@ func NewServer(
 	authStore.MaybeLogBootstrapCredential()
 
 	if !authStore.HasUsers() {
-		slog.Warn("WARNING: Authentication is DISABLED — all API endpoints are publicly accessible. Configure users via K8s ConfigMap or SHARKO_AUTH_USER env var.")
+		// Auth is never open anymore: with zero users every request is
+		// refused (fail closed). Before the router starts serving,
+		// cmd/sharko/serve.go either seeds demo users (demo mode) or
+		// calls EnsureInitialAdmin, which creates an admin with a
+		// random password. This is just a startup breadcrumb.
+		slog.Info("no users configured yet — an initial admin will be created before the server starts serving (demo mode seeds its own users)")
 	}
 
 	// perf M1: one shared read cache, threaded into every service that
@@ -1035,6 +1048,23 @@ func (s *Server) SetDemoGitProvider(gp service.GitProviderOverride) {
 // Used by demo mode only. In local mode the auth store accepts plaintext passwords.
 func (s *Server) AddDemoUser(username, password, role string) error {
 	return s.authStore.AddUser(username, password, role)
+}
+
+// EnsureInitialAdmin makes sure at least one user account exists before the
+// router starts serving. When the auth store has zero users (no chart-seeded
+// accounts, no SHARKO_BOOTSTRAP_ADMIN_PASSWORD, no SHARKO_AUTH_USER), it
+// generates an admin with a random password and stores it where the operator
+// can read it — the sharko-initial-admin-secret Secret in-cluster, or a
+// 0600 local file outside a cluster. Existing users are never touched.
+//
+// cmd/sharko/serve.go calls this on the non-demo serve path, after demo
+// seeding would have happened and before api.NewRouter. Auth is enforced
+// either way: a start with zero users no longer runs open (see
+// basicAuthMiddleware), so a failure here should abort startup — a server
+// nobody can log in to helps no one.
+func (s *Server) EnsureInitialAdmin(ctx context.Context) error {
+	_, err := s.authStore.EnsureInitialAdmin(ctx)
+	return err
 }
 
 // SetAWSDetector overrides the AWS identity detector GET
@@ -1730,16 +1760,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If no auth configured, allow any login
-	if !s.authStore.HasUsers() {
-		token := generateToken()
-		sessionsMu.Lock()
-		activeSessions[token] = &sessionInfo{Username: "anonymous", Expiry: time.Now().Add(sessionLifetime)}
-		sessionsMu.Unlock()
-		writeJSON(w, http.StatusOK, map[string]string{"token": token})
-		return
-	}
-
+	// No users configured is NOT a free pass anymore: the old branch that
+	// minted an "anonymous" session for any credentials is gone (v4
+	// fail-open removal). With zero users, ValidateCredentials below
+	// refuses everything, so the caller gets the same 401 as any bad
+	// credential.
 	if !s.authStore.ValidateCredentials(req.Username, req.Password) {
 		s.auditLog.Add(audit.Entry{
 			Level:    "warn",
@@ -1842,13 +1867,30 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // basicAuthMiddleware enforces token-based auth on all API routes.
 // Accepts: Authorization: Bearer <token>
 // Skips: health checks, login endpoint, and static files.
+//
+// Fail CLOSED: the old "no users configured = every endpoint open" behavior
+// is gone. The HasUsers() check now runs per request (not once at router
+// construction), and zero users means 401 — never open. In practice this
+// branch is unreachable: cmd/sharko/serve.go guarantees users exist before
+// the router is built (demo seeding or EnsureInitialAdmin), but if the
+// store ever ends up empty at request time the server refuses, it does not
+// open up.
 func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
-	// If no users configured, skip auth entirely
-	if !s.authStore.HasUsers() {
-		return next
-	}
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// TEST-ONLY seam: reproduces the historical "no users = open"
+		// wiring (the middleware used to return the mux unwrapped, so
+		// even the role-header strip did not run) for this package's
+		// unit tests, which exercise handlers through the full router
+		// without a login dance and stamp X-Sharko-User/-Role headers
+		// themselves. The field is unexported and its only writers live
+		// in _test.go files — no production code path can set it. The
+		// moment a test adds a user, auth is enforced again (HasUsers()
+		// is checked live per request).
+		if s.authDisabledForTests && !s.authStore.HasUsers() {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Strip any client-supplied role header to prevent spoofing.
 		// Only the middleware sets this header (for API key auth).
 		r.Header.Del("X-Sharko-Role")
@@ -1861,6 +1903,15 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 		// swallowing the request as a 401 here.
 		if path == "/api/v1/health" || path == "/api/v1/auth/login" || path == "/api/v1/login" || path == "/api/v1/webhooks/git" || !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Fail CLOSED: zero users at request time = refuse, never open.
+		// This branch is practically unreachable (serve.go guarantees
+		// users exist before the router is built), but if the store ever
+		// ends up empty the server refuses — it does not open up.
+		if !s.authStore.HasUsers() {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
@@ -2012,23 +2063,27 @@ func (s *Server) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 // handleHashPassword godoc
 //
 // @Summary Hash password
-// @Description Generates a bcrypt hash from a plaintext password. Only available when auth is disabled.
+// @Description Generates a bcrypt hash from a plaintext password, for operators who manage user accounts by hand in the users ConfigMap and Secret. Requires authentication.
 // @Tags auth
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param body body map[string]interface{} true "Password to hash"
 // @Success 200 {object} map[string]interface{} "Bcrypt hash"
 // @Failure 400 {object} map[string]interface{} "Bad request"
-// @Failure 403 {object} map[string]interface{} "Forbidden when auth is enabled"
+// @Failure 401 {object} map[string]interface{} "Not authenticated"
 // @Router /auth/hash [post]
 // handleHashPassword generates a bcrypt hash from a plaintext password.
-// Only available when auth is disabled (no users configured) for initial setup.
+//
+// History: this endpoint used to be gated on "no users configured" — the
+// pre-auth setup window. That window no longer exists (Sharko now generates
+// an initial admin instead of ever running without users), so the old gate
+// would have made the endpoint permanently dead. It is now a plain
+// authenticated utility: basicAuthMiddleware requires a valid session or
+// API key before the request reaches here, the handler is a pure function
+// over its input, and it reads no stored data — so it adds no
+// unauthenticated surface.
 func (s *Server) handleHashPassword(w http.ResponseWriter, r *http.Request) {
-	if s.authStore.HasUsers() {
-		writeError(w, http.StatusForbidden, "hash endpoint is only available when auth is disabled")
-		return
-	}
-
 	var req struct {
 		Password string `json:"password"`
 	}

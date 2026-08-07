@@ -124,7 +124,7 @@ active_connection: test
 	// keeps the test deterministic without a fake LLM server.
 	aiClient := ai.NewClient(ai.Config{Provider: ai.ProviderCustomOpenAI, BaseURL: "http://127.0.0.1:1", CloudModel: "test-model"})
 
-	return NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
+	return withLegacyOpenAuthForTests(NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient))
 }
 
 // v4CatalogAndValuesFiles returns the file set a v4 repo with one approved

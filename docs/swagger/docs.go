@@ -1844,7 +1844,12 @@ const docTemplate = `{
         },
         "/auth/hash": {
             "post": {
-                "description": "Generates a bcrypt hash from a plaintext password. Only available when auth is disabled.",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Generates a bcrypt hash from a plaintext password, for operators who manage user accounts by hand in the users ConfigMap and Secret. Requires authentication.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1882,8 +1887,8 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
-                    "403": {
-                        "description": "Forbidden when auth is enabled",
+                    "401": {
+                        "description": "Not authenticated",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

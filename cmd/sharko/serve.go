@@ -655,6 +655,19 @@ var serveCmd = &cobra.Command{
 			return nil
 		}
 
+		// Non-demo path from here on. If nothing configured a user by now
+		// (no chart-seeded accounts, no SHARKO_BOOTSTRAP_ADMIN_PASSWORD,
+		// no SHARKO_AUTH_USER), Sharko creates its own admin with a
+		// random password and prints where to find it — the
+		// sharko-initial-admin-secret Secret in-cluster, or a 0600 local
+		// file outside a cluster. Auth is enforced from the first request
+		// either way; a zero-user start no longer runs open. Demo mode is
+		// the only path that skips this, and it seeds its own users above
+		// before its router is built.
+		if err := srv.EnsureInitialAdmin(cmd.Context()); err != nil {
+			return fmt.Errorf("could not set up the initial admin user (and Sharko refuses to run without auth): %w", err)
+		}
+
 		// Repo path and GitOps config — always constructed (not provider-dependent).
 		repoPaths := orchestrator.RepoPathsConfig{
 			ClusterValues:   "configuration/addons-clusters-values",
