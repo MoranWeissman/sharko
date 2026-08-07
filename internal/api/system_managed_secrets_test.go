@@ -1203,7 +1203,7 @@ func TestBuildManagedSecretRows_MergesAndTagsEachKind(t *testing.T) {
 		ConsecutiveFailures: 2,
 	}}
 
-	rows := buildManagedSecretRows(conn, values)
+	rows := buildManagedSecretRows(conn, values, nil)
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 merged rows, got %d", len(rows))
 	}
@@ -1262,8 +1262,10 @@ func TestBuildManagedSecretRows_MergesAndTagsEachKind(t *testing.T) {
 // TestManagedSecretStateSortRank_MatchesTheUITable pins the exact rank
 // table ui/src/components/resource/StatusMark.tsx's statusSortRank uses, so
 // the merged Rows array reads in the same order the System page renders:
-// out_of_sync, missing, foreign, unknown, in_sync. An unrecognized state
-// string reads as "unknown", matching toResourceStatus's own fallback.
+// missing, out_of_sync, orphaned, foreign, unknown, in_sync (leftover-
+// secrets S1 inserted "orphaned" between out_of_sync and foreign). An
+// unrecognized state string reads as "unknown", matching toResourceStatus's
+// own fallback.
 func TestManagedSecretStateSortRank_MatchesTheUITable(t *testing.T) {
 	cases := []struct {
 		state         string
@@ -1272,13 +1274,14 @@ func TestManagedSecretStateSortRank_MatchesTheUITable(t *testing.T) {
 	}{
 		{"missing", false, 0},
 		{"out_of_sync", false, 1},
-		{"foreign", false, 2},
-		{"unknown", true, 3},                                    // a FAILED check outranks a never-checked row
-		{"unknown", false, 4},                                   // genuinely never checked
-		{"in_sync", false, 5},
-		{"some-state-the-server-has-never-heard-of", false, 4}, // falls through to "unknown"'s (not-checked) rank
-		{"some-state-the-server-has-never-heard-of", true, 3},  // ...but a check error still promotes it
-		{"", false, 4},
+		{"orphaned", false, 2},
+		{"foreign", false, 3},
+		{"unknown", true, 4},                                   // a FAILED check outranks a never-checked row
+		{"unknown", false, 5},                                  // genuinely never checked
+		{"in_sync", false, 6},
+		{"some-state-the-server-has-never-heard-of", false, 5}, // falls through to "unknown"'s (not-checked) rank
+		{"some-state-the-server-has-never-heard-of", true, 4},  // ...but a check error still promotes it
+		{"", false, 5},
 	}
 	for _, tc := range cases {
 		if got := managedSecretStateSortRank(tc.state, tc.hasCheckError); got != tc.want {
@@ -1305,7 +1308,7 @@ func TestBuildManagedSecretRows_WorstFirstOrder(t *testing.T) {
 		{Cluster: "c-out-of-sync", Addon: "a", State: "out_of_sync"},
 	}
 
-	rows := buildManagedSecretRows(conn, values)
+	rows := buildManagedSecretRows(conn, values, nil)
 	if len(rows) != 6 {
 		t.Fatalf("expected 6 merged rows, got %d", len(rows))
 	}

@@ -44,6 +44,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/notifications"
 	"github.com/MoranWeissman/sharko/internal/observations"
 	"github.com/MoranWeissman/sharko/internal/operations"
@@ -240,6 +241,27 @@ type SecretReconciler interface {
 	// (no Git connection, catalog unreadable); a single unreachable cluster
 	// is isolated inside the pass and does not surface here.
 	CheckAll(ctx context.Context) error
+	// OrphanedSecrets (leftover-secrets S1) returns a snapshot of every
+	// leftover values secret this engine's own passes have found: a live
+	// secret that carries BOTH Sharko's managed-by label AND the
+	// sharko.dev/addon provenance annotation, that no current desired-state
+	// plan claims any more (see secrets.Reconciler.scanOrphans for the full
+	// safety rule). Pure in-memory read — GET /system/managed-secrets never
+	// triggers a K8s call to build this. Sorted deterministically (cluster,
+	// then namespace, then name).
+	OrphanedSecrets() []models.OrphanedSecret
+	// DeleteOrphanedSecret deletes one leftover secret found by
+	// OrphanedSecrets — the operator-gated, human-confirmed action behind
+	// DELETE /clusters/{name}/orphaned-secrets/{namespace}/{secret}. Never
+	// trusts the scan record as proof on its own: re-verifies the record is
+	// still known, that a FRESH plan still does not claim it, and that the
+	// live secret still passes both the provenance-annotation check and the
+	// managed-by label gate before deleting anything. A non-nil error means
+	// nothing was deleted; the error text is safe to show the caller
+	// verbatim (see secrets.ErrOrphanUnknown / ErrOrphanReclaimed /
+	// ErrOrphanRefused for the specific refusal reasons the handler maps to
+	// status codes).
+	DeleteOrphanedSecret(ctx context.Context, cluster, namespace, name string) error
 }
 
 // Server holds the HTTP handlers and their dependencies.
@@ -1162,6 +1184,11 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Cluster secrets (remote cluster operations)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/secrets", srv.handleListClusterSecrets)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/secrets/refresh", srv.handleRefreshClusterSecrets)
+
+	// Leftover addon-values secrets (leftover-secrets S1) — a values secret
+	// the catalog no longer claims, found by the addon-values engine's own
+	// scan passes (never at list time), operator-gated delete only.
+	mux.HandleFunc("DELETE /api/v1/clusters/{name}/orphaned-secrets/{namespace}/{secret}", srv.handleDeleteOrphanedSecret)
 
 	// Secrets reconciler
 	mux.HandleFunc("POST /api/v1/secrets/reconcile", srv.handleTriggerReconcile)

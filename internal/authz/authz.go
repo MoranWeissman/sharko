@@ -143,10 +143,16 @@ var ActionRequirements = map[string]Role{
 	// caller, but it only ever exposes addon labels derived from git, never
 	// a live Secret, so it is the wrong precedent to copy here.
 	"secret.resource.read": RoleOperator,
-	"token.create":         RoleOperator,
-	"token.renew-own":      RoleOperator,
-	"token.revoke-own":     RoleOperator,
-	"init":                 RoleOperator,
+	// Deleting a leftover values secret (leftover-secrets S1) — same tier
+	// as secret.resource.read just above: it reaches a live cluster with
+	// real credentials and acts on a Secret Sharko itself created, gated by
+	// the reconciler's own re-verified ownership + provenance checks
+	// (internal/secrets.Reconciler.DeleteOrphanedSecret).
+	"orphaned-secret.delete": RoleOperator,
+	"token.create":           RoleOperator,
+	"token.renew-own":        RoleOperator,
+	"token.revoke-own":       RoleOperator,
+	"init":                   RoleOperator,
 
 	// Connectivity tests (v4-wave2 review B1). These endpoints reach out to
 	// a Git host, an ArgoCD server or a secret store with real credentials —

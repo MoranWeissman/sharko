@@ -38,6 +38,18 @@ var ErrForeignSecret = errors.New("this secret already exists on the cluster and
 type ManagedSecretInfo struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+	// Addon and WrittenAt (leftover-secrets S1) are copied straight from
+	// this Secret's sharko.dev/addon and sharko.dev/written-at annotations
+	// — metadata only, never .Data. Both are "" for a Sharko-managed Secret
+	// that carries no provenance annotations at all: a values secret
+	// written before the provenance annotation existed (an accepted,
+	// honest trade-off — see internal/secrets/orphans.go), or a
+	// managed-by-labeled Secret that isn't a values secret in the first
+	// place (a cluster-registration kubeconfig Secret, an ArgoCD
+	// connection Secret). Addon empty is exactly the signal the orphan
+	// scanner uses to leave those alone.
+	Addon     string `json:"addon,omitempty"`
+	WrittenAt string `json:"written_at,omitempty"`
 }
 
 // IsManagedBySharko reports whether a Secret carries Sharko's ownership
@@ -235,6 +247,8 @@ func ListManagedSecrets(ctx context.Context, client kubernetes.Interface, namesp
 		result = append(result, ManagedSecretInfo{
 			Name:      s.Name,
 			Namespace: s.Namespace,
+			Addon:     s.Annotations[AnnotationAddon],
+			WrittenAt: s.Annotations[AnnotationWrittenAt],
 		})
 	}
 	return result, nil

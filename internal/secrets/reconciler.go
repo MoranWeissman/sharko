@@ -258,6 +258,19 @@ type Reconciler struct {
 	// default in that case, same as every install that never touches the
 	// setting; see isEnabled.
 	enabledFn func(ctx context.Context) bool
+
+	// orphanMu guards orphanRecords — kept SEPARATE from mu (leftover-
+	// secrets S1) so a slow orphan scan (one remote LIST call per cluster)
+	// never blocks a reader of itemRecords, and vice versa. Follows this
+	// file's own "own mutex per independent piece of state" style (see
+	// stopOnce next to stopCh above).
+	orphanMu sync.RWMutex
+	// orphanRecords holds the last known orphan-secret findings, keyed by
+	// cluster name. Rebuilt PER CLUSTER on every scan — never wholesale —
+	// so a cluster whose LIST call fails this pass keeps its previous
+	// findings (and their honest LastChecked timestamps) instead of losing
+	// them or fabricating fresh ones (locked decision #10, orphans.go).
+	orphanRecords map[string][]models.OrphanedSecret
 }
 
 // SetEnabledFn registers the live reader this reconciler consults, at the
@@ -698,6 +711,12 @@ func (r *Reconciler) reconcile() {
 	r.itemRecords = itemResults
 	r.mu.Unlock()
 
+	// leftover-secrets S1: the orphan scan runs on EVERY completed pass,
+	// including the zero-work one right below — "the catalog entry was
+	// hand-deleted" is exactly a zero-push plan, and that is precisely the
+	// case this scan exists to catch. Never gated behind len(plan.work).
+	r.scanOrphans(ctx, plan)
+
 	if len(plan.work) == 0 && len(errs) == 0 {
 		log.Info("[secrets] no addons with secret definitions — nothing to reconcile", "layout", plan.layout)
 		// P2-D D1: still a completed pass (git and the catalog both read
@@ -710,6 +729,7 @@ func (r *Reconciler) reconcile() {
 		now := float64(time.Now().Unix())
 		metrics.ReconcilerLastRun.WithLabelValues(engineAddonValues).Set(now)
 		metrics.ReconcilerLastSuccess.WithLabelValues(engineAddonValues).Set(now)
+		recordAddonValuesStateGauges(itemResults, r.OrphanedSecretCount())
 		return
 	}
 
@@ -748,14 +768,16 @@ func (r *Reconciler) reconcile() {
 	}
 	metrics.ReconcilerItemsChecked.WithLabelValues(engineAddonValues).Add(float64(stats.Checked))
 
-	recordAddonValuesStateGauges(itemResults)
+	recordAddonValuesStateGauges(itemResults, r.OrphanedSecretCount())
 	recordAddonValuesFightGauge(itemResults)
 }
 
 // addonValuesMetricStates is every state sharko_managed_secrets_state can
 // report for this engine (P2-D D1/D4) — written every pass, in full, so a
 // state that just emptied out reports 0 instead of a stale nonzero value.
-var addonValuesMetricStates = []string{"in_sync", "out_of_sync", "missing", "foreign", "unknown"}
+// "orphaned" (leftover-secrets S1) is set from the orphan scan's own record
+// count, not from an ItemOutcome — see recordAddonValuesStateGauges.
+var addonValuesMetricStates = []string{"in_sync", "out_of_sync", "missing", "foreign", "unknown", "orphaned"}
 
 // metricStateFromOutcome buckets one item's outcome into the
 // sharko_managed_secrets_state vocabulary (P2-D D1). Deliberately mirrors
@@ -784,11 +806,17 @@ func metricStateFromOutcome(outcome ItemOutcome) string {
 // whole map from scratch every pass (never merged with the previous one —
 // see itemRecords' own doc comment), so itemResults IS the complete current
 // picture without an extra lock round-trip.
-func recordAddonValuesStateGauges(items map[ItemKey]ItemRecord) {
+//
+// orphanCount (leftover-secrets S1) is a separate fact from itemResults —
+// an orphan is, by definition, a secret NO current work item claims, so it
+// can never be derived from an ItemOutcome. Pass r.OrphanedSecretCount(),
+// itself read from the same scan that just ran.
+func recordAddonValuesStateGauges(items map[ItemKey]ItemRecord, orphanCount int) {
 	counts := make(map[string]int, len(addonValuesMetricStates))
 	for _, rec := range items {
 		counts[metricStateFromOutcome(rec.Outcome)]++
 	}
+	counts["orphaned"] = orphanCount
 	for _, state := range addonValuesMetricStates {
 		metrics.ManagedSecretsState.WithLabelValues(engineAddonValues, state).Set(float64(counts[state]))
 	}
@@ -887,11 +915,31 @@ type secretWork struct {
 type pushPlan struct {
 	layout string
 	work   []secretWork
+	// clusters (leftover-secrets S1) is every managed cluster this pass
+	// read from the repo — name plus credential lookup key — regardless of
+	// whether any addon has a push definition right now. Populated
+	// UNCONDITIONALLY by planV3/planV4, even when work ends up empty: "the
+	// catalog entry that used to define this push was hand-deleted" is
+	// exactly the scenario orphan detection exists to catch (orphans.go),
+	// and that scenario is precisely the one where work is empty but the
+	// clusters — and the leftover secrets sitting on them — still need to
+	// be looked at.
+	clusters []clusterRef
 	// problems are things that went wrong for PART of the repo — one
 	// unreadable cluster file, one cluster name that cannot be a path.
 	// The rest of the plan still runs; these are recorded in the status
 	// so a half-working run never looks like a clean one.
 	problems []string
+}
+
+// clusterRef is the minimum a cluster's identity takes to be scanned for
+// orphan secrets (or reconciled for push work): its display name and the
+// key to fetch its credentials with (which differs from the name when the
+// cluster record has a SecretPath override — see
+// models.Cluster.CredentialLookupKey).
+type clusterRef struct {
+	name       string
+	credLookup string
 }
 
 // planPushes reads the connected repo and works out every secret that
@@ -956,10 +1004,13 @@ func (r *Reconciler) planV3(ctx context.Context, gr GitReader, catalogData []byt
 			pushesByAddon[entry.Name] = entry.Secrets
 		}
 	}
-	if len(pushesByAddon) == 0 {
-		return plan, nil
-	}
 
+	// The cluster list is read UNCONDITIONALLY — even when the catalog
+	// currently defines no push at all (leftover-secrets S1). A catalog
+	// entry's secrets block being hand-deleted is exactly the case orphan
+	// detection exists for, and that case is precisely a zero-push plan;
+	// bailing out before reading clusters, as this used to, would mean the
+	// orphan scan never learns which clusters to look at.
 	clusterData, err := gr.GetFileContent(ctx, r.managedClustersPath, r.baseBranch)
 	if err != nil {
 		return plan, fmt.Errorf("could not read %s: %w", r.managedClustersPath, err)
@@ -967,6 +1018,13 @@ func (r *Reconciler) planV3(ctx context.Context, gr GitReader, catalogData []byt
 	clusters, err := r.parser.ParseClusterAddons(clusterData)
 	if err != nil {
 		return plan, fmt.Errorf("could not read %s: %w", r.managedClustersPath, err)
+	}
+	for _, cluster := range clusters {
+		plan.clusters = append(plan.clusters, clusterRef{name: cluster.Name, credLookup: cluster.CredentialLookupKey()})
+	}
+
+	if len(pushesByAddon) == 0 {
+		return plan, nil
 	}
 
 	for _, cluster := range clusters {
@@ -1013,10 +1071,11 @@ func (r *Reconciler) planV4(ctx context.Context, gr GitReader, catalogData []byt
 			pushesByAddon[addonName] = append(pushesByAddon[addonName], *req.Push)
 		}
 	}
-	if len(pushesByAddon) == 0 {
-		return plan, nil
-	}
 
+	// The cluster list is read UNCONDITIONALLY — even when the catalog
+	// currently defines no push at all. See planV3's matching comment
+	// (leftover-secrets S1): a zero-push plan is exactly the case orphan
+	// detection needs the cluster list for.
 	clusterData, err := gr.GetFileContent(ctx, config.V4ManagedClustersPath, r.baseBranch)
 	if err != nil {
 		return plan, fmt.Errorf("could not read %s: %w", config.V4ManagedClustersPath, err)
@@ -1024,6 +1083,13 @@ func (r *Reconciler) planV4(ctx context.Context, gr GitReader, catalogData []byt
 	clusters, err := r.parser.ParseClusterAddons(clusterData)
 	if err != nil {
 		return plan, fmt.Errorf("could not read %s: %w", config.V4ManagedClustersPath, err)
+	}
+	for _, cluster := range clusters {
+		plan.clusters = append(plan.clusters, clusterRef{name: cluster.Name, credLookup: cluster.CredentialLookupKey()})
+	}
+
+	if len(pushesByAddon) == 0 {
+		return plan, nil
 	}
 
 	for _, cluster := range clusters {
@@ -1347,6 +1413,12 @@ func (r *Reconciler) CheckAll(ctx context.Context) error {
 		}
 		checked++
 	}
+
+	// leftover-secrets S1: CheckAll is a read-only pass, and the orphan
+	// scan is itself read-only (a LIST call, never a write) — it belongs
+	// here on exactly the same terms it belongs at the end of reconcile().
+	r.scanOrphans(ctx, plan)
+
 	log.Info("[secrets] check-only pass complete — nothing was written",
 		"layout", plan.layout, "checked", checked, "could_not_check", failed)
 	return nil

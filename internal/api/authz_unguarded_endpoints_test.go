@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/operations"
 )
 
@@ -112,6 +113,12 @@ func (f *fakeSecretReconciler) checkAllCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.checkedAll
+}
+
+func (f *fakeSecretReconciler) OrphanedSecrets() []models.OrphanedSecret { return nil }
+
+func (f *fakeSecretReconciler) DeleteOrphanedSecret(_ context.Context, _, _, _ string) error {
+	return nil
 }
 
 // assert403 decodes the body and asserts a clean JSON 403.
