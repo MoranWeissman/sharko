@@ -11,14 +11,15 @@
 <p align="center">
   <a href="https://github.com/MoranWeissman/sharko/releases"><img src="https://img.shields.io/github/v/release/MoranWeissman/sharko" alt="Release"></a>
   <a href="https://github.com/MoranWeissman/sharko/blob/main/LICENSE"><img src="https://img.shields.io/github/license/MoranWeissman/sharko" alt="License"></a>
-  <img src="https://img.shields.io/badge/go-1.25-blue" alt="Go">
-  <img src="https://img.shields.io/badge/react-18-61dafb" alt="React">
-  <img src="https://img.shields.io/badge/typescript-5-3178c6" alt="TypeScript">
+  <a href="https://github.com/MoranWeissman/sharko/actions/workflows/ci.yml"><img src="https://github.com/MoranWeissman/sharko/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://sharko.readthedocs.io/"><img src="https://img.shields.io/badge/docs-readthedocs-blue" alt="Docs"></a>
 </p>
 
 ---
 
-> **v2.0.0 — production release.** Sharko follows [semantic versioning](https://semver.org/) and an [API stability contract](docs/site/developer-guide/api-stability.md): breaking changes only land in MAJOR version bumps.
+> **v3.0.0 — latest release.** Sharko reached production GA with `v2.0.0` (2026-06-03); `v3.0.0` is the current release line, and `v4` is in development. Sharko follows [semantic versioning](https://semver.org/) and an [API stability contract](docs/site/developer-guide/api-stability.md): breaking changes only land in MAJOR version bumps.
+
+Full documentation: **https://sharko.readthedocs.io/**
 
 **Sharko is a GitOps agent with an API: your portal or pipeline asks for "a cluster with these addons," and Sharko opens a pull request — it never changes your cluster behind your back.**
 
@@ -68,7 +69,7 @@ If DIY serves you well, keep it. Sharko is for teams who want that same pattern 
 - **Addon dependency ordering** — declare `dependsOn` in the catalog to enforce deployment order; cycle detection prevents invalid graphs
 - **Audit log** — every write operation recorded with actor, action, result, and timestamp; queryable via `GET /api/v1/audit`
 - **Multi-cloud provider stubs** — interface stubs for GCP and Azure so contributors can fill in those providers without redesigning the secrets layer
-- **End-to-end test framework** — test against a real ArgoCD + Kind cluster (`make e2e-setup && make e2e`)
+- **End-to-end test framework** — test against a real ArgoCD + Kind cluster (`make test-e2e-fast` for a fast in-process pass, `make test-e2e` for the full kind-backed suite)
 
 ## Demo
 
@@ -275,6 +276,8 @@ Configure in **Settings → Secrets Provider**. Supports structured JSON secrets
 
 ## Development
 
+For local secrets (Git token, AI provider keys), copy `secrets.env.example` to `secrets.env` and fill in the values.
+
 ### Demo mode
 
 ```bash
@@ -306,12 +309,18 @@ swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseIntern
 
 ## Documentation
 
+The full documentation site is at **https://sharko.readthedocs.io/**:
+
 | Document | Description |
 |----------|-------------|
-| [API Contract](docs/api-contract.md) | Full API reference with request/response shapes and error codes |
-| [Architecture](docs/architecture.md) | Server-first architecture, orchestrator pattern, provider interfaces |
-| [User Guide](docs/user-guide.md) | End-to-end guide: install, configure, manage clusters and addons |
-| [Developer Guide](docs/developer-guide.md) | Project structure, coding patterns, testing, adding new features |
+| [Getting Started](docs/site/getting-started/quickstart.md) | Quick start: install, first run, wizard walkthrough |
+| [User Guide](docs/site/user-guide/why-sharko.md) | Day-to-day guide: connections, clusters, addons, upgrades, drift detection |
+| [Operator Manual](docs/site/operator/installation.md) | Install, configure, and run Sharko in production |
+| [API Reference](docs/site/api/overview.md) | Full API reference: endpoints, request/response shapes, and the OpenAPI spec |
+| [Architecture](docs/site/architecture/overview.md) | Server-first architecture, orchestrator pattern, provider interfaces |
+| [Developer Guide](docs/site/developer-guide.md) | Project structure, coding patterns, testing, adding new features |
+
+The legacy `docs/api-contract.md`, `docs/architecture.md`, `docs/user-guide.md`, and `docs/developer-guide.md` files remain in the repo as raw reference only — the docs site above is the maintained version.
 
 ## Community
 
@@ -326,7 +335,7 @@ Sharko is an open project that follows CNCF-style governance and community conve
 | [SECURITY.md](SECURITY.md) | Responsible security disclosure process |
 | [ADOPTERS.md](ADOPTERS.md) | Organizations using Sharko — add yours! |
 
-For project Q&A and design discussion, please use [GitHub Discussions](https://github.com/MoranWeissman/sharko/discussions) (once enabled by the maintainers). For bug reports and feature requests, use the [issue tracker](https://github.com/MoranWeissman/sharko/issues/new/choose). For security issues, follow [SECURITY.md](SECURITY.md) — please do not file security reports as public issues.
+GitHub Discussions is not turned on for this repo yet, so for now, project Q&A, design discussion, bug reports, and feature requests all go through the [issue tracker](https://github.com/MoranWeissman/sharko/issues/new/choose). For security issues, follow [SECURITY.md](SECURITY.md) — please do not file security reports as public issues.
 
 ## License
 
