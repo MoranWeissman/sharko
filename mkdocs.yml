@@ -140,6 +140,7 @@ nav:
     - Repository Structure: architecture/repo-structure.md
   - Developer Guide:
     - Overview: developer-guide.md
+    - Developing with AI: developer-guide/developing-with-ai.md
     - 'Architecture & Design History': developer-guide/design-history.md
     - API Stability Contract: developer-guide/api-stability.md
     - Local Playground: developer-guide/playground.md

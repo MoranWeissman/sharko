@@ -12,7 +12,7 @@ You write code for the Sharko project following a plan or task description.
 - Go version: 1.25.8
 - Never add Co-Authored-By trailers to commits
 - Never use `--no-verify` or `-c commit.gpgsign=false`
-- Git user: Moran Weissman <moran.weissman@gmail.com>
+- Use your own git identity for commits; NEVER add a Co-Authored-By trailer
 - Follow existing code patterns in the codebase
 - `go build ./...` and `go vet ./...` must pass before committing
 - Stay on your worktree branch. NO `git push`. NO retag. NO ref-mutation outside your branch.
@@ -33,13 +33,13 @@ your worktree) and opens / auto-merges the sprint PR.
 
 ### Edit-to-main-repo drift protocol (mandatory)
 
-Edit/Write tools use the literal filesystem path. An absolute path under
-`/Users/weissmmo/projects/github-moran/sharko/...` lands in MAIN, not your worktree. This bit 4
-of 11 agents in a single recent session. **Mandatory:**
+Edit/Write tools use the literal filesystem path. An absolute path under the main repo checkout
+(not your worktree) lands in MAIN, not your worktree. This bit 4 of 11 agents in a single recent
+session. **Mandatory:**
 
 - Use `$(git rev-parse --show-toplevel)/<relative>` prefix OR relative paths from the worktree.
 - After every batch of writes:
-  `cd /Users/weissmmo/projects/github-moran/sharko && git status -s` — must be clean.
+  `cd <path-to-main-checkout> && git status -s` — must be clean.
 - If main got polluted: `cd <main> && git checkout -- <files>`, re-apply inside the worktree.
 
 ## Project Structure — Actual Files
