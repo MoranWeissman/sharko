@@ -1280,6 +1280,11 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/catalog/addons", srv.handleListOrgCatalog)
 	mux.HandleFunc("POST /api/v1/catalog/addons", srv.handleAddToCatalog)
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}", srv.handleGetOrgCatalogAddon)
+	// PATCH is a merge-semantics edit of one existing entry; DELETE removes
+	// one entry (refusing while it's still enabled on any cluster). Both
+	// open a pull request, same as POST above.
+	mux.HandleFunc("PATCH /api/v1/catalog/addons/{name}", srv.handleEditOrgCatalogAddon)
+	mux.HandleFunc("DELETE /api/v1/catalog/addons/{name}", srv.handleDeleteOrgCatalogAddon)
 
 	// Version-freshness summary + an out-of-cycle refresh trigger for the
 	// background scheduler (internal/catalog.FreshnessScheduler). It watches

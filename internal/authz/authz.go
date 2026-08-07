@@ -53,10 +53,13 @@ var ActionRequirements = map[string]Role{
 	"cluster.remove":               RoleAdmin,
 	"cluster.unadopt":              RoleAdmin,
 	"addon.remove-from-catalog":    RoleAdmin,
-	"user.create":                  RoleAdmin,
-	"user.delete":                  RoleAdmin,
-	"user.change-role":             RoleAdmin,
-	"token.revoke-other":           RoleAdmin,
+	// Deleting a v4 catalog.yaml entry (DELETE /catalog/addons/{name}) —
+	// same tier as its v3 sibling addon.remove-from-catalog just above.
+	"catalog.remove":     RoleAdmin,
+	"user.create":        RoleAdmin,
+	"user.delete":        RoleAdmin,
+	"user.change-role":   RoleAdmin,
+	"token.revoke-other": RoleAdmin,
 	// Renewing somebody ELSE's token. The own/other split mirrors revoke:
 	// pushing out the expiry of a token you do not own keeps a credential
 	// alive that only its owner should be able to keep alive.
@@ -121,10 +124,13 @@ var ActionRequirements = map[string]Role{
 	// v4 Wave 2 Epic 7 Story 7.2 — subset upgrade: bumps the version pin
 	// on a chosen set of clusters in one PR. Same tier as the existing
 	// global/per-cluster addon.update-catalog upgrade write.
-	"addon.upgrade-clusters":    RoleOperator,
-	"default-addons.update":     RoleOperator,
-	"engine.pin-upgrade":        RoleOperator,
-	"catalog.add":               RoleOperator,
+	"addon.upgrade-clusters": RoleOperator,
+	"default-addons.update":  RoleOperator,
+	"engine.pin-upgrade":     RoleOperator,
+	"catalog.add":            RoleOperator,
+	// Editing a v4 catalog.yaml entry (PATCH /catalog/addons/{name}) — same
+	// tier as its v3 sibling addon.update-catalog above.
+	"catalog.update":            RoleOperator,
 	"reconciler.trigger":        RoleOperator,
 	"catalog.freshness.refresh": RoleOperator,
 	// Single-item addon-values-secret row actions (S4 — Managed Secrets

@@ -26,6 +26,8 @@ func TestLockstep_CatalogOpCodes(t *testing.T) {
 	}{
 		{"catalog add", orchestrator.OpCodeCatalogAdd, prtracker.OpCatalogAdd},
 		{"catalog add and enable", orchestrator.OpCodeCatalogAddEnable, prtracker.OpCatalogAddEnable},
+		{"catalog edit", orchestrator.OpCodeCatalogEdit, prtracker.OpCatalogEdit},
+		{"catalog delete", orchestrator.OpCodeCatalogDelete, prtracker.OpCatalogDelete},
 	} {
 		if tc.orchCode != tc.prCode {
 			t.Errorf(
