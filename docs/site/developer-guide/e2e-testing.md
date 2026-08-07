@@ -400,6 +400,7 @@ storage). The cleanup hook runs on `t.Cleanup` so a panicked test or
 |---|---|---|---|
 | `e2e` | label `e2e`, nightly, manual | ~10–15 min | `make test-e2e-report` — full suite. |
 | `helm-mode-e2e` (V125-1-13.8) | **every** PR push | ~5–8 min | `make test-e2e-helm` — Wave-D subset. |
+| `live-gitea` (task #65) | label `e2e`, nightly, manual | a few minutes | `TestGiteaLiveWriteLoop` against a `gitea/gitea` service container. See [Live-Gitea write loop](#live-gitea-write-loop-task-65) above. |
 
 The split is deliberate. `helm-mode-e2e` is unlabelled and PR-blocking
 because the maintainer chose runtime-honesty over speed: the real Helm
@@ -546,6 +547,97 @@ runs the Wave-D Helm-mode tests; the gitfake Pod is installed
 transparently as part of `installSharkoHelm`. No new label, no new job —
 the env-gated allowlist is the only production-touching surface and it
 stays off unless the chart values opt in.
+
+## Live-Gitea write loop (task #65)
+
+Every other GiteaProvider exercise in this repo talks to a fake: the
+`internal/gitprovider` unit tests stub the Gitea REST API with `httptest`,
+and the helm-mode gitfake primitive (above) speaks plain git-protocol, not
+Gitea's API. `TestGiteaLiveWriteLoop`
+(`tests/e2e/lifecycle/gitea_live_test.go`) is the one test in the suite
+that drives `internal/gitprovider.GiteaProvider` against a **real** Gitea
+server, so it catches drift between what the fakes assume and what Gitea
+actually returns on the wire.
+
+It walks the provider's full write surface in order: `TestConnection` →
+`CreateBranch` → `CreateOrUpdateFile` (create, then update in place, with a
+`GetFileContent` round-trip after each) → `BatchCreateFiles` (with
+`ListDirectory` + `GetFileContent` reads) → `CreatePullRequest` →
+`GetPullRequestStatus` ("open") → `MergePullRequest` →
+`GetPullRequestStatus` ("merged") → `DeleteBranch`. Everything it creates
+is removed afterwards on a best-effort basis (the branch, and the files
+that land on the base branch once the PR merges), so repeat runs against
+a long-lived Gitea instance don't pile up junk.
+
+**It's fully opt-in.** With no env vars set, the test skips with one clear
+line — `go test ./...` and `go test -tags e2e ./...` never touch the
+network because of it.
+
+### Env vars
+
+| Variable | Required | Default | What it does |
+|---|---|---|---|
+| `SHARKO_E2E_GITEA_URL` | yes | — | Base URL of the Gitea instance, e.g. `http://localhost:3000`. Unset = the test skips. |
+| `SHARKO_E2E_GITEA_TOKEN` | yes | — | API token with write access to the repo. Unset = the test skips. |
+| `SHARKO_E2E_GITEA_OWNER` | no | `sharko-e2e` | Repo owner (usually the admin user CI creates). |
+| `SHARKO_E2E_GITEA_REPO` | no | `sharko-e2e-live` | Repo name. Must already exist and be initialised (so a base branch is present) before the test runs. |
+| `SHARKO_E2E_GITEA_BASE` | no | `main` | The base branch the test branches from and opens its pull request against. |
+
+### Running in CI
+
+`.github/workflows/e2e.yml`'s `live-gitea` job runs it on the same triggers
+as the other two e2e jobs (label `e2e`, `workflow_dispatch`, nightly). The
+job boots a `gitea/gitea` service container, waits for its API to answer,
+creates an admin user + API token + an auto-initialised test repo via
+Gitea's CLI and REST API, then runs
+`go test -tags=e2e -run '^TestGiteaLiveWriteLoop$' ./tests/e2e/lifecycle/...`
+with the env vars above pointed at the service container. No kind, no
+Docker-in-Docker, no Sharko boot involved — just the test binary talking
+straight to the service container over `localhost:3000`. The whole job
+stays well under the workflow's shared time budget.
+
+### Running locally
+
+You need a Gitea instance of your own — for example:
+
+```bash
+docker run -d --name sharko-e2e-gitea -p 3000:3000 \
+  -e GITEA__security__INSTALL_LOCK=true \
+  -e GITEA__database__DB_TYPE=sqlite3 \
+  gitea/gitea:1.23.5
+
+docker exec sharko-e2e-gitea gitea admin user create \
+  --admin --username sharko-e2e --password 'Sharko-E2E-Passw0rd!' \
+  --email sharko-e2e@example.invalid --must-change-password=false
+```
+
+Then create an API token and an auto-initialised repo (via the Gitea web
+UI at `http://localhost:3000`, or the same `curl` calls the CI job uses —
+see the `live-gitea` job in `.github/workflows/e2e.yml` for the exact
+commands), and run:
+
+```bash
+export SHARKO_E2E_GITEA_URL=http://localhost:3000
+export SHARKO_E2E_GITEA_TOKEN=<your token>
+export SHARKO_E2E_GITEA_OWNER=sharko-e2e
+export SHARKO_E2E_GITEA_REPO=sharko-e2e-live
+make test-e2e-gitea
+```
+
+Tear the container down with `docker rm -f sharko-e2e-gitea` when you're
+done.
+
+### Note on the git-host allowlist (V125-1-13)
+
+This suite constructs `gitprovider.GiteaProvider` directly (the same way
+`internal/demo` and the unit tests do) — it never goes through Sharko's
+HTTP connection-creation path, so the git-host allowlist in
+`internal/service/connection.go::deriveProviderFromURL` (see
+[In-cluster gitfake](#in-cluster-gitfake-v125-1-13x) above) never comes
+into play here. That allowlist's own gap — helm-mode tests needing an
+env-gated escape hatch to point at a non-`github.com` host — was already
+closed by the `SHARKO_E2E_GIT_HOSTS_ALLOWLIST` work described above; this
+suite didn't need to touch it.
 
 ## CI integration
 
@@ -736,6 +828,7 @@ Per-domain test-file map (top-level test → file → endpoint count):
 | `TestGlobalValuesEditor`, `TestPerClusterValuesOverride` | `lifecycle/values_test.go` | global + per-cluster values + AI opt-out |
 | `TestPRTracking`, `TestNotificationsLifecycle` | `lifecycle/pr_test.go` | PR tracker + notifications |
 | `TestDashboardAndReadsInProcess`, `TestFleetStatusWithArgocd` | `lifecycle/dashboard_test.go` | dashboard + observability + reads |
+| `TestGiteaLiveWriteLoop` (task #65) | `lifecycle/gitea_live_test.go` | live-Gitea GiteaProvider write loop (env-gated, skips without `SHARKO_E2E_GITEA_URL`) |
 
 For the broader strategy and gap analysis, see the design doc
 `docs/design/2026-05-13-test-coverage-strategy.md` in the repo (not
