@@ -221,6 +221,25 @@ export function statusStripClassName(state: string): string {
 }
 
 /**
+ * statusBarClassName (design-secret-sync-visual-pass, section 3) — the
+ * tiles view's per-card status-mix bar reads off this, the SAME
+ * STATUS_META fill each row's own <StatusDot> uses (dotClassName), so the
+ * bar segment, the dot, the strip, and the filter chip can never disagree
+ * about what colour a state is. "unknown" has no fill of its own (it's a
+ * hollow ring everywhere else it appears) — the bar still needs a solid
+ * segment colour for it, so this returns the same blue-grey the hollow
+ * ring's border uses, as a `bg-*` class.
+ */
+export function statusBarClassName(state: string): string {
+  const s = toResourceStatus(state)
+  const meta = STATUS_META[s]
+  if (meta.dotClassName) return meta.dotClassName
+  // "unknown" — no fill in STATUS_META (the dot is a hollow ring instead).
+  // Same blue-grey family as its ring/strip, as a background fill.
+  return 'bg-[#5a8aaa] dark:bg-gray-500'
+}
+
+/**
  * StatusDot — H3's one dot shape. A filled circle whose fill colour and
  * inner mark carry the state; "unknown" is a hollow ring instead of a
  * filled circle so it can never be mistaken for a checked, healthy state at

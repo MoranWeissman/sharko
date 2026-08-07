@@ -388,7 +388,10 @@ describe('ManagedSecrets — the live resource, read-only (G4)', () => {
     expect(mockGetAddonValuesSecretResource).toHaveBeenCalledWith('prod-eu', 'datadog')
 
     const panel = await screen.findByTestId('detail-resource-panel')
-    expect(within(panel).getByText('datadog/datadog-secrets')).toBeInTheDocument()
+    // design-secret-sync-visual-pass item 22: the live card no longer
+    // repeats the {namespace}/{name} identity — the resource header above
+    // it already says that. The header assertion covers identity; this
+    // scope is about the live card's own content.
     expect(within(panel).getByText('type Opaque')).toBeInTheDocument()
 
     // P3-F2: the key list is its own section under the two diff cards, no
