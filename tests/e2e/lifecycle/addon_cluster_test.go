@@ -68,22 +68,22 @@ applicationsets:
     version: 5.20.0
 `
 
-	// Initial managed-clusters.yaml with both target clusters and both
-	// addons disabled. Enable/disable subtests use dry_run so the file
-	// itself is never rewritten — but the orchestrator's dry-run path
-	// returns the same FilesToWrite preview regardless of file presence,
-	// so seeding it keeps the upgrade subtest's commit graph realistic.
-	managedClustersYAML = `# Managed clusters
-clusters:
-  - name: target-1
-    labels:
-      metrics-server: disabled
-      kube-state-metrics: disabled
-  - name: target-2
-    labels:
-      metrics-server: disabled
-      kube-state-metrics: disabled
-`
+	// managed-clusters.yaml is deliberately NOT seeded here (v4 closing
+	// wave finding): none of this test's subtests need it to exist —
+	// enable/disable run dry_run (the orchestrator's dry-run preview
+	// tolerates a missing file, EnableAddon/DisableAddon just skip the
+	// label-file entry in FilesToWrite) and the upgrade subtest only
+	// touches the catalog. Seeding it bought nothing but cost everything:
+	// managed-clusters.yaml at this exact path is also
+	// orchestrator.V3SecondaryMarkerPath, the v3-format marker the v4
+	// migration gate (internal/orchestrator/v3_migration_gate.go) checks
+	// for. Pre-seeding it made this repo look like an established v3
+	// repo before the first request ever landed, so every write in this
+	// suite 409'd with "this repo uses the v3 format — migrate to
+	// continue". Leaving the file absent keeps the repo in the gate's
+	// "empty, nothing to migrate" bucket, which is what an ordinary
+	// fresh v3 connection actually looks like before any cluster is
+	// registered.
 
 	// Per-cluster values files — required by the live disable path
 	// (existingValues read from git). Empty stanzas are sufficient for
@@ -447,14 +447,18 @@ func registerConnection(t *testing.T, sharko *harness.Sharko, admin *harness.Cli
 }
 
 // seedMockGit pre-populates the in-memory git mock with the addons
-// catalog, managed-clusters.yaml, and per-target values files. Required
-// for the live UpgradeAddonGlobally subtest (which reads the catalog
-// from main) and for any future live enable/disable path.
+// catalog and per-target values files. Required for the live
+// UpgradeAddonGlobally subtest (which reads the catalog from main) and
+// for any future live enable/disable path.
+//
+// Deliberately does NOT seed managed-clusters.yaml — see the fixtures
+// const block above for why: that exact path doubles as the v3-format
+// marker the v4 migration gate checks for, and none of this test's
+// subtests actually need the file to exist.
 func seedMockGit(t *testing.T, mock *harness.MockGitProvider) {
 	t.Helper()
 	files := map[string][]byte{
 		pathCatalog:                          []byte(addonsCatalogYAML),
-		pathManagedClusters:                  []byte(managedClustersYAML),
 		pathClusterValues + "/target-1.yaml": []byte(target1ValuesYAML),
 		pathClusterValues + "/target-2.yaml": []byte(target2ValuesYAML),
 	}
