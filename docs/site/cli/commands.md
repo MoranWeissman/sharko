@@ -217,17 +217,32 @@ Kubernetes version: v1.29.3
 
 If the cluster is unreachable, the error message from the provider or the Kubernetes API is shown.
 
-### `sharko adopt-cluster`
+### `sharko adopt`
 
-Adopt an existing ArgoCD cluster into Sharko management. Creates the Git values file for a cluster that is already registered in ArgoCD but not yet tracked in the addons repo.
+Adopt one or more existing ArgoCD clusters into Sharko management. Creates the Git values file for clusters that are already registered in ArgoCD but not yet tracked in the addons repo.
 
 ```bash
-sharko adopt-cluster <name> [--addons <list>]
+sharko adopt <cluster1> [cluster2] ... [flags]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--addons <list>` | Comma-separated addons to enable on the adopted cluster |
+| `-y`, `--yes` | Skip the confirmation prompt |
+| `--dry-run` | Preview what would happen without making changes |
+| `--auto-merge` | Auto-merge the adoption PR (overrides the server default) |
+
+### `sharko unadopt-cluster`
+
+Reverse adoption of a cluster. Removes Sharko management (GitOps config, managed-by labels) but keeps the ArgoCD cluster secret intact.
+
+```bash
+sharko unadopt-cluster <name>
+```
+
+| Flag | Description |
+|------|-------------|
+| `-y`, `--yes` | Skip the confirmation prompt |
+| `--dry-run` | Preview what would happen without making changes |
 
 ### `sharko list-clusters`
 
@@ -264,7 +279,6 @@ sharko add-addon <name> [flags]
 | `--version <ver>` | Yes | Chart version |
 | `--namespace <ns>` | No | Target namespace (defaults to addon name) |
 | `--values <file>` | No | Base values YAML file |
-| `--depends-on <list>` | No | Comma-separated list of addon names that must be `Healthy` before this addon is deployed |
 
 Example:
 
@@ -274,16 +288,7 @@ sharko add-addon ingress-nginx \
   --repo https://kubernetes.github.io/ingress-nginx \
   --version 4.9.0 \
   --namespace ingress-nginx
-
-# With dependency ordering:
-sharko add-addon ingress-nginx \
-  --chart ingress-nginx \
-  --repo https://kubernetes.github.io/ingress-nginx \
-  --version 4.9.0 \
-  --depends-on cert-manager
 ```
-
-Sharko validates the dependency graph on every `add-addon` call. Cycles are rejected with a descriptive error before any PR is created.
 
 ### `sharko remove-addon`
 
@@ -294,6 +299,37 @@ sharko remove-addon <name> [--confirm]
 ```
 
 Without `--confirm`, runs a dry-run and shows affected clusters. With `--confirm`, creates the removal PR.
+
+### `sharko configure-addon`
+
+Update one or more configuration fields for an existing addon. Only the flags you pass are sent to the server.
+
+```bash
+sharko configure-addon <name> [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--version <ver>` | Chart version |
+| `--self-heal <true\|false>` | Self-heal setting |
+| `--sync-option <opt>` | ArgoCD sync option (repeatable) |
+| `--ignore-differences <json>` | ignoreDifferences entries as a JSON array |
+| `--extra-helm-value <k=v>` | Extra Helm value (repeatable) |
+
+Example:
+
+```bash
+sharko configure-addon kyverno --sync-option ServerSideApply=true
+sharko configure-addon prometheus --self-heal=false
+```
+
+### `sharko describe-addon`
+
+Show the full details of an addon, including its catalog defaults.
+
+```bash
+sharko describe-addon <name>
+```
 
 ### `sharko upgrade-addon`
 
@@ -334,6 +370,43 @@ List all addons in the catalog. Use `--show-config` to include the full catalog 
 sharko list-addons
 sharko list-addons --show-config
 ```
+
+---
+
+## Catalog Commands
+
+### `sharko add-to-catalog`
+
+Add an addon to your org's catalog (`catalog.yaml`) and open a pull request. This is the approval step — nothing runs until the addon is in that file.
+
+```bash
+sharko add-to-catalog <name> [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--chart <name>` | Chart name in the repo (required unless `--from-marketplace`) |
+| `--repo <url>` | Chart repository URL, `https://` or `oci://` (required unless `--from-marketplace`) |
+| `--version <ver>` | Chart version (always required) |
+| `--namespace <ns>` | Namespace to install into |
+| `--from-marketplace` | Copy the chart location, namespace, and needed-secrets list from the Marketplace entry of the same name |
+| `--enable-on <cluster>` | Also switch the addon on for this cluster, in the same pull request |
+
+Example:
+
+```bash
+sharko add-to-catalog cert-manager --from-marketplace --version 1.14.5
+```
+
+### `sharko validate-catalog`
+
+Validate a curated catalog file (`catalog/addons.yaml` format) against the same rules the running server enforces when it embeds the catalog at build time.
+
+```bash
+sharko validate-catalog <file>
+```
+
+Exits 0 on valid, 1 on validation errors (printed to stderr).
 
 ---
 
@@ -448,4 +521,30 @@ Revoke an API key by name. Takes effect immediately — no grace period, no undo
 
 ```bash
 sharko token revoke <name>
+```
+
+---
+
+## PR Commands
+
+Manage pull requests Sharko has opened and is tracking.
+
+```bash
+sharko pr list                 # list tracked pull requests
+sharko pr status <id>          # show details for a tracked PR
+sharko pr refresh <id>         # force-refresh a tracked PR's status
+sharko pr wait <id>            # wait for a PR to be merged or closed
+```
+
+---
+
+## User Commands
+
+Manage Sharko user accounts (admin only).
+
+```bash
+sharko user list                          # list all users
+sharko user create <username>             # create a new user
+sharko user delete <username>             # delete a user
+sharko user update <username>             # update a user's role or enabled status
 ```
