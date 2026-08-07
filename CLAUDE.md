@@ -5,7 +5,7 @@
 - **Never add Co-Authored-By trailers** to commits. All commits are authored solely by the repo owner.
 - **Never use --no-verify or skip hooks.**
 - **Never retag an existing version.** Every code change — no matter how small — gets a new semver version. Retagging (deleting a tag and recreating it on a different commit) is forbidden. Patch bump for fixes, minor for features, major for breaking changes.
-- Git user: `Moran Weissman <moran.weissman@gmail.com>`
+- Use your own git identity for commits. Never add a Co-Authored-By trailer.
 
 ## Code Rules
 
@@ -70,6 +70,20 @@ If you catch yourself rationalizing around this rule → STOP and ask the user. 
 - `bmad-code-review` — post-implementation review against plan
 - `bmad-testarch-automate` — test strategy + coverage expansion
 - `bmad-help` — unsure which skill applies
+
+### Where the BMAD skills come from, and what to do if they're missing
+
+The `bmad-*` skills listed above are committed in this repo at `.claude/skills/`. They come from
+the BMAD-METHOD project (MIT license, BMad Code, LLC) — see `THIRD-PARTY-NOTICES.md` at the repo
+root for the full license text and a link upstream. The skill files themselves are plain
+instructions; the engine that runs them (`_bmad/`) is a separate install, not shipped in this
+repo — see `CONTRIBUTING.md` for the one-line setup.
+
+If a `bmad-*` skill is not available in your session (engine not installed, or skills not synced),
+do not stall on it. Fall back to the matching `.claude/team/*.md` role file instead — read
+`.claude/team/tech-lead.md` for the orchestration playbook and dispatch the relevant role agent
+directly. The BMAD flow is the preferred path when available; the role files are the always-on
+fallback.
 
 ### BMAD + Sharko team agents
 
