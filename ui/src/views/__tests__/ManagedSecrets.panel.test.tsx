@@ -322,8 +322,11 @@ describe('the two cards', () => {
     const panel = await openRow('values-prod-eu-datadog')
     const liveCard = await within(panel).findByTestId('diff-live-card')
 
-    await waitFor(() => expect(liveCard).toHaveTextContent('datadog/datadog-secrets'))
-    expect(liveCard).toHaveTextContent('type Opaque')
+    // design-secret-sync-visual-pass item 22: the live card no longer
+    // repeats the {namespace}/{name} identity (the resource header above
+    // it already says that) — "type Opaque" is the first fact that's
+    // genuinely live-read-only, so it's what proves the card loaded.
+    await waitFor(() => expect(liveCard).toHaveTextContent('type Opaque'))
     // The allow-listed provenance annotation shows as written; the
     // self-copying one shows as the server's mask.
     const annotations = within(liveCard).getByTestId('resource-annotations')
@@ -412,7 +415,10 @@ describe('the open panel is independent of the list', () => {
     await waitFor(() => expect(mockGetManagedSecrets.mock.calls.length).toBeGreaterThan(before))
 
     expect(mockGetAddonValuesSecretResource).toHaveBeenCalledTimes(1)
-    expect(within(panel).getByTestId('diff-live-card')).toHaveTextContent('datadog/datadog-secrets')
+    // The live card's content survived untouched — proven by "type Opaque"
+    // (the {namespace}/{name} identity line was removed from the live card
+    // in the visual pass; the resource header still carries identity).
+    expect(within(panel).getByTestId('diff-live-card')).toHaveTextContent('type Opaque')
   })
 
   it('opening a DIFFERENT row does read that row', async () => {
@@ -466,7 +472,10 @@ describe('the page keeps itself fresh every 30 seconds while visible', () => {
     // for a manual Refresh, now proven for the automatic 30s one too.
     expect(screen.getByTestId('secret-detail-panel')).toBeInTheDocument()
     expect(mockGetAddonValuesSecretResource).toHaveBeenCalledTimes(1)
-    expect(within(panel).getByTestId('diff-live-card')).toHaveTextContent('datadog/datadog-secrets')
+    // The live card's content survived untouched — proven by "type Opaque"
+    // (the {namespace}/{name} identity line was removed from the live card
+    // in the visual pass; the resource header still carries identity).
+    expect(within(panel).getByTestId('diff-live-card')).toHaveTextContent('type Opaque')
   })
 
   it('does not re-read while the tab is hidden', async () => {

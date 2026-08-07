@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/tests/e2e/harness"
 	"gopkg.in/yaml.v3"
 )
@@ -260,6 +261,57 @@ func insecureTransport() *http.Transport {
 	return &http.Transport{
 		//nolint:gosec // intentional: kind-installed argocd uses self-signed certs
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// v4 bootstrap seeding
+// ---------------------------------------------------------------------------
+
+// seedV4Bootstrap commits the same v4 bootstrap seed InitRepo /
+// CollectBootstrapFiles produce in production (orchestrator.
+// BuildV4SeedFiles — empty data folders, the engine pin at
+// sharko-engine.yaml, and README.md) into mock, before any cluster
+// endpoint touches the repo.
+//
+// Why this matters here (v4 closing wave finding): every mutating
+// cluster/addon handler now refuses a write on a v3-format repo
+// (internal/orchestrator/v3_migration_gate.go) — a repo counts as
+// v3-format the moment it has real content at one of the v3 marker
+// paths (bootstrap/Chart.yaml or configuration/managed-clusters.yaml).
+// This test's own first write (RegisterManagedCluster, through the
+// v3-shaped RepoPathsConfig every in-process boot wires by default —
+// see sharko.go's startSharkoInProcess) lands exactly on that second
+// marker path, so every subtest downstream that mutates the repo again
+// inherits a 409 — the migration gate is a genuine one-way door for a
+// v3 repo already carrying real content, not something a fixture tweak
+// can route around.
+//
+// Seeding the v4 engine pin FIRST makes the repo v4-format from request
+// one: RegisterCluster (internal/orchestrator/cluster.go) already
+// branches on isV4Repo and writes the cluster registry to the v4 root
+// path (managed-clusters.yaml) instead of the v3 one (configuration/
+// managed-clusters.yaml), so the v3 marker path never gets written and
+// the migration gate never fires. Register / list / get / batch-register
+// all keep working through the SAME v3-shaped API routes this test
+// already calls — production dual-branches on repo format internally,
+// so the test needs no new endpoints for those.
+//
+// Three write endpoints do NOT yet have a v4 implementation —
+// AdoptClusters, UnadoptCluster (internal/orchestrator/{adopt,unadopt}.go)
+// and the addon-label PATCH behind PatchClusterAddons (cluster.go's
+// UpdateClusterAddons) all explicitly refuse with ErrV4RepoUnsupported
+// ("... coming with the takeover work") on a v4 repo. Those subtests
+// accept that refusal gracefully rather than asserting success — see
+// the comment at each one in cluster_test.go.
+func seedV4Bootstrap(t *testing.T, mock *harness.MockGitProvider, repoURL string) {
+	t.Helper()
+	files := orchestrator.BuildV4SeedFiles(
+		orchestrator.GitOpsConfig{RepoURL: repoURL, BaseBranch: "main"},
+		orchestrator.RepoPathsConfig{},
+	)
+	if err := mock.BatchCreateFiles(t.Context(), files, "main", "seed: v4 bootstrap"); err != nil {
+		t.Fatalf("seedV4Bootstrap: %v", err)
 	}
 }
 

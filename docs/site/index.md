@@ -6,7 +6,15 @@
 
 <p align="center"><em>Declarative addon management for Kubernetes clusters, built on ArgoCD.</em></p>
 
-Sharko runs in-cluster and manages the full lifecycle of addons (cert-manager, monitoring, logging, and more) across your entire fleet — from a single dashboard, CLI, or REST API. Every change goes through a Git PR, so fleet state is always auditable and version-controlled.
+Sharko manages the addons on your Kubernetes fleet — cert-manager, monitoring, logging, and anything else you run everywhere — from a single dashboard, CLI, or REST API. It rests on two simple ideas.
+
+**The engine is Sharko's. The repo is yours.** All the logic that turns "which addons go where" into real ArgoCD Applications lives in one place: [`sharko-engine`](https://github.com/MoranWeissman/sharko/tree/main/charts/sharko-engine), a versioned, signed Helm chart published right next to the Sharko server image. Your repo pins one version of that chart. When Sharko ships new deploy logic, you get a small pin-bump pull request to review and merge — never a live migration you have to plan around.
+
+**Your repo holds data, not templates.** Open it and you'll find small, readable files: `catalog.yaml` (which addons are approved), `cluster-addons/<cluster-name>.yaml` (which addons run where), and a `values/` folder for Helm values. No template logic to write or maintain. Your repo, Sharko's format — read it any time, write through Sharko.
+
+Two doors lead to the same pipeline: the UI, for a person clicking through a change, and the REST API, for a portal or a pipeline acting on someone's behalf. Either way, every write does the same three things — validate, preview, then open a Git pull request. **Sharko proposes, ArgoCD enforces:** Sharko never touches a cluster directly. It writes to Git, and ArgoCD, watching that repo, does the actual deploying.
+
+And if you ever want to stop using Sharko, you can. Remove it and every addon keeps running and syncing, because ArgoCD was always the one deploying them from Git — not Sharko. See [If You Remove Sharko](operator/removing-sharko.md) for exactly what stops and what doesn't.
 
 ![Sharko and ArgoCD run on the hub cluster, read/write the GitOps repo, and ArgoCD deploys addons to a mixed fleet of Sharko-managed, self-managed, and EKS-token spoke clusters.](assets/diagrams/01-hub-spoke.drawio.svg)
 
@@ -52,6 +60,7 @@ Sharko runs in-cluster and manages the full lifecycle of addons (cert-manager, m
 
 ## Key Features
 
+- **Versioned engine, data-only repo** — the deploy logic ships as a signed Helm chart your repo pins; your repo itself holds only small YAML files, never template logic
 - **Wizard-based setup** — guided first-run configures Git, ArgoCD, secrets provider, and initializes your repo
 - **Fleet dashboard** — cluster health cards, addon version matrix, drift detection
 - **Managed vs discovered clusters** — adopt existing ArgoCD clusters into Sharko management in one click
@@ -60,6 +69,7 @@ Sharko runs in-cluster and manages the full lifecycle of addons (cert-manager, m
 - **Secrets management** — deliver credentials to remote clusters (AWS SM or Kubernetes Secrets, no ESO)
 - **AI assistant** — context-aware troubleshooting with OpenAI, Claude, Gemini, or Ollama
 - **API keys** — long-lived tokens for non-interactive consumers
+- **No lock-in** — remove Sharko and every addon keeps running and syncing from Git
 
 ## Try the Demo
 
