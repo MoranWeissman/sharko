@@ -148,6 +148,17 @@ config:
   environments: ""
 
 # ---------------------------------------------------------------------------
+# Secrets — webhook HMAC verification
+# ---------------------------------------------------------------------------
+secrets:
+  # HMAC-SHA256 secret for validating POST /api/v1/webhooks/git (the
+  # X-Hub-Signature-256 header). Maps to the SHARKO_WEBHOOK_SECRET env var.
+  # Leave empty to skip signature verification (fine for internal
+  # environments without a public gateway; set it before exposing the
+  # webhook endpoint to the internet).
+  webhookSecret: ""
+
+# ---------------------------------------------------------------------------
 # Authentication
 # ---------------------------------------------------------------------------
 # Authentication is managed via K8s-native resources:

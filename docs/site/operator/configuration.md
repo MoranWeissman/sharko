@@ -15,10 +15,21 @@ Most Sharko configuration is managed via Helm values, documented on this page. A
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
 | `config.connectionSecretName` | string | `"sharko-connections"` | Name of the Kubernetes Secret where connections are stored (encrypted) |
-| `config.devMode` | bool | `false` | Enable env var fallback for credentials (`GITHUB_TOKEN`, `ARGOCD_TOKEN`, etc.). Use only for local dev — not in production |
 | `config.nodeAccess` | bool | `false` | Grant Sharko read access to Kubernetes Nodes (get/list). Opt-in — adds a ClusterRole rule |
 | `config.environments` | string | `""` | Comma-separated keywords extracted from cluster names to infer environment. Example: `"dev,qa,staging,prod"` — cluster `"my-app-prod-eks"` → env `"prod"` |
 | `config.repoURL` | string | `""` | Git repo URL for the addons repository. Falls back to the active connection's repo URL if empty |
+
+### Dev mode (credential env var fallback)
+
+There is no `config.devMode` chart value. The real switch is the `SHARKO_DEV_MODE` environment variable — set it to `"true"` via `extraEnv` to let Sharko fall back to `GITHUB_TOKEN`, `ARGOCD_TOKEN`, `AZURE_DEVOPS_PAT`, and `GITEA_TOKEN` env vars for credentials that are not configured in the Settings UI. Use only for local dev — not in production.
+
+```yaml
+extraEnv:
+  - name: SHARKO_DEV_MODE
+    value: "true"
+  - name: GITHUB_TOKEN
+    value: "ghp_xxxx"
+```
 
 ## Authentication {#auth}
 

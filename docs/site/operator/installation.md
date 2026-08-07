@@ -33,7 +33,6 @@ secrets:
 
 config:
   connectionSecretName: "sharko-connections"
-  devMode: false
 
 gitops:
   actions:
