@@ -262,9 +262,11 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Trash2,
 } from 'lucide-react'
 import {
   api,
+  deleteOrphanedSecret,
   fetchAuditLog,
   getAddonValuesSecretResource,
   getConnectionSecretResource,
@@ -282,6 +284,7 @@ import type {
   ConnectionSecretRow,
   ManagedSecretsEngineInfo,
   ManagedSecretsResponse,
+  OrphanedSecretRow,
   SecretResource,
 } from '@/services/models'
 import { InfoHint } from '@/components/InfoHint'
@@ -303,11 +306,26 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 // every keystroke.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// The five states, worst first (G3, gitops-proud P4-G — kept in lockstep
-// with StatusMark's statusSortRank) — the order the filter chips render in
-// and the order a group header lists its sums in. Declared here because
-// both the chips (far below) and groupSummary (just below) read it.
-const CHIP_ORDER: ResourceStatus[] = ['missing', 'out_of_sync', 'foreign', 'unknown', 'in_sync']
+// The six states, worst first (G3, gitops-proud P4-G; leftover-secrets
+// S1.2 inserts "orphaned" — kept in lockstep with StatusMark's
+// statusSortRank) — the order the filter chips render in and the order a
+// group header lists its sums in. Declared here because both the chips
+// (far below) and groupSummary (just below) read it.
+const CHIP_ORDER: ResourceStatus[] = ['missing', 'out_of_sync', 'orphaned', 'foreign', 'unknown', 'in_sync']
+
+/**
+ * The Delete confirm body (leftover-secrets S1.2, locked wording) — the
+ * exact sentence the confirm dialog shows before an operator deletes one
+ * orphaned leftover. Names the blast radius (namespace/name, cluster),
+ * says plainly this is Sharko's own past write with nothing in git asking
+ * for it anymore, and that it cannot be undone.
+ */
+function deleteConfirmDescription(row: UnifiedRow | null): string {
+  if (!row) return ''
+  const ns = row.secretNamespace ?? ''
+  const name = row.secretName ?? ''
+  return `This permanently deletes secret "${ns}/${name}" from cluster "${row.cluster}". Sharko wrote it once, but nothing in git asks for it anymore. This cannot be undone.`
+}
 
 /**
  * The one sentence Sharko says about a secret somebody else created — on the
@@ -399,7 +417,12 @@ interface UnifiedRow {
   driftSource?: 'git' | 'cluster'
 }
 
-function buildUnifiedRows(connectionRows: ConnectionSecretRow[], addonRows: AddonValuesSecretRow[], valuesSourceLabel: string): UnifiedRow[] {
+function buildUnifiedRows(
+  connectionRows: ConnectionSecretRow[],
+  addonRows: AddonValuesSecretRow[],
+  orphanedRows: OrphanedSecretRow[],
+  valuesSourceLabel: string,
+): UnifiedRow[] {
   const conn: UnifiedRow[] = connectionRows.map((r) => ({
     kind: 'connection',
     key: `connection-${r.cluster}`,
@@ -438,7 +461,29 @@ function buildUnifiedRows(connectionRows: ConnectionSecretRow[], addonRows: Addo
     sourceLabel: r.source || valuesSourceLabel,
     selfHeals: r.self_heals,
   }))
-  return [...conn, ...values]
+  // leftover-secrets S1.2 — orphaned rows fold in as kind 'values' on
+  // purpose: they have no live secret Sharko compares against a store (the
+  // whole point is the source is gone), but sharing 'values' means
+  // group-by-addon already handles an orphan the same way it handles any
+  // other addon-shaped row — including the "addon unknown" case, which
+  // falls into the same '—' bucket a values row without an addon would.
+  const orphaned: UnifiedRow[] = orphanedRows.map((r) => ({
+    kind: 'values',
+    key: `orphaned-${r.cluster}-${r.secret_namespace}-${r.secret_name}`,
+    cluster: r.cluster,
+    addon: r.addon,
+    secretNamespace: r.secret_namespace,
+    secretName: r.secret_name,
+    state: r.state,
+    lastChecked: r.last_checked,
+    // The row's own real source — never the addon-values fallback label,
+    // which describes a comparison this row doesn't make.
+    sourceLabel: r.source,
+    // Sharko never repairs an orphaned row on its own — the whole point of
+    // the state is that nothing asks for it anymore.
+    selfHeals: false,
+  }))
+  return [...conn, ...values, ...orphaned]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -559,7 +604,7 @@ export function buildRowGroups(rows: UnifiedRow[], groupBy: GroupBy): RowGroup[]
  *     must say that in words.
  */
 export function groupSummary(rows: UnifiedRow[]): string {
-  const counts: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, foreign: 0, unknown: 0 }
+  const counts: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, orphaned: 0, foreign: 0, unknown: 0 }
   for (const r of rows) counts[toResourceStatus(r.state)]++
   const parts = [`${rows.length} secret${rows.length === 1 ? '' : 's'}`]
   for (const status of CHIP_ORDER) {
@@ -629,6 +674,12 @@ function compareRows(a: UnifiedRow, b: UnifiedRow, key: SortKey): number {
 // row right now, and why not when it doesn't — shared by the row's ⋯ menu
 // and the detail panel's own Sync button so the two never disagree.
 function syncGateFor(row: UnifiedRow): { disabled: boolean; reason?: string } {
+  // leftover-secrets S1.2: an orphaned row has no source left to sync
+  // FROM — Delete is the only action it offers. actionsForRow and the
+  // panel both branch on row.state === 'orphaned' before ever reaching
+  // this gate, but it stays a safe "no" here too rather than falling
+  // through to a kind-based default that would say otherwise.
+  if (row.state === 'orphaned') return { disabled: true, reason: 'This secret is orphaned — Delete is the only action.' }
   // Checked first, and for both kinds of row: a secret Sharko did not create
   // is never Sharko's to write, whatever else is true about it (P1-A).
   if (row.state === 'foreign') return { disabled: true, reason: FOREIGN_SYNC_REASON }
@@ -661,7 +712,25 @@ function syncConfirmDescription(row: UnifiedRow | null): string {
   return `${opening} It pushes the current value from ${row.sourceLabel} onto the cluster. If the secret doesn't exist yet, this creates it.`
 }
 
-function actionsForRow(row: UnifiedRow, opts: { busy: boolean; onRefresh: () => void; onRequestSync: () => void }): RowAction[] {
+function actionsForRow(
+  row: UnifiedRow,
+  opts: { busy: boolean; onRefresh: () => void; onRequestSync: () => void; onRequestDelete: () => void },
+): RowAction[] {
+  // leftover-secrets S1.2: an orphaned row gets exactly one action —
+  // Delete. No Refresh (there is nothing left to check it against), no
+  // Sync (syncGateFor above already refuses it). Destructive, so it
+  // renders red and grouped below any safe action (RowActionsMenu's own
+  // convention — see its `destructive` handling).
+  if (row.state === 'orphaned') {
+    return [
+      {
+        label: 'Delete',
+        icon: <Trash2 className="h-3.5 w-3.5" />,
+        onSelect: opts.onRequestDelete,
+        destructive: true,
+      },
+    ]
+  }
   const gate = syncGateFor(row)
   return [
     {
@@ -783,6 +852,7 @@ function PanelActionButton({
   label,
   reason,
   testId,
+  destructive,
 }: {
   onClick: () => void
   disabled?: boolean
@@ -791,6 +861,8 @@ function PanelActionButton({
   label: string
   reason?: string
   testId?: string
+  /** leftover-secrets S1.2 — the panel's Delete button reads red, matching ConfirmationModal's own destructive styling, never the neutral Refresh/Sync look. */
+  destructive?: boolean
 }) {
   return (
     <span className="inline-flex items-center gap-1">
@@ -799,7 +871,11 @@ function PanelActionButton({
         onClick={onClick}
         disabled={disabled || loading}
         data-testid={testId}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-[#6aade0] bg-white px-3 py-1.5 text-sm font-medium text-[#0a3a5a] hover:bg-[#e0f0ff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+          destructive
+            ? 'border-red-300 bg-white text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-700 dark:text-red-400 dark:hover:bg-red-950'
+            : 'border-[#6aade0] bg-white text-[#0a3a5a] hover:bg-[#e0f0ff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+        }`}
       >
         {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
         {label}
@@ -965,7 +1041,10 @@ function KeyValueList({
 //      already answers "is it on the cluster" — sending a read that can
 //      only come back 404 is a doomed call, and it made the panel show a
 //      red error for a secret whose absence is the ordinary, expected
-//      thing.
+//      thing. leftover-secrets S1.2 extends this to an ORPHANED row for a
+//      different reason: the live-read endpoint is keyed by a registered
+//      addon definition, and an orphan by definition no longer has one —
+//      firing it would be the same doomed call for a different cause.
 //   3. A reader who is not allowed to read live secrets fires nothing.
 //      Before this, a viewer's panel fired the request anyway and rendered
 //      the 403 as an error, which is a permission dialog dressed up as a
@@ -995,10 +1074,14 @@ function useLiveSecret(row: UnifiedRow | null, allowed: boolean) {
   const kind = row?.kind
   const cluster = row?.cluster ?? ''
   const addon = row?.addon
-  // Rule 2 + rule 3, in one place: these are the only two reasons the read
-  // is skipped, and both are facts already in hand — no request needed to
-  // discover either.
-  const skip = !row || !allowed || row.state === 'missing'
+  // Rule 2 + rule 3, in one place: these are the only reasons the read is
+  // skipped, and all are facts already in hand — no request needed to
+  // discover any of them. leftover-secrets S1.2 extends rule 2 to
+  // 'orphaned': the endpoint a live read would hit is keyed by a
+  // registered addon definition, and an orphan by definition no longer has
+  // one — firing the read would be exactly the same doomed call a
+  // known-missing row's read would be.
+  const skip = !row || !allowed || row.state === 'missing' || row.state === 'orphaned'
 
   useEffect(() => {
     if (skip) {
@@ -1070,13 +1153,26 @@ function useLiveSecret(row: UnifiedRow | null, allowed: boolean) {
 // established; printing one would be inventing it. Do not add a tick.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type DiffVerdict = 'match' | 'differ' | 'never_created' | 'could_not_look' | 'foreign'
+type DiffVerdict = 'match' | 'differ' | 'never_created' | 'could_not_look' | 'foreign' | 'orphaned'
 
 /**
- * diffVerdictFor picks which of the five sentences the panel says.
+ * The locked panel sentence (leftover-secrets S1.2, maintainer wording,
+ * verbatim — do not paraphrase): what an orphaned row's verdict line says.
+ */
+const ORPHANED_PANEL_SENTENCE =
+  'Orphaned — its source in git is gone. Sharko wrote this secret once, but nothing asks for it anymore.'
+
+/**
+ * diffVerdictFor picks which of the six sentences the panel says.
  *
  * The order of the checks is the whole logic:
- *   - foreign first: whoever else owns this secret, that fact outranks
+ *   - orphaned first: leftover-secrets S1.2's own state, and it doesn't
+ *     overlap with any of the checks below (an orphaned row never carries
+ *     foreign/missing/in_sync/out_of_sync at the same time), but it's
+ *     checked ahead of everything else because there is nothing left to
+ *     compare — no live read was fired for it either (useLiveSecret's skip
+ *     rule), so none of the live-read branches below apply.
+ *   - foreign next: whoever else owns this secret, that fact outranks
  *     everything else Sharko might say about it.
  *   - a row already known missing next: no read was fired, so there is
  *     nothing on the right to describe.
@@ -1089,6 +1185,7 @@ type DiffVerdict = 'match' | 'differ' | 'never_created' | 'could_not_look' | 'fo
  *     "could not look", because it means the last check never finished.
  */
 function diffVerdictFor(row: UnifiedRow, live: LiveSecretState): DiffVerdict {
+  if (row.state === 'orphaned') return 'orphaned'
   if (row.state === 'foreign') return 'foreign'
   if (row.state === 'missing') return 'never_created'
   if (live.status === 'error') return live.notFound ? 'never_created' : 'could_not_look'
@@ -1098,7 +1195,7 @@ function diffVerdictFor(row: UnifiedRow, live: LiveSecretState): DiffVerdict {
 }
 
 /**
- * The five sentences. "never created" is the one that changes wording by
+ * The six sentences. "never created" is the one that changes wording by
  * kind, and honestly so: on a values row Sync really is what creates the
  * secret, but on a connection row Sync is disabled for exactly this state
  * (there is nothing to sync onto yet) — promising it there would send a
@@ -1119,6 +1216,8 @@ function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
       return 'Someone else created this secret — Sharko will not touch it.'
     case 'could_not_look':
       return 'Sharko could not look at the cluster just now.'
+    case 'orphaned':
+      return ORPHANED_PANEL_SENTENCE
   }
 }
 
@@ -1137,6 +1236,21 @@ function DiffCard({ title, children, testId }: { title: string; children: ReactN
  * wait for. That is the point of splitting the two cards apart.
  */
 function IntentCard({ row }: { row: UnifiedRow }) {
+  // leftover-secrets S1.2 — an orphaned row's "should be" is nothing: its
+  // source definition is the thing that's gone. Checked before the
+  // kind-based branches below, since an orphaned row is kind 'values' but
+  // must never say "the values come from X" — that source no longer
+  // exists to compare against.
+  if (row.state === 'orphaned') {
+    return (
+      <DiffCard title="What it should be" testId="diff-intent-card">
+        <p className="text-sm text-[#0a2a4a] dark:text-gray-200">Nothing — its source in git is gone.</p>
+        <p className="mt-2 text-xs text-[#3a6a8a] dark:text-gray-500">
+          Sharko wrote this secret once, but nothing in git asks for it anymore.
+        </p>
+      </DiffCard>
+    )
+  }
   if (row.kind === 'connection') {
     return (
       <DiffCard title="What it should be" testId="diff-intent-card">
@@ -1182,6 +1296,16 @@ function LiveCard({ row, live, onRetry }: { row: UnifiedRow; live: LiveSecretSta
         {live.status === 'skipped' && row.state === 'missing' && (
           <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="resource-not-there">
             Nothing is there — this secret has not been created yet.
+          </p>
+        )}
+        {/* leftover-secrets S1.2 — the calm sentence where the live card
+            would be for an orphaned row. No read was fired (useLiveSecret's
+            skip rule): the live-read endpoint is keyed by a registered
+            addon definition an orphan no longer has, so this is a stated
+            fact, not a failed lookup. */}
+        {live.status === 'skipped' && row.state === 'orphaned' && (
+          <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="resource-orphaned-live">
+            Sharko still sees it on the cluster.
           </p>
         )}
         {live.status === 'loading' && <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Reading it from the cluster…</p>}
@@ -1380,12 +1504,15 @@ function SecretDetailPanel({
   open,
   onOpenChange,
   onRequestSync,
+  onRequestDelete,
   onChanged,
 }: {
   row: UnifiedRow | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onRequestSync: (row: UnifiedRow) => void
+  /** leftover-secrets S1.2 — opens the page-level Delete confirm for an orphaned row. */
+  onRequestDelete: (row: UnifiedRow) => void
   onChanged: () => void
 }) {
   const navigate = useNavigate()
@@ -1455,7 +1582,18 @@ function SecretDetailPanel({
   const identity = row.secretNamespace && row.secretName ? `${row.secretNamespace}/${row.secretName}` : '—'
 
   const purposeSentence: ReactNode =
-    row.kind === 'connection' ? (
+    row.state === 'orphaned' ? (
+      <>
+        Orphaned secret on cluster <span className="font-medium">{row.cluster}</span>
+        {row.addon ? (
+          <>
+            {' '}
+            — was for addon <span className="font-medium">{row.addon}</span>
+          </>
+        ) : null}
+        .
+      </>
+    ) : row.kind === 'connection' ? (
       <>
         Connects <span className="font-medium">{row.cluster}</span> to ArgoCD.
       </>
@@ -1471,8 +1609,16 @@ function SecretDetailPanel({
   // hardcoded "the vault". H3: "checked against" everywhere this fact
   // shows up (the SOURCE column, this sentence, the revision line below) —
   // one phrase, not several near-synonyms for the same fact.
+  //
+  // leftover-secrets S1.2: an orphaned row gets its own sentence instead —
+  // "checked against X" would contradict the verdict line right above it,
+  // which already says the source in git is gone.
   const sourceSentence =
-    row.kind === 'connection' ? 'Checked against git.' : `Checked against ${row.sourceLabel} — git only holds a pointer to it.`
+    row.state === 'orphaned'
+      ? 'No source in git anymore — Sharko is not comparing this against anything.'
+      : row.kind === 'connection'
+        ? 'Checked against git.'
+        : `Checked against ${row.sourceLabel} — git only holds a pointer to it.`
 
   // The connection-secret label drift — WHICH labels differ, under the
   // verdict sentence that already said THAT they differ. Kept as its own
@@ -1552,20 +1698,36 @@ function SecretDetailPanel({
         )}
       </div>
 
-      {/* ── 2. State, with the two actions right beside it ─────────────── */}
+      {/* ── 2. State, with the actions right beside it ──────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg ring-1 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-800">
         <StatusMark status={row.state} />
         <RoleGuard roles={['admin', 'operator']}>
           <div className="flex items-center gap-2">
-            <PanelActionButton onClick={handleRefresh} loading={refreshing} icon={RefreshCw} label="Refresh" testId="detail-refresh" />
-            <PanelActionButton
-              onClick={() => onRequestSync(row)}
-              disabled={gate.disabled}
-              icon={RotateCcw}
-              label="Sync"
-              reason={gate.reason}
-              testId="detail-sync"
-            />
+            {/* leftover-secrets S1.2: an orphaned row gets exactly one
+                action — Delete, red, opening the page-level confirm. No
+                Refresh (there's nothing left to check it against), no
+                Sync (there's no source to sync from). */}
+            {row.state === 'orphaned' ? (
+              <PanelActionButton
+                onClick={() => onRequestDelete(row)}
+                icon={Trash2}
+                label="Delete"
+                testId="detail-delete"
+                destructive
+              />
+            ) : (
+              <>
+                <PanelActionButton onClick={handleRefresh} loading={refreshing} icon={RefreshCw} label="Refresh" testId="detail-refresh" />
+                <PanelActionButton
+                  onClick={() => onRequestSync(row)}
+                  disabled={gate.disabled}
+                  icon={RotateCcw}
+                  label="Sync"
+                  reason={gate.reason}
+                  testId="detail-sync"
+                />
+              </>
+            )}
           </div>
         </RoleGuard>
       </div>
@@ -1618,7 +1780,11 @@ function SecretDetailPanel({
       <p className="text-sm text-[#0a2a4a] dark:text-white">{purposeSentence}</p>
       <p
         className="text-xs text-[#3a6a8a] dark:text-gray-500"
-        title={row.kind === 'values' ? `Git only holds a pointer to it — the value itself lives in ${row.sourceLabel}.` : undefined}
+        title={
+          row.kind === 'values' && row.state !== 'orphaned'
+            ? `Git only holds a pointer to it — the value itself lives in ${row.sourceLabel}.`
+            : undefined
+        }
       >
         {sourceSentence}
       </p>
@@ -1681,13 +1847,23 @@ function SecretDetailPanel({
         </p>
       )}
 
+      {/* leftover-secrets S1.2: an orphaned row's addon is best-effort (read
+          off its provenance annotation) and can be absent — falls back to
+          the cluster page rather than building a broken /addons/undefined
+          link. */}
       <button
         type="button"
-        onClick={() => navigate(row.kind === 'connection' ? `/clusters/${encodeURIComponent(row.cluster)}` : `/addons/${encodeURIComponent(row.addon!)}`)}
+        onClick={() =>
+          navigate(
+            row.kind === 'connection' || !row.addon
+              ? `/clusters/${encodeURIComponent(row.cluster)}`
+              : `/addons/${encodeURIComponent(row.addon)}`,
+          )
+        }
         data-testid="detail-view-page-link"
         className="text-sm text-teal-700 hover:underline dark:text-teal-400"
       >
-        {row.kind === 'connection' ? 'View cluster page' : 'View addon page'}
+        {row.kind === 'connection' || !row.addon ? 'View cluster page' : 'View addon page'}
       </button>
     </ResourceDetailSheet>
   )
@@ -1706,6 +1882,7 @@ function SecretTableRow({
   onSelect,
   onRefresh,
   onRequestSync,
+  onRequestDelete,
 }: {
   row: UnifiedRow
   /** true when the row sits under a group parent — a small left inset, nothing else changes. */
@@ -1714,6 +1891,8 @@ function SecretTableRow({
   onSelect: () => void
   onRefresh: () => void
   onRequestSync: () => void
+  /** leftover-secrets S1.2 — opens the page-level Delete confirm for an orphaned row. */
+  onRequestDelete: () => void
 }) {
   // P3-F2: the row opens the panel, so it has to BE a control — reachable
   // by Tab, opened by Enter or Space, and announced as a button. Before
@@ -1807,7 +1986,7 @@ function SecretTableRow({
         "nothing here", not an invented word like "n/a" or a made-up noun.
       */}
       <TableCell className="py-1 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="cell-addon">
-        {row.kind === 'values' ? row.addon : '—'}
+        {row.kind === 'values' ? (row.addon ?? '—') : '—'}
       </TableCell>
       {/* Cluster (H2): both kinds print it now. It used to be left blank on
           connection rows because the identity cell already implied the
@@ -1830,7 +2009,7 @@ function SecretTableRow({
         <RoleGuard roles={['admin', 'operator']}>
           <RowActionsMenu
             label={`Actions for ${row.cluster}${row.addon ? ' / ' + row.addon : ''}`}
-            actions={actionsForRow(row, { busy, onRefresh, onRequestSync })}
+            actions={actionsForRow(row, { busy, onRefresh, onRequestSync, onRequestDelete })}
           />
         </RoleGuard>
       </TableCell>
@@ -1889,6 +2068,11 @@ export function ManagedSecrets() {
   const [busyRows, setBusyRows] = useState<Record<string, boolean>>({})
   const [syncTarget, setSyncTarget] = useState<UnifiedRow | null>(null)
   const [syncing, setSyncing] = useState(false)
+  // leftover-secrets S1.2 — the orphaned-row Delete confirm target, same
+  // pattern as syncTarget above: set it to open the ConfirmationModal,
+  // null it to close.
+  const [deleteTarget, setDeleteTarget] = useState<UnifiedRow | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   // B3 — the active chip filter, the search text, and the selected row all
   // live in the URL (?state=, ?q=, ?row=) so the page can be reloaded,
@@ -2061,10 +2245,11 @@ export function ManagedSecrets() {
 
   const connectionRows = data?.cluster_connection_secrets ?? []
   const addonRows = data?.addon_values_secrets ?? []
+  const orphanedRows = data?.orphaned_secrets ?? []
   const valuesSourceLabel = data?.addon_values_secret_source || 'secrets store'
   const unifiedRows = useMemo(
-    () => buildUnifiedRows(connectionRows, addonRows, valuesSourceLabel),
-    [connectionRows, addonRows, valuesSourceLabel],
+    () => buildUnifiedRows(connectionRows, addonRows, orphanedRows, valuesSourceLabel),
+    [connectionRows, addonRows, orphanedRows, valuesSourceLabel],
   )
 
   const selectedRow = useMemo(() => unifiedRows.find((r) => r.key === selectedRowKey) ?? null, [unifiedRows, selectedRowKey])
@@ -2085,7 +2270,7 @@ export function ManagedSecrets() {
   }, [unifiedRows, search])
 
   const counts = useMemo(() => {
-    const c: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, foreign: 0, unknown: 0 }
+    const c: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, orphaned: 0, foreign: 0, unknown: 0 }
     for (const r of searchFiltered) c[toResourceStatus(r.state)]++
     return c
   }, [searchFiltered])
@@ -2240,6 +2425,28 @@ export function ManagedSecrets() {
       showToast(err instanceof Error ? err.message : 'Sync failed', 'error')
     } finally {
       setSyncing(false)
+    }
+  }
+
+  // leftover-secrets S1.2 — the orphaned-row Delete, confirmed. Deletion is
+  // never automatic: this only ever runs after the ConfirmationModal's
+  // explicit confirm, naming the exact secret being deleted. Closes the
+  // panel first if it's showing the row just deleted (a panel open on a
+  // secret that no longer exists is a dead end), then refetches the list —
+  // the same `load()` every other write on this page already calls.
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      const result = await deleteOrphanedSecret(deleteTarget.cluster, deleteTarget.secretNamespace ?? '', deleteTarget.secretName ?? '')
+      showToast(result.message || 'Secret deleted.', 'success')
+      if (selectedRowKey === deleteTarget.key) selectRow(null)
+      setDeleteTarget(null)
+      load()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to delete secret', 'error')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -2446,6 +2653,7 @@ export function ManagedSecrets() {
                             onSelect={() => selectRow(row.key)}
                             onRefresh={() => handleRefreshRow(row)}
                             onRequestSync={() => setSyncTarget(row)}
+                            onRequestDelete={() => setDeleteTarget(row)}
                           />
                         ))}
                     </Fragment>
@@ -2458,6 +2666,7 @@ export function ManagedSecrets() {
                       onSelect={() => selectRow(row.key)}
                       onRefresh={() => handleRefreshRow(row)}
                       onRequestSync={() => setSyncTarget(row)}
+                      onRequestDelete={() => setDeleteTarget(row)}
                     />
                   ))}
             </TableBody>
@@ -2478,6 +2687,7 @@ export function ManagedSecrets() {
           if (!open) selectRow(null)
         }}
         onRequestSync={(row) => setSyncTarget(row)}
+        onRequestDelete={(row) => setDeleteTarget(row)}
         onChanged={load}
       />
 
@@ -2495,6 +2705,25 @@ export function ManagedSecrets() {
         description={syncConfirmDescription(syncTarget)}
         confirmText="Sync"
         loading={syncing}
+      />
+
+      {/* leftover-secrets S1.2 — the orphaned-row Delete confirm. Same
+          pattern as Sync above: a page-level target state, a destructive
+          ConfirmationModal, and cancel does nothing at all — no request is
+          made unless this confirms. */}
+      <ConfirmationModal
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+        title={
+          deleteTarget
+            ? `Delete secret "${deleteTarget.secretNamespace ?? ''}/${deleteTarget.secretName ?? ''}"?`
+            : 'Delete?'
+        }
+        description={deleteConfirmDescription(deleteTarget)}
+        confirmText="Delete"
+        destructive
+        loading={deleting}
       />
     </div>
   )
