@@ -189,7 +189,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          docker exec "$GITEA_CONTAINER" gitea admin user create \
+          # -u 1000:1000 is load-bearing: `docker exec` defaults to root,
+          # and Gitea's CLI hard-refuses to run as root ("Gitea is not
+          # supposed to be run as root. Sorry."). The gitea/gitea image's
+          # own entrypoint drops privileges to uid/gid 1000 (the `git`
+          # user) before starting the server, so the CLI has to run as
+          # that same user to see the same config/data. Matches Gitea's
+          # documented "create an admin account" recipe (`docker exec -u
+          # git <container> gitea admin user create ...`).
+          docker exec -u 1000:1000 "$GITEA_CONTAINER" gitea admin user create \
             --admin \
             --username "$GITEA_ADMIN_USER" \
             --password "$GITEA_ADMIN_PASS" \
