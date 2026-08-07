@@ -60,7 +60,10 @@ vi.mock('@/components/Layout', () => ({
 // test can confirm the redirect preserved it, without rendering the real
 // (heavy) ManagedSecrets view.
 vi.mock('@/views/ManagedSecrets', () => ({
-  default: () => {
+  // Named (not anonymous) so eslint-plugin-react-hooks recognizes this as
+  // a component and applies rules-of-hooks to the useSearchParams() call
+  // below correctly.
+  default: function ManagedSecretsMock() {
     const [params] = useSearchParams()
     return <div data-testid="secret-sync-page">SECRET-SYNC:{params.toString()}</div>
   },

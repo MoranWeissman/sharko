@@ -282,7 +282,6 @@ export function Dashboard() {
     } else {
       void fetchData();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchData]);
 
   // Auto-refresh every 30s

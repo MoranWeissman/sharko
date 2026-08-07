@@ -268,7 +268,11 @@ export function MarketplaceBrowseTab() {
     [sources],
   )
 
-  const allEntries = entries ?? []
+  // useMemo, not a plain `?? []` — that literal creates a new array
+  // reference every render whenever entries is null, which would make
+  // availableLicenses below recompute on every render even though nothing
+  // actually changed.
+  const allEntries = useMemo(() => entries ?? [], [entries])
   const availableLicenses = useMemo(() => {
     const set = new Set<string>()
     for (const e of allEntries) set.add(e.license)

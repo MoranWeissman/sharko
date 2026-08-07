@@ -423,7 +423,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessageSeed 
         textareaRef.current?.focus()
       }
     },
-    [loading, sessionId],
+    [loading, sessionId, pageContext],
   )
 
   const markStreamingDone = useCallback((msgId: string) => {

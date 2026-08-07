@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { AdoptClustersDialog } from '../AdoptClustersDialog'
 import type { Cluster } from '@/services/models'
 import * as api from '@/services/api'
+import type { TestClusterUnavailable } from '@/services/api'
 
 // Mock the API module
 vi.mock('@/services/api', () => ({
@@ -43,7 +44,7 @@ describe('AdoptClustersDialog', () => {
         unavailable: true,
         error: 'Test feature not configured',
         error_code: 'test_unavailable',
-      } as any)
+      } as unknown as TestClusterUnavailable)
 
       render(
         <AdoptClustersDialog
@@ -138,7 +139,7 @@ describe('AdoptClustersDialog', () => {
         unavailable: true,
         error: 'Test feature not configured',
         error_code: 'test_unavailable',
-      } as any)
+      } as unknown as TestClusterUnavailable)
 
       vi.mocked(api.adoptClusters).mockResolvedValue({
         results: [{
@@ -287,7 +288,7 @@ describe('AdoptClustersDialog', () => {
         unavailable: true,
         error: 'Test feature not configured',
         error_code: 'test_unavailable',
-      } as any)
+      } as unknown as TestClusterUnavailable)
 
       render(
         <AdoptClustersDialog

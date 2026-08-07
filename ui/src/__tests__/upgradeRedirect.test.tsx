@@ -58,7 +58,10 @@ vi.mock('@/components/Layout', () => ({
 // can confirm the redirect preserved it, without rendering the real
 // (heavy) AddonCatalog view.
 vi.mock('@/views/AddonCatalog', () => ({
-  default: () => {
+  // Named (not anonymous) so eslint-plugin-react-hooks recognizes this as
+  // a component and applies rules-of-hooks to the useSearchParams() call
+  // below correctly.
+  default: function AddonCatalogMock() {
     const [params] = useSearchParams()
     return <div data-testid="addons-page">ADDONS:{params.toString()}</div>
   },

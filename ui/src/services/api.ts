@@ -1143,11 +1143,26 @@ export async function configureAddon(
 }
 
 /**
+ * Response shape for token creation is not fully pinned down server-side —
+ * callers (see ApiKeys.tsx) probe `token` / `api_token` / `value` in that
+ * order, so all three stay optional here rather than picking one and
+ * casting the rest away with `any`.
+ */
+export interface TokenCreateResult {
+  token?: string
+  api_token?: string
+  value?: string
+  name?: string
+  role?: string
+  [key: string]: unknown
+}
+
+/**
  * Create an API token. Leave expires_in_days out for the default of 90 days;
  * anything else must be between 1 and 365.
  */
 export async function createToken(data: { name: string; role: string; expires_in_days?: number }) {
-  return postJSON<any>('/tokens', data)
+  return postJSON<TokenCreateResult>('/tokens', data)
 }
 
 export async function listTokens() {
@@ -1164,15 +1179,18 @@ export async function renewToken(name: string, expiresInDays?: number) {
 }
 
 export async function revokeToken(name: string) {
-  return deleteJSON<any>(`/tokens/${encodeURIComponent(name)}`)
+  return deleteJSON<unknown>(`/tokens/${encodeURIComponent(name)}`)
 }
 
+// Not called from the UI today — the response shape is intentionally left
+// as `unknown` (not `any`) so any future caller has to narrow it before
+// use instead of silently getting untyped access.
 export async function batchRegisterClusters(clusters: Array<{ name: string; addons?: Record<string, boolean>; region?: string }>) {
-  return postJSON<any>('/clusters/batch', { clusters })
+  return postJSON<unknown>('/clusters/batch', { clusters })
 }
 
 export async function discoverClusters() {
-  return fetchJSON<any>('/clusters/available')
+  return fetchJSON<unknown>('/clusters/available')
 }
 
 export interface OperationStep {
@@ -1190,7 +1208,20 @@ export interface OperationSession {
   error?: string
 }
 
-export async function initRepo(data?: { bootstrap_argocd?: boolean; auto_merge?: boolean }): Promise<{ operation_id: string } | any> {
+/**
+ * Either the async-init shape (`operation_id`, poll it via getOperation)
+ * or the legacy synchronous shape (`pr_url` / `pull_request_url`) — see
+ * the "Legacy synchronous response fallback" branch in FirstRunWizard.tsx
+ * and ConnectionSection.tsx, which is why both stay optional here.
+ */
+export interface InitRepoResult {
+  operation_id?: string
+  pr_url?: string
+  pull_request_url?: string
+  [key: string]: unknown
+}
+
+export async function initRepo(data?: { bootstrap_argocd?: boolean; auto_merge?: boolean }): Promise<InitRepoResult> {
   const res = await fetch(`${BASE_URL}/init`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },

@@ -65,7 +65,6 @@ export function HomeClusterCard({ homeCluster, sharkoVersion, argocdVersion, arg
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notAllReady])
 
   return (

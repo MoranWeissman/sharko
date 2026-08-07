@@ -964,7 +964,6 @@ export function AddonCatalog() {
     } else {
       void fetchCatalog()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchCatalog])
 
   // Auto-refresh every 60s (less critical page). Also re-polls the pending
