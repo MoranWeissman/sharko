@@ -1,12 +1,28 @@
 # Catalog Scan — trusted-source scanning bot.
 #
-# Manual-only (run via workflow_dispatch when you want a scan). Runs the
-# catalog-scan plugins, edits `catalog/addons.yaml`, and opens ONE draft PR
-# per scan run with the labels `catalog-scan` + `needs-review`. Draft-to-main
-# + label gating + NEVER auto-merge (human review is required for every
-# proposed catalog change).
+# PARKED: manual-only (run via workflow_dispatch when you want a scan) —
+# there is no schedule. See the banner in
+# docs/site/developer-guide/catalog-scan-runbook.md.
 #
-# ## Required one-time setup before the first run
+# ## Dry run by default
+#
+# `dry_run` defaults to true. A default manual run only runs the `scan`
+# job — it scans the plugins and PRINTS what it would propose, and
+# cannot write anything: the workflow-level permission is
+# `contents: read`, full stop.
+#
+# Opening a PR is a second job (`open-pr`). It only runs when you
+# explicitly pass `dry_run=false` when dispatching, and it is the ONLY
+# job that carries write permissions. If `dry_run` stays at its default,
+# `open-pr` never runs, so its permissions are never exercised.
+#
+# When dry_run=false and there ARE proposals, `open-pr` edits
+# `catalog/addons.yaml`, pushes a `catalog-scan/<date>` branch, and opens
+# ONE draft PR per run with the labels `catalog-scan` + `needs-review`.
+# Draft-to-main + label gating + NEVER auto-merge (human review is
+# required for every proposed catalog change).
+#
+# ## Required one-time setup before the first non-dry run
 #
 # The repo MUST have these labels (otherwise `gh pr create --label`
 # in the pr-open script fails):
@@ -15,6 +31,9 @@
 #   gh label create needs-review --color FBCA04 --description "Human review required"
 #
 # ## Permissions
+#
+# Workflow-level default is `contents: read` — a default (dry-run) run
+# cannot write anything. Only `open-pr` (dry_run=false only) elevates:
 #
 # `contents: write` — push the scanner branch + edit catalog/addons.yaml.
 # `pull-requests: write` — open the draft PR.
@@ -25,20 +44,81 @@
 name: Catalog Scan
 
 on:
-  workflow_dispatch:       # manual trigger only — run when you want a scan
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — scan and print proposals only, do not open a PR'
+        type: boolean
+        default: true
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: catalog-scan
   cancel-in-progress: false   # let in-flight runs finish
 
 jobs:
-  scan-and-open-pr:
-    name: scan + open PR
+  scan:
+    name: scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      has_changeset: ${{ steps.check.outputs.has_changeset }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: 'scripts/package-lock.json'
+
+      - name: Install scanner deps
+        run: npm ci --prefix scripts
+
+      - name: Run catalog scan (dry-run — prints proposals, writes nothing)
+        if: ${{ github.event.inputs.dry_run != 'false' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/catalog-scan.mjs --catalog catalog/addons.yaml --dry-run
+
+      - name: Run catalog scan (writes changeset for the open-pr job)
+        if: ${{ github.event.inputs.dry_run == 'false' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/catalog-scan.mjs --catalog catalog/addons.yaml
+
+      - name: Check for a non-empty changeset
+        id: check
+        if: ${{ github.event.inputs.dry_run == 'false' }}
+        run: |
+          if [ -s _dist/catalog-scan/changeset.json ]; then
+            echo "has_changeset=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changeset=false" >> "$GITHUB_OUTPUT"
+            echo "no proposals — skipping PR open"
+          fi
+
+      - name: Upload changeset
+        if: ${{ github.event.inputs.dry_run == 'false' && steps.check.outputs.has_changeset == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalog-scan-changeset
+          path: _dist/catalog-scan/changeset.json
+          retention-days: 1
+
+  open-pr:
+    name: open PR
+    needs: scan
+    if: ${{ github.event.inputs.dry_run == 'false' && needs.scan.outputs.has_changeset == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -64,17 +144,13 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
-      - name: Run catalog scan
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/catalog-scan.mjs --catalog catalog/addons.yaml
+      - name: Download changeset
+        uses: actions/download-artifact@v4
+        with:
+          name: catalog-scan-changeset
+          path: _dist/catalog-scan
 
-      - name: Open PR (if changeset non-empty)
+      - name: Open PR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ -s _dist/catalog-scan/changeset.json ]; then
-            node scripts/catalog-scan/pr-open.mjs
-          else
-            echo "no proposals — skipping PR open"
-          fi
+        run: node scripts/catalog-scan/pr-open.mjs
