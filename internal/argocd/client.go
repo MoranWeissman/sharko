@@ -106,7 +106,7 @@ func NewClient(serverURL, token string, insecure bool) *Client {
 	transport := &http.Transport{}
 	if insecure {
 		transport.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // explicit operator opt-in (argocd.insecure) — see ErrTLSCertificateNotTrusted
+			InsecureSkipVerify: true, // #nosec G402 -- verification is ON by default; this branch only runs on the operator's explicit connection-level opt-in (argocd.insecure), never hardcoded — see ErrTLSCertificateNotTrusted
 		}
 	}
 
@@ -259,7 +259,7 @@ func probeArgoCD(baseURL string, insecure bool) bool {
 	transport := &http.Transport{}
 	if insecure {
 		transport.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // explicit operator opt-in (argocd.insecure), mirrored from the real client
+			InsecureSkipVerify: true, // #nosec G402 -- credential-free discovery probe; verification is ON by default and this branch only runs on the same explicit argocd.insecure opt-in the real client uses
 		}
 	}
 	client := &http.Client{

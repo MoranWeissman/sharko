@@ -31,6 +31,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -155,6 +156,7 @@ func fetchProjectReadme(ctx context.Context, candidateURLs []string) projectRead
 	// unauthenticated, well within the cache's 1h fresh window.
 	readmeURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/readme",
 		url.PathEscape(owner), url.PathEscape(repo))
+	// #nosec G704 -- scheme and host are the fixed literal https://api.github.com; owner/repo are charset-validated by parseGitHubOwnerRepo (no ".", "..", or separators) and path-escaped, and the request carries no credential
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, readmeURL, nil)
 	if err != nil {
 		out := projectReadmeResponse{
@@ -166,6 +168,7 @@ func fetchProjectReadme(ctx context.Context, candidateURLs []string) projectRead
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
 	client := &http.Client{Timeout: 8 * time.Second}
+	// #nosec G704 -- same request as above: fixed https://api.github.com host, validated + escaped path segments, no credential attached
 	resp, err := client.Do(req)
 	if err != nil {
 		return projectReadmeResponse{
@@ -298,5 +301,19 @@ func parseGitHubOwnerRepo(raw string) (string, string) {
 	if owner == "" || repo == "" {
 		return "", ""
 	}
+	// Both segments go into a GitHub API URL path. Real GitHub owner and repo
+	// names only ever use this charset, and refusing "." / ".." rules out a
+	// dot-segment ever landing in that path (url.PathEscape escapes slashes
+	// but leaves dots alone). Anything outside this is not a GitHub repo
+	// reference and gets the same "not a GitHub URL" answer as any other
+	// non-match.
+	if !validGitHubNameRe.MatchString(owner) || !validGitHubNameRe.MatchString(repo) ||
+		owner == "." || owner == ".." || repo == "." || repo == ".." {
+		return "", ""
+	}
 	return owner, repo
 }
+
+// validGitHubNameRe matches the characters GitHub allows in owner and repo
+// names. Deliberately strict: these values are placed into a URL path.
+var validGitHubNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)

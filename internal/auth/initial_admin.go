@@ -302,7 +302,7 @@ func (s *Store) ensureInitialAdminLocal() (bool, error) {
 	}
 
 	// Reuse an existing file so restarts keep the same password.
-	if data, readErr := os.ReadFile(path); readErr == nil {
+	if data, readErr := os.ReadFile(path); readErr == nil { // #nosec G304 -- path comes from the operator's own SHARKO_INITIAL_ADMIN_FILE env var or defaults under ~/.sharko; it is never derived from request data
 		var f initialAdminFile
 		if json.Unmarshal(data, &f) == nil && f.Username != "" && f.Password != "" {
 			if err := s.seedLocalAdmin(f.Username, f.Password); err != nil {
@@ -327,7 +327,7 @@ func (s *Store) ensureInitialAdminLocal() (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return false, fmt.Errorf("creating directory for initial admin file: %w", err)
 	}
-	payload, err := json.MarshalIndent(initialAdminFile{
+	payload, err := json.MarshalIndent(initialAdminFile{ // #nosec G117 -- writing the generated admin password to the 0600 credential file IS this feature (the v4 "no more running open" contract); it goes nowhere else — not into logs, not into an API response
 		Username: initialAdminUsername,
 		Password: password,
 	}, "", "  ")

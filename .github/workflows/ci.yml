@@ -429,16 +429,16 @@ jobs:
   # catch: TLS verification disabled, command/path/SQL injection via taint
   # analysis, weak randomness, overly-permissive file modes, etc.
   #
-  # Scope for this PR: internal/ is deliberately excluded for now.
-  # Stories 152.A-152.G of this same sprint are rewriting exactly the
-  # internal/ files gosec flags (TLS refusal in remoteclient, the backend
-  # boundary in providers, the refresh-path re-point) IN PARALLEL with
-  # this one — landing this job pointed at internal/ today would be red
-  # for timing reasons, not real gosec-config reasons, and fixing findings
-  # here would step on those lanes' own diffs. TODO(fast-follow, before
-  # v4.0.0 tags): once 152.A-152.G land, drop `-exclude-dir=internal` and
-  # let gosec cover internal/ too — the PM should treat that as part of
-  # this story's completion, not optional polish.
+  # Scope: everything, including internal/. When this job first landed,
+  # internal/ was temporarily excluded because stories 152.A-152.G were
+  # rewriting exactly the internal/ files gosec would flag, in parallel
+  # with this one. Those lanes have all merged, so the exclusion is gone —
+  # internal/ is where every bit of Sharko's secret handling lives, and it
+  # gets the same blocking scan as the rest of the tree. Every finding the
+  # first internal/ run produced was either fixed or annotated in place
+  # with a line-specific "#nosec <rule> -- <reason>" comment; a bare
+  # #nosec with no rule id and no reason should be treated as a review
+  # failure, not a suppression.
   #
   # -severity=medium -confidence=medium is the "useful, not noise" bar:
   # it drops gosec's LOW-severity G104 (ignored io.Close() etc. — ~47 hits
@@ -487,7 +487,7 @@ jobs:
       - name: Run gosec
         run: |
           gosec -severity=medium -confidence=medium \
-            -exclude-dir=ui -exclude-dir=vendor -exclude-dir=internal \
+            -exclude-dir=ui -exclude-dir=vendor \
             -exclude-rules="cmd/sharko/.*:G304,G402;cmd/playground/.*:G204,G702,G402;cmd/perf-baseline-compare/.*:G304,G703;cmd/catalog-sign/.*:G204" \
             ./...
 

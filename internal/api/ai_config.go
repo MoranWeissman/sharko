@@ -198,7 +198,7 @@ func (s *Server) handleSaveAIConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Persist to K8s Secret if store is available
 	if s.aiConfigStore != nil {
-		cfgJSON, _ := json.Marshal(newCfg)
+		cfgJSON, _ := json.Marshal(newCfg) // #nosec G117 -- this JSON goes only into AIConfigStore.SaveJSON, which AES-encrypts it into the sharko-ai-config K8s Secret; persisting the API key is the store's purpose and it never reaches a log or response
 		if err := s.aiConfigStore.SaveJSON(cfgJSON); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to persist AI config: "+err.Error())
 			return
