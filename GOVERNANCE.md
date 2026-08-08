@@ -10,10 +10,11 @@ Sharko is led by a single maintainer, Moran Weissman, who acts as
 Benevolent Dictator For Now (BDFL). The BDFL has final say on
 technical direction, scope, release timing, and maintainer additions.
 
-Sharko reached production GA with `v2.0.0` (2026-06-03) and is
-currently on the `v3.x` release line (latest tag: `v3.0.0`), with `v4`
-in development. This model is intentional and appropriate for the
-project's current stage:
+Sharko reached production GA with `v2.0.0` (2026-06-03). The `v3.0.0`
+tag has since been retired as unsafe — there is no release to install
+right now (see [SECURITY.md](SECURITY.md)) — and `v4` is in development
+on `main`. This model is intentional and appropriate for the project's
+current stage:
 
 - The contributor community is still small, with a single maintainer
   doing the day-to-day work. A heavyweight governance structure would
@@ -115,8 +116,9 @@ Release cadence and version numbering follow the rules in
 - `v2.0.0` (2026-06-03) was Sharko's first production-ready release.
   SemVer has applied strictly since then: patch for fixes, minor for
   features, major for breaking changes.
-- The current release line is `v3.x` (latest tag: `v3.0.0`); `v4` is
-  in active development.
+- `v3.0.0` has been retired as unsafe, so there is no supported
+  release right now (see [SECURITY.md](SECURITY.md)); `v4` is in
+  active development on `main`.
 
 The BDFL (or, post-transition, the steering committee) decides when a
 release is ready.

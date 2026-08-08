@@ -452,8 +452,9 @@ Releases are cut by maintainers. The process is documented in
   breaking changes. **Never retag** an existing version
   (see [CLAUDE.md](CLAUDE.md) "Git Rules").
 - **Release line** — Sharko reached production GA with `v2.0.0`
-  (2026-06-03); the current release line is `v3.x` (latest tag:
-  `v3.0.0`), with `v4` in active development (see
+  (2026-06-03). `v3.0.0` has since been retired as unsafe, so there is
+  no supported release right now (see [SECURITY.md](SECURITY.md)); `v4`
+  is in active development on `main` (see
   [`.claude/team/product-manager.md`](.claude/team/product-manager.md)).
 - **Release cadence** — fixes are bundled on a working branch and
   cut as a release at a real milestone, not per-fix.

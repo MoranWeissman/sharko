@@ -17,7 +17,7 @@
 
 ---
 
-> **`v3.0.0` is the latest tagged release.** Sharko reached production GA with `v2.0.0` (2026-06-03); `v3.0.0` is the current release line. The `v4` work described below is built on `main` and has not been tagged yet. Sharko follows [semantic versioning](https://semver.org/) and an [API stability contract](docs/site/developer-guide/api-stability.md): breaking changes only land in MAJOR version bumps.
+> **There is no release to install right now.** `v3.0.0`, the only public release, is retired — it is unsafe and unsupported, so **do not install it**. There is no patch for the `v3` line, and every earlier tag has the same flaw. The `v4` work described below is built on `main` and has not been tagged yet — wait for it. See [SECURITY.md](SECURITY.md#why-v300-is-retired) for what went wrong. Sharko follows [semantic versioning](https://semver.org/) and an [API stability contract](docs/site/developer-guide/api-stability.md): breaking changes only land in MAJOR version bumps.
 
 Full documentation: **https://sharko.readthedocs.io/**
 
@@ -79,6 +79,8 @@ make demo
 Open [http://localhost:8080](http://localhost:8080) and log in with `admin` / `admin` (admin role) or `qa` / `sharko` (viewer role).
 
 ## Quick Start (Production)
+
+> **Don't run this yet.** The published chart still installs `v3.0.0`, which is retired and unsafe. Wait for `v4` — see [SECURITY.md](SECURITY.md#why-v300-is-retired).
 
 ### 1. Install Sharko
 
