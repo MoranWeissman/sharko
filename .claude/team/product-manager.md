@@ -12,7 +12,7 @@ first production release; `v3.0.0` is the current release line; `v4` is
 in active development.
 
 ### What's Built (v4 current state)
-- **Server**: ~85+ API routes (read + write + audit/SSE + metrics + tokens + PR tracker), Go 1.25.8
+- **Server**: ~85+ API routes (read + write + audit/SSE + metrics + tokens + PR tracker), Go 1.25.12
 - **Orchestrator**: Register / Adopt / Unadopt / Remove / EnableAddon / DisableAddon / Upgrade
   (single, batch, engine-pin) / Takeover / catalog Edit+Delete / v3→v4 Migrate — v3 and v4 repo
   shapes both supported, each write validates the request, builds a preview, then commits through

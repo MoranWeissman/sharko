@@ -9,7 +9,8 @@ You write code for the Sharko project following a plan or task description.
 
 ## Rules
 - Go module: `github.com/MoranWeissman/sharko`
-- Go version: 1.25.8
+- Go version: 1.25.12 (bumped from 1.25.8 in story 152.H — 1.25.9-1.25.11 fixed 11 HIGH-severity
+  stdlib CVEs the container-image-scan job caught in the shipped image; check `go.mod` for exact)
 - Never add Co-Authored-By trailers to commits
 - Never use `--no-verify` or `-c commit.gpgsign=false`
 - Use your own git identity for commits; NEVER add a Co-Authored-By trailer

@@ -696,7 +696,7 @@ func writeBaselinesYAML(path string, bf *baselinesFile) error {
 	}
 
 	combined := []byte(header + buf.String())
-	return os.WriteFile(path, combined, 0o644)
+	return os.WriteFile(path, combined, 0o600)
 }
 
 // yamlWriter is a tiny io.Writer adapter so the YAML encoder can write
@@ -777,7 +777,7 @@ func writeBaselinesMarkdown(path string, oldBaselines, fresh *baselinesFile) err
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(rewritten), 0o644)
+	return os.WriteFile(path, []byte(rewritten), 0o600)
 }
 
 // markdownPathRE matches a `###` heading that contains a backtick-
@@ -1089,5 +1089,5 @@ func writeDeltaSummary(path string, oldBaselines, fresh *baselinesFile) error {
 		}
 	}
 
-	return os.WriteFile(path, []byte(b.String()), 0o644)
+	return os.WriteFile(path, []byte(b.String()), 0o600)
 }

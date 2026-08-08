@@ -202,7 +202,8 @@ make test-e2e-fast
 make test-e2e
 
 # Forbidden-content sweep (always — see CLAUDE.md Content Policy). The pattern list lives
-# only in .github/workflows/ci.yml's security-scan job (FORBIDDEN_PATTERNS array); extract
+# only in .github/workflows/ci.yml's forbidden-content-check job (renamed from security-scan
+# in story 152.H; FORBIDDEN_PATTERNS array); extract
 # at runtime — never duplicate the literal strings in this doc.
 grep -rn -f <(sed -n '/FORBIDDEN_PATTERNS=(/,/)/p' .github/workflows/ci.yml \
     | grep -oE '"[^"]+"' | tr -d '"') \

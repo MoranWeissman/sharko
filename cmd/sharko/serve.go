@@ -649,7 +649,12 @@ var serveCmd = &cobra.Command{
 			router := api.NewRouter(srv, staticFS)
 			addr := fmt.Sprintf(":%d", port)
 			slog.Info("listening", "addr", addr)
-			if err := http.ListenAndServe(addr, router); err != nil {
+			// ReadHeaderTimeout guards against Slowloris-style attacks (a client
+			// that opens a connection and trickles headers forever, tying up a
+			// handler goroutine indefinitely). http.ListenAndServe has no such
+			// timeout; an explicit http.Server does.
+			httpServer := &http.Server{Addr: addr, Handler: router, ReadHeaderTimeout: 10 * time.Second}
+			if err := httpServer.ListenAndServe(); err != nil {
 				return fmt.Errorf("server error: %w", err)
 			}
 			return nil
@@ -1477,7 +1482,12 @@ var serveCmd = &cobra.Command{
 
 		addr := fmt.Sprintf(":%d", port)
 		slog.Info("listening", "addr", addr)
-		if err := http.ListenAndServe(addr, router); err != nil {
+		// ReadHeaderTimeout guards against Slowloris-style attacks (a client
+		// that opens a connection and trickles headers forever, tying up a
+		// handler goroutine indefinitely). http.ListenAndServe has no such
+		// timeout; an explicit http.Server does.
+		httpServer := &http.Server{Addr: addr, Handler: router, ReadHeaderTimeout: 10 * time.Second}
+		if err := httpServer.ListenAndServe(); err != nil {
 			return fmt.Errorf("server error: %w", err)
 		}
 		return nil
