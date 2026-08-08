@@ -103,11 +103,11 @@ func (p *AWSSecretsManagerProvider) GetSecretValue(ctx context.Context, path str
 	}
 	if output.SecretString != nil {
 		value := []byte(*output.SecretString)
-		slog.Debug("[provider] GetSecretValue success", "path", path, "size", len(value))
+		slog.Debug("[provider] GetSecretValue success", "path", path)
 		return value, nil
 	}
 	if output.SecretBinary != nil {
-		slog.Debug("[provider] GetSecretValue success", "path", path, "size", len(output.SecretBinary))
+		slog.Debug("[provider] GetSecretValue success", "path", path)
 		return output.SecretBinary, nil
 	}
 	return nil, fmt.Errorf("secret %q has no value", path)
@@ -175,13 +175,18 @@ func (p *AWSSecretsManagerProvider) fetchSecret(secretName, clusterRoleARN strin
 	// Payload sniff: structured EKS-JSON → STS token path; anything else →
 	// raw kubeconfig YAML. This dispatch is what makes creds_source=eks-token
 	// flow through the aws-sm arm with no separate wiring (V2-cleanup-53.1).
+	//
+	// No "size" field on either log line below (task #152 story D): raw here
+	// is a whole kubeconfig — cluster credentials — and these lines run at
+	// Info, not Debug, so they are on by default in production. secretName
+	// and format are Git/config metadata and stay.
 	if structured, ok := sniffStructuredEKSSecret(raw); ok {
-		slog.Info("[provider] secret fetched", "secretName", secretName, "format", "structured", "size", len(raw))
+		slog.Info("[provider] secret fetched", "secretName", secretName, "format", "structured")
 		return p.buildFromStructured(structured, clusterRoleARN)
 	}
 
 	// Fallback: treat the secret value as raw kubeconfig YAML.
-	slog.Info("[provider] secret fetched", "secretName", secretName, "format", "raw", "size", len(raw))
+	slog.Info("[provider] secret fetched", "secretName", secretName, "format", "raw")
 	return p.buildFromRawKubeconfig(raw, secretName)
 }
 
@@ -354,6 +359,20 @@ func (p *AWSSecretsManagerProvider) buildFromStructured(s structuredEKSSecret, c
 		return nil, fmt.Errorf("generating EKS token for cluster %q: %w", name, err)
 	}
 
+	// tokenPrefix (task #152 story D, reviewed): the first 20 characters of
+	// an EKS bearer token are provably non-secret, not just "probably
+	// short enough to be safe". The token is v1Prefix ("k8s-aws-v1.", 11
+	// chars) + base64url(presigned STS URL). Every presigned URL this
+	// codebase ever produces starts with the literal "https://" (HTTPS is
+	// not optional here), and base64 encodes input in fixed 3-byte groups —
+	// so the first 9 base64 characters are determined ENTIRELY by those
+	// first 7 bytes of the literal scheme, before the host, region,
+	// account, or signature ever enter the encoding. 11 + 9 = 20. Verified
+	// empirically: token[:20] is the same constant string
+	// "k8s-aws-v1.aHR0cHM6L" for every region, credential, and signature —
+	// nothing variable, let alone secret, is in it. If this ever changes
+	// (a different URL scheme, a different prefix length), this comment's
+	// claim stops holding and the field should be re-judged, not assumed.
 	tokenPreview := token
 	if len(tokenPreview) > 20 {
 		tokenPreview = tokenPreview[:20] + "..."
