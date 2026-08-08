@@ -125,6 +125,40 @@ describe('TakeoverDialog', () => {
     expect(screen.getByTestId('takeover-todo-name-collision')).toHaveTextContent('run this check again');
   });
 
+  // Task #150: a rival Secret manager is a BLOCKED finding from the server.
+  // The dialog must treat it like every block — no confirm button in the
+  // DOM, no acknowledge checkbox to wave it through — and show the server's
+  // stop-the-old-manager path.
+  it('a rival connection owner blocks: no confirm, no acknowledge checkbox, the way through is shown', async () => {
+    const rivalBlockedReport: TakeoverReport = {
+      ...okReport,
+      ready: false,
+      summary: 'prod-eu is not ready to take over yet: 1 thing to fix first.',
+      findings: okReport.findings.map((f) =>
+        f.id === 'secret-owner'
+          ? {
+              ...f,
+              status: 'blocked' as const,
+              detail: 'The connection is marked as owned by "terraform".',
+              what_it_means:
+                'Something called "terraform" wrote this connection and can write it again.',
+              what_to_do:
+                'Stop or retire whatever "terraform" is, remove its ownership marker, then run this check again.',
+            }
+          : f,
+      ),
+    };
+    mockPreflight.mockResolvedValue(rivalBlockedReport);
+    render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId('takeover-finding-secret-owner')).toBeInTheDocument());
+    expect(screen.getByTestId('takeover-finding-secret-owner')).toHaveAttribute('data-status', 'blocked');
+    expect(screen.queryByTestId('takeover-confirm')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('takeover-acknowledge')).not.toBeInTheDocument();
+    expect(screen.getByTestId('takeover-todo-secret-owner')).toHaveTextContent('run this check again');
+    expect(screen.getAllByText(/terraform/).length).toBeGreaterThan(0);
+  });
+
   it('re-runs the checks in place, so a fix shows up as green', async () => {
     mockPreflight.mockResolvedValueOnce(blockedReport).mockResolvedValueOnce(okReport);
     render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);

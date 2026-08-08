@@ -186,11 +186,20 @@ sharko add-clusters cluster-a,cluster-b,cluster-c \
 
 ### `sharko remove-cluster`
 
-Deregister a cluster. Creates a PR to remove the cluster's directory.
+Deregister a cluster through a pull request. Requires `-y/--yes` — the server
+refuses a removal without an explicit confirmation. See what the removal will
+do first with `sharko unregister-consequences <name>`.
 
 ```bash
-sharko remove-cluster <name>
+sharko unregister-consequences <name>   # read this first
+sharko remove-cluster <name> -y
+sharko remove-cluster <name> -y --cleanup git   # keep the ArgoCD connection
 ```
+
+`--cleanup` takes `all` (default — repo files, remote addon secrets, and the
+ArgoCD connection only if Sharko owns it; a connection owned by another tool
+or by you is always left alone), `git` (repo files only), or `none` (only the
+fleet-record entry).
 
 ### `sharko update-cluster`
 
