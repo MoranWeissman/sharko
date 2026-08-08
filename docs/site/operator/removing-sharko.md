@@ -11,14 +11,18 @@ answer to "what happens when I turn it off?" Here is Sharko's.
 ## Nothing stops when Sharko stops
 
 Everything ArgoCD deploys is rendered from **your** Git repository, not
-from Sharko. The root Application and AppProject, the ApplicationSets,
-your addons catalog, and your per-cluster values files all live in the
-repo Sharko initialized — the root app
-(`templates/bootstrap/root-app.yaml` in the Sharko source) sources
-`$values/configuration/bootstrap-config.yaml`,
-`addons-catalog.yaml`, and `managed-clusters.yaml` straight from that
-repo. Which addons run on which cluster is decided by labels on
-ArgoCD's cluster secrets.
+from Sharko's own storage. One ArgoCD Application — the engine pin,
+`sharko-engine.yaml` at the root of your repo — points at Sharko's engine
+chart, published once and versioned by that single file; the chart
+itself renders the AppProject and one ApplicationSet per addon in your
+catalog. Those ApplicationSets read straight from your repo:
+`catalog.yaml` (the addons your org approved), `managed-clusters.yaml`
+(which clusters, and how to reach them), `cluster-addons/<cluster>.yaml`
+(which of those addons run on that cluster, and at what version), and
+the `values/` tree (Helm values, fleet-wide and per-cluster). Which
+addons run where is decided by two things kept in step with each other:
+the `cluster-addons/<cluster>.yaml` file, and the matching label the
+reconciler keeps on ArgoCD's own cluster secret.
 
 Sharko has no database of its own. Delete the Sharko deployment and:
 
@@ -27,6 +31,10 @@ Sharko has no database of its own. Delete the Sharko deployment and:
   before.
 - Nothing is uninstalled, degraded, or orphaned at the moment Sharko
   goes away.
+
+> **Re-verified 2026-08-08** on `main@45503903`, including a git change
+> applied while Sharko was down — the claim above isn't just a design
+> intent, it's been tested against a real repo.
 
 ## What degrades over time
 
@@ -39,14 +47,16 @@ not immediately:
    place, but the next rotation or change in your secret store is no
    longer picked up and delivered. If you use External Secrets
    Operator instead of Sharko's delivery, this doesn't apply to you.
-2. **The `managed-clusters.yaml` → cluster-secret label sync, and
-   cluster-credential rotation.** The
-   [cluster reconciler](cluster-reconciler.md) keeps the labels on
-   ArgoCD's cluster secrets in step with `managed-clusters.yaml`, and
-   refreshes rotated cluster credentials. Current labels stay as they
-   are — deployments are unaffected — but editing the YAML no longer
+2. **Two label syncs, and cluster-credential rotation.** The
+   [cluster reconciler](cluster-reconciler.md) keeps two things in step
+   with git on a timer: which addons are switched on for a cluster (a
+   label read from `cluster-addons/<cluster>.yaml`) and the cluster's own
+   connection record (read from `managed-clusters.yaml`) — and it
+   refreshes rotated cluster credentials. Whatever labels and connection
+   details are live at the moment Sharko stops stay exactly as they are
+   — deployments are unaffected — but editing either file no longer
    changes anything, and rotated cluster credentials are no longer
-   refreshed.
+   picked up.
 
 You also lose the management surface itself: the UI, the REST API, the
 audit log, the upgrade advisor, and PR authoring. Your clusters don't
@@ -55,11 +65,11 @@ notice; the humans who used those do.
 ## The exit is standard ArgoCD, not a migration
 
 To keep operating without Sharko, you go back to what you did before
-it: hand-edit the labels on ArgoCD's cluster secrets to control which
-addons run where, and manage the catalog and values files in the repo
-directly. There is no export step, no data to convert, no proprietary
-state to unwind — your repo remains a fully self-describing ArgoCD
-setup, because that's what it was all along.
+it: hand-edit the addon-enablement labels on ArgoCD's cluster secrets to
+control which addons run where, and manage the catalog and values files
+in the repo directly. There is no export step, no data to convert, no
+proprietary state to unwind — your repo remains a fully self-describing
+ArgoCD setup, because that's what it was all along.
 
 ## Don't want Sharko owning connections in the first place?
 

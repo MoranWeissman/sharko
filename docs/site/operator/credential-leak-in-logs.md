@@ -238,22 +238,18 @@ exposed credential second, purge logs third.
 1. **Rotate the leaked credential immediately.** Whatever credential
    was exposed, treat as compromised. Depending on what leaked:
 
-   - **Admin password** — rotate via the bootstrap procedure. Generate
-     a new admin Secret, restart Sharko:
+   - **Admin password** — rotate it directly:
      ```sh
-     # Get current admin secret:
-     kubectl -n <sharko-ns> get secret <sharko-release> \
-       -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
-     # Generate a new password and patch the secret:
-     NEW_PW=$(openssl rand -base64 32)
-     kubectl -n <sharko-ns> patch secret <sharko-release> \
-       --type='json' \
-       -p="[{\"op\":\"replace\",\"path\":\"/data/admin.initialPassword\",\"value\":\"$(echo -n "$NEW_PW" | base64)\"}]"
-     # Restart so the bootstrap path re-runs:
-     kubectl -n <sharko-ns> rollout restart deployment/sharko
+     kubectl exec -n <sharko-ns> deployment/sharko -- sharko reset-admin
      ```
-     Then change the admin user's password via the UI (the rotated
-     "initial" secret is the bootstrap fallback only).
+     This mints a fresh random password, prints it to stdout, and
+     rotates the `sharko-initial-admin-secret` Secret to carry the new
+     plaintext (retrieve it any time afterward with
+     `kubectl get secret sharko-initial-admin-secret -n <sharko-ns>
+     -o jsonpath='{.data.password}' | base64 -d`). No manual secret
+     patch or restart needed — see
+     [Initial Credentials](installation.md#initial-credentials) for the
+     full retrieval and rotation model.
 
    - **ArgoCD account token** — rotate via `argocd account
      generate-token --account sharko`; update the Sharko secret.
