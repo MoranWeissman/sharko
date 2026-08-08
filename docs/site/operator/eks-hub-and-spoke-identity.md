@@ -188,10 +188,16 @@ serviceAccount:
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "ReadClusterAndAddonSecrets",
+      "Sid": "ReadClusterCredentialSecrets",
       "Effect": "Allow",
       "Action": "secretsmanager:GetSecretValue",
       "Resource": "arn:aws:secretsmanager:us-east-1:123456789012:secret:clusters/*"
+    },
+    {
+      "Sid": "ReadAddonSecretValues",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "arn:aws:secretsmanager:us-east-1:123456789012:secret:addon-secrets/*"
     },
     {
       "Sid": "AssumeSpokeRolesForTestAndSecretPush",
@@ -206,13 +212,24 @@ serviceAccount:
 }
 ```
 
-Scope the `secretsmanager:GetSecretValue` resource to the prefix your
-secrets provider is configured with (default `clusters/` — see
-[Installation](../getting-started/installation.md#aws-secrets-manager-optional)),
-not to `*`. Scope the `sts:AssumeRole` resource to the same explicit
-spoke-role list as ArgoCD's role in (a) — Sharko never needs to assume a
-role ArgoCD itself couldn't also assume, since it's reaching the same
-clusters for a narrower purpose.
+Scope each `secretsmanager:GetSecretValue` resource to the prefix its own
+provider is configured with — `connection.provider.prefix` (default
+`clusters/`) for cluster credentials, `connection.addonSecretProvider.prefix`
+for addon secret values (see
+[Installation](../getting-started/installation.md#aws-secrets-manager-optional)) —
+not to `*`, and not to one shared prefix for both. Splitting the two
+statements onto two disjoint prefixes means a caller (or a bug) reading
+under the wrong provider's assumption is refused by AWS itself, not just
+by Sharko's own code. It is **not** full identity separation — both reads
+still run as this one `sharko-hub-role` principal, since a plain
+`GetSecretValue` call doesn't assume a per-provider role today (only the
+EKS-token-mint path for cluster credentials supports a per-cluster
+`roleArn`). See
+[Security → A worked example](security.md#a-worked-example-locking-down-a-production-install)
+for the fuller picture and that limit spelled out. Scope the
+`sts:AssumeRole` resource to the same explicit spoke-role list as ArgoCD's
+role in (a) — Sharko never needs to assume a role ArgoCD itself couldn't
+also assume, since it's reaching the same clusters for a narrower purpose.
 
 If Sharko has **no** identity at all (no IRSA annotation, no Pod
 Identity association, nothing in the default credential chain), it

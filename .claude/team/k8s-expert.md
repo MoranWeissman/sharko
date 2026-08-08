@@ -202,7 +202,13 @@ Reference docs:
 - Connections: configured via Settings UI → stored in encrypted K8s Secret (`sharko-connections`)
 - Auth: admin user with random password on first install
   - Get password: `kubectl get secret sharko-initial-admin-secret -n sharko -o jsonpath='{.data.password}' | base64 -d`
-- RBAC: ClusterRole for reading ArgoCD resources (configurable namespace via `rbac.argocdNamespace`)
+- RBAC: ClusterRole for reading ArgoCD CRDs only (configurable namespace via `rbac.argocdNamespace`
+  for the paired namespaced `-argocd-secrets` Role). **No cluster-wide Secrets grant** — as of
+  Story 152.F (v4, 2026-08-08) the old cluster-wide `secrets: get,list` ClusterRole rule was
+  removed. Secret reads are namespace-scoped: `-argocd-secrets` Role in `rbac.argocdNamespace`
+  (ArgoCD cluster Secrets), and a `-secrets-provider` Role per namespace in
+  `rbac.k8sSecretsProviderNamespaces` (release namespace always included) for the k8s-secrets
+  cluster-credential/addon-secret backends. See `docs/site/operator/security.md#rbac`.
 - Optional Ollama sidecar (`ai.ollama.deploy: true`)
 - Dev mode: `config.devMode: true` enables env var fallback for credentials
 

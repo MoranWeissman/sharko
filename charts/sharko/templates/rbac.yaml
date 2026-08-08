@@ -21,11 +21,21 @@ rules:
   - apiGroups: ["argoproj.io"]
     resources: ["applications", "appprojects", "applicationsets"]
     verbs: ["get", "list", "watch"]
-  # ArgoCD clusters (stored as secrets in argocd namespace)
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list"]
-    # Cluster-wide read via ClusterRoleBinding; write access in argocd namespace via argocd-secrets Role
+  # Story 152.F (least privilege): this ClusterRole used to also carry a
+  # cluster-wide `secrets: get,list` rule "for reading ArgoCD cluster
+  # Secrets". That rule was wider than the code needs — `list` on Secrets
+  # hands over their contents, and every Secret read Sharko's own
+  # ServiceAccount does on the host cluster is namespace-scoped:
+  #   - ArgoCD cluster Secrets live in rbac.argocdNamespace (default
+  #     "argocd") and are already covered, with MORE verbs than this
+  #     ClusterRole granted, by the "-argocd-secrets" Role below.
+  #   - The k8s-secrets cluster-credential/addon-secret provider backends
+  #     read Secrets from a configured namespace (default the release
+  #     namespace) — covered by the "-secrets-provider" Role/RoleBinding
+  #     pair below, one per namespace in rbac.k8sSecretsProviderNamespaces.
+  # Nothing left needs a cluster-wide Secret read, so the rule is gone. If
+  # a future feature genuinely needs one, add it back here with a comment
+  # naming the code path and why a namespaced Role can't cover it.
   {{- if .Values.config.nodeAccess }}
   # Node read access (default-on; set config.nodeAccess=false to disable).
   # Used by the Dashboard node-count widget (/api/v1/cluster/nodes).
@@ -51,6 +61,13 @@ subjects:
     namespace: {{ .Release.Namespace }}
 ---
 # Role: write access to secrets in the ArgoCD namespace (cluster secret management)
+#
+# This Role also covers everything the old cluster-wide `secrets: get,list`
+# ClusterRole rule used to grant for THIS namespace (Story 152.F) — every
+# ArgoCD-cluster-Secret read in the codebase (internal/argosecrets,
+# internal/clusterreconciler, internal/providers/argocd_provider.go) already
+# targets rbac.argocdNamespace, which is exactly this Role's namespace, and
+# get/list/watch here is a strict superset of what the removed rule gave.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -172,4 +189,55 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "sharko.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+---
+# Role + RoleBinding per namespace: read access for the k8s-secrets
+# cluster-credential provider (connection.provider) and the k8s-secrets
+# addon-secret provider (connection.addonSecretProvider) — see
+# internal/providers/k8s_secrets.go. Both providers default to a namespace
+# named literally "sharko" when left unconfigured (that default is NOT tied
+# to .Release.Namespace); if you use either provider unconfigured and your
+# release namespace isn't literally "sharko", add "sharko" (or whatever the
+# configured namespace actually is) to rbac.k8sSecretsProviderNamespaces —
+# a namespace this chart doesn't already own can't be assumed to exist, so
+# it is never added automatically.
+#
+# This is read-only (get/list, matching GetCredentials, ListClusters,
+# searchSimilarK8s and GetSecretValue — none of them write) and replaces the
+# cluster-wide `secrets: get,list` rule removed from the ClusterRole above
+# (Story 152.F). It is the reach that used to be implicit and unbounded;
+# now it is exactly the namespace(s) an operator actually configured.
+{{- $secretsProviderNamespaces := list .Release.Namespace }}
+{{- range .Values.rbac.k8sSecretsProviderNamespaces }}
+{{- $secretsProviderNamespaces = append $secretsProviderNamespaces . }}
+{{- end }}
+{{- range $ns := ($secretsProviderNamespaces | uniq) }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "sharko.fullname" $ }}-secrets-provider
+  namespace: {{ $ns }}
+  labels:
+    {{- include "sharko.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "sharko.fullname" $ }}-secrets-provider
+  namespace: {{ $ns }}
+  labels:
+    {{- include "sharko.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "sharko.fullname" $ }}-secrets-provider
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "sharko.serviceAccountName" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
 {{- end }}
