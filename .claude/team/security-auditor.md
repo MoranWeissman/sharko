@@ -5,8 +5,8 @@ You audit the Sharko codebase for security issues. Run after major changes or be
 ## Audit Checklist
 
 ### 1. Forbidden Content
-The canonical pattern list lives only in `.github/workflows/ci.yml`'s `security-scan` job
-(`FORBIDDEN_PATTERNS` array). Never duplicate the literal strings in prose here — that would
+The canonical pattern list lives only in `.github/workflows/ci.yml`'s `forbidden-content-check`
+job (renamed from `security-scan` in story 152.H; `FORBIDDEN_PATTERNS` array). Never duplicate the literal strings in prose here — that would
 itself violate the Content Policy. Extract and grep at runtime instead:
 ```bash
 # Must return empty

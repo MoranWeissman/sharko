@@ -114,7 +114,7 @@ func run(opts options, s signer) error {
 	if s == nil {
 		return fmt.Errorf("nil signer")
 	}
-	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
+	if err := os.MkdirAll(opts.OutDir, 0o750); err != nil {
 		return fmt.Errorf("mkdir %s: %w", opts.OutDir, err)
 	}
 
@@ -153,7 +153,7 @@ func run(opts options, s signer) error {
 			SigPath:    filepath.Join(opts.OutDir, e.Name+".sig"),
 			CertPath:   filepath.Join(opts.OutDir, e.Name+".pem"),
 		}
-		if err := os.WriteFile(payloadPath, canonical, 0o644); err != nil {
+		if err := os.WriteFile(payloadPath, canonical, 0o600); err != nil {
 			return fmt.Errorf("write payload for %q: %w", e.Name, err)
 		}
 		if err := s.SignBlob(payloadPath, out); err != nil {
@@ -174,7 +174,7 @@ func run(opts options, s signer) error {
 		return fmt.Errorf("marshal signed yaml: %w", err)
 	}
 	signedPath := filepath.Join(opts.OutDir, "addons.yaml.signed")
-	if err := os.WriteFile(signedPath, signedYAML, 0o644); err != nil {
+	if err := os.WriteFile(signedPath, signedYAML, 0o600); err != nil {
 		return fmt.Errorf("write signed yaml: %w", err)
 	}
 

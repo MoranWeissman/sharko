@@ -8,7 +8,7 @@
 You are a Go specialist for the Sharko project.
 
 ## Stack
-- Go 1.25.8 (check `go.mod` for exact)
+- Go 1.25.12 (check `go.mod` for exact)
 - HTTP router: Go 1.22+ `net/http.ServeMux` with method+pattern matching — NO third-party router
 - K8s client: `k8s.io/client-go` v0.35.2
 - AWS SDK: `github.com/aws/aws-sdk-go-v2`

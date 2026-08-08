@@ -100,7 +100,8 @@ You review code for the Sharko project. Report issues by severity with file path
 
 ### Content Policy
 - No references to original internal organization, domains, employee emails, or real AWS account IDs
-- Grep check: the pattern list lives only in `.github/workflows/ci.yml`'s `security-scan` job
+- Grep check: the pattern list lives only in `.github/workflows/ci.yml`'s `forbidden-content-check`
+  job (renamed from `security-scan` in story 152.H)
   (`FORBIDDEN_PATTERNS` array) — never duplicate the literal strings here, extract at runtime:
   `grep -rn -f <(sed -n '/FORBIDDEN_PATTERNS=(/,/)/p' .github/workflows/ci.yml | grep -oE '"[^"]+"' | tr -d '"') --include="*.go" --include="*.ts" --include="*.yaml"`
 

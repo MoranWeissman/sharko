@@ -186,10 +186,10 @@ func main() {
 // "both locations always agree" invariant a structural property rather
 // than a discipline.
 func run(logger *slog.Logger) error {
-	if err := os.MkdirAll(docsOutputDir, 0o755); err != nil {
+	if err := os.MkdirAll(docsOutputDir, 0o750); err != nil {
 		return fmt.Errorf("creating %s: %w", docsOutputDir, err)
 	}
-	if err := os.MkdirAll(embedOutputDir, 0o755); err != nil {
+	if err := os.MkdirAll(embedOutputDir, 0o750); err != nil {
 		return fmt.Errorf("creating %s: %w", embedOutputDir, err)
 	}
 
@@ -336,10 +336,10 @@ func run(logger *slog.Logger) error {
 func writeSchemaToBoth(filename string, body []byte) (docsPath, embedPath string, err error) {
 	docsPath = filepath.Join(docsOutputDir, filename)
 	embedPath = filepath.Join(embedOutputDir, filename)
-	if err := os.WriteFile(docsPath, body, 0o644); err != nil {
+	if err := os.WriteFile(docsPath, body, 0o600); err != nil {
 		return "", "", fmt.Errorf("writing %s: %w", docsPath, err)
 	}
-	if err := os.WriteFile(embedPath, body, 0o644); err != nil {
+	if err := os.WriteFile(embedPath, body, 0o600); err != nil {
 		return "", "", fmt.Errorf("writing %s: %w", embedPath, err)
 	}
 	return docsPath, embedPath, nil

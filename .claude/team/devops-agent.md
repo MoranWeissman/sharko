@@ -29,9 +29,13 @@ You handle CI/CD, Makefiles, Docker, Helm chart packaging, GitHub Actions, relea
 Makefile                        Build/dev/test/e2e targets (see test-e2e* family below)
 Dockerfile                      Multi-stage Go + UI build
 .github/workflows/              CI/CD pipelines
-  ci.yml                        7 jobs: go-build-test, ui-build-test, swagger-check,
+  ci.yml                        13 jobs: go-build-test, ui-build-test, swagger-check,
                                 provider-types-up-to-date, schemas-up-to-date,
-                                validate-sharko-config, helm-validate, security-scan
+                                engine-version-up-to-date, validate-sharko-config,
+                                validate-catalog, helm-validate, forbidden-content-check
+                                (renamed from security-scan, story 152.H — it's a
+                                forbidden-content grep, not a scanner), gosec,
+                                ui-deps-audit, container-image-scan
   release.yml                   workflow_run-triggered on CI success
   pr-docker.yml                 PR-time Docker build smoke
   e2e.yml                       Scheduled / on-demand kind-backed e2e
@@ -136,7 +140,10 @@ For CI, steps 1-5 are build / regen, steps 6-8 are test + validation. The corres
 - `provider-types-up-to-date` → fails if step 4 produces a diff
 - `validate-sharko-config` → runs step 8 over PR-diffed YAML files
 - `helm-validate` → `helm template charts/sharko/`
-- `security-scan` → forbidden-content grep
+- `forbidden-content-check` → forbidden-content grep (renamed from `security-scan`, story 152.H)
+- `gosec` → Go static-analysis security scanner (story 152.H)
+- `ui-deps-audit` → `npm audit --omit=dev` on the UI's production dependencies (story 152.H)
+- `container-image-scan` → Trivy scan of the built Docker image (story 152.H)
 
 ## Patterns
 - `make demo` — build UI + start with mock backends

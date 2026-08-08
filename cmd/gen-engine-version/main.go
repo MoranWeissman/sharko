@@ -93,10 +93,10 @@ func run() error {
 
 	out := renderGoFile(meta)
 
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o750); err != nil {
 		return fmt.Errorf("creating output dir: %w", err)
 	}
-	if err := os.WriteFile(outputPath, []byte(out), 0o644); err != nil {
+	if err := os.WriteFile(outputPath, []byte(out), 0o600); err != nil {
 		return fmt.Errorf("writing %s: %w", outputPath, err)
 	}
 

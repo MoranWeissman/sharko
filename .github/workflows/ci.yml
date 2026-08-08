@@ -21,7 +21,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           cache: true
 
       - name: Build
@@ -30,11 +30,18 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test with coverage
-        run: go test -coverprofile=coverage.out -covermode=atomic ./...
+      # -race is on by default now (story 152.H) — needs -covermode=atomic,
+      # which this step already used. Verified locally: same 51/51 packages
+      # pass under -race with zero data races reported (worth re-checking
+      # if this job ever gets flaky — a flaky race report is usually real).
+      - name: Test with coverage (race detector on)
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
+      # Pinned (story 152.H) — an unpinned tool install is a supply-chain
+      # hole and makes CI results irreproducible. Bump deliberately, not
+      # silently via @latest.
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
 
       - name: Vulnerability scan
         run: govulncheck ./...
@@ -87,7 +94,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           cache: true
 
       - name: Install swag
@@ -118,7 +125,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           cache: true
 
       - name: Regenerate provider types
@@ -157,7 +164,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           cache: true
 
       - name: Regenerate schemas
@@ -186,7 +193,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           cache: true
 
       - name: Regenerate engine version
@@ -232,7 +239,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           cache: true
 
       - name: Build sharko CLI
@@ -304,7 +311,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           cache: true
 
       - name: Check whether catalog/addons.yaml changed
@@ -376,8 +383,15 @@ jobs:
             || { echo "::error::sharko-engine chart rendered NO AppProject from the fixture repo"; exit 1; }
           echo "engine chart render guard passed: ApplicationSet + AppProject present"
 
-  security-scan:
-    name: Security Scan
+  # Renamed from "security-scan" (story 152.H). All this job ever did was
+  # grep for forbidden content (original org name, internal domains,
+  # employee emails, real AWS account IDs — see CLAUDE.md Content Policy).
+  # The old name oversold it: someone reading the checks list would think
+  # Sharko runs a real security scanner here. It doesn't — the actual
+  # static-analysis, dependency, and image scanning live in the gosec,
+  # ui-deps-audit, and container-image-scan jobs below.
+  forbidden-content-check:
+    name: Forbidden Content Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -404,7 +418,157 @@ jobs:
             fi
           done
           if [ "$FOUND" -eq 1 ]; then
-            echo "Security scan failed: forbidden content detected."
+            echo "Forbidden content check failed: forbidden content detected."
             exit 1
           fi
-          echo "Security scan passed."
+          echo "Forbidden content check passed."
+
+  # New in story 152.H (task #152, Secret Sync security closure). gosec is
+  # a real static-analysis security scanner for Go — it looks for the
+  # class of bug the forbidden-content grep above was never meant to
+  # catch: TLS verification disabled, command/path/SQL injection via taint
+  # analysis, weak randomness, overly-permissive file modes, etc.
+  #
+  # Scope for this PR: internal/ is deliberately excluded for now.
+  # Stories 152.A-152.G of this same sprint are rewriting exactly the
+  # internal/ files gosec flags (TLS refusal in remoteclient, the backend
+  # boundary in providers, the refresh-path re-point) IN PARALLEL with
+  # this one — landing this job pointed at internal/ today would be red
+  # for timing reasons, not real gosec-config reasons, and fixing findings
+  # here would step on those lanes' own diffs. TODO(fast-follow, before
+  # v4.0.0 tags): once 152.A-152.G land, drop `-exclude-dir=internal` and
+  # let gosec cover internal/ too — the PM should treat that as part of
+  # this story's completion, not optional polish.
+  #
+  # -severity=medium -confidence=medium is the "useful, not noise" bar:
+  # it drops gosec's LOW-severity G104 (ignored io.Close() etc. — ~47 hits
+  # in this repo, essentially never a real bug on its own) and its
+  # notoriously false-positive-prone LOW-confidence G101 (flags any field
+  # literally named "password"/"token"/"secret", which this codebase's
+  # auth/config structs are full of — real hardcoded literals would trip
+  # other rules too). Everything MEDIUM+/MEDIUM+ still blocks.
+  #
+  # The --exclude-rules entries are narrow, path-scoped, and by design —
+  # not a blanket rule silence:
+  #   - cmd/sharko/*:G304,G402   — the CLI reads operator-given file paths
+  #     by design (validate-config/validate-catalog/kubeconfig), and
+  #     buildHTTPClient's InsecureSkipVerify is gated behind an explicit
+  #     --insecure opt-in flag, not a default.
+  #   - cmd/playground/*:G204,G702,G402 — the local kind-cluster dev tool
+  #     shells out to kubectl/kind/docker by design (fixed command names,
+  #     every call site literal — see cmd/playground/shell.go) and uses an
+  #     insecure TLS client only to reach a local kind cluster's
+  #     self-signed ArgoCD cert, already commented as such at the call
+  #     site.
+  #   - cmd/perf-baseline-compare/*:G304,G703 — a dev-only perf-baseline
+  #     tool that reads/writes the file path the operator passed on the
+  #     command line.
+  #   - cmd/catalog-sign/*:G204 — invokes the fixed `cosign` binary with
+  #     dynamically-built args (payload/output paths), by design.
+  # G306 (writable file perms) and G301 (writable dir perms) findings in
+  # these same generator/tooling files were fixed directly instead of
+  # excluded (0o644->0o600, 0o755->0o750) — trivial, safe, no excuse to
+  # leave them.
+  gosec:
+    name: Gosec Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
+
+      - name: Run gosec
+        run: |
+          gosec -severity=medium -confidence=medium \
+            -exclude-dir=ui -exclude-dir=vendor -exclude-dir=internal \
+            -exclude-rules="cmd/sharko/.*:G304,G402;cmd/playground/.*:G204,G702,G402;cmd/perf-baseline-compare/.*:G304,G703;cmd/catalog-sign/.*:G204" \
+            ./...
+
+  # New in story 152.H. Dev-dependency vulnerabilities (eslint, vite,
+  # vitest, etc.) never ship to a user — they don't belong in a release
+  # gate and would just be noise a contributor can't act on without
+  # touching build tooling. --omit=dev keeps this to what actually reaches
+  # production. `npm audit` reads straight off the committed
+  # package-lock.json; no install needed, so this job is fast.
+  #
+  # --audit-level=high is the starting bar (useful, not noise) — a MODERATE
+  # finding here doesn't fail the build today but is still visible in the
+  # job output for anyone reading it.
+  ui-deps-audit:
+    name: UI Production Dependency Audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  # New in story 152.H. Scans the actual image Sharko ships (same
+  # Dockerfile pr-docker.yml builds) for known OS-package and Go-module
+  # vulnerabilities, so a CVE baked into the base image or a vendored
+  # binary doesn't reach main unnoticed. Builds locally (push: false,
+  # load: true) — this job never publishes anything, it only scans.
+  #
+  # trivy-action is pinned to a full commit SHA, not the mutable "0.35.0"
+  # tag, and that's deliberate rather than the repo's usual convention
+  # (most actions here use a floating major-version tag). On 2026-03-19
+  # aquasecurity/trivy-action was compromised for ~12 hours: 76 of its 77
+  # version tags were force-pushed with a credential-stealing payload
+  # (CVE-2026-33634) that dumps CI runner memory for SSH keys, cloud
+  # credentials, and Kubernetes secrets — exactly the class of thing this
+  # whole sprint exists to stop leaking. 0.35.0 was the one tag confirmed
+  # never touched; pinning the SHA behind it (rather than the tag) means
+  # even a future force-push to "0.35.0" can't silently change what this
+  # job runs. Verified 57a97c7e7821a5776cebc9bb87c984fa69cba8f1 is exactly
+  # what "0.35.0" points at via the GitHub API before using it here.
+  #
+  # severity CRITICAL,HIGH + ignore-unfixed is the starting bar — a base
+  # image can carry MEDIUM/LOW findings or CRITICAL/HIGH ones with no
+  # upstream fix yet indefinitely; blocking on those would make this job
+  # permanently red for reasons nobody here can act on.
+  container-image-scan:
+    name: Container Image Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image (local only — not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: sharko:ci-scan
+          build-args: |
+            CACHE_BUST=${{ github.sha }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=container-image-scan
+          cache-to: type=gha,mode=max,scope=container-image-scan
+
+      - name: Scan image for known vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0 — see comment above job, pinned to commit SHA not tag
+        with:
+          image-ref: sharko:ci-scan
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          version: v0.69.3

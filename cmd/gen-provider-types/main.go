@@ -98,10 +98,10 @@ func run(sourcePath, outputPath string) error {
 
 	rendered := renderTypeScript(types, sourcePath)
 
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o750); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(outputPath), err)
 	}
-	if err := os.WriteFile(outputPath, []byte(rendered), 0o644); err != nil {
+	if err := os.WriteFile(outputPath, []byte(rendered), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", outputPath, err)
 	}
 	fmt.Printf("gen-provider-types: wrote %d types to %s\n", len(types), outputPath)

@@ -207,17 +207,20 @@ go run ./cmd/schema-gen                       # If any schema-relevant model fie
 make test-e2e-fast                            # In-process e2e (~30s, no kind)
 # make test-e2e                               # Full kind-backed e2e (~10-15 min) — for release-gate runs
 
-# Security (always) — pattern list lives only in .github/workflows/ci.yml's security-scan
-# job (FORBIDDEN_PATTERNS array); extract at runtime, never duplicate the literal strings here
+# Security (always) — pattern list lives only in .github/workflows/ci.yml's
+# forbidden-content-check job (FORBIDDEN_PATTERNS array, renamed from security-scan in
+# story 152.H); extract at runtime, never duplicate the literal strings here
 grep -rn -f <(sed -n '/FORBIDDEN_PATTERNS=(/,/)/p' .github/workflows/ci.yml \
     | grep -oE '"[^"]+"' | tr -d '"') \
   --include="*.go" --include="*.ts" --include="*.yaml" . | \
   grep -v node_modules | grep -v .git/
 ```
 
-CI mirrors this with seven jobs in `.github/workflows/ci.yml`: `go-build-test`, `ui-build-test`,
+CI mirrors this with jobs in `.github/workflows/ci.yml`: `go-build-test`, `ui-build-test`,
 `swagger-check`, `provider-types-up-to-date`, `schemas-up-to-date`, `validate-sharko-config`,
-`helm-validate`, `security-scan`. The `schemas-up-to-date` and `validate-sharko-config` jobs were
+`helm-validate`, `forbidden-content-check` (renamed from `security-scan`, story 152.H — it's a
+forbidden-content grep, not a real scanner), plus story 152.H's `gosec`, `ui-deps-audit`, and
+`container-image-scan`. The `schemas-up-to-date` and `validate-sharko-config` jobs were
 added by V125-1-9 and gate every PR that touches an envelope-shaped YAML or its model.
 
 Always run the quality gate commands and read the output. Never assume things pass.
