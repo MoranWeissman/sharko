@@ -3185,7 +3185,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Removes a cluster with configurable cleanup scope.\nPass cleanup=all (default) to remove Git config and clean up ArgoCD + remote secrets.\nPass cleanup=git to remove Git config only. Pass cleanup=none for managed-clusters entry only.\nRequires yes=true for confirmation. Pass dry_run=true to preview.",
+                "description": "Removes a cluster with configurable cleanup scope.\nPass cleanup=all (default) to remove Git config and clean up ArgoCD + remote secrets.\nPass cleanup=git to remove Git config only. Pass cleanup=none for managed-clusters entry only.\nRequires yes=true for confirmation. Pass dry_run=true to preview.\nOn a v4 repo, the Git side removes the cluster from the root managed-clusters.yaml and deletes cluster-addons/{name}.yaml plus every Helm values file under values/clusters/{name}/ (cleanup=all/git); cleanup=none only removes the managed-clusters.yaml entry. ArgoCD-side behavior (remote secret cleanup, the ArgoCD cluster Secret delete/skip decision) is the same on every repo layout.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3249,7 +3249,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Removal still writes the v3 cluster registry and is not supported on a v4 repo yet",
+                        "description": "The repo is still v3-format and has not migrated to v4 yet, or a repo-layout probe could not get an answer",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

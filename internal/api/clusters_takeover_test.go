@@ -699,9 +699,19 @@ func TestDropLegacyLabels_200_RemovesOnlyTheCarriedLabel(t *testing.T) {
 
 // ─────────────────────────────────────────────────────────────────────────
 // 6.5 — the consequences read tells the truth about v4 repos
+//
+// v4-coherence-closure lane K: removal now works on a v4 repo the same way
+// adopt/unadopt/the label-patch already did (RemoveCluster grew its own v4
+// branch — remove.go, remove_v4_test.go). The page used to say removal was
+// refused on a v4 repo (the "removal-not-available" consequence); that is
+// no longer true anywhere, on either layout, so the two tests below flip
+// the old pin: same real DELETE instructions on both layouts, and the
+// "removal-not-available" id never appears again. A third test pins the
+// one piece of wording that DOES still differ by layout: how many files
+// leave the repo.
 // ─────────────────────────────────────────────────────────────────────────
 
-func TestUnregisterConsequences_SaysRemovalIsNotAvailableOnAV4Repo(t *testing.T) {
+func TestUnregisterConsequences_GivesRealInstructionsOnAV4Repo(t *testing.T) {
 	gp := newTakeoverFakeGP() // has an engine pin → v4
 	_, router, _ := takeoverTestServer(t, gp, []*corev1.Secret{takenOverSecret()}, fakeAppSetReader{})
 
@@ -714,17 +724,27 @@ func TestUnregisterConsequences_SaysRemovalIsNotAvailableOnAV4Repo(t *testing.T)
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if strings.Contains(resp.ConfirmationRequired, "DELETE /api/v1/clusters/") {
-		t.Errorf("the page still tells the user to send a call that would be refused: %q", resp.ConfirmationRequired)
+	if !strings.Contains(resp.ConfirmationRequired, "DELETE /api/v1/clusters/prod-eu") {
+		t.Errorf("a v4 repo was not given the real removal instructions: %q", resp.ConfirmationRequired)
 	}
-	found := false
 	for _, c := range resp.Consequences {
 		if c.ID == "removal-not-available" {
-			found = true
+			t.Errorf("a v4 repo was still told removal is unavailable — it is not, anymore: %+v", c)
+		}
+	}
+	// The v4-specific wording: more than one file leaves the repo.
+	found := false
+	for _, c := range resp.Consequences {
+		if c.ID != "git-record" {
+			continue
+		}
+		found = true
+		if !strings.Contains(c.Detail, "Helm values file") {
+			t.Errorf("the git-record consequence does not say a v4 removal deletes more than the addon-assignment file: %q", c.Detail)
 		}
 	}
 	if !found {
-		t.Errorf("no consequence explains that removal is not available yet: %+v", resp.Consequences)
+		t.Error("expected a git-record consequence")
 	}
 }
 

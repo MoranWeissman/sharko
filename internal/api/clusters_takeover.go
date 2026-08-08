@@ -742,15 +742,18 @@ func (s *Server) handleClusterUnregisterConsequences(w http.ResponseWriter, r *h
 	}
 	ctx := r.Context()
 
-	// Is removal even available on this repo? On a v4-format repo it is not
-	// yet: RemoveCluster still writes the v3 registry and refuses outright
-	// (orchestrator.ErrV4RepoUnsupported). Telling somebody to send a DELETE
-	// that is going to be refused wastes their time and makes Sharko look
-	// like it is broken, so this page says so instead.
+	// Removal is available on every repo layout now (v4-coherence-closure
+	// lane K — RemoveCluster grew its own v4 branch, remove.go /
+	// remove_v4_test.go, the same way adopt/unadopt/the label-patch already
+	// had one). This probe only decides the WORDING below: a v4 repo
+	// deletes more than one file per cluster (the addon-assignment file
+	// plus every per-cluster Helm values file, not one combined values
+	// file), so the "its files leave the repo" consequence says so
+	// precisely instead of implying there is only ever one file.
 	//
 	// A Git connection Sharko cannot reach answers "not v4" — the same
-	// direction every other format probe takes — so a hiccup shows the
-	// ordinary instructions rather than a scary "not available".
+	// direction every other format probe takes — so a hiccup shows the v3
+	// wording rather than guessing.
 	v4Repo := false
 	if s.connSvc != nil {
 		if gp, gpErr := s.connSvc.GetActiveGitProvider(); gpErr == nil {
@@ -759,27 +762,17 @@ func (s *Server) handleClusterUnregisterConsequences(w http.ResponseWriter, r *h
 	}
 
 	resp := UnregisterConsequencesResponse{Cluster: name}
-	if v4Repo {
-		resp.ConfirmationRequired = "Nothing here has happened yet — and on this repo there is nothing you can send yet either. Taking a cluster back out of Sharko is not built for the new repo layout, so the removal call refuses. It arrives with the unregister work. Until then, everything below is what removal WILL do, so you can plan for it."
-	} else {
-		resp.ConfirmationRequired = "Nothing here has happened yet. To go ahead, send DELETE /api/v1/clusters/" + name +
-			" with \"yes\": true in the body. Add \"cleanup\": \"git\" to take the cluster out of Sharko's records but leave its ArgoCD connection alone."
-	}
+	resp.ConfirmationRequired = "Nothing here has happened yet. To go ahead, send DELETE /api/v1/clusters/" + name +
+		" with \"yes\": true in the body. Add \"cleanup\": \"git\" to take the cluster out of Sharko's records but leave its ArgoCD connection alone."
 
+	gitRecordDetail := "A pull request removes this cluster from the fleet record and deletes its addon file."
 	if v4Repo {
-		resp.Consequences = append(resp.Consequences, UnregisterConsequence{
-			ID:          "removal-not-available",
-			Title:       "Removing a cluster is not available on this repo yet",
-			Detail:      "This repo uses Sharko's newer file layout, and the remove-a-cluster call has not been rebuilt for it — it refuses rather than writing the old files and breaking the fleet record.",
-			WhatItMeans: "Nothing below can be carried out today. It is here so you know what removal will do when it lands, and so you can decide now whether you want it to. Nothing is at risk in the meantime: the cluster stays exactly as it is.",
-			Severity:    "warning",
-		})
+		gitRecordDetail = "A pull request removes this cluster from the fleet record and deletes its addon-assignment file, plus every per-cluster Helm values file it has."
 	}
-
 	resp.Consequences = append(resp.Consequences, UnregisterConsequence{
 		ID:          "git-record",
 		Title:       "Its files leave the repo",
-		Detail:      "A pull request removes this cluster from the fleet record and deletes its addon file.",
+		Detail:      gitRecordDetail,
 		WhatItMeans: "Sharko stops treating it as one of your clusters. The change goes through a pull request, so you can read it before it lands and undo it afterwards by reverting.",
 		Severity:    "info",
 	})
@@ -882,10 +875,6 @@ func (s *Server) handleClusterUnregisterConsequences(w http.ResponseWriter, r *h
 		}
 	}
 	switch {
-	case v4Repo:
-		resp.Summary = fmt.Sprintf(
-			"Removing %s is not something Sharko can do on this repo yet — it lands with the unregister work. The list below is what it will do when it does, so nothing here is a surprise later. Nothing has been changed.",
-			name)
 	case warnCount == 0:
 		resp.Summary = fmt.Sprintf("Unregistering %s looks straightforward — read the list below, then confirm.", name)
 	default:
