@@ -25,6 +25,23 @@ rbac:
   create: true
   # The namespace where ArgoCD is installed
   argocdNamespace: argocd
+  # Extra namespaces (beyond the release namespace, which is always
+  # included) where Sharko needs read (get/list) access to Secrets for the
+  # k8s-secrets cluster-credential provider (connection.provider) and/or
+  # the k8s-secrets addon-secret provider (connection.addonSecretProvider).
+  # Only needed if you use the "k8s-secrets" backend for either one AND
+  # its configured namespace isn't the release namespace — most commonly
+  # because you left connection.provider.namespace or
+  # connection.addonSecretProvider.namespace empty, which falls back to
+  # the literal string "sharko" (NOT the release namespace) — add "sharko"
+  # here in that case, or better, set the namespace field explicitly to
+  # your release namespace so there is nothing to keep in sync.
+  #
+  # Using two DIFFERENT namespaces here for the cluster-credential and the
+  # addon-secret provider is how you keep those two identities separate at
+  # the RBAC layer — a Secret readable by one Role is not readable by the
+  # other. See docs/site/operator/security.md#rbac.
+  k8sSecretsProviderNamespaces: []
 
 # ---------------------------------------------------------------------------
 # Cluster-Test Provider
