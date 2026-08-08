@@ -37,6 +37,16 @@ func FailureSentence(raw string) string {
 		return ""
 	case strings.Contains(raw, "the secret definition in the catalog has no"):
 		return "One of the secret definitions in the catalog is incomplete. Fix it in the catalog, then click Refresh."
+	case strings.Contains(raw, "skip certificate checks"):
+		// remoteclient.ErrUnverifiedDestination (task #152 lane C) — a
+		// deliberate refusal, not a failure: the cluster's connection is
+		// configured to skip TLS certificate checks, and Sharko will not
+		// put a secret value on a wire it cannot verify. Checked before
+		// the write-stage cases below so a defense-in-depth refusal that
+		// surfaced through EnsureSecret ("creating secret: ...") still
+		// maps here, to the honest sentence, not to a generic
+		// write-failed one.
+		return "One of the clusters is set up to skip certificate checks, so Sharko refused to send it a secret. Fix that cluster's connection so its certificate can be verified, then click Refresh."
 	case strings.Contains(raw, "getting credentials"):
 		return "Sharko couldn't get credentials for one of the clusters. Check that Sharko can reach that cluster, then click Refresh."
 	case strings.Contains(raw, "connecting to cluster"):
