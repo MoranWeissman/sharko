@@ -2215,6 +2215,183 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes one addon's entry from catalog.yaml — and its values/global/{name}.yaml (plus any stray values/clusters/*/{name}.yaml left over from an earlier enable/disable cycle) — as one pull request. Refuses with 409 (code addon_enabled_on_clusters) when the addon is still switched on in any cluster: a delete must never leave a cluster pointing an enabled addon at a catalog entry that no longer exists — switch it off on those clusters first (DELETE /api/v1/v4/clusters/{cluster}/addons/{addon}), then delete it here. Without confirmation (yes: true in the body, or ?confirm=true) and without dry_run, returns a 400 impact report naming every file the delete would touch — the same contract shape as DELETE /api/v1/addons/{name} (the v3 door), so a client written against that one confirms this one the same way. dry_run returns a 200 preview with real diffs.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Remove an approved addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Set to 'true' to confirm destructive removal",
+                        "name": "confirm",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Confirmation and options",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DeleteFromCatalogRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Pull request opened (or dry-run preview)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request, invalid addon name, or confirmation required (body carries an impact report)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Addon is not in your catalog (code not_in_catalog)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "The repo is in a layout this endpoint does not write (code repo_layout), or the addon is still enabled on one or more clusters (code addon_enabled_on_clusters, with a clusters array)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "catalog.yaml exists but is blank (code empty_catalog_file)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Changes one or more fields of an addon ALREADY in catalog.yaml and opens a pull request with exactly that edit — merge semantics: only the fields present in the request body change, everything else on the existing entry is left exactly as it was. This is an edit, not a rebuild — POST /api/v1/catalog/addons is the door for a brand-new entry. ` + "`" + `settings` + "`" + ` merges field-by-field onto whatever settings block is already there; ` + "`" + `secrets` + "`" + `, ` + "`" + `additional_sources` + "`" + ` and ` + "`" + `extra_helm_values` + "`" + ` each replace the existing value whole when sent. Supports dry_run (returns a preview with the real diff, no side effects) and the same auto_merge override every other catalog write accepts. The real write is one pull request touching only catalog.yaml.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Edit an approved addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.EditCatalogEntryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Pull request opened (or dry-run preview)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request, invalid addon name, or an empty edit (code invalid_request)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Addon is not in your catalog yet (code not_in_catalog) — add it first",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "The repo is in a layout this endpoint does not write (code repo_layout)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "catalog.yaml exists but is blank (code empty_catalog_file), or the edit leaves the entry incomplete (code incomplete_entry, with a problems array)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
             }
         },
         "/catalog/freshness": {
@@ -10815,6 +10992,22 @@ const docTemplate = `{
                 "CredsSourceEKSToken"
             ]
         },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.DeleteFromCatalogRequest": {
+            "type": "object",
+            "properties": {
+                "auto_merge": {
+                    "description": "AutoMerge mirrors every other v4/v3 write's per-request override.",
+                    "type": "boolean"
+                },
+                "dry_run": {
+                    "type": "boolean"
+                },
+                "yes": {
+                    "description": "Yes is the caller's confirmation — the same word every other v4\nwrite asks for. Without it (and without DryRun) DeleteFromCatalog\nrefuses with a *CatalogDeleteConfirmationError carrying the impact\nreport — deliberately mapped to 400 by the API layer, mirroring the\nv3 DELETE /addons/{name} contract, unlike every other catalog-write\nconfirmation gate in this package (422): a client written against\nthe v3 delete confirms this door the same way.",
+                    "type": "boolean"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonRequest": {
             "type": "object",
             "properties": {
@@ -10930,6 +11123,57 @@ const docTemplate = `{
                 },
                 "verification": {
                     "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_verify.Result"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.EditCatalogEntryRequest": {
+            "type": "object",
+            "properties": {
+                "additional_sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource"
+                    }
+                },
+                "auto_merge": {
+                    "description": "AutoMerge is the per-request auto-merge decision. nil falls back to\nthe connection-level default — same contract as every other\ncatalog-write request in this package.",
+                    "type": "boolean"
+                },
+                "chart": {
+                    "type": "string"
+                },
+                "dry_run": {
+                    "type": "boolean"
+                },
+                "extra_helm_values": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "repo_url": {
+                    "type": "string"
+                },
+                "secrets": {
+                    "description": "Secrets, AdditionalSources and ExtraHelmValues replace the existing\nvalue WHOLE when non-nil — the same \"list/map fields replace, never\nmerge element-by-element\" rule the rest of the v4 format uses\n(design doc §3.3 decision D12). nil (the field absent from the\nrequest) leaves the existing value untouched.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_config.AddonSecretRequirement"
+                    }
+                },
+                "settings": {
+                    "description": "Settings, when non-nil, is merged field-by-field onto the existing\nentry's settings block via catalog.MergeAddonSettings — a field this\nrequest does not set is left exactly as it was, even when the\nexisting settings block already has other fields populated. A nil\nexisting settings block is treated as empty (every field unset)\nbefore the merge, so the first settings edit on an entry that has\nnone yet still only sets what was asked for.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_config.AddonSettings"
+                        }
+                    ]
+                },
+                "version": {
+                    "type": "string"
                 }
             }
         },

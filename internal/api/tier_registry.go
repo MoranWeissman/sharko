@@ -126,6 +126,10 @@ var HandlerTier = map[string]audit.Tier{
 	// catalog.yaml is a configuration change, same tier as the v3
 	// catalog writes above.
 	"handleAddToCatalog": audit.Tier2,
+	// Editing or removing an existing catalog.yaml entry — same tier as
+	// handleAddToCatalog above.
+	"handleEditOrgCatalogAddon":   audit.Tier2,
+	"handleDeleteOrgCatalogAddon": audit.Tier2,
 
 	// v3 -> v4 migration (v4 Wave 2 Story 5.2) — rewrites every
 	// configuration file in the repo in one PR. Tier 2, the same bucket

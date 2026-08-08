@@ -334,6 +334,10 @@ const (
 	// CodeRepoLayout — the repo is in a shape this operation does not
 	// write (409): still v3, already v4, or carrying both at once.
 	CodeRepoLayout = "repo_layout"
+	// CodeAddonEnabledOnClusters — a DELETE /catalog/addons/{name} request
+	// for an addon that is still switched on in at least one cluster
+	// (409). The body's `clusters` array names each one.
+	CodeAddonEnabledOnClusters = "addon_enabled_on_clusters"
 )
 
 // writeCodedError writes {"error": msg, "code": code} plus any extra
@@ -390,6 +394,230 @@ func writeAddToCatalogError(w http.ResponseWriter, err error) {
 	case errors.Is(err, orchestrator.ErrCatalogEntryIncomplete):
 		writeCodedError(w, http.StatusUnprocessableEntity, CodeIncompleteEntry, err.Error(),
 			map[string]interface{}{"problems": []string{err.Error()}})
+	default:
+		writeError(w, http.StatusBadGateway, err.Error())
+	}
+}
+
+// handleEditOrgCatalogAddon godoc
+//
+// @Summary Edit an approved addon
+// @Description Changes one or more fields of an addon ALREADY in catalog.yaml and opens a pull request with exactly that edit — merge semantics: only the fields present in the request body change, everything else on the existing entry is left exactly as it was. This is an edit, not a rebuild — POST /api/v1/catalog/addons is the door for a brand-new entry. `settings` merges field-by-field onto whatever settings block is already there; `secrets`, `additional_sources` and `extra_helm_values` each replace the existing value whole when sent. Supports dry_run (returns a preview with the real diff, no side effects) and the same auto_merge override every other catalog write accepts. The real write is one pull request touching only catalog.yaml.
+// @Tags catalog
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Addon name"
+// @Param body body orchestrator.EditCatalogEntryRequest true "Fields to change"
+// @Success 200 {object} orchestrator.GitResult "Pull request opened (or dry-run preview)"
+// @Failure 400 {object} map[string]interface{} "Bad request, invalid addon name, or an empty edit (code invalid_request)"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Addon is not in your catalog yet (code not_in_catalog) — add it first"
+// @Failure 409 {object} map[string]interface{} "The repo is in a layout this endpoint does not write (code repo_layout)"
+// @Failure 422 {object} map[string]interface{} "catalog.yaml exists but is blank (code empty_catalog_file), or the edit leaves the entry incomplete (code incomplete_entry, with a problems array)"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /catalog/addons/{name} [patch]
+func (s *Server) handleEditOrgCatalogAddon(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "catalog.update") {
+		return
+	}
+
+	name := r.PathValue("name")
+	if name == "" {
+		writeCodedError(w, http.StatusBadRequest, CodeInvalidRequest, "addon name is required", nil)
+		return
+	}
+	if !models.IsValidResourceName(name) {
+		writeCodedError(w, http.StatusBadRequest, CodeInvalidRequest,
+			fmt.Sprintf("invalid addon name %q: %s", name, models.InvalidResourceNameMessage), nil)
+		return
+	}
+
+	var req orchestrator.EditCatalogEntryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	req.Name = name
+
+	ac, err := s.connSvc.GetActiveArgocdClient()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		return
+	}
+
+	// Tier 2: configuration change — same tiering as every other catalog write.
+	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		return
+	}
+
+	orch := s.attachPRTracker(orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil))
+	result, err := orch.EditCatalogEntry(ctx, req)
+	if err != nil {
+		writeEditCatalogEntryError(w, err)
+		return
+	}
+
+	if req.DryRun {
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
+	audit.Enrich(ctx, audit.Fields{
+		Event:    "catalog_addon_edited",
+		Resource: "catalog:" + name,
+	})
+	writeJSON(w, http.StatusOK, withAttributionWarning(result, tokRes))
+}
+
+// writeEditCatalogEntryError maps EditCatalogEntry's errors onto status
+// codes: 400 for a request that cannot be read, 404 for an addon that is
+// not in the catalog yet, 409 for a repo in a shape this does not write,
+// 422 for "the edit cannot work as asked", and 502 only for a genuine
+// upstream failure.
+func writeEditCatalogEntryError(w http.ResponseWriter, err error) {
+	var missing *catalog.MissingRequiredFieldError
+	switch {
+	case errors.Is(err, orchestrator.ErrCatalogRequestInvalid):
+		writeCodedError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error(), nil)
+	case errors.Is(err, orchestrator.ErrV4AddonNotInCatalog):
+		writeCodedError(w, http.StatusNotFound, CodeNotInCatalog, err.Error(), nil)
+	case orchestrator.IsV4RepoUnsupported(err), errors.Is(err, orchestrator.ErrMixedRepoLayout), orchestrator.IsV3RepoUnsupported(err):
+		writeCodedError(w, http.StatusConflict, CodeRepoLayout, err.Error(), nil)
+	case errors.Is(err, orchestrator.ErrCatalogFileEmpty):
+		writeCodedError(w, http.StatusUnprocessableEntity, CodeEmptyCatalogFile, err.Error(), nil)
+	case errors.As(err, &missing):
+		writeCodedError(w, http.StatusUnprocessableEntity, CodeIncompleteEntry, missing.Error(),
+			map[string]interface{}{"addon": missing.Addon, "problems": []string{missing.Error()}})
+	default:
+		writeError(w, http.StatusBadGateway, err.Error())
+	}
+}
+
+// handleDeleteOrgCatalogAddon godoc
+//
+// @Summary Remove an approved addon
+// @Description Removes one addon's entry from catalog.yaml — and its values/global/{name}.yaml (plus any stray values/clusters/*/{name}.yaml left over from an earlier enable/disable cycle) — as one pull request. Refuses with 409 (code addon_enabled_on_clusters) when the addon is still switched on in any cluster: a delete must never leave a cluster pointing an enabled addon at a catalog entry that no longer exists — switch it off on those clusters first (DELETE /api/v1/v4/clusters/{cluster}/addons/{addon}), then delete it here. Without confirmation (yes: true in the body, or ?confirm=true) and without dry_run, returns a 400 impact report naming every file the delete would touch — the same contract shape as DELETE /api/v1/addons/{name} (the v3 door), so a client written against that one confirms this one the same way. dry_run returns a 200 preview with real diffs.
+// @Tags catalog
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Addon name"
+// @Param confirm query string false "Set to 'true' to confirm destructive removal"
+// @Param body body orchestrator.DeleteFromCatalogRequest false "Confirmation and options"
+// @Success 200 {object} orchestrator.GitResult "Pull request opened (or dry-run preview)"
+// @Failure 400 {object} map[string]interface{} "Bad request, invalid addon name, or confirmation required (body carries an impact report)"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Addon is not in your catalog (code not_in_catalog)"
+// @Failure 409 {object} map[string]interface{} "The repo is in a layout this endpoint does not write (code repo_layout), or the addon is still enabled on one or more clusters (code addon_enabled_on_clusters, with a clusters array)"
+// @Failure 422 {object} map[string]interface{} "catalog.yaml exists but is blank (code empty_catalog_file)"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /catalog/addons/{name} [delete]
+func (s *Server) handleDeleteOrgCatalogAddon(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "catalog.remove") {
+		return
+	}
+
+	name := r.PathValue("name")
+	if name == "" {
+		writeCodedError(w, http.StatusBadRequest, CodeInvalidRequest, "addon name is required", nil)
+		return
+	}
+	if !models.IsValidResourceName(name) {
+		writeCodedError(w, http.StatusBadRequest, CodeInvalidRequest,
+			fmt.Sprintf("invalid addon name %q: %s", name, models.InvalidResourceNameMessage), nil)
+		return
+	}
+
+	var reqBody struct {
+		Yes       bool  `json:"yes,omitempty"`
+		DryRun    bool  `json:"dry_run,omitempty"`
+		AutoMerge *bool `json:"auto_merge,omitempty"`
+	}
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			return
+		}
+	}
+	// Same dual query/body support as the v3 delete door (?confirm=true,
+	// ?dry_run=true common for DELETE) — a client written against that one
+	// confirms this door the same way.
+	if r.URL.Query().Get("confirm") == "true" {
+		reqBody.Yes = true
+	}
+	if r.URL.Query().Get("dry_run") == "true" {
+		reqBody.DryRun = true
+	}
+
+	ac, err := s.connSvc.GetActiveArgocdClient()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		return
+	}
+
+	// Tier 2: configuration change.
+	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		return
+	}
+
+	orch := s.attachPRTracker(orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil))
+	result, err := orch.DeleteFromCatalog(ctx, orchestrator.DeleteFromCatalogRequest{
+		Name:      name,
+		Yes:       reqBody.Yes,
+		DryRun:    reqBody.DryRun,
+		AutoMerge: reqBody.AutoMerge,
+	})
+	if err != nil {
+		writeDeleteFromCatalogError(w, err)
+		return
+	}
+
+	if reqBody.DryRun {
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
+	audit.Enrich(ctx, audit.Fields{
+		Event:    "catalog_addon_removed",
+		Resource: "catalog:" + name,
+	})
+	writeJSON(w, http.StatusOK, withAttributionWarning(result, tokRes))
+}
+
+// writeDeleteFromCatalogError maps DeleteFromCatalog's errors onto status
+// codes. Two shapes get bespoke bodies rather than the plain {error, code}
+// writeCodedError produces: *CatalogDeleteBlockedError (409, plus a
+// `clusters` array) and *CatalogDeleteConfirmationError (400, plus an
+// `impact` object — deliberately the v3 RemoveAddon status code, not the
+// 422 every other catalog-write confirmation gate in this package uses).
+func writeDeleteFromCatalogError(w http.ResponseWriter, err error) {
+	var blocked *orchestrator.CatalogDeleteBlockedError
+	var confirmErr *orchestrator.CatalogDeleteConfirmationError
+	switch {
+	case errors.Is(err, orchestrator.ErrCatalogRequestInvalid):
+		writeCodedError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error(), nil)
+	case errors.Is(err, orchestrator.ErrV4AddonNotInCatalog):
+		writeCodedError(w, http.StatusNotFound, CodeNotInCatalog, err.Error(), nil)
+	case orchestrator.IsV4RepoUnsupported(err), errors.Is(err, orchestrator.ErrMixedRepoLayout), orchestrator.IsV3RepoUnsupported(err):
+		writeCodedError(w, http.StatusConflict, CodeRepoLayout, err.Error(), nil)
+	case errors.Is(err, orchestrator.ErrCatalogFileEmpty):
+		writeCodedError(w, http.StatusUnprocessableEntity, CodeEmptyCatalogFile, err.Error(), nil)
+	case errors.As(err, &blocked):
+		writeCodedError(w, http.StatusConflict, CodeAddonEnabledOnClusters, blocked.Error(),
+			map[string]interface{}{"addon": blocked.Addon, "clusters": blocked.Clusters})
+	case errors.As(err, &confirmErr):
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": confirmErr.Error(),
+			"impact": map[string]interface{}{
+				"addon":         confirmErr.Addon,
+				"files_removed": confirmErr.FilesRemoved,
+			},
+		})
 	default:
 		writeError(w, http.StatusBadGateway, err.Error())
 	}

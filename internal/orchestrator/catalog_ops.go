@@ -155,6 +155,11 @@ var (
 const (
 	OpCodeCatalogAdd       = "catalog-add"
 	OpCodeCatalogAddEnable = "catalog-add-enable"
+	// OpCodeCatalogEdit and OpCodeCatalogDelete are the same kind of hand
+	// copy of prtracker.OpCatalogEdit / OpCatalogDelete (see catalog_edit.go
+	// / catalog_delete.go), pinned by the same op-code lockstep test.
+	OpCodeCatalogEdit   = "catalog-edit"
+	OpCodeCatalogDelete = "catalog-delete"
 )
 
 // CatalogFileEmptyMessage is the whole sentence a present-but-empty

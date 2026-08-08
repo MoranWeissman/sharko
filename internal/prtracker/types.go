@@ -35,6 +35,12 @@ const (
 	// OpCatalogAddEnable is the combined form: the same approval pull
 	// request also switches the addon on for a cluster.
 	OpCatalogAddEnable = "catalog-add-enable"
+	// OpCatalogEdit is a merge-semantics edit of one existing catalog.yaml
+	// entry (PATCH /api/v1/catalog/addons/{name}).
+	OpCatalogEdit = "catalog-edit"
+	// OpCatalogDelete removes one entry from catalog.yaml (DELETE
+	// /api/v1/catalog/addons/{name}).
+	OpCatalogDelete = "catalog-delete"
 
 	// AI assistant write-tool bucket
 	OpAIToolEnable  = "ai-tool-enable"

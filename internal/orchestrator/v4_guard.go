@@ -145,3 +145,44 @@ func (o *Orchestrator) refuseV3ShapedWriteOnV4Repo(ctx context.Context, operatio
 	}
 	return fmt.Errorf("%w: %s writes files this repo does not use — %s", ErrV4RepoUnsupported, operation, door)
 }
+
+// ErrV3RepoUnsupported marks a v4-shaped catalog write (PATCH/DELETE
+// /api/v1/catalog/addons/{name}) attempted against a repo that has not
+// adopted the v4 layout. Mirror image of ErrV4RepoUnsupported:
+// refuseV3ShapedWriteOnV4Repo above refuses a v3-shaped write ON a v4 repo
+// (it would create a second cluster registry nothing reads); this refuses
+// a v4-shaped write on a v3 repo — there is no catalog.yaml there for
+// these two doors to edit or delete an entry from, only
+// configuration/addons-catalog.yaml, which the v3 doors (PATCH/DELETE
+// /addons/{name}) already own. Callers map this to HTTP 409, same as
+// ErrV4RepoUnsupported.
+var ErrV3RepoUnsupported = errors.New("operation not supported on a v3 repo")
+
+// IsV3RepoUnsupported reports whether err is a v3-repo refusal.
+func IsV3RepoUnsupported(err error) bool {
+	return errors.Is(err, ErrV3RepoUnsupported)
+}
+
+// V3CatalogEditDoor points a v4-catalog edit/delete caller at the doors
+// that DO exist on a v3 repo.
+const V3CatalogEditDoor = `this repo keeps its approved addons in configuration/addons-catalog.yaml — use PATCH /api/v1/addons/{name} or DELETE /api/v1/addons/{name}`
+
+// refuseV4ShapedWriteOnV3Repo is the mirror image of
+// refuseV3ShapedWriteOnV4Repo: it stops a v4 catalog edit/delete before any
+// read or write when the connected repo has not adopted the v4 layout —
+// there is no catalog.yaml there for these two doors to touch, only the v3
+// file the sibling endpoints already own. Fail closed on an unanswerable
+// probe, same reasoning as every other v4/v3 guard in this file: refusing
+// costs a retry, guessing costs a file written into a repo shape that
+// never reads it.
+func (o *Orchestrator) refuseV4ShapedWriteOnV3Repo(ctx context.Context, operation string) error {
+	v4, err := o.isV4Repo(ctx)
+	if err != nil {
+		return fmt.Errorf("Sharko stopped before %s: %w", operation, err)
+	}
+	if v4 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s needs the v4 catalog.yaml, which this repo does not have yet — %s",
+		ErrV3RepoUnsupported, operation, V3CatalogEditDoor)
+}

@@ -1164,6 +1164,24 @@ definitions:
     - CredsSourceInlineKubeconfig
     - CredsSourceSecretKubeconfig
     - CredsSourceEKSToken
+  github_com_MoranWeissman_sharko_internal_orchestrator.DeleteFromCatalogRequest:
+    properties:
+      auto_merge:
+        description: AutoMerge mirrors every other v4/v3 write's per-request override.
+        type: boolean
+      dry_run:
+        type: boolean
+      "yes":
+        description: |-
+          Yes is the caller's confirmation — the same word every other v4
+          write asks for. Without it (and without DryRun) DeleteFromCatalog
+          refuses with a *CatalogDeleteConfirmationError carrying the impact
+          report — deliberately mapped to 400 by the API layer, mirroring the
+          v3 DELETE /addons/{name} contract, unlike every other catalog-write
+          confirmation gate in this package (422): a client written against
+          the v3 delete confirms this door the same way.
+        type: boolean
+    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonRequest:
     properties:
       addon:
@@ -1250,6 +1268,54 @@ definitions:
         type: array
       verification:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_verify.Result'
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.EditCatalogEntryRequest:
+    properties:
+      additional_sources:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource'
+        type: array
+      auto_merge:
+        description: |-
+          AutoMerge is the per-request auto-merge decision. nil falls back to
+          the connection-level default — same contract as every other
+          catalog-write request in this package.
+        type: boolean
+      chart:
+        type: string
+      dry_run:
+        type: boolean
+      extra_helm_values:
+        additionalProperties:
+          type: string
+        type: object
+      namespace:
+        type: string
+      repo_url:
+        type: string
+      secrets:
+        description: |-
+          Secrets, AdditionalSources and ExtraHelmValues replace the existing
+          value WHOLE when non-nil — the same "list/map fields replace, never
+          merge element-by-element" rule the rest of the v4 format uses
+          (design doc §3.3 decision D12). nil (the field absent from the
+          request) leaves the existing value untouched.
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_config.AddonSecretRequirement'
+        type: array
+      settings:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_config.AddonSettings'
+        description: |-
+          Settings, when non-nil, is merged field-by-field onto the existing
+          entry's settings block via catalog.MergeAddonSettings — a field this
+          request does not set is left exactly as it was, even when the
+          existing settings block already has other fields populated. A nil
+          existing settings block is treated as empty (every field unset)
+          before the merge, so the first settings edit on an entry that has
+          none yet still only sets what was asked for.
+      version:
+        type: string
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.EnableAddonRequest:
     properties:
@@ -5022,6 +5088,80 @@ paths:
       tags:
       - catalog
   /catalog/addons/{name}:
+    delete:
+      consumes:
+      - application/json
+      description: 'Removes one addon''s entry from catalog.yaml — and its values/global/{name}.yaml
+        (plus any stray values/clusters/*/{name}.yaml left over from an earlier enable/disable
+        cycle) — as one pull request. Refuses with 409 (code addon_enabled_on_clusters)
+        when the addon is still switched on in any cluster: a delete must never leave
+        a cluster pointing an enabled addon at a catalog entry that no longer exists
+        — switch it off on those clusters first (DELETE /api/v1/v4/clusters/{cluster}/addons/{addon}),
+        then delete it here. Without confirmation (yes: true in the body, or ?confirm=true)
+        and without dry_run, returns a 400 impact report naming every file the delete
+        would touch — the same contract shape as DELETE /api/v1/addons/{name} (the
+        v3 door), so a client written against that one confirms this one the same
+        way. dry_run returns a 200 preview with real diffs.'
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Set to 'true' to confirm destructive removal
+        in: query
+        name: confirm
+        type: string
+      - description: Confirmation and options
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DeleteFromCatalogRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Pull request opened (or dry-run preview)
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+        "400":
+          description: Bad request, invalid addon name, or confirmation required (body
+            carries an impact report)
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon is not in your catalog (code not_in_catalog)
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: The repo is in a layout this endpoint does not write (code
+            repo_layout), or the addon is still enabled on one or more clusters (code
+            addon_enabled_on_clusters, with a clusters array)
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: catalog.yaml exists but is blank (code empty_catalog_file)
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove an approved addon
+      tags:
+      - catalog
     get:
       description: Single-addon form of GET /catalog/addons. 404 means the addon is
         not in your catalog.yaml — your org has not approved it, so it cannot be enabled
@@ -5062,6 +5202,77 @@ paths:
       security:
       - BearerAuth: []
       summary: Get one approved addon
+      tags:
+      - catalog
+    patch:
+      consumes:
+      - application/json
+      description: 'Changes one or more fields of an addon ALREADY in catalog.yaml
+        and opens a pull request with exactly that edit — merge semantics: only the
+        fields present in the request body change, everything else on the existing
+        entry is left exactly as it was. This is an edit, not a rebuild — POST /api/v1/catalog/addons
+        is the door for a brand-new entry. `settings` merges field-by-field onto whatever
+        settings block is already there; `secrets`, `additional_sources` and `extra_helm_values`
+        each replace the existing value whole when sent. Supports dry_run (returns
+        a preview with the real diff, no side effects) and the same auto_merge override
+        every other catalog write accepts. The real write is one pull request touching
+        only catalog.yaml.'
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.EditCatalogEntryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Pull request opened (or dry-run preview)
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+        "400":
+          description: Bad request, invalid addon name, or an empty edit (code invalid_request)
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon is not in your catalog yet (code not_in_catalog) — add
+            it first
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: The repo is in a layout this endpoint does not write (code
+            repo_layout)
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: catalog.yaml exists but is blank (code empty_catalog_file),
+            or the edit leaves the entry incomplete (code incomplete_entry, with a
+            problems array)
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Edit an approved addon
       tags:
       - catalog
   /catalog/freshness:

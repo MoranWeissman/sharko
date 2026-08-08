@@ -232,6 +232,84 @@ func renderCatalogEntry(name string, entry config.AddonCatalogEntry, entryIndent
 	return out, nil
 }
 
+// writeCatalogFileRemove renders catalog.yaml with name's entry deleted.
+// Same surgical-splice-with-verified-fallback contract as writeCatalogFile:
+// spliceRemoveCatalogEntry deletes only the lines belonging to name, the
+// result is read back and compared field-for-field against spec (which the
+// caller has already deleted the entry from), and anything that does not
+// match exactly falls back to a whole-file re-render.
+func writeCatalogFileRemove(original []byte, spec config.AddonCatalogSpec, name string) (body []byte, reformatted bool, err error) {
+	full, fullErr := config.SaveAddonCatalog(spec)
+	if fullErr != nil {
+		return nil, false, fullErr
+	}
+
+	edited, editErr := spliceRemoveCatalogEntry(original, name)
+	if editErr != nil {
+		return full, true, nil
+	}
+	// The trust check, same as writeCatalogFile's: the spliced text must
+	// load back to exactly the catalog we meant to write, or it does not
+	// get used. This is also what catches the one case spliceRemoveCatalogEntry
+	// cannot special-case for itself — deleting the last remaining entry
+	// leaves an empty `addons:` mapping, which loads back with a nil map
+	// rather than spec's empty-but-non-nil one; that mismatch is exactly
+	// what routes it to the always-correct whole-file fallback below.
+	readBack, loadErr := config.LoadAddonCatalog(edited)
+	if loadErr != nil || !reflect.DeepEqual(readBack, spec) {
+		return full, true, nil
+	}
+	return edited, false, nil
+}
+
+// spliceRemoveCatalogEntry deletes name's block from the original text and
+// returns the result. Same fallback contract as spliceCatalogEntries: an
+// error means "this document is not a shape this code can edit safely" —
+// always a fallback signal, never something to show a person.
+func spliceRemoveCatalogEntry(original []byte, name string) ([]byte, error) {
+	lines := strings.Split(string(original), "\n")
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(original, &doc); err != nil {
+		return nil, fmt.Errorf("catalog.yaml does not parse: %w", err)
+	}
+	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("catalog.yaml is not a single YAML mapping")
+	}
+	root := doc.Content[0]
+	if root.Style != 0 {
+		return nil, fmt.Errorf("catalog.yaml root is not a block mapping")
+	}
+
+	addonsKey, addonsVal := mappingEntry(root, "addons")
+	if addonsKey == nil {
+		return nil, fmt.Errorf("catalog.yaml has no addons block")
+	}
+	if isEmptyAddonsValue(addonsVal) {
+		return nil, fmt.Errorf("catalog.yaml addons block has no entries to remove")
+	}
+	if addonsVal.Kind != yaml.MappingNode || addonsVal.Style != 0 {
+		return nil, fmt.Errorf("catalog.yaml addons block is not a block mapping")
+	}
+
+	entryIndent := indentOf(lineAt(lines, addonsVal.Content[0].Line-1))
+
+	idx := keyIndexIn(addonsVal, name)
+	if idx < 0 {
+		return nil, fmt.Errorf("catalog.yaml: addon %q not found", name)
+	}
+	start := addonsVal.Content[idx*2].Line - 1
+	end := entryContentEnd(lines, addonsVal, idx, entryIndent)
+	if start < 0 || end > len(lines) || start >= end {
+		return nil, fmt.Errorf("catalog.yaml: could not locate the lines for addon %q", name)
+	}
+
+	out := make([]string, 0, len(lines))
+	out = append(out, lines[:start]...)
+	out = append(out, lines[end:]...)
+	return []byte(strings.Join(out, "\n")), nil
+}
+
 // mappingEntry returns the key and value nodes for key in a block mapping.
 func mappingEntry(n *yaml.Node, key string) (*yaml.Node, *yaml.Node) {
 	if n == nil || n.Kind != yaml.MappingNode {
