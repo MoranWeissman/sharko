@@ -204,8 +204,8 @@ GET    /metrics                        (Prometheus)
 
 ### Admin password retrieval
 ```bash
-kubectl get secret <release-name> -n sharko \
-  -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
+kubectl get secret sharko-initial-admin-secret -n sharko \
+  -o jsonpath='{.data.password}' | base64 -d
 ```
 
 ## API Contract Maintenance

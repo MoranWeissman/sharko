@@ -164,7 +164,7 @@ Reference docs:
 - 12 templates, 24 top-level value keys (will grow with v1.0.0 phases)
 - Connections: configured via Settings UI → stored in encrypted K8s Secret (`sharko-connections`)
 - Auth: admin user with random password on first install
-  - Get password: `kubectl get secret <release> -n sharko -o jsonpath='{.data.admin\.initialPassword}' | base64 -d`
+  - Get password: `kubectl get secret sharko-initial-admin-secret -n sharko -o jsonpath='{.data.password}' | base64 -d`
 - RBAC: ClusterRole for reading ArgoCD resources (configurable namespace via `rbac.argocdNamespace`)
 - Optional Ollama sidecar (`ai.ollama.deploy: true`)
 - Dev mode: `config.devMode: true` enables env var fallback for credentials

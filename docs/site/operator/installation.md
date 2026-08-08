@@ -6,8 +6,8 @@ This guide is for platform engineers and cluster operators installing Sharko in 
 
 | Requirement | Notes |
 |-------------|-------|
-| Kubernetes 1.27+ | Any CNCF-conformant distribution |
-| ArgoCD | Must be installed and accessible from within the cluster |
+| Kubernetes | Any CNCF-conformant distribution. Sharko's e2e suite is tested against **1.31** in CI (kind's `kindest/node:v1.31.0`, the harness default). Sharko's Kubernetes client library (`client-go` v0.35.2) follows the standard Kubernetes version-skew policy, so nearby minor versions in both directions are expected to interoperate, but 1.31 is the only version CI actually exercises today. |
+| ArgoCD | Must be installed and accessible from within the cluster. Tested weekly against the three newest ArgoCD minor releases — the CI-verified range is currently **v3.2–v3.4** (last confirmed 2026-07-05 by the `argocd-matrix` workflow). The running app's **System** page shows the detected ArgoCD version against this same tested range. |
 | Helm 3.x | `helm version` to verify |
 | GitHub PAT or Azure DevOps PAT | For GitOps write operations |
 | (Optional) AWS IAM role | If using AWS Secrets Manager as the credentials provider |
@@ -76,7 +76,7 @@ Sharko ships with a single bootstrap `admin` user. There are three ways to set t
 
 ### 1. Auto-generated (default)
 
-If you set neither `bootstrapAdmin.password` nor `bootstrapAdmin.existingSecret.name`, Sharko generates a random 16-character password on first install. There are then three ways to retrieve it:
+If you set neither `bootstrapAdmin.password` nor `bootstrapAdmin.existingSecret.name`, Sharko generates a random 16-character password on first install. There are then two ways to retrieve it:
 
 #### (a) Dedicated `sharko-initial-admin-secret` (recommended for production)
 
@@ -125,18 +125,18 @@ This is the only time this credential will be shown. Store it securely.
 
 After logging, Sharko removes the marker from the Sharko Secret so the credential is never re-emitted on subsequent restarts. **Store the value somewhere durable immediately** (a password manager, your secrets vault).
 
-#### (c) Sharko Secret marker (only works before first restart)
-
-You can also retrieve the value directly from the Sharko Secret while the `admin.initialPassword` key is still present (i.e. before the first successful pod start):
-
-```bash
-kubectl get secret sharko -n sharko \
-  -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
-```
+!!! note "There is no third window"
+    Earlier Sharko versions could be queried directly for the password
+    while it briefly sat on the release Secret's `admin.initialPassword`
+    key (`kubectl get secret sharko -o jsonpath='{.data.admin\.initialPassword}'`).
+    That key is deleted in the same startup step that logs the password
+    and writes the dedicated secret, so by the time you could run the
+    command it already returns empty — don't rely on it. Use (a) or (b)
+    above.
 
 #### Recovery path
 
-If you missed all three windows above (no dedicated secret because you opted out, log scrolled off, marker already deleted), run `kubectl exec -n sharko deployment/sharko -- sharko reset-admin` to mint a fresh random password. The reset command also rotates `sharko-initial-admin-secret` to carry the new plaintext (or, in opt-out mode, deletes any stale copy). The new password is also printed to stdout so you can capture it in the same step.
+If you missed both windows above (no dedicated secret because you opted out, log scrolled off), run `kubectl exec -n sharko deployment/sharko -- sharko reset-admin` to mint a fresh random password. The reset command also rotates `sharko-initial-admin-secret` to carry the new plaintext (or, in opt-out mode, deletes any stale copy). The new password is also printed to stdout so you can capture it in the same step.
 
 ### 2. Operator-supplied inline (`bootstrapAdmin.password`)
 

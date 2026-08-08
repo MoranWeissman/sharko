@@ -92,18 +92,21 @@ Out of scope:
 
 ## Supported Versions
 
-Sharko is currently **pre-release** (`v1.x`). The first production
-release will be `v2.0.0` (see
-[`.claude/team/product-manager.md`](.claude/team/product-manager.md)).
+The latest tagged release is `v3.0.0`. `v4` is under active development
+on `main` and has not shipped yet.
 
-| Version    | Supported for security fixes |
-| ---------- | ---------------------------- |
-| `v2.x`     | Not yet released             |
-| `v1.x` (current pre-release line) | Latest minor only — please upgrade to the most recent `v1.x` minor before reporting |
-| `v0.x` and earlier | No |
+| Version | Supported for security fixes |
+| ------- | ----------------------------- |
+| `v3.0.x` (current release) | Yes |
+| `v4` (in development on `main`, unreleased) | Fixes land on `main` as part of normal development and ship in the next tagged release — there's no separate backport, because nothing has shipped yet |
+| `v2.x` and earlier | No — please upgrade to `v3.0.0` before reporting |
 
-Once `v2.0.0` ships, this table will be updated to follow the standard
-CNCF support window: latest minor and the immediately preceding minor.
+Sharko supports only the latest minor line: a security fix lands on
+`main` and ships in the next release rather than being backported to
+older tags. Once the project has shipped more than one minor release in
+a line, this table will be updated to also name the immediately
+preceding minor as supported, matching the standard CNCF support
+window.
 
 ## Security-Sensitive Code Paths
 

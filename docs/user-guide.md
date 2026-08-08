@@ -8,7 +8,7 @@ This guide covers installing Sharko, configuring it, and using the CLI and dashb
 
 ### Prerequisites
 
-- A Kubernetes cluster (1.27+) with ArgoCD installed
+- A Kubernetes cluster with ArgoCD installed (Sharko's e2e suite is tested against 1.31 in CI — see [Installation prerequisites](site/operator/installation.md#prerequisites) for the full range)
 - Helm 3.x
 - A GitHub Personal Access Token (PAT) with repo access
 
@@ -52,8 +52,8 @@ The Sharko server should be running and accessible on port 80 (ClusterIP by defa
 On first install, Sharko creates an admin account with a random password. Retrieve it:
 
 ```bash
-kubectl get secret sharko -n sharko \
-  -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
+kubectl get secret sharko-initial-admin-secret -n sharko \
+  -o jsonpath='{.data.password}' | base64 -d
 ```
 
 Then log in via the CLI:

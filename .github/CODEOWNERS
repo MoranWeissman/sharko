@@ -1,0 +1,4 @@
+# This file gates the curated addon catalog (catalog/addons.yaml, catalog/schema.json,
+# catalog/embed.go) so a change to what Sharko ships in its embedded catalog always
+# needs the maintainer's review before it can merge.
+catalog/** @MoranWeissman

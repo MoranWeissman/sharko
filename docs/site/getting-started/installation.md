@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Kubernetes 1.27+ with **ArgoCD** installed and running
+- Kubernetes with **ArgoCD** installed and running (tested against **1.31** in CI — see [Operator prerequisites](../operator/installation.md#prerequisites) for the full Kubernetes and ArgoCD compatibility range)
 - **Helm 3.x** (`helm version` to verify)
 
 That's it. Connection credentials (Git token, ArgoCD token) are entered through the first-run wizard after install — not at Helm install time.
