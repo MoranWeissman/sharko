@@ -152,6 +152,7 @@ nav:
     - Testing Guide: developer-guide/testing-guide.md
     - End-to-End Testing: developer-guide/e2e-testing.md
     - Perf Harness: developer-guide/perf-harness.md
+    - Release Checklist: developer-guide/release-checklist.md
     - Contributor Smoke Walk: developer-guide/contributor-smoke-walk.md
     - Logging: developer-guide/logging.md
     - Runbook Style Guide: developer-guide/runbook-style-guide.md
