@@ -68,6 +68,37 @@ func (o *Orchestrator) updateClusterAddonsV4(ctx context.Context, name string, a
 		return nil, readErr
 	}
 
+	// Nothing named: nothing to change. Return before touching git at all.
+	//
+	// This guard exists because of a bug a kind e2e run caught (the
+	// PatchClusterLabels subtest sends `{"addons": {}}` as a no-op-patch
+	// probe): with an empty addons map, the loop below never runs, so
+	// `updated` never passes through gitops.SetClusterAddonsAddon (the
+	// only thing that produces a valid apiVersion/kind envelope — see
+	// models.SaveClusterAddons). On a cluster whose assignment file does
+	// not exist yet (the ordinary case right after registration, since
+	// RegisterCluster never creates cluster-addons/<name>.yaml), `updated`
+	// stayed empty and the `!exists` branch below then prepended ONLY the
+	// plain-English comment header to it — a file with no apiVersion/kind
+	// at all, which every subsequent read of cluster-addons/<name>.yaml
+	// then failed to parse ("not a Sharko document"). An empty request has
+	// no addon to validate against the catalog gate either, so there is
+	// nothing left to do but report success with no git write — the same
+	// no-op contract the PatchClusterLabels subtest's own comment expects.
+	if len(addonNames) == 0 {
+		result.Status = "success"
+		result.CompletedSteps = []string{}
+		if dryRun {
+			result.DryRun = &DryRunResult{
+				EffectiveAddons: []string{},
+				FilesToWrite:    []FilePreview{},
+				PRTitle:         fmt.Sprintf("%s update addons for cluster %s", o.gitops.CommitPrefix, name),
+				SecretsToCreate: []string{},
+			}
+		}
+		return result, nil
+	}
+
 	// Apply the full desired on/off set over ONE in-memory buffer, in one
 	// pass — the same loop-over-a-buffer-then-commit-once shape
 	// AddToCatalog's add-and-enable combo branch uses (catalog_ops.go), so
@@ -81,7 +112,11 @@ func (o *Orchestrator) updateClusterAddonsV4(ctx context.Context, name string, a
 		}
 	}
 	// v4 naming polish item 3: this cluster's assignment file did not exist
-	// before this write — headers ride creation only.
+	// before this write — headers ride creation only. Reached only when
+	// addonNames is non-empty (guarded above), so `updated` has always
+	// been through gitops.SetClusterAddonsAddon at least once here and
+	// already carries a valid apiVersion/kind envelope — the header is
+	// purely a comment prepended in front of it, never a substitute for it.
 	if !exists {
 		updated = append([]byte(clusterAddonsFileHeader(name)), updated...)
 	}
