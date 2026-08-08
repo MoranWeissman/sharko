@@ -111,7 +111,11 @@ var takeoverPreflightCmd = &cobra.Command{
 cluster's ArgoCD connection today, which ApplicationSets would react to it
 changing owners, what is deployed there, and whether the name clashes with a
 cluster Sharko already has. Writes nothing — safe to run as often as you
-like.`,
+like.
+
+Exits 0 when the cluster is ready to take over (warnings included — read
+them), and 1 when something blocks it, so a script or CI gate can branch on
+the result.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
@@ -127,6 +131,11 @@ like.`,
 			return fmt.Errorf("invalid response: %w", err)
 		}
 		printPreflightReport(&report)
+		if !report.Ready {
+			// A blocked report exits non-zero so scripts don't have to parse
+			// the text. The findings above already say what to fix.
+			return fmt.Errorf("%s is not ready to take over — fix the blocked check(s) above and run this again", name)
+		}
 		return nil
 	},
 }

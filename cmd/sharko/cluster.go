@@ -15,6 +15,8 @@ func init() {
 	addClusterCmd.Flags().Bool("dry-run", false, "Preview what would happen without making changes")
 	rootCmd.AddCommand(addClusterCmd)
 
+	removeClusterCmd.Flags().BoolP("yes", "y", false, "Confirm the removal (required — the server refuses without it)")
+	removeClusterCmd.Flags().String("cleanup", "", `How much to remove: "all" (default), "git", or "none"`)
 	rootCmd.AddCommand(removeClusterCmd)
 
 	updateClusterCmd.Flags().String("add-addon", "", "Comma-separated addons to enable")
@@ -184,12 +186,37 @@ var addClusterCmd = &cobra.Command{
 var removeClusterCmd = &cobra.Command{
 	Use:   "remove-cluster <name>",
 	Short: "Deregister a cluster",
-	Args:  cobra.ExactArgs(1),
+	Long: `Removes a cluster from Sharko through a pull request.
+
+The server refuses a removal without an explicit confirmation, so this
+command requires -y/--yes. Before confirming, see exactly what the removal
+will do with: sharko unregister-consequences <name>.
+
+--cleanup controls how much goes: "all" (default — repo files, remote addon
+secrets, and the ArgoCD connection IF Sharko owns it; a connection owned by
+another tool or by you is always left alone), "git" (repo files only, the
+connection stays), or "none" (only the fleet-record entry).`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 
+		yes, _ := cmd.Flags().GetBool("yes")
+		if !yes {
+			// The server would refuse anyway (it requires "yes": true) — but
+			// with instructions instead of a bare 400: point at the
+			// consequences read first, then the confirmed rerun.
+			return fmt.Errorf(
+				"removing a cluster needs an explicit confirmation.\nFirst see what it would do:  sharko unregister-consequences %s\nThen run:                    sharko remove-cluster %s -y",
+				name, name)
+		}
+		cleanup, _ := cmd.Flags().GetString("cleanup")
+		body := map[string]interface{}{"yes": true}
+		if cleanup != "" {
+			body["cleanup"] = cleanup
+		}
+
 		fmt.Printf("Removing cluster %s... ", name)
-		respBody, status, err := apiRequest("DELETE", "/api/v1/clusters/"+url.PathEscape(name), nil)
+		respBody, status, err := apiRequest("DELETE", "/api/v1/clusters/"+url.PathEscape(name), body)
 		if err != nil {
 			fmt.Println("failed")
 			return err
