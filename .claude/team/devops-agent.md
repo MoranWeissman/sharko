@@ -29,13 +29,21 @@ You handle CI/CD, Makefiles, Docker, Helm chart packaging, GitHub Actions, relea
 Makefile                        Build/dev/test/e2e targets (see test-e2e* family below)
 Dockerfile                      Multi-stage Go + UI build
 .github/workflows/              CI/CD pipelines
-  ci.yml                        13 jobs: go-build-test, ui-build-test, swagger-check,
+  ci.yml                        14 jobs: go-build-test, ui-build-test, swagger-check,
                                 provider-types-up-to-date, schemas-up-to-date,
                                 engine-version-up-to-date, validate-sharko-config,
                                 validate-catalog, helm-validate, forbidden-content-check
                                 (renamed from security-scan, story 152.H — it's a
                                 forbidden-content grep, not a scanner), gosec,
-                                ui-deps-audit, container-image-scan
+                                ui-deps-audit, container-image-scan, security-gate
+                                (story 152.J — the ONE security check branch protection
+                                requires; fans in go-build-test + forbidden-content-check
+                                + gosec + ui-deps-audit + container-image-scan and fails
+                                on any non-success result, skipped and cancelled included.
+                                Its name is PERMANENT — never rename it. New security
+                                jobs must be added to its needs: list; an in-job
+                                completeness check fails any ci.yml job that is neither
+                                covered nor declared non-security)
   release.yml                   workflow_run-triggered on CI success
   pr-docker.yml                 PR-time Docker build smoke
   e2e.yml                       Scheduled / on-demand kind-backed e2e
@@ -144,6 +152,11 @@ For CI, steps 1-5 are build / regen, steps 6-8 are test + validation. The corres
 - `gosec` → Go static-analysis security scanner (story 152.H)
 - `ui-deps-audit` → `npm audit --omit=dev` on the UI's production dependencies (story 152.H)
 - `container-image-scan` → Trivy scan of the built Docker image (story 152.H)
+- `security-gate` → fan-in over the five security checks above + `go-build-test`'s govulncheck/race
+  coverage; the only security check branch protection requires (story 152.J). `if: always()` so it
+  can never be skipped (GitHub counts a skipped job as a passed required check); fails on any
+  covered job whose result is not `success`; a second step fails the gate if any ci.yml job is
+  neither in its `needs:` list nor in its explicit NON_SECURITY_JOBS list. Name frozen forever.
 
 ## Patterns
 - `make demo` — build UI + start with mock backends

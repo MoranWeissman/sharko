@@ -220,7 +220,11 @@ CI mirrors this with jobs in `.github/workflows/ci.yml`: `go-build-test`, `ui-bu
 `swagger-check`, `provider-types-up-to-date`, `schemas-up-to-date`, `validate-sharko-config`,
 `helm-validate`, `forbidden-content-check` (renamed from `security-scan`, story 152.H — it's a
 forbidden-content grep, not a real scanner), plus story 152.H's `gosec`, `ui-deps-audit`, and
-`container-image-scan`. The `schemas-up-to-date` and `validate-sharko-config` jobs were
+`container-image-scan`, all fanned into `security-gate` (story 152.J) — the one permanently-named
+job branch protection requires for security; it fails if any covered check fails, is skipped, or
+never runs, and its completeness step fails any ci.yml job left neither covered nor declared
+non-security. Never rename `security-gate`; new security jobs go into its `needs:` list. The
+`schemas-up-to-date` and `validate-sharko-config` jobs were
 added by V125-1-9 and gate every PR that touches an envelope-shaped YAML or its model.
 
 Always run the quality gate commands and read the output. Never assume things pass.

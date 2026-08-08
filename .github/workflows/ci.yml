@@ -572,3 +572,146 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
           version: v0.69.3
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # security-gate — the ONE check branch protection requires for security
+  # (story 152.J, task #152 Secret Sync security closure).
+  #
+  # THE NAME IS PERMANENT. Never rename this job and never change its
+  # `name:` field — branch protection matches the DISPLAY name, and it
+  # requires exactly the string "security-gate". This sprint already lived
+  # through what a rename does: when security-scan was renamed to
+  # forbidden-content-check, the old required name simply never reported
+  # again and every PR sat unmergeable with 19 green checks and nothing
+  # visibly wrong. The whole point of this job is that individual security
+  # jobs above stay free to be renamed, split, or replaced — only this
+  # fan-in name is frozen.
+  #
+  # ── Adding a new security job? Do this ─────────────────────────────────
+  #   1. Add its job id to the `needs:` list below. That is the entire
+  #      registration — the gate then fails whenever your job fails, is
+  #      skipped, or is cancelled.
+  #   2. If you forget, the "no job escapes this gate" step below fails
+  #      this gate and prints your job's name with these instructions —
+  #      a new job in this file CANNOT ship undecided.
+  #   3. If your new job is genuinely NOT a security check, add it to the
+  #      NON_SECURITY_JOBS list in that same step instead. That decision
+  #      then sits in the diff where a reviewer sees it.
+  #
+  # ── Rules that keep this gate honest ───────────────────────────────────
+  #   - `if: always()` is load-bearing, NOT a style choice. Without it,
+  #     a failed or skipped dependency would make this job get SKIPPED —
+  #     and GitHub reports a skipped job as "Success", which SATISFIES a
+  #     required check. A skipped gate is an open gate. For the same
+  #     reason, never use `!cancelled()` here (a cancelled run would skip
+  #     the gate and the merge button would light up green) and never add
+  #     any other condition, path filter, or `paths:` trigger filter that
+  #     could stop this job from reporting.
+  #   - Deleting or renaming a job listed in `needs:` makes this whole
+  #     workflow file invalid ("job security-gate needs X which does not
+  #     exist") — NO jobs run, the required security-gate check stays
+  #     "Expected/pending", and the PR is blocked. That fails closed, and
+  #     the Actions tab shows the workflow-file error. Fix by updating
+  #     the `needs:` entry (and NON_SECURITY_JOBS if relevant) in the
+  #     same commit as the rename.
+  #   - This gate only sees jobs in THIS file (ci.yml). A security check
+  #     added in a different workflow file is outside its reach and must
+  #     be wired into branch protection (or moved here) on its own.
+  security-gate:
+    name: security-gate  # display name == required-check context; frozen forever
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    needs:
+      - go-build-test          # carries govulncheck + the -race tests
+      - forbidden-content-check
+      - gosec
+      - ui-deps-audit
+      - container-image-scan
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every covered security check must have succeeded
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          echo "Covered security checks and their results:"
+          echo "$NEEDS_JSON" | jq -r 'to_entries[] | "  \(.key): \(.value.result)"'
+          bad=$(echo "$NEEDS_JSON" | jq -r 'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"')
+          if [ -n "$bad" ]; then
+            echo ""
+            while IFS='=' read -r job result; do
+              case "$result" in
+                failure)
+                  echo "::error::security-gate: '$job' FAILED. Open that job's log in this run to see why." ;;
+                skipped)
+                  echo "::error::security-gate: '$job' was SKIPPED — it never ran. A skipped security check is not a pass. Something (an 'if:' condition, a dependency, a filter) prevented it from running; find and remove that, or the gate stays red." ;;
+                cancelled)
+                  echo "::error::security-gate: '$job' was CANCELLED before finishing — no result is not a pass. Re-run the workflow to get a real answer." ;;
+                *)
+                  echo "::error::security-gate: '$job' ended with unexpected result '$result' — treated as a failure." ;;
+              esac
+            done <<< "$bad"
+            exit 1
+          fi
+          echo "security-gate: all covered security checks succeeded."
+
+      # Escape hatch closed: every job in ci.yml must be either covered by
+      # this gate (in `needs:` above) or explicitly declared non-security
+      # (in NON_SECURITY_JOBS below). A job that is neither fails the gate
+      # by name — so adding a job to this file forces a visible decision.
+      # What this does NOT catch: a wrong decision (someone knowingly
+      # listing a security job as non-security — that's on the reviewer),
+      # and jobs living in other workflow files.
+      - name: No job escapes this gate undecided
+        if: ${{ always() }}
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+          import yaml  # preinstalled on GitHub-hosted runners
+
+          jobs = set(yaml.safe_load(open(".github/workflows/ci.yml"))["jobs"])
+          jobs.discard("security-gate")
+          covered = set(json.loads(os.environ["NEEDS_JSON"]))
+
+          # Jobs in ci.yml that are deliberately NOT security checks.
+          # Adding a job here instead of to security-gate's `needs:` is an
+          # explicit, reviewable statement that it is not a security check.
+          NON_SECURITY_JOBS = {
+              "ui-build-test",             # build/lint/unit-test quality gate
+              "swagger-check",             # generated-docs drift gate
+              "provider-types-up-to-date", # generated-code drift gate
+              "schemas-up-to-date",        # generated-schema drift gate
+              "engine-version-up-to-date", # generated-code drift gate
+              "validate-sharko-config",    # YAML schema validation (PR-only)
+              "validate-catalog",          # catalog format validation (PR-only)
+              "helm-validate",             # chart lint/render gate
+          }
+
+          problems = []
+          for job in sorted(jobs - covered - NON_SECURITY_JOBS):
+              problems.append(
+                  f"job '{job}' is in ci.yml but neither covered by security-gate "
+                  f"nor declared non-security. Add it to security-gate's needs: "
+                  f"list (if it is a security check) or to NON_SECURITY_JOBS in "
+                  f"this step (if it is not)."
+              )
+          for job in sorted(covered & NON_SECURITY_JOBS):
+              problems.append(
+                  f"job '{job}' is BOTH in security-gate's needs: and in "
+                  f"NON_SECURITY_JOBS — it cannot be both; remove one."
+              )
+          for job in sorted(NON_SECURITY_JOBS - jobs):
+              problems.append(
+                  f"NON_SECURITY_JOBS lists '{job}' but no such job exists in "
+                  f"ci.yml — remove the stale entry."
+              )
+
+          if problems:
+              for p in problems:
+                  print(f"::error::security-gate: {p}")
+              sys.exit(1)
+          print("security-gate: every job in ci.yml is accounted for "
+                f"({len(covered)} covered, {len(NON_SECURITY_JOBS)} declared non-security).")
+          PYEOF
