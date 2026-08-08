@@ -297,13 +297,19 @@ func insecureTransport() *http.Transport {
 // already calls — production dual-branches on repo format internally,
 // so the test needs no new endpoints for those.
 //
-// Three write endpoints do NOT yet have a v4 implementation —
-// AdoptClusters, UnadoptCluster (internal/orchestrator/{adopt,unadopt}.go)
-// and the addon-label PATCH behind PatchClusterAddons (cluster.go's
-// UpdateClusterAddons) all explicitly refuse with ErrV4RepoUnsupported
-// ("... coming with the takeover work") on a v4 repo. Those subtests
-// accept that refusal gracefully rather than asserting success — see
-// the comment at each one in cluster_test.go.
+// UPDATE (v4-coherence-closure lane P, e2e honesty round 2): AdoptClusters,
+// UnadoptCluster (internal/orchestrator/{adopt,unadopt}.go) and the
+// addon-label PATCH behind PatchClusterAddons (cluster.go's
+// UpdateClusterAddons) ALL now have real v4 implementations — the
+// ErrV4RepoUnsupported refusal this comment used to describe is retired
+// for those three doors (it survives only as a defensive fallback the API
+// handlers keep for a repo state the orchestrator should never produce).
+// cluster_test.go's PatchClusterLabels and UnadoptCluster subtests assert
+// real success now. AdoptClusters is the one exception worth calling out:
+// its v4 preflight needs an argo-secret-manager this harness never wires
+// (see that subtest's own comment), so it asserts a specific, documented
+// failure shape instead of a blanket "any non-2xx is fine" — not a
+// v4-unsupported 409, a real "no in-cluster install" preflight failure.
 func seedV4Bootstrap(t *testing.T, mock *harness.MockGitProvider, repoURL string) {
 	t.Helper()
 	files := orchestrator.BuildV4SeedFiles(
