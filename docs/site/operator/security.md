@@ -192,15 +192,52 @@ This is compliant with the Kubernetes **Restricted** Pod Security Standard. No p
 
 ## RBAC
 
-Sharko creates a `ClusterRole` granting read access to ArgoCD resources:
+Sharko's default install grants **no cluster-wide access to Secrets**. As of
+v4 (Story 152.F), every Secret read the Sharko ServiceAccount does on the
+host cluster is scoped to the one namespace it actually needs, not the
+whole cluster. This is a real tightening from earlier versions, which
+carried a cluster-wide `secrets: get,list` rule — `list` on Secrets hands
+over their contents, so that rule was wider than any code path needed.
+
+Sharko creates one `ClusterRole` (cluster-wide, but **not** for Secrets)
+plus a small set of namespaced `Role`s:
 
 ```yaml
 rbac:
   create: true
   argocdNamespace: argocd
+  k8sSecretsProviderNamespaces: []
 ```
 
-The ClusterRole grants `get`, `list`, and `watch` on ArgoCD CRDs (Applications, AppProjects, ApplicationSets). It does not grant write access to the Kubernetes API.
+| Object | Scope | What it's for |
+|---|---|---|
+| `ClusterRole` (`sharko`) | cluster-wide | `get/list/watch` on ArgoCD CRDs (Applications, AppProjects, ApplicationSets) — read-only, no write access to the Kubernetes API. Also `get/list` on Nodes if `config.nodeAccess: true` (default). **No Secrets rule.** |
+| `Role` (`sharko-argocd-secrets`), in `rbac.argocdNamespace` | one namespace | Full CRUD on Secrets in the ArgoCD namespace — this is where Sharko reads and writes the ArgoCD cluster-connection Secrets (`internal/argosecrets`, `internal/clusterreconciler`). |
+| `Role` (`sharko-secrets-provider`), one per namespace in `k8sSecretsProviderNamespaces` (the release namespace is always included) | one namespace each | `get/list` on Secrets — read-only, for the **k8s-secrets** cluster-credential provider and/or the **k8s-secrets** addon-secret provider (`internal/providers/k8s_secrets.go`), when either is configured to use that backend. |
+| `Role` (`sharko-auth`), in the release namespace | one namespace, name-scoped | Sharko's own operational Secrets (auth store, connections, API tokens) — restricted to specific `resourceNames`, not a blanket read/list. |
+
+If you use the **k8s-secrets** backend for `connection.provider` or
+`connection.addonSecretProvider` and leave its `namespace` field empty, the
+provider's own default is the literal string `"sharko"` — **not** your
+release namespace. If your release namespace isn't literally `sharko`, add
+`"sharko"` to `rbac.k8sSecretsProviderNamespaces` (only if that namespace
+already exists — Helm cannot create a Role in a namespace that isn't
+there), or, better, set the namespace field explicitly to your release
+namespace so there's nothing to keep in sync. Getting this wrong shows up
+as a 403 rather than the old silent cluster-wide read — see
+[K8s Secrets Provider — Secret Not Found in Namespace](k8s-secrets-not-found-in-namespace.md).
+
+**Keeping the addon-secret identity and the cluster-credential identity
+separate.** Point `connection.provider.namespace` and
+`connection.addonSecretProvider.namespace` at two *different* namespaces
+(each listed in `rbac.k8sSecretsProviderNamespaces`) and a Secret readable
+by one Role is not readable by the other — a compromise of the addon-secret
+read path does not also expose cluster-credential Secrets, and the reverse.
+This is real, RBAC-enforced separation for the Kubernetes backend. For the
+AWS Secrets Manager backend, the closest equivalent is two IRSA-role IAM
+policy statements scoped to two different secret-name prefixes, under the
+one pod identity — see [Scoped IRSA policy](#scoped-aws-irsa-policy) below,
+and its documented limit.
 
 Read access to Kubernetes Nodes (`get`, `list` on `v1/nodes`) is granted by default so the Dashboard node-count widget works out of the box. Node metadata is low-sensitivity — no pod, secret, or workload data is exposed. To disable it on clusters where cluster-wide node reads are restricted, set:
 
@@ -265,6 +302,156 @@ spec:
         - port: 443
           protocol: TCP
 ```
+
+## A worked example: locking down a production install
+
+This section puts RBAC, the AWS IRSA policy, and a NetworkPolicy together
+into one example, so you have something to copy and adapt rather than
+piecing the three together yourself. Everything below uses placeholder
+values — `123456789012` for an AWS account ID, `sharko.example.com` for a
+hostname — swap in your own before applying anything.
+
+The scenario: Sharko is installed in the `sharko` namespace, ArgoCD in the
+`argocd` namespace, both AWS Secrets Manager backends (cluster credentials
+and addon secrets) live under two different prefixes in the same account.
+
+**1. Helm values — namespaced RBAC, no cluster-wide Secrets access:**
+
+```yaml
+rbac:
+  create: true
+  argocdNamespace: argocd
+  # Only needed here because this example's connection.provider.namespace
+  # and connection.addonSecretProvider.namespace stay empty — they're
+  # unused with the aws-sm backend below. Left in to show the shape.
+  k8sSecretsProviderNamespaces: []
+
+connection:
+  provider:
+    type: "aws-sm"
+    region: "us-east-1"
+    prefix: "clusters/"
+    roleArn: "arn:aws:iam::123456789012:role/sharko-hub-role"
+  addonSecretProvider:
+    type: "aws-sm"
+    region: "us-east-1"
+    prefix: "addon-secrets/"
+    roleArn: "arn:aws:iam::123456789012:role/sharko-hub-role"
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/sharko-hub-role"
+```
+
+Running `helm template` on this confirms what actually gets created — no
+`ClusterRole` rule for Secrets, one namespaced `Role` in `argocd` for the
+cluster-connection Secrets, and (since the backend here is `aws-sm`, not
+`k8s-secrets`) no `-secrets-provider` Role is needed at all.
+
+### Scoped AWS IRSA policy
+
+Attach this policy to the `sharko-hub-role` IAM role referenced above (the
+role the ServiceAccount annotation points at). It has two separate
+statements — one for cluster-credential secrets, one for addon-secret
+values — each scoped to its own resource-name prefix, matching the two
+different `prefix` values set above:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadClusterCredentialSecrets",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "arn:aws:secretsmanager:us-east-1:123456789012:secret:clusters/*"
+    },
+    {
+      "Sid": "ReadAddonSecretValues",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "arn:aws:secretsmanager:us-east-1:123456789012:secret:addon-secrets/*"
+    },
+    {
+      "Sid": "AssumeSpokeRolesForTestAndSecretPush",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": [
+        "arn:aws:iam::123456789012:role/example-spoke-role"
+      ]
+    }
+  ]
+}
+```
+
+**The honest limit:** the two `GetSecretValue` statements above scope *what
+each call can reach* to a disjoint prefix, but both calls still run as the
+same `sharko-hub-role` principal — Sharko's cluster-credential provider and
+its addon-secret provider don't assume two different IAM roles for a plain
+Secrets Manager read (only cluster-credential EKS-token minting supports a
+per-cluster `roleArn`; see
+[EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md#c-sharkos-own-role-for-pushing-addon-secrets-and-running-tests)).
+So this is real blast-radius reduction — a leaked policy edit or a bug that
+sends the wrong prefix to `GetSecretValue` is refused by AWS, not just by
+Sharko's own code — but it isn't full identity separation. Full separation
+would need Sharko to assume a distinct IAM role per provider even for plain
+value reads, which the current code doesn't do. Treat it as a known
+follow-up, not a solved problem, if your threat model requires two fully
+separate principals.
+
+**2. NetworkPolicy — restrict Sharko's egress to what it actually calls:**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sharko
+  namespace: sharko
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: sharko
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+  egress:
+    # ArgoCD API (cluster-connection Secret reads/writes go through the
+    # Kubernetes API, not a network call to ArgoCD, but Sharko also calls
+    # ArgoCD's REST API for applications/projects).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: argocd
+    # DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # HTTPS out — your Git provider, AWS Secrets Manager / STS endpoints,
+    # and any managed cluster's Kubernetes API Sharko pushes addon secrets
+    # to. Narrow this to an IP allowlist if your platform supports it;
+    # NetworkPolicy alone can't match on hostname.
+    - ports:
+        - port: 443
+          protocol: TCP
+```
+
+This is a starting point, not a finished policy — the exact egress
+destinations depend on which Git provider, which AWS region, and which
+managed clusters you actually run. Test with `kubectl exec` into the
+Sharko pod and a `curl` to each expected destination after applying it,
+before relying on it in production.
 
 ## Webhook Security
 

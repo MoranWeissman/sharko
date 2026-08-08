@@ -2,7 +2,9 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The error
+> **Verified:** Authored 2026-06-01 against `main` HEAD; RBAC section
+> corrected 2026-08-08 (Story 152.F) against `charts/sharko/templates/rbac.yaml`
+> after the least-privilege rework. The error
 > message `"secret for cluster %q not found in namespace %q. Set
 > --secret-path to specify the exact secret name"` is verified
 > against `internal/providers/k8s_secrets.go:142`. The slog.Error at
@@ -88,9 +90,11 @@ What an operator sees when this fires:
   not a not-found — see Mitigation step 3.
 
 If the symptom is "every cluster fails" with this error, the issue
-is likely a Helm misconfiguration (wrong `secrets.namespace` value)
-or RBAC (the Sharko SA can't list Secrets in the configured
-namespace). Single-cluster failure stays in this runbook.
+is likely a Helm misconfiguration (wrong `connection.provider.namespace`
+or `connection.addonSecretProvider.namespace` value) or RBAC (the
+Sharko SA can't list Secrets in the configured namespace — check that
+namespace is in `rbac.k8sSecretsProviderNamespaces`). Single-cluster
+failure stays in this runbook.
 
 If the error includes "is forbidden: User ... cannot list secrets,"
 this is RBAC not not-found — see Mitigation step 4 / escalate to
@@ -118,18 +122,23 @@ in the same namespace = Helm config issue (Mitigation step 5).
 ### 2. Read off the configured Sharko-secrets namespace
 
 ```sh
-# From Helm values:
-helm get values sharko -n <sharko-ns> | grep -A1 -E 'secrets:|namespace:'
-
-# From the deployment env (resolved value, includes any defaults):
-SHARKO_SECRETS_NS=$(kubectl -n <sharko-ns> get deployment sharko \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_SECRETS_NAMESPACE")].value}')
-echo "Configured Sharko-secrets namespace: ${SHARKO_SECRETS_NS:-sharko (default)}"
+# From Helm values — the field name depends on which provider is
+# affected: connection.provider.namespace (cluster-credentials) or
+# connection.addonSecretProvider.namespace (addon secrets). There is
+# no "secrets.namespace" value — that name doesn't exist in this chart.
+helm get values sharko -n <sharko-ns> | grep -A3 -E 'provider:|addonSecretProvider:'
 ```
 
-The default per `internal/providers/k8s_secrets.go:33` is `sharko`.
-If the Helm value sets a different namespace, that's the one the
-provider looks in.
+`GET /api/v1/providers` and `GET /api/v1/config` report the provider
+`type`/`region`/`prefix` but not the configured namespace — Helm values
+(or the connection saved in the Settings UI, if it was set there instead
+of via Helm) is the only place to read it today.
+
+The default per `internal/providers/k8s_secrets.go:29` is the literal
+string `sharko` — **not** the release namespace Sharko itself is
+installed into, unless that also happens to be named `sharko`. If the
+namespace field was left empty, that literal default is the one the
+provider looks in; if a Helm value set it explicitly, that's the one.
 
 ### 3. List actual Secrets in the configured namespace
 
@@ -178,8 +187,9 @@ kubectl auth can-i get secret "$CLUSTER" -n "$NS" \
 ```
 
 Both should return `yes`. If `no`, RBAC is the gap (Mitigation step
-4); a Sharko Helm reinstall typically restores the ClusterRole +
-RoleBinding.
+4); a Sharko Helm reinstall typically restores the namespaced Role +
+RoleBinding — as long as the target namespace is listed in
+`rbac.k8sSecretsProviderNamespaces` (see Mitigation step 4).
 
 ---
 
@@ -242,25 +252,33 @@ RoleBinding.
    Re-run the cluster test.
 
 4. **If RBAC is the gap (Diagnosis step 4 returns "no"), re-apply
-   the Helm chart to restore the ClusterRole + RoleBinding.**
-   Sharko's chart ships a ClusterRole that grants
-   `list/get/watch secrets` in the configured namespace; if it was
-   removed (cleanup, audit) restoring is the cleanest fix:
+   the Helm chart to restore the namespaced Role + RoleBinding.**
+   As of Story 152.F, Sharko's chart does **not** ship a
+   cluster-wide grant for Secrets — it ships a namespaced `Role`
+   named `<release>-secrets-provider` (`get/list`, no `watch`, no
+   write) in the release namespace plus any namespace listed under
+   `rbac.k8sSecretsProviderNamespaces`. If the target namespace
+   ($NS) is missing from that list, or the Role/RoleBinding pair was
+   removed (cleanup, audit), restoring is the cleanest fix:
 
    ```sh
-   helm upgrade --reuse-values sharko sharko/sharko -n <sharko-ns>
+   helm upgrade --reuse-values \
+     --set "rbac.k8sSecretsProviderNamespaces[0]=$NS" \
+     sharko sharko/sharko -n <sharko-ns>
    ```
 
-   For a manual repair (when re-applying is not desirable):
+   For a manual repair (when re-applying is not desirable) — note
+   this is a namespaced `Role`, not a `ClusterRole`:
 
    ```sh
-   kubectl create clusterrole sharko-secrets-reader \
-     --verb=get,list,watch \
+   kubectl create role sharko-secrets-reader \
+     -n "$NS" \
+     --verb=get,list \
      --resource=secrets
 
    kubectl create rolebinding sharko-secrets-reader \
      -n "$NS" \
-     --clusterrole=sharko-secrets-reader \
+     --role=sharko-secrets-reader \
      --serviceaccount=<sharko-ns>:"$SA"
    ```
 
@@ -268,15 +286,23 @@ RoleBinding.
 
 5. **If multiple clusters fail because the configured namespace is
    wrong (or the convention mismatch is fleet-wide), update the
-   Helm value to match the existing layout.** This is the
-   fleet-wide fix when an operator deploys Sharko into an existing
-   K8s-Secrets layout:
+   Helm value to match the existing layout — and add that namespace
+   to `rbac.k8sSecretsProviderNamespaces` in the same change, or the
+   provider will find the Secret but the RoleBinding won't reach it.**
+   This is the fleet-wide fix when an operator deploys Sharko into an
+   existing K8s-Secrets layout:
 
    ```sh
    helm upgrade --reuse-values \
-     --set "secrets.namespace=existing-kubeconfigs" \
+     --set "connection.provider.namespace=existing-kubeconfigs" \
+     --set "rbac.k8sSecretsProviderNamespaces[0]=existing-kubeconfigs" \
      sharko sharko/sharko -n <sharko-ns>
    ```
+
+   (Use `connection.addonSecretProvider.namespace` instead if the
+   affected provider is the addon-secret one, not the
+   cluster-credential one — they're configured, and can be RBAC'd,
+   independently.)
 
    The deployment rolls out; the new namespace is in effect on the
    next `GetCredentials` per cluster. Re-test all affected clusters.
@@ -351,16 +377,23 @@ Fix is Mitigation step 4 — restore RBAC.
 ### Wrong namespace in Helm values
 
 A platform team deployed Sharko expecting Secrets in
-`my-team/secrets` but the Helm value resolved to default `sharko`.
-Every cluster fails because the lookup is happening in an empty
-namespace.
+`my-team/secrets` but left `connection.provider.namespace` (or
+`connection.addonSecretProvider.namespace`) empty, which resolves to
+the literal default `sharko` — not the release namespace, and not
+`my-team/secrets`. Every cluster fails because the lookup is
+happening in an empty (or wrong) namespace.
 
 Diagnostic signature: Diagnosis step 2 shows the resolved
 namespace doesn't match what the operator expected; the actual
 Secrets live in a different namespace.
 
-Fix is Mitigation step 5 — set `secrets.namespace` to the correct
-value.
+Fix is Mitigation step 5 — set `connection.provider.namespace` /
+`connection.addonSecretProvider.namespace` to the correct value, and
+add that same namespace to `rbac.k8sSecretsProviderNamespaces` so the
+Sharko ServiceAccount actually has permission to read it (as of Story
+152.F, RBAC is scoped per namespace — updating the provider's target
+namespace without also granting RBAC there produces a 403, not a
+"not found").
 
 ---
 
