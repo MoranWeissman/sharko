@@ -715,14 +715,3 @@ jobs:
           print("security-gate: every job in ci.yml is accounted for "
                 f"({len(covered)} covered, {len(NON_SECURITY_JOBS)} declared non-security).")
           PYEOF
-
-  # THROWAWAY (proof 3 of the security-gate test pull request). A brand new
-  # job that is in neither security-gate's needs: list nor its
-  # NON_SECURITY_JOBS list. The gate's "no job escapes" step must go red and
-  # name it. Removed again on the next commit of this branch.
-  tmp-escaped-job:
-    name: Throwaway Escaped Job
-    runs-on: ubuntu-latest
-    steps:
-      - name: Do nothing at all
-        run: echo "I am a new job nobody told security-gate about."
