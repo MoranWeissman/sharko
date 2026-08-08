@@ -12,7 +12,7 @@ Sharko manages the addons on your Kubernetes fleet — cert-manager, monitoring,
 
 **Your repo holds data, not templates.** Open it and you'll find small, readable files: `catalog.yaml` (which addons are approved), `cluster-addons/<cluster-name>.yaml` (which addons run where), and a `values/` folder for Helm values. No template logic to write or maintain. Your repo, Sharko's format — read it any time, write through Sharko.
 
-Two doors lead to the same pipeline: the UI, for a person clicking through a change, and the REST API, for a portal or a pipeline acting on someone's behalf. Either way, every write does the same three things — validate, preview, then open a Git pull request. **Sharko proposes, ArgoCD enforces:** Sharko never touches a cluster directly. It writes to Git, and ArgoCD, watching that repo, does the actual deploying.
+Three doors lead to the same pipeline: the UI, for a person clicking through a change; the REST API, for a portal or a pipeline acting on someone's behalf; and the CLI, which wraps that same API. Every write does the same three things — validate, preview, then open a Git pull request. **Sharko proposes, ArgoCD enforces:** Sharko doesn't deploy workloads — ArgoCD does that, by syncing from Git. Sharko does manage the ArgoCD connection Secret and addon secrets on the cluster directly; everything else goes to Git first.
 
 And if you ever want to stop using Sharko, you can. Remove it and every addon keeps running and syncing, because ArgoCD was always the one deploying them from Git — not Sharko. See [If You Remove Sharko](operator/removing-sharko.md) for exactly what stops and what doesn't.
 

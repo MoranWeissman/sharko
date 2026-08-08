@@ -380,8 +380,8 @@ levers:
   guard. Wire an alert on >0 per chart per day. V2-4.x follow-up.
 
 - **Gating — catalog scan validates chart values at scan time.** The
-  daily catalog scanner bot
-  ([`../developer-guide/catalog-scan-runbook.md`](../developer-guide/catalog-scan-runbook.md))
+  catalog scanner bot (manual-only, run via `workflow_dispatch`;
+  [`../developer-guide/catalog-scan-runbook.md`](../developer-guide/catalog-scan-runbook.md))
   could pre-run the `ScanForSecrets` heuristic over each chart's
   `values.yaml` and surface findings as catalog warnings. That moves
   the detection from "annotation attempt" to "catalog onboarding" —

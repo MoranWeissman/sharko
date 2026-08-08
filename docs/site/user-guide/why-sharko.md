@@ -12,7 +12,7 @@ Sharko's deploy logic — the part that turns "which addons go where" into real 
 
 Everything else in your repo is data, not code: `catalog.yaml` lists the addons your org has approved, `cluster-addons/<cluster-name>.yaml` says which of those addons run on which cluster, and a `values/` folder holds the Helm values layered on top. None of these files carry template logic — that's what the engine chart is for. Your repo, Sharko's format: you can read it any time, but you write to it through Sharko.
 
-Two doors lead to the same pipeline: the UI, for a person clicking through a change, and the REST API, for a portal, a pipeline, or a tool like Backstage acting on someone's behalf. Whichever door you use, every write does the same three things — validate the change, show a preview, then open a Git pull request. **Sharko proposes, ArgoCD enforces:** Sharko is never the thing that touches a cluster. It writes to Git, and ArgoCD, watching that repo, does the actual deploying.
+Three doors lead to the same pipeline: the UI, for a person clicking through a change; the REST API, for a portal, a pipeline, or a tool like Backstage acting on someone's behalf; and the CLI, which wraps that same API. Whichever door you use, every write does the same three things — validate the change, show a preview, then open a Git pull request. **Sharko proposes, ArgoCD enforces:** Sharko doesn't deploy workloads — ArgoCD does that, by syncing from Git. Sharko does manage the ArgoCD connection Secret and addon secrets on the cluster; it writes those directly, while everything else goes through Git first.
 
 ## The two GitOps loops
 
@@ -110,7 +110,7 @@ For an ArgoCD Application to "deploy" that Secret, it needs the credential **val
 1. **External Secrets Operator (ESO)** — the Application deploys an `ExternalSecret` manifest; ESO fetches the value and writes the Secret (this is the pattern many shops use today).
 2. **A CRD + controller** (operator mode) — the Application deploys a `SharkoClusterRegistration` custom resource; Sharko's controller reconciles it.
 
-**Sharko does neither by design.** It dropped the ESO dependency (so teams without a secret store can still use it) and has no CRD yet (operator mode is roadmap, not v3.0.0). With no ESO and no CRD, an ArgoCD Application has **no Kubernetes resource to render** for cluster registration.
+**Sharko does neither by design.** It dropped the ESO dependency (so teams without a secret store can still use it), and it has no CRD — an earlier CRD-based build was tried and shelved (see below); there's no plan to bring it back. With no ESO and no CRD, an ArgoCD Application has **no Kubernetes resource to render** for cluster registration.
 
 So Sharko runs its own process that writes the cluster Secret directly, using credentials it holds encrypted in its own config store. This is a design choice (self-contained, no hard dependency on ESO) that costs one trade-off: Sharko's desired state is not a kubectl-visible object today. For more on that transparency gap and the roadmap to close it, see the section below.
 

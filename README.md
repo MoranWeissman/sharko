@@ -21,11 +21,11 @@
 
 Full documentation: **https://sharko.readthedocs.io/**
 
-**Sharko is a GitOps agent with an API: your portal or pipeline asks for "a cluster with these addons," and Sharko opens a pull request — it never changes your cluster behind your back.**
+**Sharko is a GitOps agent with an API: your portal or pipeline asks for "a cluster with these addons," and Sharko opens a pull request — every change to what runs on your cluster goes through a PR you review, never straight to your cluster behind your back.**
 
 Sharko's deploy logic lives in one place: [`sharko-engine`](charts/sharko-engine), a versioned, signed Helm chart published next to the server image. Your repo pins one version of it; when Sharko ships new deploy logic, you get a small pin-bump PR to review, not a migration. Everything else in your repo is small, readable data files — no template logic to write or maintain. Your repo, Sharko's format: read it any time, write through Sharko.
 
-Two doors lead to the same pipeline: the UI for a person, the REST API for a portal, Backstage, Terraform, or a pipeline acting on someone's behalf. Either door does the same three things — validate, preview, then open a PR. **Sharko proposes, ArgoCD enforces:** Sharko never touches a cluster directly, and if you remove it, everything ArgoCD deployed keeps running and syncing from Git.
+Three doors lead to the same pipeline: the UI for a person, the REST API for a portal, Backstage, Terraform, or a pipeline acting on someone's behalf, and the CLI, which wraps that same API. All three do the same three things — validate, preview, then open a PR. **Sharko proposes, ArgoCD enforces:** Sharko doesn't deploy workloads — ArgoCD does that, by syncing from Git — but Sharko does manage the ArgoCD connection Secrets and addon secrets on your clusters. If you remove Sharko, everything ArgoCD deployed keeps running and syncing from Git.
 
 Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD. Install it with a single Helm command, and a guided wizard walks you through connecting your Git repo, ArgoCD instance, and optional secrets provider — no config files, no env vars to set by hand.
 
@@ -44,7 +44,7 @@ If DIY serves you well, keep it. Sharko is for teams who want that same pattern 
 ## Features
 
 - **Versioned engine, data-only repo** — the deploy logic ships as a signed Helm chart (`sharko-engine`) that your repo pins one version of; your repo itself holds only small, readable data files, never template logic
-- **PR-gated writes through every door** — UI, API, and CLI all run the same validate → preview → open-a-PR pipeline; Sharko never touches a cluster directly
+- **PR-gated writes through every door** — UI, API, and CLI all run the same validate → preview → open-a-PR pipeline; Sharko doesn't deploy workloads (ArgoCD does), though it does manage ArgoCD connection Secrets and addon secrets on your clusters
 - **Fleet upgrades and version matrix** — see every addon's version across every cluster; upgrade recommendations flag security fixes and breaking changes before you commit to a version
 - **Curated catalog with signed entries** — 45 vetted Helm addons, each cryptographically signed with [cosign](https://docs.sigstore.dev/cosign/overview/) and scored by the [OpenSSF Scorecard](https://securityscorecards.dev/) project
 - **Secret sync** — deliver addon credentials to remote clusters via AWS Secrets Manager or Kubernetes Secrets, no External Secrets Operator required
@@ -56,7 +56,6 @@ If DIY serves you well, keep it. Sharko is for teams who want that same pattern 
 - **Wizard-based setup** — first run opens a step-by-step wizard: Git connection, ArgoCD connection, secrets provider, and repo initialization
 - **Fleet dashboard** — cluster health cards with sync status, addon counts, and connection indicators; managed and discovered clusters in separate sections
 - **Third-party catalogs** — operators extend the built-in catalog with internal or partner sources, either via `SHARKO_CATALOG_URLS` or a git-native `marketplace-sources.yaml`. If the same addon appears in both, the built-in entry wins.
-- **Daily catalog scanner** — a daily GitHub Action scans the CNCF Landscape and AWS EKS Blueprints, then opens draft PRs proposing additions or updates to the built-in catalog
 - **Managed vs discovered clusters** — Sharko surfaces all ArgoCD clusters; adopt discovered clusters into full management in one click
 - **API keys** — long-lived tokens for Backstage, Terraform, and CI/CD integrations
 - **ArgoCD diagnostics** — ArgoCD connection state surfaced per cluster; bootstrap app health shown on dashboard and observability view

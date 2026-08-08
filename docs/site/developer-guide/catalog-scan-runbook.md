@@ -1,10 +1,10 @@
 # Catalog Scan Runbook — Addon Discovery Bot
 
-> **Verified:** Not verified end-to-end since authoring (V123-3.5, 2026-04-25); review pending. The runbook describes a daily, stateless GitHub Actions workflow whose source-of-truth is `.github/workflows/catalog-scan.yml` + `scripts/catalog-scan.mjs` — those have not changed materially since they were authored. A re-walk against a real bot-opened PR is recommended.
+> **Verified:** Not verified end-to-end since authoring (V123-3.5, 2026-04-25); review pending. 2026-08-08: the scheduled trigger was turned off (bot is now manual-only, run via `workflow_dispatch`) — this is a config change to `.github/workflows/catalog-scan.yml`, not a re-walk; the underlying scan logic (`scripts/catalog-scan.mjs`) has not changed materially since authoring. A re-walk against a real bot-opened PR is still recommended.
 
 Operational guide for reviewers of `catalog-scan` bot PRs.
 
-The **addon discovery bot** (codenamed V123-3 internally) opens one **draft PR per scan day** with proposed catalog additions and updates derived from upstream sources. Reviewers triage these PRs — the bot **never** auto-merges.
+The **addon discovery bot** (codenamed V123-3 internally) opens one **draft PR per run** with proposed catalog additions and updates derived from upstream sources. Reviewers triage these PRs — the bot **never** auto-merges.
 
 ## What This Bot Does — Menu Ownership, Not Security Scanning
 
@@ -16,7 +16,7 @@ The bot includes an OpenSSF Scorecard signal for each proposal, but this is **on
 
 ## What this is
 
-`catalog-scan` is a daily, stateless GitHub Actions workflow (`.github/workflows/catalog-scan.yml`) that:
+`catalog-scan` is a manual-only, stateless GitHub Actions workflow (`.github/workflows/catalog-scan.yml`), triggered via `workflow_dispatch` when you want a scan, that:
 
 1. Runs `node scripts/catalog-scan.mjs` against `catalog/addons.yaml`.
 2. Each registered plugin fetches an upstream source (CNCF Landscape, AWS EKS Blueprints, …) and emits normalized catalog entries.
@@ -27,7 +27,7 @@ Design context: see [catalog extensibility design doc §7.3](https://github.com/
 
 **Guarantees:**
 
-- Cron schedule: `0 4 * * *` (daily 04:00 UTC). `workflow_dispatch` for manual runs.
+- Manual-only: triggered via `workflow_dispatch`, no scheduled cron.
 - Stateless — every run is independent; no caching between runs.
 - One open PR at a time. The concurrency guard skips opening if a `catalog-scan`-labeled PR is already open OR the target branch already exists.
 - Draft PR only. Labels `catalog-scan` + `needs-review` always applied.
@@ -247,5 +247,5 @@ make catalog-scan-pr   # runs scanner + pr-open.mjs --dry-run
 - **`cdk-eks-blueprints` source format may drift.** The `aws-eks-blueprints` plugin's regex extractors cover both `HELM_CHART_*` constants and the `defaultProps = {...}` object-literal pattern. New patterns in upstream would require updating the regex priority order in `aws-eks-blueprints.mjs`.
 - **Signal pre-compute is best-effort.** Scorecard requires a github.com `source_url`; license requires `Chart.yaml` annotations OR an `index.yaml` `license` field; chart resolvability requires `https://` chart repos (`oci://` is skipped). Reviewers verify manually when signals are `unknown`.
 - **The bot does NOT detect deletions.** Removing an entry from upstream does not remove it from the catalog. Humans handle removals via direct CODEOWNERS-gated edits.
-- **No state between runs.** The bot doesn't remember that you closed yesterday's proposal for `foo`. If `foo` still appears in upstream tomorrow, it will be re-proposed. (V2 hardening: persistent deny-list — not yet implemented.)
-- **Stateless concurrency guard has a small race window.** Two scheduled runs firing within seconds (e.g. `workflow_dispatch` + `cron`) could both pass the open-PR check. Acceptable risk — duplicate PRs are reviewer-visible; the second is closed immediately.
+- **No state between runs.** The bot doesn't remember that you closed a previous proposal for `foo`. If `foo` still appears in upstream on the next run, it will be re-proposed. (V2 hardening: persistent deny-list — not yet implemented.)
+- **Stateless concurrency guard has a small race window.** Two `workflow_dispatch` runs fired within seconds of each other could both pass the open-PR check. Acceptable risk — duplicate PRs are reviewer-visible; the second is closed immediately.
