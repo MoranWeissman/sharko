@@ -871,6 +871,11 @@ func itemFailureReason(err error) string {
 	switch {
 	case strings.Contains(msg, "the secret definition in the catalog has no"):
 		return "catalog_definition"
+	case strings.Contains(msg, "skip certificate checks"):
+		// remoteclient.ErrUnverifiedDestination (task #152 lane C) — same
+		// position as FailureSentence's case, before the write-stage
+		// buckets, for the same reason.
+		return "unverified_connection"
 	case strings.Contains(msg, "getting credentials"):
 		return "credentials"
 	case strings.Contains(msg, "connecting to cluster"):
@@ -1209,6 +1214,23 @@ func (r *Reconciler) reconcileSecret(
 		return ItemOutcomeError, fmt.Errorf("getting credentials: %w", err)
 	}
 
+	// TLS refusal (task #152 lane C), asked BEFORE building a client and
+	// BEFORE any value is pulled out of the secrets store — there is no
+	// reason to fetch a value Sharko is never going to send. The hard stop
+	// lives in remoteclient.EnsureSecret (the choke point every write goes
+	// through); this early return exists — mirroring the foreign-secret
+	// early return below — so the recorded outcome is a deliberate refusal
+	// carrying Sharko's own fixed sentence, not a failed write attempt.
+	// SyncOne drives this same function, so the "Sync" row action inherits
+	// the identical refusal.
+	if tlsErr := remoteclient.CheckDestinationTLS(creds.Raw); tlsErr != nil {
+		log.Info("[secrets] refusing to deliver this secret — the cluster's connection is set up to skip certificate checks",
+			"cluster", clusterName, "addon", addonName,
+			"namespace", ref.Namespace, "secret", ref.SecretName,
+		)
+		return ItemOutcomeError, tlsErr
+	}
+
 	// Build a K8s client for the remote cluster.
 	client, err := r.remoteClientFn(creds.Raw)
 	if err != nil {
@@ -1532,6 +1554,18 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 		r.recordItemCheck(clusterName, addonName, ItemOutcomeError, checkErr.Error())
 		return "", checkErr
 	}
+
+	// TLS refusal (task #152 lane C) — the check side. A destination
+	// Sharko refuses to deliver to is refused on the check too, so the row
+	// says the same thing after a "Refresh" click as it does after the
+	// periodic pass, instead of flip-flopping between a drift verdict and
+	// a refusal every five minutes. Asked before the client is built and
+	// before any value is fetched from the secrets store.
+	if tlsErr := remoteclient.CheckDestinationTLS(creds.Raw); tlsErr != nil {
+		r.recordItemCheck(clusterName, addonName, ItemOutcomeError, tlsErr.Error())
+		return "", tlsErr
+	}
+
 	client, err := r.remoteClientFn(creds.Raw)
 	if err != nil {
 		checkErr := fmt.Errorf("connecting to cluster %q: %w", clusterName, err)
