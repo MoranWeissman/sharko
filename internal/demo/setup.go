@@ -199,7 +199,7 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 			addonSecretDefs[name] = def
 		}
 	}
-	srv.SetAddonSecretDefs(addonSecretDefs)
+	srv.SetDemoAddonSecretDefs(addonSecretDefs)
 
 	// 7. Default addons.
 	srv.SetDefaultAddons(map[string]bool{

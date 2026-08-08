@@ -1023,20 +1023,6 @@ definitions:
           type: string
         type: array
     type: object
-  github_com_MoranWeissman_sharko_internal_orchestrator.AddonSecretDefinition:
-    properties:
-      addon_name:
-        type: string
-      keys:
-        additionalProperties:
-          type: string
-        description: secret data key → provider path (e.g. "api-key" → "secrets/datadog/api-key")
-        type: object
-      namespace:
-        type: string
-      secret_name:
-        type: string
-    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult:
     properties:
       dry_run:
@@ -3583,99 +3569,6 @@ info:
   title: Sharko API
   version: 1.0.0
 paths:
-  /addon-secrets:
-    get:
-      description: Returns all registered addon secret definitions
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Addon secret definitions
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: List addon secret definitions
-      tags:
-      - addons
-    post:
-      consumes:
-      - application/json
-      description: Registers a new addon secret definition for remote cluster secret
-        propagation
-      parameters:
-      - description: Addon secret definition
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddonSecretDefinition'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Secret definition created
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad request
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Create addon secret definition
-      tags:
-      - addons
-  /addon-secrets/{addon}:
-    delete:
-      description: Removes the secret definition for a specific addon
-      parameters:
-      - description: Addon name
-        in: path
-        name: addon
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Secret definition deleted
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad request
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: Not found
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Delete addon secret definition
-      tags:
-      - addons
   /addons:
     post:
       consumes:
@@ -6798,18 +6691,33 @@ paths:
       - clusters
   /clusters/{name}/secrets/refresh:
     post:
-      description: Re-creates all managed addon secrets on a remote cluster
+      description: 'Delivers every addon-values secret the GIT CATALOG defines for
+        this cluster, right now, through the same git-backed engine the periodic reconciler
+        runs (task #152). What to deliver — backend paths, destination namespaces,
+        Secret names, key lists — comes exclusively from Git; any request body is
+        ignored entirely. Pass ?addon= to narrow the push to one addon, which must
+        already be defined in Git for this cluster or the call is refused.'
       parameters:
       - description: Cluster name
         in: path
         name: name
         required: true
         type: string
+      - description: Refresh only this addon's secrets (must be defined in the Git
+          catalog for this cluster)
+        in: query
+        name: addon
+        type: string
       produces:
       - application/json
       responses:
         "200":
-          description: Secrets refreshed
+          description: Secrets refreshed from Git
+          schema:
+            additionalProperties: true
+            type: object
+        "207":
+          description: Some secrets refreshed, some failed
           schema:
             additionalProperties: true
             type: object
@@ -6823,19 +6731,24 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "404":
+          description: The cluster or addon is not defined in Git
+          schema:
+            additionalProperties: true
+            type: object
         "502":
-          description: Gateway error
+          description: Git or upstream error
           schema:
             additionalProperties: true
             type: object
         "503":
-          description: Credentials provider not configured
+          description: Secrets reconciler not configured
           schema:
             additionalProperties: true
             type: object
       security:
       - BearerAuth: []
-      summary: Refresh cluster secrets
+      summary: Refresh cluster secrets from Git
       tags:
       - clusters
   /clusters/{name}/takeover:

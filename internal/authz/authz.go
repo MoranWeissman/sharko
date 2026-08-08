@@ -69,8 +69,10 @@ var ActionRequirements = map[string]Role{
 	"ai.provider":                          RoleAdmin,
 	"dashboard.save":                       RoleAdmin,
 	"argocd.resource-exclusions":           RoleAdmin,
-	"addon-secret.create":                  RoleAdmin,
-	"addon-secret.delete":                  RoleAdmin,
+	// addon-secret.create / addon-secret.delete / addon-secret.list are
+	// GONE (task #152, story 152.A) — the /addon-secrets definition-CRUD
+	// endpoints were removed with them. The Git catalog is the only source
+	// of addon-secret definitions now.
 	"pr.delete":                            RoleAdmin,
 	"catalog.sources.refresh":              RoleAdmin,
 	"settings.probe-mode":                  RoleAdmin,
@@ -191,7 +193,6 @@ var ActionRequirements = map[string]Role{
 	"audit.list":              RoleViewer,
 	"audit.stream":            RoleViewer,
 	"metrics.read":            RoleViewer,
-	"addon-secret.list":       RoleViewer,
 	"engine.pin-check":        RoleViewer,
 	"catalog.freshness.read":  RoleViewer,
 	// Every secret Sharko manages, aggregated across both engines

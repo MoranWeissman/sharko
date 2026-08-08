@@ -1579,27 +1579,19 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 
 // SyncOne re-pushes a single addon-values secret (one cluster+addon pair) —
 // S4's "Sync" row action. Drives the exact same write primitive the
-// periodic pass uses (reconcileSecret), so a manual sync and a scheduled
-// pass can never diverge on what "push this secret" means. Uses a
-// throwaway *ReconcileStats scoped to this one call — it is never merged
-// into r.lastStats, since that field reports the periodic pass's own
-// counters, not a single on-demand action's. Fires the per-item audit
-// callback on an actual write, exactly like the periodic pass does, so a
-// manual Sync shows up in the audit log the same way an automatic repair
-// does.
+// periodic pass uses (reconcileSecret, via syncWork in sync_cluster.go —
+// shared with SyncCluster), so a manual sync and a scheduled pass can
+// never diverge on what "push this secret" means. syncWork keeps the
+// per-item record and fires the per-item audit callback on an actual
+// write, exactly like the periodic pass does, so a manual Sync shows up in
+// the audit log the same way an automatic repair does.
 func (r *Reconciler) SyncOne(ctx context.Context, clusterName, addonName string) (string, error) {
 	w, err := r.findWork(ctx, clusterName, addonName)
 	if err != nil {
 		return "", err
 	}
 
-	stats := &ReconcileStats{}
-	outcome, syncErr := r.reconcileSecret(ctx, stats, w.clusterName, w.credLookup, w.addon, w.push)
-
-	errMsg := ""
-	if syncErr != nil {
-		errMsg = syncErr.Error()
-	}
+	outcome, syncErr := r.syncWork(ctx, w)
 
 	// Ownership gate (P1-A), defense in depth. reconcileSecret already
 	// refused to write and came back "foreign" with no error; a caller who
@@ -1607,42 +1599,11 @@ func (r *Reconciler) SyncOne(ctx context.Context, clusterName, addonName string)
 	// told plainly why nothing happened. The RECORD stays error-free on
 	// purpose — "somebody else owns this" is a boundary the row states in
 	// its own status, not a failed check to report as one.
-	refusedForeign := syncErr == nil && outcome == ItemOutcomeForeign
-
-	key := ItemKey{Cluster: clusterName, Addon: addonName}
-	r.mu.Lock()
-	if r.itemRecords == nil {
-		r.itemRecords = make(map[ItemKey]ItemRecord)
-	}
-	prev := r.itemRecords[key]
-	rec := ItemRecord{LastChecked: time.Now(), Outcome: outcome, Error: errMsg, ChangedAt: prev.ChangedAt}
-	if outcome == ItemOutcomeCreated || outcome == ItemOutcomeUpdated {
-		rec.ChangedAt = rec.LastChecked
-	}
-	// L10 (code review): same carry-forward rule recordItemCheck now
-	// applies to CheckOne/CheckAll — a real sync failure (syncErr != nil)
-	// extends the streak the periodic pass would also be building on this
-	// pair; any real outcome (created/updated/unchanged/foreign) resets it,
-	// including the refused-foreign case, which is a boundary, not a
-	// failure. Before this, every manual Sync on an already-failing row
-	// reset its ConsecutiveFailures to 0, so a row a human kept retrying by
-	// hand could never cross the fight-detection threshold the periodic
-	// pass uses.
-	if syncErr != nil {
-		rec.ConsecutiveFailures = prev.ConsecutiveFailures + 1
-	}
-	r.itemRecords[key] = rec
-	r.mu.Unlock()
-
-	if refusedForeign {
+	if syncErr == nil && outcome == ItemOutcomeForeign {
 		return "", ErrForeignSecret
 	}
 	if syncErr != nil {
 		return "", syncErr
-	}
-
-	if r.itemAuditFn != nil && (outcome == ItemOutcomeCreated || outcome == ItemOutcomeUpdated) {
-		r.itemAuditFn(clusterName, addonName, outcome)
 	}
 
 	return string(outcome), nil

@@ -190,7 +190,7 @@ Surface default: **`stable`**. The core production flow.
 | POST | `/clusters/{name}/unadopt` | `stable` | Mirrors adopt. |
 | DELETE | `/clusters/{name}/orphan` | `stable` | V125-1-7/8 ownership-label gate; settled. |
 | GET | `/clusters/{name}/secrets` | `stable` | Surface default. |
-| POST | `/clusters/{name}/secrets/refresh` | `stable` | Surface default. |
+| POST | `/clusters/{name}/secrets/refresh` | `stable` | v4.0.0 (task #152): delivers from the Git catalog via the reconciler's plan; request bodies are ignored, optional `?addon=` must exist in Git. |
 | POST | `/clusters/{name}/addons/{addon}` | `stable` | Per-cluster addon enable. |
 | DELETE | `/clusters/{name}/addons/{addon}` | `stable` | Per-cluster addon disable. |
 | POST | `/clusters/{name}/doctor` | `beta` | New in V2-cleanup-88.4/89.5 (5 checks); check-ID vocabulary may still grow. |
@@ -311,11 +311,10 @@ Surface default: **`stable`** for the read APIs.
 
 Surface default: **`stable`**.
 
-| Method | Endpoint | Tier | Rationale |
-|---|---|---|---|
-| GET | `/addon-secrets` | `stable` | Surface default. |
-| POST | `/addon-secrets` | `stable` | Surface default. |
-| DELETE | `/addon-secrets/{addon}` | `stable` | Surface default. |
+The three `/addon-secrets` definition endpoints (GET/POST/DELETE) were
+**removed in v4.0.0** (task #152, Secret Sync security closure): they let an
+API caller introduce a secret definition outside Git. Addon secret
+definitions live only in the Git catalog now.
 
 ### Init + async operations
 
