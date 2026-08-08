@@ -126,7 +126,7 @@ func (p *KubernetesSecretProvider) GetSecretValue(ctx context.Context, path stri
 	if !ok {
 		return nil, fmt.Errorf("secret %q/%q has no key %q", namespace, secretName, key)
 	}
-	slog.Debug("[provider] GetSecretValue success (k8s)", "path", path, "size", len(val))
+	slog.Debug("[provider] GetSecretValue success (k8s)", "path", path)
 	return val, nil
 }
 
