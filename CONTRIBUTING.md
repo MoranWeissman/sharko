@@ -72,8 +72,13 @@ first — it's a narrower, faster path than the general steps below.
    Testing](#building-and-testing)) before pushing.
 6. **Push** to your fork and open a pull request against `main`.
 7. **CI** runs on every PR. The PR is blocked from merge until all
-   required checks pass. Address feedback by adding new commits to the
-   branch — don't force-push during review unless requested.
+   required checks pass. The security checks (gosec, the UI dependency
+   audit, the container image scan, the forbidden-content check, and
+   govulncheck + race tests inside the Go build job) all report through
+   one required check named `security-gate` — it fails if any of them
+   fails, is skipped, or doesn't run. Address feedback by adding new
+   commits to the branch — don't force-push during review unless
+   requested.
 8. **Squash merge** is the default. Your commit messages will be
    summarized into the squashed commit message; keep them descriptive.
 

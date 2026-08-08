@@ -35,11 +35,13 @@ grep -rn -f <(sed -n '/FORBIDDEN_PATTERNS=(/,/)/p' .github/workflows/ci.yml \
   grep -v node_modules | grep -v .git/   # Must return empty
 ```
 
-CI mirrors this with 7 jobs (`.github/workflows/ci.yml`): `go-build-test`, `ui-build-test`,
+CI mirrors this in `.github/workflows/ci.yml`: `go-build-test`, `ui-build-test`,
 `swagger-check`, `provider-types-up-to-date`, `schemas-up-to-date`, `validate-sharko-config`,
 `helm-validate`, `forbidden-content-check` (renamed from `security-scan`, story 152.H), plus
-`gosec`/`ui-deps-audit`/`container-image-scan` (also story 152.H). The schemas/validate jobs
-were added by V125-1-9 and gate
+`gosec`/`ui-deps-audit`/`container-image-scan` (also story 152.H), all fanned into
+`security-gate` (story 152.J) — the single permanently-named security check branch protection
+requires; it fails when any covered check fails, is skipped, or never runs. The schemas/validate
+jobs were added by V125-1-9 and gate
 every PR touching envelope-shaped YAML or its Go model.
 
 ## v0.1.0 Build Sequence — COMPLETED
