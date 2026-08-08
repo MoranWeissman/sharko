@@ -11,29 +11,45 @@ Per `project_version_strategy` memory: `v2.0.0` (2026-06-03) was Sharko's
 first production release; `v3.0.0` is the current release line; `v4` is
 in active development.
 
-### What's Built (v1.x snapshot, post V125-1-8 + V125-1-9 on 2026-05-21)
+### What's Built (v4 current state)
 - **Server**: ~85+ API routes (read + write + audit/SSE + metrics + tokens + PR tracker), Go 1.25.8
-- **Orchestrator**: Register / Adopt / Unadopt / Deregister / Update / Refresh / Upgrade (single + batch);
-  PR-only Git flow with auto-merge; idempotent retry via `findOpenPRForCluster`
-- **Cluster Reconciler (V125-1-8)**: `internal/clusterreconciler/` — git→ArgoCD Secret reconciler
-  with ownership-label gate (`app.kubernetes.io/managed-by: sharko`); 30s safety-net tick +
-  low-latency `Trigger()` from `prTracker.SetOnMergeFn`
-- **Schema envelope (V125-1-9)**: every Sharko-owned YAML is `apiVersion: sharko.io/v1` enveloped;
-  read-time JSON Schema validation; `sharko validate-config` CLI; `schemas-up-to-date` +
-  `validate-sharko-config` CI gates; dual-write committed schemas at `docs/schemas/` and
-  `internal/schema/`
-- **Providers (V125-1-11)**: split into three typed configs (`AddonSecretProviderConfig`,
+- **Orchestrator**: Register / Adopt / Unadopt / Remove / EnableAddon / DisableAddon / Upgrade
+  (single, batch, engine-pin) / Takeover / catalog Edit+Delete / v3→v4 Migrate — v3 and v4 repo
+  shapes both supported, each write validates the request, builds a preview, then commits through
+  `commitChangesWithMeta` as a single PR; PR-only Git flow with auto-merge; idempotent retry via
+  `findOpenPRForCluster`
+- **Cluster Reconciler**: `internal/clusterreconciler/` is the single writer of ArgoCD cluster
+  Secrets — git→ArgoCD Secret reconciler with ownership-label gate
+  (`app.kubernetes.io/managed-by: sharko`); 30s safety-net tick + low-latency `Trigger()` from
+  `prTracker.SetOnMergeFn`. On a v4 repo it also derives each cluster's addon-enablement labels
+  straight from `cluster-addons/<cluster>.yaml` (`v4_assignments.go`) — that's what turns
+  "enable an addon" into an actual deploy on v4
+- **v4 data-file format**: `managed-clusters.yaml`, `catalog.yaml`, and `sharko-engine.yaml` live
+  at the repo root; per-cluster addon assignment is `cluster-addons/<cluster>.yaml`; values are
+  `values/global/<addon>.yaml` and `values/clusters/<cluster>/<addon>.yaml`. Every Sharko-read v4
+  file drops the old `spec:` envelope wrapper (apiVersion + kind + payload fields directly) except
+  `sharko-engine.yaml`, which is a real ArgoCD `Application` object and keeps the full shape.
+  `sharko validate-config` CLI and `schemas-up-to-date` / `validate-sharko-config` CI gates cover
+  both v3 and v4 shapes
+- **Providers**: split into three typed configs (`AddonSecretProviderConfig`,
   `ClusterTestProviderConfig`, `ClusterRegSourceProviderConfig`); ArgoCDProvider auto-default;
   AWS SM (raw kubeconfig + structured JSON + EKS STS); K8s Secrets
-- **Auth**: session cookies, API keys (`sharko_` prefix, bcrypt-stored), three RBAC roles
-  (Viewer / Operator / Admin) via `internal/authz/`
-- **Catalog**: embedded + third-party merge (embedded-wins); per-entry cosign-keyless signing
-  (Sigstore modern Bundle format, workflow_run SAN-encoded); daily trusted-source scanner bot
+- **Auth**: self-generated initial admin on a zero-user start (the old fail-open path is removed —
+  every start now requires real auth); session cookies; API keys (`sharko_` prefix, bcrypt-stored,
+  now persisted across restarts via `sharko-api-tokens` Secret in-cluster / 0600 file locally,
+  hashed only); three RBAC roles (Viewer / Operator / Admin) via `internal/authz/`
+- **Catalog**: embedded curated marketplace (browse/search/ArtifactHub scorecards) + per-entry
+  cosign-keyless signing (Sigstore modern Bundle format, workflow_run SAN-encoded); the
+  trusted-source scanner bot is PARKED — no schedule, manual `workflow_dispatch` only, dry-run by
+  default (read-only permissions; opening a PR needs an explicit `dry_run=false`)
 - **AI**: multi-provider agent (OpenAI / Claude / Gemini / Ollama / custom) — read + write tools
 - **Audit + Metrics + PR Tracker + Notifications**: full observability surface
-- **e2e harness (V125-1-13)**: `tests/e2e/{harness,lifecycle}` with kind multi-cluster +
-  in-cluster gitfake Pod + helm-mode harness; `make test-e2e-fast` (~30s) and `make test-e2e`
-  (~10-15 min) split
+- **e2e harness**: `tests/e2e/{harness,lifecycle}` with kind multi-cluster + in-cluster gitfake Pod
+  + helm-mode harness; `make test-e2e-fast` (~30s) and `make test-e2e` (~10-15 min) split; e2e now
+  requires success (not tolerates 500/409) on v4 config-diff + values paths
+- **Release evidence gate**: a version tag only publishes after `release.yml` runs the full e2e +
+  docs + perf suite against that tag and the evidence fan-in job passes — no more tagging ahead of
+  proof
 
 ### Post-v2.0.0 Hardening Backlog
 - Scoped RBAC (current Viewer/Operator/Admin remains; per-resource scopes are V3+ per
@@ -49,8 +65,16 @@ in active development.
 - Multi-ArgoCD
 - Rule-based auto-merge
 - Advanced metrics
-- Operator mode (CRDs)
 - Job queue / async write API (synchronous + PR-only covers v2)
+
+### Settled, not backlog: Operator mode (CRDs) — tried, shelved, not coming back
+An earlier build added a CRD-based operator mode (a `ClusterAddons` CRD + controller + RBAC +
+values-driven chart). It worked, then was removed from the product before v4 shipped — Sharko's
+real desired state (which addons, at which versions, on which clusters) belongs in a pull request
+a person reviews, and a `CustomResource` isn't the natural place for that review step. Git already
+is that place. The code still exists on branch `operator-shelf` but does not run in the product;
+there is no plan to bring it back. Do not put this back on a roadmap list. See
+`docs/architecture.md` ("Kubernetes Operator: tried, shelved, not coming back").
 
 ## What Users Care About (priority order)
 1. **Time to first value** — helm install → login → init → add-cluster must be under 10 minutes
@@ -77,18 +101,32 @@ in active development.
 - CLI never generates ApplicationSets — only data files
 - One repo for everything (server + UI + CLI + templates)
 - ArgoCD auth via account token, not ServiceAccount
-- Coupling contract: cluster name = values file name
+- Coupling contract on a v4 repo: cluster name = the per-cluster assignment file name
+  (`cluster-addons/<cluster>.yaml`) and the per-cluster values folder name
+  (`values/clusters/<cluster>/<addon>.yaml`) — the old v3 "cluster name = one combined values
+  file name" contract is dead; v3 repos keep working under the v3 shape, v4 repos use the split
+  layout, and the two shapes are never mixed in one repo
 - Synchronous write API (init is the documented exception with operation_id + heartbeat)
 - PR-only Git flow, no direct commits
 - Sharko manages remote cluster secrets directly (no ESO / no AVP / no Redis bridge)
 - Ownership-label gate: `app.kubernetes.io/managed-by: sharko` is THE canonical "mine" signal
-  for every cluster Secret Sharko writes (V125-1-8)
-- Envelope-shaped YAML files with JSON-Schema read-time validation (V125-1-9). New Sharko-owned
-  YAML files MUST be envelope-shaped; bare-YAML is legacy-compat only during V125 and removed in V126
-- Three typed ProviderConfigs (V125-1-11) — cross-domain field leakage is a compile error
+  for every cluster Secret Sharko writes
+- Envelope-shaped YAML files with JSON-Schema read-time validation. v3 files keep the
+  apiVersion/kind/metadata/spec envelope; v4 files drop the `spec:` wrapper (payload fields sit
+  directly under apiVersion+kind) except `sharko-engine.yaml`, which is a real ArgoCD Application
+  and keeps the full shape
+- Three typed ProviderConfigs — cross-domain field leakage is a compile error
+- Operator mode (CRD-based) is shelved for good, not a future roadmap item — see the backlog
+  section above
+- Zero-user start requires real auth: initial admin is self-generated on first startup, the old
+  fail-open path is removed (this sprint's #777)
+- API tokens persist across restarts, hashed only, never plaintext at rest (this sprint's #783)
+- v4 catalog and cluster writes (edit, delete, adopt, unadopt, remove, enable/disable, upgrade,
+  takeover) all go through the same validate → preview → single-PR pipeline as v3 (this sprint's
+  #774, #775, #776, #779, #780)
 
 ## Update This File When
 - A phase is completed (update Current State)
-- A major feature ships (update What's Built / What v1.0.0 Adds)
+- A major feature ships (update What's Built)
 - A design decision is made that changes product direction
 - User feedback reveals new priorities

@@ -156,6 +156,31 @@ Every handler for POST/DELETE/PATCH must call `s.requireAdmin(w, r)` as the firs
   or AVP's secret-injection model is a critical finding — the current design is push-based,
   Sharko-controlled, and audit-reviewable.
 
+### 14. Initial Admin Self-Generation (v4 "no more running open" contract)
+- When Sharko starts with zero users configured, it now creates an admin user with a random
+  password instead of serving the API without authentication. The old zero-users fail-open path
+  in `internal/api/router.go` is gone (`internal/auth/initial_admin.go`) — auth is enforced from
+  the first request.
+- K8s mode: the generated password lands in the `sharko-initial-admin-secret` Secret (same
+  ArgoCD-style pattern as the existing bootstrap-credential logging) plus a one-time stdout
+  banner; the bcrypt hash goes into the regular auth Secret and the users ConfigMap gets a durable
+  admin entry. Local mode: a 0600 JSON file (default `~/.sharko/initial-admin.json`, override via
+  `SHARKO_INITIAL_ADMIN_FILE`) with a 0700 parent directory.
+- **Demo mode is the one deliberate exception** — it seeds its own users before this path runs and
+  must NOT call the self-generation function. A finding that demo mode reads/creates the initial-
+  admin Secret or file is a critical finding (it would leak or overwrite a real generated
+  password).
+
+### 15. API Token Persistence (survives restarts)
+- API tokens now persist across restarts (`internal/auth/token_persistence.go`) — the old
+  in-memory-only token store is gone for tokens specifically (human sessions are still in-memory,
+  see §5).
+- K8s mode: the dedicated `sharko-api-tokens` Secret (`APITokensSecretName`), labeled
+  `app.kubernetes.io/managed-by: sharko`. Local mode: a 0600 file.
+- Only the bcrypt hash is ever persisted — the same "plaintext shown once, never again" rule from
+  §6 applies to the persisted copy too. A code path that writes plaintext token material to the
+  Secret or file is a critical finding.
+
 ## Catalog signing surface (V123-2)
 
 The v1.23 catalog-signing surface introduced a set of cosign/Sigstore concerns that every audit touching `internal/catalog/` MUST cover:

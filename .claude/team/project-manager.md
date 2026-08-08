@@ -54,30 +54,39 @@ every PR touching envelope-shaped YAML or its Go model.
 | 10 | Templates cleanup + embed | Done |
 | 11 | Docs + README + init endpoint | Done |
 
-## Current State — 2026-05-21
+## Current State — v4-coherence-closure sprint
 
-Today (2026-05-21) closed two architectural sprints in one day:
+`v3.0.0` is the shipped release line; `v4` (the split-file data format —
+`managed-clusters.yaml` / `catalog.yaml` / `sharko-engine.yaml` at repo root,
+`cluster-addons/<cluster>.yaml` per-cluster assignment, `values/global/` + `values/clusters/`)
+is functionally complete and merged to main, waiting on Moran's word for the `v4.0.0` tag —
+never tag it without that.
 
-- **V125-1-8** — cluster reconciler + ownership label + GitOps stance fix (PR #348, 6 stories + scaffold)
-- **V125-1-9** — schema envelope + JSON Schema + read-time validation + CLI + CI gates (PR #346, 6 stories + scaffold)
+This sprint (v4-coherence-closure) shipped, in order: self-generated initial admin with the old
+fail-open path removed (#777); v4-native catalog edit + delete through the preview/PR pipeline
+(#774); adopt / unadopt / addon-label changes working on v4 repos (#775); CLI full v4 parity
+including takeover and real diffs everywhere (#776); cluster removal working on v4 repos (#779);
+UI previews showing exact file content through every flow (#780); a `DriftDetected` event once
+per label fight (#770); e2e now requires success (not tolerating 500/409) on v4 config-diff +
+values paths (#769); real ESLint wired into CI (#772); the catalog-scan bot parked for real — no
+schedule, read-only by default (#782); the release workflow gated on full evidence — e2e, docs,
+lint, perf — before a tag can publish (#781); API tokens now persist across restarts, hashed only
+(#783); and a documentation pass making the scanner-parked / operator-shelved / three-doors story
+consistent everywhere (#778, #784).
 
-Plus today's polish: V126-2/3/4/5 (empty bootstrap, N/M badge, e2e harness QoL, sharko-dev DX).
+The v1.0.0 phase table is historical and removed from this file — those phases all shipped during
+the v1.x pre-release stream. The V125-* bundle numbering used during the schema-envelope /
+cluster-reconciler architectural sprint is also historical: that work shipped, `internal/argosecrets`
+lost its reconciler (the legacy 3-minute ticker is gone — `internal/clusterreconciler` is now the
+only writer of ArgoCD cluster Secrets, for both v3 and v4 repos), and current planning happens at
+the epic/story level tracked in `docs/design/` (date-prefixed) and the project memory file
+`project_sharko_v4_prd_definition`.
 
-The v1.0.0 phase table is historical and removed in this refresh — those phases all shipped during
-the v1.x pre-release stream. Current planning happens at the bundle level (V125-1-N, V126-N), tracked
-in `docs/site/planning/` and the project memory file `project_sharko_roadmap`.
+### Active workstream — post-sprint cleanup
 
-### Active workstream — V2.0.0 production launch
-
-Per `project_sharko_roadmap`: V2.0.0 = first production launch. Remaining V125 architectural epics
-+ V126 polish constitute the production-launch backlog. Items currently on deck:
-
-- V125-1-7 — orphan-delete tightening (keys off V125-1-8's `IsManagedBySharko` predicate)
-- V125-2 — Adopt flow (flips the ownership label on as the "now mine" signal)
-- V125-1-13.x cleanup — in-cluster gitfake + env-gated allowlist (Path A) per
-  `project_v125_1_13_helm_tests_followup` memory
-- Audit-log architecture stabilization
-- CNCF maturity gap closure (~40% to incubation post-v1.20)
+- Dependabot tail — remaining PRs being triaged and merged
+- Branch sweep (merged-PR heads accumulate; keep `main` + `operator-shelf` + open-PR heads)
+- Moran's pre-tag walkthrough of v4 before the `v4.0.0` tag
 
 ### V3+ Backlog (per `project_v3_backlog`)
 - Fine-grained per-endpoint RBAC scopes
@@ -85,10 +94,15 @@ Per `project_sharko_roadmap`: V2.0.0 = first production launch. Remaining V125 a
 - Multi-ArgoCD
 - Rule-based auto-merge
 - Advanced metrics
-- Operator mode (CRDs)
 - Job queue / async write API
 - ValidatingAdmissionWebhook for GitOps-only enforcement
 - Webhooks / event emission
+
+**Not backlog — settled and shelved:** operator mode (CRD-based `ClusterAddons` controller). It
+was built, worked, and was removed before v4 shipped in favor of Git-reviewed desired state. The
+code lives on branch `operator-shelf` and does not run in the product. There is no plan to bring
+it back — see `docs/architecture.md` ("Kubernetes Operator: tried, shelved, not coming back").
+Do not re-add it to any backlog list.
 
 ## Sprint cadence (current shape)
 

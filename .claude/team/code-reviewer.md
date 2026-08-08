@@ -57,18 +57,21 @@ You review code for the Sharko project. Report issues by severity with file path
 - `CreateApplication` sends JSON directly
 - v1.0.0: `AddRepository` for init flow (Phase 5)
 
-### ArgoCD Cluster Secrets — two writers, same shape (V125-1-8)
-- `internal/argosecrets/Manager` (legacy `cluster-addons.yaml` path) and
-  `internal/clusterreconciler/Reconciler` (V125-1-8 canonical for `managed-clusters.yaml`) both
-  emit Secrets via the shared wrappers `argosecrets.BuildSecretConfigJSON` and
+### ArgoCD Cluster Secrets — one reconciler, one direct-call helper, same shape
+- `internal/clusterreconciler/Reconciler` is the only periodic reconciler — it owns the tick loop
+  and is the single writer that converges cluster Secrets to `managed-clusters.yaml` (both v3 and
+  v4 repo shapes; on v4 it also derives addon-enablement labels from `cluster-addons/*.yaml`).
+  `internal/argosecrets/Manager` no longer has a reconciler of its own — its `Ensure()`/`Delete()`
+  are called directly (synchronously) by the orchestrator on register/adopt/takeover. Both code
+  paths emit Secrets via the shared wrappers `argosecrets.BuildSecretConfigJSON` and
   `argosecrets.BuildClusterSecretLabels`. Reviews MUST flag any code path that builds the Secret
   payload by hand instead of going through these wrappers.
 - **Ownership label gate** — every cluster Secret Sharko writes carries
   `app.kubernetes.io/managed-by: sharko`; every cluster-Secret delete checks
   `clusterreconciler.IsManagedBySharko(secret)` first. `Manager.Delete()` and any orchestrator
-  cleanup path that bypasses this predicate is a critical finding (regresses V125-1-7 orphan-delete
-  + V125-2 Adopt safety).
-- Label values must match cluster-addons.yaml format (`"true"`/`"false"`, not
+  cleanup path that bypasses this predicate is a critical finding — it is the one safety gate that
+  both the reconciler and the orchestrator's direct Manager calls share.
+- Label values must match the boolean-string convention (`"true"`/`"false"`, not
   `"enabled"`/`"disabled"`).
 
 ### Schema envelope (V125-1-9)
