@@ -121,7 +121,10 @@ connection:
   argocd:
     serverURL: ""     # ArgoCD API server URL
     namespace: ""     # namespace where ArgoCD is installed
-    insecure: ""      # true | false — skip TLS verify (leave empty to keep runtime value)
+    insecure: ""      # true | false — skip TLS certificate verification toward ArgoCD.
+                      # Verification is ON by default; set true ONLY for an ArgoCD with a
+                      # self-signed / internal-CA certificate you cannot add to the pod's
+                      # trust store. Leave empty to keep the runtime (UI-set) value.
   # Cluster-test / cluster-credentials provider (non-secret fields).
   provider:
     type: ""          # "aws-sm" | "k8s-secrets" | "argocd"

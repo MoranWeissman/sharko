@@ -187,14 +187,19 @@ type Connection struct {
 
 // ConnectionResponse is a connection with masked sensitive data for API responses.
 type ConnectionResponse struct {
-	Name                string          `json:"name"`
-	Description         string          `json:"description,omitempty"`
-	GitProvider         GitProviderType `json:"git_provider"`
-	GitRepoIdentifier   string          `json:"git_repo_identifier"`
-	GitTokenMasked      string          `json:"git_token_masked"`
-	ArgocdServerURL     string          `json:"argocd_server_url"`
-	ArgocdTokenMasked   string          `json:"argocd_token_masked"`
-	ArgocdNamespace     string          `json:"argocd_namespace"`
+	Name              string          `json:"name"`
+	Description       string          `json:"description,omitempty"`
+	GitProvider       GitProviderType `json:"git_provider"`
+	GitRepoIdentifier string          `json:"git_repo_identifier"`
+	GitTokenMasked    string          `json:"git_token_masked"`
+	ArgocdServerURL   string          `json:"argocd_server_url"`
+	ArgocdTokenMasked string          `json:"argocd_token_masked"`
+	ArgocdNamespace   string          `json:"argocd_namespace"`
+	// ArgocdInsecure surfaces the connection's TLS-verification opt-out so the
+	// Settings editor can prefill its checkbox instead of guessing (a wrong
+	// guess would silently flip the stored value on the next save). It is a
+	// setting, not a credential — safe to expose.
+	ArgocdInsecure      bool            `json:"argocd_insecure"`
 	Provider            *ProviderConfig `json:"provider,omitempty"`
 	AddonSecretProvider *ProviderConfig `json:"addon_secret_provider,omitempty"`
 	GitOps              *GitOpsSettings `json:"gitops,omitempty"`
@@ -285,6 +290,7 @@ func (c *Connection) ToResponse(isActive bool) ConnectionResponse {
 		ArgocdServerURL:     c.Argocd.ServerURL,
 		ArgocdTokenMasked:   MaskToken(c.Argocd.Token),
 		ArgocdNamespace:     c.Argocd.Namespace,
+		ArgocdInsecure:      c.Argocd.Insecure,
 		Provider:            c.Provider,
 		AddonSecretProvider: c.AddonSecretProvider,
 		GitOps:              c.GitOps,

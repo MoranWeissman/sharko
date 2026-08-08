@@ -2,6 +2,8 @@ package remoteclient
 
 import (
 	"errors"
+	"net/url"
+	"strings"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -83,6 +85,34 @@ func destinationUnverified(client kubernetes.Interface) bool {
 	return unverified
 }
 
+// connectionUnverified reports whether a destination's connection is unsafe
+// to carry a secret value over. Two cases, both refused (task #152 lane C,
+// and the plaintext-http gap story 152-I found afterwards):
+//
+//   - insecure is true — the kubeconfig (or the ArgoCD cluster config folded
+//     into one) says `insecure-skip-tls-verify: true`. A MITM can terminate
+//     the TLS session and read the value.
+//   - the server URL is plain `http://` — there is no TLS at all, so the
+//     value travels in the clear with no MITM even needed. This is strictly
+//     worse than skip-verify, yet the original lane C check only looked at
+//     the Insecure flag and let an http destination straight through. Reads
+//     and deletes still work against such a cluster (they carry no value);
+//     only the value-carrying write path refuses, exactly as for skip-verify.
+//
+// A schemeless or non-http(s) host is left to the pre-existing behavior (the
+// Insecure flag only) — a real Kubernetes API server is always https, so
+// this only ever ADDS a refusal for an explicit plaintext http destination,
+// never removes one.
+func connectionUnverified(insecure bool, host string) bool {
+	if insecure {
+		return true
+	}
+	if u, err := url.Parse(host); err == nil && strings.EqualFold(u.Scheme, "http") {
+		return true
+	}
+	return false
+}
+
 // CheckDestinationTLS reports, from raw kubeconfig bytes, whether Sharko
 // would refuse to deliver a secret to this destination. Returns
 // ErrUnverifiedDestination when the kubeconfig skips TLS certificate
@@ -105,7 +135,7 @@ func CheckDestinationTLS(kubeconfig []byte) error {
 	if err != nil {
 		return nil
 	}
-	if restConfig.TLSClientConfig.Insecure {
+	if connectionUnverified(restConfig.TLSClientConfig.Insecure, restConfig.Host) {
 		return ErrUnverifiedDestination
 	}
 	return nil
