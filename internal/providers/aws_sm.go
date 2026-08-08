@@ -15,10 +15,21 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+// secretsManagerClient is the slice of the AWS Secrets Manager API this
+// provider uses. *secretsmanager.Client satisfies it; tests satisfy it
+// with a fake so the addon-secret boundary's allowed path can be proven
+// without real AWS credentials. Method shapes match the SDK's generated
+// client (secretsmanager v1.41.5); ListSecrets comes in via the SDK's own
+// paginator interface so NewListSecretsPaginator accepts the field as-is.
+type secretsManagerClient interface {
+	GetSecretValue(ctx context.Context, params *secretsmanager.GetSecretValueInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error)
+	secretsmanager.ListSecretsAPIClient
+}
+
 // AWSSecretsManagerProvider reads kubeconfigs from AWS Secrets Manager.
 // Secret path: {prefix}{cluster-name}. Supports IRSA for authentication.
 type AWSSecretsManagerProvider struct {
-	client  *secretsmanager.Client
+	client  secretsManagerClient
 	prefix  string
 	roleARN string // default IAM role to assume for EKS token generation
 
@@ -74,9 +85,16 @@ func NewAWSSecretsManagerProviderFromClusterTestConfig(cfg ClusterTestProviderCo
 }
 
 // GetSecretValue retrieves a raw secret value from AWS Secrets Manager.
-// path is the full secret name/ARN in AWS Secrets Manager.
+// path is the full secret name in AWS Secrets Manager, and it must sit
+// under the configured prefix — see checkAddonSecretPathAllowed. The
+// boundary check runs BEFORE the AWS call, so a refused path never
+// reaches AWS at all.
 func (p *AWSSecretsManagerProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
 	slog.Debug("[provider] GetSecretValue called", "path", path)
+	if err := p.checkAddonSecretPathAllowed(path); err != nil {
+		slog.Warn("[provider] GetSecretValue refused: path outside the configured boundary", "path", path, "prefix", p.prefix)
+		return nil, err
+	}
 	output, err := p.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
 		SecretId: aws.String(path),
 	})
@@ -93,6 +111,32 @@ func (p *AWSSecretsManagerProvider) GetSecretValue(ctx context.Context, path str
 		return output.SecretBinary, nil
 	}
 	return nil, fmt.Errorf("secret %q has no value", path)
+}
+
+// checkAddonSecretPathAllowed is the addon-secret read boundary (task
+// #152 story B). The configured prefix is the whole allowlist: a path is
+// allowed only when it starts with the prefix, and an empty prefix
+// refuses everything instead of silently allowing the whole AWS account.
+//
+// The prefix is matched literally, exactly as it is used everywhere else
+// in this provider ({prefix}{name} concatenation, ListSecrets name
+// filter). Operators should end it with a separator such as "/" so a
+// prefix like "prod" cannot also match a sibling name like
+// "production-secrets/...".
+//
+// This boundary is only for addon-secret VALUE reads (GetSecretValue).
+// The cluster-credential path (GetCredentials / fetchSecret) keeps its
+// documented exact-name and secret_path lookups — that surface hands the
+// kubeconfig to Sharko itself, it never delivers a value into a managed
+// cluster.
+func (p *AWSSecretsManagerProvider) checkAddonSecretPathAllowed(path string) error {
+	if p.prefix == "" {
+		return awsNoPrefixRefusal(path)
+	}
+	if !strings.HasPrefix(path, p.prefix) {
+		return awsOutsidePrefixRefusal(path, p.prefix)
+	}
+	return nil
 }
 
 // structuredEKSSecret is the JSON schema used when secrets contain EKS cluster
