@@ -79,9 +79,26 @@ func newKubernetesSecretProviderWithClient(client kubernetes.Interface, namespac
 //
 // Supported formats:
 //   - "secret-name/key"              — uses provider namespace
-//   - "namespace/secret-name/key"    — explicit namespace
+//   - "namespace/secret-name/key"    — explicit namespace, and it must be
+//     the SAME namespace the provider is configured for
+//
+// Boundary (task #152 story B): the configured namespace is the whole
+// area this connection may read. The explicit-namespace form is still
+// accepted as spelled-out clarity, but it can no longer point anywhere
+// else — a path naming a different namespace is refused BEFORE any
+// Kubernetes API call, so the read never happens. The check lives here in
+// the provider so every trigger (the scheduled reconciler, "refresh now",
+// the doctor) inherits it without asking.
 func (p *KubernetesSecretProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
 	slog.Debug("[provider] GetSecretValue called (k8s)", "path", path)
+	if p.namespace == "" {
+		// Fail closed: the public constructors always default the
+		// namespace, so this only fires for a construction path that
+		// skipped the default — refuse rather than read from an
+		// unpredictable namespace.
+		slog.Warn("[provider] GetSecretValue refused (k8s): no namespace configured", "path", path)
+		return nil, k8sNoNamespaceRefusal(path)
+	}
 	parts := strings.Split(path, "/")
 	var namespace, secretName, key string
 	switch len(parts) {
@@ -90,6 +107,10 @@ func (p *KubernetesSecretProvider) GetSecretValue(ctx context.Context, path stri
 		secretName = parts[0]
 		key = parts[1]
 	case 3:
+		if parts[0] != p.namespace {
+			slog.Warn("[provider] GetSecretValue refused (k8s): path outside the configured namespace", "path", path, "namespace", p.namespace)
+			return nil, k8sOutsideNamespaceRefusal(path, parts[0], p.namespace)
+		}
 		namespace = parts[0]
 		secretName = parts[1]
 		key = parts[2]
