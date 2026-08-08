@@ -152,6 +152,27 @@ func EnsureSecret(ctx context.Context, client kubernetes.Interface, namespace, n
 	if apierrors.IsNotFound(err) {
 		_, createErr := client.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
 		if createErr != nil {
+			// The check-then-create race: this Get just said the Secret
+			// wasn't there, but something created one with this exact name
+			// in the moment between that Get and this Create, so the API
+			// server refuses the Create as a conflict. That is not a
+			// bypass of the ownership gate — it is the gate arriving one
+			// API call later. Ask the SAME question the update path below
+			// asks: re-fetch and check who owns what actually landed.
+			if apierrors.IsAlreadyExists(createErr) {
+				raced, getErr := client.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+				if getErr == nil && !IsManagedBySharko(raced) {
+					slog.Info("[remoteclient] leaving this secret alone — somebody else created it in the moment between Sharko's check and its write",
+						"namespace", namespace, "name", name)
+					return fmt.Errorf("secret %s/%s: %w", namespace, name, ErrForeignSecret)
+				}
+				// Either the re-fetch itself failed, or the Secret that won
+				// the race turned out to be Sharko's own (e.g. a second
+				// concurrent reconcile pass). Either way nothing was
+				// written by this call — the caller's next pass reconciles
+				// it the ordinary way — so fall through to the plain error
+				// below rather than guess at a write here.
+			}
 			return fmt.Errorf("creating secret %s/%s: %w", namespace, name, createErr)
 		}
 		slog.Info("[remoteclient] secret created", "namespace", namespace, "name", name)
