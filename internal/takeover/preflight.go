@@ -314,24 +314,32 @@ func checkSecretOwner(in Inputs) Finding {
 		return f
 
 	case in.ManagedBy != "":
-		f.Status = StatusWarning
+		// Another tool's ownership marker BLOCKS — it does not warn. That
+		// tool can write the connection again and undo the takeover, so
+		// there is no acknowledgment that makes going ahead safe. The path
+		// through is: stop the old manager, remove its marker (the marker
+		// does not come off by itself), re-run this check.
+		f.Status = StatusBlocked
 		f.Detail = fmt.Sprintf("The connection is marked as owned by %q.", in.ManagedBy)
 		f.WhatItMeans = fmt.Sprintf(
-			"Something called %q wrote this connection and may write it again. If it does, it can undo the takeover and put its own settings back.",
+			"Something called %q wrote this connection and can write it again. If it does, it puts its own connection back — and that undoes the takeover.",
 			in.ManagedBy)
 		f.WhatToDo = fmt.Sprintf(
-			"Turn off whatever %q is — or stop it from managing this cluster's connection — before you go ahead. If you know it is retired and the marker is just left over, you can go ahead and acknowledge this warning.",
+			"Stop or retire whatever %q is — or stop it from managing this cluster's connection. Then remove its ownership marker from the connection: the marker does not come off by itself when the tool is turned off, and this check stays red while it is there. Once both are done, run this check again. It goes green, or drops to a warning asking you to confirm nobody manages this connection — and you approve the takeover from there.",
 			in.ManagedBy)
 		return f
 
 	case in.ForeignOwnerFound && in.ForeignOwnerConfidence == "hard":
-		f.Status = StatusWarning
+		// A hard tracking match BLOCKS too: the named ArgoCD application
+		// really does render this exact Secret from Git, so its next sync
+		// would put its own version back no matter what anyone acknowledged.
+		f.Status = StatusBlocked
 		f.Detail = fmt.Sprintf("The connection is being deployed by the ArgoCD application %q.", in.ForeignOwnerAppName)
 		f.WhatItMeans = fmt.Sprintf(
-			"ArgoCD application %q builds this connection from a file in Git. After the takeover, the next time that application syncs it will put its own version back and the two will fight over the cluster.",
+			"ArgoCD application %q builds this connection from a file in Git. If the takeover went ahead, the next time that application syncs it would put its own version back and the two would fight over the cluster.",
 			in.ForeignOwnerAppName)
 		f.WhatToDo = fmt.Sprintf(
-			"Remove this cluster's connection from whatever %q deploys (or stop that application syncing it) before you go ahead. If you have already done that, acknowledge this warning and continue.",
+			"Remove this cluster's connection from whatever %q deploys — or stop that application syncing it — then run this check again.",
 			in.ForeignOwnerAppName)
 		return f
 
@@ -347,17 +355,22 @@ func checkSecretOwner(in Inputs) Finding {
 		return f
 	}
 
-	f.Status = StatusOK
+	// No ownership marker at all. This is a WARNING, not a clean pass:
+	// Sharko can only see markers, and "no marker" is not proof that
+	// nothing manages this connection — a tool that leaves no marker could
+	// still own it. The human confirms and acknowledges; Sharko never
+	// guesses.
+	f.Status = StatusWarning
 	if len(legacy) > 0 {
 		f.Detail = fmt.Sprintf(
 			"Nobody has claimed the connection for %q. It carries %s that Sharko will keep: %s.",
 			in.Cluster, plural(len(legacy), "label", "labels"), strings.Join(SortedKeys(legacy), ", "))
-		f.WhatItMeans = "No other tool says it owns this connection, so Sharko can take it over cleanly. The labels already on it stay exactly as they are."
+		f.WhatItMeans = "Nothing has put its name on this connection, which usually means nothing manages it. But Sharko can only see the markers tools leave behind, so this is not proof — a tool that leaves no marker could still be managing it. The labels already on it stay exactly as they are."
 	} else {
 		f.Detail = fmt.Sprintf("Nobody has claimed the connection for %q.", in.Cluster)
-		f.WhatItMeans = "No other tool says it owns this connection, so Sharko can take it over cleanly."
+		f.WhatItMeans = "Nothing has put its name on this connection, which usually means nothing manages it. But Sharko can only see the markers tools leave behind, so this is not proof — a tool that leaves no marker could still be managing it."
 	}
-	f.WhatToDo = "Nothing to do."
+	f.WhatToDo = "Check for yourself that nothing else manages this cluster's connection — Terraform, a script, another team's tooling. When you are sure, acknowledge this warning and approve the takeover."
 	return f
 }
 

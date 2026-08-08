@@ -69,7 +69,7 @@ var validClusterNameRe = regexp.MustCompile(models.ResourceNamePattern)
 // @Success 207 {object} map[string]interface{} "Partial success"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 409 {object} map[string]interface{} "Cluster already exists"
+// @Failure 409 {object} map[string]interface{} "Cluster already exists, or its ArgoCD connection is owned by another tool — stop that tool and use the takeover flow instead"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /clusters [post]
 // handleRegisterCluster handles POST /api/v1/clusters — register a new cluster.
@@ -234,6 +234,14 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		// the orchestrator's message listing the bad name(s).
 		if orchestrator.IsAddonNotInCatalog(err) {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		// Ownership guard (secret-ownership hardening): the cluster's ArgoCD
+		// connection Secret already exists and belongs to another tool.
+		// Conflict with existing state → 409; the message says who owns it
+		// and points at the takeover flow.
+		if orchestrator.IsConnectionOwnedByAnotherTool(err) {
+			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
 		writeError(w, http.StatusBadGateway, err.Error())

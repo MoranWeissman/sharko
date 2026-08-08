@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -147,6 +148,144 @@ func TestRegisterCluster_Kubeconfig_WritesArgoSecret(t *testing.T) {
 	}
 	if !foundStep {
 		t.Errorf("expected write_argocd_secret step; got %v", result.CompletedSteps)
+	}
+}
+
+// TestRegisterCluster_Kubeconfig_RivalOwnedSecretRefuses pins the register
+// ownership guard (secret-ownership hardening, task #150 lane A): when a
+// same-name ArgoCD cluster Secret already exists and its ownership marker
+// names another tool, the WHOLE registration fails server-side — no Ensure
+// write, no Git PR — and the error points at the takeover flow.
+func TestRegisterCluster_Kubeconfig_RivalOwnedSecretRefuses(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	asm := newMockArgoSecretManager()
+	asm.secretDetails = map[string]ClusterSecretDetail{
+		"kind-sharko": {Found: true, Server: "https://127.0.0.1:60123", ManagedBy: "terraform"},
+	}
+
+	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+
+	_, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:       "kind-sharko",
+		Provider:   "kubeconfig",
+		Kubeconfig: v125TestBearerKubeconfig,
+		Addons:     map[string]bool{"monitoring": true},
+	})
+	if err == nil {
+		t.Fatal("expected the registration to be refused — another tool owns the connection")
+	}
+	if !IsConnectionOwnedByAnotherTool(err) {
+		t.Errorf("expected a ConnectionOwnedByAnotherToolError, got: %v", err)
+	}
+	for _, want := range []string{"terraform", "takeover"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error must mention %q: %v", want, err)
+		}
+	}
+	if len(asm.ensured) != 0 {
+		t.Errorf("a refused registration still wrote the ArgoCD Secret: %d Ensure call(s)", len(asm.ensured))
+	}
+	if len(git.prs) != 0 {
+		t.Errorf("a refused registration still opened %d pull request(s)", len(git.prs))
+	}
+}
+
+// TestRegisterCluster_Kubeconfig_HardForeignOwnerRefuses — same guard, other
+// trigger: an ArgoCD application demonstrably renders the same-name Secret
+// from Git (hard tracking match). Registration refuses instead of writing
+// a Secret that application would overwrite on its next sync.
+func TestRegisterCluster_Kubeconfig_HardForeignOwnerRefuses(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	asm := newMockArgoSecretManager()
+	asm.secretDetails = map[string]ClusterSecretDetail{
+		"kind-sharko": {Found: true, Server: "https://127.0.0.1:60123",
+			ForeignOwnerFound: true, ForeignOwnerConfidence: "hard", ForeignOwnerAppName: "fleet-bootstrap"},
+	}
+
+	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+
+	_, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:       "kind-sharko",
+		Provider:   "kubeconfig",
+		Kubeconfig: v125TestBearerKubeconfig,
+		Addons:     map[string]bool{"monitoring": true},
+	})
+	if err == nil {
+		t.Fatal("expected the registration to be refused — an ArgoCD application deploys the connection")
+	}
+	if !IsConnectionOwnedByAnotherTool(err) {
+		t.Errorf("expected a ConnectionOwnedByAnotherToolError, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fleet-bootstrap") {
+		t.Errorf("error must name the owning application: %v", err)
+	}
+	if len(asm.ensured) != 0 {
+		t.Errorf("a refused registration still wrote the ArgoCD Secret: %d Ensure call(s)", len(asm.ensured))
+	}
+}
+
+// TestRegisterCluster_Kubeconfig_OwnershipReadFailureRefuses — doubt =
+// refuse: when the guard cannot read who owns the same-name Secret, the
+// registration fails rather than writing over a connection whose owner is
+// unknown (mirrors remove.go's ownership-gate stance).
+func TestRegisterCluster_Kubeconfig_OwnershipReadFailureRefuses(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	asm := newMockArgoSecretManager()
+	asm.secretDetailErr = fmt.Errorf("secrets \"kind-sharko\" is forbidden")
+
+	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+
+	_, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:       "kind-sharko",
+		Provider:   "kubeconfig",
+		Kubeconfig: v125TestBearerKubeconfig,
+		Addons:     map[string]bool{"monitoring": true},
+	})
+	if err == nil {
+		t.Fatal("expected the registration to be refused — the ownership read failed and doubt must refuse")
+	}
+	if !strings.Contains(err.Error(), "could not read who owns it") {
+		t.Errorf("expected the could-not-read-owner error, got: %v", err)
+	}
+	if len(asm.ensured) != 0 {
+		t.Errorf("a refused registration still wrote the ArgoCD Secret: %d Ensure call(s)", len(asm.ensured))
+	}
+}
+
+// TestRegisterCluster_Kubeconfig_SharkoOwnedSecretStillWrites — the guard
+// must not get in the way of a re-register: a Secret Sharko already owns
+// passes straight through to the Ensure write.
+func TestRegisterCluster_Kubeconfig_SharkoOwnedSecretStillWrites(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	asm := newMockArgoSecretManager()
+	asm.secretDetails = map[string]ClusterSecretDetail{
+		"kind-sharko": {Found: true, Server: "https://127.0.0.1:60123", ManagedBy: "sharko"},
+	}
+
+	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+
+	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:       "kind-sharko",
+		Provider:   "kubeconfig",
+		Kubeconfig: v125TestBearerKubeconfig,
+		Addons:     map[string]bool{"monitoring": true},
+	})
+	if err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+	if result.Status != "success" {
+		t.Errorf("expected status=success, got %q", result.Status)
+	}
+	if len(asm.ensured) != 1 {
+		t.Errorf("expected exactly 1 Ensure call, got %d", len(asm.ensured))
 	}
 }
 

@@ -3,6 +3,7 @@ package argosecrets
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -515,6 +516,64 @@ func TestEnsure_AdoptPath(t *testing.T) {
 		// The fake clientset may or may not move StringData→Data; what matters is
 		// Data is not overwritten with Sharko's template values.
 		t.Errorf("StringData[server] unexpectedly set to %q on adopted path", secret.StringData["server"])
+	}
+}
+
+// TestEnsure_RivalManagedByRefuses pins the last-line ownership guard
+// (secret-ownership hardening, task #150 lane A): Ensure must NEVER stamp
+// Sharko's ownership label onto a Secret whose marker names another tool.
+// It errors instead — naming the rival and pointing at the takeover flow —
+// and leaves the Secret untouched. Unlabeled Secrets stay adoptable (see
+// TestEnsure_AdoptPath); only a rival marker refuses.
+func TestEnsure_RivalManagedByRefuses(t *testing.T) {
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-cluster",
+			Namespace: testNamespace,
+			Labels: map[string]string{
+				LabelSecretType: "cluster",
+				LabelManagedBy:  "terraform",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"name":   []byte("my-cluster"),
+			"server": []byte("https://OLD.gr7.us-east-1.eks.amazonaws.com"),
+			"config": []byte(`{"foreign":"config"}`),
+		},
+	}
+
+	client := fake.NewSimpleClientset(existing)
+	mgr := NewManager(client, testNamespace)
+
+	changed, err := mgr.Ensure(context.Background(), baseSpec())
+	if err == nil {
+		t.Fatal("expected Ensure to refuse a rival-owned Secret, got nil error")
+	}
+	if changed {
+		t.Error("a refused Ensure must report changed=false")
+	}
+	for _, want := range []string{"terraform", "takeover"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error must mention %q: %v", want, err)
+		}
+	}
+
+	// No write may have happened, and the rival's marker must survive.
+	for _, a := range client.Actions() {
+		if a.GetVerb() == "update" || a.GetVerb() == "create" {
+			t.Errorf("a refused Ensure still issued a %s action", a.GetVerb())
+		}
+	}
+	secret, getErr := client.CoreV1().Secrets(testNamespace).Get(context.Background(), "my-cluster", metav1.GetOptions{})
+	if getErr != nil {
+		t.Fatalf("secret vanished: %v", getErr)
+	}
+	if secret.Labels[LabelManagedBy] != "terraform" {
+		t.Errorf("the rival's ownership marker was touched: %v", secret.Labels)
+	}
+	if _, ok := secret.Annotations[AnnotationAdopted]; ok {
+		t.Errorf("a refused Ensure still stamped the adopted annotation: %v", secret.Annotations)
 	}
 }
 

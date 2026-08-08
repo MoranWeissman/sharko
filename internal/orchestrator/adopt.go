@@ -101,9 +101,22 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		if o.argoSecretManager != nil {
 			managedBy, labelErr := o.argoSecretManager.GetManagedByLabel(ctx, clusterName)
 			if labelErr != nil {
-				log.Warn("could not read managed-by label — proceeding with adoption",
+				// Doubt = refuse (secret-ownership hardening, task #150 lane
+				// A — mirrors remove.go's ownership-gate stance): a failed
+				// ownership read means Sharko cannot tell whether another
+				// tool owns this connection, and adopting anyway is exactly
+				// the silent steal FR-4.6 exists to prevent. Fail THIS
+				// cluster's adoption; the rest of the batch continues.
+				log.Warn("could not read managed-by label — refusing to adopt this cluster",
 					"cluster", clusterName, "error", labelErr)
-			} else if managedBy != "" && managedBy != "sharko" {
+				cr.Status = "failed"
+				cr.Error = fmt.Sprintf(
+					"could not confirm who owns cluster %q's ArgoCD connection: %v — Sharko will not adopt a connection whose owner it cannot read. Fix the read problem and try again.",
+					clusterName, labelErr)
+				result.Results = append(result.Results, cr)
+				continue
+			}
+			if managedBy != "" && managedBy != "sharko" {
 				cr.Status = "failed"
 				cr.Error = fmt.Sprintf("cluster %q is managed by %q, not sharko — cannot adopt", clusterName, managedBy)
 				result.Results = append(result.Results, cr)

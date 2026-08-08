@@ -47,8 +47,12 @@ func TestAdoptClusters_V4_HappyPath_WritesBothFilesAndSwapsOwnership(t *testing.
 	if cr.Status != "success" {
 		t.Fatalf("expected success, got %s (error: %s)", cr.Status, cr.Error)
 	}
-	if len(cr.Warnings) != 0 {
-		t.Errorf("expected no warnings on a clean adopt, got %v", cr.Warnings)
+	// An unclaimed connection is no longer a silent pass (task #150): the
+	// preflight warns that nobody claims it and asks the human to confirm
+	// nothing else manages it. The adopt door has no acknowledgment
+	// protocol — it proceeds and carries the warning on the result.
+	if len(cr.Warnings) != 1 || !strings.Contains(cr.Warnings[0], "Nobody has claimed") {
+		t.Errorf("expected exactly the confirm-nobody-manages warning to ride along, got %v", cr.Warnings)
 	}
 
 	// The two v4 files, same pair a takeover writes.
@@ -132,7 +136,10 @@ func TestAdoptClusters_V4_NotReady_FailsWithPreflightSummary(t *testing.T) {
 
 // TestAdoptClusters_V4_WarningSurfacesButProceeds pins the other half of
 // the contract: a cluster the preflight only WARNS about (not blocks)
-// still adopts, and the warning rides along on the result.
+// still adopts, and the warning rides along on the result. A rival
+// ownership marker no longer qualifies (it blocks — see the test below);
+// the acknowledgeable states are the soft ownership signal and the
+// no-marker state.
 func TestAdoptClusters_V4_WarningSurfacesButProceeds(t *testing.T) {
 	git := adoptV4Git()
 	argocd := newMockArgocd()
@@ -142,8 +149,11 @@ func TestAdoptClusters_V4_WarningSurfacesButProceeds(t *testing.T) {
 
 	asm := newMockArgoSecretManager()
 	asm.secretDetails = map[string]ClusterSecretDetail{
-		// Claimed by something other than Sharko — a warning, not a block.
-		"prod-eu": {Found: true, Server: "https://prod-eu.example.com", ManagedBy: "flux"},
+		// A soft ownership signal — a marker that MAY belong to an ArgoCD
+		// application or a plain Helm release named "flux". Not proof, so
+		// it warns rather than blocks.
+		"prod-eu": {Found: true, Server: "https://prod-eu.example.com",
+			ForeignOwnerFound: true, ForeignOwnerConfidence: "soft", ForeignOwnerAppName: "flux"},
 	}
 
 	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
@@ -171,6 +181,47 @@ func TestAdoptClusters_V4_WarningSurfacesButProceeds(t *testing.T) {
 	// on its own, which is the point of the assertion above.
 	if _, ok := git.files[V4ManagedClustersPath]; !ok {
 		t.Error("a warned-but-ready adoption must still write")
+	}
+}
+
+// TestAdoptClusters_V4_RivalManagedByBlocks pins the task #150 flip at the
+// v4 adopt door: a connection whose ownership marker names another tool is
+// BLOCKED by the shared takeover preflight, so the adoption fails and
+// nothing is written or relabelled.
+func TestAdoptClusters_V4_RivalManagedByBlocks(t *testing.T) {
+	git := adoptV4Git()
+	argocd := newMockArgocd()
+	argocd.existingClusters = []models.ArgocdCluster{
+		{Name: "prod-eu", Server: "https://prod-eu.example.com"},
+	}
+
+	asm := newMockArgoSecretManager()
+	asm.secretDetails = map[string]ClusterSecretDetail{
+		"prod-eu": {Found: true, Server: "https://prod-eu.example.com", ManagedBy: "terraform"},
+	}
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+	orch.SetApplicationSetManager(newFakeAppSetManager())
+
+	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
+		Clusters: []string{"prod-eu"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected top-level error: %v", err)
+	}
+	cr := result.Results[0]
+	if cr.Status != "failed" {
+		t.Fatalf("expected failed — another tool owns the connection — got %s", cr.Status)
+	}
+	if !strings.Contains(cr.Error, "not ready to take over yet") {
+		t.Errorf("expected the preflight summary as the error, got: %q", cr.Error)
+	}
+	if _, ok := git.files[V4ManagedClustersPath]; ok {
+		t.Error("a blocked adoption must not write anything")
+	}
+	if len(asm.takenOver) != 0 {
+		t.Error("a blocked adoption must not swap ArgoCD ownership")
 	}
 }
 

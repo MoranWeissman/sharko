@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -231,6 +232,47 @@ func TestAdoptClusters_RejectManagedByOther(t *testing.T) {
 	}
 	if !strings.Contains(result.Results[0].Error, "managed by") {
 		t.Errorf("expected managed-by error, got: %s", result.Results[0].Error)
+	}
+}
+
+// TestAdoptClusters_ManagedByReadFailureRefuses pins the doubt=refuse flip
+// (task #150 lane A): when the ownership label cannot be read, the v3 adopt
+// door used to log and PROCEED — the wrong direction. It now fails that
+// cluster's adoption, mirroring remove.go's ownership-gate stance.
+func TestAdoptClusters_ManagedByReadFailureRefuses(t *testing.T) {
+	argocd := newMockArgocd()
+	argocd.existingClusters = []models.ArgocdCluster{
+		{Name: "cluster-a", Server: "https://a.example.com"},
+	}
+
+	git := newMockGitProvider()
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n")
+
+	asm := newMockArgoSecretManager()
+	asm.labelErr = fmt.Errorf("secrets \"cluster-a\" is forbidden")
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+
+	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
+		Clusters: []string{"cluster-a"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected top-level error: %v", err)
+	}
+	cr := result.Results[0]
+	if cr.Status != "failed" {
+		t.Fatalf("expected failed — doubt must refuse — got %s (error: %s)", cr.Status, cr.Error)
+	}
+	if !strings.Contains(cr.Error, "could not confirm who owns") {
+		t.Errorf("expected the could-not-confirm-owner error, got: %q", cr.Error)
+	}
+	// Nothing may be written or annotated for a refused cluster.
+	if len(git.prs) != 0 {
+		t.Errorf("a refused adoption still opened %d pull request(s)", len(git.prs))
+	}
+	if len(asm.annotations["cluster-a"]) != 0 {
+		t.Errorf("a refused adoption still set annotations: %v", asm.annotations["cluster-a"])
 	}
 }
 
