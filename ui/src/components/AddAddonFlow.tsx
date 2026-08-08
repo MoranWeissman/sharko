@@ -55,15 +55,40 @@ export interface DryRunPreviewProps {
  * no commit. Every array read is null-safe (`?? []`) because the Go DryRunResult
  * serializes the slice as `files_to_write` while older fixtures may use `files`.
  *
- * V3-D4: per-action rendering — create/delete show a terse label and no
- * content dump (a whole new/removed file as +/- lines is noise), update shows
- * the actual line-by-line diff inline and visible by default (green added /
- * red removed, <redacted> verbatim).
+ * FR31 (exact files AND content through every door): the server already
+ * computes a redacted diff for create and delete actions, not just update —
+ * see internal/orchestrator/preview_diff.go, buildFileDiff (create: all
+ * lines are additions against empty old content; delete: all lines are
+ * deletions against empty new content). This superseded the earlier V3-D4
+ * "no content dump for create/delete" choice: dropping content the server
+ * already sent left previews showing filenames only for exactly the two
+ * actions most worth checking before a merge (a brand-new file, or one
+ * about to disappear). All three actions now render the same diff body —
+ * inline, visible by default, no expand step — when `diff` is present.
  */
 export function DryRunPreview({ result }: DryRunPreviewProps) {
   const files = result.files_to_write ?? result.files ?? []
   const secrets = result.secrets_to_create ?? []
   const effectiveAddons = result.effective_addons ?? []
+
+  const renderDiffBody = (diff: string) => (
+    <div className="ml-4 mt-1 overflow-x-auto rounded border border-[#6aade0] bg-white p-2 dark:border-gray-600 dark:bg-gray-800 min-w-0">
+      <pre className="whitespace-pre text-xs">
+        {diff.split('\n').map((line, idx) => {
+          const lineColor = line.startsWith('+')
+            ? 'text-green-600 dark:text-green-400'
+            : line.startsWith('-')
+              ? 'text-red-600 dark:text-red-400'
+              : 'text-[#2a5a7a] dark:text-gray-400'
+          return (
+            <div key={idx} className={lineColor}>
+              {line}
+            </div>
+          )
+        })}
+      </pre>
+    </div>
+  )
 
   return (
     <div className="rounded-md bg-[#e8f4ff] p-3 ring-2 ring-[#6aade0] dark:bg-gray-900 dark:ring-gray-700 min-w-0">
@@ -92,56 +117,46 @@ export function DryRunPreview({ result }: DryRunPreviewProps) {
             </span>
             <ul className="mt-1 space-y-1 font-mono min-w-0">
               {files.map((f) => {
+                const hasDiff = f.diff && f.diff.trim().length > 0
+
                 if (f.action === 'create') {
                   return (
-                    <li key={f.path} className="flex items-start gap-1 min-w-0">
-                      <span className="text-green-600 dark:text-green-400">+</span>{' '}
-                      <span className="break-all">{f.path}</span>
-                      <span className="ml-1 text-[#5a8aaa] dark:text-gray-500">
-                        (new file)
-                      </span>
+                    <li key={f.path} className="min-w-0">
+                      <div className="flex items-start gap-1 min-w-0">
+                        <span className="text-green-600 dark:text-green-400">+</span>{' '}
+                        <span className="break-all">{f.path}</span>
+                        <span className="ml-1 text-[#5a8aaa] dark:text-gray-500">
+                          (new file)
+                        </span>
+                      </div>
+                      {hasDiff && f.diff && renderDiffBody(f.diff)}
                     </li>
                   )
                 }
 
                 if (f.action === 'delete') {
                   return (
-                    <li key={f.path} className="flex items-start gap-1 min-w-0">
-                      <span className="text-red-600 dark:text-red-400">-</span>{' '}
-                      <span className="break-all">{f.path}</span>
-                      <span className="ml-1 text-[#5a8aaa] dark:text-gray-500">
-                        (removed)
-                      </span>
+                    <li key={f.path} className="min-w-0">
+                      <div className="flex items-start gap-1 min-w-0">
+                        <span className="text-red-600 dark:text-red-400">-</span>{' '}
+                        <span className="break-all">{f.path}</span>
+                        <span className="ml-1 text-[#5a8aaa] dark:text-gray-500">
+                          (removed)
+                        </span>
+                      </div>
+                      {hasDiff && f.diff && renderDiffBody(f.diff)}
                     </li>
                   )
                 }
 
                 // action === 'update'
-                const hasDiff = f.diff && f.diff.trim().length > 0
                 return (
                   <li key={f.path} className="min-w-0">
                     <div className="flex items-start gap-1 min-w-0">
                       <span className="text-amber-600 dark:text-amber-400">~</span>{' '}
                       <span className="break-all">{f.path}</span>
                     </div>
-                    {hasDiff && f.diff && (
-                      <div className="ml-4 mt-1 overflow-x-auto rounded border border-[#6aade0] bg-white p-2 dark:border-gray-600 dark:bg-gray-800 min-w-0">
-                        <pre className="whitespace-pre text-xs">
-                          {f.diff.split('\n').map((line, idx) => {
-                            const lineColor = line.startsWith('+')
-                              ? 'text-green-600 dark:text-green-400'
-                              : line.startsWith('-')
-                                ? 'text-red-600 dark:text-red-400'
-                                : 'text-[#2a5a7a] dark:text-gray-400'
-                            return (
-                              <div key={idx} className={lineColor}>
-                                {line}
-                              </div>
-                            )
-                          })}
-                        </pre>
-                      </div>
-                    )}
+                    {hasDiff && f.diff && renderDiffBody(f.diff)}
                   </li>
                 )
               })}

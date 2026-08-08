@@ -4,14 +4,21 @@ import { DryRunPreview } from '@/components/AddAddonFlow'
 import type { DryRunResult } from '@/services/models'
 
 /*
- * V3-D4 — Per-action rendering in DryRunPreview.
+ * Per-action rendering in DryRunPreview.
  *
- * create → 'new file' label, no content dump.
- * delete → 'removed' label, no content dump.
+ * create → 'new file' label, PLUS the diff body when the server sent one.
+ * delete → 'removed' label, PLUS the diff body when the server sent one.
  * update → actual line-by-line diff shown inline and visible by default
  *          (green added / red removed, <redacted> verbatim).
- * Dumping a whole new/removed file as +/- lines was noise, and the
- * collapsed-by-default chevron made the feature look like it did nothing.
+ *
+ * All three actions share the same diff rendering (FR31 — exact files AND
+ * content through every door). This supersedes the earlier V3-D4 choice to
+ * withhold content for create/delete: the server already computes a
+ * redacted diff for those actions too (buildFileDiff in
+ * internal/orchestrator/preview_diff.go treats create as "all lines added"
+ * and delete as "all lines removed"), so hiding it in the UI dropped data
+ * the response already carried. A file with no `diff` field (e.g. some
+ * legacy call sites) still renders as a plain marker + path row, no crash.
  */
 
 describe('DryRunPreview — per-action rendering (V3-D4)', () => {
@@ -92,14 +99,14 @@ describe('DryRunPreview — per-action rendering (V3-D4)', () => {
     expect(redactedElements.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('a CREATE entry shows the "new file" label and no content dump', () => {
+  it('a CREATE entry shows the "new file" label AND the diff content the server sent', () => {
     const result: DryRunResult = {
       pr_title: 'Create new file',
       files_to_write: [
         {
           path: 'new-addon.yaml',
           action: 'create',
-          diff: 'name: test\nversion: 1.0.0\n# ... 50 more lines of boilerplate',
+          diff: '+name: test\n+version: 1.0.0',
         },
       ],
     }
@@ -111,22 +118,42 @@ describe('DryRunPreview — per-action rendering (V3-D4)', () => {
     expect(screen.getByText('+')).toBeInTheDocument()
     expect(screen.getByText('(new file)')).toBeInTheDocument()
 
-    // The diff content is NOT rendered (no full-content dump).
-    expect(screen.queryByText(/name: test/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/version: 1\.0\.0/)).not.toBeInTheDocument()
+    // The diff content IS rendered — FR31, exact files AND content through
+    // every door. No expand step: it's visible immediately, same as update.
+    expect(screen.getByText(/\+name: test/)).toBeInTheDocument()
+    expect(screen.getByText(/\+version: 1\.0\.0/)).toBeInTheDocument()
 
-    // No expand control is rendered (no button).
+    // Still no expand control (visible-by-default stays the convention).
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
-  it('a DELETE entry shows the "removed" label and no content dump', () => {
+  it('a CREATE entry with no diff field renders the label only, no crash', () => {
+    const result: DryRunResult = {
+      pr_title: 'Create new file',
+      files_to_write: [
+        {
+          path: 'new-addon.yaml',
+          action: 'create',
+          // No `diff` field — some call sites still omit it.
+        },
+      ],
+    }
+
+    render(<DryRunPreview result={result} />)
+
+    expect(screen.getByText('new-addon.yaml')).toBeInTheDocument()
+    expect(screen.getByText('(new file)')).toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('a DELETE entry shows the "removed" label AND the diff content the server sent', () => {
     const result: DryRunResult = {
       pr_title: 'Remove deprecated addon',
       files_to_write: [
         {
           path: 'old-addon.yaml',
           action: 'delete',
-          diff: '- name: old-addon\n- version: 0.5.0\n- # ... entire removed file',
+          diff: '-name: old-addon\n-version: 0.5.0',
         },
       ],
     }
@@ -138,11 +165,31 @@ describe('DryRunPreview — per-action rendering (V3-D4)', () => {
     expect(screen.getByText('-')).toBeInTheDocument()
     expect(screen.getByText('(removed)')).toBeInTheDocument()
 
-    // The diff content is NOT rendered (no full-content dump).
-    expect(screen.queryByText(/name: old-addon/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/version: 0\.5\.0/)).not.toBeInTheDocument()
+    // The diff content IS rendered — the deleted file's exact content is
+    // exactly what's worth checking before merging a delete.
+    expect(screen.getByText(/-name: old-addon/)).toBeInTheDocument()
+    expect(screen.getByText(/-version: 0\.5\.0/)).toBeInTheDocument()
 
-    // No expand control is rendered (no button).
+    // Still no expand control.
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('a DELETE entry with no diff field renders the label only, no crash', () => {
+    const result: DryRunResult = {
+      pr_title: 'Remove deprecated addon',
+      files_to_write: [
+        {
+          path: 'old-addon.yaml',
+          action: 'delete',
+          // No `diff` field.
+        },
+      ],
+    }
+
+    render(<DryRunPreview result={result} />)
+
+    expect(screen.getByText('old-addon.yaml')).toBeInTheDocument()
+    expect(screen.getByText('(removed)')).toBeInTheDocument()
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
@@ -169,7 +216,7 @@ describe('DryRunPreview — per-action rendering (V3-D4)', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
-  it('multi-file op: an update + a delete renders the update diff inline AND the delete label (no deleted content)', () => {
+  it('multi-file op: an update + a delete each render their own diff inline', () => {
     const result: DryRunResult = {
       pr_title: 'Update one, remove one',
       files_to_write: [
@@ -181,7 +228,7 @@ describe('DryRunPreview — per-action rendering (V3-D4)', () => {
         {
           path: 'removed.yaml',
           action: 'delete',
-          diff: '- # Entire removed file content here...',
+          diff: '-name: removed\n-version: 2.0.0',
         },
       ],
     }
@@ -195,10 +242,11 @@ describe('DryRunPreview — per-action rendering (V3-D4)', () => {
     // The update's diff is visible immediately.
     expect(screen.getByText(/\+newFeature: enabled/)).toBeInTheDocument()
 
-    // The delete label is visible.
+    // The delete label is visible, AND its diff content renders too — the
+    // exact content of a file about to be removed is exactly what's worth
+    // checking before merging.
     expect(screen.getByText('(removed)')).toBeInTheDocument()
-
-    // The deleted file's content is NOT rendered.
-    expect(screen.queryByText(/Entire removed file content here/)).not.toBeInTheDocument()
+    expect(screen.getByText(/-name: removed/)).toBeInTheDocument()
+    expect(screen.getByText(/-version: 2\.0\.0/)).toBeInTheDocument()
   })
 })
