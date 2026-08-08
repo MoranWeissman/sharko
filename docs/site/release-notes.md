@@ -16,9 +16,302 @@ recent release is the first thing readers see.
 
 ## Unreleased
 
+**Status:** not tagged yet. Everything below has merged to `main` since v3.0.0
+(released 2026-07-21) and will become **v4.0.0** once the maintainer decides
+it's ready — this entry is written ahead of the tag so nothing gets lost.
+
+### Breaking changes
+
+- **A brand-new Sharko no longer starts wide open.** If nobody has created a user
+  yet, Sharko now generates a real admin account and password the first time it
+  starts, instead of letting anyone in with any login. Anonymous login has been
+  removed completely. Get the generated password from the Kubernetes Secret
+  `sharko-initial-admin-secret` (or from `~/.sharko/initial-admin.json` if you're
+  running Sharko locally, not in a cluster).
+  ([#777](https://github.com/MoranWeissman/sharko/pull/777))
+- **The important one: Sharko now verifies ArgoCD's own TLS certificate by
+  default.** It never did before — the setting existed as a Helm value, an
+  environment variable, and a connection field, but every call site ignored
+  it, so ArgoCD's bearer token was exposed to anyone who could intercept the
+  connection. If your ArgoCD uses a self-signed or internal-CA certificate
+  over https, Sharko will now refuse to connect until you either add that CA
+  to the Sharko pod's trust store, or explicitly tick "Skip TLS certificate
+  verification" in Settings, or set `connection.argocd.insecure=true`.
+  Connections saved through the old setup wizard or Settings page already
+  had "skip verification" written into them, so most existing installs keep
+  working as before — but you should go and untick that box on purpose now
+  that it's an honest choice instead of the only option.
+  ([#800](https://github.com/MoranWeissman/sharko/pull/800))
+- **Taking over a cluster with no ownership markers now stops and makes you
+  confirm.** Before, Sharko would let this through quietly. Now you have to read
+  a warning about who might own the connection's Secret and confirm you want to
+  proceed, every time.
+  ([#788](https://github.com/MoranWeissman/sharko/pull/788),
+  [#789](https://github.com/MoranWeissman/sharko/pull/789),
+  [#790](https://github.com/MoranWeissman/sharko/pull/790))
+- **If another tool's ownership marker is still on the cluster's connection
+  Secret, takeover now refuses outright — there's no tick-a-box way past it
+  anymore.** You have to turn the other tool off and remove its label by hand,
+  then run the takeover check again before Sharko will let you continue.
+  ([#788](https://github.com/MoranWeissman/sharko/pull/788),
+  [#789](https://github.com/MoranWeissman/sharko/pull/789),
+  [#790](https://github.com/MoranWeissman/sharko/pull/790))
+- **AWS Secrets Manager and Kubernetes addon-secret paths now have a real
+  boundary.** An AWS Secrets Manager connection must have a prefix configured,
+  and every addon-secret path must sit under it — an empty prefix used to mean
+  "the whole AWS account" and is now a configuration error instead. A
+  Kubernetes addon-secret path can no longer name a namespace other than the
+  one its connection is configured for. If you were relying on either of the
+  old, looser behaviors, this breaks on upgrade.
+  ([#791](https://github.com/MoranWeissman/sharko/pull/791))
+- **A cluster whose connection skips certificate checks no longer receives
+  addon secrets.** If a cluster's kubeconfig or ArgoCD connection has TLS
+  verification turned off (`insecure-skip-tls-verify` / `insecure: true`),
+  Sharko now refuses to deliver any secret to it — reads, deletes, and
+  connectivity checks still work, only secret delivery stops. Fix the
+  cluster's connection with real CA data to get delivery working again; a
+  test estate that intentionally uses self-signed clusters can build the
+  binary with the `sharko_unverified_dest_ok` tag instead.
+  ([#792](https://github.com/MoranWeissman/sharko/pull/792))
+- **Same rule now also covers a cluster registered with a plain `http://`
+  address, not just one that skips certificate checks.** Plain http is
+  worse than skip-verify — anyone on the network path can read the value
+  with no attack needed at all — so it gets the same refusal.
+  ([#799](https://github.com/MoranWeissman/sharko/pull/799))
+- **Sharko no longer accepts a secret definition over the API.**
+  `POST /api/v1/addon-secrets` and `DELETE /api/v1/addon-secrets/{addon}` are
+  gone — every addon-secret refresh now reads its definition from the Git
+  catalog only, the same source the scheduled sync already used. If anything
+  in your setup called those two endpoints directly, define the secret in the
+  catalog in Git instead.
+  ([#794](https://github.com/MoranWeissman/sharko/pull/794))
+- **The Helm chart no longer grants itself a cluster-wide read of every
+  Secret on the host cluster.** Permissions are now scoped per namespace —
+  ArgoCD's own namespace, plus the namespace of each configured Kubernetes
+  secrets-backend connection — instead of one blanket cluster-wide rule. If
+  you use the Kubernetes secrets backend in a namespace other than Sharko's
+  own release namespace, list that namespace in the new chart setting
+  `rbac.k8sSecretsProviderNamespaces`, or Sharko won't be able to read
+  secrets there after upgrading.
+  ([#793](https://github.com/MoranWeissman/sharko/pull/793))
+
+### What's new
+
+#### A new repo format for clusters and addons (v4)
+
+Sharko can now run entirely off a flat, self-describing set of files in your
+Git repo instead of the older nested layout: a root `managed-clusters.yaml`,
+a root `catalog.yaml` (the approved-addons list), a root engine file, and one
+`cluster-addons/<cluster-name>.yaml` per cluster. A small Helm chart (the
+"engine") turns those files straight into ArgoCD ApplicationSets — no
+generated/baked catalog step in between.
+([#619](https://github.com/MoranWeissman/sharko/pull/619),
+[#648](https://github.com/MoranWeissman/sharko/pull/648),
+[#649](https://github.com/MoranWeissman/sharko/pull/649),
+[#650](https://github.com/MoranWeissman/sharko/pull/650),
+[#666](https://github.com/MoranWeissman/sharko/pull/666))
+
+- Every everyday operation now works end to end on the new format: editing or
+  deleting a catalog entry, adopting or unadopting a cluster, changing which
+  addons are on for a cluster, and removing a cluster altogether all go
+  through the same preview-then-pull-request flow.
+  ([#774](https://github.com/MoranWeissman/sharko/pull/774),
+  [#775](https://github.com/MoranWeissman/sharko/pull/775),
+  [#779](https://github.com/MoranWeissman/sharko/pull/779))
+- **A one-pull-request migration** converts an existing repo from the old
+  layout to the new one in a single commit; nothing stops working while you
+  decide when to run it, and the old layout keeps being read right up until
+  you do.
+  ([#636](https://github.com/MoranWeissman/sharko/pull/636))
+- **The engine chart is signed and published as an OCI chart** on every
+  Sharko release, and picks up version-pin upgrade pull requests on its own.
+  ([#623](https://github.com/MoranWeissman/sharko/pull/623))
+- **The CLI has full parity with the new format**, including `takeover`,
+  `takeover-preflight`, `drop-legacy-labels`, `unregister-consequences`,
+  `enable-addon`, `disable-addon`, and `upgrade-clusters` — and every dry-run
+  in the CLI now prints the real file-by-file diff instead of a placeholder.
+  ([#776](https://github.com/MoranWeissman/sharko/pull/776))
+- **Every preview in the UI shows the real file content, not a placeholder** —
+  adding an addon, editing the catalog, adopting or removing a cluster,
+  editing values.
+  ([#780](https://github.com/MoranWeissman/sharko/pull/780))
+
+#### Taking over a cluster someone else set up
+
+Sharko can now take over a cluster that was registered outside of it — a
+safety preflight check first, then an in-place swap of the ArgoCD connection
+Secret, dropping any legacy labels, and a clear list of what breaks if you
+walk away instead of finishing the takeover.
+([#643](https://github.com/MoranWeissman/sharko/pull/643)). This flow was
+hardened further this arc — see Breaking changes above for what that means
+for you.
+
+#### Secret Sync (was "Managed Secrets")
+
+A page that shows every secret Sharko manages on your clusters — both
+connection secrets and the values secrets it writes for addons — with
+refresh, sync, and diff actions, worst-first ordering, and a 30-second
+self-refresh. Renamed from "Managed Secrets" partway through, with a real off
+switch for the values engine and a docs page naming the boundary promise.
+([#713](https://github.com/MoranWeissman/sharko/pull/713),
+[#715](https://github.com/MoranWeissman/sharko/pull/715),
+[#727](https://github.com/MoranWeissman/sharko/pull/727))
+
+- **Sharko won't touch a secret it didn't create.** If it finds one with its
+  label but no record of writing it, that secret is marked "Foreign" and left
+  alone. ([#719](https://github.com/MoranWeissman/sharko/pull/719))
+- **Leftover secrets are found, not just ignored.** If a catalog entry that
+  used to push a secret gets deleted, the secret it left behind is now
+  detected and shown as "Orphaned," with an operator-gated delete that names
+  exactly what it's about to remove.
+  ([#753](https://github.com/MoranWeissman/sharko/pull/753),
+  [#754](https://github.com/MoranWeissman/sharko/pull/754))
+
+#### Native Gitea support
+
+Gitea is now a first-class git provider option alongside GitHub and Azure
+DevOps, with both read and write support (branches, files, pull requests,
+merges).
+([#607](https://github.com/MoranWeissman/sharko/pull/607),
+[#608](https://github.com/MoranWeissman/sharko/pull/608))
+
+#### Dashboard rebuilt
+
+The dashboard was redesigned twice this arc and landed as a work queue: pull
+requests and problems lead, and the old scattered stat cards collapse into
+one clickable fleet strip.
+([#670](https://github.com/MoranWeissman/sharko/pull/670),
+[#674](https://github.com/MoranWeissman/sharko/pull/674)) A long series of
+hands-on test walks then polished wording and behavior across almost every
+screen — clusters, addons, observability, marketplace — too many individual
+fixes to list here one by one.
+
+#### Faster pages
+
+The server stopped rebuilding its ArgoCD and git clients on every single
+request, and the UI now shows last-known data immediately and refreshes in
+the background instead of blanking the screen while it waits.
+([#673](https://github.com/MoranWeissman/sharko/pull/673)) Two slow
+per-request lookup patterns were fixed and hot reads now answer from a short
+cache. ([#692](https://github.com/MoranWeissman/sharko/pull/692))
+
+#### Clearer errors
+
+Every error the server returns now has the same shape — a plain headline,
+the cause, a hint, and a machine-readable code — and the UI renders that
+structure instead of gluing message fragments together.
+([#694](https://github.com/MoranWeissman/sharko/pull/694)) If ArgoCD becomes
+unreachable or rejects Sharko's token, you now get an honest "can't check
+right now" state instead of being bounced back to first-time setup.
+([#693](https://github.com/MoranWeissman/sharko/pull/693))
+
+#### Release process, now backed by evidence
+
+- **A tag can only publish once every real check has passed** — the full
+  end-to-end suite, the docs build, lint, and the performance check — not
+  just the everyday quick CI run.
+  ([#781](https://github.com/MoranWeissman/sharko/pull/781))
+- **arm64 images are now genuinely cross-compiled** instead of built under
+  slow emulation (which had been silently failing), and every CLI release
+  ships a real SBOM.
+  ([#758](https://github.com/MoranWeissman/sharko/pull/758))
+- **A new end-to-end suite runs against a real Gitea server in CI**, not just
+  a stand-in, catching drift between the two.
+  ([#757](https://github.com/MoranWeissman/sharko/pull/757))
+
+#### Open source readiness
+
+- Dependency and vulnerability scanning are now wired into CI; the first run
+  caught and fixed several real advisories.
+  ([#728](https://github.com/MoranWeissman/sharko/pull/728))
+- The AI tooling used to help build Sharko (BMAD workflow skills, team role
+  files) is now in the public repo with proper MIT attribution, plus a guide
+  for anyone who wants to use the same setup.
+  ([#745](https://github.com/MoranWeissman/sharko/pull/745))
+- Version numbers, the changelog, and documentation links were swept to say
+  the true, current thing.
+  ([#729](https://github.com/MoranWeissman/sharko/pull/729))
+
+#### Smaller things
+
+- API tokens get a lifecycle: they expire (90 days by default) and can be
+  renewed or revoked, and sessions now enforce their own expiry too.
+  ([#632](https://github.com/MoranWeissman/sharko/pull/632))
+- API tokens now survive a restart — they used to be wiped out every time the
+  Sharko pod restarted; they're now saved (as a hash, never the raw value) so
+  they keep working across restarts.
+  ([#783](https://github.com/MoranWeissman/sharko/pull/783))
+- A stuck fight over cluster labels now raises a real Kubernetes event
+  (`DriftDetected`), visible with `kubectl get events`, instead of only
+  showing up in an internal log line.
+  ([#770](https://github.com/MoranWeissman/sharko/pull/770))
+
+### Removed
+
+- **Sharko explored a Kubernetes operator** (a CRD and controller for driving
+  addon labels directly from a custom resource) and decided not to ship it —
+  the direction settled on the engine chart instead. The code is kept on the
+  `operator-shelf` branch, not deleted, but it is not part of the product.
+  ([#619](https://github.com/MoranWeissman/sharko/pull/619))
+- **The catalog-scanning bot is parked for good.** By default it only scans
+  and reports now, even when triggered manually — it will not open a pull
+  request unless you explicitly ask it to.
+  ([#782](https://github.com/MoranWeissman/sharko/pull/782))
+
+### Security
+
+- **The addon-values engine refuses to update or delete a secret it did not
+  create.** ([#719](https://github.com/MoranWeissman/sharko/pull/719))
+- Dependency and vulnerability scanning caught and fixed three real,
+  reachable advisories (gRPC, `x/text`, and sigstore-go).
+  ([#728](https://github.com/MoranWeissman/sharko/pull/728))
+- **Secret values never reach the logs.** Five lines that logged the length
+  of a fetched value no longer do — including two that logged the length of
+  a whole kubeconfig at the normal log level, not just the debug level. A
+  new test drives a known fake value through every delivery path and
+  confirms it never turns up in a log line, a metric, an audit entry, or an
+  error message.
+  ([#798](https://github.com/MoranWeissman/sharko/pull/798))
+- **The shipped container image now runs on Go 1.25.12,** clearing eleven
+  known high-severity CVEs in the Go standard library's certificate, TLS,
+  HTTP/2, and DNS handling that were baked into the previous image. If
+  you're running an older image, update it.
+  ([#795](https://github.com/MoranWeissman/sharko/pull/795))
+- See "The important one: Sharko now verifies ArgoCD's own TLS certificate
+  by default," "AWS Secrets Manager and Kubernetes addon-secret paths now
+  have a real boundary," "A cluster whose connection skips certificate
+  checks no longer receives addon secrets" (and the plain-`http://` case
+  right after it), and "The Helm chart no longer grants itself a
+  cluster-wide read of every Secret" under Breaking changes above.
+
+### Bug fixes
+
+- **A secret that appeared on a cluster between Sharko's ownership check and
+  its write is now correctly reported as somebody else's, not as a generic
+  failure.** This closes a race in the ownership gate: Sharko never actually
+  overwrote another tool's secret either way, but before this fix the
+  refusal could show up as a plain error instead of the real "this belongs
+  to something else" message.
+  ([#797](https://github.com/MoranWeissman/sharko/pull/797))
+- **A Secret Sync row that was refused now shows the real reason** instead
+  of the generic "the last check didn't finish" — this covers rows refused
+  by the new TLS-verification and secret-path-boundary checks above.
+  ([#801](https://github.com/MoranWeissman/sharko/pull/801))
+
 ### Internal
 
 - Consolidated ArgoCD cluster Secret writer to a single reconciler (`internal/clusterreconciler`). The legacy 3-minute `argosecrets.Reconciler` loop was retired. The `argosecrets.Manager` (pure CRUD writer for direct kubeconfig writes) remains. No user action needed; convergence behavior is unchanged. (Operator Phase 0: PR #588)
+- The UI's code now runs through a linter in CI, so obvious front-end mistakes get caught before merge instead of after.
+  ([#772](https://github.com/MoranWeissman/sharko/pull/772))
+- Real security checks (Go static analysis, a container image scan, a UI
+  dependency audit) now run on every pull request, not just at some other
+  time.
+  ([#795](https://github.com/MoranWeissman/sharko/pull/795))
+- The CI job that only ever searched for forbidden text was renamed from
+  "Security Scan" to "Forbidden Content Check," so its name matches what it
+  actually does. If your fork's branch protection rules or your own
+  automation reference the old job name, update them.
+  ([#795](https://github.com/MoranWeissman/sharko/pull/795))
 
 ---
 
