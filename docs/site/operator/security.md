@@ -511,9 +511,9 @@ When a user performs a Tier 2 action without a personal PAT configured, the resp
 
 For the full design rationale and the V2.x roadmap that builds on this foundation, see `docs/design/2026-04-16-attribution-and-permissions-model.md`.
 
-## v2.0.0 threat model
+## v4 threat model
 
-The structured threat model for the v2.0.0 production-launch baseline lives at [`docs/design/2026-06-02-threat-model-v2.md`](https://github.com/MoranWeissman/sharko/blob/main/docs/design/2026-06-02-threat-model-v2.md). It documents the seven assets, six primary trust boundaries (with STRIDE per boundary), OWASP Top 10 (2021) mapping, CNCF / SLSA supply-chain analysis, the comprehensive 40-row existing-mitigation table, and the 11 known gaps tracked for v3+. The companion review-prep bundle scoped for an external security consultant is tracked in `.bmad/output/reviews/v2-security-review-prep.md`.
+The threat model lives at [`docs/design/2026-08-08-threat-model-v4.md`](https://github.com/MoranWeissman/sharko/blob/main/docs/design/2026-08-08-threat-model-v4.md). It is a full rewrite for v4, written in plain language for an operator rather than a security-review committee — it replaces the older v2.0.0 document, which used a heavier STRIDE/OWASP/SLSA framework structure. It walks through the four checks that guard a secret value on its way through Sharko (one delivery path shared by the scheduled engine and "refresh now," the backend boundary, the destination TLS check, and the ownership gate that stops Sharko overwriting a Secret it doesn't own), where a raw secret value exists and for how long, what permissions Sharko holds and how to cut them down, the residual risk if the Sharko pod itself is compromised, and a plain list of what is honestly not built yet. The companion review-prep bundle scoped for an external security consultant against the older v2.0.0 baseline is kept for historical reference at `.bmad/output/reviews/v2-security-review-prep.md`.
 
 ## SSRF guard on URL-fetching endpoints
 

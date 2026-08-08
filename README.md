@@ -290,7 +290,7 @@ Sharko is an open project that follows CNCF-style governance and community conve
 | [GOVERNANCE.md](GOVERNANCE.md) | Project governance, decision-making, and the BDFL → steering-committee transition plan |
 | [MAINTAINERS.md](MAINTAINERS.md) | Current maintainers and how to become one |
 | [SECURITY.md](SECURITY.md) | Responsible security disclosure process |
-| [Threat Model](docs/design/2026-06-02-threat-model-v2.md) | The v4 threat model: how a secret value moves through Sharko, the checks that guard it, what permissions Sharko holds, and what's honestly not built yet |
+| [Threat Model](docs/design/2026-08-08-threat-model-v4.md) | The v4 threat model: how a secret value moves through Sharko, the checks that guard it, what permissions Sharko holds, and what's honestly not built yet |
 | [ADOPTERS.md](ADOPTERS.md) | Organizations using Sharko — add yours! |
 
 GitHub Discussions is not turned on for this repo yet, so for now, project Q&A, design discussion, bug reports, and feature requests all go through the [issue tracker](https://github.com/MoranWeissman/sharko/issues/new/choose). For security issues, follow [SECURITY.md](SECURITY.md) — please do not file security reports as public issues.
