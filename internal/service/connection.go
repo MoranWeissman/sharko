@@ -630,20 +630,32 @@ func (s *ConnectionService) buildArgocdClient(conn *models.Connection) (*argocd.
 		}
 	}
 
-	// Auto-discover server URL if still empty
+	// Auto-discover server URL if still empty. The discovery probes use the
+	// same TLS stance as the client built below, so discovery never returns
+	// a URL the token-carrying client would then refuse.
 	if serverURL == "" {
 		ns := conn.Argocd.Namespace
 		if ns == "" {
 			ns = "argocd"
 		}
-		serverURL = argocd.DiscoverServerURL(ns)
+		serverURL = argocd.DiscoverServerURL(ns, conn.Argocd.Insecure)
 	}
 
 	if token == "" {
 		return nil, fmt.Errorf("ArgoCD token not configured. Provide it via Settings UI or set ARGOCD_TOKEN env var with SHARKO_DEV_MODE=true")
 	}
 
-	return argocd.NewClient(serverURL, token, true), nil
+	// TLS certificate verification is ON by default (task #152 adversarial
+	// finding — this call site used to hardcode insecure=true, which silently
+	// accepted any certificate on an https ArgoCD and exposed the ArgoCD
+	// bearer token to anyone on the network path). Skipping verification now
+	// requires the operator's explicit argocd.insecure=true on the connection.
+	if conn.Argocd.Insecure {
+		slog.Warn("argocd: TLS certificate verification is DISABLED for this connection (argocd.insecure=true) — anyone on the network path to the ArgoCD server can read the ArgoCD token; use only for self-signed test setups",
+			"server", serverURL)
+	}
+
+	return argocd.NewClient(serverURL, token, conn.Argocd.Insecure), nil
 }
 
 // GetGitProviderForConnection returns a GitProvider for a specific named connection.
@@ -729,8 +741,11 @@ func (s *ConnectionService) TestCredentials(ctx context.Context, conn *models.Co
 }
 
 // DiscoverArgocdURL finds the ArgoCD server URL for the given namespace.
+// Used by the first-run wizard's discover endpoint, which runs before any
+// connection (and thus any insecure opt-in) exists — so the probes verify
+// TLS. The probes carry no credential either way.
 func (s *ConnectionService) DiscoverArgocdURL(namespace string) string {
-	return argocd.DiscoverServerURL(namespace)
+	return argocd.DiscoverServerURL(namespace, false)
 }
 
 // GetActiveConnection returns the active connection with its full configuration.

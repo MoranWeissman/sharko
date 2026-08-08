@@ -717,6 +717,9 @@ export interface ConnectionResponse {
   argocd_server_url: string
   argocd_token_masked: string
   argocd_namespace: string
+  /** True when this connection skips TLS certificate verification toward
+   *  ArgoCD (explicit operator opt-in; verification is on by default). */
+  argocd_insecure?: boolean
   is_default: boolean
   is_active: boolean
   provider?: {
