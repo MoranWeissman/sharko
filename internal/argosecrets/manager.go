@@ -574,6 +574,22 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 
 	// Secret exists — check whether we manage it or need to adopt it.
 	if existing.Labels[LabelManagedBy] != ManagedByValue {
+		// LAST-LINE OWNERSHIP GUARD (secret-ownership hardening, task #150
+		// lane A): a Secret whose ownership marker names ANOTHER tool is
+		// never adoptable here. Stamping Sharko's label over it would
+		// silently steal that tool's connection — and the tool can write it
+		// back, leaving the two fighting over the cluster. Unlabeled
+		// Secrets stay adoptable: v3 adopt gates rivals upstream (FR-4.6),
+		// v4 adopt gates via the takeover preflight, and registration gates
+		// via refuseWhenSecretOwnedByAnotherTool — this branch is the
+		// safety net behind all three doors. The only path that changes a
+		// rival-owned connection's owner is TakeOverClusterSecret, behind
+		// its explicit human approval.
+		if rival := existing.Labels[LabelManagedBy]; rival != "" {
+			return false, fmt.Errorf(
+				"the ArgoCD connection for cluster %q is owned by %q, and Sharko will not take ownership of another tool's connection without an explicit takeover. Stop %q from managing this connection and remove its ownership marker from the connection — it does not come off by itself when the tool is stopped — then use Sharko's takeover flow",
+				spec.Name, rival, rival)
+		}
 		// Adoption path: secret exists but was not created by Sharko.
 		// Apply the managed-by label, merge desired labels (foreign labels kept),
 		// stamp the adopted annotation, and preserve the existing Data/StringData

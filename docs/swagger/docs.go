@@ -2715,7 +2715,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Cluster already exists",
+                        "description": "Cluster already exists, or its ArgoCD connection is owned by another tool — stop that tool and use the takeover flow instead",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

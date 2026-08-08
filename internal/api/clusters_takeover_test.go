@@ -346,9 +346,11 @@ func TestTakeover_409_NamesTheWarningItIsWaitingOn(t *testing.T) {
 		[]*corev1.Secret{brownfieldSecret("prod-eu", map[string]string{"env": "prod"}, nil)},
 		fakeAppSetReader{list: []appsets.ApplicationSetInfo{unsafeAppSet("legacy-addons", "env")}})
 
+	// The no-marker owner warning is acknowledged; the appset-safety one is
+	// deliberately not — the 409 must name exactly the outstanding one.
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
-		TakeoverRequest{Yes: true}))
+		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingSecretOwner}}))
 
 	if w.Code != http.StatusConflict {
 		t.Fatalf("unacknowledged warning: got %d, want 409 (body=%s)", w.Code, w.Body.String())
@@ -374,7 +376,7 @@ func TestTakeover_409_AckingADifferentFindingDoesNotCoverThisOne(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
-		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingApplications}}))
+		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingApplications, takeover.FindingSecretOwner}}))
 
 	if w.Code != http.StatusConflict {
 		t.Fatalf("ack of the wrong finding: got %d, want 409 (body=%s)", w.Code, w.Body.String())
@@ -391,9 +393,12 @@ func TestTakeover_400_WhenTheConfirmationIsMissing(t *testing.T) {
 	_, router, _ := takeoverTestServer(t, gp,
 		[]*corev1.Secret{brownfieldSecret("prod-eu", nil, nil)}, fakeAppSetReader{})
 
+	// The owner warning (no ownership marker on the brownfield Secret) is
+	// acknowledged so the request reaches the confirmation gate — the thing
+	// this test pins is that a missing "yes" is still a 400.
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
-		TakeoverRequest{}))
+		TakeoverRequest{AcknowledgedFindings: []string{takeover.FindingSecretOwner}}))
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("missing confirmation: got %d, want 400 (body=%s)", w.Code, w.Body.String())
@@ -409,9 +414,13 @@ func TestTakeover_200_AckedWarningGoesThroughAndSwapsTheOwner(t *testing.T) {
 		[]*corev1.Secret{brownfieldSecret("prod-eu", map[string]string{"env": "prod"}, nil)},
 		fakeAppSetReader{list: []appsets.ApplicationSetInfo{unsafeAppSet("legacy-addons", "env")}})
 
+	// Both warnings on this cluster are still-acknowledgeable ones: the
+	// unsafe ApplicationSet, and the no-marker owner state (nobody claims
+	// the connection — the human confirms). A rival ownership marker would
+	// NOT be acknowledgeable; that case is pinned as a 409 below.
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
-		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingAppSetSafety}}))
+		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingAppSetSafety, takeover.FindingSecretOwner}}))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("acked takeover: got %d, want 200 (body=%s)", w.Code, w.Body.String())
@@ -445,6 +454,43 @@ func TestTakeover_200_AckedWarningGoesThroughAndSwapsTheOwner(t *testing.T) {
 	}
 	if gp.prs != 1 {
 		t.Errorf("expected exactly one pull request, got %d", gp.prs)
+	}
+}
+
+// TestTakeover_409_RivalManagedByBlocksEvenWhenAcked pins the server-side
+// takeover block (task #150): a connection whose ownership marker names
+// another tool is BLOCKED, and no combination of "yes" and acknowledgments
+// gets past it. The only path through is stopping the old manager, removing
+// its marker, and re-running the preflight.
+func TestTakeover_409_RivalManagedByBlocksEvenWhenAcked(t *testing.T) {
+	gp := newTakeoverFakeGP()
+	_, router, k8s := takeoverTestServer(t, gp,
+		[]*corev1.Secret{brownfieldSecret("prod-eu", map[string]string{"app.kubernetes.io/managed-by": "terraform"}, nil)},
+		fakeAppSetReader{})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
+		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{
+			takeover.FindingSecretOwner, takeover.FindingAppSetSafety,
+			takeover.FindingApplications, takeover.FindingNameCollision,
+		}}))
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("rival-owned takeover: got %d, want 409 (body=%s)", w.Code, w.Body.String())
+	}
+	if gp.wroteAnything() {
+		t.Fatalf("a blocked takeover still touched git: branches=%v written=%v prs=%d", gp.branches, gp.written, gp.prs)
+	}
+	secret, err := k8s.CoreV1().Secrets("argocd").Get(context.Background(), "prod-eu", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get cluster secret: %v", err)
+	}
+	if secret.Labels["app.kubernetes.io/managed-by"] != "terraform" {
+		t.Errorf("the rival's ownership marker was touched: %v", secret.Labels)
+	}
+	body := decodeMap(t, w)
+	if _, ok := body["preflight"]; !ok {
+		t.Errorf("the 409 does not carry the preflight report the caller has to read: %s", w.Body.String())
 	}
 }
 
@@ -568,7 +614,7 @@ func TestTakeover_ProceedsWhenTheFleetRecordIsSimplyAbsent(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
-		TakeoverRequest{Yes: true}))
+		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingSecretOwner}}))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("first takeover on an empty repo: got %d, want 200 (body=%s)", w.Code, w.Body.String())

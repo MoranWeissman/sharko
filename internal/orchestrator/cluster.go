@@ -463,6 +463,20 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// the reconcilers only sync addon labels onto it.
 	hasInlineCertPair := creds != nil && len(creds.CertData) > 0 && len(creds.KeyData) > 0
 	if !selfManaged && isInlineSource(credsSource) && o.argoSecretManager != nil && creds != nil && (creds.Token != "" || hasInlineCertPair) {
+		// OWNERSHIP GUARD (secret-ownership hardening, task #150 lane A):
+		// before the direct Ensure write, check who owns the same-name
+		// ArgoCD cluster Secret. A rival ownership marker or a hard ArgoCD
+		// tracking owner fails the WHOLE registration — writing the Git
+		// record while skipping the Secret write would leave a cluster whose
+		// connection Sharko claims but does not hold, and stamping over the
+		// Secret would silently steal another tool's connection. The
+		// takeover door is the only path that changes a connection's owner.
+		// A missing Secret is the normal fresh-register case and costs one
+		// extra Get; an ownership read failure refuses too (doubt = refuse,
+		// same stance as remove.go's ownership gate).
+		if guardErr := o.refuseWhenSecretOwnedByAnotherTool(ctx, req.Name); guardErr != nil {
+			return nil, guardErr
+		}
 		// Addon labels in the canonical "enabled"/"disabled" vocabulary —
 		// the SAME value the reconciler writes when it later reconciles this
 		// cluster from managed-clusters.yaml (which we also write in this

@@ -97,23 +97,39 @@ func TestPreflight_MissingSecretBlocks(t *testing.T) {
 	}
 }
 
-func TestPreflight_ForeignManagedByWarnsButDoesNotBlock(t *testing.T) {
+// TestPreflight_ForeignManagedByBlocks pins the secret-ownership hardening
+// decision (task #150): another tool's ownership marker BLOCKS the takeover
+// — there is no acknowledgment that makes it safe, because that tool can
+// write the connection back and undo everything. The path through is stop
+// the tool, remove its marker, re-run.
+func TestPreflight_ForeignManagedByBlocks(t *testing.T) {
 	in := cleanInputs()
 	in.ManagedBy = "flux"
 	r := Preflight(in)
 
-	if !r.Ready {
-		t.Error("another tool's ownership marker is a warning, not a block — an operator can know it is retired")
-	}
-	if !r.NeedsAcknowledgement {
-		t.Error("a warning must require an explicit acknowledgement")
+	if r.Ready {
+		t.Error("another tool's ownership marker must block — that tool can put its own connection back and undo the takeover")
 	}
 	f := findingByID(t, r, FindingSecretOwner)
-	if f.Status != StatusWarning {
-		t.Errorf("status = %q, want warning", f.Status)
+	if f.Status != StatusBlocked {
+		t.Errorf("status = %q, want blocked", f.Status)
 	}
 	if !strings.Contains(f.Detail, "flux") {
 		t.Errorf("the finding must name the owner it found: %q", f.Detail)
+	}
+	// The copy must offer NO acknowledge-and-proceed escape…
+	for _, text := range []string{f.WhatItMeans, f.WhatToDo} {
+		if strings.Contains(strings.ToLower(text), "acknowledge this warning") {
+			t.Errorf("a blocked finding must not invite an acknowledgment escape: %q", text)
+		}
+	}
+	// …and it must say the marker does not come off by itself, and that the
+	// check can be re-run after the fix.
+	if !strings.Contains(f.WhatToDo, "does not come off by itself") {
+		t.Errorf("the action must say the marker stays behind when the tool is stopped: %q", f.WhatToDo)
+	}
+	if !strings.Contains(f.WhatToDo, "run this check again") {
+		t.Errorf("a blocked finding must tell the person the check can be re-run: %q", f.WhatToDo)
 	}
 }
 
@@ -129,18 +145,84 @@ func TestPreflight_AlreadySharkoOwnedIsClean(t *testing.T) {
 	}
 }
 
-func TestPreflight_HardForeignOwnerWarns(t *testing.T) {
+// TestPreflight_HardForeignOwnerBlocks — a hard tracking match means the
+// named ArgoCD application really does render this exact Secret from Git,
+// so its next sync would put its own version back no matter what anyone
+// acknowledged. Blocked, not warned (task #150).
+func TestPreflight_HardForeignOwnerBlocks(t *testing.T) {
 	in := cleanInputs()
 	in.ForeignOwnerFound = true
 	in.ForeignOwnerConfidence = "hard"
 	in.ForeignOwnerAppName = "fleet-bootstrap"
 
-	f := findingByID(t, Preflight(in), FindingSecretOwner)
-	if f.Status != StatusWarning {
-		t.Errorf("status = %q, want warning", f.Status)
+	r := Preflight(in)
+	if r.Ready {
+		t.Error("an ArgoCD application that demonstrably deploys this connection must block the takeover")
+	}
+	f := findingByID(t, r, FindingSecretOwner)
+	if f.Status != StatusBlocked {
+		t.Errorf("status = %q, want blocked", f.Status)
 	}
 	if !strings.Contains(f.WhatItMeans, "fleet-bootstrap") {
 		t.Errorf("must name the application: %q", f.WhatItMeans)
+	}
+	if !strings.Contains(f.WhatToDo, "run this check again") {
+		t.Errorf("a blocked finding must tell the person the check can be re-run: %q", f.WhatToDo)
+	}
+}
+
+// TestPreflight_SoftForeignOwnerStaysAWarning — a soft signal (mismatched
+// tracking marker, or only the instance label a plain Helm release also
+// stamps) is the "unknown ownership" state: not proof, so the human makes
+// the call by acknowledging. It must stay acknowledgeable, and it must
+// keep naming the Helm possibility.
+func TestPreflight_SoftForeignOwnerStaysAWarning(t *testing.T) {
+	in := cleanInputs()
+	in.ForeignOwnerFound = true
+	in.ForeignOwnerConfidence = "soft"
+	in.ForeignOwnerAppName = "old-install"
+
+	r := Preflight(in)
+	if !r.Ready {
+		t.Error("a soft ownership signal is not proof — it warns, and the human decides")
+	}
+	if !r.NeedsAcknowledgement {
+		t.Error("a warning must require an explicit acknowledgement")
+	}
+	f := findingByID(t, r, FindingSecretOwner)
+	if f.Status != StatusWarning {
+		t.Errorf("status = %q, want warning", f.Status)
+	}
+	if !strings.Contains(f.WhatItMeans, "old-install") {
+		t.Errorf("must name what it found: %q", f.WhatItMeans)
+	}
+	if !strings.Contains(f.WhatItMeans, "Helm") {
+		t.Errorf("must keep naming the plain-Helm possibility so a Helm-only user is not misled: %q", f.WhatItMeans)
+	}
+}
+
+// TestPreflight_NoMarkersIsAWarningNotAFreePass — task #150: "no ownership
+// marker" used to come back clean, but absence of a marker is not proof
+// that nothing manages the connection. It now warns, and the takeover only
+// proceeds once a person confirms and acknowledges.
+func TestPreflight_NoMarkersIsAWarningNotAFreePass(t *testing.T) {
+	r := Preflight(cleanInputs())
+
+	if !r.Ready {
+		t.Error("no markers must not block — it warns, and the human confirms")
+	}
+	if !r.NeedsAcknowledgement {
+		t.Error("the no-marker state must require an explicit acknowledgement — Sharko never guesses that nothing manages the connection")
+	}
+	f := findingByID(t, r, FindingSecretOwner)
+	if f.Status != StatusWarning {
+		t.Errorf("status = %q, want warning", f.Status)
+	}
+	if !strings.Contains(f.WhatItMeans, "not proof") {
+		t.Errorf("must say plainly that no marker is not proof: %q", f.WhatItMeans)
+	}
+	if !strings.Contains(f.WhatToDo, "acknowledge") {
+		t.Errorf("must tell the person to confirm and acknowledge: %q", f.WhatToDo)
 	}
 }
 
