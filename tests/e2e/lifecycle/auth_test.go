@@ -120,16 +120,29 @@ func TestAuthFlow(t *testing.T) {
 	})
 
 	t.Run("HashEndpoint", func(t *testing.T) {
-		// In the in-process boot path StartSharko always seeds an
-		// admin → authStore.HasUsers()==true → /auth/hash returns 403
-		// by design (security: bcrypt-as-a-service is only safe during
-		// initial bootstrap). Asserting 403 documents the contract.
+		// /auth/hash used to be gated on "no users configured" (the old
+		// pre-auth setup window). That window no longer exists — Sharko
+		// always generates an initial admin — so the endpoint is now a
+		// plain authenticated utility (see internal/api/router.go
+		// handleHashPassword). An authenticated caller gets a bcrypt
+		// hash back; an unauthenticated caller is rejected by
+		// basicAuthMiddleware before the handler ever runs.
+		var out harness.HashPasswordResponse
+		c.PostJSON(t, "/api/v1/auth/hash",
+			map[string]string{"password": "anything-not-empty"},
+			&out,
+			harness.WithExpectStatus(http.StatusOK),
+		)
+		if !strings.HasPrefix(out.Hash, "$2") {
+			t.Fatalf("HashEndpoint (authenticated): hash=%q does not look like a bcrypt hash", out.Hash)
+		}
+
 		resp := c.Do(t, http.MethodPost, "/api/v1/auth/hash", map[string]string{
 			"password": "anything-not-empty",
-		})
+		}, harness.WithHeader("Authorization", ""), harness.WithNoRetry())
 		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden {
-			t.Fatalf("HashEndpoint (auth-enabled): status=%d want 403", resp.StatusCode)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("HashEndpoint (unauthenticated): status=%d want 401", resp.StatusCode)
 		}
 	})
 

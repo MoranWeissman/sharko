@@ -875,7 +875,7 @@ func newIsolatedTestServer(t *testing.T) *Server {
 	observabilitySvc := service.NewObservabilityService(clusterSvc)
 	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}), nil, "")
 	aiClient := ai.NewClient(ai.Config{})
-	return NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
+	return withLegacyOpenAuthForTests(NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient))
 }
 
 // installCredProvider publishes cp as the server's cluster-credentials

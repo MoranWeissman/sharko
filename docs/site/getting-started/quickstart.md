@@ -19,9 +19,11 @@ helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
 ## 2. Get the Admin Password
 
 ```bash
-kubectl get secret sharko -n sharko \
-  -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
+kubectl get secret sharko-initial-admin-secret -n sharko \
+  -o jsonpath='{.data.password}' | base64 -d
 ```
+
+Sharko stores the generated admin password in a dedicated `sharko-initial-admin-secret` Secret — the same pattern ArgoCD uses with `argocd-initial-admin-secret`.
 
 ## 3. Open the UI
 

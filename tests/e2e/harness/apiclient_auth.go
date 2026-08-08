@@ -80,11 +80,12 @@ type HashPasswordResponse struct {
 	Hash string `json:"hash"`
 }
 
-// HashPassword POSTs /api/v1/auth/hash. The handler is only reachable
-// when the auth store has NO users (HasUsers()==false). Whenever the
-// in-process boot path has seeded an admin (i.e. always, today) the
-// endpoint returns 403 — callers asserting that code should pass
-// WithExpectStatus(http.StatusForbidden).
+// HashPassword POSTs /api/v1/auth/hash. The endpoint is a plain
+// authenticated utility (see internal/api/router.go handleHashPassword):
+// any authenticated caller gets a bcrypt hash back; an unauthenticated
+// request is rejected with 401 by basicAuthMiddleware before the
+// handler runs. It no longer has a "no users" gate — that pre-auth
+// setup window doesn't exist anymore.
 func (c *Client) HashPassword(t *testing.T, plaintext string, opts ...RequestOption) HashPasswordResponse {
 	t.Helper()
 	var out HashPasswordResponse

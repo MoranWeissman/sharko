@@ -41,7 +41,7 @@ func notificationsTestServer(t *testing.T) (*Server, http.Handler) {
 	dashboardSvc := service.NewDashboardService(connSvc, "")
 	observabilitySvc := service.NewObservabilityService(clusterSvc)
 	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}), nil, "")
-	srv := NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, ai.NewClient(ai.Config{}))
+	srv := withLegacyOpenAuthForTests(NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, ai.NewClient(ai.Config{})))
 
 	return srv, NewRouter(srv, nil)
 }

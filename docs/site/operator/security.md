@@ -42,12 +42,25 @@ extraEnv:
 
 ### Admin Password
 
-The initial admin password is randomly generated and stored as a bcrypt hash in a Kubernetes Secret. Retrieve it once and change it immediately after first login.
+The initial admin password is randomly generated and stored as a bcrypt hash in a Kubernetes Secret. The plaintext is mirrored to the `sharko-initial-admin-secret` Secret (the same pattern ArgoCD uses with `argocd-initial-admin-secret`) so you can retrieve it after install:
+
+```bash
+kubectl get secret sharko-initial-admin-secret -n sharko \
+  -o jsonpath='{.data.password}' | base64 -d
+```
+
+Retrieve it once and change it immediately after first login.
 
 ### No Users Configured
 
-!!! danger "Risk: Auth disabled"
-    If the `sharko-users` ConfigMap is deleted or contains no users, and no `SHARKO_AUTH_USER` / `SHARKO_AUTH_PASSWORD` env vars are set, **authentication may be bypassed**. Always ensure at least one user account exists.
+There is no way to run Sharko with authentication off (outside demo mode). If Sharko starts and finds **zero** configured users — no chart-seeded accounts, no `SHARKO_BOOTSTRAP_ADMIN_PASSWORD`, no `SHARKO_AUTH_USER` / `SHARKO_AUTH_PASSWORD` env vars — it creates an `admin` user itself with a random password and tells you where to find it:
+
+- **In a cluster:** the password lands in the `sharko-initial-admin-secret` Secret (retrieve it with the command above). Set `SHARKO_WRITE_INITIAL_ADMIN_SECRET=false` if you want the password to appear only in the startup log.
+- **Outside a cluster (local binary):** the password is saved to `~/.sharko/initial-admin.json` (file mode 0600; override the path with `SHARKO_INITIAL_ADMIN_FILE`). The same password is reused on the next start.
+
+Either way the password is also printed once on the server's startup output, and every API request requires authentication from the first moment. If the user store somehow ends up empty at request time, requests are refused with a 401 — the server never falls back to running open.
+
+The only exception is **demo mode** (`sharko serve --demo`), which is loud about it: it seeds the fixed demo users `admin/admin` and `qa/sharko` and enforces login with those. Demo mode is for trying Sharko out with mock backends, never for real clusters.
 
 Check user configuration:
 

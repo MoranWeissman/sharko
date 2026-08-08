@@ -182,7 +182,7 @@ func orphanTestServer(t *testing.T, gp gitprovider.GitProvider, argoURL string, 
 	dashboardSvc := service.NewDashboardService(connSvc, "")
 	observabilitySvc := service.NewObservabilityService(clusterSvc)
 	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}), nil, "")
-	srv := NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, ai.NewClient(ai.Config{}))
+	srv := withLegacyOpenAuthForTests(NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, ai.NewClient(ai.Config{})))
 
 	// Save an active connection pointing at the stub ArgoCD URL. The Git
 	// side is overridden below so its config doesn't matter beyond shape.
@@ -404,7 +404,7 @@ func TestHandleDeleteOrphanCluster_NoActiveConnection_Returns502(t *testing.T) {
 	dashboardSvc := service.NewDashboardService(connSvc, "")
 	observabilitySvc := service.NewObservabilityService(clusterSvc)
 	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}), nil, "")
-	srv := NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, ai.NewClient(ai.Config{}))
+	srv := withLegacyOpenAuthForTests(NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, ai.NewClient(ai.Config{})))
 	router := NewRouter(srv, nil)
 
 	w := httptest.NewRecorder()
