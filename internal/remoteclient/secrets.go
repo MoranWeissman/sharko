@@ -122,6 +122,18 @@ const (
 // create. nil/empty leaves annotation handling byte-identical to before
 // this parameter existed.
 func EnsureSecret(ctx context.Context, client kubernetes.Interface, namespace, name string, data map[string][]byte, annotations map[string]string) error {
+	// TLS gate (task #152 lane C) — asked FIRST, before any API call, so a
+	// secret value never even reaches the transport of a connection that
+	// skips certificate checks. Same choke-point reasoning as the
+	// ownership gate below: every value-carrying write Sharko performs on
+	// a remote cluster goes through this function, so the question lives
+	// here and no caller can forget to ask it. See tlsguard.go.
+	if destinationUnverified(client) {
+		slog.Info("[remoteclient] refusing to send this secret — the cluster's connection is set up to skip certificate checks",
+			"namespace", namespace, "name", name)
+		return fmt.Errorf("secret %s/%s: %w", namespace, name, ErrUnverifiedDestination)
+	}
+
 	slog.Info("[remoteclient] EnsureSecret called", "namespace", namespace, "name", name, "keys", len(data))
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{

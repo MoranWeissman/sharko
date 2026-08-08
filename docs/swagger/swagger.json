@@ -9,147 +9,6 @@
     "host": "localhost:8080",
     "basePath": "/api/v1",
     "paths": {
-        "/addon-secrets": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns all registered addon secret definitions",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "addons"
-                ],
-                "summary": "List addon secret definitions",
-                "responses": {
-                    "200": {
-                        "description": "Addon secret definitions",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Registers a new addon secret definition for remote cluster secret propagation",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "addons"
-                ],
-                "summary": "Create addon secret definition",
-                "parameters": [
-                    {
-                        "description": "Addon secret definition",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddonSecretDefinition"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Secret definition created",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/addon-secrets/{addon}": {
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Removes the secret definition for a specific addon",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "addons"
-                ],
-                "summary": "Delete addon secret definition",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Addon name",
-                        "name": "addon",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Secret definition deleted",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Not found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
         "/addons": {
             "post": {
                 "security": [
@@ -4626,14 +4485,14 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Re-creates all managed addon secrets on a remote cluster",
+                "description": "Delivers every addon-values secret the GIT CATALOG defines for this cluster, right now, through the same git-backed engine the periodic reconciler runs (task #152). What to deliver — backend paths, destination namespaces, Secret names, key lists — comes exclusively from Git; any request body is ignored entirely. Pass ?addon= to narrow the push to one addon, which must already be defined in Git for this cluster or the call is refused.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "clusters"
                 ],
-                "summary": "Refresh cluster secrets",
+                "summary": "Refresh cluster secrets from Git",
                 "parameters": [
                     {
                         "type": "string",
@@ -4641,11 +4500,24 @@
                         "name": "name",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Refresh only this addon's secrets (must be defined in the Git catalog for this cluster)",
+                        "name": "addon",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Secrets refreshed",
+                        "description": "Secrets refreshed from Git",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "207": {
+                        "description": "Some secrets refreshed, some failed",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -4665,15 +4537,22 @@
                             "additionalProperties": true
                         }
                     },
+                    "404": {
+                        "description": "The cluster or addon is not defined in Git",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
-                        "description": "Gateway error",
+                        "description": "Git or upstream error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "503": {
-                        "description": "Credentials provider not configured",
+                        "description": "Secrets reconciler not configured",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -10800,27 +10679,6 @@
                     "items": {
                         "type": "string"
                     }
-                }
-            }
-        },
-        "github_com_MoranWeissman_sharko_internal_orchestrator.AddonSecretDefinition": {
-            "type": "object",
-            "properties": {
-                "addon_name": {
-                    "type": "string"
-                },
-                "keys": {
-                    "description": "secret data key → provider path (e.g. \"api-key\" → \"secrets/datadog/api-key\")",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "namespace": {
-                    "type": "string"
-                },
-                "secret_name": {
-                    "type": "string"
                 }
             }
         },

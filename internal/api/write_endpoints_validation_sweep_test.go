@@ -57,8 +57,10 @@ func TestWriteEndpoints_EmptyBody_RejectedOrUpstreamErrored(t *testing.T) {
 		{name: "POST /addons/upgrade-batch", method: http.MethodPost, path: "/api/v1/addons/upgrade-batch", body: []byte("{}")},
 		{name: "PATCH /addons/{name}", method: http.MethodPatch, path: "/api/v1/addons/foo", body: []byte("{}"), allowSuccess: true /* partial-update no-op */},
 		{name: "PUT /addons/{name}/values", method: http.MethodPut, path: "/api/v1/addons/foo/values", body: []byte("{}")},
-		// addon-secrets
-		{name: "POST /addon-secrets", method: http.MethodPost, path: "/api/v1/addon-secrets", body: []byte("{}")},
+		// POST /addon-secrets is gone (task #152, story 152.A) — the
+		// definition-CRUD endpoints were removed; a POST there now hits the
+		// V124-4.4 catch-all 404, which the "Unknown path" case below
+		// already covers for the whole family.
 		// users / tokens
 		{name: "POST /users", method: http.MethodPost, path: "/api/v1/users", body: []byte("{}")},
 		{name: "POST /tokens", method: http.MethodPost, path: "/api/v1/tokens", body: []byte("{}")},

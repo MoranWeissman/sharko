@@ -19,9 +19,9 @@ package harness
 //   GET    /api/v1/addons/version-matrix        — full matrix
 //   POST   /api/v1/addons/unwrap-globals        — globals migration
 //   POST   /api/v1/addons/upgrade-batch         — batch upgrade
-//   GET    /api/v1/addon-secrets                — list secret defs
-//   POST   /api/v1/addon-secrets                — create secret def
-//   DELETE /api/v1/addon-secrets/{addon}        — remove secret def
+//
+// (The /addon-secrets definition-CRUD endpoints this file once wrapped
+// were retired by task #152, story 152.A — see the note at the bottom.)
 //
 // Many of these endpoints require an active ArgoCD client. The in-process
 // boot path used by the e2e harness today does NOT seed an ArgoCD
@@ -175,47 +175,15 @@ func (c *Client) ListAdminAddonsRaw(t *testing.T) *http.Response {
 }
 
 // ---------------------------------------------------------------------------
-// /addon-secrets — fully in-memory, typed happy-path wrappers
+// /addon-secrets — RETIRED (task #152, story 152.A)
 // ---------------------------------------------------------------------------
-
-// ListAddonSecrets fetches GET /api/v1/addon-secrets. The wire shape is
-// a map keyed by addon name → AddonSecretDefinition, decoded directly
-// against sharko's internal type so any field change breaks the harness
-// at compile time.
-func (c *Client) ListAddonSecrets(t *testing.T) map[string]orchestrator.AddonSecretDefinition {
-	t.Helper()
-	out := make(map[string]orchestrator.AddonSecretDefinition)
-	c.GetJSON(t, "/api/v1/addon-secrets", &out)
-	return out
-}
-
-// CreateAddonSecret POSTs def to /api/v1/addon-secrets and returns the
-// echoed-back definition. 201 on success, 400 on missing required
-// fields. The handler is a pure in-memory write — no upstream call.
-func (c *Client) CreateAddonSecret(t *testing.T, def orchestrator.AddonSecretDefinition) orchestrator.AddonSecretDefinition {
-	t.Helper()
-	var out orchestrator.AddonSecretDefinition
-	c.PostJSON(t, "/api/v1/addon-secrets", def, &out, WithExpectStatus(http.StatusCreated))
-	return out
-}
-
-// CreateAddonSecretRaw POSTs def and returns the raw response. Use when
-// the test deliberately drives a 400 (missing required fields).
-func (c *Client) CreateAddonSecretRaw(t *testing.T, def orchestrator.AddonSecretDefinition) *http.Response {
-	t.Helper()
-	return c.Do(t, http.MethodPost, "/api/v1/addon-secrets", def)
-}
-
-// DeleteAddonSecret issues DELETE /api/v1/addon-secrets/{addon}. 200 on
-// success, 404 when no definition exists for the addon name.
-func (c *Client) DeleteAddonSecret(t *testing.T, addon string) {
-	t.Helper()
-	c.Delete(t, "/api/v1/addon-secrets/"+addon)
-}
-
-// DeleteAddonSecretRaw returns the raw response — used to assert the 404
-// path.
-func (c *Client) DeleteAddonSecretRaw(t *testing.T, addon string) *http.Response {
-	t.Helper()
-	return c.Do(t, http.MethodDelete, "/api/v1/addon-secrets/"+addon, nil)
-}
+//
+// The GET/POST/DELETE /addon-secrets definition-CRUD endpoints are gone:
+// they let an API caller plant a whole secret definition (backend path,
+// destination namespace, Secret name, key list) into an in-memory map that
+// the refresh endpoint then delivered, bypassing Git. The Git catalog is
+// the only source of addon-secret definitions now, and
+// POST /clusters/{name}/secrets/refresh runs the reconciler's git-backed
+// plan. The typed CRUD wrappers that lived here are deleted with the
+// endpoints; lifecycle's TestAddonSecretEndpointsRetired drives the old
+// paths raw (via Client.Do) to pin the 404s in place.

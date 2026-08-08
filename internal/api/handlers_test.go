@@ -128,6 +128,14 @@ type fakeReconciler struct {
 	syncErr     error
 	syncCalls   []itemCallArgs
 
+	// SyncCluster seams (task #152, story 152.A) — what the git-backed
+	// cluster refresh returns, and every (cluster, addon) pair it was
+	// called with.
+	syncClusterRefreshed []string
+	syncClusterFailed    []string
+	syncClusterErr       error
+	syncClusterCalls     []itemCallArgs
+
 	// checkedAll counts CheckAll calls (P1-A A3). Guarded because the
 	// handler runs the check in a goroutine.
 	checkAllMu sync.Mutex
@@ -213,6 +221,11 @@ func (r *fakeReconciler) CheckOne(_ context.Context, cluster, addon string) (str
 func (r *fakeReconciler) SyncOne(_ context.Context, cluster, addon string) (string, error) {
 	r.syncCalls = append(r.syncCalls, itemCallArgs{cluster, addon})
 	return r.syncOutcome, r.syncErr
+}
+
+func (r *fakeReconciler) SyncCluster(_ context.Context, cluster, addon string) ([]string, []string, error) {
+	r.syncClusterCalls = append(r.syncClusterCalls, itemCallArgs{cluster, addon})
+	return r.syncClusterRefreshed, r.syncClusterFailed, r.syncClusterErr
 }
 
 func (r *fakeReconciler) CheckAll(_ context.Context) error {

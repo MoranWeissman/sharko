@@ -871,6 +871,11 @@ func itemFailureReason(err error) string {
 	switch {
 	case strings.Contains(msg, "the secret definition in the catalog has no"):
 		return "catalog_definition"
+	case strings.Contains(msg, "skip certificate checks"):
+		// remoteclient.ErrUnverifiedDestination (task #152 lane C) — same
+		// position as FailureSentence's case, before the write-stage
+		// buckets, for the same reason.
+		return "unverified_connection"
 	case strings.Contains(msg, "getting credentials"):
 		return "credentials"
 	case strings.Contains(msg, "connecting to cluster"):
@@ -1209,6 +1214,23 @@ func (r *Reconciler) reconcileSecret(
 		return ItemOutcomeError, fmt.Errorf("getting credentials: %w", err)
 	}
 
+	// TLS refusal (task #152 lane C), asked BEFORE building a client and
+	// BEFORE any value is pulled out of the secrets store — there is no
+	// reason to fetch a value Sharko is never going to send. The hard stop
+	// lives in remoteclient.EnsureSecret (the choke point every write goes
+	// through); this early return exists — mirroring the foreign-secret
+	// early return below — so the recorded outcome is a deliberate refusal
+	// carrying Sharko's own fixed sentence, not a failed write attempt.
+	// SyncOne drives this same function, so the "Sync" row action inherits
+	// the identical refusal.
+	if tlsErr := remoteclient.CheckDestinationTLS(creds.Raw); tlsErr != nil {
+		log.Info("[secrets] refusing to deliver this secret — the cluster's connection is set up to skip certificate checks",
+			"cluster", clusterName, "addon", addonName,
+			"namespace", ref.Namespace, "secret", ref.SecretName,
+		)
+		return ItemOutcomeError, tlsErr
+	}
+
 	// Build a K8s client for the remote cluster.
 	client, err := r.remoteClientFn(creds.Raw)
 	if err != nil {
@@ -1532,6 +1554,18 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 		r.recordItemCheck(clusterName, addonName, ItemOutcomeError, checkErr.Error())
 		return "", checkErr
 	}
+
+	// TLS refusal (task #152 lane C) — the check side. A destination
+	// Sharko refuses to deliver to is refused on the check too, so the row
+	// says the same thing after a "Refresh" click as it does after the
+	// periodic pass, instead of flip-flopping between a drift verdict and
+	// a refusal every five minutes. Asked before the client is built and
+	// before any value is fetched from the secrets store.
+	if tlsErr := remoteclient.CheckDestinationTLS(creds.Raw); tlsErr != nil {
+		r.recordItemCheck(clusterName, addonName, ItemOutcomeError, tlsErr.Error())
+		return "", tlsErr
+	}
+
 	client, err := r.remoteClientFn(creds.Raw)
 	if err != nil {
 		checkErr := fmt.Errorf("connecting to cluster %q: %w", clusterName, err)
@@ -1579,27 +1613,19 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 
 // SyncOne re-pushes a single addon-values secret (one cluster+addon pair) —
 // S4's "Sync" row action. Drives the exact same write primitive the
-// periodic pass uses (reconcileSecret), so a manual sync and a scheduled
-// pass can never diverge on what "push this secret" means. Uses a
-// throwaway *ReconcileStats scoped to this one call — it is never merged
-// into r.lastStats, since that field reports the periodic pass's own
-// counters, not a single on-demand action's. Fires the per-item audit
-// callback on an actual write, exactly like the periodic pass does, so a
-// manual Sync shows up in the audit log the same way an automatic repair
-// does.
+// periodic pass uses (reconcileSecret, via syncWork in sync_cluster.go —
+// shared with SyncCluster), so a manual sync and a scheduled pass can
+// never diverge on what "push this secret" means. syncWork keeps the
+// per-item record and fires the per-item audit callback on an actual
+// write, exactly like the periodic pass does, so a manual Sync shows up in
+// the audit log the same way an automatic repair does.
 func (r *Reconciler) SyncOne(ctx context.Context, clusterName, addonName string) (string, error) {
 	w, err := r.findWork(ctx, clusterName, addonName)
 	if err != nil {
 		return "", err
 	}
 
-	stats := &ReconcileStats{}
-	outcome, syncErr := r.reconcileSecret(ctx, stats, w.clusterName, w.credLookup, w.addon, w.push)
-
-	errMsg := ""
-	if syncErr != nil {
-		errMsg = syncErr.Error()
-	}
+	outcome, syncErr := r.syncWork(ctx, w)
 
 	// Ownership gate (P1-A), defense in depth. reconcileSecret already
 	// refused to write and came back "foreign" with no error; a caller who
@@ -1607,42 +1633,11 @@ func (r *Reconciler) SyncOne(ctx context.Context, clusterName, addonName string)
 	// told plainly why nothing happened. The RECORD stays error-free on
 	// purpose — "somebody else owns this" is a boundary the row states in
 	// its own status, not a failed check to report as one.
-	refusedForeign := syncErr == nil && outcome == ItemOutcomeForeign
-
-	key := ItemKey{Cluster: clusterName, Addon: addonName}
-	r.mu.Lock()
-	if r.itemRecords == nil {
-		r.itemRecords = make(map[ItemKey]ItemRecord)
-	}
-	prev := r.itemRecords[key]
-	rec := ItemRecord{LastChecked: time.Now(), Outcome: outcome, Error: errMsg, ChangedAt: prev.ChangedAt}
-	if outcome == ItemOutcomeCreated || outcome == ItemOutcomeUpdated {
-		rec.ChangedAt = rec.LastChecked
-	}
-	// L10 (code review): same carry-forward rule recordItemCheck now
-	// applies to CheckOne/CheckAll — a real sync failure (syncErr != nil)
-	// extends the streak the periodic pass would also be building on this
-	// pair; any real outcome (created/updated/unchanged/foreign) resets it,
-	// including the refused-foreign case, which is a boundary, not a
-	// failure. Before this, every manual Sync on an already-failing row
-	// reset its ConsecutiveFailures to 0, so a row a human kept retrying by
-	// hand could never cross the fight-detection threshold the periodic
-	// pass uses.
-	if syncErr != nil {
-		rec.ConsecutiveFailures = prev.ConsecutiveFailures + 1
-	}
-	r.itemRecords[key] = rec
-	r.mu.Unlock()
-
-	if refusedForeign {
+	if syncErr == nil && outcome == ItemOutcomeForeign {
 		return "", ErrForeignSecret
 	}
 	if syncErr != nil {
 		return "", syncErr
-	}
-
-	if r.itemAuditFn != nil && (outcome == ItemOutcomeCreated || outcome == ItemOutcomeUpdated) {
-		r.itemAuditFn(clusterName, addonName, outcome)
 	}
 
 	return string(outcome), nil

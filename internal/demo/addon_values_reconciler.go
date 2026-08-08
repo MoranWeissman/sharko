@@ -66,6 +66,20 @@ type demoAddonValuesReconciler struct {
 	// still a real, checkable row.
 	valid map[demoAddonValueKey]bool
 
+	// clusters is every cluster name in the demo estate (task #152,
+	// SyncCluster) — the demo counterpart to the real engine's
+	// plan.clusters, which lists every managed cluster regardless of
+	// whether any addon currently defines a push for it. A cluster with
+	// zero addon-values pairs is still a known cluster, so a cluster-wide
+	// refresh on it succeeds with an empty list rather than refusing.
+	clusters map[string]bool
+
+	// secretNames maps addon name → destination Secret name (task #152,
+	// SyncCluster) — copied from the seeded definitions at construction so
+	// a cluster-wide refresh can report the same secret NAMES the real
+	// engine reports. Names only, never a value, never a backend path.
+	secretNames map[string]string
+
 	interval time.Duration
 	lastRun  time.Time
 
@@ -143,11 +157,19 @@ var addonValuesAgeOffsets = []time.Duration{
 // checked yet" row).
 func newDemoAddonValuesReconciler(estate *GeneratedEstate, defs map[string]orchestrator.AddonSecretDefinition, now time.Time, auditLog *audit.Log) *demoAddonValuesReconciler {
 	r := &demoAddonValuesReconciler{
-		items:    make(map[demoAddonValueKey]demoAddonValueRecord),
-		valid:    make(map[demoAddonValueKey]bool),
-		interval: 5 * time.Minute,
-		lastRun:  now.Add(-90 * time.Second),
-		auditLog: auditLog,
+		items:       make(map[demoAddonValueKey]demoAddonValueRecord),
+		valid:       make(map[demoAddonValueKey]bool),
+		clusters:    make(map[string]bool, len(estate.Clusters)),
+		secretNames: make(map[string]string, len(defs)),
+		interval:    5 * time.Minute,
+		lastRun:     now.Add(-90 * time.Second),
+		auditLog:    auditLog,
+	}
+	for _, c := range estate.Clusters {
+		r.clusters[c.Name] = true
+	}
+	for name, def := range defs {
+		r.secretNames[name] = def.SecretName
 	}
 
 	defNames := make([]string, 0, len(defs))
@@ -545,6 +567,102 @@ func (r *demoAddonValuesReconciler) SyncOne(_ context.Context, cluster, addon st
 	}
 
 	return outcome, nil
+}
+
+// SyncCluster is the demo counterpart to secrets.Reconciler.SyncCluster
+// (task #152, story 152.A) — the engine behind POST
+// /clusters/{name}/secrets/refresh. Same contract as the real one: the
+// cluster must be known to the estate (the demo's stand-in for "in the
+// managed clusters list in Git"), a named addon must have a definition on
+// that cluster, and each pair syncs exactly the way SyncOne syncs it — an
+// out-of-sync row comes back updated, a missing or never-checked row comes
+// back created, a foreign row is left alone in neither list, a row whose
+// last check failed fails again and lands in failed. The refusal error
+// texts carry the same substrings the real engine's sentinel errors carry,
+// so internal/api's clusterSecretsRefreshRefusal maps a demo refusal to
+// the exact sentence a real one produces.
+func (r *demoAddonValuesReconciler) SyncCluster(_ context.Context, cluster, addonName string) (refreshed []string, failed []string, err error) {
+	r.mu.Lock()
+	if !r.clusters[cluster] {
+		r.mu.Unlock()
+		return nil, nil, fmt.Errorf("cluster %q is not in the managed clusters list in Git — nothing to refresh", cluster)
+	}
+
+	// Collect this cluster's pairs in sorted addon order, so the same demo
+	// refresh always reports the same list in the same order.
+	var addons []string
+	for key := range r.valid {
+		if key.Cluster != cluster {
+			continue
+		}
+		if addonName != "" && key.Addon != addonName {
+			continue
+		}
+		addons = append(addons, key.Addon)
+	}
+	if addonName != "" && len(addons) == 0 {
+		r.mu.Unlock()
+		return nil, nil, fmt.Errorf("Git does not define an addon-values secret for addon %q on cluster %q — nothing to refresh", addonName, cluster)
+	}
+	sort.Strings(addons)
+
+	type auditEvent struct{ event, detail, addon string }
+	var auditEvents []auditEvent
+	for _, addon := range addons {
+		key := demoAddonValueKey{Cluster: cluster, Addon: addon}
+		prev, hadRecord := r.items[key]
+		secretName := r.secretNames[addon]
+		if secretName == "" {
+			secretName = addon
+		}
+
+		// Foreign rows are a boundary, not a failure — left alone, in
+		// neither list, exactly like the real SyncCluster.
+		if hadRecord && prev.outcome == "foreign" {
+			continue
+		}
+		// A row whose last check itself failed fails its sync too — the
+		// demo's deterministic stand-in for "the cluster is unreachable".
+		if hadRecord && prev.outcome == "error" {
+			r.items[key] = demoAddonValueRecord{outcome: prev.outcome, lastChecked: time.Now(), errMsg: prev.errMsg}
+			failed = append(failed, secretName)
+			continue
+		}
+
+		outcome := "unchanged"
+		event, detail := "", ""
+		switch {
+		case !hadRecord || prev.outcome == "missing":
+			outcome = "created"
+			event, detail = "addon_secret_created", "secret created"
+		case prev.outcome == "out_of_sync":
+			outcome = "updated"
+			event, detail = "addon_secret_updated", "secret updated"
+		}
+		r.items[key] = demoAddonValueRecord{outcome: outcome, lastChecked: time.Now()}
+		refreshed = append(refreshed, secretName)
+		if event != "" {
+			auditEvents = append(auditEvents, auditEvent{event: event, detail: detail, addon: addon})
+		}
+	}
+	r.mu.Unlock()
+
+	if r.auditLog != nil {
+		for _, ev := range auditEvents {
+			r.auditLog.Add(audit.Entry{
+				Level:    "info",
+				Event:    ev.event,
+				User:     "sharko",
+				Action:   "push",
+				Resource: fmt.Sprintf("cluster:%s/addon:%s", cluster, ev.addon),
+				Source:   "reconciler",
+				Result:   "success",
+				Detail:   ev.detail,
+			})
+		}
+	}
+
+	return refreshed, failed, nil
 }
 
 // OrphanedSecrets (leftover-secrets S1) returns a deterministic, sorted

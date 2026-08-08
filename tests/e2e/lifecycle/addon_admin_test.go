@@ -19,7 +19,7 @@ import (
 )
 
 // TestAddonAdmin covers the 10 custom-addon admin endpoints (12 minus
-// the two addon-secrets ones that get their own top-level test below):
+// the retired addon-secrets ones — see TestAddonSecretEndpointsRetired):
 //
 //	POST   /api/v1/addons                       (write — needs ArgoCD)
 //	GET    /api/v1/addons/{name}                (read — needs ArgoCD)
@@ -251,21 +251,19 @@ func TestAddonAdmin(t *testing.T) {
 	})
 }
 
-// TestAddonSecretsLifecycle exercises the addon-secret bindings endpoints.
-// All three are pure in-memory operations on the *api.Server — no upstream
-// dial, so the in-process harness covers the FULL happy path including
-// duplicate-name semantics and the 404-on-missing path.
+// TestAddonSecretEndpointsRetired pins the task #152 (story 152.A) closure
+// in place: the GET/POST/DELETE /addon-secrets definition-CRUD endpoints
+// are GONE. They let an admin token plant a whole secret definition —
+// backend path, destination namespace, Secret name, key list — into an
+// in-memory map that POST /clusters/{name}/secrets/refresh then delivered,
+// bypassing Git entirely. The Git catalog is the only source of
+// addon-secret definitions now.
 //
-// Endpoints:
-//
-//	GET    /api/v1/addon-secrets                — list
-//	POST   /api/v1/addon-secrets                — create / overwrite
-//	DELETE /api/v1/addon-secrets/{addon}        — remove
-//
-// RBAC: addon-secret.list = viewer+; addon-secret.create/delete = admin.
-// The bootstrap admin from StartSharko has the admin role, so all three
-// run without an explicit role-elevation step.
-func TestAddonSecretsLifecycle(t *testing.T) {
+// Every old route must 404 (the V124-4.4 JSON catch-all), and the POST
+// must not change any server state: a follow-up refresh 503s on this
+// harness (no secrets reconciler wired) rather than delivering anything
+// the POST tried to plant.
+func TestAddonSecretEndpointsRetired(t *testing.T) {
 	git := StartGitFake(t)
 	mock := StartGitMock(t)
 	sharko := StartSharko(t, SharkoConfig{
@@ -277,122 +275,47 @@ func TestAddonSecretsLifecycle(t *testing.T) {
 	SeedUsers(t, sharko, DefaultTestUsers())
 	admin := NewClient(t, sharko)
 
-	t.Run("ListEmpty", func(t *testing.T) {
-		// Fresh server — no addon-secret defs configured. Handler returns
-		// an empty map (NOT a 404), matching the swagger contract.
-		got := admin.ListAddonSecrets(t)
-		if len(got) != 0 {
-			t.Fatalf("ListAddonSecrets (fresh server): got %d defs want 0; raw=%+v", len(got), got)
-		}
+	def := orchestrator.AddonSecretDefinition{
+		AddonName:  "datadog",
+		SecretName: "attacker-chosen-secret",
+		Namespace:  "attacker-ns",
+		Keys:       map[string]string{"api-key": "secrets/attacker/prod-master-key"},
+	}
+
+	t.Run("Post_Gone_404", func(t *testing.T) {
+		resp := admin.Do(t, http.MethodPost, "/api/v1/addon-secrets", def)
+		assertStatus(t, resp, http.StatusNotFound,
+			"POST /addon-secrets must stay retired — an API caller must not be able to introduce a definition")
 	})
 
-	t.Run("Create_MissingFields_400", func(t *testing.T) {
-		// Missing addon_name + secret_name + namespace + keys. Handler
-		// emits a single combined message: "addon_name, secret_name,
-		// namespace, and keys are required".
-		resp := admin.CreateAddonSecretRaw(t, orchestrator.AddonSecretDefinition{})
-		assertStatusBody(t, resp, http.StatusBadRequest,
-			"addon_name, secret_name, namespace, and keys are required",
-			"empty addon-secret POST must fail with combined-required message", "")
+	t.Run("Delete_Gone_404", func(t *testing.T) {
+		resp := admin.Do(t, http.MethodDelete, "/api/v1/addon-secrets/datadog", nil)
+		assertStatus(t, resp, http.StatusNotFound,
+			"DELETE /addon-secrets/{addon} must stay retired")
 	})
 
-	t.Run("Create_HappyPath_201", func(t *testing.T) {
-		def := orchestrator.AddonSecretDefinition{
-			AddonName:  "datadog",
-			SecretName: "datadog-secrets",
-			Namespace:  "datadog",
-			Keys: map[string]string{
-				"api-key": "secrets/datadog/api-key",
-				"app-key": "secrets/datadog/app-key",
-			},
-		}
-		got := admin.CreateAddonSecret(t, def)
-		// Echo-back contract: response body == request body verbatim
-		// (handler writes the def back so the UI can confirm the saved
-		// shape without re-issuing a GET).
-		if got.AddonName != def.AddonName ||
-			got.SecretName != def.SecretName ||
-			got.Namespace != def.Namespace ||
-			len(got.Keys) != len(def.Keys) {
-			t.Fatalf("CreateAddonSecret echo: got %+v want %+v", got, def)
-		}
-
-		// Confirm the def now appears in the list (proves the in-memory
-		// write took effect, not just the response shape).
-		listed := admin.ListAddonSecrets(t)
-		if _, ok := listed["datadog"]; !ok {
-			t.Fatalf("ListAddonSecrets after Create: 'datadog' missing; got keys=%v", keysOf(listed))
-		}
+	t.Run("List_Gone_404", func(t *testing.T) {
+		resp := admin.Do(t, http.MethodGet, "/api/v1/addon-secrets", nil)
+		assertStatus(t, resp, http.StatusNotFound,
+			"GET /addon-secrets must stay retired — the git-truth view lives at GET /system/managed-secrets")
 	})
 
-	t.Run("DuplicateName_OverwritesIdempotent", func(t *testing.T) {
-		// Sharko's current contract is "POST = upsert" — there is NO
-		// 409 on duplicate. The handler unconditionally writes into
-		// the addonSecretDefs map, replacing any existing entry. This
-		// test locks that contract in: a second POST with the same
-		// addon_name AND a different namespace should succeed (201)
-		// AND the listed value should reflect the SECOND write.
-		//
-		// Rationale for documenting this here: the dispatch brief
-		// described "DuplicateName: POST same name twice — expect 4xx
-		// on second", which would be a NEW behaviour. Implementing
-		// that needs a product-code change (a map-existence check
-		// before the write) which is OUT OF SCOPE for 7-1.6 (test-only
-		// story per the dispatch). Filing the contract gap in the
-		// final report is the right action; the test asserts the
-		// CURRENT behaviour so a future-developer who flips it to 409
-		// sees the contract change explicitly.
-		first := orchestrator.AddonSecretDefinition{
-			AddonName:  "vault",
-			SecretName: "vault-keys-v1",
-			Namespace:  "vault",
-			Keys:       map[string]string{"unseal-key": "secrets/vault/v1"},
+	t.Run("RefreshDeliversNothingThePostAskedFor", func(t *testing.T) {
+		// The POST above 404ed; prove it also left nothing behind that a
+		// refresh could deliver. This harness wires no secrets reconciler,
+		// so the git-backed refresh refuses with a structured 503 — and
+		// echoes nothing the hand-made definition named.
+		resp := admin.Do(t, http.MethodPost, "/api/v1/clusters/some-cluster/secrets/refresh", nil)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("refresh on this harness: status=%d want=503 (no secrets reconciler wired)", resp.StatusCode)
 		}
-		_ = admin.CreateAddonSecret(t, first)
-
-		second := orchestrator.AddonSecretDefinition{
-			AddonName:  "vault",
-			SecretName: "vault-keys-v2",
-			Namespace:  "vault-system", // changed
-			Keys:       map[string]string{"unseal-key": "secrets/vault/v2"},
+		body, _ := io.ReadAll(resp.Body)
+		for _, smuggled := range []string{"attacker-chosen-secret", "attacker-ns", "secrets/attacker/prod-master-key"} {
+			if strings.Contains(string(body), smuggled) {
+				t.Fatalf("refresh response carries %q — content from the retired POST leaked through; body=%s", smuggled, body)
+			}
 		}
-		got := admin.CreateAddonSecret(t, second)
-		if got.SecretName != "vault-keys-v2" || got.Namespace != "vault-system" {
-			t.Fatalf("Second POST upsert: got %+v want secret_name=vault-keys-v2 namespace=vault-system", got)
-		}
-
-		listed := admin.ListAddonSecrets(t)
-		if v, ok := listed["vault"]; !ok || v.SecretName != "vault-keys-v2" || v.Namespace != "vault-system" {
-			t.Fatalf("Listed 'vault' after upsert: got %+v ok=%v want SecretName=vault-keys-v2 Namespace=vault-system",
-				v, ok)
-		}
-	})
-
-	t.Run("Delete_HappyPath", func(t *testing.T) {
-		// Confirm the entry from Create_HappyPath is present before
-		// delete so the test is order-tolerant if anyone reorders the
-		// subtests.
-		def := orchestrator.AddonSecretDefinition{
-			AddonName:  "to-delete",
-			SecretName: "to-delete-secret",
-			Namespace:  "default",
-			Keys:       map[string]string{"k": "v"},
-		}
-		_ = admin.CreateAddonSecret(t, def)
-
-		admin.DeleteAddonSecret(t, "to-delete")
-
-		listed := admin.ListAddonSecrets(t)
-		if _, ok := listed["to-delete"]; ok {
-			t.Fatalf("Delete: 'to-delete' still present in list; got keys=%v", keysOf(listed))
-		}
-	})
-
-	t.Run("Delete_NotFound_404", func(t *testing.T) {
-		resp := admin.DeleteAddonSecretRaw(t, "no-such-addon")
-		assertStatusBody(t, resp, http.StatusNotFound,
-			"no secret definition for addon: no-such-addon",
-			"DELETE on missing addon-secret must 404 with addon-name in body", "")
 	})
 }
 
@@ -455,12 +378,3 @@ func assertStatusBody(t *testing.T, resp *http.Response, wantStatus int, wantSub
 	}
 }
 
-// keysOf returns the sorted keys of a map. Used in failure messages so
-// the surrounding test logs are deterministic across runs.
-func keysOf(m map[string]orchestrator.AddonSecretDefinition) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}

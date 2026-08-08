@@ -372,7 +372,7 @@ func TestHandleGetManagedSecrets_AddonValuesSecretRow(t *testing.T) {
 	}
 	srv, router := reconcileTestServer(t, gp, argo.URL)
 
-	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+	srv.SetDemoAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
 		"datadog": {
 			AddonName:  "datadog",
 			SecretName: "datadog-secrets",
@@ -419,7 +419,7 @@ func TestHandleGetManagedSecrets_SourceIsOnEveryRow(t *testing.T) {
 	}
 	srv, router := reconcileTestServer(t, gp, argo.URL)
 
-	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+	srv.SetDemoAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
 		"datadog": {
 			AddonName:  "datadog",
 			SecretName: "datadog-secrets",
@@ -475,7 +475,7 @@ func TestHandleGetManagedSecrets_AddonValuesSecretRow_TimestampsFromReconcilerAn
 	}
 	srv, router := reconcileTestServer(t, gp, argo.URL)
 
-	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+	srv.SetDemoAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
 		"datadog": {
 			AddonName:  "datadog",
 			SecretName: "datadog-secrets",
@@ -536,7 +536,7 @@ func TestHandleGetManagedSecrets_AddonValuesSecretRow_UnknownStaysUnknown(t *tes
 	}
 	srv, router := reconcileTestServer(t, gp, argo.URL)
 
-	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+	srv.SetDemoAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
 		"datadog": {
 			AddonName:  "datadog",
 			SecretName: "datadog-secrets",
@@ -649,7 +649,7 @@ func TestHandleGetManagedSecrets_AddonValuesSecretRow_ForeignSurfacesOnTheRow(t 
 		managedYAML: []byte("clusters:\n- name: prod-eu\n  labels:\n    datadog: enabled\n"),
 	}
 	srv, router := reconcileTestServer(t, gp, argo.URL)
-	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+	srv.SetDemoAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
 		"datadog": {
 			AddonName:  "datadog",
 			SecretName: "datadog-secrets",
@@ -699,7 +699,7 @@ func TestHandleGetManagedSecrets_AddonValuesSecretRow_LastCheckErrorIsCanned(t *
 	}
 	srv, router := reconcileTestServer(t, gp, argo.URL)
 
-	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+	srv.SetDemoAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
 		"datadog": {
 			AddonName:  "datadog",
 			SecretName: "datadog-secrets",
@@ -1132,7 +1132,7 @@ func TestHandleGetManagedSecrets_AddonValuesSecretRow_SelfHeals(t *testing.T) {
 		managedYAML: []byte("clusters:\n- name: prod-eu\n  labels:\n    datadog: enabled\n    eso: enabled\n"),
 	}
 	srv, router := reconcileTestServer(t, gp, argo.URL)
-	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+	srv.SetDemoAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
 		"datadog": {AddonName: "datadog", SecretName: "datadog-secrets", Namespace: "datadog", Keys: map[string]string{"api-key": "secrets/datadog/api-key"}},
 		"eso":     {AddonName: "eso", SecretName: "eso-secrets", Namespace: "eso", Keys: map[string]string{"api-key": "secrets/eso/api-key"}},
 	})
@@ -1439,7 +1439,7 @@ func managedSecretsFilterFixture(t *testing.T) (*Server, http.Handler) {
 	})
 	srv.SetClusterReconciler(recon)
 
-	srv.SetAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
+	srv.SetDemoAddonSecretDefs(map[string]orchestrator.AddonSecretDefinition{
 		"datadog": {AddonName: "datadog", SecretName: "datadog-secrets", Namespace: "datadog", Keys: map[string]string{"api-key": "secrets/datadog/api-key"}},
 	})
 	srv.SetSecretReconciler(&fakeReconciler{

@@ -87,9 +87,8 @@ var mutatingPatternTier = map[string]audit.Tier{
 	// Preview merge (v1.21 QA Bundle 4) — read-only, classified Personal.
 	"POST /api/v1/addons/{name}/values/preview-merge": audit.TierPersonal,
 
-	// Addon secrets — Tier 2.
-	"POST /api/v1/addon-secrets":           audit.Tier2,
-	"DELETE /api/v1/addon-secrets/{addon}": audit.Tier2,
+	// The /addon-secrets definition routes are gone (task #152, story
+	// 152.A) — no pattern entries for them any more.
 
 	// Secrets reconciler — Tier 1.
 	"POST /api/v1/secrets/reconcile": audit.Tier1,

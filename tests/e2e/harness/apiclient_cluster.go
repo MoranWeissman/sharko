@@ -180,7 +180,9 @@ func (c *Client) ListClusterSecrets(t *testing.T, name string) (status int, body
 }
 
 // RefreshClusterSecrets issues POST /api/v1/clusters/{name}/secrets/refresh.
-// 503 is expected when no credentials provider is configured.
+// Delivers from the reconciler's git-backed plan (task #152, story 152.A);
+// 503 is expected when no secrets reconciler is wired (this in-process
+// harness never wires one).
 func (c *Client) RefreshClusterSecrets(t *testing.T, name string) (status int, body map[string]any) {
 	t.Helper()
 	resp := c.Do(t, http.MethodPost, "/api/v1/clusters/"+name+"/secrets/refresh", nil)
