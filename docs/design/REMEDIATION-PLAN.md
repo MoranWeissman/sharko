@@ -135,11 +135,29 @@
 
 ### R9. ArgoCD resource exclusion — document or auto-configure
 
-**Gap:** Neither documented in the starter repo README nor auto-configured during init.
+**Status: SHIPPED, not a gap.** This has since been built as a real feature, not just a
+documentation note: `GET /api/v1/argocd/resource-exclusions` (`internal/api/argocd_resource_exclusions.go`,
+API tier `stable`) reads `argocd-cm` and reports whether the exclusion is configured, with a
+recommendation when it isn't. Full setup steps live at
+[Configuration → ArgoCD Resource Exclusions](../site/operator/configuration.md#argocd-resource-exclusions).
 
-**Fix:** Add a note to `templates/starter/README.md` explaining that ArgoCD should be configured to exclude secrets with `app.kubernetes.io/managed-by: sharko`. Include the ArgoCD `resource.exclusions` config snippet.
+**Task #152 (Secret Sync security closure, story G) re-examined this recommendation** against the
+project's locked rule that documentation must never recommend papering over two controllers
+fighting over the same Secret. Verdict: **the advice stays** — it is not that pattern. An
+addon-values Secret Sharko writes is never part of any ArgoCD Application's Git-tracked manifests,
+so there is no second renderer of the same object to fight with; ArgoCD's Application controller
+only tracks and prunes what it deployed itself from Git. The exclusion's real job is narrower —
+keeping these Secrets out of ArgoCD's cluster-wide resource cache and its orphaned-resources view,
+so an operator reading ArgoCD's UI doesn't mistake a live addon credential for leftover cruft.
+Sharko's own ownership gate (`remoteclient.EnsureSecret`) is what actually prevents a cross-tool
+overwrite, with or without this exclusion configured. Full writeup:
+[`docs/design/2026-06-02-threat-model-v2.md` §11](2026-06-02-threat-model-v2.md#11-the-argocd-resource-exclusions-question).
 
-**Files:** `templates/starter/README.md`
+The per-addon `ignoreDifferences` catalog settings are a separate, legitimate feature (suppressing
+diffs on fields ArgoCD *does* actively manage) and were never in question here.
+
+**Original gap (historical):** Neither documented in the starter repo README nor auto-configured
+during init. Now superseded by the API + docs above.
 
 ---
 
