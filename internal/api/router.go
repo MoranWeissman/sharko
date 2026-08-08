@@ -1067,6 +1067,20 @@ func (s *Server) EnsureInitialAdmin(ctx context.Context) error {
 	return err
 }
 
+// LoadPersistedAPITokens loads API tokens persisted across restarts (the
+// sharko-api-tokens Secret in-cluster, a 0600 local file outside a cluster)
+// and turns on write-through persistence for create/renew/revoke.
+//
+// cmd/sharko/serve.go calls this on the non-demo serve path, right after
+// EnsureInitialAdmin. A failure here should abort startup: starting with an
+// empty token set and then writing through would clobber the durable copy
+// and silently lose every existing machine token — the restart-recovery bug
+// (NFR12) persistence exists to fix. Demo mode skips this and keeps tokens
+// in-memory only.
+func (s *Server) LoadPersistedAPITokens(ctx context.Context) error {
+	return s.authStore.InitTokenPersistence(ctx)
+}
+
 // SetAWSDetector overrides the AWS identity detector GET
 // /system/capabilities serves, bypassing the lazy real-detector build in
 // getAWSDetector (capabilities.go) entirely. Exists for demo/test

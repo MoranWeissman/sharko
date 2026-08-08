@@ -136,6 +136,14 @@ rules:
     resources: ["secrets"]
     resourceNames: ["sharko-initial-admin-secret"]
     verbs: ["get", "update", "delete"]
+  # v4-coherence lane J: API tokens survive restarts. Sharko keeps bcrypt
+  # token hashes (never raw values) in this dedicated Secret — loaded at
+  # startup, written through on create/renew/revoke. Create is covered by
+  # the blanket create rule above (resourceNames can't restrict create).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["sharko-api-tokens"]
+    verbs: ["get", "update"]
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "update", "delete"]  # migration state stored in ConfigMaps

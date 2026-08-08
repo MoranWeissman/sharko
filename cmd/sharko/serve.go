@@ -668,6 +668,17 @@ var serveCmd = &cobra.Command{
 			return fmt.Errorf("could not set up the initial admin user (and Sharko refuses to run without auth): %w", err)
 		}
 
+		// API tokens survive restarts: load the persisted set (the
+		// sharko-api-tokens Secret in-cluster, a 0600 file under
+		// ~/.sharko locally) and write through on every create, renew,
+		// and revoke from here on. Failing to READ the persisted set is
+		// fatal — running with an empty in-memory set would clobber the
+		// durable copy on the first write and silently lose every
+		// existing machine token.
+		if err := srv.LoadPersistedAPITokens(cmd.Context()); err != nil {
+			return fmt.Errorf("could not load persisted API tokens (running on would risk losing them): %w", err)
+		}
+
 		// Repo path and GitOps config — always constructed (not provider-dependent).
 		repoPaths := orchestrator.RepoPathsConfig{
 			ClusterValues:   "configuration/addons-clusters-values",

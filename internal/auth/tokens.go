@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	cryptoRand "crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -227,6 +228,15 @@ func (s *Store) CreateTokenFor(owner, name, role string, expiresInDays int) (str
 		return "", fmt.Errorf("token %q already exists", name)
 	}
 	s.tokens[name] = token
+	// Write through to durable storage (no-op when persistence is off).
+	// A token that cannot be persisted is rolled back and the caller gets
+	// the error — a token that LOOKS created but silently dies on the next
+	// restart is the exact bug persistence exists to fix.
+	if err := s.persistTokensLocked(context.Background()); err != nil {
+		delete(s.tokens, name)
+		s.mu.Unlock()
+		return "", fmt.Errorf("token %q was not created: %w", name, err)
+	}
 	s.mu.Unlock()
 
 	// SECURITY: never log the plaintext or the hash — name/role/expiry only.
@@ -258,7 +268,16 @@ func (s *Store) RenewToken(name string, expiresInDays int) (APIToken, error) {
 		s.mu.Unlock()
 		return APIToken{}, &TokenNotFoundError{Name: name}
 	}
+	previousExpiry := tok.ExpiresAt
 	tok.ExpiresAt = &expiresAt
+	// Write through so the new expiry survives a restart. On failure the
+	// old expiry is restored and the caller gets the error — the renewed
+	// window must never exist only in memory.
+	if err := s.persistTokensLocked(context.Background()); err != nil {
+		tok.ExpiresAt = previousExpiry
+		s.mu.Unlock()
+		return APIToken{}, fmt.Errorf("token %q was not renewed: %w", name, err)
+	}
 	view := tok.view(now)
 	s.mu.Unlock()
 
@@ -318,10 +337,19 @@ func (s *Store) RevokeToken(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.tokens[name]; !exists {
+	tok, exists := s.tokens[name]
+	if !exists {
 		return &TokenNotFoundError{Name: name}
 	}
 	delete(s.tokens, name)
+	// Write through so the revocation survives a restart. On failure the
+	// token is restored and the caller gets the error: "revoked" must mean
+	// revoked everywhere, not revoked-until-the-next-restart. The caller
+	// retries from a consistent state (the token still works).
+	if err := s.persistTokensLocked(context.Background()); err != nil {
+		s.tokens[name] = tok
+		return fmt.Errorf("token %q was not revoked: %w", name, err)
+	}
 
 	slog.Info("API token revoked", "name", name)
 	return nil
@@ -367,7 +395,11 @@ func (s *Store) AuthenticateToken(plaintext string) (username string, role strin
 		if c.expiresAt != nil && now.After(*c.expiresAt) {
 			return "", "", &TokenExpiredError{Name: c.name, ExpiredAt: *c.expiresAt}
 		}
-		// Update LastUsed
+		// Update LastUsed. Deliberately NOT written through to durable
+		// storage here — persisting on every authenticated request would
+		// hammer the K8s API server. The value rides along on the next
+		// create/renew/revoke write; across a restart it may be stale,
+		// which only affects the informational last_used_at field.
 		s.mu.Lock()
 		if t, exists := s.tokens[c.name]; exists {
 			t.LastUsed = now

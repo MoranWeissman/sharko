@@ -101,8 +101,13 @@ type Store struct {
 	// in local mode it is in-memory only.
 	userTokens map[string]string // username -> AES-256-GCM ciphertext (base64)
 
-	// API tokens (in-memory)
-	tokens map[string]*APIToken // name -> token
+	// API tokens. Held in memory for authentication speed; persisted
+	// across restarts once InitTokenPersistence installs a persister
+	// (K8s: the sharko-api-tokens Secret; local: a 0600 file). A nil
+	// persister means pure in-memory — demo mode and unit tests.
+	// See token_persistence.go.
+	tokens         map[string]*APIToken // name -> token
+	tokenPersister tokenPersister       // nil until InitTokenPersistence
 }
 
 // NewStore creates an auth store with auto-detection of the backend mode.
