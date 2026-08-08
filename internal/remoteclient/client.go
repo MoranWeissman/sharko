@@ -46,11 +46,12 @@ func NewClientFromKubeconfig(kubeconfig []byte) (kubernetes.Interface, error) {
 
 	// Unverified-destination mark (tlsguard.go). A kubeconfig that says
 	// `insecure-skip-tls-verify: true` — including one the ArgoCD provider
-	// synthesized from a cluster config with `insecure: true` — yields a
-	// client EnsureSecret will refuse to send a secret value through. The
-	// client itself still works for everything else (reads, diagnostics,
-	// deletes); only the value-carrying write path refuses.
-	if !allowUnverifiedDestinations && restConfig.TLSClientConfig.Insecure {
+	// synthesized from a cluster config with `insecure: true` — OR one whose
+	// server URL is plain `http://` (no TLS at all) yields a client
+	// EnsureSecret will refuse to send a secret value through. The client
+	// itself still works for everything else (reads, diagnostics, deletes);
+	// only the value-carrying write path refuses. See connectionUnverified.
+	if !allowUnverifiedDestinations && connectionUnverified(restConfig.TLSClientConfig.Insecure, restConfig.Host) {
 		return unverifiedDestinationClient{client}, nil
 	}
 
