@@ -4,6 +4,7 @@ package lifecycle
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -232,28 +233,26 @@ func TestClusterLifecycle(t *testing.T) {
 		// in addon_cluster_test.go (V2 Epic 7-1.7); here we only need
 		// the round-trip to succeed.
 		//
-		// This repo is v4-format (seedV4Bootstrap) so the cluster is
-		// registered through the real production register flow, not a
-		// fixture stand-in — but the handler behind this route
-		// (UpdateClusterAddons, internal/orchestrator/cluster.go) has no
-		// v4 implementation yet: it unconditionally refuses with a 409
-		// ("... coming with the takeover work") the moment the repo is
-		// v4-format, dry-run or not. That is a known, documented
-		// production gap, not a fixture bug, so we accept the refusal
-		// rather than fail the suite over it — same pattern the
-		// DeregisterCluster/RegisterOrphanByCancellingPR subtests below
-		// already use for other not-yet-supported paths.
+		// v4-coherence-closure lane P (e2e honesty round 2): this used to
+		// accept a 409 here, on the theory that UpdateClusterAddons
+		// (internal/orchestrator/cluster.go) had no v4 implementation yet.
+		// That is no longer true — UpdateClusterAddons now dispatches to
+		// updateClusterAddonsV4 (internal/orchestrator/cluster_addons_v4.go)
+		// on a v4 repo, which is a pure Git write (cluster-addons/<name>.yaml)
+		// with no ArgoCD dependency, so this in-process harness can and must
+		// prove the real 200/207, not tolerate a stale refusal.
 		resp := admin.Do(t, http.MethodPatch, "/api/v1/clusters/"+managedClusterName,
 			map[string]any{"addons": map[string]bool{}})
 		defer resp.Body.Close()
-		switch resp.StatusCode {
-		case http.StatusOK, http.StatusMultiStatus:
-			t.Logf("PatchClusterAddons: status=%d", resp.StatusCode)
-		case http.StatusConflict:
-			t.Logf("PatchClusterAddons: 409 (v4 repo — addon-label patch has no v4 implementation yet; route reachable, refusal correct)")
-		default:
-			t.Errorf("PatchClusterAddons: unexpected status=%d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMultiStatus {
+			t.Fatalf("PatchClusterAddons: status=%d body=%s", resp.StatusCode, body)
 		}
+		var result orchestrator.RegisterClusterResult
+		if err := json.Unmarshal(body, &result); err != nil {
+			t.Fatalf("PatchClusterAddons: decode: %v; body=%s", err, body)
+		}
+		t.Logf("PatchClusterAddons: status=%d result=%+v", resp.StatusCode, result)
 	})
 
 	t.Run("TestConnectivity", func(t *testing.T) {
@@ -409,67 +408,75 @@ func TestClusterLifecycle(t *testing.T) {
 	})
 
 	t.Run("AdoptClusters", func(t *testing.T) {
+		// v4-coherence-closure lane P (e2e honesty round 2): AdoptClusters
+		// (internal/orchestrator/adopt.go) now has a real v4 branch
+		// (adoptSingleClusterV4, adopt_v4.go) — the old 409 refusal is
+		// dead code on a v4 repo today. The API handler's own comment
+		// says so (internal/api/clusters_adopt.go): "A v4 repo is now a
+		// supported adopt door ... this stays only as a defensive
+		// mapping". So this subtest no longer tolerates a 409.
+		//
+		// What this harness genuinely CANNOT prove: a full v4 adoption
+		// succeeding end to end. adoptSingleClusterV4's preflight
+		// (gatherAdoptPreflightInputs) needs o.argoSecretManager to read
+		// the target cluster's ArgoCD Secret detail, and NEITHER e2e
+		// harness wires one — see seedV4Bootstrap's doc comment
+		// (cluster_helpers.go): "the argo-secret-manager is not wired in
+		// the in-process configuration". Without it, adoptSingleClusterV4
+		// fails early with a specific, documented error before any git
+		// write. That is the real, current limit of this harness, not a
+		// stand-in for the retired "not supported" 409 — so this subtest
+		// asserts that EXACT failure shape (documented tolerance) rather
+		// than silently accepting whatever status comes back.
+		//
+		// Register a real cluster directly in ArgoCD (bypassing Sharko)
+		// so the preflight actually reaches the argoSecretManager gate,
+		// instead of failing earlier on "not found in ArgoCD".
+		const adoptCandidateName = "lifecycle-adopt-candidate"
+		registerClusterInArgoCDDirect(t, argoAccess, target2, adoptCandidateName)
+
 		autoMerge := false
 		req := orchestrator.AdoptClustersRequest{
-			Clusters:  []string{"some-cluster"},
+			Clusters:  []string{adoptCandidateName},
 			AutoMerge: &autoMerge,
 			DryRun:    true,
 		}
 		status, body := admin.AdoptClusters(t, req)
-		switch status {
-		case http.StatusOK, http.StatusMultiStatus:
-			t.Logf("adopt ok: %v", body)
-		case http.StatusServiceUnavailable:
-			t.Skipf("AdoptClusters: 503 (no credentials provider)")
-		case http.StatusBadGateway:
-			t.Logf("AdoptClusters: 502 (cluster not found in argocd; route reachable)")
-		case http.StatusConflict:
-			// This repo is v4-format (seedV4Bootstrap). AdoptClusters
-			// (internal/orchestrator/adopt.go) still only writes the v3
-			// registry and unconditionally refuses on a v4 repo — a
-			// known, documented production gap ("... coming with the
-			// takeover work"), not a fixture bug. Route reachability and
-			// auth are still proven; the refusal itself is correct.
-			t.Logf("AdoptClusters: 409 (v4 repo — adoption has no v4 implementation yet; route reachable, refusal correct)")
-		default:
-			t.Fatalf("unexpected status=%d body=%v", status, body)
+		if status != http.StatusOK {
+			t.Fatalf("AdoptClusters: status=%d body=%v (want 200 — a single-cluster batch where the only cluster fails preflight is not a mixed 207)", status, body)
 		}
+		results, _ := body["results"].([]any)
+		if len(results) != 1 {
+			t.Fatalf("AdoptClusters: results=%v want exactly 1 entry", body["results"])
+		}
+		cr, _ := results[0].(map[string]any)
+		if got, _ := cr["status"].(string); got != "failed" {
+			t.Fatalf("AdoptClusters: results[0].status=%q want %q (the v4 preflight must run and fail closed without an argo-secret-manager)", got, "failed")
+		}
+		errMsg, _ := cr["error"].(string)
+		if !strings.Contains(errMsg, "in-cluster install") {
+			t.Fatalf("AdoptClusters: results[0].error=%q — expected the documented no-argo-secret-manager preflight failure, not a leftover v4-unsupported refusal", errMsg)
+		}
+		t.Logf("AdoptClusters: documented harness gap confirmed (no in-cluster argo-secret-manager): %s", errMsg)
 	})
 
 	t.Run("UnadoptCluster", func(t *testing.T) {
-		// Unadopt against a non-existent cluster in dry-run mode.
-		// The orchestrator's unadopt handler is dry-run-tolerant: with
-		// DryRun=true it returns a 200 preview of the file actions it
-		// WOULD take (delete <name>.yaml + update managed-clusters.yaml)
-		// without consulting ArgoCD's cluster list, so a "cluster I've
-		// never heard of" is a fine input — the preview just shows the
-		// no-op shape. The non-dry-run path against a non-existent
-		// cluster legitimately errors, but we don't exercise that here
-		// because it is destructive against any real cluster that
-		// happens to share the name.
-		//
-		// What the subtest proves: the route is reachable, auth +
-		// parameter validation pass, and the preview response is
-		// well-formed. Originally the assertion required non-2xx,
-		// which contradicted the dry-run contract; updated in
-		// V125-1-13.y.3 to match the actual handler behavior.
+		// v4-coherence-closure lane P (e2e honesty round 2): UnadoptCluster
+		// (internal/orchestrator/unadopt.go) now has a real v4 branch
+		// (buildUnadoptV4Plan, unadopt_v4.go) that is pure Git — unlike
+		// AdoptClusters, its Step 1 "was this cluster ever adopted" check
+		// is SKIPPED outright when argoSecretManager is nil (the same
+		// stance every other optional-capability guard in this file
+		// takes), so this harness CAN prove the real 200. A dry-run
+		// against an unregistered cluster is a legitimate no-op preview
+		// — buildUnadoptV4Plan treats "not in managed-clusters.yaml" as
+		// idempotent, not an error — so this subtest now demands that 200
+		// outright instead of tolerating a stale v4-unsupported 409.
 		status, body := admin.UnadoptCluster(t, "does-not-exist", true)
-		t.Logf("unadopt non-existent (dry-run): status=%d body=%v", status, body)
-		switch status {
-		case http.StatusOK, http.StatusMultiStatus:
-			// Expected: dry-run preview against an unknown cluster.
-		case http.StatusNotFound, http.StatusBadGateway, http.StatusServiceUnavailable:
-			// Also acceptable: handler refuses unknown clusters early.
-		case http.StatusConflict:
-			// This repo is v4-format (seedV4Bootstrap). UnadoptCluster
-			// (internal/orchestrator/unadopt.go) still only writes the v3
-			// registry and unconditionally refuses on a v4 repo, dry-run
-			// or not — a known, documented production gap ("... coming
-			// with the takeover work"), not a fixture bug.
-			t.Logf("unadopt: 409 (v4 repo — un-adoption has no v4 implementation yet; route reachable, refusal correct)")
-		default:
-			t.Errorf("unadopt non-existent dry-run: unexpected status=%d body=%v", status, body)
+		if status != http.StatusOK {
+			t.Fatalf("unadopt non-existent (dry-run): status=%d body=%v (want 200 — a dry-run preview against an unregistered v4 cluster is a legitimate no-op)", status, body)
 		}
+		t.Logf("unadopt non-existent (dry-run): status=%d body=%v", status, body)
 	})
 
 	t.Run("BatchRegister", func(t *testing.T) {
@@ -522,15 +529,22 @@ func TestClusterLifecycle(t *testing.T) {
 		// Tear down the managed cluster we registered early. cleanup=git
 		// is the cheapest deregister path that exercises the orchestrator's
 		// remove flow without requiring credProvider (cleanup=all needs it).
+		//
+		// v4-coherence-closure lane P (e2e honesty round 2): the old
+		// `default: t.Logf(...)` branch here silently tolerated ANY
+		// unexpected status, including a stale v4-unsupported 409 — a
+		// soft pass-through, not a real assertion. RemoveCluster
+		// (internal/orchestrator/remove.go) has had a real v4 branch
+		// since PR #779 ("cluster removal works on v4 repos"): with
+		// cleanup=git every ArgoCD-touching step is gated on
+		// `cleanup == "all"`, so this path is pure Git and does not need
+		// an argo-secret-manager the way AdoptClusters' preflight does —
+		// this harness CAN and must prove the real 200.
 		status, body := admin.RemoveCluster(t, managedClusterName, "git", false)
-		switch status {
-		case http.StatusOK, http.StatusMultiStatus:
-			t.Logf("deregister ok: status=%d body=%v", status, body)
-		case http.StatusBadGateway:
-			t.Fatalf("deregister failed: status=%d body=%v", status, body)
-		default:
-			t.Logf("deregister: status=%d body=%v", status, body)
+		if status != http.StatusOK && status != http.StatusMultiStatus {
+			t.Fatalf("deregister: status=%d body=%v (want 200/207 — cleanup=git on a v4 repo is a pure Git write with a real v4 implementation)", status, body)
 		}
+		t.Logf("deregister ok: status=%d body=%v", status, body)
 	})
 
 	t.Run("RegisterOrphanByCancellingPR", func(t *testing.T) {
