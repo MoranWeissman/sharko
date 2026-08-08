@@ -263,6 +263,19 @@ func clusterValuesStub(addonName, clusterName string) []byte {
 // repo yet" answer. Any OTHER failure is (false, err), and the write
 // gates turn that into a refusal. Read and status paths are free to keep
 // treating an error as "not v4"; they say so at their call site.
+// IsV4Repo is the exported, fail-closed form of isV4Repo — for API-layer
+// callers that pick a v3-vs-v4 commit PATH themselves (rather than routing
+// the whole write through an orchestrator method) and need the same
+// "guessing costs the fleet" discipline every other v4 write gate uses.
+// The PATCH /clusters/{name} secret_path writer (clusters_write.go) is the
+// one caller today: it chooses between managed-clusters.yaml (v4) and
+// configuration/managed-clusters.yaml (v3) and must not guess wrong in the
+// "not v4" direction, for the exact reason isV4Repo's doc comment above
+// describes.
+func (o *Orchestrator) IsV4Repo(ctx context.Context) (bool, error) {
+	return o.isV4Repo(ctx)
+}
+
 func (o *Orchestrator) isV4Repo(ctx context.Context) (bool, error) {
 	if o.git == nil {
 		return false, nil

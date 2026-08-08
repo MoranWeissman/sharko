@@ -16,6 +16,7 @@ import (
 // @Summary Adopt existing ArgoCD clusters
 // @Description Adopts one or more existing ArgoCD clusters under Sharko management.
 // @Description Phase 1 verifies connectivity per cluster, Phase 2 creates GitOps config via PR.
+// @Description On a v4 repo, phase 1 is replaced per cluster by the same takeover preflight the brownfield-takeover door runs: a cluster the preflight blocks fails with the preflight's summary as its error (the batch continues with the rest); a cluster it only warns about proceeds, and the warnings are listed on that cluster's result. The write is the same two v4 files a takeover writes (managed-clusters.yaml plus an empty cluster-addons/{name}.yaml), followed by the ArgoCD connection ownership swap and the adopted annotation once the pull request merges — no separate confirmation step beyond dry_run.
 // @Tags clusters
 // @Accept json
 // @Produce json
@@ -27,7 +28,7 @@ import (
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
-// @Failure 409 {object} map[string]interface{} "Adoption still writes the v3 cluster registry and is not supported on a v4 repo yet"
+// @Failure 409 {object} map[string]interface{} "The repo carries both the old and the new layout (code repo_layout)"
 // @Router /clusters/adopt [post]
 func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.adopt") {
@@ -74,13 +75,21 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 		}
 		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
 	}
+	// On a v4 repo, AdoptClusters runs the takeover preflight per cluster,
+	// which reads the ApplicationSets — same wiring migration.go uses for
+	// the runtime handoff. nil is a valid, commonly-hit state (out-of-cluster
+	// / no ApplicationSet access); the preflight then reports "could not
+	// check" instead of claiming they are fine.
+	orch.SetApplicationSetManager(s.appSetManager)
 
 	result, err := orch.AdoptClusters(r.Context(), req)
 	if err != nil {
-		// A v4 repo is a well-formed request against a repo state this
-		// operation does not handle yet — 409, not an upstream failure.
+		// A v4 repo is now a supported adopt door (v4-coherence-closure lane
+		// D) — this stays only as a defensive mapping, matching the coded
+		// shape the rest of the repo-layout family uses (CodeRepoLayout,
+		// catalog_org.go).
 		if orchestrator.IsV4RepoUnsupported(err) {
-			writeError(w, http.StatusConflict, err.Error())
+			writeCodedError(w, http.StatusConflict, CodeRepoLayout, err.Error(), nil)
 			return
 		}
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -133,6 +142,7 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 // @Summary Un-adopt a cluster
 // @Description Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.
 // @Description The cluster must have been adopted (has sharko.sharko.dev/adopted annotation).
+// @Description On a v4 repo, the pull request removes the cluster from managed-clusters.yaml and deletes cluster-addons/{name}.yaml plus every Helm values file under values/clusters/{name}/ — everything this cluster owns in the repo.
 // @Tags clusters
 // @Accept json
 // @Produce json
@@ -144,7 +154,7 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
-// @Failure 409 {object} map[string]interface{} "Cluster was not adopted"
+// @Failure 409 {object} map[string]interface{} "Cluster was not adopted, or the repo carries both the old and the new layout (code repo_layout)"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /clusters/{name}/unadopt [post]
 func (s *Server) handleUnadoptCluster(w http.ResponseWriter, r *http.Request) {
@@ -200,8 +210,11 @@ func (s *Server) handleUnadoptCluster(w http.ResponseWriter, r *http.Request) {
 
 	result, err := orch.UnadoptCluster(r.Context(), name, req)
 	if err != nil {
+		// A v4 repo is now a supported unadopt door (v4-coherence-closure
+		// lane D) — kept as a defensive mapping, coded shape like the rest
+		// of the repo-layout family.
 		if orchestrator.IsV4RepoUnsupported(err) {
-			writeError(w, http.StatusConflict, err.Error())
+			writeCodedError(w, http.StatusConflict, CodeRepoLayout, err.Error(), nil)
 			return
 		}
 		// Check if this is a "not adopted" error.

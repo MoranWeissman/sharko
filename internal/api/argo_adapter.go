@@ -74,3 +74,47 @@ func (a *argoManagerAdapter) GetTrackingOwner(ctx context.Context, name string) 
 	appName, confidence, found, err := a.mgr.GetTrackingOwner(ctx, name)
 	return appName, string(confidence), found, err
 }
+
+// GetClusterSecretDetail delegates to the real Manager and converts
+// argosecrets.ClusterSecretDetail to orchestrator.ClusterSecretDetail —
+// same conversion-adapter shape as GetTrackingOwner above, needed so
+// AdoptClusters' v4 branch can run the takeover preflight without the
+// orchestrator importing internal/argosecrets.
+func (a *argoManagerAdapter) GetClusterSecretDetail(ctx context.Context, name string) (orchestrator.ClusterSecretDetail, error) {
+	d, err := a.mgr.GetClusterSecretDetail(ctx, name)
+	if err != nil {
+		return orchestrator.ClusterSecretDetail{}, err
+	}
+	return orchestrator.ClusterSecretDetail{
+		Found:                  d.Found,
+		Name:                   d.Name,
+		Server:                 d.Server,
+		Labels:                 d.Labels,
+		Annotations:            d.Annotations,
+		ManagedBy:              d.ManagedBy,
+		Adopted:                d.Adopted,
+		ForeignOwnerAppName:    d.ForeignOwnerAppName,
+		ForeignOwnerConfidence: string(d.ForeignOwnerConfidence),
+		ForeignOwnerFound:      d.ForeignOwnerFound,
+	}, nil
+}
+
+// TakeOverClusterSecret delegates to the real Manager and converts
+// argosecrets.TakeOverResult to orchestrator.TakeOverResult. Used by
+// AdoptClusters' v4 branch for the ownership swap — the same primitive
+// the brownfield-takeover handler (clusters_takeover.go) uses.
+func (a *argoManagerAdapter) TakeOverClusterSecret(ctx context.Context, name string, preserveLegacyLabels bool, takenOverAt string, legacyKeyFn func(key string) bool) (orchestrator.TakeOverResult, error) {
+	res, err := a.mgr.TakeOverClusterSecret(ctx, name, preserveLegacyLabels, takenOverAt, legacyKeyFn)
+	if err != nil {
+		return orchestrator.TakeOverResult{}, err
+	}
+	return orchestrator.TakeOverResult{
+		Found:              res.Found,
+		AlreadyOwned:       res.AlreadyOwned,
+		Changed:            res.Changed,
+		PreservedLabels:    res.PreservedLabels,
+		DroppedLabels:      res.DroppedLabels,
+		ProtectionRepaired: res.ProtectionRepaired,
+		Server:             res.Server,
+	}, nil
+}

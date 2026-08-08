@@ -30,6 +30,17 @@ type mockArgoSecretManager struct {
 	labelErr       error
 	unadoptErr     error
 	ensureErr      error
+
+	// secretDetails / secretDetailErr / takeOverResults / takeOverErr back
+	// GetClusterSecretDetail / TakeOverClusterSecret — the v4 adopt/takeover
+	// preflight + ownership-swap primitives (v4-coherence-closure lane D).
+	secretDetails   map[string]ClusterSecretDetail
+	secretDetailErr error
+	takeOverResults map[string]TakeOverResult
+	takeOverErr     error
+	// takenOver records the names TakeOverClusterSecret was called with, in
+	// call order, so tests can assert the swap happened (or did not).
+	takenOver []string
 }
 
 func newMockArgoSecretManager() *mockArgoSecretManager {
@@ -81,6 +92,34 @@ func (m *mockArgoSecretManager) Ensure(_ context.Context, spec ArgoSecretSpec) (
 	}
 	m.ensured = append(m.ensured, spec)
 	return true, nil
+}
+
+// GetClusterSecretDetail returns the seeded detail for name, or a
+// not-found detail when nothing was seeded — mirrors
+// argosecrets.Manager.GetClusterSecretDetail's "missing is not an error"
+// contract.
+func (m *mockArgoSecretManager) GetClusterSecretDetail(_ context.Context, name string) (ClusterSecretDetail, error) {
+	if m.secretDetailErr != nil {
+		return ClusterSecretDetail{}, m.secretDetailErr
+	}
+	if d, ok := m.secretDetails[name]; ok {
+		return d, nil
+	}
+	return ClusterSecretDetail{Found: false}, nil
+}
+
+// TakeOverClusterSecret returns the seeded result for name (defaulting to
+// Found:true, Changed:true — an ordinary successful swap) and records the
+// call.
+func (m *mockArgoSecretManager) TakeOverClusterSecret(_ context.Context, name string, _ bool, _ string, _ func(key string) bool) (TakeOverResult, error) {
+	if m.takeOverErr != nil {
+		return TakeOverResult{}, m.takeOverErr
+	}
+	m.takenOver = append(m.takenOver, name)
+	if res, ok := m.takeOverResults[name]; ok {
+		return res, nil
+	}
+	return TakeOverResult{Found: true, Changed: true}, nil
 }
 
 // ---------- adopt tests ----------

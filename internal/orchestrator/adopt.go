@@ -42,16 +42,28 @@ const AnnotationAdoptedLegacy = "sharko.sharko.io/adopted"
 // If the ArgoCD secret manager is available:
 //   - Rejects clusters that have a managed-by label set to something other than "sharko" (FR-4.6).
 //   - Sets the adopted annotation on the ArgoCD secret after PR merge.
+//
+// On a v4 repo (v4-coherence-closure lane D) the above v3-shaped checks are
+// replaced, per cluster, by the takeover preflight: a cluster the preflight
+// blocks fails with the preflight's summary as its error; a cluster it only
+// warns about proceeds, and the warnings ride along on the per-cluster
+// result. See adopt_v4.go for gatherAdoptPreflightInputs /
+// adoptSingleClusterV4 and takeover.go's buildTakeoverFiles for the two v4
+// files the write produces — the same pair TakeoverClusterGit writes.
 func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersRequest) (*AdoptClustersResult, error) {
 	log := logging.LoggerFromContext(ctx)
 	if len(req.Clusters) == 0 {
 		return nil, fmt.Errorf("at least one cluster name is required")
 	}
-	// Adoption still writes the v3 registry (managed-clusters.yaml). On a
-	// v4 repo that would create a rival registry file and orphan every
-	// v4-registered cluster — refuse before anything is read or written.
-	if err := o.refuseOnV4Repo(ctx, "adopting a cluster"); err != nil {
-		return nil, err
+
+	// Fail closed: everything below this line can write, and getting the
+	// answer wrong in the "not v4" direction recreates the v3 registry
+	// (configuration/managed-clusters.yaml) on a v4 repo — the
+	// second-registry hijack v4_guard.go describes. Same stance as
+	// RegisterCluster's v4 probe (cluster.go:571).
+	v4Repo, v4ProbeErr := o.isV4Repo(ctx)
+	if v4ProbeErr != nil {
+		return nil, fmt.Errorf("Sharko stopped before adopting a cluster: %w", v4ProbeErr)
 	}
 
 	result := &AdoptClustersResult{
@@ -77,6 +89,11 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 			cr.Status = "failed"
 			cr.Error = fmt.Sprintf("cluster %q not found in ArgoCD — cannot adopt", clusterName)
 			result.Results = append(result.Results, cr)
+			continue
+		}
+
+		if v4Repo {
+			result.Results = append(result.Results, o.adoptSingleClusterV4(ctx, clusterName, serverURL, req, nil))
 			continue
 		}
 
