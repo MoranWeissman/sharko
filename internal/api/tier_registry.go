@@ -144,10 +144,9 @@ var HandlerTier = map[string]audit.Tier{
 	// migration it completes.
 	"handleMigrationComplete": audit.Tier2,
 
-	// Addon secret definitions — these define what secrets get reconciled where,
-	// which changes future deployment behaviour, so config-tier.
-	"handleCreateAddonSecret": audit.Tier2,
-	"handleDeleteAddonSecret": audit.Tier2,
+	// The addon-secret definition handlers (handleCreateAddonSecret /
+	// handleDeleteAddonSecret) are gone — task #152, story 152.A retired
+	// the endpoints; definitions live only in the Git catalog now.
 
 	// Values editor — Tier 2: changes WHAT gets deployed. The same
 	// handler also services the `refresh_from_upstream` flow.

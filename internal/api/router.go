@@ -245,6 +245,22 @@ type SecretReconciler interface {
 	// addonValuesSecretSyncFailureSentence (internal/api/system_managed_secrets.go)
 	// first — see handleSyncAddonValuesSecret.
 	SyncOne(ctx context.Context, clusterName, addonName string) (outcome string, err error)
+	// SyncCluster delivers every addon-values secret Git defines for ONE
+	// cluster right now (task #152, story 152.A) — the git-backed engine
+	// behind POST /clusters/{name}/secrets/refresh. What to deliver comes
+	// exclusively from the Git catalog via the reconciler's own plan
+	// (planPushes → reconcileSecret, the same pipeline the periodic timer
+	// runs) — never from a request body, never from any in-memory
+	// definition. addonName narrows the push to one addon when non-empty;
+	// an addon Git does not define for this cluster refuses the whole
+	// call. refreshed and failed carry destination Secret names only —
+	// never a value, never a backend path. Error text follows the same
+	// safety split as SyncOne: the fixed refusal sentences
+	// (secrets.ErrClusterNotInGit / ErrAddonNotInGit / ErrNoGitConnection
+	// wording) are safe verbatim; anything else must be mapped to a canned
+	// sentence first — see clusterSecretsRefreshRefusal
+	// (internal/api/cluster_secrets.go).
+	SyncCluster(ctx context.Context, clusterName, addonName string) (refreshed []string, failed []string, err error)
 	// CheckAll re-checks EVERY addon-values secret against its source right
 	// now, WITHOUT writing anything (P1-A A3 — what the page's "Refresh
 	// all" drives on this engine). The fleet-wide counterpart of CheckOne,
@@ -321,7 +337,9 @@ type Server struct {
 	gitopsState atomic.Pointer[orchestrator.GitOpsConfig]
 	gitMu       sync.Mutex // shared mutex serializing all Git operations across requests
 
-	// Remote secret management (optional — set via SetAddonSecretDefs).
+	// Demo-only addon-secret definitions (set via SetDemoAddonSecretDefs —
+	// demo mode and tests only, never a production boot; the Git catalog is
+	// the only production source of addon-secret definitions).
 	addonSecretDefs   map[string]orchestrator.AddonSecretDefinition
 	addonSecretDefsMu sync.RWMutex // protects addonSecretDefs from concurrent read/write
 	secretFetcher     orchestrator.SecretValueFetcher
@@ -673,8 +691,15 @@ func (s *Server) SetWriteAPIDeps(
 	s.publishGitopsCfg(gitops)
 }
 
-// SetAddonSecretDefs sets the addon secret definitions (loaded from env/config).
-func (s *Server) SetAddonSecretDefs(defs map[string]orchestrator.AddonSecretDefinition) {
+// SetDemoAddonSecretDefs seeds addon secret definitions for DEMO MODE AND
+// TESTS ONLY (task #152, story 152.A). There is no HTTP door into this map
+// any more — the POST/DELETE /addon-secrets endpoints are gone — and no
+// production code path calls this: a real boot's addon-secret definitions
+// live exclusively in the Git catalog, read by internal/secrets.Reconciler.
+// The map only decorates demo-mode read surfaces (the Managed Secrets
+// page's rows, the blanked resource view). Never wire this into
+// cmd/sharko/serve.go.
+func (s *Server) SetDemoAddonSecretDefs(defs map[string]orchestrator.AddonSecretDefinition) {
 	s.addonSecretDefs = defs
 }
 
@@ -1240,10 +1265,13 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// migrate a single file.
 	mux.HandleFunc("POST /api/v1/addons/unwrap-globals", srv.handleUnwrapGlobalValues)
 
-	// Addon secrets (definition CRUD)
-	mux.HandleFunc("GET /api/v1/addon-secrets", srv.handleListAddonSecrets)
-	mux.HandleFunc("POST /api/v1/addon-secrets", srv.handleCreateAddonSecret)
-	mux.HandleFunc("DELETE /api/v1/addon-secrets/{addon}", srv.handleDeleteAddonSecret)
+	// The /addon-secrets definition-CRUD endpoints are GONE (task #152,
+	// story 152.A). They let an API caller drop a whole secret definition
+	// — backend path, destination namespace, Secret name, key list — into
+	// an in-memory map that the refresh endpoint then delivered, bypassing
+	// Git entirely. The Git catalog is the ONLY source of addon-secret
+	// definitions now; the refresh endpoint below runs the reconciler's
+	// git-backed plan. Do not add these routes back.
 
 	// Cluster secrets (remote cluster operations)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/secrets", srv.handleListClusterSecrets)

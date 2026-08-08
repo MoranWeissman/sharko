@@ -53,7 +53,6 @@ Supported filter predicates for clusters: `env:<value>`, `health:<value>`, `addo
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/tokens` | List API keys (admin only) |
-| `GET` | `/api/v1/addon-secrets` | List addon secret definitions |
 | `GET` | `/api/v1/clusters/{name}/secrets` | List managed secrets on a cluster |
 
 ### Audit Log
@@ -82,7 +81,7 @@ All write endpoints require the `admin` role.
 | `DELETE` | `/api/v1/clusters/{name}` | Deregister a cluster |
 | `PATCH` | `/api/v1/clusters/{name}` | Update addon labels |
 | `POST` | `/api/v1/clusters/{name}/refresh` | Refresh cluster credentials |
-| `POST` | `/api/v1/clusters/{name}/secrets/refresh` | Refresh managed secrets on a cluster |
+| `POST` | `/api/v1/clusters/{name}/secrets/refresh` | Deliver the Git-defined addon secrets to a cluster now (optionally `?addon=` for one addon; the addon must be defined in the Git catalog) |
 | `POST` | `/api/v1/clusters/{name}/test` | Test cluster connectivity (returns `{"reachable": bool, "version": "..."}`) |
 | `POST` | `/api/v1/clusters/adopt` | Adopt one or more discovered ArgoCD clusters into Sharko management (body: `{"clusters": [...]}`) |
 | `POST` | `/api/v1/clusters/{name}/doctor` | Run the [connection doctor](../operator/connection-doctor.md) — five real-attempt checks with plain-English fixes |
@@ -100,10 +99,10 @@ All write endpoints require the `admin` role.
 
 ### Addon Secrets
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/v1/addon-secrets` | Define an addon secret template |
-| `DELETE` | `/api/v1/addon-secrets/{addon}` | Remove an addon secret definition |
+The `/addon-secrets` definition endpoints were removed in v4.0.0. Addon secret
+definitions live only in the Git catalog (the `secrets:` block on a v3 catalog
+entry, the `push:` block on a v4 one); the reconciler and
+`POST /api/v1/clusters/{name}/secrets/refresh` both read from there.
 
 ### Tokens
 

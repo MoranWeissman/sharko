@@ -387,7 +387,7 @@ func TestClusterLifecycle(t *testing.T) {
 		case http.StatusOK:
 			t.Logf("secrets refresh: %v", body)
 		case http.StatusServiceUnavailable:
-			t.Skipf("SecretsRefresh: 503 (no credentials provider configured)")
+			t.Skipf("SecretsRefresh: 503 (no secrets reconciler wired on this harness — the refresh is git-backed since task #152)")
 		default:
 			t.Fatalf("unexpected status=%d body=%v", status, body)
 		}

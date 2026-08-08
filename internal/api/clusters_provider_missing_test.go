@@ -119,7 +119,12 @@ func TestListClusterSecrets_NoProvider_Returns503(t *testing.T) {
 	assertProviderMissingResponse(t, w, "GET /clusters/{name}/secrets")
 }
 
-func TestRefreshClusterSecrets_NoProvider_Returns503(t *testing.T) {
+// TestRefreshClusterSecrets_NoReconciler_Returns503 — task #152, story
+// 152.A moved this endpoint off the credentials-provider precondition and
+// onto the git-backed secrets reconciler (which itself only exists once a
+// provider is configured). Same 503 + structured code + hint contract as
+// the provider-missing family, with a code naming the real missing piece.
+func TestRefreshClusterSecrets_NoReconciler_Returns503(t *testing.T) {
 	srv := newIsolatedTestServer(t)
 	router := NewRouter(srv, nil)
 
@@ -127,5 +132,21 @@ func TestRefreshClusterSecrets_NoProvider_Returns503(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assertProviderMissingResponse(t, w, "POST /clusters/{name}/secrets/refresh")
+	label := "POST /clusters/{name}/secrets/refresh"
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("%s: status = %d, want 503", label, w.Code)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("%s: response is not valid JSON: %v", label, err)
+	}
+	if body["code"] != "secrets_reconciler_not_configured" {
+		t.Errorf("%s: body code = %q, want %q", label, body["code"], "secrets_reconciler_not_configured")
+	}
+	if body["hint"] == "" {
+		t.Errorf("%s: body hint should be non-empty (operators need an actionable next step)", label)
+	}
+	if body["error"] == "" {
+		t.Errorf("%s: body error should be non-empty", label)
+	}
 }

@@ -49,6 +49,15 @@ type fakeSecretReconciler struct {
 	syncErr     error
 	syncCalls   []itemCallArgs
 
+	// SyncCluster seams (task #152, story 152.A) — what the git-backed
+	// cluster refresh returns, and a record of exactly what it was called
+	// with (cluster + optional addon; there is nothing else a caller CAN
+	// pass, which is the point).
+	syncClusterRefreshed []string
+	syncClusterFailed    []string
+	syncClusterErr       error
+	syncClusterCalls     []itemCallArgs
+
 	lastItemOutcome   string
 	lastItemOutcomeOK bool
 
@@ -104,6 +113,13 @@ func (f *fakeSecretReconciler) CheckOne(_ context.Context, cluster, addon string
 func (f *fakeSecretReconciler) SyncOne(_ context.Context, cluster, addon string) (string, error) {
 	f.syncCalls = append(f.syncCalls, itemCallArgs{cluster, addon})
 	return f.syncOutcome, f.syncErr
+}
+
+func (f *fakeSecretReconciler) SyncCluster(_ context.Context, cluster, addon string) ([]string, []string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.syncClusterCalls = append(f.syncClusterCalls, itemCallArgs{cluster, addon})
+	return f.syncClusterRefreshed, f.syncClusterFailed, f.syncClusterErr
 }
 
 func (f *fakeSecretReconciler) CheckAll(_ context.Context) error {
