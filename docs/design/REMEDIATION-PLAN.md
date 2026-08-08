@@ -151,7 +151,7 @@ keeping these Secrets out of ArgoCD's cluster-wide resource cache and its orphan
 so an operator reading ArgoCD's UI doesn't mistake a live addon credential for leftover cruft.
 Sharko's own ownership gate (`remoteclient.EnsureSecret`) is what actually prevents a cross-tool
 overwrite, with or without this exclusion configured. Full writeup:
-[`docs/design/2026-06-02-threat-model-v2.md` §11](2026-06-02-threat-model-v2.md#11-the-argocd-resource-exclusions-question).
+[`docs/design/2026-08-08-threat-model-v4.md` §11](2026-08-08-threat-model-v4.md#11-the-argocd-resource-exclusions-question).
 
 The per-addon `ignoreDifferences` catalog settings are a separate, legitimate feature (suppressing
 diffs on fields ArgoCD *does* actively manage) and were never in question here.
