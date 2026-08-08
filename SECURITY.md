@@ -92,21 +92,38 @@ Out of scope:
 
 ## Supported Versions
 
-The latest tagged release is `v3.0.0`. `v4` is under active development
-on `main` and has not shipped yet.
+**No version of Sharko is supported for production use right now.**
+
+`v3.0.0` is retired. It is unsafe and unsupported — **do not install it.**
+`v4` is being built on `main` and has not shipped yet. Wait for `v4`.
 
 | Version | Supported for security fixes |
 | ------- | ----------------------------- |
-| `v3.0.x` (current release) | Yes |
-| `v4` (in development on `main`, unreleased) | Fixes land on `main` as part of normal development and ship in the next tagged release — there's no separate backport, because nothing has shipped yet |
-| `v2.x` and earlier | No — please upgrade to `v3.0.0` before reporting |
+| `v3.0.x` | No — retired. Unsafe and unsupported, do not install it. |
+| `v2.x` and earlier | No. They have the same flaw as `v3.0.0`, so do not fall back to them either. |
+| `v4` (being built on `main`, not released) | Fixes land on `main` and ship in `v4.0.0` |
 
-Sharko supports only the latest minor line: a security fix lands on
-`main` and ships in the next release rather than being backported to
-older tags. Once the project has shipped more than one minor release in
-a line, this table will be updated to also name the immediately
-preceding minor as supported, matching the standard CNCF support
-window.
+### Why v3.0.0 is retired
+
+Sharko did not check the ArgoCD server's TLS certificate. There was a
+setting meant to control that check, but the code ignored it and skipped
+the check every time. On top of that, the web interface wrote "skip
+verification" into every connection it saved. Sharko's connection to
+ArgoCD carries Sharko's ArgoCD API token, so someone who could read that
+network traffic could have read the token.
+
+**Affected:** `v3.0.0` and every earlier tag. Fixed on `main`, ships in
+`v4.0.0`.
+
+**Not affected:** the secret values Sharko delivers to your clusters,
+your Git token, and your cluster kubeconfigs. Those travel over
+different connections and this flaw did not touch them.
+
+**What to do:** do not install `v3.0.0`. Wait for `v4`. There is no
+patch release for the `v3` line.
+
+If you did run `v3.0.0` against an `https://` ArgoCD server, treat that
+ArgoCD token as possibly exposed.
 
 ## Security-Sensitive Code Paths
 

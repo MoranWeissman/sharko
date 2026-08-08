@@ -44,7 +44,7 @@ the following way:
 
 - **MAJOR** — a breaking change to any endpoint at the `stable` tier.
   The integrator MUST review the release notes and may need to update
-  their integration before upgrading. v3.0.0 will be the next major
+  their integration before upgrading. v4.0.0 will be the next major
   bump.
 - **MINOR** — additive changes (new endpoints, new optional request
   fields, new response fields). Breakage permitted at the `beta`
