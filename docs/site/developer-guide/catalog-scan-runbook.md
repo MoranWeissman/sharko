@@ -2,6 +2,21 @@
 
 > **Verified:** Not verified end-to-end since authoring (V123-3.5, 2026-04-25); review pending. 2026-08-08: the scheduled trigger was turned off (bot is now manual-only, run via `workflow_dispatch`) — this is a config change to `.github/workflows/catalog-scan.yml`, not a re-walk; the underlying scan logic (`scripts/catalog-scan.mjs`) has not changed materially since authoring. A re-walk against a real bot-opened PR is still recommended.
 
+!!! warning "Parked — no schedule, manual only"
+    This bot is parked. There is no cron trigger — it only runs when someone
+    fires `workflow_dispatch` by hand. It's kept in the repo in case it's
+    useful again later, not because it's part of the day-to-day flow.
+
+    A manual run defaults to a dry run: it scans and prints what it would
+    propose, and cannot write anything (workflow permissions are
+    `contents: read`). Opening a PR is a separate, explicit choice — pick
+    `dry_run: false` when dispatching the workflow, which is the only way
+    the write-capable job (`contents: write` + `pull-requests: write`) runs.
+
+    [PR #389](https://github.com/MoranWeissman/sharko/pull/389) tracks the
+    bot's real output — it stays open for the addon-discovery work, separate
+    from this parked-scanner decision.
+
 Operational guide for reviewers of `catalog-scan` bot PRs.
 
 The **addon discovery bot** (codenamed V123-3 internally) opens one **draft PR per run** with proposed catalog additions and updates derived from upstream sources. Reviewers triage these PRs — the bot **never** auto-merges.
@@ -27,11 +42,13 @@ Design context: see [catalog extensibility design doc §7.3](https://github.com/
 
 **Guarantees:**
 
-- Manual-only: triggered via `workflow_dispatch`, no scheduled cron.
+- Manual-only: triggered via `workflow_dispatch`, no scheduled cron. Parked — see the banner above.
+- Dry run by default: the `dry_run` input defaults to `true`. A default run only scans and prints proposals; it cannot write anything, because the workflow-level permission is `contents: read`.
+- Opening a PR is opt-in: only the `open-pr` job can write, only runs when `dry_run: false` is chosen explicitly, and only that job carries `contents: write` + `pull-requests: write`.
 - Stateless — every run is independent; no caching between runs.
 - One open PR at a time. The concurrency guard skips opening if a `catalog-scan`-labeled PR is already open OR the target branch already exists.
 - Draft PR only. Labels `catalog-scan` + `needs-review` always applied.
-- Workflow permissions are exactly `contents: write` + `pull-requests: write`. No `automerge` permission, no `actions: write`.
+- No `automerge` permission, no `actions: write`, anywhere in the workflow.
 - Commit author is `Moran Weissman <moran.weissman@gmail.com>`; the PR is opened by `github-actions[bot]`.
 
 ---
@@ -217,7 +234,11 @@ GraphQL: GitHub Actions is not permitted to create or approve pull requests
 ### Manual trigger
 
 ```bash
+# Dry run (default) — scans and prints proposals, opens nothing, writes nothing.
 gh workflow run "Catalog Scan"
+
+# Real run — scans AND opens a draft PR if there are proposals.
+gh workflow run "Catalog Scan" -f dry_run=false
 ```
 
 ### Local dry-run preview
