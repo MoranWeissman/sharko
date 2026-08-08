@@ -15,9 +15,9 @@ dead, and started with no errors and no crash loop.
 
 - **Main SHA tested:** `45503903f798d760d617a23a35c94e3c9f3e206b` (short `45503903`) —
   `feat(ui): Secret Sync tiles v2 — one box per secret, ArgoCD-style (#766)`.
-  This is what `main` pointed to when the playground images were built (image tag on the
-  Sharko deployment: `sharko:playground-45503903`), and it's still what `origin/main` and the
-  local checkout point to now — the checkout stayed clean and read-only for the whole run.
+  This was what `main` pointed to during the test — the playground images were built from it
+  (image tag on the Sharko deployment: `sharko:playground-45503903`), and the checkout stayed
+  clean and read-only for the whole run.
 - **Playground:** fresh `kind` hub + 2 spokes (`spoke-eu`, `spoke-us`), ArgoCD on the hub,
   Gitea as the git backend, Sharko installed via Helm. Torn down and rebuilt from scratch for
   this walk (`make playground-down` then `make playground-up`).
