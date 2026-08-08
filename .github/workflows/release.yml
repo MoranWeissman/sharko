@@ -15,6 +15,426 @@ env:
   HELM_CHART_PATH: charts/sharko
 
 jobs:
+  # =========================================================================
+  # RELEASE EVIDENCE GATE (v4-coherence-closure, lane M)
+  #
+  # FINDING this section fixes: this workflow only ever gated publishing on
+  # the plain "CI" workflow (go/UI build+test, swagger/schema/provider-type
+  # drift checks, helm lint, security scan — see ci.yml). That workflow
+  # already runs on every `v*` tag push (ci.yml `on.push.tags`), and this
+  # workflow's `workflow_run` trigger already refuses to proceed unless that
+  # CI run succeeded on a branch/ref starting with `v` (see every job's
+  # `if:` below) — so the standard CI suite was always required. What was
+  # NOT required: the full kind-backed e2e suite (label/dispatch/schedule
+  # gated in e2e.yml — never runs on a tag push), the perf regression gate
+  # (PR-only in perf-regression.yml — never runs on a tag push), and a docs
+  # site build (no workflow builds the docs site at all today). A tag could
+  # publish having never proven any of those three.
+  #
+  # The four `release-gate-*` jobs below run that missing evidence directly
+  # against the tagged commit (`ref: ${{ github.event.workflow_run.head_branch
+  # }}`, same pattern every existing job in this file already uses). They
+  # deliberately duplicate steps from e2e.yml / perf-regression.yml instead
+  # of calling them as reusable workflows — the same call perf-regression.yml
+  # already makes in its own header comment ("a shared composite action adds
+  # indirection that's not worth the maintenance until a third workflow
+  # needs the same boot"). A release gate is exactly that third case handled
+  # the same way: plain duplication, not a promotion pipeline.
+  #
+  # `release-evidence-gate` is the fan-in job every publish step actually
+  # depends on. Why it exists instead of just chaining `needs:` straight
+  # from `sign-catalog-entries` to the four evidence jobs: GitHub Actions'
+  # default job `if:` is `success()` when needs are present, which already
+  # blocks a dependent job whenever a needed job FAILS — but a needed job
+  # that gets SKIPPED (e.g. because someone edits an evidence job's `if:`
+  # in a way that makes it silently not run) also counts as "not success",
+  # so a naive chain would still refuse to publish in that case too... but
+  # the workflow RUN's overall conclusion only turns red when a job actually
+  # FAILS — a run made entirely of successes and skips reports green. That
+  # is the exact hole this gate closes: `release-evidence-gate` runs with
+  # `if: always()` (so it cannot itself be skipped away by a bad upstream
+  # `if:`), reads every evidence job's `needs.<job>.result` explicitly, and
+  # `exit 1`s the moment any of them is not literally `success` — turning
+  # a silent skip into a loud, real failure instead of a quiet no-op.
+  # =========================================================================
+
+  release-gate-e2e:
+    name: "Release Evidence: Full E2E (kind + argocd)"
+    # Same gate every publish job in this file uses: only run once the CI
+    # workflow succeeded, and only for a run triggered by a `v*` tag push
+    # (never for CI runs on plain `main` pushes or PRs).
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install kind + kubectl
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          curl -Lo ./kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
+          kind --version
+          kubectl version --client=true
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Run full E2E suite (release evidence)
+        env:
+          GOTMPDIR: /tmp
+          E2E_OFFLINE: "0"
+        run: make test-e2e-report
+
+      - name: Upload coverage HTML
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-e2e-coverage-${{ github.event.workflow_run.head_branch }}
+          path: _dist/e2e-coverage.html
+          retention-days: 30
+
+      - name: Upload JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-e2e-junit-${{ github.event.workflow_run.head_branch }}
+          path: _dist/e2e-junit.xml
+          retention-days: 30
+
+      - name: Cleanup stale kind clusters
+        if: always()
+        run: |
+          kind get clusters 2>/dev/null | grep "^sharko-e2e-" | \
+            xargs -I{} kind delete cluster --name {} || true
+
+  # Mirrors e2e.yml's `live-gitea` job — the one lane that drives a REAL
+  # Gitea server (service container) instead of the in-repo fake, catching
+  # drift between the fakes' stub shapes and the real Gitea REST API.
+  release-gate-e2e-live-gitea:
+    name: "Release Evidence: E2E (live Gitea)"
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      gitea:
+        image: gitea/gitea:1.23.5
+        ports:
+          - 3000:3000
+        env:
+          GITEA__security__INSTALL_LOCK: "true"
+          GITEA__database__DB_TYPE: sqlite3
+          GITEA__server__DOMAIN: localhost
+          GITEA__server__ROOT_URL: http://localhost:3000/
+          GITEA__server__DISABLE_SSH: "true"
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:3000/api/healthz || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+          --health-start-period 10s
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Wait for Gitea API to answer
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/healthz >/dev/null 2>&1; then
+              echo "gitea API is up (attempt $i)"
+              exit 0
+            fi
+            echo "waiting for gitea API... (attempt $i)"
+            sleep 2
+          done
+          echo "gitea API never came up" >&2
+          exit 1
+
+      - name: Provision admin user, API token, and test repo
+        id: provision
+        env:
+          GITEA_CONTAINER: ${{ job.services.gitea.id }}
+          GITEA_ADMIN_USER: sharko-e2e
+          GITEA_ADMIN_PASS: Sharko-E2E-CI-Passw0rd!
+          GITEA_REPO: sharko-e2e-live
+        run: |
+          set -euo pipefail
+
+          # -u 1000:1000 is load-bearing — see e2e.yml's `live-gitea` job for
+          # the full explanation (Gitea's CLI refuses to run as root, and the
+          # image drops privileges to uid/gid 1000 before starting).
+          docker exec -u 1000:1000 "$GITEA_CONTAINER" gitea admin user create \
+            --admin \
+            --username "$GITEA_ADMIN_USER" \
+            --password "$GITEA_ADMIN_PASS" \
+            --email "sharko-e2e@example.invalid" \
+            --must-change-password=false
+
+          token_json=$(curl -sf -u "$GITEA_ADMIN_USER:$GITEA_ADMIN_PASS" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"sharko-e2e-ci","scopes":["write:repository","write:issue"]}' \
+            "http://localhost:3000/api/v1/users/$GITEA_ADMIN_USER/tokens")
+          token=$(echo "$token_json" | jq -r '.sha1 // empty')
+          if [ -z "$token" ]; then
+            echo "failed to create API token: $token_json" >&2
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+          curl -sf -u "$GITEA_ADMIN_USER:$GITEA_ADMIN_PASS" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"$GITEA_REPO\",\"auto_init\":true,\"default_branch\":\"main\",\"private\":false}" \
+            "http://localhost:3000/api/v1/user/repos" >/dev/null
+
+          echo "provisioned admin=$GITEA_ADMIN_USER repo=$GITEA_ADMIN_USER/$GITEA_REPO"
+
+      - name: Run live-Gitea E2E suite
+        env:
+          GOTMPDIR: /tmp
+          SHARKO_E2E_GITEA_URL: http://localhost:3000
+          SHARKO_E2E_GITEA_TOKEN: ${{ steps.provision.outputs.token }}
+          SHARKO_E2E_GITEA_OWNER: sharko-e2e
+          SHARKO_E2E_GITEA_REPO: sharko-e2e-live
+          SHARKO_E2E_GITEA_BASE: main
+        run: |
+          go test -tags=e2e -timeout=10m -v -run '^TestGiteaLiveWriteLoop$' ./tests/e2e/lifecycle/...
+
+      - name: Dump Gitea container logs on failure
+        if: failure()
+        env:
+          GITEA_CONTAINER: ${{ job.services.gitea.id }}
+        run: docker logs --tail=200 "$GITEA_CONTAINER" || true
+
+  # Mirrors e2e.yml's `helm-mode-e2e` job — exercises the real boot path
+  # (docker build -> kind load -> helm upgrade --install -> bootstrap admin
+  # secret -> port-forward), not just the in-process lane.
+  release-gate-e2e-helm:
+    name: "Release Evidence: E2E (helm + kind + argocd)"
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install kind + kubectl
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          curl -Lo ./kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
+          kind --version
+          kubectl version --client=true
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "latest"
+
+      - name: Run Helm-mode E2E subset
+        env:
+          GOTMPDIR: /tmp
+          E2E_SHARKO_MODE: helm
+          SHARKO_E2E_IMAGE_TAG: release-${{ github.event.workflow_run.head_branch }}
+        run: make test-e2e-helm
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          echo "=== kind clusters ==="
+          kind get clusters || true
+          echo "=== nodes (all clusters) ==="
+          for c in $(kind get clusters 2>/dev/null); do
+            echo "--- cluster: $c ---"
+            kubectl --context "kind-$c" describe nodes || true
+            echo "--- helm releases in $c ---"
+            helm --kube-context "kind-$c" list -A || true
+            echo "--- sharko deployment logs in $c ---"
+            kubectl --context "kind-$c" logs -n sharko deployment/sharko --tail=200 --all-containers=true || true
+            echo "--- argocd pods in $c ---"
+            kubectl --context "kind-$c" get pods -n argocd -o wide || true
+          done
+
+      - name: Cleanup stale kind clusters
+        if: always()
+        run: |
+          kind get clusters 2>/dev/null | grep "^sharko-e2e-" | \
+            xargs -I{} kind delete cluster --name {} || true
+
+  # Mirrors perf-regression.yml's `perf-regression` job. Deliberately no
+  # `skip-perf-gate` label escape hatch here — that label exists for PR
+  # authors trading off an intentional regression against review speed;
+  # a tag has no PR context, and the maintainer's explicit priority for
+  # this gate is honesty over speed, so a release always pays the perf
+  # tax in full.
+  release-gate-perf:
+    name: "Release Evidence: Perf Regression Gate (p99 +20% threshold)"
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install kind + kubectl
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          curl -Lo ./kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
+          kind --version
+          kubectl version --client=true
+
+      - name: Build perf-baseline-compare
+        run: go build -o _dist/perf-baseline-compare ./cmd/perf-baseline-compare
+
+      - name: Run perf harness + capture timings
+        env:
+          GOTMPDIR: /tmp
+          E2E_OFFLINE: "0"
+        run: make test-e2e-perf-capture
+
+      - name: Compare against baselines (>20% p99 = fail)
+        run: make test-e2e-perf-compare
+
+      - name: Upload captured timings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-perf-timings-${{ github.event.workflow_run.head_branch }}
+          path: _dist/perf-timings.jsonl
+          retention-days: 30
+
+      - name: Cleanup stale kind clusters
+        if: always()
+        run: |
+          kind get clusters 2>/dev/null | grep "^sharko-e2e-" | \
+            xargs -I{} kind delete cluster --name {} || true
+
+  # No existing workflow builds the docs site at all — this is the first.
+  # `mkdocs build --strict` fails on unresolved internal links, missing nav
+  # entries, and orphan pages (same as CONTRIBUTING.md tells contributors to
+  # run locally); a release should never publish a version whose docs site
+  # doesn't actually build.
+  release-gate-docs:
+    name: "Release Evidence: Docs Build (mkdocs --strict)"
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install docs dependencies
+        run: pip install -r docs/requirements.txt
+
+      - name: Build docs (strict)
+        run: mkdocs build --strict
+
+  release-evidence-gate:
+    name: Release Evidence Gate
+    needs:
+      - release-gate-e2e
+      - release-gate-e2e-live-gitea
+      - release-gate-e2e-helm
+      - release-gate-perf
+      - release-gate-docs
+    # `always()` drops the implicit `success()` GitHub would otherwise AND
+    # onto this `if:` — see the block comment above for why that matters:
+    # this job must run (and fail loudly) even when an evidence job above
+    # was skipped rather than failed, so it still needs the outer tag/CI
+    # gate spelled out explicitly since `always()` alone would let it fire
+    # on every CI completion, tag or not.
+    if: >
+      always() &&
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify every release-evidence job actually succeeded
+        run: |
+          fail=0
+
+          check() {
+            local label="$1" result="$2"
+            if [ "$result" = "success" ]; then
+              echo "  PASS  $label"
+            else
+              echo "  FAIL  $label (result: $result)"
+              fail=1
+            fi
+          }
+
+          check "Full E2E (kind + argocd)"    "${{ needs.release-gate-e2e.result }}"
+          check "E2E (live Gitea)"            "${{ needs.release-gate-e2e-live-gitea.result }}"
+          check "E2E (helm + kind + argocd)"  "${{ needs.release-gate-e2e-helm.result }}"
+          check "Perf regression gate"        "${{ needs.release-gate-perf.result }}"
+          check "Docs build (mkdocs --strict)" "${{ needs.release-gate-docs.result }}"
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Release evidence gate FAILED — at least one required job above did not succeed (including any that were skipped). A tag must not publish without ALL release evidence: full e2e, live-Gitea e2e, helm-mode e2e, the perf regression gate, and a strict docs build. No publish step will run."
+            exit 1
+          fi
+
+          echo "All release evidence jobs passed. Proceeding to publish."
+
   # cosign-keyless signs every entry in catalog/addons.yaml BEFORE the
   # binary builds, so the embedded YAML inside the released image and
   # CLI archives carries `signature.bundle` URLs that point at release
@@ -23,7 +443,20 @@ jobs:
   # embedded catalog as Verified out of the box.
   sign-catalog-entries:
     name: Sign Catalog Entries
+    # This is the first publish step in the workflow, so it is the one
+    # place the release-evidence gate has to be enforced — every other
+    # publish job (build-and-push, helm-package, helm-package-engine,
+    # goreleaser) already `needs:` its way back to this job, so gating
+    # here gates the whole chain. The explicit
+    # `needs.release-evidence-gate.result == 'success'` check (rather than
+    # relying only on the implicit success() GitHub ANDs onto a `needs:`
+    # job by default) says outright, for anyone reading this file, that a
+    # skipped or failed evidence gate must stop publishing — see the
+    # `release-evidence-gate` job above for why "skipped" needs calling
+    # out explicitly instead of trusting the default.
+    needs: [release-evidence-gate]
     if: >
+      needs.release-evidence-gate.result == 'success' &&
       github.event.workflow_run.conclusion == 'success' &&
       startsWith(github.event.workflow_run.head_branch, 'v')
     runs-on: ubuntu-latest
