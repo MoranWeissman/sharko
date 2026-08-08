@@ -790,6 +790,31 @@ func TestAddonValuesSecretCheckFailureSentence_NeverEchoesRawText(t *testing.T) 
 			`something entirely unexpected: value=hunter2`,
 			"The last check didn't finish.",
 		},
+		{
+			// remoteclient.ErrUnverifiedDestination's exact text, as
+			// checkWork/reconcileSecret return it unwrapped (task #152
+			// lane C's row-level loose end — see the case's own comment
+			// in system_managed_secrets.go for why this was missing).
+			"unverified destination — TLS refusal reaches the row",
+			`this cluster's connection is set up to skip certificate checks, so Sharko will not send a secret over it`,
+			"This cluster's connection is set up to skip certificate checks, so Sharko refused to send it a secret.",
+		},
+		{
+			// internal/providers.awsOutsidePrefixRefusal, wrapped the way
+			// reconcileSecret/checkWork wrap every provider fetch error
+			// ("fetching %q from provider: %w") — task #152 story B's
+			// boundary refusal reaching the row.
+			"AWS prefix boundary refusal reaches the row",
+			`fetching "clusters/prod/x" from provider: secret path refused: "clusters/prod/x" is outside the prefix "clusters/" this AWS Secrets Manager connection is allowed to read. Sharko only reads addon secrets under the configured prefix`,
+			`"clusters/prod/x" is outside the prefix "clusters/" this AWS Secrets Manager connection is allowed to read. Sharko only reads addon secrets under the configured prefix`,
+		},
+		{
+			// internal/providers.k8sOutsideNamespaceRefusal, same
+			// wrapping — pins that the extraction isn't AWS-specific.
+			"Kubernetes namespace boundary refusal reaches the row",
+			`fetching "other-ns/creds/api-key" from provider: secret path refused: "other-ns/creds/api-key" points at namespace "other-ns", but this Kubernetes secrets connection is only allowed to read secrets in namespace "sharko"`,
+			`"other-ns/creds/api-key" points at namespace "other-ns", but this Kubernetes secrets connection is only allowed to read secrets in namespace "sharko"`,
+		},
 	}
 
 	for _, tc := range cases {
@@ -800,6 +825,54 @@ func TestAddonValuesSecretCheckFailureSentence_NeverEchoesRawText(t *testing.T) 
 			}
 			if tc.errMsg != "" && got == tc.errMsg {
 				t.Errorf("mapped sentence equals the raw error text — S8 requires a canned sentence, never a passthrough")
+			}
+		})
+	}
+}
+
+// TestAddonValuesSecretSyncFailureSentence_NeverEchoesRawText is the
+// sync-side twin of TestAddonValuesSecretCheckFailureSentence_NeverEchoesRawText
+// (S8/H1) — pins that addonValuesSecretSyncFailureSentence recognizes the
+// same TLS and boundary refusals the check-side mapper does, since SyncOne
+// drives the identical checkWork/reconcileSecret refusal paths CheckOne
+// does. Only the two refusal cases and the unrecognized-stage default are
+// covered here (worded "sync" not "check") — the rest of the switch is
+// identical to the check twin and already covered by that test plus the
+// handler-level tests in addon_secret_single_test.go.
+func TestAddonValuesSecretSyncFailureSentence_NeverEchoesRawText(t *testing.T) {
+	cases := []struct {
+		name   string
+		errMsg string
+		want   string
+	}{
+		{"empty", "", ""},
+		{
+			"unverified destination — TLS refusal reaches the row",
+			`this cluster's connection is set up to skip certificate checks, so Sharko will not send a secret over it`,
+			"This cluster's connection is set up to skip certificate checks, so Sharko refused to send it a secret.",
+		},
+		{
+			"AWS prefix boundary refusal reaches the row",
+			`fetching "clusters/prod/x" from provider: secret path refused: "clusters/prod/x" is outside the prefix "clusters/" this AWS Secrets Manager connection is allowed to read. Sharko only reads addon secrets under the configured prefix`,
+			`"clusters/prod/x" is outside the prefix "clusters/" this AWS Secrets Manager connection is allowed to read. Sharko only reads addon secrets under the configured prefix`,
+		},
+		{
+			"foreign secret refusal — passed through verbatim, unchanged",
+			`Someone else created this one — Sharko will not touch it`,
+			`Someone else created this one — Sharko will not touch it`,
+		},
+		{
+			"unrecognized stage — safe fallback, not the raw string",
+			`something entirely unexpected: value=hunter2`,
+			"The last sync didn't finish.",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := addonValuesSecretSyncFailureSentence(tc.errMsg)
+			if got != tc.want {
+				t.Errorf("addonValuesSecretSyncFailureSentence(%q) = %q, want %q", tc.errMsg, got, tc.want)
 			}
 		})
 	}

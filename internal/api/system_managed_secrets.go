@@ -1116,6 +1116,28 @@ func addonValuesSecretCheckFailureSentence(errMsg string) string {
 		return "No addon-values secret is defined for this cluster and addon — check that the cluster is registered, the addon is enabled on it, and the addon's catalog entry defines a secret to push."
 	case strings.Contains(errMsg, "the secret definition in the catalog has no"):
 		return "The secret definition in the catalog is incomplete — fill in the missing fields."
+	case strings.Contains(errMsg, "skip certificate checks"):
+		// remoteclient.ErrUnverifiedDestination (task #152 lane C), asked
+		// early in checkWork/reconcileSecret before any value is fetched —
+		// a deliberate refusal, not a failed check. This case was missing
+		// here (loose end from lane C — the sibling engine-level mappers,
+		// clusterreconciler.FailureSentence and secrets.FailureSentence,
+		// already had it; this per-row one didn't, so a refused row fell
+		// through to the generic "last check didn't finish" default
+		// instead of the real, safe reason). Checked before the "provider"
+		// case below on purpose: it must win even though the wrapping text
+		// ("fetching %q from provider: %w") also contains the word
+		// "provider".
+		return "This cluster's connection is set up to skip certificate checks, so Sharko refused to send it a secret."
+	case strings.Contains(errMsg, "secret path refused"):
+		// internal/providers.ErrSecretPathRefused (task #152 story B) — the
+		// AWS-prefix and Kubernetes-namespace boundary refusals. Also a
+		// deliberate refusal, not a failure, and also safe to show verbatim
+		// (see secretPathRefusedSentence's doc comment: the refusal names
+		// only the refused path and the configured prefix/namespace, both
+		// Git/config metadata, never secret material). Checked before
+		// "provider" below for the same reason as the TLS case above.
+		return secretPathRefusedSentence(errMsg)
 	case strings.Contains(errMsg, "getting credentials"):
 		return "Sharko couldn't get credentials for this cluster."
 	case strings.Contains(errMsg, "connecting to cluster"):
@@ -1131,6 +1153,28 @@ func addonValuesSecretCheckFailureSentence(errMsg string) string {
 	default:
 		return "The last check didn't finish."
 	}
+}
+
+// secretPathRefusedSentence extracts the safe, canned sentence
+// internal/providers/boundary.go's boundary-refusal constructors
+// (awsNoPrefixRefusal, awsOutsidePrefixRefusal, k8sNoNamespaceRefusal,
+// k8sOutsideNamespaceRefusal) produce, dropping the "fetching ... from ...
+// provider:" wrapper reconcileSecret/checkWork/syncWork add around it
+// (internal/secrets/reconciler.go) — so a row shows the provider's own
+// words, the exact text an operator already sees at every other door (task
+// #152 story B's "three-door parity" requirement). Safe to show verbatim:
+// boundary.go's own doc comment says these sentences name only the refused
+// path and the configured boundary — Git/config metadata, never secret
+// material. Falls back to the full wrapped string if the marker somehow
+// isn't found (defensive only — every boundary.go constructor wraps
+// ErrSecretPathRefused with fmt.Errorf("%w: ...", ...), so the marker is
+// always present in practice).
+func secretPathRefusedSentence(errMsg string) string {
+	const marker = "secret path refused: "
+	if idx := strings.Index(errMsg, marker); idx != -1 {
+		return errMsg[idx+len(marker):]
+	}
+	return errMsg
 }
 
 // addonValuesSecretSyncFailureSentence is addonValuesSecretCheckFailureSentence's
@@ -1166,6 +1210,20 @@ func addonValuesSecretSyncFailureSentence(errMsg string) string {
 		return "No addon-values secret is defined for this cluster and addon — check that the cluster is registered, the addon is enabled on it, and the addon's catalog entry defines a secret to push."
 	case strings.Contains(errMsg, "the secret definition in the catalog has no"):
 		return "The secret definition in the catalog is incomplete — fill in the missing fields."
+	case strings.Contains(errMsg, "skip certificate checks"):
+		// remoteclient.ErrUnverifiedDestination (task #152 lane C) — same
+		// loose end as addonValuesSecretCheckFailureSentence's own case
+		// above, missing here too (SyncOne drives the same reconcileSecret
+		// refusal CheckOne's checkWork does). Same sentence as the check
+		// twin, deliberately: the refusal names Sharko's own fixed reason,
+		// not a "check" or "sync" verb, so there's nothing to say
+		// differently between the two doors.
+		return "This cluster's connection is set up to skip certificate checks, so Sharko refused to send it a secret."
+	case strings.Contains(errMsg, "secret path refused"):
+		// internal/providers.ErrSecretPathRefused (task #152 story B) — see
+		// secretPathRefusedSentence's doc comment. Checked before
+		// "provider" below for the same reason as the TLS case above.
+		return secretPathRefusedSentence(errMsg)
 	case strings.Contains(errMsg, "getting credentials"):
 		return "Sharko couldn't get credentials for this cluster."
 	case strings.Contains(errMsg, "connecting to cluster"):
