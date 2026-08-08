@@ -63,7 +63,7 @@ func (s *Server) handleDocsList(w http.ResponseWriter, _ *http.Request) {
 		}
 		// Extract title from first # heading in the file
 		title := slugToTitle(name)
-		data, readErr := os.ReadFile(filepath.Join(docsDir, e.Name()))
+		data, readErr := os.ReadFile(filepath.Join(docsDir, e.Name())) // #nosec G304 -- e.Name() comes from ReadDir of the fixed docsDir, not from the request; nothing user-controlled reaches this path
 		if readErr == nil {
 			if t := extractTitle(string(data)); t != "" {
 				title = t
@@ -101,7 +101,7 @@ func (s *Server) handleDocsGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(docsDir, slug+".md"))
+	data, err := os.ReadFile(filepath.Join(docsDir, slug+".md")) // #nosec G304 G703 -- slug is regex-validated above to [a-zA-Z0-9_-]+ only, so no path separator or dot segment can reach the join; the analyzer does not see that check
 	if err != nil {
 		writeError(w, http.StatusNotFound, "document not found")
 		return

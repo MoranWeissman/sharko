@@ -437,7 +437,7 @@ func generateHistory(rng *rand.Rand, now time.Time) []generatedHistoryEntry {
 // MUST check cfg.IsDefault() first — this function does not special-case
 // the default size and is only ever invoked for a non-default ScaleConfig.
 func GenerateEstate(cfg ScaleConfig) (*GeneratedEstate, error) {
-	rng := rand.New(rand.NewSource(cfg.Seed))
+	rng := rand.New(rand.NewSource(cfg.Seed)) // #nosec G404 -- generates fake demo-estate data; needs a deterministic, seedable sequence (cfg.Seed) for reproducible demos, and nothing here is a credential or token
 
 	addons, err := selectAddons(cfg.Addons, rng)
 	if err != nil {

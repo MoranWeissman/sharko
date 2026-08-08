@@ -439,7 +439,7 @@ func buildSecretConfig(spec ClusterSecretSpec) (string, error) {
 				CAData:   spec.CAData,
 			},
 		}
-		b, err := json.MarshalIndent(cfg, "", "  ")
+		b, err := json.MarshalIndent(cfg, "", "  ") // #nosec G117 -- the bearerToken field is ArgoCD's own declarative cluster-Secret config format; this JSON only ever lands in the ArgoCD cluster Secret, which is exactly where ArgoCD requires the token to live
 		if err != nil {
 			return "", fmt.Errorf("marshalling bearerTokenConfig: %w", err)
 		}

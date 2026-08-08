@@ -86,7 +86,7 @@ func (s *Server) handleCheckSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	recon := s.secretReconciler
-	go func() {
+	go func() { // #nosec G118 -- deliberately detached from the request context (see the handler comment above): cancelling the HTTP request must not abandon a fleet-wide check halfway through; the 5-minute timeout below bounds it instead
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		if err := recon.CheckAll(ctx); err != nil {
