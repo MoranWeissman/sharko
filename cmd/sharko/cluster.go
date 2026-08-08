@@ -82,20 +82,7 @@ var addClusterCmd = &cobra.Command{
 		// Handle dry-run response.
 		if dryRun {
 			var result struct {
-				DryRun *struct {
-					EffectiveAddons []string `json:"effective_addons"`
-					FilesToWrite    []struct {
-						Path   string `json:"path"`
-						Action string `json:"action"`
-					} `json:"files_to_write"`
-					PRTitle         string   `json:"pr_title"`
-					SecretsToCreate []string `json:"secrets_to_create"`
-					Verification    *struct {
-						Success      bool   `json:"success"`
-						ErrorCode    string `json:"error_code,omitempty"`
-						ErrorMessage string `json:"error_message,omitempty"`
-					} `json:"verification,omitempty"`
-				} `json:"dry_run"`
+				DryRun  *cliDryRunResult `json:"dry_run"`
 				Cluster struct {
 					Server        string `json:"server"`
 					ServerVersion string `json:"server_version"`
@@ -106,7 +93,6 @@ var addClusterCmd = &cobra.Command{
 			}
 
 			fmt.Println()
-			fmt.Println("Dry-run preview (no changes made):")
 
 			if result.Cluster.Server != "" {
 				fmt.Printf("  Server:  %s\n", result.Cluster.Server)
@@ -115,30 +101,7 @@ var addClusterCmd = &cobra.Command{
 				fmt.Printf("  Version: %s\n", result.Cluster.ServerVersion)
 			}
 
-			if result.DryRun != nil {
-				if len(result.DryRun.EffectiveAddons) > 0 {
-					fmt.Printf("  Addons:  %s\n", strings.Join(result.DryRun.EffectiveAddons, ", "))
-				}
-				fmt.Printf("  PR:      %s\n", result.DryRun.PRTitle)
-				if len(result.DryRun.FilesToWrite) > 0 {
-					fmt.Println("  Files:")
-					for _, f := range result.DryRun.FilesToWrite {
-						fmt.Printf("    [%s] %s\n", f.Action, f.Path)
-					}
-				}
-				if len(result.DryRun.SecretsToCreate) > 0 {
-					fmt.Printf("  Secrets: %s\n", strings.Join(result.DryRun.SecretsToCreate, ", "))
-				}
-				if result.DryRun.Verification != nil {
-					if result.DryRun.Verification.Success {
-						fmt.Println("  Verify:  passed")
-					} else {
-						fmt.Printf("  Verify:  FAILED [%s] %s\n",
-							result.DryRun.Verification.ErrorCode,
-							result.DryRun.Verification.ErrorMessage)
-					}
-				}
-			}
+			printDryRun(result.DryRun)
 			return nil
 		}
 
@@ -420,6 +383,14 @@ var listClustersCmd = &cobra.Command{
 }
 
 // printAPIError formats and returns an error from an API error response.
+//
+// The first line is always "API error (HTTP <status>): <message>" — that
+// format is depended on by scripts parsing CLI output, so it never changes.
+// When the server's error body also carries a coded-error "code" field
+// and/or a "problems" list (the v4 semantic-validation shape — see
+// writeV4OrchestratorError and writeCodedError in internal/api), those are
+// appended on their own lines so a caller doesn't have to re-run the
+// request with --dry-run just to see which values or secrets are missing.
 func printAPIError(body []byte, status int) error {
 	var errResp map[string]interface{}
 	if err := json.Unmarshal(body, &errResp); err != nil {
@@ -429,5 +400,14 @@ func printAPIError(body []byte, status int) error {
 	if msg == "" {
 		msg = string(body)
 	}
-	return fmt.Errorf("API error (HTTP %d): %s", status, msg)
+	out := fmt.Sprintf("API error (HTTP %d): %s", status, msg)
+	if code, ok := errResp["code"].(string); ok && code != "" {
+		out += fmt.Sprintf("\n  code: %s", code)
+	}
+	if problems, ok := errResp["problems"]; ok && problems != nil {
+		if b, err := json.Marshal(problems); err == nil && string(b) != "null" && string(b) != "[]" {
+			out += fmt.Sprintf("\n  problems: %s", string(b))
+		}
+	}
+	return fmt.Errorf("%s", out)
 }

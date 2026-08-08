@@ -253,14 +253,57 @@ Examples:
 	},
 }
 
+// addonDetailResponse mirrors models.AddonDetailResponse — the body GET
+// /api/v1/addons/{name} actually returns (NOT /api/v1/addons/{name}/detail,
+// which does not exist — a pre-existing CLI bug fixed alongside this
+// struct: the old code called the wrong route and got a 404 every time).
+type addonDetailResponse struct {
+	Addon          addonCatalogItem           `json:"addon"`
+	ApplicationSet *addonApplicationSetStatus `json:"application_set,omitempty"`
+}
+
+// addonCatalogItem mirrors models.AddonCatalogItem.
+type addonCatalogItem struct {
+	AddonName               string                `json:"addon_name"`
+	Chart                   string                `json:"chart"`
+	RepoURL                 string                `json:"repo_url"`
+	Namespace               string                `json:"namespace,omitempty"`
+	Version                 string                `json:"version"`
+	TotalClusters           int                   `json:"total_clusters"`
+	EnabledClusters         int                   `json:"enabled_clusters"`
+	HealthyApplications     int                   `json:"healthy_applications"`
+	DegradedApplications    int                   `json:"degraded_applications"`
+	MissingApplications     int                   `json:"missing_applications"`
+	DeployedClusterCount    int                   `json:"deployed_cluster_count"`
+	TotalTargetClusterCount int                   `json:"total_target_cluster_count"`
+	Applications            []addonDeploymentInfo `json:"applications"`
+}
+
+// addonDeploymentInfo mirrors models.AddonDeploymentInfo.
+type addonDeploymentInfo struct {
+	ClusterName       string `json:"cluster_name"`
+	Enabled           bool   `json:"enabled"`
+	ConfiguredVersion string `json:"configured_version,omitempty"`
+	DeployedVersion   string `json:"deployed_version,omitempty"`
+	SyncStatus        string `json:"sync_status,omitempty"`
+	HealthStatus      string `json:"health_status,omitempty"`
+	Status            string `json:"status"`
+}
+
+// addonApplicationSetStatus mirrors models.ApplicationSetStatusInfo.
+type addonApplicationSetStatus struct {
+	Name          string `json:"name"`
+	GeneratedApps int    `json:"generated_apps"`
+}
+
 var describeAddonCmd = &cobra.Command{
 	Use:   "describe-addon <name>",
-	Short: "Show full details of an addon including defaults",
+	Short: "Show full details of an addon including deployment status",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 
-		respBody, status, err := apiGet("/api/v1/addons/" + url.PathEscape(name) + "/detail")
+		respBody, status, err := apiGet("/api/v1/addons/" + url.PathEscape(name))
 		if err != nil {
 			return err
 		}
@@ -269,71 +312,60 @@ var describeAddonCmd = &cobra.Command{
 			return printAPIError(respBody, status)
 		}
 
-		var detail struct {
-			Name    string `json:"name"`
-			Chart   string `json:"chart"`
-			RepoURL string `json:"repo_url"`
-			Version struct {
-				Value     string `json:"value"`
-				IsDefault bool   `json:"is_default"`
-			} `json:"version"`
-			Namespace struct {
-				Value     string `json:"value"`
-				IsDefault bool   `json:"is_default"`
-			} `json:"namespace"`
-			SelfHeal struct {
-				Value     bool `json:"value"`
-				IsDefault bool `json:"is_default"`
-			} `json:"self_heal"`
-			SyncOptions       []string      `json:"sync_options"`
-			IgnoreDifferences []interface{} `json:"ignore_differences"`
-			ExtraHelmValues   []string      `json:"extra_helm_values"`
-			AdditionalSources []interface{} `json:"additional_sources"`
-		}
-
+		var detail addonDetailResponse
 		if err := json.Unmarshal(respBody, &detail); err != nil {
 			return fmt.Errorf("invalid response: %w", err)
 		}
+		a := detail.Addon
 
-		defaultTag := func(isDefault bool) string {
-			if isDefault {
-				return " (default)"
-			}
-			return ""
+		fmt.Printf("Addon: %s\n", a.AddonName)
+		fmt.Printf("  Chart:     %s\n", a.Chart)
+		fmt.Printf("  Repo:      %s\n", a.RepoURL)
+		fmt.Printf("  Version:   %s\n", a.Version)
+		if a.Namespace != "" {
+			fmt.Printf("  Namespace: %s\n", a.Namespace)
 		}
-		noneIfEmpty := func(s []string) string {
-			if len(s) == 0 {
-				return "(none)"
-			}
-			return strings.Join(s, ", ")
+		fmt.Printf("  Clusters:  %d/%d enabled, %d/%d running (healthy)\n",
+			a.EnabledClusters, a.TotalClusters, a.DeployedClusterCount, a.TotalTargetClusterCount)
+		if a.DegradedApplications > 0 || a.MissingApplications > 0 {
+			fmt.Printf("  Health:    %d healthy, %d degraded, %d missing\n",
+				a.HealthyApplications, a.DegradedApplications, a.MissingApplications)
 		}
-		noneIfEmptyAny := func(s []interface{}) string {
-			if len(s) == 0 {
-				return "(none)"
-			}
-			b, _ := json.Marshal(s)
-			return string(b)
+		if detail.ApplicationSet != nil {
+			fmt.Printf("  ApplicationSet: %s (%d generated app(s))\n",
+				detail.ApplicationSet.Name, detail.ApplicationSet.GeneratedApps)
 		}
-
-		fmt.Printf("Addon: %s\n", detail.Name)
-		fmt.Printf("  Chart:     %s\n", detail.Chart)
-		fmt.Printf("  Repo:      %s\n", detail.RepoURL)
-		fmt.Printf("  Version:   %s%s\n", detail.Version.Value, defaultTag(detail.Version.IsDefault))
-		fmt.Printf("  Namespace: %s%s\n", detail.Namespace.Value, defaultTag(detail.Namespace.IsDefault))
-		fmt.Printf("  Self-Heal: %v%s\n", detail.SelfHeal.Value, defaultTag(detail.SelfHeal.IsDefault))
-		fmt.Printf("  Sync Options: %s\n", noneIfEmpty(detail.SyncOptions))
-		fmt.Printf("  Ignore Differences: %s\n", noneIfEmptyAny(detail.IgnoreDifferences))
-		fmt.Printf("  Extra Helm Values: %s\n", noneIfEmpty(detail.ExtraHelmValues))
-		fmt.Printf("  Additional Sources: %s\n", noneIfEmptyAny(detail.AdditionalSources))
+		if len(a.Applications) > 0 {
+			fmt.Println("  Deployments:")
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "    CLUSTER\tENABLED\tCONFIGURED\tDEPLOYED\tSYNC\tHEALTH")
+			for _, d := range a.Applications {
+				fmt.Fprintf(w, "    %s\t%v\t%s\t%s\t%s\t%s\n",
+					d.ClusterName, d.Enabled, d.ConfiguredVersion, d.DeployedVersion, d.SyncStatus, d.HealthStatus)
+			}
+			w.Flush()
+		}
 
 		return nil
 	},
 }
 
+// addonCatalogEntry mirrors models.AddonCatalogEntry — the catalog entry
+// shape GET /api/v1/addons/list returns.
+type addonCatalogEntry struct {
+	Name        string   `json:"name"`
+	RepoURL     string   `json:"repoURL"`
+	Chart       string   `json:"chart"`
+	Version     string   `json:"version"`
+	Namespace   string   `json:"namespace,omitempty"`
+	SelfHeal    *bool    `json:"selfHeal,omitempty"`
+	SyncOptions []string `json:"syncOptions,omitempty"`
+}
+
 var listAddonsCmd = &cobra.Command{
 	Use:   "list-addons",
 	Short: "List addons in the catalog",
-	Long: `List all addons in the catalog with cluster deployment status.
+	Long: `List all addons in the catalog.
 
 Examples:
   sharko list-addons
@@ -341,7 +373,12 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		showConfig, _ := cmd.Flags().GetBool("show-config")
 
-		respBody, status, err := apiGet("/api/v1/addons")
+		// Route fixed alongside this command: the old code called GET
+		// /api/v1/addons, which does not exist (a pre-existing 404 bug) —
+		// the real route is /api/v1/addons/list, and its response is keyed
+		// "applicationsets" (the server's field name, carried over verbatim
+		// here rather than reshaped, since this is a CLI-only lane).
+		respBody, status, err := apiGet("/api/v1/addons/list")
 		if err != nil {
 			return err
 		}
@@ -350,15 +387,7 @@ Examples:
 		}
 
 		var resp struct {
-			Addons []struct {
-				AddonName       string   `json:"addon_name"`
-				Version         string   `json:"version"`
-				Namespace       string   `json:"namespace"`
-				SelfHeal        *bool    `json:"selfHeal"`
-				SyncOptions     []string `json:"syncOptions"`
-				TotalClusters   int      `json:"total_clusters"`
-				EnabledClusters int      `json:"enabled_clusters"`
-			} `json:"addons"`
+			Addons []addonCatalogEntry `json:"applicationsets"`
 		}
 		if err := json.Unmarshal(respBody, &resp); err != nil {
 			return fmt.Errorf("invalid response: %w", err)
@@ -371,23 +400,26 @@ Examples:
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		if showConfig {
-			fmt.Fprintln(w, "NAME\tVERSION\tNAMESPACE\tSELF-HEAL\tCLUSTERS")
+			fmt.Fprintln(w, "NAME\tCHART\tVERSION\tNAMESPACE\tSELF-HEAL\tSYNC-OPTIONS")
 		} else {
-			fmt.Fprintln(w, "NAME\tVERSION\tNAMESPACE\tCLUSTERS")
+			fmt.Fprintln(w, "NAME\tCHART\tVERSION\tNAMESPACE")
 		}
 
 		for _, a := range resp.Addons {
-			clusters := fmt.Sprintf("%d/%d", a.EnabledClusters, a.TotalClusters)
 			if showConfig {
 				selfHeal := "false"
 				if a.SelfHeal != nil && *a.SelfHeal {
 					selfHeal = "true"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-					a.AddonName, a.Version, a.Namespace, selfHeal, clusters)
+				syncOpts := "(none)"
+				if len(a.SyncOptions) > 0 {
+					syncOpts = strings.Join(a.SyncOptions, ",")
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+					a.Name, a.Chart, a.Version, a.Namespace, selfHeal, syncOpts)
 			} else {
 				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-					a.AddonName, a.Version, a.Namespace, clusters)
+					a.Name, a.Chart, a.Version, a.Namespace)
 			}
 		}
 		w.Flush()

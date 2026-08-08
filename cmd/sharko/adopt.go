@@ -90,13 +90,7 @@ that are already registered in ArgoCD but not yet managed by Sharko.`,
 					Branch string `json:"branch"`
 					Merged bool   `json:"merged"`
 				} `json:"git,omitempty"`
-				DryRun *struct {
-					FilesToWrite []struct {
-						Path   string `json:"path"`
-						Action string `json:"action"`
-					} `json:"files_to_write"`
-					PRTitle string `json:"pr_title"`
-				} `json:"dry_run,omitempty"`
+				DryRun *cliDryRunResult `json:"dry_run,omitempty"`
 			} `json:"results"`
 		}
 		if err := json.Unmarshal(respBody, &result); err != nil {
@@ -136,10 +130,7 @@ that are already registered in ArgoCD but not yet managed by Sharko.`,
 			}
 
 			if cr.DryRun != nil {
-				fmt.Printf("    PR:     %s\n", cr.DryRun.PRTitle)
-				for _, f := range cr.DryRun.FilesToWrite {
-					fmt.Printf("    [%s] %s\n", f.Action, f.Path)
-				}
+				printDryRun(cr.DryRun)
 			}
 
 			if cr.Message != "" {

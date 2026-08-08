@@ -78,13 +78,7 @@ secret intact. The cluster must have the sharko.sharko.dev/adopted annotation.`,
 				Branch string `json:"branch"`
 				Merged bool   `json:"merged"`
 			} `json:"git,omitempty"`
-			DryRun *struct {
-				FilesToWrite []struct {
-					Path   string `json:"path"`
-					Action string `json:"action"`
-				} `json:"files_to_write"`
-				PRTitle string `json:"pr_title"`
-			} `json:"dry_run,omitempty"`
+			DryRun *cliDryRunResult `json:"dry_run,omitempty"`
 		}
 		if err := json.Unmarshal(respBody, &result); err != nil {
 			return fmt.Errorf("invalid response: %w", err)
@@ -93,11 +87,7 @@ secret intact. The cluster must have the sharko.sharko.dev/adopted annotation.`,
 		fmt.Println()
 
 		if dryRun && result.DryRun != nil {
-			fmt.Println("Dry-run preview (no changes made):")
-			fmt.Printf("  PR:  %s\n", result.DryRun.PRTitle)
-			for _, f := range result.DryRun.FilesToWrite {
-				fmt.Printf("  [%s] %s\n", f.Action, f.Path)
-			}
+			printDryRun(result.DryRun)
 			return nil
 		}
 
