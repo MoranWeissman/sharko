@@ -32,43 +32,53 @@ relative paths from the worktree. After every batch of writes:
 
 ## Actual File Inventory
 
+This inventory drifts fast — before relying on a name below, `ls ui/src/views/` /
+`ls ui/src/components/` to confirm it still exists.
+
 ### Views (`ui/src/views/`)
 ```
-AddonCatalog.tsx       AddonDetail.tsx
-AIAssistant.tsx        ApiKeys.tsx
-ClusterDetail.tsx      ClustersOverview.tsx
-Connections.tsx        Dashboard.tsx
-Dashboards.tsx         Docs.tsx
-Login.tsx              Observability.tsx
-Settings.tsx           UserInfo.tsx
-UserManagement.tsx     VersionMatrix.tsx
+AddonCatalog.tsx       AddonDetail.tsx        AIAssistant.tsx
+ApiKeys.tsx             AuditViewer.tsx        ClusterDetail.tsx
+ClustersOverview.tsx    Dashboard.tsx          Dashboards.tsx
+Login.tsx               ManagedSecrets.tsx     Observability.tsx
+SecretTiles.tsx         Settings.tsx           SystemView.tsx
+UserInfo.tsx            UserManagement.tsx
 ```
+`Settings.tsx` now composes section files from `ui/src/views/settings/`
+(`ConnectionSection.tsx`, `AIConfigSection.tsx`, `CatalogSourcesSection.tsx`,
+`GitOpsSection.tsx`, `InlineCredentialsSection.tsx`, `SecretsProviderSection.tsx`,
+`AddonValuesEngineSection.tsx`, `ProbeModeSection.tsx`, `MyAccountSection.tsx`) instead of one
+flat file with internal tabs.
 
 ### Custom Components (`ui/src/components/`)
+The list has grown well past the old v1.x set — some of the still-current ones:
 ```
-AddonDots.tsx          ClusterCard.tsx
-CommandPalette.tsx     ConfirmationModal.tsx
-ConnectionStatus.tsx   DateTimeDisplay.tsx
-DetailNavPanel.tsx     EmptyState.tsx
-ErrorFallback.tsx      ErrorState.tsx
-FloatingAssistant.tsx  Layout.tsx
-LoadingState.tsx       MarkdownRenderer.tsx
-NotificationBell.tsx   RoleGuard.tsx
-SearchableSelect.tsx   StatCard.tsx
-StatusBadge.tsx        WaveDecoration.tsx
-YamlViewer.tsx
+AddAddonFlow.tsx        AdoptClustersDialog.tsx   ArgoCDStatusBanner.tsx
+AttentionSection.tsx    ClusterCard.tsx           ClusterIdentityPanel.tsx
+ClusterStatusSummary.tsx CommandPalette.tsx        ConfirmationModal.tsx
+DetailNavPanel.tsx      DiagnoseModal.tsx         DoctorModal.tsx
+DriftAlertsPanel.tsx    EnableAddonPicker.tsx     FirstRunWizard.tsx
+FleetStatusStrip.tsx    FloatingAssistant.tsx     Layout.tsx
+MarketplaceTab.tsx      MigrationBanner.tsx       NotificationBell.tsx
+PendingPRsPanel.tsx     RoleGuard.tsx             TakeoverDialog.tsx
+V4EnableAddonDialog.tsx ValuesEditor.tsx          VerifiedBadge.tsx
+WaveDecoration.tsx      YamlViewer.tsx
 ```
+Older components like `ConnectionStatus.tsx`, `ErrorFallback.tsx`, `ErrorState.tsx`, and
+`MarkdownRenderer.tsx` are all still present too — the component count has grown, not turned
+over. Verify with `ls ui/src/components/` before citing any name not in the grep above.
 
 ### shadcn/ui Components (`ui/src/components/ui/`)
 ```
-badge  button  card  dialog  dropdown-menu  input
+badge  button  card  dialog  dropdown-menu  input  popover
 separator  sheet  sidebar  skeleton  table  tabs  tooltip
 ```
 
 ### Hooks (`ui/src/hooks/`)
 ```
-use-mobile.ts    useAuth.tsx       useConnections.tsx
-useDashboards.ts useTheme.tsx
+use-mobile.ts        useAddonStates.tsx     useAuth.tsx
+useConnectionHealth.ts useConnections.tsx   useDashboards.ts
+useNavBadges.tsx      useTheme.tsx
 ```
 
 ### Services (`ui/src/services/`)
@@ -76,6 +86,19 @@ useDashboards.ts useTheme.tsx
 api.ts       Centralized API client (fetchJSON, postJSON, putJSON, deleteJSON)
 models.ts    TypeScript types mirroring Go models
 ```
+
+### v4 UI Note
+
+Two dialogs exist for the v4 write paths but are built-but-unmounted — present in the codebase,
+not yet wired into any route/parent that renders them: `V4EnableAddonDialog.tsx` (the v4
+equivalent of the v3 enable-addon flow, writing `cluster-addons/<cluster>.yaml`) and
+`TakeoverDialog.tsx` (drives `TakeoverClusterGit`). Check `git grep -n "V4EnableAddonDialog\|TakeoverDialog"`
+before assuming either renders anywhere before doing UI work near them. `DryRunPreview` (defined
+in `AddAddonFlow.tsx`, reused from `AdoptClustersDialog.tsx`, `ValuesEditor.tsx`,
+`MarketplaceAddonDetail.tsx`, `V4EnableAddonDialog.tsx`, and several views) renders
+`DryRunResult.files_to_write` — it now renders `create` and `delete` actions with a real diff,
+not just `update`, matching the catalog edit/delete and cluster-removal v4 flows that ship diffs
+for all three actions.
 
 ## Color Palette (Sky-Blue Theme)
 

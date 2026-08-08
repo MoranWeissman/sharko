@@ -211,9 +211,11 @@ func (o *Orchestrator) RegisterCluster(ctx, req) (*RegisterClusterResult, error)
 
 ## `internal/argosecrets/` — ArgoCD Cluster Secret Manager
 
-- `Manager.Ensure()` returns `(bool, error)` — true if write occurred, false if skipped.
-- `Reconciler`: 3-min ticker reads `cluster-addons.yaml`, calls `Manager.Ensure()` per cluster
-  (legacy path — kept for cluster-addons file).
+- `Manager.Ensure()` returns `(bool, error)` — true if write occurred, false if skipped. Called
+  directly (synchronously) by the orchestrator on register/adopt/takeover — this package no
+  longer has its own ticker/`Reconciler`. `internal/clusterreconciler` is the only periodic
+  reconciler of ArgoCD cluster Secrets now, for both v3 and v4 repos (`internal/secrets` still
+  runs its own separate reconciler for addon secrets, unrelated).
 - Adapter pattern: `ArgoSecretManager` interface in orchestrator, adapter in
   `internal/api/argo_adapter.go`. Dependency boundary: orchestrator cannot import argosecrets.
 - **Shared wrappers (V125-1-8)**: `BuildSecretConfigJSON(ClusterSecretSpec) (string, error)` and
@@ -602,7 +604,7 @@ func (t *Tracker) ListPRs(ctx, status, cluster, user string) ([]PRInfo, error)
 func (t *Tracker) PollSinglePR(ctx, prID int) (*PRInfo, error)
 ```
 
-### Orchestrator: Adoption/Unadopt/Remove/Disable
+### Orchestrator: Adoption/Unadopt/Remove/Disable (v3 repos — combined values file)
 
 **`orchestrator/adopt.go` — AdoptClusters:**
 - Two-phase: Stage1 verify per cluster, then create values + managed-clusters.yaml PR
@@ -626,6 +628,31 @@ func (t *Tracker) PollSinglePR(ctx, prID int) (*PRInfo, error)
 - Disables specific addon on a single cluster
 - Cleanup scope: `all`, `labels`, `none`
 - Updates values file, optionally updates managed-clusters labels, optionally deletes addon secrets
+
+### Orchestrator: v4 write model (split per-cluster assignment files)
+
+v4 repos don't have one combined values file per cluster — they have
+`cluster-addons/<cluster>.yaml` (which addons run there) plus one
+`values/clusters/<cluster>/<addon>.yaml` per addon. Every v4 write follows the same shape:
+**validate the request → build a `FilePreview` diff of every file the operation would touch →
+commit everything as a single PR via `commitChangesWithMeta`** (never a bare `commitChanges` call
+for v4 paths — `commitChangesWithMeta` attaches `PRMetadata` so the PR title/body name the
+operation). `buildFileDiff`/`BuildFileDiff` (`orchestrator/preview_diff.go`) redacts secret values
+in both old and new content before diffing values files; non-secret files (catalog,
+managed-clusters, cluster-addons) diff as-is.
+
+The v4-specific files, parallel to the v3 ones above:
+- `orchestrator/adopt_v4.go` — `adoptSingleClusterV4`
+- `orchestrator/unadopt_v4.go` — `buildUnadoptV4Plan` + `unadoptV4FilePreviews`
+- `orchestrator/cluster_addons_v4.go`, `addon_ops_v4.go` — `EnableAddonV4` / `DisableAddonV4`,
+  writing/removing entries in `cluster-addons/<cluster>.yaml`
+- `orchestrator/catalog_edit.go`, `catalog_delete.go` — `EditCatalogEntry` / `DeleteFromCatalog`,
+  both go through the same preview/PR pipeline as every other v4 write
+- `orchestrator/upgrade_v4.go` — `UpgradeAddonClustersV4`
+- `orchestrator/takeover.go` — `TakeoverClusterGit`, generates real file previews via
+  `buildTakeoverFiles` / `takeoverFilePreviews` (not placeholder diffs)
+- `orchestrator/migration_v3v4.go` + `migration_*.go` — `MigrateV3ToV4`, converts a v3 repo to
+  the v4 shape in one PR (`commitMigrationPR`)
 
 ### Idempotent Retry with `findOpenPRForCluster`
 

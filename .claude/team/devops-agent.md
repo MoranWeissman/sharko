@@ -35,7 +35,13 @@ Dockerfile                      Multi-stage Go + UI build
   release.yml                   workflow_run-triggered on CI success
   pr-docker.yml                 PR-time Docker build smoke
   e2e.yml                       Scheduled / on-demand kind-backed e2e
-  catalog-scan.yml              Trusted-source catalog scanner bot (CNCF Landscape + EKS Blueprints)
+  catalog-scan.yml              Trusted-source catalog scanner bot (CNCF Landscape + EKS Blueprints).
+                                PARKED — manual `workflow_dispatch` only, no schedule. `dry_run`
+                                defaults to true: the default run only scans + prints proposals,
+                                workflow-level permission is `contents: read` (cannot write
+                                anything). Opening a draft PR needs an explicit `dry_run=false`,
+                                which is the only path that elevates to `contents: write` +
+                                `pull-requests: write`. Never auto-merges.
   catalog-sign-roundtrip.yml    cosign-keyless signing round-trip verification
   claude-code-review.yml        PR review automation
   claude.yml                    @claude mention handler
@@ -150,10 +156,26 @@ on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
-    branches: ["main"]
 ```
 
-This ensures a release is never published without passing CI. The release job checks `event.workflow_run.conclusion == 'success'` before proceeding.
+Every job's own `if:` restricts it to a `v*`-tagged ref, and checks `event.workflow_run.conclusion
+== 'success'` before proceeding — that already required the standard CI suite (go/UI build+test,
+swagger/schema/provider-type drift, helm lint, security scan) to have passed on the tag.
+
+**Release evidence gate (v4-coherence-closure):** plain CI passing used to be the whole gate, but
+that never proved the full kind-backed e2e suite, the perf-regression check, or a docs-site build
+had run against the actual tagged commit — a tag could publish having never exercised any of the
+three. `release.yml` now runs `release-gate-*` jobs directly against the tagged commit
+(`release-gate-e2e`, `release-gate-e2e-live-gitea`, `release-gate-e2e-helm`, `release-gate-perf`,
+`release-gate-docs`) — they deliberately duplicate steps from `e2e.yml` / `perf-regression.yml`
+rather than call them as reusable workflows,
+matching perf-regression.yml's own stated reasoning that a shared composite action isn't worth the
+indirection until a third workflow needs the same boot. **`release-evidence-gate`** is the fan-in
+job every publish step (`sign-catalog-entries` onward) actually depends on: GitHub Actions'
+default `needs:` semantics already fail a dependent job when a needed job FAILS, but a needed job
+that gets SKIPPED still counts as "not success" only if something explicitly checks for it —
+`release-evidence-gate` is that explicit check, so a silently-skipped evidence job (e.g. someone
+loosens an `if:`) fails the release instead of quietly missing it.
 
 ### Concurrency Control
 

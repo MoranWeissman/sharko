@@ -49,8 +49,36 @@ GET    /api/v1/version                            → GetVersion
 - `$.Values.repoURL` and `$.Values.revision` from `bootstrap/values.yaml`
 - AppProject + ApplicationSet created per addon in catalog
 
-### The Coupling Contract
-**Cluster name = values file name.** `sharko add-cluster prod-eu` creates `configuration/addons-clusters-values/prod-eu.yaml`. The AppSet git generator finds it via `{{.name}}.yaml`.
+### The Coupling Contract (v3 repos)
+**Cluster name = values file name.** `sharko add-cluster prod-eu` creates `configuration/addons-clusters-values/prod-eu.yaml`. The AppSet git generator finds it via `{{.name}}.yaml`. This is
+the v3 repo shape only — see "v4 Data-File Layout" below for the split-file format v4 repos use
+instead. A repo is one shape or the other, never mixed.
+
+## v4 Data-File Layout
+
+v4 replaces the single combined values file with a split layout (design doc
+`docs/design/2026-07-30-v4-data-file-format.md`):
+
+- `managed-clusters.yaml`, `catalog.yaml`, `sharko-engine.yaml` — three single files at the repo
+  root (renamed from `fleet/connections.yaml`, `catalog/addons.yaml`, `engine/application.yaml`).
+  `catalog.yaml` is the org's whole approved addon list — a fresh v4 repo starts with an empty
+  catalog, nothing runs until someone approves it. `sharko-engine.yaml` is a real ArgoCD
+  `Application` object (the engine chart pin) and is the one file that keeps the full
+  apiVersion/kind/metadata/spec shape; every other v4 file drops the `spec:` wrapper.
+- `cluster-addons/<cluster-name>.yaml` — one per-cluster file naming which addons are enabled on
+  that cluster. This is what `internal/clusterreconciler`'s v4 layer (`v4_assignments.go`) reads
+  to derive the `addons.sharko.dev/<addon>: enabled` labels the engine's ApplicationSet matches
+  on — v4 cluster registration itself writes no addon labels.
+- `values/global/<addon>.yaml` — generated the moment an addon is added to the catalog, from the
+  chart's own `values.yaml` with cluster-specific fields commented out (`internal/orchestrator/smart_values.go`).
+- `values/clusters/<cluster>/<addon>.yaml` — per-cluster override, one file per addon per cluster
+  (already scoped to one addon, unlike v3's one-file-per-cluster-with-every-addon shape). Seeded
+  from the global template the first time an addon is enabled on that cluster with no explicit
+  values.
+
+The path `cluster-addons/` is fixed by the format, not configurable — the engine chart's own
+ApplicationSet generator hard-codes the same literal, so a configurable override would let a repo
+silently stop matching what the engine reads.
 
 ### What Sharko Does NOT Touch
 - AppSet template logic (sync waves, multi-source, ignoreDifferences)
@@ -124,32 +152,41 @@ addonSecrets:
 
 ## ArgoCD Cluster Secret Management
 
-Two cooperating writers exist, both emitting identical Secret shapes via shared wrappers in
-`internal/argosecrets/manager.go`:
+`internal/clusterreconciler/` is the only reconciler — the only periodic, tick-driven writer of
+ArgoCD cluster Secrets, for both v3 and v4 repos. `internal/argosecrets/` no longer has a
+reconciler of its own (the old 3-min ticker over `cluster-addons.yaml` is retired); its
+`Manager.Ensure()`/`Delete()` are still called directly, synchronously, by the orchestrator on
+the register/adopt/takeover paths. Both code paths emit identical Secret shapes via shared
+wrappers in `internal/argosecrets/manager.go`:
 
-- `internal/argosecrets/` (legacy path, still in use)
-  - `manager.go` — CRUD for ArgoCD cluster secrets in `execProviderConfig` format.
-    `BuildSecretConfigJSON(ClusterSecretSpec) (string, error)` and
-    `BuildClusterSecretLabels(ClusterSecretSpec) map[string]string` are the **shared wrappers**
-    that V125-1-8's `internal/clusterreconciler/` reuses so both writers produce identical Secret
-    payloads — ArgoCD's auth code path is unchanged across the two.
-  - `reconciler.go` — 3-min ticker over `cluster-addons.yaml` (legacy file).
+- `internal/argosecrets/`
+  - `manager.go` — CRUD for ArgoCD cluster secrets in `execProviderConfig` format, called directly
+    by the orchestrator (not on a timer). `BuildSecretConfigJSON(ClusterSecretSpec) (string, error)`
+    and `BuildClusterSecretLabels(ClusterSecretSpec) map[string]string` are the **shared wrappers**
+    that `internal/clusterreconciler/` reuses so both writers produce identical Secret payloads —
+    ArgoCD's auth code path is unchanged across the two.
   - Adapter: `argo_adapter.go` in `internal/api/` bridges Manager → `ArgoSecretManager` interface
     in orchestrator.
 
-- `internal/clusterreconciler/` (V125-1-8 canonical reconciler for managed-clusters.yaml)
+- `internal/clusterreconciler/` (the canonical reconciler, for `managed-clusters.yaml` on both
+  v3 and v4 repos)
   - `reconciler.go` — single goroutine, 30s `DefaultTickInterval` safety-net + non-blocking
     `Trigger()` channel for low-latency post-merge convergence (wired in `serve.go` via
     `prTracker.SetOnMergeFn(func(pr) { recon.Trigger() })`).
   - `labels.go` — `LabelManagedBy = "app.kubernetes.io/managed-by"`,
     `LabelValueSharko = "sharko"`, plus `IsManagedBySharko(secret)` (nil-safe predicate) and
     `ApplyManagedBySharkoLabel(secret)` (idempotent setter).
-  - Reads via `models.LoadManagedClusters` (V125-1-9 envelope-aware reader); writes Secrets in
+  - `v4_assignments.go` — on a v4 repo, also reads `cluster-addons/*.yaml` and derives the
+    `addons.sharko.dev/<addon>: enabled` labels the engine's ApplicationSet matches on. A cluster
+    whose assignment file can't be read is tracked as "desired unknown" so its live labels are
+    left alone rather than wiped by a false "zero addons" read.
+  - Reads via `models.LoadManagedClusters` (envelope-aware reader, both shapes); writes Secrets in
     the `argocd` namespace filtered by the ownership label.
   - Per-cluster + per-secret error isolation: one vault failure does NOT block reconciliation
     of the others (design §10).
-  - Default path `configuration/managed-clusters.yaml`, branch `main`, namespace `argocd` —
-    all overridable via `Deps`.
+  - Default v3 path `configuration/managed-clusters.yaml`; on a v4 repo, the root file
+    `managed-clusters.yaml` (`V4ManagedClustersPath`, tried as a fallback only when the configured
+    v3 path is absent). Branch `main`, namespace `argocd` — all overridable via `Deps`.
 
 **Ownership rule (universal):** every cluster Secret Sharko writes carries the managed-by label;
 every cluster-Secret deletion checks `IsManagedBySharko` first. V125-1-7 orphan-delete tightening

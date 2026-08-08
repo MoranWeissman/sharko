@@ -48,12 +48,21 @@ internal/models/         Shared data models + V125-1-9 envelope-aware LoadManage
 internal/schema/         V125-1-9 — Envelope[T] generic, IsEnveloped detector, DefaultValidator
                          (santhosh-tekuri/jsonschema v5), generator.go (invopop/jsonschema),
                          embedded *.v1.json schemas
-internal/clusterreconciler/  V125-1-8 — git→ArgoCD reconciler with ownership label gate
+internal/clusterreconciler/  The only reconciler of ArgoCD cluster Secrets — git→ArgoCD Secret
+                             reconciler with ownership label gate
                              (app.kubernetes.io/managed-by: sharko); 30s safety-net tick +
-                             low-latency Trigger() driven by prTracker.SetOnMergeFn
-internal/argosecrets/    ArgoCD cluster Secret Manager + Reconciler (3-min, legacy path);
-                         BuildSecretConfigJSON + BuildClusterSecretLabels are shared by the
-                         new clusterreconciler so both writers emit the same shape
+                             low-latency Trigger() driven by prTracker.SetOnMergeFn. On a v4 repo
+                             it also derives each cluster's addon-enablement labels straight from
+                             cluster-addons/<cluster>.yaml (v4_assignments.go) — v4 registration
+                             never writes those labels itself, so this is what turns "enable an
+                             addon" into an actual ArgoCD deploy on v4.
+internal/argosecrets/    ArgoCD cluster Secret Manager (retired: the package's own 3-min ticker
+                         reconciler — clusterreconciler is the only reconciler of ArgoCD cluster
+                         Secrets now, for both v3 and v4 repos). Manager.Ensure()/Delete() are
+                         still called directly by the orchestrator on the register/adopt/takeover
+                         paths; BuildSecretConfigJSON + BuildClusterSecretLabels are shared
+                         wrappers so clusterreconciler and the orchestrator's direct Manager
+                         calls emit the same Secret shape
 internal/prtracker/      PR lifecycle tracker; SetOnMergeFn fans merge events to consumers
 internal/cmstore/        ConfigMap-backed JSON state store (PR tracker, observations, audit)
 internal/audit/          Request-scoped audit via context Enrich pattern; ring buffer + SSE
@@ -99,8 +108,8 @@ tests/e2e/{harness,lifecycle}/  V125-1-13 kind-backed e2e harness + in-cluster g
   Resource, Detail})`. NOTE: `internal/audit` is request-scoped via context — non-HTTP reader paths
   (e.g. clusterreconciler) must use `slog` directly, not audit.Enrich (V125-1-8.1 finding).
 - **PR-merge fan-out**: `prTracker.SetOnMergeFn(func(pr PRInfo) { recon.Trigger() })` lets
-  multiple subsystems react to PR merges without coupling. Used by clusterreconciler and
-  argosecrets reconciler.
+  multiple subsystems react to PR merges without coupling. Used by clusterreconciler for its
+  low-latency post-merge convergence.
 
 ## Catalog signing/sources boundary (v1.23)
 

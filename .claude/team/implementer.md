@@ -172,7 +172,11 @@ internal/
     store.go        Store interface + FileStore (YAML, local dev)
     k8s_store.go    K8sStore (encrypted K8s Secret)
     ai_store.go     AI config persistence
-    parser.go       Git repo config parser (addons-catalog, cluster-addons)
+    parser.go       Git repo config parser for v3-shaped files — the single combined
+                    `addons-catalog.yaml` and the single `managed-clusters.yaml` (legacy bare
+                    or enveloped). v4's split files (root `catalog.yaml`, per-cluster
+                    `cluster-addons/<cluster>.yaml`) are read elsewhere — see
+                    internal/config/addon_catalog.go and internal/clusterreconciler/v4_assignments.go
 
   auth/             store.go — User auth (K8s ConfigMap or env var)
   authz/            RBAC (Viewer/Operator/Admin) + action→role map
@@ -208,16 +212,16 @@ tests/e2e/          V125-1-13 e2e harness
                     domain tests. Run via `make test-e2e-fast` (~30s, no kind) or
                     `make test-e2e` (~10-15 min, kind-backed) / `make test-e2e-helm`.
 
-templates/
-  starter/          Embedded scaffold for sharko init
-  bootstrap/        Production AppSet templates (reference)
-  charts/           6 addon Helm charts (reference)
-  configuration/    Cluster values + addon catalog (reference)
-  monitoring/       Datadog CRDs, dashboards, monitors (reference)
-  docs/             Architecture docs (reference)
-  embed.go          //go:embed all:starter
+templates/          `starter/`, `configuration/`, and `monitoring/` (Datadog reference) are gone —
+                    do not reference them, they no longer exist in the tree.
+  bootstrap/        AppSet + root-app templates for `sharko init` (Chart.yaml, root-app.yaml,
+                    repository-secret.yaml, configuration/, templates/)
+  examples/         Sample files (e.g. validate-action.yaml)
+  embed.go          //go:embed for the templates above
 
-charts/sharko/      Helm chart for deploying Sharko (12 templates)
+charts/sharko/        Helm chart for deploying the Sharko server
+charts/sharko-engine/ v4 engine chart — the GitOps engine (ApplicationSet generators, etc.) that
+                      `sharko-engine.yaml` pins as an ArgoCD Application
 ```
 
 ## Swagger / OpenAPI

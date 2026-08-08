@@ -362,3 +362,17 @@ Catalog signing surface (v1.23) still applies: any change in `internal/catalog/`
 `internal/catalog/sources/`, or `internal/catalog/signing/` must consider trust-policy regex
 semantics, sidecar bundle fetch path, sources-vs-signing import boundary, and the per-entry
 `Verified` + `SignatureIdentity` API contract. Bring the security-auditor for those by default.
+
+## v4-coherence-closure sprint (2026-08)
+
+Closed the gap between v4's data-file format shipping and the rest of the product actually
+working on it end to end: self-generated initial admin with the zero-user fail-open path removed
+(#777); v4 catalog edit/delete, adopt/unadopt/label-patch, and cluster removal all working through
+the same validate → preview → single-PR pipeline (#774, #775, #779); CLI full v4 parity including
+takeover and real diffs (#776); UI previews showing exact file content, not placeholders (#780);
+API tokens persisting across restarts (#783); e2e strictness (no more silent 500/409 tolerance,
+#769) plus a `DriftDetected` event once per label fight (#770); the catalog-scan bot parked for
+real (#782) and the release workflow gated on full e2e+docs+perf evidence, not just plain CI
+(#781). `internal/clusterreconciler` is now the only reconciler of ArgoCD cluster Secrets — the
+old `internal/argosecrets` ticker is gone (`internal/secrets` still runs its own separate
+reconciler for addon secrets, unrelated). `v4.0.0` is not tagged yet; that's on Moran's word only.

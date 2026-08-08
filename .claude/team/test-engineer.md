@@ -57,6 +57,23 @@ E2E tests live under `tests/e2e/{harness,lifecycle}` (V125-1-13). The lifecycle 
 contains per-domain `*_test.go` files; the harness directory contains shared apiclient_*.go
 helpers plus the in-cluster gitfake Pod scaffolding.
 
+**E2E strictness rule (current):** a lifecycle test must not silently tolerate a 500 or a 409 —
+either the code is fixed so the real status comes back, or the tolerance is deliberate and
+documented in the test with a comment saying why. e2e config-diff and values paths on v4 clusters
+now REQUIRE success, not "success or one of these error codes" (this sprint's e2e-strictness
+work, #769) — that change caught real bugs isolated agents had missed.
+
+`cmd/sharko/` has its own `net/http/httptest`-backed CLI test harness (`cli_test_helpers_test.go`)
+that spins up a real HTTP test server and drives the CLI commands against it — not just unit
+tests of individual functions. Covers cluster/addon/v4/takeover/dry-run/malformed-input command
+paths (`addon_test.go`, `addon_v4_test.go`, `takeover_test.go`, `dryrun_test.go`,
+`malformed_input_test.go`, `validate_config_v4_test.go`, etc.).
+
+`internal/clusterreconciler/` has dedicated drift-event tests (`drift_event_test.go`,
+`drift_detection_test.go`, `fight_detection_test.go`) covering the `DriftDetected` event emitted
+once per label fight (#770), plus v4-specific coverage (`v4_addon_labels_test.go`,
+`v4_enable_converges_test.go`, `v4_fallback_test.go`, `v4_migration_labels_test.go`).
+
 Frontend tests are vitest, co-located alongside views/components.
 
 ## Patterns established by V125-1-8 / V125-1-9 work
