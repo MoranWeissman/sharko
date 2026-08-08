@@ -54,6 +54,7 @@ interface WizardForm {
   argocd_server_url: string
   argocd_token: string
   argocd_namespace: string
+  argocd_insecure: boolean
   provider_type: '' | 'aws-sm' | 'k8s-secrets'
   provider_region: string
   provider_prefix: string
@@ -65,6 +66,7 @@ const emptyForm: WizardForm = {
   argocd_server_url: '',
   argocd_token: '',
   argocd_namespace: 'argocd',
+  argocd_insecure: false,
   provider_type: '',
   provider_region: '',
   provider_prefix: '',
@@ -381,6 +383,24 @@ function StepArgoCD({
             onChange={(e) => onChange({ argocd_namespace: e.target.value })}
             placeholder="argocd"
           />
+        </div>
+
+        <div className="flex items-start gap-2">
+          <input
+            id="wizard-argocd-insecure"
+            type="checkbox"
+            checked={form.argocd_insecure}
+            onChange={(e) => onChange({ argocd_insecure: e.target.checked })}
+            className="mt-0.5 h-4 w-4 rounded border-[#5a9dd0] text-teal-600 focus:ring-teal-500 dark:border-gray-600"
+          />
+          <label htmlFor="wizard-argocd-insecure" className="text-sm text-[#0a3a5a] dark:text-gray-300">
+            Skip TLS certificate verification
+            <span className="block text-xs text-[#3a6a8a] dark:text-gray-500">
+              Only for an ArgoCD with a self-signed certificate. Keep this off unless the
+              connection test tells you to turn it on — with it on, the connection can be
+              read by anyone between Sharko and ArgoCD.
+            </span>
+          </label>
         </div>
       </div>
 
@@ -1714,6 +1734,7 @@ export function FirstRunWizard({
         git_url: gitUrl,
         argocd_server_url: existingConnection.argocd_server_url,
         argocd_namespace: existingConnection.argocd_namespace || 'argocd',
+        argocd_insecure: existingConnection.argocd_insecure ?? false,
         provider_type:
           (existingConnection.provider?.type as '' | 'aws-sm' | 'k8s-secrets') || '',
         provider_region: existingConnection.provider?.region || '',
@@ -1743,7 +1764,11 @@ export function FirstRunWizard({
       server_url: form.argocd_server_url || '',
       token: form.argocd_token || undefined,
       namespace: form.argocd_namespace || 'argocd',
-      insecure: true,
+      // Verification is on unless the operator explicitly ticked the
+      // skip-verification checkbox. This used to be hardcoded `true`,
+      // which silently turned verification off for every connection
+      // created through the wizard (task #152 adversarial finding).
+      insecure: form.argocd_insecure,
     },
     provider: form.provider_type
       ? {

@@ -26,6 +26,7 @@ interface ConnectionFormData {
   argocd_server_url: string
   argocd_token: string
   argocd_namespace: string
+  argocd_insecure: boolean
 }
 
 interface TestStatus {
@@ -58,6 +59,7 @@ export function ConnectionSection() {
     argocd_server_url: '',
     argocd_token: '',
     argocd_namespace: 'argocd',
+    argocd_insecure: false,
   })
 
   const [saving, setSaving] = useState(false)
@@ -99,6 +101,7 @@ export function ConnectionSection() {
         argocd_server_url: existingConn.argocd_server_url,
         argocd_token: '',
         argocd_namespace: existingConn.argocd_namespace,
+        argocd_insecure: existingConn.argocd_insecure ?? false,
       })
     }
   }, [existingConn?.name]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -482,6 +485,23 @@ export function ConnectionSection() {
                   required
                 />
               </div>
+              <div className="flex items-start gap-2 sm:col-span-2">
+                <input
+                  id="conn-argocd-insecure"
+                  type="checkbox"
+                  checked={form.argocd_insecure}
+                  onChange={(e) => { setForm(prev => ({ ...prev, argocd_insecure: e.target.checked })); setTestStatus({ git: 'idle', argocd: 'idle' }) }}
+                  className="mt-0.5 h-4 w-4 rounded border-[#5a9dd0] text-teal-600 focus:ring-teal-500 dark:border-gray-600"
+                />
+                <label htmlFor="conn-argocd-insecure" className="text-sm text-[#0a3a5a] dark:text-gray-300">
+                  Skip TLS certificate verification
+                  <span className="block text-xs text-[#3a6a8a] dark:text-gray-500">
+                    Only for an ArgoCD with a self-signed certificate. Keep this off unless the
+                    connection test tells you to turn it on — with it on, the connection can be
+                    read by anyone between Sharko and ArgoCD.
+                  </span>
+                </label>
+              </div>
             </div>
             <div className="mt-3 flex items-center gap-3">
               <button
@@ -688,7 +708,11 @@ function buildPayload(form: ConnectionFormData, name?: string) {
       server_url: form.argocd_server_url || '',
       token: form.argocd_token || undefined,
       namespace: form.argocd_namespace || 'argocd',
-      insecure: true,
+      // Verification is on unless the operator explicitly ticked the
+      // skip-verification checkbox. This used to be hardcoded `true`,
+      // which silently turned verification off for every connection
+      // saved through this form (task #152 adversarial finding).
+      insecure: form.argocd_insecure,
     },
   }
 }
