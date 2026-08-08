@@ -288,6 +288,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 // @Description Pass cleanup=all (default) to remove Git config and clean up ArgoCD + remote secrets.
 // @Description Pass cleanup=git to remove Git config only. Pass cleanup=none for managed-clusters entry only.
 // @Description Requires yes=true for confirmation. Pass dry_run=true to preview.
+// @Description On a v4 repo, the Git side removes the cluster from the root managed-clusters.yaml and deletes cluster-addons/{name}.yaml plus every Helm values file under values/clusters/{name}/ (cleanup=all/git); cleanup=none only removes the managed-clusters.yaml entry. ArgoCD-side behavior (remote secret cleanup, the ArgoCD cluster Secret delete/skip decision) is the same on every repo layout.
 // @Tags clusters
 // @Accept json
 // @Produce json
@@ -300,7 +301,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
-// @Failure 409 {object} map[string]interface{} "Removal still writes the v3 cluster registry and is not supported on a v4 repo yet"
+// @Failure 409 {object} map[string]interface{} "The repo is still v3-format and has not migrated to v4 yet, or a repo-layout probe could not get an answer"
 // @Router /clusters/{name} [delete]
 // handleDeregisterCluster handles DELETE /api/v1/clusters/{name} — remove a cluster.
 func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request) {
@@ -353,9 +354,13 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 
 	result, orchErr := orch.RemoveCluster(ctx, req)
 	if orchErr != nil {
-		// Removal stays refused on a v4 repo (out of scope for this lane) —
-		// same coded shape as the rest of the repo-layout family so a
-		// caller can branch on `code` instead of English text.
+		// Removal works on a v4 repo now (v4-coherence-closure lane K —
+		// RemoveCluster grew its own v4 branch, remove.go). This mapping
+		// stays as defensive plumbing: RemoveCluster no longer returns
+		// ErrV4RepoUnsupported itself, but the coded shape is what the rest
+		// of the repo-layout family (repo_layout) uses, so any v4-guard
+		// refusal that does surface here still answers the same way a
+		// caller can branch on `code` for instead of English text.
 		if orchestrator.IsV4RepoUnsupported(orchErr) {
 			writeCodedError(w, http.StatusConflict, CodeRepoLayout, orchErr.Error(), nil)
 			return
