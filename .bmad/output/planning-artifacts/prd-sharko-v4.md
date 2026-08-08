@@ -1,6 +1,6 @@
 ---
 stepsCompleted: ['step-01-init', 'step-02-discovery', 'step-02b-vision', 'step-02c-executive-summary', 'step-03-success', 'step-04-journeys', 'step-05-domain', 'step-06-innovation', 'step-07-project-type', 'step-08-scoping', 'step-09-functional', 'step-10-nonfunctional', 'step-11-polish', 'step-12-complete']
-status: COMPLETE (2026-07-29) · AMENDED 2026-08-08 (catalog model — see the Amendment note under the title)
+status: COMPLETE (2026-07-29) · AMENDED 2026-08-08 (catalog model + secret ownership — see the two Amendment notes under the title)
 inputDocuments:
   - .bmad/output/architecture/2026-07-25-sharko-oss-professional-design.md
   - .bmad/output/brainstorming/2026-07-24-blind-vs-biased-diff.md
@@ -32,6 +32,9 @@ documentCounts:
 
 > **Amendment (2026-08-08) — the catalog model changed after this PRD was first completed.**
 > On 2026-07-31 the "delta" catalog model was replaced by the **approved-list model**, and the catalog sections below were updated to match. What the approved-list model means: the org's catalog file holds the **full, self-contained list of addons the org approved** — chart, chart repo, version, namespace, settings, needed secrets — and nothing is inherited from a list shipped inside Sharko. The curated list still exists, but only as a **read-only discovery window (the "Marketplace")**: it decorates approved entries with display knowledge — description, docs link, known quirks, required values — and it never adds an addon to the org's catalog and never supplies a deployment field. Why the change: the delta model showed every curated addon to everyone with no way to opt out, so 45 addons nobody chose looked approved. Design doc: `2026-07-31-catalog-approved-model`.
+
+> **Amendment (2026-08-08) — the secret-ownership rule, locked after a correction the same day.**
+> Three things are now part of the product's promise. First, **writing a backend path for an addon secret into git IS the user's opt-in** that Sharko manages that destination Secret — there is no separate validate-only default and no per-addon switch; the one global off switch for the whole engine stays, for shops that deliver secrets another way. Second, **taking over or registering a cluster is refused — not just warned about — when another tool can recreate that cluster's connection Secret** (its ownership label names another manager, or an ArgoCD application provably renders it from git). The way through is always: stop the old manager, remove its ownership marker from the Secret, run the check again, then say yes. When ownership is merely unclear, Sharko says so and makes the person confirm — it never guesses, and it never quietly stamps its own ownership label onto a Secret somebody else set up. Third, **Sharko's docs never recommend ArgoCD's `ignoreDifferences` as the fix for a secret-ownership conflict** — it hides a fight between two tools without stopping it. (App-level catalog quirks that legitimately use the field, like the cert-manager webhook, are unaffected.)
 
 ## Executive Summary
 

@@ -224,8 +224,12 @@ Sharko surfaces both cases without asking you to go digging first:
 - **At adopt or registration**, if the secret already carries an ArgoCD
   tracking marker (the `argocd.argoproj.io/tracking-id` annotation, or the
   `app.kubernetes.io/instance` label, depending on your ArgoCD's
-  `trackingMethod`), Sharko names the owning Application in a warning on
-  the operation's response — it does not block the adopt or registration.
+  `trackingMethod`), Sharko names the owner it found. When the marker is
+  hard proof that another Application really renders this exact secret —
+  or the secret carries another tool's ownership label — the operation is
+  refused until that other manager is stopped. When the marker is only a
+  hint (it may just be a leftover, or a plain Helm release label), Sharko
+  warns and asks you to confirm before going ahead.
 - **The [connection doctor](connection-doctor.md)** (`POST
   /clusters/{name}/doctor`) runs a `secret-ownership` check for
   self-managed connections: pass when no foreign marker is found, fail
@@ -243,6 +247,18 @@ The fix, in every case, is on the OTHER Application: either drop
 `Replace=true` from its `syncOptions`, or stop defining Sharko's addon
 label keys in the manifest it renders — let Sharko own those keys and let
 the other Application own everything else on the secret.
+
+!!! warning "`ignoreDifferences` is not the fix"
+    It can be tempting to make the fight go quiet by adding an
+    `ignoreDifferences` rule to the other Application, so ArgoCD stops
+    looking at the fields the two tools disagree on. Do not do that for
+    a secret-ownership conflict. It does not stop the fight — both tools
+    keep writing, whoever writes last wins, and the disagreement just
+    stops being visible. The only real fix is the one above: make ONE
+    tool the owner of each part of the secret. (`ignoreDifferences` has
+    a legitimate job elsewhere — addon resources that rewrite their own
+    fields, like autoscaled replica counts. Secrets that two tools are
+    writing is not that.)
 
 ## Registered but no secret yet?
 
