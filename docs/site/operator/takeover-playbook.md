@@ -126,10 +126,19 @@ There are three outcomes:
 
 - **Green** — nothing to do, carry on.
 - **Warning** — you have to read it and tick a box saying you have.
-  Warnings do not stop you; they stop you doing it *by accident*.
-- **Blocked** — the takeover is refused until you fix it. The only two
-  blocking cases are "there is no connection to take over" and "that
-  name already belongs to a different cluster".
+  Warnings do not stop you; they stop you doing it *by accident*. The
+  ownership check warns, for example, when nothing claims the
+  connection — Sharko can only see markers, so it asks you to confirm
+  nothing else manages it rather than assuming.
+- **Blocked** — the takeover is refused until you fix it, and no
+  tick-box gets you past it. The blocking cases: there is no connection
+  to take over; that name already belongs to a different cluster (or
+  Sharko could not read its own cluster list to check); and **another
+  tool owns the connection** — its ownership label names another
+  manager, or an ArgoCD application provably renders this exact secret
+  from Git. For that last one, stop the old manager first — and remove
+  its ownership marker from the secret, because the label does not fall
+  off just because the tool was turned off — then run the check again.
 
 **Fix something, then hit "Check again."** The same check turns green in
 place. That loop is the point of the preflight — it is a read, it writes
@@ -189,8 +198,15 @@ resync anything as a result of the swap.
 Two caveats worth stating plainly:
 
 - If another ArgoCD application still renders this cluster secret from
-  Git, its next sync will fight Sharko over it. The preflight warns you
-  about exactly this — deal with it before you confirm, not after.
+  Git, its next sync would fight Sharko over it. When the preflight can
+  prove that is the case, it blocks the takeover outright; when it only
+  suspects it, it warns. Either way: deal with it at the source — stop
+  the other application rendering this secret. Do **not** paper over it
+  with an `ignoreDifferences` rule on that application; that hides the
+  fight without stopping it. See
+  [Managing Cluster Connections Yourself → When another ArgoCD
+  Application also renders this
+  secret](self-managed-connections.md#when-another-argocd-application-also-renders-this-secret).
 - Adding an ApplicationSet label later (step 4) *does* cause ArgoCD to
   act. That is a deliberate, separate step, one addon at a time.
 
@@ -319,17 +335,16 @@ connection, what is deployed there right now, and which ApplicationSets
 may react to the labels the takeover carried over. Nothing is deleted
 until you send the removal itself with an explicit confirmation.
 
-**One thing to know:** on a repo using Sharko's newer file layout — which
-is every repo you would be taking a cluster over into — taking a cluster
-back out is not built yet. The removal call refuses rather than writing
-the old files and breaking the fleet record, and the consequences page
-says so at the top. It arrives with the unregister work. Reading the
-consequences is still worth doing: it is what removal will do when it
-lands, so you can decide now whether you want it.
+Two promises the removal keeps:
 
-Once removal is available, if you want the cluster out of Sharko but
-want ArgoCD to keep talking to it, you ask for `"cleanup": "git"` —
-Sharko drops its own records and leaves the connection exactly as it is.
+- **If you want the cluster out of Sharko but want ArgoCD to keep
+  talking to it**, ask for `"cleanup": "git"` — Sharko drops its own
+  records and leaves the connection exactly as it is.
+- **Sharko only ever deletes a connection it owns.** A full removal
+  deletes the ArgoCD connection secret only when it carries Sharko's
+  ownership label. If the label is missing, names another tool, or
+  cannot be read, the secret stays and the response says so — doubt
+  means leave it alone.
 
 ## See also
 

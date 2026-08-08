@@ -206,9 +206,11 @@ changing what Sharko itself wants is never flagged as a fight). After
 **2 consecutive reverted ticks**, `last_reconcile.outcome` stays
 `succeeded` (Sharko is still successfully re-applying its labels every
 tick — nothing is actually broken from Sharko's side) but `message`
-carries a plain-English warning naming the pattern. Full writeup,
-including the fix, at [Managing Cluster Connections Yourself → When
-another ArgoCD Application also renders this
+carries a plain-English warning naming the pattern. The fix is always
+to stop the other writer at its source — never an `ignoreDifferences`
+rule, which only hides the fight. Full writeup, including the fix, at
+[Managing Cluster Connections Yourself → When another ArgoCD
+Application also renders this
 secret](self-managed-connections.md#when-another-argocd-application-also-renders-this-secret).
 
 ---

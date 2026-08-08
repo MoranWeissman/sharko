@@ -193,14 +193,19 @@ carries no ArgoCD tracking markers from another Application. **Fail**
 means it does — the failure names the owning Application.
 
 This is the same detection call (`argosecrets.Manager.GetTrackingOwner`)
-that Adopt and Register already use for their upfront warning, so the
-doctor and that warning can never disagree about what counts as a
-foreign owner.
+that Adopt and Register use up front — where hard proof of another
+owner refuses the operation, and a weaker marker warns — so the doctor
+and those gates can never disagree about what counts as a foreign
+owner.
 
 **Fix on failure:** in the named Application's manifest, make sure it
 doesn't define Sharko's addon-label keys and doesn't use the
 `Replace=true` sync option — otherwise the two will keep fighting over
-this Secret. The full failure-mode writeup, including the reconciler's
+this Secret. Do not reach for an `ignoreDifferences` rule instead — it
+hides the fight without stopping it (see the warning in [Managing
+Cluster Connections
+Yourself](self-managed-connections.md#when-another-argocd-application-also-renders-this-secret)).
+The full failure-mode writeup, including the reconciler's
 label-fight detection that catches an *ongoing* fight even when this
 check itself is run only once, lives in [Managing Cluster Connections
 Yourself → When another ArgoCD Application also renders this

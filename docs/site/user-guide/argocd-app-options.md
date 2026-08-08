@@ -21,7 +21,7 @@ A small header on each tab cross-links to the other — so if you open Deploymen
 4. Change the fields you want:
    - **Self-Heal** — toggle. When on, ArgoCD reverts manual cluster-side changes to match Git.
    - **Sync Options** — comma-separated ArgoCD sync options (`CreateNamespace=true, ServerSideApply=true`, etc.).
-   - **Ignore Differences** — YAML list of fields ArgoCD should ignore during diff. Example:
+   - **Ignore Differences** — YAML list of fields ArgoCD should ignore during diff. For addon resources that rewrite their own fields (an autoscaler changing replica counts, a webhook injecting a certificate). It is never the fix when two tools fight over a cluster-connection Secret — for that, see [the ownership-conflict warning](../operator/self-managed-connections.md#when-another-argocd-application-also-renders-this-secret). Example:
      ```yaml
      - group: apps
        kind: Deployment
