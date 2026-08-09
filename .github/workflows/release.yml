@@ -481,7 +481,7 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
         with:
-          cosign-release: 'v2.4.1'
+          cosign-release: 'v2.6.5'
 
       - name: Extract version from tag
         id: version
@@ -629,7 +629,7 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
         with:
-          cosign-release: 'v2.4.1'
+          cosign-release: 'v2.6.5'
 
       - name: Sign published image (keyless)
         env:
@@ -719,7 +719,7 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
         with:
-          cosign-release: 'v2.4.1'
+          cosign-release: 'v2.6.5'
 
       - name: Sign published Helm chart (keyless)
         env:
@@ -845,7 +845,7 @@ jobs:
         if: steps.check.outputs.exists != 'true'
         uses: sigstore/cosign-installer@v3
         with:
-          cosign-release: 'v2.4.1'
+          cosign-release: 'v2.6.5'
 
       - name: Sign published engine Helm chart (keyless)
         if: steps.check.outputs.exists != 'true'
@@ -909,7 +909,7 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
         with:
-          cosign-release: 'v2.4.1'
+          cosign-release: 'v2.6.5'
 
       # HONESTY PASS: puts syft on PATH so .goreleaser.yaml's `sboms:`
       # block can shell out to it. GoReleaser doesn't bundle an SBOM
