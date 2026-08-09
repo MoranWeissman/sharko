@@ -285,6 +285,19 @@
 //   SAME live read this panel already fires (no second request). Every
 //   value in it is the server's own fixed mask — see SecretResource's own
 //   contract — this file never has a real value to accidentally print.
+//
+//   SSF-8 (drawer calm-down, 2026-08-09 PM decision) — the drawer shrinks
+//   back to 640px and opens on one plain screen: what this is, is it okay,
+//   what it was checked against, when, and what to do about it. Everything
+//   else (namespace, kind/type, commit, key list, activity) moves into
+//   disclosure sections closed by default. A row that already matches its
+//   source no longer opens straight into a two-column comparison box — it
+//   shows the one-line result and a "View comparison" control instead;
+//   every other verdict still shows the comparison automatically, same as
+//   before. The YAML tab is renamed "YAML" (still redacts the same way)
+//   and states "Secret values are hidden." up top. "Orphaned"/"Foreign" as
+//   status words become "Not in config"/"Managed elsewhere" — the internal
+//   state keys are unchanged.
 // ─────────────────────────────────────────────────────────────────────────
 
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -757,7 +770,7 @@ function syncGateFor(row: UnifiedRow): { disabled: boolean; reason?: string } {
   // panel both branch on row.state === 'orphaned' before ever reaching
   // this gate, but it stays a safe "no" here too rather than falling
   // through to a kind-based default that would say otherwise.
-  if (row.state === 'orphaned') return { disabled: true, reason: 'This secret is orphaned — Delete is the only action.' }
+  if (row.state === 'orphaned') return { disabled: true, reason: "This secret's source isn't in config anymore — Delete is the only action." }
   // Checked first, and for both kinds of row: a secret Sharko did not create
   // is never Sharko's to write, whatever else is true about it (P1-A).
   if (row.state === 'foreign') return { disabled: true, reason: FOREIGN_SYNC_REASON }
@@ -1270,11 +1283,13 @@ function useLiveSecret(row: UnifiedRow | null, allowed: boolean) {
 type DiffVerdict = 'match' | 'differ' | 'never_created' | 'could_not_look' | 'foreign' | 'orphaned'
 
 /**
- * The locked panel sentence (leftover-secrets S1.2, maintainer wording,
- * verbatim — do not paraphrase): what an orphaned row's verdict line says.
+ * The panel sentence for an orphaned row's verdict line. Word pass SSF-8
+ * (2026-08-09 PM decision): "Orphaned" read as jargon, so the sentence now
+ * opens with the plain fact instead of the internal word — the row's own
+ * status label already says "Not in config" next to it.
  */
 const ORPHANED_PANEL_SENTENCE =
-  'Orphaned — its source in git is gone. Sharko wrote this secret once, but nothing asks for it anymore.'
+  'Not in config — its source in git is gone. Sharko wrote this secret once, but nothing asks for it anymore.'
 
 /**
  * diffVerdictFor picks which of the six sentences the panel says.
@@ -1319,7 +1334,11 @@ function diffVerdictFor(row: UnifiedRow, live: LiveSecretState): DiffVerdict {
 function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
   switch (verdict) {
     case 'match':
-      return 'These match — the cluster has what the source says.'
+      // SSF-8 binding honesty rule: a values row's source is NEVER called
+      // "Git" here — git only ever holds a pointer for a values row, the
+      // real source is row.sourceLabel (e.g. an AWS Secrets Manager path).
+      // A connection row's source really is git, so it says "Git" plainly.
+      return row.kind === 'connection' ? 'Matches Git.' : `Matches ${row.sourceLabel}.`
     case 'differ':
       return "These differ — Sync writes the source's version onto the cluster."
     case 'never_created':
@@ -1509,7 +1528,8 @@ function KeyTable({ live }: { live: LiveSecretState }) {
   const keys = live.resource.data_keys
   return (
     <div data-testid="detail-key-table">
-      <h3 className="mb-1 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Keys</h3>
+      {/* SSF-8: no heading of its own — the "Keys" <summary> that wraps this
+          component now carries that label. */}
       <div className="rounded-md border border-border bg-card p-3">
         {keys.length === 0 ? (
           <p className="text-xs text-[#5a8aaa] dark:text-gray-500">This secret has no keys.</p>
@@ -1557,6 +1577,9 @@ function KeyTable({ live }: { live: LiveSecretState }) {
 // on its own, because the redacting already happened on the server.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** SSF-8: the single plain-words line at the top of the YAML view — the fact a reader needs before anything else on this tab. */
+const YAML_VALUES_HIDDEN_SENTENCE = 'Secret values are hidden.'
+
 /** Never say this is the live object itself — Sharko reads a fixed, safe subset of it, not everything the cluster has. */
 const REDACTED_YAML_SCOPE_SENTENCE = 'This shows only the fields Sharko reads from the cluster — every value here is a placeholder, never the real one.'
 
@@ -1591,6 +1614,9 @@ function RedactedYamlSection({ row, live, onRetry }: { row: UnifiedRow; live: Li
   }
   return (
     <div data-testid="detail-yaml-view">
+      <p className="mb-1 text-sm font-medium text-[#0a2a4a] dark:text-gray-200" data-testid="detail-yaml-hidden">
+        {YAML_VALUES_HIDDEN_SENTENCE}
+      </p>
       <p className="mb-2 text-xs text-[#3a6a8a] dark:text-gray-500" data-testid="detail-yaml-scope">
         {REDACTED_YAML_SCOPE_SENTENCE}
       </p>
@@ -1617,7 +1643,7 @@ function RedactedYamlSection({ row, live, onRetry }: { row: UnifiedRow; live: Li
       {live.status === 'ready' && (
         <div className="rounded-md border border-border bg-card p-3">
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Redacted YAML</span>
+            <span className="text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">YAML</span>
             {/* Copies the WHOLE redacted block, never a single key — there is no per-secret or per-value copy control here. */}
             <button
               type="button"
@@ -1696,7 +1722,8 @@ function RecentActivity({ row }: { row: UnifiedRow }) {
   const { entries, loading } = useRecentActivity(row)
   return (
     <div>
-      <h3 className="mb-1 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Sharko's record</h3>
+      {/* SSF-8: no heading of its own — the "Sharko's record" <summary> that
+          wraps this component now carries that label. */}
       <p className="mb-1.5 text-xs text-[#5a8aaa] dark:text-gray-500">
         Only what's happened since Sharko last started — older activity isn't kept.
       </p>
@@ -1763,8 +1790,14 @@ function SecretDetailPanel({
   // reopens on Overview for whichever row the panel is now showing; a tab
   // choice made on one row must not carry over to the next one it opens.
   const [detailTab, setDetailTabState] = useState<'overview' | 'yaml'>('overview')
+  // SSF-8 (drawer calm-down): a matching row's comparison box starts closed
+  // behind "View comparison" — this remembers whether THIS OPEN has been
+  // expanded. Resets alongside the tab choice whenever a different row
+  // opens, same rule as detailTab just above: nothing carries over.
+  const [comparisonOpen, setComparisonOpen] = useState(false)
   useEffect(() => {
     setDetailTabState('overview')
+    setComparisonOpen(false)
   }, [row?.key])
 
   // Connection-secret Diff keeps its existing getClusterComparison fetch
@@ -1830,7 +1863,7 @@ function SecretDetailPanel({
   const purposeSentence: ReactNode =
     row.state === 'orphaned' ? (
       <>
-        Orphaned secret on cluster <span className="font-medium">{row.cluster}</span>
+        Not in config anymore, on cluster <span className="font-medium">{row.cluster}</span>
         {row.addon ? (
           <>
             {' '}
@@ -1924,42 +1957,40 @@ function SecretDetailPanel({
   // connection row, where it's accurate.
   const comparisonHeading = row.kind === 'connection' ? 'Diff' : 'Comparison'
 
+  // SSF-8 (drawer calm-down): the sheet's title now says what the row IS,
+  // in plain words, instead of its raw namespace/name identity — a
+  // connection row is "{cluster} connection", a values row is "{addon}
+  // values on {cluster}". The old namespace/name fact (the identity const
+  // above) still exists — it moved into the collapsed Resource details
+  // section below instead of leading the panel. An orphaned row's addon is
+  // best-effort and can be absent (see the view-page link below); the
+  // fallback keeps the title honest rather than printing "undefined".
+  const drawerTitle =
+    row.kind === 'connection' ? `${row.cluster} connection` : row.addon ? `${row.addon} values on ${row.cluster}` : `Secret on ${row.cluster}`
+
   return (
     <ResourceDetailSheet
       open={open}
       onOpenChange={onOpenChange}
-      title={identity}
+      title={drawerTitle}
       testId="secret-detail-panel"
-      // Two cards side by side need the room; every other user of this
-      // sheet keeps the narrow default.
+      // The comparison zone can still put two cards side by side (open by
+      // default for every verdict except a match); every other user of
+      // this sheet keeps the narrow default.
       wide
     >
-      {/* ── Zone A — identity (no box) ───────────────────────────────────
-          design-secret-sync-visual-pass, section 4. purposeSentence moved
-          up here from the old tail section — what this thing IS belongs
-          before everything else, not buried after the diff and the keys.
-          SSF-4: the sheet's own title already states the identity
-          (namespace/name) and purposeSentence already states the kind in
-          full — this row no longer repeats either fact, it only adds what
-          the title can't: the object kind badge, the cluster, the age. */}
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1" data-testid="detail-resource-header">
-        <span className="rounded-full bg-[#d0e8f8] px-2 py-0.5 text-[11px] font-medium text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-300">
-          Secret
-        </span>
-        <span className="text-xs text-[#3a6a8a] dark:text-gray-500">on {row.cluster}</span>
-        {/* The age is a live-read fact, so it appears once the read lands
-            and stays absent otherwise — never an invented one. */}
-        {live.status === 'ready' && live.resource.created_at && (
-          <span className="text-xs text-[#3a6a8a] dark:text-gray-500">
-            created <TimeChip iso={live.resource.created_at} />
-          </span>
-        )}
-      </div>
-
+      {/* ── First screen (SSF-8, drawer calm-down) — this answers exactly
+          five questions and nothing else: what is this, is it okay, what
+          was it checked against, when, and what can I do. Everything past
+          that is a disclosure section further down, closed by default, or
+          sits behind "View comparison". The sheet's own title already
+          states the identity in plain words (SSF-8) and the kind (SSF-4) —
+          this paragraph adds the one fact the title can't: the specific
+          purpose. */}
       <p className="text-sm text-[#2a5a7a] dark:text-gray-300">{purposeSentence}</p>
 
       {/* SSF-5 (Secret Sync finish pass) — Overview vs the new read-only
-          Redacted YAML view, same segmented-pill pattern the page's own
+          YAML view, same segmented-pill pattern the page's own
           Group by / List-Tiles controls already use. Resets to Overview
           whenever a different row opens (the effect above). */}
       <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
@@ -1987,7 +2018,7 @@ function SecretDetailPanel({
               : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
           }`}
         >
-          Redacted YAML
+          YAML
         </button>
       </div>
 
@@ -2067,12 +2098,37 @@ function SecretDetailPanel({
             </p>
           )}
 
-          {/* ── Zone B — the comparison (one box, two panes) ─────────────────
+          {/* SSF-8: "what was it checked against" and "when" — two of the
+              five first-screen questions — stated once, plainly, right
+              under the status row. This is the old Zone D dl's "Checked
+              against" and "Last checked" rows, promoted out of the
+              collapsed section: the rest of that dl still collapses below. */}
+          <p className="flex flex-wrap items-baseline gap-x-2 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="detail-checked-line">
+            <span
+              title={
+                row.kind === 'values' && row.state !== 'orphaned'
+                  ? `Git only holds a pointer to it — the value itself lives in ${row.sourceLabel}.`
+                  : undefined
+              }
+            >
+              {sourceSentence}
+            </span>
+            <span className="text-xs text-[#5a8aaa] dark:text-gray-500">
+              · last checked <TimeChip iso={row.lastChecked} />
+            </span>
+          </p>
+
+          {/* ── Comparison (one box, two panes) ───────────────────────────
               design-secret-sync-visual-pass, section 4. The two separate ring
-              cards become one container with an interior hairline — same
-              content, same testids, half the visual weight. SSF-2 moved the
-              box itself off the hardcoded Sharko-blue ring onto the app's own
-              border-border/bg-card tokens. */}
+              cards became one container with an interior hairline — same
+              content, same testids. SSF-8: a row that already MATCHES its
+              source opens on just the one-line result — the box itself sits
+              behind "View comparison" instead of rendering automatically,
+              since there's nothing wrong to show. Every other verdict
+              (differ, never created, could not look, foreign, not in
+              config) still shows the box straight away — those are exactly
+              the states where the comparison IS the answer to "is it
+              okay". */}
           <div>
             <h3 className="mb-1 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{comparisonHeading}</h3>
             <p
@@ -2082,114 +2138,141 @@ function SecretDetailPanel({
               {verdict === 'match' && <CheckCircle className="mr-1.5 inline h-4 w-4 align-text-bottom" aria-hidden="true" />}
               {diffVerdictSentence(verdict, row)}
             </p>
-            <div className="rounded-md border border-border bg-card">
-              <div className="grid sm:grid-cols-2 sm:divide-x divide-border max-sm:divide-y">
-                <IntentCard row={row} />
-                {/* The live half sits INSIDE the role guard, so a viewer sees a
-                    sentence about access rather than a permission error where a
-                    card should be — and the read is never fired for them either
-                    (useLiveSecret's `allowed`). */}
-                <RoleGuard
-                  roles={['admin', 'operator']}
-                  fallback={
-                    <DiffCard title="What is on the cluster" testId="diff-live-card">
-                      <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="live-needs-operator">
-                        {LIVE_READ_NEEDS_OPERATOR}
-                      </p>
-                    </DiffCard>
-                  }
-                >
-                  <LiveCard row={row} live={live} onRetry={retry} driftDetail={driftDetail} />
-                </RoleGuard>
+            {verdict === 'match' && !comparisonOpen ? (
+              <button
+                type="button"
+                onClick={() => setComparisonOpen(true)}
+                data-testid="view-comparison-toggle"
+                className="text-xs font-medium text-teal-700 hover:underline dark:text-teal-400"
+              >
+                View comparison
+              </button>
+            ) : (
+              <div className="rounded-md border border-border bg-card">
+                <div className="grid sm:grid-cols-2 sm:divide-x divide-border max-sm:divide-y">
+                  <IntentCard row={row} />
+                  {/* The live half sits INSIDE the role guard, so a viewer sees a
+                      sentence about access rather than a permission error where a
+                      card should be — and the read is never fired for them either
+                      (useLiveSecret's `allowed`). */}
+                  <RoleGuard
+                    roles={['admin', 'operator']}
+                    fallback={
+                      <DiffCard title="What is on the cluster" testId="diff-live-card">
+                        <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="live-needs-operator">
+                          {LIVE_READ_NEEDS_OPERATOR}
+                        </p>
+                      </DiffCard>
+                    }
+                  >
+                    <LiveCard row={row} live={live} onRetry={retry} driftDetail={driftDetail} />
+                  </RoleGuard>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
-          {/* ── Zone C — keys (kept as the one remaining box) ────────────────
+          {/* ── Resource details (collapsed, SSF-8) ───────────────────────
+              Everything the old Zone A header said (kind, cluster, age) plus
+              the namespace/name identity that used to be the sheet's own
+              title, plus the rest of the old Zone D dl (commit, self-heal,
+              drift) that isn't one of the five first-screen answers. Closed
+              by default — a reader who wants it opens it; nobody else pays
+              for it. */}
+          <details className="border-t border-border pt-3" data-testid="detail-resource-disclosure">
+            <summary className="cursor-pointer text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Resource details</summary>
+            <div className="mt-2 space-y-3">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1" data-testid="detail-resource-header">
+                <span className="rounded-full bg-[#d0e8f8] px-2 py-0.5 text-[11px] font-medium text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-300">
+                  Secret
+                </span>
+                <span className="text-xs text-[#3a6a8a] dark:text-gray-500">on {row.cluster}</span>
+                {/* The age is a live-read fact, so it appears once the read lands
+                    and stays absent otherwise — never an invented one. */}
+                {live.status === 'ready' && live.resource.created_at && (
+                  <span className="text-xs text-[#3a6a8a] dark:text-gray-500">
+                    created <TimeChip iso={live.resource.created_at} />
+                  </span>
+                )}
+              </div>
+              <dl className="space-y-1.5 text-xs">
+                <div className="flex justify-between gap-3">
+                  <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Namespace / name</dt>
+                  <dd className="text-right font-mono text-[#2a5a7a] dark:text-gray-400" data-testid="detail-identity">
+                    {identity}
+                  </dd>
+                </div>
+                {/* P2-C1: which commit and which file this row was compared
+                    against — short SHA here, full SHA on hover. Connection rows
+                    only; values rows have no commit to point at (their intent is
+                    the store, C2 covers that instead). */}
+                {row.kind === 'connection' && row.comparedRevision && (
+                  <div className="flex justify-between gap-3">
+                    <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Commit</dt>
+                    <dd
+                      className="text-right text-[#2a5a7a] dark:text-gray-400"
+                      title={`Full commit: ${row.comparedRevision}`}
+                      data-testid="detail-compared-revision"
+                    >
+                      Checked against git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
+                      {row.comparedPath && (
+                        <>
+                          {' '}
+                          · <span className="font-mono">{row.comparedPath}</span>
+                        </>
+                      )}
+                    </dd>
+                  </div>
+                )}
+                {/* P2-C3: the one-line self-heal promise — only where it changes
+                    what the reader should do (an out-of-sync or missing row). */}
+                {(row.state === 'out_of_sync' || row.state === 'missing') && (
+                  <div className="flex justify-between gap-3">
+                    <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Self-heal</dt>
+                    <dd className="text-right text-[#2a5a7a] dark:text-gray-400" data-testid="detail-self-heals">
+                      {row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
+                    </dd>
+                  </div>
+                )}
+                {/* P2-C6: drift blame — which side moved. Connection rows,
+                    out-of-sync only, and only when both revisions are known. */}
+                {row.kind === 'connection' && row.state === 'out_of_sync' && row.driftSource && (
+                  <div className="flex justify-between gap-3">
+                    <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Drift</dt>
+                    <dd className="text-right text-[#2a5a7a] dark:text-gray-400" data-testid="detail-drift-source">
+                      {row.driftSource === 'git'
+                        ? 'Git moved — a newer commit changed what this secret should be.'
+                        : 'The cluster moved — something changed this secret outside git.'}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            </div>
+          </details>
+
+          {/* ── Keys (collapsed, SSF-8) ────────────────────────────────────
               design-secret-sync-visual-pass, section 4: unchanged content, the
-              no-per-key-verdict rule, and the blanking sentence — verbatim. */}
+              no-per-key-verdict rule, and the blanking sentence — verbatim,
+              just closed by default now. */}
           <RoleGuard roles={['admin', 'operator']}>
-            <KeyTable live={live} />
+            <details className="border-t border-border pt-3" data-testid="detail-keys-disclosure">
+              <summary className="cursor-pointer text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Keys</summary>
+              <div className="mt-2">
+                <KeyTable live={live} />
+              </div>
+            </details>
           </RoleGuard>
 
-          {/* ── Zone D — the record (one grouped block, secondary by design) ──
-              design-secret-sync-visual-pass, section 4. The loose tail of six
-              single-line paragraphs at three font sizes becomes one <dl>, all
-              text-xs, under one heading — no sentence changes, only placement
-              and a shared type scale. */}
-          <div className="border-t border-border pt-3">
-            <h3 className="mb-1.5 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Details</h3>
-            <dl className="space-y-1.5 text-xs">
-              <div className="flex justify-between gap-3">
-                <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Checked against</dt>
-                <dd
-                  className="text-right text-[#2a5a7a] dark:text-gray-400"
-                  title={
-                    row.kind === 'values' && row.state !== 'orphaned'
-                      ? `Git only holds a pointer to it — the value itself lives in ${row.sourceLabel}.`
-                      : undefined
-                  }
-                >
-                  {sourceSentence}
-                </dd>
-              </div>
-              {/* P2-C1: which commit and which file this row was compared
-                  against — short SHA here, full SHA on hover. Connection rows
-                  only; values rows have no commit to point at (their intent is
-                  the store, C2 covers that instead). */}
-              {row.kind === 'connection' && row.comparedRevision && (
-                <div className="flex justify-between gap-3">
-                  <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Commit</dt>
-                  <dd
-                    className="text-right text-[#2a5a7a] dark:text-gray-400"
-                    title={`Full commit: ${row.comparedRevision}`}
-                    data-testid="detail-compared-revision"
-                  >
-                    Checked against git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
-                    {row.comparedPath && (
-                      <>
-                        {' '}
-                        · <span className="font-mono">{row.comparedPath}</span>
-                      </>
-                    )}
-                  </dd>
-                </div>
-              )}
-              <div className="flex justify-between gap-3">
-                <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Last checked</dt>
-                <dd className="text-right text-[#2a5a7a] dark:text-gray-400">
-                  <TimeChip iso={row.lastChecked} />
-                </dd>
-              </div>
-              {/* P2-C3: the one-line self-heal promise — only where it changes
-                  what the reader should do (an out-of-sync or missing row). */}
-              {(row.state === 'out_of_sync' || row.state === 'missing') && (
-                <div className="flex justify-between gap-3">
-                  <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Self-heal</dt>
-                  <dd className="text-right text-[#2a5a7a] dark:text-gray-400" data-testid="detail-self-heals">
-                    {row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
-                  </dd>
-                </div>
-              )}
-              {/* P2-C6: drift blame — which side moved. Connection rows,
-                  out-of-sync only, and only when both revisions are known. */}
-              {row.kind === 'connection' && row.state === 'out_of_sync' && row.driftSource && (
-                <div className="flex justify-between gap-3">
-                  <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Drift</dt>
-                  <dd className="text-right text-[#2a5a7a] dark:text-gray-400" data-testid="detail-drift-source">
-                    {row.driftSource === 'git'
-                      ? 'Git moved — a newer commit changed what this secret should be.'
-                      : 'The cluster moved — something changed this secret outside git.'}
-                  </dd>
-                </div>
-              )}
-            </dl>
-          </div>
-
-          {/* H4-3: "Last repaired" — a single timestamp — became this short
-              list, so a reader sees the pattern (repeated repairs, a repair
-              that stopped happening) instead of only the most recent one. */}
-          <RecentActivity row={row} />
+          {/* ── Activity (collapsed, SSF-8) ── H4-3: "Last repaired" — a
+              single timestamp — became this short list, so a reader who
+              opens it sees the pattern (repeated repairs, a repair that
+              stopped happening) instead of only the most recent one. */}
+          <details className="border-t border-border pt-3" data-testid="detail-activity-disclosure">
+            <summary className="cursor-pointer text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Sharko's record</summary>
+            <div className="mt-2">
+              <RecentActivity row={row} />
+            </div>
+          </details>
 
           {/* leftover-secrets S1.2: an orphaned row's addon is best-effort (read
               off its provenance annotation) and can be absent — falls back to

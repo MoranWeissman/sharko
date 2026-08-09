@@ -964,11 +964,11 @@ describe('ManagedSecrets', () => {
     expect(mockGetClusterComparison).not.toHaveBeenCalled()
 
     // A different (in-sync) values row shows the matching verdict, still
-    // with no label-drift call.
+    // with no label-drift call. SSF-8: a values row's match sentence names
+    // its real source, never "Git" — that word is reserved for connection
+    // rows, which really are checked against git.
     fireEvent.click(screen.getByTestId('secret-row-values-prod-eu-datadog'))
-    await waitFor(() =>
-      expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('These match — the cluster has what the source says.'),
-    )
+    await waitFor(() => expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('Matches AWS Secrets Manager.'))
     expect(mockGetClusterComparison).not.toHaveBeenCalled()
   })
 
@@ -1016,7 +1016,8 @@ describe('ManagedSecrets', () => {
     renderPage()
 
     const row = await screen.findByTestId('secret-row-values-prod-eu-eso')
-    expect(within(row).getByText('Foreign')).toBeInTheDocument()
+    // SSF-8 word pass: "Foreign" → "Managed elsewhere".
+    expect(within(row).getByText('Managed elsewhere')).toBeInTheDocument()
     const dot = within(row).getAllByTestId('status-dot')[0]
     expect(dot).toHaveAttribute('data-status', 'foreign')
     // Neither red nor amber — foreign is a boundary, not damage.

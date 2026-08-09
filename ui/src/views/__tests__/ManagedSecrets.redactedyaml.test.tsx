@@ -227,3 +227,25 @@ describe('SSF-5 — Redacted YAML', () => {
     expect(within(panel).queryByTestId('detail-yaml-content')).not.toBeInTheDocument()
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSF-8 — the tab is named "YAML" (was "Redacted YAML"), and states plainly
+// up front that values are hidden.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SSF-8 — the YAML tab', () => {
+  it('labels the tab button "YAML", never "Redacted YAML"', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('secret-row-values-prod-eu-datadog'))
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(within(panel).getByTestId('detail-tab-yaml')).toHaveTextContent('YAML')
+    expect(within(panel).queryByText('Redacted YAML')).not.toBeInTheDocument()
+  })
+
+  it('states "Secret values are hidden." at the top of the YAML view', async () => {
+    renderPage()
+    const panel = await openRowOnYamlTab('values-prod-eu-datadog')
+    expect(within(panel).getByTestId('detail-yaml-hidden')).toHaveTextContent('Secret values are hidden.')
+  })
+})
