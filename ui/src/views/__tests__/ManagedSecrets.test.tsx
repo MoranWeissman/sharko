@@ -209,12 +209,13 @@ describe('ManagedSecrets', () => {
 
     const connRow1 = screen.getByTestId('secret-row-connection-prod-eu')
     const connRow2 = screen.getByTestId('secret-row-connection-staging-us')
-    // design-secret-sync-visual-pass, section 2: the "checked against"
-    // relation lives once in the sticky column header now — the cell
-    // states just the place name, and the full sentence is one hover away
-    // (title attribute), never printed inline on every one of 170 rows.
+    // design-secret-sync-visual-pass, section 2: the "compared with"
+    // relation (SSF-8 item 3, was "checked against") lives once in the
+    // sticky column header now — the cell states just the place name, and
+    // the full sentence is one hover away (title attribute), never printed
+    // inline on every one of 170 rows.
     expect(within(connRow1).getByTestId('cell-source')).toHaveTextContent('git')
-    expect(within(connRow1).getByTestId('cell-source')).toHaveAttribute('title', 'Checked against git.')
+    expect(within(connRow1).getByTestId('cell-source')).toHaveAttribute('title', 'Compared with git.')
     expect(within(connRow2).getByTestId('cell-source')).toHaveTextContent('git')
 
     const valuesRow1 = screen.getByTestId('secret-row-values-prod-eu-datadog')
@@ -222,7 +223,7 @@ describe('ManagedSecrets', () => {
     expect(within(valuesRow1).getByTestId('cell-source')).toHaveTextContent('AWS Secrets Manager')
     expect(within(valuesRow1).getByTestId('cell-source')).toHaveAttribute(
       'title',
-      'Checked against AWS Secrets Manager — git only holds a pointer to it.',
+      'Compared with AWS Secrets Manager — git only holds a pointer to it.',
     )
     expect(within(valuesRow2).getByTestId('cell-source')).toHaveTextContent('AWS Secrets Manager')
 
@@ -882,7 +883,7 @@ describe('ManagedSecrets', () => {
 
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).getByText(/Connects/)).toBeInTheDocument()
-    expect(within(panel).getByText('Checked against git.')).toBeInTheDocument()
+    expect(within(panel).getByText('Compared with git.')).toBeInTheDocument()
 
     await waitFor(() => expect(mockGetClusterComparison).toHaveBeenCalledWith('staging-us'))
     await waitFor(() => expect(within(panel).getByText(/Missing 1 addon label/)).toBeInTheDocument())
@@ -911,7 +912,7 @@ describe('ManagedSecrets', () => {
 
     // C1: short SHA (7 chars) + full path shown; full SHA on hover (title).
     const revisionLine = within(panel).getByTestId('detail-compared-revision')
-    expect(revisionLine).toHaveTextContent('Checked against git abcdef1 · configuration/managed-clusters.yaml')
+    expect(revisionLine).toHaveTextContent('Compared with git abcdef1 · configuration/managed-clusters.yaml')
     expect(revisionLine.title).toBe('Full commit: abcdef1234567890abcdef1234567890abcdef12')
 
     // C3: self_heals: false on an out_of_sync row -> "Waiting for Sync."
@@ -946,7 +947,7 @@ describe('ManagedSecrets', () => {
 
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).getByText(/Carries values for addon/)).toBeInTheDocument()
-    expect(within(panel).getByText('Checked against AWS Secrets Manager — git only holds a pointer to it.')).toBeInTheDocument()
+    expect(within(panel).getByText('Compared with AWS Secrets Manager — git only holds a pointer to it.')).toBeInTheDocument()
     // P3-F2: the verdict is one of the five edge sentences.
     expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent(
       "These differ — Sync writes the source's version onto the cluster.",

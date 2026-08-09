@@ -710,15 +710,15 @@ type SortKey = 'name' | 'namespace' | 'addon' | 'cluster' | 'source' | 'state'
 
 /**
  * sourceShortLabel (design-secret-sync-visual-pass, section 2) — the SOURCE
- * column used to repeat the sentence "checked against X" on every one of
+ * column used to repeat the sentence "compared with X" on every one of
  * 170 rows (~137px of pure waste per row, measured). The relation
- * ("checked against") now lives once in the sticky column header
- * ("Checked against"); this cell shows just the place name. Strips a
- * leading "the " so "the demo secrets store" reads as "demo secrets
- * store" — display-only, never touches the server string itself (the
- * Source/"Checked against" filter <select> and the search box still match
- * on the full sourceLabel, only the visible option text runs through
- * this).
+ * ("compared with" — SSF-8 item 3, was "checked against") now lives once
+ * in the sticky column header ("Compared with"); this cell shows just the
+ * place name. Strips a leading "the " so "the demo secrets store" reads as
+ * "demo secrets store" — display-only, never touches the server string
+ * itself (the Source/"Compared with" filter <select> and the search box
+ * still match on the full sourceLabel, only the visible option text runs
+ * through this).
  */
 const sourceShortLabel = (l: string) => l.replace(/^the /i, '')
 
@@ -1885,19 +1885,21 @@ function SecretDetailPanel({
 
   // S3 honesty lock, panel copy: row.sourceLabel is the real backend name
   // (or the "secrets store" fallback) resolved once server-side — never a
-  // hardcoded "the vault". H3: "checked against" everywhere this fact
-  // shows up (the SOURCE column, this sentence, the revision line below) —
-  // one phrase, not several near-synonyms for the same fact.
+  // hardcoded "the vault". H3: "compared with" everywhere this fact shows
+  // up (the SOURCE column, this sentence, the revision line below) — one
+  // phrase, not several near-synonyms for the same fact. SSF-8 item 3
+  // renamed the phrase from "checked against" to "compared with" — same
+  // rule, same single-phrase discipline, new words.
   //
   // leftover-secrets S1.2: an orphaned row gets its own sentence instead —
-  // "checked against X" would contradict the verdict line right above it,
+  // "compared with X" would contradict the verdict line right above it,
   // which already says the source in git is gone.
   const sourceSentence =
     row.state === 'orphaned'
       ? 'No source in git anymore — Sharko is not comparing this against anything.'
       : row.kind === 'connection'
-        ? 'Checked against git.'
-        : `Checked against ${row.sourceLabel} — git only holds a pointer to it.`
+        ? 'Compared with git.'
+        : `Compared with ${row.sourceLabel} — git only holds a pointer to it.`
 
   // The connection-secret label drift — WHICH labels differ, under the
   // verdict sentence that already said THAT they differ. Kept as its own
@@ -2214,7 +2216,7 @@ function SecretDetailPanel({
                       title={`Full commit: ${row.comparedRevision}`}
                       data-testid="detail-compared-revision"
                     >
-                      Checked against git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
+                      Compared with git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
                       {row.comparedPath && (
                         <>
                           {' '}
@@ -2434,17 +2436,18 @@ function SecretTableRow({
       >
         {row.cluster}
       </TableCell>
-      {/* Checked against (G1/H3, design-secret-sync-visual-pass section 2):
+      {/* Compared with (G1/H3, design-secret-sync-visual-pass section 2):
           the S3 honesty lock, sortable/filterable/searched on every row.
-          The RELATION ("checked against") now lives once in the sticky
-          column header — this cell states just the place name, so the
-          longest demo name (kube-prometheus-stack-grafana-admin, 35
-          chars) can render uncut at 1280px. The full sentence — the same
-          one the panel's Zone D says — is one hover away. */}
+          The RELATION ("compared with" — SSF-8 item 3, was "checked
+          against") now lives once in the sticky column header — this cell
+          states just the place name, so the longest demo name
+          (kube-prometheus-stack-grafana-admin, 35 chars) can render uncut
+          at 1280px. The full sentence — the same one the panel's Resource
+          details says — is one hover away. */}
       <TableCell
         className="truncate py-2 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
         data-testid="cell-source"
-        title={row.kind === 'connection' ? 'Checked against git.' : `Checked against ${row.sourceLabel} — git only holds a pointer to it.`}
+        title={row.kind === 'connection' ? 'Compared with git.' : `Compared with ${row.sourceLabel} — git only holds a pointer to it.`}
       >
         {sourceShortLabel(row.sourceLabel)}
       </TableCell>
@@ -2478,7 +2481,7 @@ function SecretTableRow({
 function GroupHeaderRow({ group, expanded, onToggle }: { group: RowGroup; expanded: boolean; onToggle: () => void }) {
   return (
     <TableRow className="hover:bg-transparent">
-      {/* Name, Namespace, Status, Addon, Cluster, Checked against, plus the
+      {/* Name, Namespace, Status, Addon, Cluster, Compared with, plus the
           actions column (G1 added Addon + Source; H2 moved Status next to
           Name; walk finding #140 added Namespace; design-secret-sync-
           visual-pass removed the LAST CHECKED column — the fact lives in
@@ -3094,7 +3097,7 @@ export function ManagedSecrets() {
             <X className="h-3 w-3" aria-hidden="true" />
           </button>
         )}
-        {/* SSF-3 (Secret Sync finish pass) — Addon and Checked against used
+        {/* SSF-3 (Secret Sync finish pass) — Addon and Compared with used
             to be two separate <select>s sitting in the toolbar; they fold
             into one Filters popover now (existing shadcn Popover, no new
             component system) so the toolbar reads as one row of controls
@@ -3146,7 +3149,7 @@ export function ManagedSecrets() {
               </select>
             </label>
             <label className="flex flex-col gap-1 text-xs text-[#3a6a8a] dark:text-gray-400">
-              Checked against
+              Compared with
               <select
                 value={sourceFilter}
                 onChange={(e) => setSourceFilter(e.target.value)}
@@ -3309,7 +3312,7 @@ export function ManagedSecrets() {
                 <SortableTh label="Status" sortKeyName="state" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[140px] px-1.5" />
                 <SortableTh label="Addon" sortKeyName="addon" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[124px] px-1.5" />
                 <SortableTh label="Cluster" sortKeyName="cluster" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[150px] px-1.5" />
-                <SortableTh label="Checked against" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[180px] px-1.5" />
+                <SortableTh label="Compared with" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[180px] px-1.5" />
                 <TableHead className="w-9 px-1.5" />
               </TableRow>
             </TableHeader>
