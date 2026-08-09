@@ -70,6 +70,12 @@ func (a *AzureDevOpsProvider) GetFileContent(_ context.Context, filePath, ref st
 }
 
 // ListDirectory returns the names of entries in a directory at the given ref.
+//
+// When the directory does not exist at all Azure DevOps returns 404, the
+// same as GetFileContent does for a missing file. That is wrapped with
+// gitprovider.ErrFileNotFound so callers can use errors.Is to tell "nothing
+// here" apart from a genuine listing failure (task #147 acceptance-walk
+// finding).
 func (a *AzureDevOpsProvider) ListDirectory(_ context.Context, dirPath, ref string) ([]string, error) {
 	apiURL := fmt.Sprintf("%s/items?scopePath=%s&recursionLevel=OneLevel&versionDescriptor.version=%s&api-version=7.1",
 		a.baseURL, url.QueryEscape(dirPath), url.QueryEscape(ref))
@@ -77,6 +83,9 @@ func (a *AzureDevOpsProvider) ListDirectory(_ context.Context, dirPath, ref stri
 	resp, body, err := a.doGet(apiURL)
 	if err != nil {
 		return nil, fmt.Errorf("list directory: %w", err)
+	}
+	if resp.StatusCode == 404 {
+		return nil, fmt.Errorf("list directory: path %q at ref %q: %w", dirPath, ref, ErrFileNotFound)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("list directory: unexpected status %d", resp.StatusCode)

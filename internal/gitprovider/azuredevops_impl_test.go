@@ -118,6 +118,55 @@ func TestAzure_ListDirectory_Success(t *testing.T) {
 	}
 }
 
+// TestAzure_ListDirectory_NotFound_404 — task #147 acceptance-walk finding.
+// A directory that genuinely does not exist (e.g. a cluster that never had
+// a values file written) must come back as gitprovider.ErrFileNotFound, the
+// same sentinel GetFileContent already uses for a missing file, so
+// fail-closed callers treat it as "nothing there" rather than a genuine
+// listing failure.
+func TestAzure_ListDirectory_NotFound_404(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /items", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "not found"})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	_, err := provider.ListDirectory(context.Background(), "/charts/missing", "main")
+	if err == nil {
+		t.Fatal("expected error for a missing directory, got nil")
+	}
+	if !errors.Is(err, ErrFileNotFound) {
+		t.Errorf("expected errors.Is(err, ErrFileNotFound), got: %v", err)
+	}
+}
+
+// TestAzure_ListDirectory_ServerError_NotSentinel — only a definitive 404
+// maps to the sentinel; a 500 must not, so fail-closed callers still abort
+// instead of treating the directory as empty.
+func TestAzure_ListDirectory_ServerError_NotSentinel(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /items", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "internal error"})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	_, err := provider.ListDirectory(context.Background(), "/charts/missing", "main")
+	if err == nil {
+		t.Fatal("expected error for a 500, got nil")
+	}
+	if errors.Is(err, ErrFileNotFound) {
+		t.Errorf("a genuine server error must not match ErrFileNotFound, got: %v", err)
+	}
+}
+
 func TestAzure_ListPullRequests_MapsStatus(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /pullrequests", func(w http.ResponseWriter, r *http.Request) {

@@ -485,6 +485,66 @@ func TestGetPullRequestStatus_Merged(t *testing.T) {
 	}
 }
 
+// TestListDirectory_NotFound_404 — task #147 acceptance-walk finding. A
+// directory that genuinely does not exist (e.g. a cluster that never had a
+// values file written) must come back as gitprovider.ErrFileNotFound, the
+// same sentinel GetFileContent already uses — every orchestrator caller of
+// ListDirectory (unadopt_v4.go, remove.go, catalog_delete.go,
+// migration_v3v4.go) treats that sentinel as "nothing there" and treats any
+// other error as a genuine failure to fail closed on. Before this fix,
+// ListDirectory returned a bare wrapped error on 404 that did not
+// errors.Is-match the sentinel, so every one of those callers mistook an
+// empty/missing directory for a real listing failure.
+func TestListDirectory_NotFound_404(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/test-owner/test-repo/contents/values/clusters/spoke-us", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(github.ErrorResponse{
+			Response: &http.Response{StatusCode: http.StatusNotFound},
+			Message:  "Not Found",
+		})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestGitHubProvider(t, server)
+	_, err := provider.ListDirectory(context.Background(), "values/clusters/spoke-us", "main")
+	if err == nil {
+		t.Fatal("expected error for a missing directory, got nil")
+	}
+	if !errors.Is(err, ErrFileNotFound) {
+		t.Errorf("expected errors.Is(err, ErrFileNotFound), got: %v", err)
+	}
+}
+
+// TestListDirectory_ServerError_NotSentinel — only a definitive 404 maps to
+// the sentinel. A 500 (rate limit, auth expiry, real transport failure) must
+// NOT match ErrFileNotFound so fail-closed callers still abort instead of
+// treating the directory as empty.
+func TestListDirectory_ServerError_NotSentinel(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/test-owner/test-repo/contents/values/clusters/spoke-us", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(github.ErrorResponse{
+			Response: &http.Response{StatusCode: http.StatusInternalServerError},
+			Message:  "Internal Server Error",
+		})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestGitHubProvider(t, server)
+	_, err := provider.ListDirectory(context.Background(), "values/clusters/spoke-us", "main")
+	if err == nil {
+		t.Fatal("expected error for a 500, got nil")
+	}
+	if errors.Is(err, ErrFileNotFound) {
+		t.Errorf("a genuine server error must not match ErrFileNotFound, got: %v", err)
+	}
+}
+
 // TestIsEmptyRepo — unit test the detector directly so future callers can
 // rely on its semantics without re-deriving them.
 func TestIsEmptyRepo(t *testing.T) {
