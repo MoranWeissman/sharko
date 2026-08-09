@@ -9,8 +9,8 @@ import { render, screen } from '@testing-library/react'
 import { StatusMark, statusLabel, statusSortRank, statusStripClassName, toResourceStatus } from '../StatusMark'
 
 describe('StatusMark', () => {
-  it('calls the fifth state "Foreign"', () => {
-    expect(statusLabel('foreign')).toBe('Foreign')
+  it('calls the fifth state "Managed elsewhere" (SSF-8 word pass — was "Foreign")', () => {
+    expect(statusLabel('foreign')).toBe('Managed elsewhere')
   })
 
   it('sorts missing first, then out-of-sync, then orphaned, then foreign, then never-checked, in-sync last (G3, leftover-secrets S1.2)', () => {
@@ -21,8 +21,8 @@ describe('StatusMark', () => {
     expect(statusSortRank('unknown')).toBeLessThan(statusSortRank('in_sync'))
   })
 
-  it('calls the orphaned state "Orphaned" and gives it a violet dot, distinct from every other fill', () => {
-    expect(statusLabel('orphaned')).toBe('Orphaned')
+  it('calls the orphaned state "Not in config" (SSF-8 word pass — was "Orphaned") and gives it a violet dot, distinct from every other fill', () => {
+    expect(statusLabel('orphaned')).toBe('Not in config')
     render(<StatusMark status="orphaned" />)
     const dot = screen.getByTestId('status-dot')
     expect(dot).toHaveAttribute('data-status', 'orphaned')

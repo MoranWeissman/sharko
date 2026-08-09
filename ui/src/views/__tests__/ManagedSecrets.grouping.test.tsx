@@ -387,6 +387,10 @@ describe('ManagedSecrets — the live resource, read-only (G4)', () => {
     await waitFor(() => expect(mockGetAddonValuesSecretResource).toHaveBeenCalledTimes(1))
     expect(mockGetAddonValuesSecretResource).toHaveBeenCalledWith('prod-eu', 'datadog')
 
+    // SSF-8: this row is in_sync (a match) — the comparison box (which
+    // holds detail-resource-panel) opens behind "View comparison".
+    await user.click(await screen.findByTestId('view-comparison-toggle'))
+
     const panel = await screen.findByTestId('detail-resource-panel')
     // design-secret-sync-visual-pass item 22: the live card no longer
     // repeats the {namespace}/{name} identity — the resource header above

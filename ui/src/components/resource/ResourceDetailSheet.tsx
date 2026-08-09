@@ -29,14 +29,17 @@ export function ResourceDetailSheet({
   children: ReactNode
   testId?: string
   /**
-   * Opt-in wider panel (P3-F2; widened again in the Secret Sync finish
-   * pass, SSF-4, from 672px to 760px — the two-card diff plus the keys
-   * table were still cramped at 672px). The default stays `sm:max-w-lg`
-   * (512px) so nothing that already uses this sheet changes width; a panel
-   * that puts two things SIDE BY SIDE — the Managed Secrets diff, which
-   * shows what a secret should be next to what is actually on the cluster
-   * — asks for `sm:max-w-[760px]` instead. Below that breakpoint the sheet
-   * is full-width either way and the caller's own grid stacks.
+   * Opt-in wider panel (P3-F2; widened to 760px in SSF-4, then back down to
+   * 640px in the SSF-8 drawer calm-down — the panel now opens on one plain
+   * sentence with everything else collapsed, so it no longer needs the
+   * extra room a side-by-side diff used to justify; the comparison zone
+   * that still wants width shows on demand instead of by default). The
+   * default stays `sm:max-w-lg` (512px) so nothing that already uses this
+   * sheet changes width; a panel that puts two things SIDE BY SIDE — the
+   * Managed Secrets diff, which shows what a secret should be next to what
+   * is actually on the cluster — asks for `sm:max-w-[640px]` instead. Below
+   * that breakpoint the sheet is full-width either way and the caller's own
+   * grid stacks.
    *
    * A prop rather than a per-page override so the two sizes stay a short,
    * named list instead of every page inventing its own width.
@@ -47,7 +50,7 @@ export function ResourceDetailSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className={`flex w-full flex-col ${wide ? 'sm:max-w-[760px]' : 'sm:max-w-lg'}`}
+        className={`flex w-full flex-col ${wide ? 'sm:max-w-[640px]' : 'sm:max-w-lg'}`}
         data-testid={testId}
       >
         <SheetHeader>

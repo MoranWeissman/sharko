@@ -119,20 +119,20 @@ beforeEach(() => {
 })
 
 describe('orphaned rows — the chip and the row', () => {
-  it('renders an "Orphaned" filter chip with the right count', async () => {
+  it('renders a "Not in config" filter chip with the right count (SSF-8 word pass — was "Orphaned")', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByTestId('filter-chip-orphaned')).toBeInTheDocument())
     const chip = screen.getByTestId('filter-chip-orphaned')
-    expect(chip).toHaveTextContent('Orphaned')
+    expect(chip).toHaveTextContent('Not in config')
     expect(chip).toHaveTextContent('1')
   })
 
-  it('renders an orphaned row with its namespace, name, and the Orphaned status', async () => {
+  it('renders an orphaned row with its namespace, name, and the "Not in config" status', async () => {
     renderPage()
     const row = await screen.findByTestId('secret-row-orphaned-staging-us-external-secrets-eso-creds')
     expect(within(row).getByTestId('cell-name')).toHaveTextContent('eso-creds')
     expect(within(row).getByTestId('cell-namespace')).toHaveTextContent('external-secrets')
-    expect(within(row).getByText('Orphaned')).toBeInTheDocument()
+    expect(within(row).getByText('Not in config')).toBeInTheDocument()
     const dot = within(row).getAllByTestId('status-dot')[0]
     expect(dot).toHaveAttribute('data-status', 'orphaned')
   })
@@ -235,11 +235,11 @@ describe('orphaned rows — the panel', () => {
     return screen.findByTestId('secret-detail-panel')
   }
 
-  it('shows the locked panel sentence', async () => {
+  it('shows the panel sentence (SSF-8 word pass: "Orphaned" → "Not in config")', async () => {
     renderPage()
     const panel = await openRow()
     expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent(
-      'Orphaned — its source in git is gone. Sharko wrote this secret once, but nothing asks for it anymore.',
+      'Not in config — its source in git is gone. Sharko wrote this secret once, but nothing asks for it anymore.',
     )
   })
 

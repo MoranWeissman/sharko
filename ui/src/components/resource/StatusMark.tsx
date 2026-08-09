@@ -8,11 +8,11 @@
 //   in_sync      "Synced"             — matches its source right now
 //   out_of_sync  "Out of sync"        — checked, and it does NOT match
 //   missing      "Missing"            — checked, and there's nothing there
-//   orphaned     "Orphaned"           — Sharko wrote this once, but its
+//   orphaned     "Not in config"      — Sharko wrote this once, but its
 //                                        source in git is gone; nothing
 //                                        asks for it anymore, and Sharko
 //                                        never deletes it on its own
-//   foreign      "Foreign"            — something IS there, and Sharko did
+//   foreign      "Managed elsewhere"  — something IS there, and Sharko did
 //                                        not create it, so Sharko leaves it
 //                                        alone
 //   unknown      "Not checked yet"    — Sharko has no answer at all
@@ -33,19 +33,30 @@
 // creates it.") — the short word on the row and the full sentence in the
 // panel are still the intended pairing, only the row word changed.
 //
-// "Foreign" is deliberately NOT red and NOT amber. Nothing is broken and
-// nothing needs fixing — somebody else owns that secret, and Sharko staying
-// off it is the system working correctly. It gets a neutral slate dot: its
-// own thing, calm, and impossible to mistake for damage.
+// "Managed elsewhere" (state key: foreign) is deliberately NOT red and NOT
+// amber. Nothing is broken and nothing needs fixing — somebody else owns
+// that secret, and Sharko staying off it is the system working correctly.
+// It gets a neutral slate dot: its own thing, calm, and impossible to
+// mistake for damage.
 //
-// leftover-secrets S1.2 adds "orphaned" — maintainer-locked word, never
-// softened. Distinct from "foreign": a foreign secret is something Sharko
-// never owned; an orphaned secret is something SHARKO WROTE whose source
-// definition someone later deleted from git. It gets its own violet dot —
-// not red (nothing is broken), not amber (there's no fix Sharko is waiting
-// on), not slate (unlike foreign, this one is Sharko's own past delivery,
-// worth calling out on its own) — with a Ghost mark, the one state where
-// the mark itself carries a hint of what the word already says.
+// leftover-secrets S1.2 adds "orphaned" (label now "Not in config", see the
+// 2026-08-09 PM decision in the SSF-8 word pass below) — distinct from
+// "foreign": a foreign secret is something Sharko never owned; an orphaned
+// secret is something SHARKO WROTE whose source definition someone later
+// deleted from git. It gets its own violet dot — not red (nothing is
+// broken), not amber (there's no fix Sharko is waiting on), not slate
+// (unlike foreign, this one is Sharko's own past delivery, worth calling
+// out on its own) — with a Ghost mark, the one state where the mark itself
+// carries a hint of what the word already says.
+//
+// SSF-8 word pass (2026-08-09 PM decision, drawer calm-down): "Orphaned"
+// and "Foreign" read as jargon to a reader who isn't already fluent in
+// Sharko's own vocabulary — both now say the plain fact instead. "Orphaned"
+// → "Not in config" (its source definition isn't in git anymore — that IS
+// the fact). "Foreign" → "Managed elsewhere" (something else owns this
+// secret, stated plainly). The internal state keys (`orphaned`, `foreign`),
+// the dot colours, and the sort rank are UNCHANGED — only the label text a
+// reader sees changed.
 //
 // Two rules that matter more than they look like they do:
 //
@@ -112,7 +123,7 @@ const STATUS_META: Record<ResourceStatus, StatusMeta> = {
     mark: X,
   },
   orphaned: {
-    label: 'Orphaned',
+    label: 'Not in config',
     // Violet/purple, on purpose — distinct from every other fill on this
     // page (green/amber/red/slate). Not red or amber: nothing is broken
     // and there's no fix Sharko is waiting on. Not slate like foreign:
@@ -124,7 +135,7 @@ const STATUS_META: Record<ResourceStatus, StatusMeta> = {
     mark: Ghost,
   },
   foreign: {
-    label: 'Foreign',
+    label: 'Managed elsewhere',
     // Neutral slate, on purpose — see the note at the top of this file.
     // Filled (something IS there, Sharko looked and knows what) with a dash
     // inside (Sharko does nothing here).
