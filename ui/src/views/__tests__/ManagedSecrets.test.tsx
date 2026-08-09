@@ -452,8 +452,10 @@ describe('ManagedSecrets', () => {
     expect(screen.queryByTestId('secret-row-connection-prod-eu')).not.toBeInTheDocument()
   })
 
-  // G1 — ADDON and SOURCE are filterable via their own selects.
-  it('filters the table with the Addon and Source selects', async () => {
+  // G1 — ADDON and SOURCE are filterable via their own selects, now folded
+  // into one Filters popover (SSF-3) — same testids, same behaviour, only
+  // reachable behind the Filters button now.
+  it('filters the table with the Addon and Source selects behind the Filters popover', async () => {
     const user = userEvent.setup()
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
@@ -461,6 +463,9 @@ describe('ManagedSecrets', () => {
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
     // 4 rows total before any filter.
     expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(4)
+
+    fireEvent.click(screen.getByTestId('filters-button'))
+    await waitFor(() => expect(screen.getByTestId('addon-filter-select')).toBeInTheDocument())
 
     await user.selectOptions(screen.getByTestId('addon-filter-select'), 'datadog')
     await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
@@ -474,6 +479,29 @@ describe('ManagedSecrets', () => {
     await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(2))
     expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument()
     expect(screen.queryByTestId('secret-row-values-prod-eu-datadog')).not.toBeInTheDocument()
+  })
+
+  // SSF-3 — the Filters button shows how many of the two selects are set,
+  // and Clear filters resets both at once.
+  it('shows an active-filter count on the Filters button and clears both filters at once', async () => {
+    const user = userEvent.setup()
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    expect(screen.queryByTestId('filters-active-count')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('filters-button'))
+    await user.selectOptions(await screen.findByTestId('addon-filter-select'), 'datadog')
+    await user.selectOptions(screen.getByTestId('source-filter-select'), 'AWS Secrets Manager')
+
+    await waitFor(() => expect(screen.getByTestId('filters-active-count')).toHaveTextContent('2'))
+
+    fireEvent.click(screen.getByTestId('filters-clear'))
+    await waitFor(() => expect(screen.queryByTestId('filters-active-count')).not.toBeInTheDocument())
+    expect((screen.getByTestId('addon-filter-select') as HTMLSelectElement).value).toBe('')
+    expect((screen.getByTestId('source-filter-select') as HTMLSelectElement).value).toBe('')
+    await waitFor(() => expect(screen.getAllByTestId(/^secret-row-/)).toHaveLength(4))
   })
 
   it('sorts worst-first by default — out-of-sync rows come before in-sync rows, never alphabetically (S3)', async () => {
@@ -955,9 +983,9 @@ describe('ManagedSecrets', () => {
     await user.click(screen.getByRole('button', { name: 'Actions for prod-eu' }))
     const syncItemDisabled = await screen.findByRole('menuitem', { name: /Sync/ })
     expect(within(syncItemDisabled).getByLabelText('Why is Sync unavailable?')).toBeInTheDocument()
-    // Refresh is always enabled here — it must carry NO hint at all.
-    const refreshItem = screen.getByRole('menuitem', { name: /Refresh/ })
-    expect(within(refreshItem).queryByLabelText(/Why is Refresh unavailable\?/)).not.toBeInTheDocument()
+    // Check now is always enabled here — it must carry NO hint at all.
+    const refreshItem = screen.getByRole('menuitem', { name: /Check now/ })
+    expect(within(refreshItem).queryByLabelText(/Why is Check now unavailable\?/)).not.toBeInTheDocument()
     await user.keyboard('{Escape}')
 
     // staging-us is out_of_sync — Sync is enabled and must carry NO hint.
@@ -1029,7 +1057,7 @@ describe('ManagedSecrets', () => {
   // pins the UI-side consequence the coordinator asked to verify: Sync
   // must stay disabled for it, exactly like any other unknown row — a
   // failed check must never leave Sync looking like a safe action to take.
-  it('disables Sync on a values row whose last check failed (state unknown) with the "click Refresh first" reason', async () => {
+  it('disables Sync on a values row whose last check failed (state unknown) with the "click Check now first" reason', async () => {
     const user = userEvent.setup()
     mockGetManagedSecrets.mockResolvedValue({
       ...baseResponse,
@@ -1057,7 +1085,7 @@ describe('ManagedSecrets', () => {
     const syncItem = await screen.findByRole('menuitem', { name: /Sync/ })
     expect(syncItem).toHaveAttribute('aria-disabled', 'true')
     await user.click(within(syncItem).getByLabelText('Why is Sync unavailable?'))
-    await waitFor(() => expect(screen.getByText('Click Refresh first to check this secret.')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Click Check now first to check this secret.')).toBeInTheDocument())
     await user.keyboard('{Escape}')
 
     // And the panel shows the failure sentence, same as the connection-row
@@ -1122,9 +1150,9 @@ describe('ManagedSecrets', () => {
     expect(order).toEqual(['secret-row-values-c-check-failed-a', 'secret-row-values-c-not-checked-a'])
   })
 
-  // P1-A A3 — a connection row's Refresh checks every cluster, and the
+  // P1-A A3 — a connection row's Check now checks every cluster, and the
   // toast says so instead of implying one cluster was singled out.
-  it("a connection row's Refresh names the real blast radius in its toast", async () => {
+  it("a connection row's Check now names the real blast radius in its toast", async () => {
     const user = userEvent.setup()
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     mockReconcileCluster.mockResolvedValue({ status: 'accepted', message: 'checking' })
@@ -1132,7 +1160,7 @@ describe('ManagedSecrets', () => {
 
     await screen.findByTestId('secret-row-connection-staging-us')
     await user.click(screen.getByRole('button', { name: 'Actions for staging-us' }))
-    await user.click(await screen.findByRole('menuitem', { name: /Refresh/ }))
+    await user.click(await screen.findByRole('menuitem', { name: /Check now/ }))
 
     await waitFor(() => expect(mockReconcileCluster).toHaveBeenCalledWith('staging-us'))
     await waitFor(() =>
