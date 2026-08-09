@@ -34,29 +34,40 @@ func cmdUp(ctx context.Context) error {
 	fmt.Printf("    Hub: %s\n", ClusterHub)
 	fmt.Printf("    Spokes (%d): %v\n", numSpokes, spokeNames)
 
-	// 2. Create or reuse hub kind cluster.
+	// 2. Build the Sharko + GitFake images BEFORE any kind cluster exists.
+	//    This is the slowest, least predictable step (cold Sharko build can
+	//    take up to ~15 minutes) — running it first means it never has to
+	//    compete with cluster startup and ArgoCD's own image pulls inside
+	//    the same Docker VM. See sharkoImageBuildTimeout's doc comment.
+	if err := buildImages(); err != nil {
+		return fmt.Errorf("build images: %w", err)
+	}
+
+	// 3. Create or reuse hub kind cluster.
 	if err := provisionHub(); err != nil {
 		return fmt.Errorf("provision hub: %w", err)
 	}
 
-	// 3. Create or reuse spoke kind clusters.
+	// 4. Create or reuse spoke kind clusters.
 	for i := 0; i < numSpokes; i++ {
 		if err := provisionSpoke(i); err != nil {
 			return fmt.Errorf("provision spoke %d: %w", i, err)
 		}
 	}
 
-	// 4. Install ArgoCD on the hub.
+	// 5. Install ArgoCD on the hub.
 	if err := installArgoCD(); err != nil {
 		return fmt.Errorf("install ArgoCD: %w", err)
 	}
 
-	// 5. Build and load Sharko + GitFake images onto the hub.
-	if err := buildAndLoadImages(); err != nil {
-		return fmt.Errorf("build/load images: %w", err)
+	// 6. Load the already-built Sharko + GitFake images onto the hub — the
+	//    hub cluster now exists (step 3), so `kind load` has somewhere to
+	//    put them.
+	if err := loadImagesOntoHub(); err != nil {
+		return fmt.Errorf("load images onto hub: %w", err)
 	}
 
-	// 6. Determine which git backend to use (Gitea by default, GitFake when PLAYGROUND_GIT_BACKEND=gitfake).
+	// 7. Determine which git backend to use (Gitea by default, GitFake when PLAYGROUND_GIT_BACKEND=gitfake).
 	gitBackend := os.Getenv("PLAYGROUND_GIT_BACKEND")
 	if gitBackend == "" {
 		gitBackend = "gitea"
@@ -81,25 +92,25 @@ func cmdUp(ctx context.Context) error {
 		}
 	}
 
-	// 7. Install Sharko on the hub via helm. For Gitea backend, allowlist
+	// 8. Install Sharko on the hub via helm. For Gitea backend, allowlist
 	//    the in-cluster Gitea host.
 	if err := installSharko(gitBackend, gitfakeURL, giteaURL); err != nil {
 		return fmt.Errorf("install Sharko: %w", err)
 	}
 
-	// 8. Register the N spokes as Sharko-managed clusters via REST API.
+	// 9. Register the N spokes as Sharko-managed clusters via REST API.
 	//    For Gitea backend, also create a gitea-typed connection.
 	if err := registerSpokes(numSpokes, spokeNames, gitBackend, giteaURL, giteaToken); err != nil {
 		return fmt.Errorf("register spokes: %w", err)
 	}
 
-	// 9. Print access instructions and next steps.
+	// 10. Print access instructions and next steps.
 	if err := printSuccessMessage(); err != nil {
 		// Non-fatal — just log the error and continue.
 		fmt.Printf("    Warning: could not retrieve all credentials: %v\n", err)
 	}
 
-	// 10. Show the status snapshot.
+	// 11. Show the status snapshot.
 	if err := showStatusSnapshot(); err != nil {
 		// Non-fatal — just log the warning.
 		fmt.Printf("    Warning: status snapshot unavailable: %v\n", err)
@@ -324,13 +335,22 @@ func mergeAdminRoleGrant(currentPolicyCSV string) (newPolicy string, alreadyGran
 // Sharko image (Go binary + full UI production build). The old flat 5-minute
 // timeout was cutting the build off mid-way on machines where the UI build
 // step alone takes ~4 minutes — this only matters on the FIRST run per git
-// SHA; every later run hits buildAndLoadImages' skip-if-already-built branch
+// SHA; every later run hits buildImages' skip-if-already-built branch
 // instead and never waits on this at all.
 const sharkoImageBuildTimeout = 15 * time.Minute
 
-// buildAndLoadImages builds Sharko + GitFake Docker images and loads them onto the hub.
-func buildAndLoadImages() error {
-	fmt.Println("==> Building and loading images onto hub")
+// buildImages builds the Sharko + GitFake Docker images. Deliberately split
+// from loadImagesOntoHub (below) and run BEFORE any kind cluster is created
+// — a cold Sharko build (Go binary + full UI production build) can take up
+// to ~15 minutes, and running it while kind is also standing up clusters and
+// ArgoCD is cold-pulling its own images inside the same Docker VM starves
+// the build of resources with zero visible progress (walk finding, task
+// #147: the build silently hit its full budget and was killed even though
+// BuildKit's buffered output showed it had actually reached the final `go
+// build` step). Building first — before there is any cluster to compete
+// with — and streaming progress via --progress=plain fixes both problems.
+func buildImages() error {
+	fmt.Println("==> Building Sharko + GitFake images")
 
 	// Build GitFake image via Makefile.
 	fmt.Println("    Building GitFake image...")
@@ -352,16 +372,33 @@ func buildAndLoadImages() error {
 		// minutes, so a flat 5-minute budget was cutting the build off
 		// mid-way on first run. 15 minutes is an honest budget for a cold
 		// build; every SUBSEQUENT run hits the skip branch above instead.
+		// --progress=plain streams BuildKit output line-by-line as it
+		// happens, instead of buffering it until the build finishes or is
+		// killed — a stalled build must be visible in the log, not silent
+		// for up to 15 minutes.
 		fmt.Println("    Building Sharko image (first run — this is a cold build of the Go binary + full UI, can take up to ~15 minutes)...")
-		if _, stderr, err := runCmd(sharkoImageBuildTimeout, "docker", "build", "-t", sharkoImage, "."); err != nil {
+		if _, stderr, err := runCmd(sharkoImageBuildTimeout, "docker", "build", "--progress=plain", "-t", sharkoImage, "."); err != nil {
 			return fmt.Errorf("docker build sharko: %w (stderr=%s)", err, stderr)
 		}
 		fmt.Println("    Sharko image built")
 	}
 
-	// Load both images onto hub.
-	fmt.Println("    Loading images onto hub cluster...")
+	fmt.Println("    Images built")
+	return nil
+}
+
+// loadImagesOntoHub kind-loads the already-built Sharko + GitFake images
+// onto the hub cluster. Split from buildImages (above) because `kind load`
+// needs a running cluster to load into — this can only run once the hub
+// cluster exists, whereas the build itself has no such dependency and is
+// deliberately run earlier (see buildImages' doc comment).
+func loadImagesOntoHub() error {
+	fmt.Println("==> Loading images onto hub cluster")
+
+	gitSHA := mustRunCmd(10*time.Second, "git", "rev-parse", "--short", "HEAD")
+	sharkoImage := "sharko:playground-" + gitSHA
 	gitfakeImage := "sharko-gitfake:e2e-" + gitSHA
+
 	if _, stderr, err := runCmd(2*time.Minute, "kind", "load", "docker-image", gitfakeImage, "--name", ClusterHub); err != nil {
 		return fmt.Errorf("kind load gitfake image: %w (stderr=%s)", err, stderr)
 	}
@@ -369,7 +406,7 @@ func buildAndLoadImages() error {
 		return fmt.Errorf("kind load sharko image: %w (stderr=%s)", err, stderr)
 	}
 
-	fmt.Println("    Images built and loaded")
+	fmt.Println("    Images loaded")
 	return nil
 }
 
