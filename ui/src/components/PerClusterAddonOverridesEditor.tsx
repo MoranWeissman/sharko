@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react'
-import { Info, Loader2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { ValuesEditor } from '@/components/ValuesEditor'
 import { RecentPRsPanel } from '@/components/RecentPRsPanel'
 import { api } from '@/services/api'
@@ -116,16 +116,14 @@ function PerClusterAddonOverridesEditorImpl({
 
   return (
     <div className="space-y-4">
-      {/* V2-cleanup-83.3: a short, plain-English intro above the addon
-        * picker. This panel edits one file in Git
-        * (configuration/addons-clusters-values/<cluster>.yaml) — it's easy
-        * to mistake for something secret-ish or global. Say what it is,
-        * that changes ship as a PR, and link to the full guide. */}
+      {/* One short scope sentence replaces the old three-part explanation
+        * (intro paragraph + picker helper + editor subtitle, UI copy pass)
+        * — the user needs to know which cluster changes and that Save
+        * opens a PR, not three versions of the same fact. Docs link kept
+        * for anyone who wants the full guide. */}
       <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
-        Customize an addon's settings for just this cluster. Pick an addon below and any values you
-        set here override its global defaults — everyone else keeps the defaults until they do the
-        same. This is plain configuration, not a secret, and every change here goes out as a pull
-        request for you to review before it merges.{' '}
+        These values apply only to <span className="font-mono">{clusterName}</span>. Save
+        opens a pull request.{' '}
         <a
           href="https://sharko.readthedocs.io/en/latest/user-guide/values-editing/"
           target="_blank"
@@ -153,14 +151,6 @@ function PerClusterAddonOverridesEditorImpl({
             </option>
           ))}
         </select>
-        <p className="mt-2 flex items-start gap-1.5 text-xs text-[#3a6a8a] dark:text-gray-500">
-          <Info className="mt-0.5 h-3 w-3 shrink-0" />
-          <span>
-            Anything here overrides global values for{' '}
-            <span className="font-mono">{clusterName}</span>. Leave empty to use the global
-            defaults. Save opens a PR — on merge, the change rolls out to this cluster only.
-          </span>
-        </p>
       </div>
 
       {loading && (
@@ -175,7 +165,6 @@ function PerClusterAddonOverridesEditorImpl({
         <ValuesEditor
           key={`${clusterName}/${selected}`}
           title={`${selected} overrides on ${clusterName}`}
-          subtitle="Only this cluster is affected. Other clusters keep using the global defaults until you edit them too."
           initialYAML={data?.current_overrides ?? ''}
           schema={data?.schema ?? null}
           hasPersonalToken={me?.has_github_token}

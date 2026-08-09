@@ -129,7 +129,7 @@ function ClusterChangesSection({
     return (
       <EmptyState
         title="No changes yet"
-        description="A change is something you do to this cluster — enabling or disabling an addon, or editing an addon's values. Each one goes out as a pull request for you to review, and shows up here once it's merged."
+        description="Enable, disable, or edit an addon on this cluster to see it here."
       />
     );
   }
@@ -1258,9 +1258,10 @@ export function ClusterDetail() {
         * here and again in the old Overview stat cards. */}
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
-            Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
-          </p>
+          {/* The generic "Kubernetes cluster managed by ArgoCD" sentence
+            * that used to sit here was removed (UI copy pass) — the
+            * cluster name, status strip, and table below already show the
+            * page's purpose. */}
           {/* The old "Last sync check" line that used to live here was a
             * duplicate of the "Managed cluster secret" panel's own Last sync
             * row below (walk day 4 locks, S1 ride-along) — removed rather
@@ -1658,18 +1659,18 @@ export function ClusterDetail() {
             <div className="flex items-start gap-1.5">
               <div>
                 <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-                  Managed cluster secret
+                  Argo CD cluster connection
                   {data?.cluster?.managed_secret_name && (
                     <span className="font-normal text-[#5a8aaa] dark:text-gray-500"> — {data.cluster.managed_secret_name}</span>
                   )}
                 </h3>
                 <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">
-                  This secret is how ArgoCD connects to the cluster, and its labels choose which addons run here. Sharko keeps it matching git.
+                  Shows connection health and whether this cluster&rsquo;s addon selection matches Git.
                 </p>
               </div>
               <InfoHint
-                text="The addon labels on this secret are read by the engine's ApplicationSet cluster generator — that's what installs and removes addons on this cluster."
-                label="What reads this secret's labels?"
+                text="Argo CD stores this connection as a Kubernetes Secret. Its addon labels are read by the ApplicationSet cluster generator — that's what installs and removes addons on this cluster."
+                label="How does this connection work?"
               />
             </div>
 
@@ -2120,7 +2121,7 @@ export function ClusterDetail() {
                   variant="info"
                   title="Connectivity check"
                 >
-                  A tiny test app Sharko deploys through ArgoCD to confirm this cluster can receive deployments. It removes itself once you enable your first addon.
+                  A tiny test app Sharko deploys through ArgoCD to confirm this cluster can receive deployments, then removes itself once you enable your first addon.
                 </InfoBanner>
               )}
 
@@ -2254,12 +2255,15 @@ export function ClusterDetail() {
             * Replaces the fading modals that used to live in the header. */}
           {activeSection === 'diagnostics' && (
             <div className="space-y-4">
-              <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Diagnostics</h3>
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Diagnostics</h3>
+                <InfoHint
+                  text="Two of these checks read ArgoCD-side state as well as Sharko's own credentials, to verify configuration consistency."
+                  label="What exactly do these checks look at?"
+                />
+              </div>
               <HelperText>
-                Diagnostics tests whether <strong>Sharko itself</strong> can reach and operate on this cluster, using the credentials you registered. This is not testing ArgoCD's connection — it's testing Sharko's ability to read addons, write secrets, and manage the cluster. (Two checks read ArgoCD-side state to verify configuration consistency.)
-              </HelperText>
-              <HelperText className="text-xs">
-                Run these checks when troubleshooting connectivity issues or after rotating credentials. Results persist here until you re-run.
+                Tests whether <strong>Sharko itself</strong> can reach and operate on this cluster using the credentials you registered — this is not testing ArgoCD's connection. Run after connection or credential changes; results persist until you re-run.
               </HelperText>
               {/* v4-wave2 8.1 — a failing git/ArgoCD/vault connection surfaces
                 * here too, not just on the Connections settings page, since a
