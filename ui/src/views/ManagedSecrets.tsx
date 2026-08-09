@@ -2365,7 +2365,14 @@ function SecretTableRow({
       >
         {sourceShortLabel(row.sourceLabel)}
       </TableCell>
-      <TableCell className="py-2 px-1.5" onClick={(e) => e.stopPropagation()}>
+      {/* SSF-2 follow-up (browser verification): this cell holds the h-8
+          (32px) row-menu trigger — RowActionsMenu's own touch target, not
+          shrunk here. py-2 on this cell (matching the text cells) pushed
+          the row to 32+8+8+1=49px, well over the ~36-40px spec; the text
+          cells alone only need 20+16=36px. Tighter padding here lets the
+          row's height follow the button (32+4+1≈37px) instead of doubling
+          up on top of it — every other cell keeps py-2. */}
+      <TableCell className="py-0.5 px-1.5" onClick={(e) => e.stopPropagation()}>
         <RoleGuard roles={['admin', 'operator']}>
           <RowActionsMenu
             label={`Actions for ${row.cluster}${row.addon ? ' / ' + row.addon : ''}`}
