@@ -320,6 +320,14 @@ func mergeAdminRoleGrant(currentPolicyCSV string) (newPolicy string, alreadyGran
 	return mergeRoleGrantLine(currentPolicyCSV, adminRoleGrantLine)
 }
 
+// sharkoImageBuildTimeout is the budget for a cold `docker build` of the
+// Sharko image (Go binary + full UI production build). The old flat 5-minute
+// timeout was cutting the build off mid-way on machines where the UI build
+// step alone takes ~4 minutes — this only matters on the FIRST run per git
+// SHA; every later run hits buildAndLoadImages' skip-if-already-built branch
+// instead and never waits on this at all.
+const sharkoImageBuildTimeout = 15 * time.Minute
+
 // buildAndLoadImages builds Sharko + GitFake Docker images and loads them onto the hub.
 func buildAndLoadImages() error {
 	fmt.Println("==> Building and loading images onto hub")
@@ -330,12 +338,25 @@ func buildAndLoadImages() error {
 		return fmt.Errorf("make build-gitfake-image: %w (stderr=%s)", err, stderr)
 	}
 
-	// Build Sharko image (Dockerfile at repo root).
-	fmt.Println("    Building Sharko image...")
+	// Build Sharko image (Dockerfile at repo root). Skips the build the same
+	// way build-gitfake-image (above) already does when the tag for the
+	// current commit is already present locally — a re-run against an
+	// already-built playground doesn't need to pay the build cost again.
 	gitSHA := mustRunCmd(10*time.Second, "git", "rev-parse", "--short", "HEAD")
 	sharkoImage := "sharko:playground-" + gitSHA
-	if _, stderr, err := runCmd(5*time.Minute, "docker", "build", "-t", sharkoImage, "."); err != nil {
-		return fmt.Errorf("docker build sharko: %w (stderr=%s)", err, stderr)
+	if dockerImageExists(sharkoImage) {
+		fmt.Printf("    Sharko image %s already present locally — skipping build\n", sharkoImage)
+	} else {
+		// This is a cold multi-stage build (Go binary + full UI production
+		// build) — on a real machine the UI step alone can take several
+		// minutes, so a flat 5-minute budget was cutting the build off
+		// mid-way on first run. 15 minutes is an honest budget for a cold
+		// build; every SUBSEQUENT run hits the skip branch above instead.
+		fmt.Println("    Building Sharko image (first run — this is a cold build of the Go binary + full UI, can take up to ~15 minutes)...")
+		if _, stderr, err := runCmd(sharkoImageBuildTimeout, "docker", "build", "-t", sharkoImage, "."); err != nil {
+			return fmt.Errorf("docker build sharko: %w (stderr=%s)", err, stderr)
+		}
+		fmt.Println("    Sharko image built")
 	}
 
 	// Load both images onto hub.
@@ -575,19 +596,36 @@ spec:
 		// else: user already exists, proceed
 	}
 
+	// Start port-forward to access Gitea's REST API from the playground
+	// process. Moved ahead of token generation (it used to sit right before
+	// repo creation) because the token step below now needs the REST API
+	// too, to delete a stale token before minting a fresh one. Retry
+	// establishing the tunnel to absorb flaky port-forward startup.
+	fmt.Println("    Establishing Gitea port-forward (with retry)...")
+	pfCmd, err := establishGiteaPortForward(kubeconfigPath)
+	if err != nil {
+		return "", "", err
+	}
+	defer func() { _ = killProcessGroup(pfCmd) }()
+
 	// Generate API token
 	fmt.Println("    Generating Gitea API token...")
-	// Run as the 'git' user (uid 1000) because Gitea CLI refuses to run as root.
 	//
-	// Unlike admin user create above, a token-name collision on a re-run is
-	// NOT treated as success: gitea only ever shows a token's raw value at
-	// creation time, so an "already exists" error here means the earlier
-	// run's token is unrecoverable, not redundant. execGiteaCmd's fail-fast
-	// on "already exists" output still helps this step (a real name clash
-	// surfaces immediately instead of after 10 retries), it just can't be
-	// swallowed into a success the way the idempotent create-user case can.
-	generateTokenCmd := fmt.Sprintf("gitea admin user generate-access-token --username %s --token-name sharko-playground --scopes 'write:repository,write:user' --raw",
-		GiteaAdminUser)
+	// Unlike admin user create above, a token-name collision can't be waved
+	// off as "already there, proceed" — gitea only ever shows a token's raw
+	// value once, at creation time, so a token left over from an earlier
+	// half-failed run is unrecoverable, not redundant. That means the create
+	// call itself can never be made idempotent; what makes THIS step
+	// rerunnable is deleting any stale token under the same name first (via
+	// the REST API — the gitea CLI has no delete-token subcommand), so the
+	// create call below always starts from a clean slate.
+	if err := giteaDeleteAccessTokenIfExists(GiteaAdminUser, GiteaAdminPassword, GiteaAPITokenName); err != nil {
+		return "", "", fmt.Errorf("clear stale gitea token before regenerating: %w", err)
+	}
+
+	// Run as the 'git' user (uid 1000) because Gitea CLI refuses to run as root.
+	generateTokenCmd := fmt.Sprintf("gitea admin user generate-access-token --username %s --token-name %s --scopes 'write:repository,write:user' --raw",
+		GiteaAdminUser, GiteaAPITokenName)
 	tokenOut, tokenErr := execGiteaCmd(kubeconfigPath, Namespace, ContextHub, generateTokenCmd)
 	if tokenErr != nil {
 		return "", "", fmt.Errorf("generate gitea token: %w", tokenErr)
@@ -601,15 +639,6 @@ spec:
 	// (runGiteaRealDoorsFlow). "Empty" here means what any git host gives
 	// you on repo creation with auto-init on: a README, nothing else.
 	fmt.Println("    Creating Gitea repository (empty — Sharko state comes later, through the real API)...")
-
-	// Start port-forward to access Gitea API from the playground process.
-	// Retry establishing the tunnel to absorb flaky port-forward startup.
-	fmt.Println("    Establishing Gitea port-forward (with retry)...")
-	pfCmd, err := establishGiteaPortForward(kubeconfigPath)
-	if err != nil {
-		return "", "", err
-	}
-	defer func() { _ = killProcessGroup(pfCmd) }()
 
 	// Create the repository
 	if err := giteaCreateRepo(giteaToken, GiteaRepoName); err != nil {
@@ -631,6 +660,14 @@ spec:
 
 	return giteaURL, giteaToken, nil
 }
+
+// sharkoRolloutTimeout is what installSharko hands to kubectl's own
+// --timeout flag on the post-install rollout status check. A named constant
+// (not a literal duplicated between the flag string and the outer runCmd
+// deadline) so the two can never silently drift back to the same value —
+// see argoCDRolloutTimeout's doc comment (argocd_sharko_token.go) for why
+// that drift matters.
+const sharkoRolloutTimeout = 3 * time.Minute
 
 // installSharko installs Sharko on the hub via direct helm upgrade --install.
 // The image (sharko:playground-<sha>) was already built + kind-loaded earlier.
@@ -680,9 +717,9 @@ func installSharko(gitBackend, gitfakeURL, giteaURL string) error {
 	// the pre-rollout pod).
 	fmt.Println("    Waiting for Sharko deployment rollout...")
 	kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
-	_, stderr, err := runCmd(3*time.Minute, "kubectl", "--kubeconfig", kubeconfigPath,
+	_, stderr, err := runCmd(outerCmdTimeout(sharkoRolloutTimeout), "kubectl", "--kubeconfig", kubeconfigPath,
 		"--context", ContextHub, "-n", Namespace,
-		"rollout", "status", "deploy/"+Release, "--timeout=180s")
+		"rollout", "status", "deploy/"+Release, "--timeout="+sharkoRolloutTimeout.String())
 	if err != nil {
 		return fmt.Errorf("wait for sharko rollout: %w (stderr=%s)", err, stderr)
 	}
@@ -1033,6 +1070,41 @@ func giteaCreateRepo(token, repoName string) error {
 		}
 		return nil
 	})
+}
+
+// giteaDeleteAccessTokenIfExists deletes a Gitea access token by name via
+// the REST API (DELETE /users/{username}/tokens/{token} — Gitea resolves
+// that path segment by numeric ID first, then falls back to matching it
+// against a token's display name, so the plain name deployGitea mints
+// tokens under works here even though generate-access-token never handed
+// back an ID). Authenticates with the admin username/password rather than a
+// bearer token, since the whole point of calling this is that we may not
+// have — or trust — an existing token yet.
+//
+// A 404 (nothing under that name) is treated as success: this is called
+// unconditionally before every token generation, not just on a detected
+// conflict, so the token-generation step is rerunnable by construction
+// rather than by string-matching gitea's error text.
+func giteaDeleteAccessTokenIfExists(username, password, tokenName string) error {
+	client := newHTTPClient()
+	url := fmt.Sprintf("%s/users/%s/tokens/%s", giteaLocalAPIBase, username, tokenName)
+	req, err := http.NewRequest("DELETE", url, nil)
+	if err != nil {
+		return fmt.Errorf("build gitea delete-token request: %w", err)
+	}
+	req.SetBasicAuth(username, password)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete gitea token %q: %w", tokenName, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("delete gitea token %q: unexpected status %d: %s", tokenName, resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 // generateManagedClustersSeed generates a managed-clusters.yaml seed content
