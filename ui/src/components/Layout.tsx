@@ -421,7 +421,7 @@ export function Layout() {
       </aside>
 
       {/* Right side: top bar + content */}
-      <div className="flex flex-col overflow-hidden" style={{ flex: '1 1 0', minWidth: 400 }}>
+      <div className="flex min-w-0 flex-col overflow-hidden" style={{ flex: '1 1 0' }}>
         {/* Top bar */}
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-[#6aade0] bg-[#f0f7ff] px-4 dark:border-gray-700 dark:bg-gray-900">
           {/* Left: mobile hamburger + breadcrumbs */}

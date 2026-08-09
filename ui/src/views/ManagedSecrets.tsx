@@ -1787,18 +1787,20 @@ function RecentActivity({ row }: { row: UnifiedRow }) {
 // a ResourceDetailSheet side drawer (SecretDetailPanel). The PM's
 // post-SSF-8 correction retired the drawer — it held a complete task and
 // stayed crowded even at 640px — in favour of a full page
-// (SecretDetailPage.tsx) at /secret-sync/<row key>. Everything below is
-// UNCHANGED content, just no longer wrapped in a Sheet: SecretDetailPage
-// renders this directly, with its own title above it (see secretTitleFor)
-// and its own Back link. The testid stays "secret-detail-panel" on
-// purpose — most of the existing detail tests only needed their render
-// harness updated, not their assertions, because of it.
+// (SecretDetailPage.tsx) at /secret-sync/<row key>. SecretDetailPage
+// renders this directly, below its own Back link. The testid stays
+// "secret-detail-panel" on purpose — most of the existing detail tests
+// only needed their render harness updated, not their assertions.
+//
+// SSF-11 (release correction): the page's title moved IN here, next to the
+// Check now / Sync actions, so the two sit in one header row instead of
+// the title floating alone above a narrow column. See secretTitleFor.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The plain-words title SecretDetailPage puts above this content — the
- * same sentence SSF-8 put in the drawer's own title bar. A connection row
- * is "{cluster} connection"; a values row is "{addon} values on
+ * The plain-words title this panel puts at the top of its own header row —
+ * the same sentence SSF-8 put in the drawer's own title bar. A connection
+ * row is "{cluster} connection"; a values row is "{addon} values on
  * {cluster}"; an orphaned row with no addon on record falls back to a
  * cluster-only sentence rather than printing "undefined".
  */
@@ -1996,21 +1998,93 @@ export function SecretDetailContent({
 
   return (
     <div data-testid="secret-detail-panel" className="space-y-4">
-      {/* ── First screen (SSF-8, drawer calm-down; SSF-9 moved this content
-          onto a full page) — this answers exactly five questions and
-          nothing else: what is this, is it okay, what was it checked
-          against, when, and what can I do. Everything past that is a
-          disclosure section further down, closed by default, or sits
-          behind "View comparison". The page's own title (secretTitleFor)
-          already states the identity in plain words (SSF-8) and the kind
-          (SSF-4) — this paragraph adds the one fact the title can't: the
-          specific purpose. */}
-      <p className="text-sm text-[#2a5a7a] dark:text-gray-300">{purposeSentence}</p>
+      {/* ── Header (SSF-11, release correction) — the title and its one-line
+          purpose sit LEFT; Check now / Sync (or, for an orphaned row, the
+          single Delete action) sit RIGHT, in the same row. flex-wrap alone
+          stacks this safely once the row runs out of room — no separate
+          mobile layout to keep in sync with the desktop one. This used to
+          be a bare title floating above a 768px-capped column with the
+          actions buried further down; the workspace is wide now, so the
+          two things a reader wants first — what is this, and what can I do
+          about it — belong on one line. */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 space-y-1">
+          <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{secretTitleFor(row)}</h1>
+          <p className="text-sm text-[#2a5a7a] dark:text-gray-300">{purposeSentence}</p>
+        </div>
+        <RoleGuard roles={['admin', 'operator']}>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* leftover-secrets S1.2: an orphaned row gets exactly one
+                action — Delete, red, opening the page-level confirm. No
+                Check now (there's nothing left to check it against), no
+                Sync (there's no source to sync from). */}
+            {row.state === 'orphaned' ? (
+              <PanelActionButton
+                onClick={() => onRequestDelete(row)}
+                icon={Trash2}
+                label="Delete"
+                testId="detail-delete"
+                destructive
+              />
+            ) : (
+              <>
+                {/* SSF-4: "Refresh" → "Check now" (testid unchanged) — it's
+                    been a read-only check since P1-A; the word finally
+                    matches "Check all now" above the table. */}
+                <PanelActionButton onClick={handleRefresh} loading={refreshing} icon={RefreshCw} label="Check now" testId="detail-refresh" />
+                {/* SSF-4: Sync is the strong teal action only when there's
+                    real drift to push (!gate.disabled) — an in-sync row's
+                    Sync stays exactly as quiet/disabled as it always has. */}
+                <PanelActionButton
+                  onClick={() => onRequestSync(row)}
+                  disabled={gate.disabled}
+                  icon={RotateCcw}
+                  label="Sync"
+                  reason={gate.reason}
+                  testId="detail-sync"
+                  strong={!gate.disabled}
+                />
+              </>
+            )}
+          </div>
+        </RoleGuard>
+      </div>
+
+      {/* ── Status row (SSF-11) — status, what it was compared with, and
+          when, together in one balanced row that wraps on its own when
+          narrow. This is visible on BOTH tabs (unlike the rest of the
+          Overview body below): "is it okay" and "when was it checked"
+          shouldn't disappear just because a reader is looking at the YAML
+          tab. The ring box is gone (design-secret-sync-visual-pass item
+          19) — a hairline under the row is enough now. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-3">
+        <StatusMark status={row.state} />
+        {/* SSF-8: "what was it checked against" and "when" — two of the
+            five first-screen questions — stated once, plainly, right next
+            to status. This is the old Zone D dl's "Checked against" and
+            "Last checked" rows, promoted out of the collapsed section: the
+            rest of that dl still collapses below. */}
+        <p className="flex flex-wrap items-baseline gap-x-2 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="detail-checked-line">
+          <span
+            title={
+              row.kind === 'values' && row.state !== 'orphaned'
+                ? `Git only holds a pointer to it — the value itself lives in ${row.sourceLabel}.`
+                : undefined
+            }
+          >
+            {sourceSentence}
+          </span>
+          <span className="text-xs text-[#5a8aaa] dark:text-gray-500">
+            · last checked <TimeChip iso={row.lastChecked} />
+          </span>
+        </p>
+      </div>
 
       {/* SSF-5 (Secret Sync finish pass) — Overview vs the new read-only
           YAML view, same segmented-pill pattern the page's own
           Group by / List-Tiles controls already use. Resets to Overview
-          whenever a different row opens (the effect above). */}
+          whenever a different row opens (the effect above). Full content
+          width now that the page isn't capped at an article width. */}
       <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
         <button
           type="button"
@@ -2053,49 +2127,6 @@ export function SecretDetailContent({
         </RoleGuard>
       ) : (
         <>
-          {/* Status + actions: the ring box is gone (design-secret-sync-visual-
-              pass item 19) — a hairline under the row is enough now that it
-              isn't competing with four other equal-weight boxes below it. */}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
-            <StatusMark status={row.state} />
-            <RoleGuard roles={['admin', 'operator']}>
-              <div className="flex items-center gap-2">
-                {/* leftover-secrets S1.2: an orphaned row gets exactly one
-                    action — Delete, red, opening the page-level confirm. No
-                    Check now (there's nothing left to check it against), no
-                    Sync (there's no source to sync from). */}
-                {row.state === 'orphaned' ? (
-                  <PanelActionButton
-                    onClick={() => onRequestDelete(row)}
-                    icon={Trash2}
-                    label="Delete"
-                    testId="detail-delete"
-                    destructive
-                  />
-                ) : (
-                  <>
-                    {/* SSF-4: "Refresh" → "Check now" (testid unchanged) — it's
-                        been a read-only check since P1-A; the word finally
-                        matches "Check all now" above the table. */}
-                    <PanelActionButton onClick={handleRefresh} loading={refreshing} icon={RefreshCw} label="Check now" testId="detail-refresh" />
-                    {/* SSF-4: Sync is the strong teal action only when there's
-                        real drift to push (!gate.disabled) — an in-sync row's
-                        Sync stays exactly as quiet/disabled as it always has. */}
-                    <PanelActionButton
-                      onClick={() => onRequestSync(row)}
-                      disabled={gate.disabled}
-                      icon={RotateCcw}
-                      label="Sync"
-                      reason={gate.reason}
-                      testId="detail-sync"
-                      strong={!gate.disabled}
-                    />
-                  </>
-                )}
-              </div>
-            </RoleGuard>
-          </div>
-
           {/* design-secret-sync-visual-pass item 20: the most actionable lines
               in the old panel were buried at the bottom — they sit right under
               the status row now, where a reader who just opened the panel
@@ -2115,26 +2146,6 @@ export function SecretDetailContent({
               {consecutiveFailuresSentence(row.consecutiveFailures ?? 0)}
             </p>
           )}
-
-          {/* SSF-8: "what was it checked against" and "when" — two of the
-              five first-screen questions — stated once, plainly, right
-              under the status row. This is the old Zone D dl's "Checked
-              against" and "Last checked" rows, promoted out of the
-              collapsed section: the rest of that dl still collapses below. */}
-          <p className="flex flex-wrap items-baseline gap-x-2 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="detail-checked-line">
-            <span
-              title={
-                row.kind === 'values' && row.state !== 'orphaned'
-                  ? `Git only holds a pointer to it — the value itself lives in ${row.sourceLabel}.`
-                  : undefined
-              }
-            >
-              {sourceSentence}
-            </span>
-            <span className="text-xs text-[#5a8aaa] dark:text-gray-500">
-              · last checked <TimeChip iso={row.lastChecked} />
-            </span>
-          </p>
 
           {/* ── Comparison (one box, two panes) ───────────────────────────
               design-secret-sync-visual-pass, section 4. The two separate ring

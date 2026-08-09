@@ -261,3 +261,72 @@ describe('deleting an orphaned row from the page', () => {
     expect(screen.getByTestId('secret-detail-panel')).toBeInTheDocument()
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSF-11 (release correction) — the page used to sit in a 768px article-
+// width column in the middle of the workspace. These pin the actual fix
+// (the shared 1536px container) and the header restructure that goes with
+// it, not brittle copies of a CSS number.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SSF-11 — the page uses the workspace, not a narrow column', () => {
+  it('the container carries the same 1536px shared class Dashboard.tsx uses, never the old 768px article width', async () => {
+    renderApp(['/secret-sync/connection-prod-eu'])
+    await screen.findByTestId('secret-detail-panel')
+
+    const container = screen.getByTestId('secret-detail-container')
+    expect(container).toHaveClass('max-w-screen-2xl')
+    expect(container).not.toHaveClass('max-w-3xl')
+  })
+
+  it('the loading and not-found states use the same wide container as the found state', async () => {
+    let resolveFetch!: (value: ManagedSecretsResponse) => void
+    mockGetManagedSecrets.mockReturnValue(new Promise((resolve) => { resolveFetch = resolve }))
+    const loadingRender = renderApp(['/secret-sync/connection-prod-eu'])
+    expect(screen.getByTestId('secret-detail-container')).toHaveClass('max-w-screen-2xl')
+    resolveFetch(response)
+    await screen.findByTestId('secret-detail-panel')
+    loadingRender.unmount()
+
+    renderApp(['/secret-sync/values-does-not-exist-anywhere'])
+    await screen.findByText("This secret isn't in the current list")
+    expect(screen.getByTestId('secret-detail-container')).toHaveClass('max-w-screen-2xl')
+  })
+
+  it('Check now and Sync sit in the header, next to the title — visible on the YAML tab too, not only on Overview', async () => {
+    renderApp(['/secret-sync/connection-prod-eu'])
+    const panel = await screen.findByTestId('secret-detail-panel')
+
+    // The title and the actions are both reachable before ever touching a
+    // tab — proving they render in the always-visible header, not inside
+    // the Overview-only body below the tab strip.
+    expect(within(panel).getByRole('heading', { name: 'prod-eu connection' })).toBeInTheDocument()
+    expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
+    expect(within(panel).getByTestId('detail-sync')).toBeInTheDocument()
+
+    fireEvent.click(within(panel).getByTestId('detail-tab-yaml'))
+    await screen.findByTestId('detail-yaml-hidden')
+
+    // Still there on the YAML tab — the header doesn't belong to Overview.
+    expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
+    expect(within(panel).getByTestId('detail-sync')).toBeInTheDocument()
+  })
+
+  it('the status/compared-with/last-checked row is visible on both tabs, not hidden behind Overview', async () => {
+    renderApp(['/secret-sync/connection-prod-eu'])
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
+
+    fireEvent.click(within(panel).getByTestId('detail-tab-yaml'))
+    await screen.findByTestId('detail-yaml-hidden')
+    expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
+  })
+
+  it('an orphaned row still shows only Delete in the header, no Check now / Sync', async () => {
+    renderApp(['/secret-sync/orphaned-staging-us-external-secrets-eso-creds'])
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(within(panel).getByTestId('detail-delete')).toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-refresh')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-sync')).not.toBeInTheDocument()
+  })
+})
