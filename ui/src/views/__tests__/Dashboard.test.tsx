@@ -107,7 +107,7 @@ describe('Dashboard', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
     });
 
     const refreshButton = screen.getByTestId('dashboard-refresh');
@@ -126,7 +126,7 @@ describe('Dashboard', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
     });
 
     // Fleet Status Strip v2 — the Clusters/Applications segments show a
@@ -301,7 +301,7 @@ describe('Dashboard — empty install (B1, no false-green)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
     });
 
     expect(screen.getByText('Nothing connected yet')).toBeInTheDocument();
@@ -345,7 +345,7 @@ describe('Dashboard — empty install (B1, no false-green)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
     });
 
     expect(screen.queryByText('Nothing connected yet')).not.toBeInTheDocument();
@@ -418,7 +418,7 @@ describe('Dashboard bootstrap banner gating (connhealth-2)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
     });
     expect(screen.getByText(BOOTSTRAP_BANNER_TEXT)).toBeInTheDocument();
   });
@@ -432,7 +432,7 @@ describe('Dashboard bootstrap banner gating (connhealth-2)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
     });
     expect(screen.queryByText(BOOTSTRAP_BANNER_TEXT)).not.toBeInTheDocument();
   });
@@ -446,7 +446,7 @@ describe('Dashboard bootstrap banner gating (connhealth-2)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
     });
     expect(screen.queryByText(BOOTSTRAP_BANNER_TEXT)).not.toBeInTheDocument();
   });
@@ -484,7 +484,7 @@ describe('Dashboard cluster wording (FleetStatusStrip only)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
     });
 
     expect(screen.queryByRole('button', { name: /disconnected cluster/i })).not.toBeInTheDocument();
@@ -502,7 +502,7 @@ describe('Dashboard cluster wording (FleetStatusStrip only)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
     });
 
     expect(screen.queryByRole('button', { name: /disconnected cluster/i })).not.toBeInTheDocument();
@@ -523,7 +523,7 @@ describe('Dashboard cluster wording (FleetStatusStrip only)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
     });
 
     expect(screen.queryByRole('button', { name: /disconnected cluster/i })).not.toBeInTheDocument();
@@ -747,7 +747,7 @@ describe('ArgoCD unreachable banner (Package 1 rewire)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
     });
     expect(screen.queryByText(/ArgoCD temporarily unreachable/i)).not.toBeInTheDocument();
   });
@@ -903,7 +903,7 @@ describe('Dashboard page order (Package 2)', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('Sharko')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
     });
     expect(screen.queryByText('Quick Actions')).not.toBeInTheDocument();
     expect(screen.queryByText('Available Addons')).not.toBeInTheDocument();
@@ -1129,5 +1129,72 @@ describe('Dashboard stale-while-refresh (perf S2)', () => {
       totalRow = within(legend).getByText('total').closest('li');
       expect(within(totalRow as HTMLElement).getByText('10')).toBeInTheDocument();
     });
+  });
+});
+
+// Dashboard header and width polish (SSF-7): the hero drops the banner
+// image and the "Sharko" h1 in favor of a plain "Managed clusters"
+// heading, and the page container widens from max-w-screen-xl to the
+// exact 1536px max-w-screen-2xl class — same width in both the normal
+// and the "nothing connected yet" empty state.
+//
+// Kept as the LAST describe block in this file on purpose: a couple of
+// its cases call the persistent `.mockResolvedValue` (not `Once`) on
+// api.getDashboardStats, which — per this file's own established
+// pattern (see the "empty install" and "stale-while-refresh" blocks
+// above) — survives `vi.clearAllMocks()` and would otherwise leak into
+// any test after it that relies on the module's default baseStats mock.
+describe('Dashboard header and width polish (SSF-7)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders "Managed clusters" as the h1 heading, not "Sharko"', async () => {
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { level: 1, name: 'Managed clusters' }),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Sharko')).not.toBeInTheDocument();
+  });
+
+  it('no longer renders the hero banner image', async () => {
+    const { container } = renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
+    });
+    // A literal <img> tag, not the status-strip donut charts' unrelated
+    // role="img" spans (their tooltip-trigger wrapper) — those are expected
+    // to stay and would false-fail a plain queryByRole('img') check.
+    expect(container.querySelector('img')).not.toBeInTheDocument();
+  });
+
+  it('carries the max-w-screen-2xl page width on the normal state', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue(baseStats);
+    (api.getClusters as ReturnType<typeof vi.fn>).mockResolvedValue({ clusters: [] });
+    const { container } = renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 1, name: 'Managed clusters' })).toBeInTheDocument();
+    });
+    expect(container.querySelector('.max-w-screen-2xl')).toBeInTheDocument();
+    expect(container.querySelector('.max-w-screen-xl')).not.toBeInTheDocument();
+  });
+
+  it('carries the max-w-screen-2xl page width on the "nothing connected yet" empty state', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      clusters: zeroClusterStats,
+    });
+    const { container } = renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Nothing connected yet')).toBeInTheDocument();
+    });
+    expect(container.querySelector('.max-w-screen-2xl')).toBeInTheDocument();
+    expect(container.querySelector('.max-w-screen-xl')).not.toBeInTheDocument();
   });
 });

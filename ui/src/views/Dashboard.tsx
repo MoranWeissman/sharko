@@ -332,14 +332,9 @@ export function Dashboard() {
   const heroSection = (
     <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-teal-700 to-blue-800 px-8 py-8 text-white shadow-lg dark:from-teal-900 dark:to-blue-950">
       <div className="flex items-center gap-6">
-        <img
-          src="/sharko-banner.png"
-          alt="Sharko"
-          className="hidden h-32 w-auto sm:block"
-        />
         <div className="flex-1">
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl" style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}>
-            Sharko
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+            Managed clusters
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-teal-100 sm:text-base">
             Addon management across all your Kubernetes clusters.
@@ -363,7 +358,7 @@ export function Dashboard() {
 
   if (noClustersYet) {
     return (
-      <div className="mx-auto max-w-screen-xl space-y-6">
+      <div className="mx-auto max-w-screen-2xl space-y-6">
         {heroSection}
         <div className="flex flex-col items-center gap-4 rounded-2xl border border-border bg-card px-6 py-14 text-center shadow-sm">
           <Server className="h-10 w-10 text-muted-foreground" />
@@ -398,7 +393,7 @@ export function Dashboard() {
   }
 
   return (
-    <div className="mx-auto max-w-screen-xl space-y-6">
+    <div className="mx-auto max-w-screen-2xl space-y-6">
       {/* Hero Section */}
       {heroSection}
 
