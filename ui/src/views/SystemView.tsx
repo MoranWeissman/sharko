@@ -448,8 +448,7 @@ export function SystemView() {
       <div>
         <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-white">System</h1>
         <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-          One read-only view of the whole chain — where is it broken? Fix things from Settings or
-          the cluster pages; nothing on this page changes anything.
+          Read-only health of Git, Argo CD, and managed clusters.
         </p>
       </div>
 

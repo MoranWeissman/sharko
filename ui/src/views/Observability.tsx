@@ -2012,9 +2012,6 @@ export function Observability() {
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Observability</h1>
-          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-            ArgoCD control plane health, addon health per cluster, resource alerts, and sync activity timeline.
-          </p>
         </div>
         <AddonGroupsSection
           groups={data.addon_groups ?? []}
@@ -2039,9 +2036,6 @@ export function Observability() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Observability</h1>
-        <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-          ArgoCD control plane health, addon health per cluster, resource alerts, and sync activity timeline.
-        </p>
       </div>
       <ControlPlaneSection data={data.control_plane} stats={stats} argoCDUrl={argoCDUrl} />
       <AddonDistributionSection addonGroups={data.addon_groups ?? []} />
