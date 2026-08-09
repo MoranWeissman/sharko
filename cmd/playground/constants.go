@@ -37,6 +37,13 @@ const (
 	GiteaAdminEmail = "admin@gitea.example.com"
 	// GiteaSeedBranch is the default branch in the Gitea repo.
 	GiteaSeedBranch = "main"
+	// GiteaAPITokenName is the fixed name deployGitea mints the Sharko API
+	// token under. Gitea only ever shows a token's raw value once, at
+	// creation, so a re-run over a half-failed previous run can't reuse an
+	// old token with this name — deployGitea deletes any token already
+	// carrying this name (via the Gitea REST API) before minting a fresh one,
+	// which is what makes this step safe to run twice.
+	GiteaAPITokenName = "sharko-playground"
 
 	// ServiceAccountName is the SA name created on each spoke for cluster-admin
 	// kubeconfig generation.
