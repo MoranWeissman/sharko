@@ -610,14 +610,15 @@ describe('SecretsProviderSection', () => {
     })
   })
 
-  // V2-cleanup-92.3 F4 — plain-English opener + docs link at the top
-  describe('Plain-English opener + docs link (F4)', () => {
-    it('renders the opener sentence and docs link at the top of the section', async () => {
+  // UI copy pass — the section opens with one short scope sentence and a
+  // docs link, not the old product-introduction paragraph.
+  describe('Short scope sentence + docs link', () => {
+    it('renders the scope sentence and docs link at the top of the section', async () => {
       setupHook()
       render(<SecretsProviderSection />)
 
       expect(
-        screen.getByText(/Sharko needs each cluster's credentials to reach it — this is where those credentials come from/i),
+        screen.getByText(/Choose where Sharko reads cluster credentials and addon secret values/i),
       ).toBeInTheDocument()
 
       const link = screen.getByRole('link', { name: /Learn how this works/i })
@@ -922,17 +923,10 @@ describe('SecretsProviderSection', () => {
     })
   })
 
-  // V3-P1.2 — positioning one-liner in opener
-  describe('Positioning one-liner in opener (V3-P1.2)', () => {
-    it('renders the IDP/GitOps positioning sentence verbatim', async () => {
-      setupHook()
-      render(<SecretsProviderSection />)
-
-      expect(
-        screen.getByText(/Sharko is a GitOps agent with an API: your portal or pipeline asks for "a cluster with these addons," and Sharko opens a pull request — it never changes your cluster behind your back/i),
-      ).toBeInTheDocument()
-    })
-  })
+  // UI copy pass — the old "Sharko is a GitOps agent with an API..."
+  // product-introduction sentence (V3-P1.2) is gone from this section on
+  // purpose; a user already inside Settings doesn't need Sharko's elevator
+  // pitch. See "Short scope sentence + docs link" above for what replaced it.
 
   // v4-wave2 8.1 — "Test Secrets Store" action (mirrors Test Git / Test
   // ArgoCD in ConnectionSection). Calls POST /providers/test on demand and
