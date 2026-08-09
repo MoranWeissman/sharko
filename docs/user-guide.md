@@ -422,42 +422,11 @@ Sharko can deliver secrets from your secrets provider (AWS Secrets Manager, Kube
 
 ### How It Works
 
-1. Define an **addon secret template** that maps a K8s Secret name/namespace to provider paths
+1. Define an **addon secret** in the Git catalog — the `secrets:` (or `push:`) block on a catalog entry, mapping a K8s Secret name/namespace to provider paths
 2. When a cluster is registered, Sharko fetches the secret values and creates the K8s Secret on the remote cluster
 3. When secrets rotate, call the refresh endpoint to re-push updated values
 
-### Define an Addon Secret Template
-
-Via CLI using the API directly (or via the UI):
-
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  -X POST https://sharko.your-cluster.com/api/v1/addon-secrets \
-  -d '{
-    "addon_name": "datadog",
-    "secret_name": "datadog-keys",
-    "namespace": "datadog",
-    "keys": {
-      "api-key": "secrets/datadog/api-key",
-      "app-key": "secrets/datadog/app-key"
-    }
-  }'
-```
-
-Or configure at startup via `SHARKO_ADDON_SECRETS` (JSON):
-
-```yaml
-extraEnv:
-  - name: SHARKO_ADDON_SECRETS
-    value: '{"datadog":{"addon_name":"datadog","secret_name":"datadog-keys","namespace":"datadog","keys":{"api-key":"secrets/datadog/api-key"}}}'
-```
-
-### List Addon Secret Definitions
-
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  https://sharko.your-cluster.com/api/v1/addon-secrets
-```
+There used to be `POST`/`GET`/`DELETE /api/v1/addon-secrets` endpoints that let you define these over the API instead. They were removed in v4.0.0 as a security fix — they let a caller point a secret at a cluster with no trace in Git, so a stolen admin token could quietly redirect a real production secret. Addon secret definitions now live **only in the Git catalog**. To add or change one, edit the catalog and open a PR, same as any other addon change.
 
 ### View Managed Secrets on a Cluster
 
@@ -984,7 +953,6 @@ If ArgoCD or Git connections fail:
 | `SHARKO_GITOPS_COMMIT_PREFIX` | Commit message prefix | `sharko:` |
 | `SHARKO_GITOPS_BASE_BRANCH` | Target branch for PRs | `main` |
 | `SHARKO_GITOPS_REPO_URL` | Git repo URL for template placeholders | (none) |
-| `SHARKO_ADDON_SECRETS` | JSON-encoded addon secret definitions (see Addon Secrets section) | (none) |
 | `SHARKO_DEFAULT_ADDONS` | Comma-separated default addons applied to new clusters | (none) |
 | `SHARKO_HOST_CLUSTER_NAME` | Name of the host cluster running Sharko (for in-cluster deployment) | (none) |
 | `SHARKO_INIT_AUTO_BOOTSTRAP` | Auto-bootstrap ArgoCD during init (not yet implemented, post-v1) | `false` |

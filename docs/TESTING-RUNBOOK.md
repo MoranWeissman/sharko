@@ -435,49 +435,51 @@ curl -s "http://localhost:8080/api/v1/observability/overview" \
 
 ## 8. Addon Secrets
 
-Addon secrets allow injecting sensitive Helm values (e.g. licence keys) from remote cluster secrets.
+Addon secrets allow injecting sensitive Helm values (e.g. licence keys) from remote cluster secrets. As of v4.0.0, a secret definition can only come from Git — there is no API endpoint to define one. This was a security fix (task #152): the old `POST /api/v1/addon-secrets` endpoint let a caller point a secret at a cluster with nothing in Git to show for it, so a stolen admin token could quietly redirect a real production secret.
 
-### 8.1 Create Addon Secret Definition (API)
+### 8.1 Declare an Addon Secret in the Catalog (Git)
 
-```bash
-curl -s -X POST "http://localhost:8080/api/v1/addon-secrets" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "addon": "keda",
-    "secret_name": "keda-operator-secret",
-    "namespace": "keda",
-    "key": "license-key"
-  }' | jq .
+Add a `secrets:` entry to the addon in `catalog.yaml` in your connected repo, then commit and push (or open a PR, depending on your GitOps mode):
+
+```yaml
+addons:
+  keda:
+    repoURL: https://kedacore.github.io/charts
+    chart: keda
+    namespace: keda
+    version: "2.15.0"
+    secrets:
+      - name: KEDA operator secret
+        description: License key for the KEDA operator.
+        required_for: install
 ```
 
-### 8.2 List Addon Secrets (API)
+Sharko's scheduled reconciler picks this up on its next pass (every 5 minutes by default), or trigger it immediately with the refresh call in 8.3 below.
 
-```bash
-curl -s "http://localhost:8080/api/v1/addon-secrets" \
-  -H "Authorization: Bearer $TOKEN" | jq .
-```
-
-### 8.3 List Secrets on a Cluster (API)
+### 8.2 List Secrets on a Cluster (API)
 
 ```bash
 curl -s "http://localhost:8080/api/v1/clusters/staging/secrets" \
   -H "Authorization: Bearer $TOKEN" | jq .
 ```
 
-### 8.4 Refresh Secrets on a Cluster (API)
+Expected: the `keda-operator-secret` Kubernetes Secret shows up once the reconciler has run, labeled `app.kubernetes.io/managed-by: sharko`.
+
+### 8.3 Refresh Secrets on a Cluster (API)
+
+Re-fetch values from the provider and push whatever the Git catalog defines for this cluster, right now — no request body, only the cluster name in the path and an optional `?addon=` to narrow it to one addon:
 
 ```bash
 curl -s -X POST "http://localhost:8080/api/v1/clusters/staging/secrets/refresh" \
   -H "Authorization: Bearer $TOKEN" | jq .
-```
 
-### 8.5 Delete Addon Secret Definition (API)
-
-```bash
-curl -s -X DELETE "http://localhost:8080/api/v1/addon-secrets/keda" \
+curl -s -X POST "http://localhost:8080/api/v1/clusters/staging/secrets/refresh?addon=keda" \
   -H "Authorization: Bearer $TOKEN" | jq .
 ```
+
+### 8.4 Remove an Addon Secret
+
+Remove the `secrets:` entry from `catalog.yaml` and commit. This stops Sharko from managing that secret going forward; it does not delete the existing Kubernetes Secret from remote clusters.
 
 ---
 

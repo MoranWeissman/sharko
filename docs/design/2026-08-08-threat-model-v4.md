@@ -3,7 +3,7 @@ title: "Sharko v4 Threat Model"
 author: "Moran Weissman <moran.weissman@gmail.com>"
 date: "2026-08-08"
 version: "v4.0.0 (pre-release, task #152 Secret Sync security closure)"
-status: "Replaces the v2.0.0 baseline threat model. Written against merged main after task #152 lanes A (refresh reads Git), B (backend boundary) and C (destination TLS refusal). Lane F (least-privilege RBAC) is an open pull request, not yet merged — this document says so explicitly wherever it matters, and does not describe lane F as shipped."
+status: "Replaces the v2.0.0 baseline threat model. Written against merged main after task #152 lanes A (refresh reads Git), B (backend boundary), C (destination TLS refusal) and F (least-privilege RBAC). All of these are merged and describe what is actually deployed."
 scope: "Sharko server, CLI, web UI, Helm chart, container image, catalog signing pipeline. Excludes downstream addon contents and ArgoCD itself."
 related:
   - ".claude/team/security-auditor.md"
@@ -286,14 +286,15 @@ in any API response — the API only ever surfaces backend *paths*
 not appear in the audit log, which records that a secret was pushed
 and to where, not what was in it.
 
-One honest gap that's still open: three debug-level log lines record a
-fetched value's **length** — not the value itself, just how many bytes
-it is (`aws_sm.go`, `k8s_secrets.go`). A length is a much smaller leak
-than a value, and it only shows up at debug log level, but it's still
-more than nothing, and the plan is to remove it (tracked as a
-follow-up story in the same sprint that produced this document, not
-yet merged as of this writing). Until that lands, treat debug-level
-Sharko logs as containing secret *shapes*, never secret *values*.
+One gap that used to be open is closed now: five log lines that
+recorded a fetched value's **length** — not the value itself, just how
+many bytes it was — have been removed (`aws_sm.go`, `k8s_secrets.go`,
+task #152 lane D). Two of them were worse than first thought: they
+logged the length of a whole cluster kubeconfig, at Info level, so they
+were on by default in production, not just at debug level. All five
+are gone now. Sharko logs still carry secret *shapes* in a couple of
+harmless ways (for example, how many keys are in a fetched Kubernetes
+Secret) but no line records how big a raw value or a kubeconfig is.
 
 Also worth being honest about: nothing here zeroes memory after use.
 The raw bytes sit in Go's normal garbage-collected heap like any other
@@ -311,14 +312,24 @@ something specific to Sharko, and it's listed honestly in
 As of this document, Sharko's Kubernetes ServiceAccount is granted, in
 its own Helm chart (`charts/sharko/templates/rbac.yaml`):
 
-- **A cluster-wide read on Secrets** (`get`, `list`) across the whole
-  host cluster, bound through a `ClusterRoleBinding`. Kubernetes itself
-  documents `list` on Secrets as exposing their contents, not just
-  their names — so this is a genuinely broad grant, wider than the
-  addon-secret and cluster-connection use cases strictly need on their
-  own.
-- **A namespaced write** on Secrets in the ArgoCD namespace, for
-  managing cluster-connection Secrets.
+- **A cluster-wide, read-only grant on ArgoCD's own resources**
+  (Applications, AppProjects, ApplicationSets — `get`/`list`/`watch`
+  only, plus Nodes if `config.nodeAccess` is on, which is the
+  default). This `ClusterRole` carries **no Secrets rule at all**.
+  There used to be a cluster-wide `secrets: get,list` rule here too —
+  Kubernetes documents `list` on Secrets as exposing their contents,
+  not just their names, so that was a genuinely broad grant. Task #152
+  story F removed it. Every Secret read Sharko does anywhere on the
+  host cluster is now one of the two namespaced grants below.
+- **A namespaced read/write** on Secrets in the ArgoCD namespace only
+  (`rbac.argocdNamespace`, default `argocd`), for managing
+  cluster-connection Secrets.
+- **A namespaced, read-only grant** (`get`/`list`) per namespace
+  listed in `rbac.k8sSecretsProviderNamespaces` (the release namespace
+  is always included), for the k8s-secrets cluster-credential and
+  addon-secret providers when either is configured to use that
+  backend. This is the exact reach those two providers need — nothing
+  wider.
 - **A namespaced, mostly resource-name-scoped** set of permissions in
   Sharko's own release namespace, for its own auth Secret, connection
   Secret, API-token Secret, and a few others — each pinned to a
@@ -326,12 +337,9 @@ its own Helm chart (`charts/sharko/templates/rbac.yaml`):
   (`create` can't be scoped by resource name, so that verb stays
   broader by necessity).
 
-**This is being narrowed.** A pull request that replaces the
-cluster-wide read with namespaced Roles wherever the code actually
-reads is open and not yet merged at the time this document was
-written (task #152, story F). Until it merges, the cluster-wide read
-above is accurate — don't read this document as describing a tighter
-posture than what's actually deployed.
+The narrowing described above already shipped (task #152, story F, PR
+#793) — this document describes the RBAC that is actually deployed
+today, not a proposal.
 
 **AWS side:** the addon-secret backend authenticates through whatever
 IAM identity you give it (typically IRSA). Sharko's own boundary check
@@ -366,10 +374,12 @@ policy and Sharko's own boundary check agree.
 
 **Today the addon-secret identity and the cluster-credential identity
 are the same ServiceAccount / IAM identity** unless you deliberately
-set up two separate connections. Splitting them so a compromise of one
-doesn't automatically hand over the other is part of the same
-not-yet-merged narrowing work referenced above. Until that lands, if
-you want that separation today, you have to build it yourself by
+set up two separate connections. This is a separate, still-open gap —
+it was not part of story F's RBAC narrowing above, and it isn't
+something the Kubernetes RBAC change could fix on its own. Real
+per-provider identity separation would need a code change so Sharko
+can assume a different role per call, which doesn't exist today. If
+you want that separation now, you have to build it yourself, by
 registering two distinct provider connections with two distinct
 underlying identities.
 
@@ -398,6 +408,19 @@ dropped — Sharko's chart already ships this), scope every identity
 Sharko holds as tightly as your setup allows, and treat "Sharko pod
 compromised" as an incident that needs the same response as "the
 identity it holds got stolen directly" — because functionally, it is.
+
+One more limit worth saying plainly here, not just in [§5](#5-the-destination-check--no-secret-over-an-unverified-connection):
+the destination TLS guard only stops secret **value writes** over an
+unverified connection. Reads (listing what's on a cluster, diagnostics,
+discovery) and deletes (cleanup during unadopt or cluster removal)
+still go through against a cluster that's registered with
+skip-verify or plain HTTP. This is a deliberate, recorded decision,
+not an oversight — none of those actions send a secret value out, and
+blocking them would break the exact cleanup paths that an
+insecurely-registered cluster most needs. If a cluster's connection
+doesn't verify who it's actually talking to, treat everything Sharko
+does against it — not only secret writes — as running over a
+connection that was never proven to be the right endpoint.
 
 ---
 
@@ -522,15 +545,15 @@ whether to trust Sharko with production credentials, so it drops that
 framework scaffolding in favor of plain description grounded directly
 in the code.
 
-It was written against `main` after task #152's lanes A
-(`POST`/`DELETE /addon-secrets` retired, refresh reads Git — merged,
+It was written and then updated against `main` after task #152's lanes
+A (`POST`/`DELETE /addon-secrets` retired, refresh reads Git — merged,
 PR #794), B (backend boundary on the AWS and Kubernetes secret-value
-readers — merged, PR #791), and C (destination TLS refusal — merged,
-PR #792). Lane F (least-privilege RBAC narrowing) was **open, not
-merged** at the time of writing (PR #793) — [§8](#8-what-permissions-sharko-holds-and-how-to-cut-them-down)
-describes the permissions that are actually deployed today, not the
-narrower set that PR proposes. When lane F merges, this document needs
-a follow-up pass to describe the tighter RBAC as shipped.
+readers — merged, PR #791), C (destination TLS refusal — merged, PR
+#792), D (secret-length log lines removed — merged, PR #798) and F
+(least-privilege RBAC narrowing — merged, PR #793).
+[§8](#8-what-permissions-sharko-holds-and-how-to-cut-them-down)
+describes the RBAC that is actually deployed today, after story F
+landed.
 
 Related reading:
 

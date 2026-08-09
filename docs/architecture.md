@@ -348,12 +348,19 @@ type AddonSecretDefinition struct {
 }
 ```
 
-Definitions are loaded from the `SHARKO_ADDON_SECRETS` environment variable (JSON map) at startup and can be updated at runtime via `POST /api/v1/addon-secrets`.
+Definitions come only from the Git catalog (the `secrets:`/`push:` block
+on a catalog entry) — there is no `SHARKO_ADDON_SECRETS` environment
+variable and no API endpoint to define them. That used to be true, but
+it was a security hole: a caller could point a secret at a cluster with
+nothing in Git to show for it, so a stolen admin token could quietly
+redirect a real production secret. Task #152 removed both the env var
+support and the `POST`/`GET`/`DELETE /api/v1/addon-secrets` endpoints.
+Git is now the only source.
 
 Secret delivery happens:
 1. During `RegisterCluster` — secrets are created on the new cluster for all enabled addons that have definitions
 2. During `UpdateCluster` — when an addon is enabled, its secrets are created; when disabled, they are deleted (best-effort)
-3. On-demand via `POST /api/v1/clusters/{name}/secrets/refresh` — refreshes all secrets on a cluster
+3. On-demand via `POST /api/v1/clusters/{name}/secrets/refresh` — reads the Git catalog and refreshes the secrets on one cluster (optionally narrowed to one addon with `?addon=`); no request body
 
 ---
 
