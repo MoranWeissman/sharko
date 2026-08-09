@@ -394,7 +394,7 @@ HTTP handlers. Each handler is a method on the `Server` struct. Handlers are thi
 | `addon_ops.go` | DELETE `/clusters/{name}/addons/{addon}` (disable addon on cluster) |
 | `addons_write.go` | POST, DELETE `/addons`, PATCH `/addons/{name}` |
 | `addons_upgrade.go` | POST `/addons/{name}/upgrade`, POST `/addons/upgrade-batch` |
-| `addon_secrets.go` | GET, POST, DELETE `/addon-secrets*` |
+| `addon_secret_single.go` | POST `/clusters/{name}/addons/{addon}/secret/refresh`, POST `/clusters/{name}/addons/{addon}/secret/sync` |
 | `tokens.go` | GET, POST, DELETE `/tokens*` |
 | `audit.go` | GET `/audit`, GET `/audit/stream` (SSE) |
 | `prs.go` | GET `/prs`, GET `/prs/{id}`, POST `/prs/{id}/refresh`, DELETE `/prs/{id}` |

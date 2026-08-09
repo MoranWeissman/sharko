@@ -1054,92 +1054,26 @@ Upgrade multiple addons in a single PR. All upgrades are applied to the global c
 
 ## 5. New System API
 
-### POST /api/v1/addon-secrets — Define an Addon Secret Template
+### Addon Secrets — the definition endpoints are gone
 
-Define how secrets for a specific addon should be fetched from the secrets provider and delivered to remote clusters. This definition is applied when clusters are registered or when secrets are refreshed.
+As of v4.0.0, there is no `POST`, `GET`, or `DELETE /api/v1/addon-secrets`
+any more. This was a security fix (task #152): those endpoints let a
+caller define, in memory, where a secret should come from and which
+cluster it should go to — no Git, no review, no trace. A stolen admin
+token could use that to redirect a real production secret to a weaker
+cluster.
 
-**Request:**
-```json
-{
-  "addon_name": "datadog",
-  "secret_name": "datadog-keys",
-  "namespace": "datadog",
-  "keys": {
-    "api-key": "secrets/datadog/api-key",
-    "app-key": "secrets/datadog/app-key"
-  }
-}
-```
+Addon secret definitions now live **only in the Git catalog** — the
+`secrets:` (or `push:`) block on a catalog entry. To change what secret
+goes where, edit the catalog and open a PR, the same way you'd change
+anything else Sharko manages.
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| addon_name | string | yes | The addon this secret belongs to. Must match an addon in the catalog. |
-| secret_name | string | yes | Name of the Kubernetes Secret to create on remote clusters. |
-| namespace | string | yes | Namespace to create the secret in on remote clusters. |
-| keys | map[string]string | yes | Map of K8s secret data key -> provider path (e.g. AWS SM path or K8s secret name). |
-
-**Success Response (201 Created):**
-```json
-{
-  "addon_name": "datadog",
-  "secret_name": "datadog-keys",
-  "namespace": "datadog",
-  "keys": {
-    "api-key": "secrets/datadog/api-key",
-    "app-key": "secrets/datadog/app-key"
-  }
-}
-```
-
-**Error Responses:**
-| Code | Condition |
-|------|-----------|
-| 400 | Missing required fields (addon_name, secret_name, namespace, keys) or invalid request body |
-| 401 | Unauthorized |
-
----
-
-### GET /api/v1/addon-secrets — List Addon Secret Definitions
-
-List all configured addon secret templates.
-
-**Response (200 OK):**
-```json
-{
-  "datadog": {
-    "addon_name": "datadog",
-    "secret_name": "datadog-keys",
-    "namespace": "datadog",
-    "keys": {
-      "api-key": "secrets/datadog/api-key",
-      "app-key": "secrets/datadog/app-key"
-    }
-  }
-}
-```
-
----
-
-### DELETE /api/v1/addon-secrets/{addon} — Remove Addon Secret Definition
-
-Remove the secret template for a specific addon. Does not delete any existing secrets from remote clusters.
-
-**Path Parameters:**
-- `addon` — addon name
-
-**Success Response (200 OK):**
-```json
-{
-  "status": "deleted",
-  "addon": "datadog"
-}
-```
-
-**Error Responses:**
-| Code | Condition |
-|------|-----------|
-| 400 | Missing addon name |
-| 404 | No secret definition found for this addon |
+`POST /api/v1/clusters/{name}/secrets/refresh` still exists, and still
+re-delivers secrets on demand. It takes no request body — only the
+cluster name in the path and an optional `?addon=` query string to
+narrow the refresh to one addon. Everything it pushes comes straight
+from the Git catalog, the same source the scheduled reconciler reads
+every few minutes.
 
 ---
 
