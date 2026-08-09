@@ -131,7 +131,7 @@ jobs:
         if: steps.check.outputs.exists != 'true'
         uses: sigstore/cosign-installer@v3
         with:
-          cosign-release: 'v2.4.1'
+          cosign-release: 'v2.6.5'
 
       - name: Sign published engine Helm chart (keyless)
         if: steps.check.outputs.exists != 'true'

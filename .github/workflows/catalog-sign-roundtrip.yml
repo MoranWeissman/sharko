@@ -74,7 +74,7 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
         with:
-          cosign-release: 'v2.4.1'
+          cosign-release: 'v2.6.5'
 
       # Build the whole tree first so a compile failure surfaces here
       # (with a clear "Build" step name) rather than confusingly inside
