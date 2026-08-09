@@ -20,8 +20,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, useSearchParams } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router-dom'
 import { ManagedSecrets } from '@/views/ManagedSecrets'
+import { SecretDetailPage } from '@/views/SecretDetailPage'
 import { AuthContext } from '@/hooks/useAuth'
 import type { ManagedSecretsResponse, SecretResource } from '@/services/models'
 
@@ -37,11 +38,9 @@ const adminAuth = {
   error: null,
 }
 
-const mockNavigate = vi.fn()
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual('react-router-dom')
-  return { ...actual, useNavigate: () => mockNavigate }
-})
+// SSF-9: real react-router-dom, no useNavigate mock — a row click now
+// navigates to its own full page (SecretDetailPage) instead of opening a
+// drawer in place. See renderPage.
 
 const mockGetManagedSecrets = vi.fn()
 const mockGetClusterComparison = vi.fn()
@@ -72,7 +71,10 @@ function renderPage(initialEntries: string[] = ['/secret-sync']) {
     <AuthContext.Provider value={adminAuth}>
       <MemoryRouter initialEntries={initialEntries}>
         <LocationProbe />
-        <ManagedSecrets />
+        <Routes>
+          <Route path="/secret-sync" element={<ManagedSecrets />} />
+          <Route path="/secret-sync/:rowKey" element={<SecretDetailPage />} />
+        </Routes>
       </MemoryRouter>
     </AuthContext.Provider>,
   )

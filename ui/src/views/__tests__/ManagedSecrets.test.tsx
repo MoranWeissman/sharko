@@ -28,8 +28,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, useSearchParams } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation, useSearchParams } from 'react-router-dom'
 import { ManagedSecrets } from '@/views/ManagedSecrets'
+import { SecretDetailPage } from '@/views/SecretDetailPage'
 import { AuthContext } from '@/hooks/useAuth'
 import type { ManagedSecretsResponse } from '@/services/models'
 
@@ -49,14 +50,11 @@ const adminAuth = {
   error: null,
 }
 
-const mockNavigate = vi.fn()
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual('react-router-dom')
-  return {
-    ...actual,
-    useNavigate: () => mockNavigate,
-  }
-})
+// SSF-9: react-router-dom is used for real here (no useNavigate mock) —
+// clicking a row now navigates to a genuine child route
+// (/secret-sync/<key>, SecretDetailPage) rather than opening a drawer in
+// place, so the test harness needs the actual router to follow it there.
+// See renderPage below.
 
 // P1-A A3 pins the exact toast wording, so the toast helper is mocked here
 // rather than rendered — the sentence is what matters, not the widget.
@@ -101,11 +99,21 @@ vi.mock('@/services/api', () => ({
   fetchAuditLog: (...args: unknown[]) => mockFetchAuditLog(...args),
 }))
 
-// Renders the current URL's search string into a testid'd node — B3 pins
-// need to see the URL actually change, not just the component's own state.
+// Renders the current URL's path + search string into a testid'd node — B3
+// pins need to see the URL actually change, not just the component's own
+// state; SSF-9's navigation pins need the PATH too (a row click now
+// changes the route, not just the query string). Mounted as a sibling of
+// <Routes>, not inside it, so it keeps reporting the current location no
+// matter which route (or none at all — e.g. a "View cluster page" link
+// this test suite doesn't mount a real page for) is active.
 function LocationProbe() {
+  const location = useLocation()
   const [searchParams] = useSearchParams()
-  return <div data-testid="location-probe">{searchParams.toString()}</div>
+  return (
+    <div data-testid="location-probe" data-pathname={location.pathname}>
+      {searchParams.toString()}
+    </div>
+  )
 }
 
 function renderPage(initialEntries: string[] = ['/secret-sync']) {
@@ -113,7 +121,10 @@ function renderPage(initialEntries: string[] = ['/secret-sync']) {
     <AuthContext.Provider value={adminAuth}>
       <MemoryRouter initialEntries={initialEntries}>
         <LocationProbe />
-        <ManagedSecrets />
+        <Routes>
+          <Route path="/secret-sync" element={<ManagedSecrets />} />
+          <Route path="/secret-sync/:rowKey" element={<SecretDetailPage />} />
+        </Routes>
       </MemoryRouter>
     </AuthContext.Provider>,
   )
@@ -198,6 +209,11 @@ beforeEach(() => {
   mockGetConnectionSecretResource.mockResolvedValue({ ...blankedResource, name: 'prod-eu', namespace: 'argocd' })
   mockGetAddonValuesSecretResource.mockResolvedValue(blankedResource)
   mockFetchAuditLog.mockResolvedValue({ entries: [] })
+  // SSF-9's scroll/group-override restore rides in sessionStorage, which
+  // jsdom does NOT reset between tests on its own — without this, a saved
+  // key from one test (e.g. group=addon) would silently seed the next
+  // test's fresh render of the same query string.
+  window.sessionStorage.clear()
 })
 
 describe('ManagedSecrets', () => {
@@ -621,18 +637,31 @@ describe('ManagedSecrets', () => {
     expect(searches[searches.length - 1]).toHaveValue('staging')
   })
 
-  it('B3: the selected row is written to the URL and a reload with that URL opens the same row', async () => {
+  // SSF-9: a row is no longer "selected" via ?row= on this same page —
+  // clicking it navigates to its own full page instead. This pin now
+  // covers both halves of that: the click actually changes the route, and
+  // an old ?row= link (still reachable via App.tsx's /secrets alias, or a
+  // stale bookmark) redirects to the same destination.
+  it('SSF-9: clicking a row navigates to its own page at /secret-sync/<key>', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     mockGetClusterComparison.mockResolvedValue({ cluster: { name: 'prod-eu', labels: {}, last_reconcile: null } })
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
     fireEvent.click(screen.getByTestId('secret-row-connection-prod-eu'))
-    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveTextContent('row=connection-prod-eu'))
 
+    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveAttribute('data-pathname', '/secret-sync/connection-prod-eu'))
+    expect(await screen.findByTestId('secret-detail-panel')).toBeInTheDocument()
+  })
+
+  it('SSF-9: an old ?row=<key> link redirects (replace) to the matching detail page', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    mockGetClusterComparison.mockResolvedValue({ cluster: { name: 'prod-eu', labels: {}, last_reconcile: null } })
     renderPage(['/secret-sync?row=connection-prod-eu'])
-    const panel = await screen.findAllByTestId('secret-detail-panel')
-    expect(panel.length).toBeGreaterThan(0)
+
+    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveAttribute('data-pathname', '/secret-sync/connection-prod-eu'))
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(panel).toBeInTheDocument()
   })
 
   it('clicking the connection-engine\'s red error names the cluster, carries a time, and filters the table to that cluster on click', async () => {
@@ -963,12 +992,19 @@ describe('ManagedSecrets', () => {
     // connection-secret thing and a values secret's content must never
     // reach the browser.
     expect(mockGetClusterComparison).not.toHaveBeenCalled()
+  })
 
-    // A different (in-sync) values row shows the matching verdict, still
-    // with no label-drift call. SSF-8: a values row's match sentence names
-    // its real source, never "Git" — that word is reserved for connection
-    // rows, which really are checked against git.
-    fireEvent.click(screen.getByTestId('secret-row-values-prod-eu-datadog'))
+  // A different (in-sync) values row shows the matching verdict, still
+  // with no label-drift call. SSF-8: a values row's match sentence names
+  // its real source, never "Git" — that word is reserved for connection
+  // rows, which really are checked against git. SSF-9: each row is its own
+  // page now, so this is its own direct-load test rather than a second
+  // click inside the same still-open panel.
+  it('an in-sync values row\'s verdict names its real source, never "Git", and never fires the label-drift comparison', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage(['/secret-sync/values-prod-eu-datadog'])
+
+    const panel = await screen.findByTestId('secret-detail-panel')
     await waitFor(() => expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('Matches AWS Secrets Manager.'))
     expect(mockGetClusterComparison).not.toHaveBeenCalled()
   })
@@ -1227,7 +1263,7 @@ describe('ManagedSecrets', () => {
     expect(scrollFrame).not.toBeNull()
   })
 
-  it('the detail panel has a link to the cluster/addon page that navigates there', async () => {
+  it('the detail page has a link to the cluster/addon page that navigates there', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
@@ -1236,12 +1272,19 @@ describe('ManagedSecrets', () => {
 
     const link = await screen.findByTestId('detail-view-page-link')
     fireEvent.click(link)
-    expect(mockNavigate).toHaveBeenCalledWith('/clusters/prod-eu')
+    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveAttribute('data-pathname', '/clusters/prod-eu'))
+  })
 
-    fireEvent.click(screen.getByTestId('secret-row-values-prod-eu-datadog'))
-    const link2 = await screen.findByTestId('detail-view-page-link')
-    fireEvent.click(link2)
-    expect(mockNavigate).toHaveBeenCalledWith('/addons/datadog')
+  it('a values row\'s "View addon page" link navigates to the addon page', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    // SSF-9: each row now has its own page — this checks a values row's
+    // link straight from its own URL rather than clicking through the list
+    // (the list is a different route from the detail page now).
+    renderPage(['/secret-sync/values-prod-eu-datadog'])
+
+    const link = await screen.findByTestId('detail-view-page-link')
+    fireEvent.click(link)
+    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveAttribute('data-pathname', '/addons/datadog'))
   })
 
   it('reports an engine as not running, rather than fabricating cadence info, when it is not wired', async () => {
@@ -1441,5 +1484,98 @@ describe('ManagedSecrets', () => {
     expect(within(list).queryByText('Synced a different cluster entirely')).not.toBeInTheDocument()
     // The honest scope note is visible, not buried.
     expect(within(panel).getByText(/since Sharko last started/)).toBeInTheDocument()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSF-10 — balanced table columns. NAME used to be the only header with no
+// width class (it absorbed every pixel of remaining table width); every
+// column now carries a percentage width instead, so the whole table grows
+// together at wide viewports rather than one column ballooning.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SSF-10 — the table columns are balanced, not absorb-all-width', () => {
+  it('every column carries a percentage width, and NAME keeps a bounded ~25-30% share instead of absorbing the rest', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+
+    const nameHeader = screen.getByTestId('sort-name').closest('th')
+    const namespaceHeader = screen.getByTestId('sort-namespace').closest('th')
+    const statusHeader = screen.getByTestId('sort-state').closest('th')
+    const addonHeader = screen.getByTestId('sort-addon').closest('th')
+    const clusterHeader = screen.getByTestId('sort-cluster').closest('th')
+    const sourceHeader = screen.getByTestId('sort-source').closest('th')
+
+    // NAME carries an explicit bounded width now — the SSF-10 bug was
+    // exactly its absence (no width class at all, so table-fixed handed it
+    // every pixel the other, pixel-pinned columns didn't claim).
+    expect(nameHeader?.className).toMatch(/w-\[2[5-9]%\]|w-\[30%\]/)
+    // Every other column is a percentage too, not a fixed pixel width, so
+    // they all grow together as the table widens past its min-width.
+    for (const header of [namespaceHeader, statusHeader, addonHeader, clusterHeader, sourceHeader]) {
+      expect(header?.className).toMatch(/w-\[\d+%\]/)
+      expect(header?.className).not.toMatch(/w-\[\d+px\]/)
+    }
+
+    // The table still stays wide/full-width with horizontal scroll only
+    // below its existing min-width, and row height is unchanged.
+    expect(screen.getByRole('table')).toHaveClass('min-w-[1000px]')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSF-9 — scroll position and expanded groups aren't URL-backed, so they
+// ride in sessionStorage instead, keyed by the list's own query string —
+// saved right before navigating to a row's page, restored on return.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SSF-9 — scroll position and expanded groups survive a return trip', () => {
+  it('restores an explicit group override and the scroll position after navigating to a row and back', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage(['/secret-sync?group=addon'])
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
+
+    // staging-us's connection secret is out_of_sync, so the connections
+    // group auto-opens by default (G4) — collapse it explicitly, an
+    // override that should survive the round trip.
+    const connGroup = screen.getByTestId('secret-group-__connections__')
+    expect(connGroup).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(connGroup)
+    expect(connGroup).toHaveAttribute('aria-expanded', 'false')
+
+    // Scroll the table's own frame, then click a row — openRowDetail saves
+    // both this scroll position and the group override, keyed by the
+    // current (group=addon) query string, right before navigating away.
+    const scrollFrame = screen.getByText('Status').closest('div.overflow-y-auto') as HTMLElement
+    scrollFrame.scrollTop = 240
+    fireEvent.click(screen.getByTestId('secret-row-values-prod-eu-datadog'))
+    await screen.findByTestId('secret-detail-panel')
+
+    // A fresh render with the SAME query string (the return trip) reads
+    // both back.
+    renderPage(['/secret-sync?group=addon'])
+    await waitFor(() => expect(screen.getByTestId('secret-group-__connections__')).toHaveAttribute('aria-expanded', 'false'))
+    const restoredFrame = screen.getByText('Status').closest('div.overflow-y-auto') as HTMLElement
+    await waitFor(() => expect(restoredFrame.scrollTop).toBe(240))
+  })
+
+  it('does not restore scroll/groups when the query string is different — the key is the exact list view, not global state', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage(['/secret-sync?group=addon'])
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
+
+    const scrollFrame = screen.getByText('Status').closest('div.overflow-y-auto') as HTMLElement
+    scrollFrame.scrollTop = 240
+    fireEvent.click(screen.getByTestId('secret-row-values-prod-eu-datadog'))
+    await screen.findByTestId('secret-detail-panel')
+
+    // A different query string (no grouping) is a different view — it
+    // must not inherit the grouped view's saved scroll.
+    renderPage(['/secret-sync'])
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    const freshFrame = screen.getByText('Status').closest('div.overflow-y-auto') as HTMLElement
+    expect(freshFrame.scrollTop).toBe(0)
   })
 })

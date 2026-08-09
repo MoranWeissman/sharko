@@ -21,8 +21,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, useSearchParams } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation, useSearchParams } from 'react-router-dom'
 import { ManagedSecrets } from '@/views/ManagedSecrets'
+import { SecretDetailPage } from '@/views/SecretDetailPage'
 import { AuthContext } from '@/hooks/useAuth'
 import type { ManagedSecretsResponse } from '@/services/models'
 
@@ -40,11 +41,9 @@ const adminAuth = {
   error: null,
 }
 
-const mockNavigate = vi.fn()
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual('react-router-dom')
-  return { ...actual, useNavigate: () => mockNavigate }
-})
+// SSF-9: real react-router-dom, no useNavigate mock — a box click now
+// navigates to its own full page (SecretDetailPage) instead of opening a
+// drawer in place. See renderPage.
 
 const mockGetManagedSecrets = vi.fn()
 const mockGetClusterComparison = vi.fn()
@@ -67,8 +66,13 @@ vi.mock('@/services/api', () => ({
 }))
 
 function LocationProbe() {
+  const location = useLocation()
   const [searchParams] = useSearchParams()
-  return <div data-testid="location-probe">{searchParams.toString()}</div>
+  return (
+    <div data-testid="location-probe" data-pathname={location.pathname}>
+      {searchParams.toString()}
+    </div>
+  )
 }
 
 function renderPage(initialEntries: string[] = ['/secret-sync']) {
@@ -76,7 +80,10 @@ function renderPage(initialEntries: string[] = ['/secret-sync']) {
     <AuthContext.Provider value={adminAuth}>
       <MemoryRouter initialEntries={initialEntries}>
         <LocationProbe />
-        <ManagedSecrets />
+        <Routes>
+          <Route path="/secret-sync" element={<ManagedSecrets />} />
+          <Route path="/secret-sync/:rowKey" element={<SecretDetailPage />} />
+        </Routes>
       </MemoryRouter>
     </AuthContext.Provider>,
   )
@@ -269,8 +276,8 @@ const blankedResource = {
   values_blanked: true,
 }
 
-describe('clicking a box opens the same detail panel a list row opens', () => {
-  it('opens the panel for that exact secret — no navigation, no filter change', async () => {
+describe('clicking a box opens that secret\'s own page (SSF-9) — no filter change on the way there', () => {
+  it('navigates to the exact secret\'s page — no addon/kind filter added along the way', async () => {
     const user = userEvent.setup()
     mockGetAddonValuesSecretResource.mockResolvedValue(blankedResource)
     renderPage()
@@ -280,16 +287,15 @@ describe('clicking a box opens the same detail panel a list row opens', () => {
     const box = await screen.findByTestId('secret-box-values-prod-eu-datadog')
     await user.click(box)
 
+    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveAttribute('data-pathname', '/secret-sync/values-prod-eu-datadog'))
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(panel).toBeInTheDocument()
     expect(panel).toHaveTextContent('datadog-secrets')
-
-    // Still on tiles — the click opened the panel, it did not switch view
-    // or narrow anything.
-    expect(screen.getByTestId('view-tiles')).toHaveAttribute('aria-pressed', 'true')
+    // The click opened that secret's own page — it never touched the
+    // list's own addon/kind filters on the way there (openRowDetail reads
+    // the query string, it doesn't mutate it).
     expect(screen.getByTestId('location-probe')).not.toHaveTextContent('addon=')
     expect(screen.getByTestId('location-probe')).not.toHaveTextContent('kind=')
-    await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveTextContent(`row=values-prod-eu-datadog`))
   })
 
   it('opens the same panel a connection-secret box stands for', async () => {

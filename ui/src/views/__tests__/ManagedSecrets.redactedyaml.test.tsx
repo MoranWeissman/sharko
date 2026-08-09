@@ -16,15 +16,15 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { ManagedSecrets } from '@/views/ManagedSecrets'
+import { SecretDetailPage } from '@/views/SecretDetailPage'
 import { AuthContext } from '@/hooks/useAuth'
 import type { ManagedSecretsResponse } from '@/services/models'
 
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual('react-router-dom')
-  return { ...actual, useNavigate: () => vi.fn() }
-})
+// SSF-9: real react-router-dom, no useNavigate mock — a row click now
+// navigates to its own full page (SecretDetailPage) instead of opening a
+// drawer in place. See renderPage.
 
 vi.mock('@/components/ToastNotification', async () => {
   const actual = await vi.importActual('@/components/ToastNotification')
@@ -65,11 +65,14 @@ function authFor(role: string) {
   }
 }
 
-function renderPage(role = 'operator') {
+function renderPage(role = 'operator', initialEntries: string[] = ['/secret-sync']) {
   return render(
     <AuthContext.Provider value={authFor(role)}>
-      <MemoryRouter initialEntries={['/secret-sync']}>
-        <ManagedSecrets />
+      <MemoryRouter initialEntries={initialEntries}>
+        <Routes>
+          <Route path="/secret-sync" element={<ManagedSecrets />} />
+          <Route path="/secret-sync/:rowKey" element={<SecretDetailPage />} />
+        </Routes>
       </MemoryRouter>
     </AuthContext.Provider>,
   )
@@ -216,12 +219,18 @@ describe('SSF-5 — Redacted YAML', () => {
     expect(mockGetAddonValuesSecretResource).not.toHaveBeenCalled()
   })
 
-  it('resets to the Overview tab when a different row is opened', async () => {
-    renderPage()
-    const firstPanel = await openRowOnYamlTab('values-prod-eu-datadog')
+  // SSF-9: a different row is its own page/mount now, so "the tab choice
+  // doesn't carry over" is proven by loading a SECOND row's page fresh
+  // (rather than clicking within a still-open drawer) and finding it back
+  // on Overview, same as the first row was before its own tab was clicked.
+  it('a different row\'s page opens on the Overview tab, never carrying over the previous row\'s YAML choice', async () => {
+    const firstRender = renderPage('operator', ['/secret-sync/values-prod-eu-datadog'])
+    const firstPanel = await screen.findByTestId('secret-detail-panel')
+    fireEvent.click(within(firstPanel).getByTestId('detail-tab-yaml'))
     await waitFor(() => expect(within(firstPanel).getByTestId('detail-yaml-content')).toBeInTheDocument())
+    firstRender.unmount()
 
-    fireEvent.click(screen.getByTestId('secret-row-values-spoke-asia-datadog'))
+    renderPage('operator', ['/secret-sync/values-spoke-asia-datadog'])
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).getByTestId('detail-tab-overview')).toHaveAttribute('aria-pressed', 'true')
     expect(within(panel).queryByTestId('detail-yaml-content')).not.toBeInTheDocument()
