@@ -47,7 +47,7 @@ func mustRunCmd(timeout time.Duration, name string, args ...string) string {
 // dockerImageExists returns true if a docker image with the given
 // name:tag is already present locally — mirrors the check the Makefile's
 // build-gitfake-image target does via `docker image inspect` (see the
-// Makefile) so buildAndLoadImages can skip a rebuild of the Sharko image the
+// Makefile) so buildImages can skip a rebuild of the Sharko image the
 // same way that target already skips a rebuild of the GitFake image.
 func dockerImageExists(image string) bool {
 	_, _, err := runCmd(10*time.Second, "docker", "image", "inspect", image)
