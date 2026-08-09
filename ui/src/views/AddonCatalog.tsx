@@ -331,14 +331,17 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
             <h3 className="truncate text-lg font-bold text-teal-700 dark:text-teal-400">
               {addon.addon_name}
             </h3>
-            <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Version: {addon.version}</p>
+            <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Version: {addon.version}</p>
             {/* S1 scope addition (maintainer's walk day 7): a long
                 namespace on one line with "Version: ... · Namespace: ..."
                 got cut off with an ellipsis. Its own line, dim mono (same
                 treatment the cluster secret panel uses for resource
                 names), and break-all so it wraps instead of truncating —
-                the full namespace is never hidden. */}
-            <p className="mt-0.5 break-all font-mono text-xs text-[#5a8aaa] dark:text-gray-500">
+                the full namespace is never hidden. Bumped from text-xs to
+                text-sm in the SSF-13 typography pass: Version/Namespace are
+                the card's primary identifying facts, not metadata, and
+                mono content has a 13-14px floor in the approved scale. */}
+            <p className="mt-0.5 break-all font-mono text-sm text-[#5a8aaa] dark:text-gray-500">
               Namespace: {namespace}
             </p>
             {/* S1 (scale-walk day 7): the badge already carries the
@@ -400,10 +403,10 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
         {/* Expanded section */}
         {expanded && (
           <div className="mt-3 border-t border-[#6aade0] pt-3 dark:border-gray-700">
-            <h4 className="mb-2 text-xs font-semibold text-[#0a3a5a] dark:text-gray-300">
+            <h4 className="mb-2 text-sm font-semibold text-[#0a3a5a] dark:text-gray-300">
               Cluster Deployments
             </h4>
-            <div className="max-h-60 overflow-auto rounded border text-xs dark:border-gray-700">
+            <div className="max-h-60 overflow-auto rounded border text-sm dark:border-gray-700">
               <table className="w-full">
                 <thead className="sticky top-0 bg-[#d0e8f8] dark:bg-gray-900">
                   <tr>
@@ -476,7 +479,7 @@ function PendingAddonCard({ pr }: { pr: TrackedPR }) {
           <h3 className="truncate text-lg font-bold text-teal-700 dark:text-teal-400">
             {name}
           </h3>
-          <p className="truncate text-xs text-[#2a5a7a] dark:text-gray-400">{subtitle}</p>
+          <p className="truncate text-sm text-[#2a5a7a] dark:text-gray-400">{subtitle}</p>
           <span
             data-testid="addon-deployment-badge"
             className="mt-1 inline-flex w-fit items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-700"
@@ -613,7 +616,7 @@ function AddonListTable({ items }: { items: AddonGridItem[] }) {
                 <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
                   {pendingDisplayName(item.pr)}
                 </td>
-                <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">—</td>
+                <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">—</td>
                 <td className="px-6 py-3">
                   <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-700">
                     Pending
@@ -632,7 +635,7 @@ function AddonListTable({ items }: { items: AddonGridItem[] }) {
                 <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
                   {item.addon.addon_name}
                 </td>
-                <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
                   {item.addon.version}
                 </td>
                 <td className="px-6 py-3 text-[#0a3a5a] dark:text-gray-300">
@@ -1352,7 +1355,7 @@ export function AddonCatalog() {
   const renderPageHeader = () => (
     <div className="space-y-4">
       <div>
-        <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Addons</h2>
+        <h2 className="page-title text-[#0a2a4a] dark:text-gray-100">Addons</h2>
         <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
           {tab === 'catalog'
             ? 'Addons in your Git catalog, with deployment coverage, health, and version.'
@@ -1442,7 +1445,7 @@ export function AddonCatalog() {
 
       {/* Action bar — refresh + Add Addon */}
       <div className="flex items-center justify-end gap-2">
-        <p className="mr-auto text-xs text-[#3a6a8a] dark:text-gray-500">
+        <p className="mr-auto text-sm text-[#3a6a8a] dark:text-gray-500">
           <span className="font-medium text-[#1a4a6a] dark:text-gray-300">Not deployed yet</span>{' '}
           = in your catalog, not enabled on any cluster.{' '}
           <span className="font-medium text-red-600 dark:text-red-400">Missing from ArgoCD</span>{' '}
@@ -1637,7 +1640,7 @@ export function AddonCatalog() {
                           onClick={() =>
                             setAddonForm((prev) => ({ ...prev, chart: c }))
                           }
-                          className={`rounded-full px-2 py-0.5 text-xs font-mono transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
+                          className={`rounded-full px-2 py-0.5 text-sm font-mono transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
                             selected
                               ? 'bg-teal-600 text-white hover:bg-teal-700'
                               : 'bg-white text-[#0a3a5a] ring-1 ring-[#c0ddf0] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700'
@@ -1699,7 +1702,7 @@ export function AddonCatalog() {
             )}
 
             {/* Note: where to set advanced options after creation. */}
-            <div className="rounded-md bg-[#e8f4ff] p-3 text-xs text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
+            <div className="rounded-md bg-[#e8f4ff] p-3 text-sm text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
               After adding, advanced options like sync options, ignore
               differences, and additional sources are available on the
               addon&rsquo;s <strong>ApplicationSet</strong> tab.
@@ -1707,7 +1710,7 @@ export function AddonCatalog() {
 
             {/* Auto-merge is now a global setting — no per-flow checkbox. */}
             {!addAddonResult && (
-              <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
+              <p className="text-sm text-[#5a8aaa] dark:text-gray-500">
                 Auto-merge follows your{' '}
                 <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
                   global GitOps setting
@@ -2017,7 +2020,7 @@ export function AddonCatalog() {
       </div>
 
       {pendingAddonPRsError && (
-        <p className="text-xs italic text-[#5a8aaa] dark:text-gray-500">
+        <p className="text-sm italic text-[#5a8aaa] dark:text-gray-500">
           Couldn&rsquo;t check for pending addons — a pending add-PR may be
           missing from this grid.
         </p>

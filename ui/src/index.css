@@ -153,3 +153,16 @@ body {
     margin: 0;
   }
 }
+
+@layer components {
+  /* Story SSF-13 (typography correction) — one page-title style shared by
+     Dashboard, AddonCatalog and Settings so they stop drifting. Measured
+     before this change: Dashboard's title rendered 24px on mobile / 30px
+     desktop (bold), AddonCatalog and Settings both rendered a flat 24px
+     (bold), with no shared rule tying the three together. This sets one
+     scale — 24px on small screens, 28px from `sm:` up, semibold — and
+     leaves text color to each caller. */
+  .page-title {
+    @apply text-2xl font-semibold tracking-tight sm:text-[1.75rem];
+  }
+}

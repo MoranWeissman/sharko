@@ -82,7 +82,7 @@ export function Settings() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Settings</h1>
+        <h1 className="page-title text-[#0a2a4a] dark:text-gray-100">Settings</h1>
       </div>
 
       <div className="flex gap-6 mt-4">
