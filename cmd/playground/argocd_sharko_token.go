@@ -28,6 +28,16 @@ const sharkoAccountName = "sharko"
 // has).
 const sharkoAccountCapability = "apiKey"
 
+// argoCDRolloutTimeout is what restartArgoCDServerAndWait hands to kubectl's
+// own --timeout flag on the rollout status check. Kept as a named constant
+// (rather than a literal duplicated between the flag string and the runCmd
+// call) specifically so it can only be changed in one place — a previous
+// version of this function had "3*time.Minute" as the outer runCmd deadline
+// and the separate literal "180s" as kubectl's own --timeout, which is
+// exactly the kind of drift that caused the kill race outerCmdTimeout now
+// guards against.
+const argoCDRolloutTimeout = 3 * time.Minute
+
 // sharkoRoleGrantLine is the argocd-rbac-cm policy.csv line granting the
 // sharko account ArgoCD's built-in role:admin — same shape and same
 // built-in role as adminRoleGrantLine (cmd_up.go), just a different
@@ -144,11 +154,11 @@ func restartArgoCDServerAndWait(kubeconfigPath string) error {
 	}
 
 	fmt.Println("    Waiting for argocd-server rollout to complete...")
-	if _, stderr, err := runCmd(3*time.Minute, "kubectl",
+	if _, stderr, err := runCmd(outerCmdTimeout(argoCDRolloutTimeout), "kubectl",
 		"--kubeconfig", kubeconfigPath,
 		"--context", ContextHub,
 		"-n", ArgoCDNamespace,
-		"rollout", "status", "deployment/argocd-server", "--timeout=180s"); err != nil {
+		"rollout", "status", "deployment/argocd-server", "--timeout="+argoCDRolloutTimeout.String()); err != nil {
 		return fmt.Errorf("wait for argocd-server rollout: %w (stderr=%s)", err, stderr)
 	}
 

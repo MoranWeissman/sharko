@@ -44,6 +44,16 @@ func mustRunCmd(timeout time.Duration, name string, args ...string) string {
 	return strings.TrimSpace(stdout)
 }
 
+// dockerImageExists returns true if a docker image with the given
+// name:tag is already present locally — mirrors the check the Makefile's
+// build-gitfake-image target does via `docker image inspect` (see the
+// Makefile) so buildAndLoadImages can skip a rebuild of the Sharko image the
+// same way that target already skips a rebuild of the GitFake image.
+func dockerImageExists(image string) bool {
+	_, _, err := runCmd(10*time.Second, "docker", "image", "inspect", image)
+	return err == nil
+}
+
 // kindClusterExists returns true if the named kind cluster exists.
 func kindClusterExists(name string) bool {
 	out, _, err := runCmd(5*time.Second, "kind", "get", "clusters")
@@ -114,9 +124,35 @@ func kubectlApply(kubeconfig, kubectlContext, namespace, yaml string) error {
 	return nil
 }
 
-// kubectlWait waits for a resource to be ready.
+// outerCmdTimeoutMargin is added on top of a wrapped command's own
+// --timeout (or equivalent) flag when deriving the outer
+// exec.CommandContext deadline passed to runCmd. Without this margin, the
+// two timeouts race to fire at the same instant: if the outer Go context
+// wins that race, exec.CommandContext SIGKILLs the process before it gets a
+// chance to print its own timeout error, and the run dies with an opaque
+// "signal: killed (stderr=)" instead of the command's own explanation of
+// what it was still waiting on. Observed live twice, on kubectl wait and
+// kubectl rollout status both passing the same duration to both timeouts.
+const outerCmdTimeoutMargin = 30 * time.Second
+
+// outerCmdTimeout derives the exec.CommandContext deadline for a command
+// that carries its own --timeout (or equivalent) flag set to innerTimeout:
+// always meaningfully more than innerTimeout (outerCmdTimeoutMargin more),
+// so the inner command always finishes and reports in its own words well
+// before the outer context could kill it. Every runCmd call in
+// cmd/playground that also passes a --timeout-shaped flag to the command
+// itself must derive its outer duration through this helper.
+func outerCmdTimeout(innerTimeout time.Duration) time.Duration {
+	return innerTimeout + outerCmdTimeoutMargin
+}
+
+// kubectlWait waits for a resource to be ready. timeout is passed straight
+// through to kubectl's own --timeout flag; the outer command deadline gets
+// outerCmdTimeoutMargin more (outerCmdTimeout) so kubectl's own timeout
+// always fires first and reports why, instead of racing the outer context's
+// SIGKILL.
 func kubectlWait(kubeconfig, kubectlContext, namespace, resourceType, resourceName, condition string, timeout time.Duration) error {
-	_, stderr, err := runCmd(timeout, "kubectl", "--kubeconfig", kubeconfig,
+	_, stderr, err := runCmd(outerCmdTimeout(timeout), "kubectl", "--kubeconfig", kubeconfig,
 		"--context", kubectlContext,
 		"-n", namespace, "wait",
 		"--for=condition="+condition,
