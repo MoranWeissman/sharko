@@ -83,9 +83,6 @@ export function Settings() {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Settings</h1>
-        <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-          Manage connections, users, API keys, and platform configuration.
-        </p>
       </div>
 
       <div className="flex gap-6 mt-4">

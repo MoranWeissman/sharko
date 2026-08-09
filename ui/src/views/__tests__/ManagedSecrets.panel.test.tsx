@@ -523,7 +523,9 @@ describe('rows are reachable from the keyboard', () => {
 
     fireEvent.keyDown(row, { key: 'Enter' })
     const panel = await screen.findByTestId('secret-detail-panel')
-    expect(within(panel).getByTestId('detail-resource-header')).toHaveTextContent('datadog/datadog-secrets')
+    // SSF-4: the identity prints once now, in the sheet's own title — not
+    // repeated inside detail-resource-header.
+    expect(panel).toHaveTextContent('datadog/datadog-secrets')
 
     fireEvent.keyDown(screen.getByTestId('secret-row-values-staging-us-datadog'), { key: ' ' })
     await waitFor(() => expect(mockGetAddonValuesSecretResource).toHaveBeenLastCalledWith('staging-us', 'datadog'))
@@ -540,8 +542,11 @@ describe('the resource header', () => {
     const panel = await openRow('values-prod-eu-datadog')
     const header = within(panel).getByTestId('detail-resource-header')
 
+    // SSF-4: the identity (name) is stated once — in the sheet's own
+    // title, not repeated in this row — so it's checked at the panel
+    // level; kind/cluster/age still live in detail-resource-header.
+    expect(panel).toHaveTextContent('datadog/datadog-secrets')
     expect(header).toHaveTextContent('Secret')
-    expect(header).toHaveTextContent('datadog/datadog-secrets')
     expect(header).toHaveTextContent('on prod-eu')
     await waitFor(() => expect(header).toHaveTextContent('created'))
   })
@@ -551,5 +556,57 @@ describe('the resource header', () => {
     renderPage()
     const panel = await openRow('values-prod-eu-datadog')
     expect(within(panel).getByTestId('detail-resource-header')).not.toHaveTextContent('created')
+  })
+
+  // SSF-4 — the identity used to print once in the sheet's own title and
+  // again in Zone A; it now prints exactly once.
+  it('states the secret identity exactly once, not twice', async () => {
+    renderPage()
+    const panel = await openRow('values-prod-eu-datadog')
+    const matches = (panel.textContent?.match(/datadog\/datadog-secrets/g) ?? []).length
+    expect(matches).toBe(1)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSF-4 — Comparison naming, Check now, and the strong Sync button
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SSF-4 — comparison heading, action naming, and Sync strength', () => {
+  it('calls the comparison "Diff" for a connection row', async () => {
+    renderPage()
+    const panel = await openRow('connection-prod-eu')
+    expect(within(panel).getByRole('heading', { name: 'Diff' })).toBeInTheDocument()
+    expect(within(panel).queryByRole('heading', { name: 'Comparison' })).not.toBeInTheDocument()
+  })
+
+  it('calls the comparison "Comparison" for a values row — never "Diff", which would claim a git check it does not make', async () => {
+    renderPage()
+    const panel = await openRow('values-prod-eu-datadog')
+    expect(within(panel).getByRole('heading', { name: 'Comparison' })).toBeInTheDocument()
+    expect(within(panel).queryByRole('heading', { name: 'Diff' })).not.toBeInTheDocument()
+  })
+
+  it('labels the check button "Check now", never "Refresh" (testid unchanged)', async () => {
+    renderPage()
+    const panel = await openRow('values-prod-eu-datadog')
+    expect(within(panel).getByTestId('detail-refresh')).toHaveTextContent('Check now')
+    expect(within(panel).queryByText('Refresh')).not.toBeInTheDocument()
+  })
+
+  it('renders Sync as the strong teal action when there is real drift to push', async () => {
+    renderPage()
+    const panel = await openRow('values-staging-us-datadog') // out_of_sync
+    const syncButton = within(panel).getByTestId('detail-sync')
+    expect(syncButton).not.toBeDisabled()
+    expect(syncButton.className).toMatch(/bg-teal-600/)
+  })
+
+  it('keeps Sync quiet and disabled — never strong — when the row is already in sync', async () => {
+    renderPage()
+    const panel = await openRow('values-prod-eu-datadog') // in_sync
+    const syncButton = within(panel).getByTestId('detail-sync')
+    expect(syncButton).toBeDisabled()
+    expect(syncButton.className).not.toMatch(/bg-teal-600/)
   })
 })

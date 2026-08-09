@@ -137,14 +137,14 @@ describe('orphaned rows — the chip and the row', () => {
     expect(dot).toHaveAttribute('data-status', 'orphaned')
   })
 
-  it('offers Delete only — no Refresh, no Sync', async () => {
+  it('offers Delete only — no Check now, no Sync', async () => {
     const user = userEvent.setup()
     renderPage()
     await screen.findByTestId('secret-row-orphaned-staging-us-external-secrets-eso-creds')
 
     await user.click(screen.getByRole('button', { name: 'Actions for staging-us / eso' }))
     expect(await screen.findByRole('menuitem', { name: /Delete/ })).toBeInTheDocument()
-    expect(screen.queryByRole('menuitem', { name: /Refresh/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /Check now/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: /Sync/ })).not.toBeInTheDocument()
   })
 

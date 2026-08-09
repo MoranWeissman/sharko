@@ -384,7 +384,7 @@ describe('AddonCatalog — Marketplace tab is the one door in (v4 walk-findings 
     // Switching tabs re-renders the page header with the Marketplace copy.
     await waitFor(() => {
       expect(
-        screen.getByText(/browse addons you could add to your catalog/i),
+        screen.getByText(/browse addons to add to your catalog/i),
       ).toBeInTheDocument()
     })
   })
@@ -416,7 +416,7 @@ describe('AddonCatalog — empty catalog points to the Marketplace (V2-cleanup-6
 
     await waitFor(() => {
       expect(
-        screen.getByText(/browse addons you could add to your catalog/i),
+        screen.getByText(/browse addons to add to your catalog/i),
       ).toBeInTheDocument()
     })
   })
@@ -459,9 +459,13 @@ describe('AddonCatalog — empty catalog points to the Marketplace (V2-cleanup-6
     localStorage.clear()
   })
 
-  // The locked two-surface sentence (design decision 8) should be visible
-  // wherever Catalog and Marketplace are explained — the Addons page header.
-  it('shows the locked Catalog-vs-Marketplace sentence in the page header', async () => {
+  // UI copy pass: the old always-visible "Marketplace is what you could
+  // run, the Catalog is what your org allows..." sentence (design decision
+  // 8) was removed from the page header — it was a second explanation of
+  // the same Catalog-vs-Marketplace distinction the tab labels themselves
+  // already carry (Catalog / Marketplace). Each tab still gets its own
+  // one-line subtitle instead.
+  it('shows one short subtitle for the active tab, not the old Catalog-vs-Marketplace paragraph', async () => {
     vi.mocked(api.getAddonCatalog).mockResolvedValueOnce({
       addons: [],
       total_addons: 0,
@@ -471,9 +475,12 @@ describe('AddonCatalog — empty catalog points to the Marketplace (V2-cleanup-6
     renderCatalog()
     await waitFor(() => {
       expect(
-        screen.getByText(/your clusters run only what.s enabled from the catalog/i),
+        screen.getByText(/addons in your git catalog/i),
       ).toBeInTheDocument()
     })
+    expect(
+      screen.queryByText(/your clusters run only what.s enabled from the catalog/i),
+    ).not.toBeInTheDocument()
   })
 })
 

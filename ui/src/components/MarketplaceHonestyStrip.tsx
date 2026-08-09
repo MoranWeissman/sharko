@@ -25,7 +25,16 @@ export function MarketplaceHonestyStrip() {
         <Info className="mt-0.5 h-5 w-5 shrink-0 text-teal-600 dark:text-teal-400" aria-hidden="true" />
         <div className="space-y-2 text-sm text-[#2a5a7a] dark:text-gray-300">
           <p>
-            This list is kept by the Sharko project, in the open.{' '}
+            <span className="font-medium text-[#0a3a5a] dark:text-gray-100">
+              Curated means correct, not audited.
+            </span>{' '}
+            Sharko checks that each entry is right — the chart address
+            works, the defaults are sane. It does not vet the software
+            itself; that call is yours, made when you review the pull
+            request that adds it to your catalog.
+          </p>
+          <p className="text-xs">
+            Kept by the Sharko project, in the open.{' '}
             <a
               href="https://github.com/MoranWeissman/sharko/blob/main/catalog/addons.yaml"
               target="_blank"
@@ -44,16 +53,6 @@ export function MarketplaceHonestyStrip() {
               propose an addon <ExternalLink className="h-3 w-3" aria-hidden="true" />
             </a>
             .
-          </p>
-          <p className="font-medium text-[#0a3a5a] dark:text-gray-100">
-            Curated means correct, not audited.
-          </p>
-          <p>
-            Sharko checks that each entry is right — the chart address
-            works, the defaults are sane. Sharko does not vet the software
-            itself. Whether an addon is safe for your org is your call,
-            made when you review the pull request that adds it to your
-            catalog.
           </p>
         </div>
       </div>

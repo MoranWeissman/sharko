@@ -2633,13 +2633,12 @@ describe('ClusterDetail', () => {
       await waitFor(() => {
         expect(screen.getByText('No changes yet')).toBeInTheDocument();
       });
-      // V2-cleanup-85.1: the empty state now says concretely what a
-      // "change" is (enabling/disabling an addon, editing its values) and
-      // that each one is a pull request, instead of the vaguer original copy.
+      // UI copy pass: the empty state stays short and actionable — the
+      // pull-request model is already explained elsewhere on this page
+      // (the connection panel and the overrides editor), so it doesn't
+      // need to be repeated here too.
       expect(
-        screen.getByText(
-          "A change is something you do to this cluster — enabling or disabling an addon, or editing an addon's values. Each one goes out as a pull request for you to review, and shows up here once it's merged.",
-        ),
+        screen.getByText('Enable, disable, or edit an addon on this cluster to see it here.'),
       ).toBeInTheDocument();
 
       // The individual per-panel empty states are collapsed away in favor
@@ -2976,11 +2975,14 @@ describe('ClusterDetail', () => {
       // Overview text must state:
       // 1. Tests Sharko's own connection (using registered credentials)
       // 2. NOT testing ArgoCD's connection
-      // 3. Honest caveat: some checks read ArgoCD-side state
       expect(screen.getByText(/Sharko itself/i)).toBeInTheDocument();
       expect(screen.getByText(/using the credentials you registered/i)).toBeInTheDocument();
       expect(screen.getByText(/not testing ArgoCD's connection/i)).toBeInTheDocument();
-      expect(screen.getByText(/Two checks read ArgoCD-side state/i)).toBeInTheDocument();
+
+      // 3. Honest caveat: some checks read ArgoCD-side state — now behind
+      // an InfoHint rather than always-visible prose (UI copy pass).
+      fireEvent.click(screen.getByLabelText('What exactly do these checks look at?'));
+      expect(screen.getByText(/read ArgoCD-side state/i)).toBeInTheDocument();
     });
   });
 
@@ -2996,11 +2998,11 @@ describe('ClusterDetail', () => {
       renderView();
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      expect(screen.getByText('Managed cluster secret')).toBeInTheDocument();
+      expect(screen.getByText('Argo CD cluster connection')).toBeInTheDocument();
       expect(screen.getByText('— argocd/prod-eu')).toBeInTheDocument();
       expect(
         screen.getByText(
-          "This secret is how ArgoCD connects to the cluster, and its labels choose which addons run here. Sharko keeps it matching git.",
+          "Shows connection health and whether this cluster’s addon selection matches Git.",
         ),
       ).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^Refresh$/ })).toBeInTheDocument();
@@ -3011,7 +3013,7 @@ describe('ClusterDetail', () => {
     it('falls back to the generic title when no managed_secret_name is available', async () => {
       renderView();
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
-      expect(screen.getByText('Managed cluster secret')).toBeInTheDocument();
+      expect(screen.getByText('Argo CD cluster connection')).toBeInTheDocument();
       expect(screen.queryByText(/—\s*argocd\//)).not.toBeInTheDocument();
     });
 

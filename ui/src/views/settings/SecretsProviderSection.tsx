@@ -338,13 +338,13 @@ export function SecretsProviderSection() {
 
   return (
     <div className="space-y-6">
-      {/* F4: Plain-English opener + docs link + positioning line (V3-P1.2) */}
+      {/* Short scope sentence + docs link. The product-introduction
+        * paragraph that used to open this section (UI copy pass) is gone —
+        * a user already inside Settings doesn't need Sharko's elevator
+        * pitch repeated to them. */}
       <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
         <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
-          Sharko is a GitOps agent with an API: your portal or pipeline asks for "a cluster with these addons," and Sharko opens a pull request — it never changes your cluster behind your back.
-        </p>
-        <p className="mt-2 text-sm text-[#2a5a7a] dark:text-gray-300">
-          Sharko needs each cluster's credentials to reach it — this is where those credentials come from.
+          Choose where Sharko reads cluster credentials and addon secret values.
         </p>
         <a
           href="/user-guide/secrets-provider/"

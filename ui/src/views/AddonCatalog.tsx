@@ -1355,15 +1355,8 @@ export function AddonCatalog() {
         <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Addons</h2>
         <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
           {tab === 'catalog'
-            ? 'All addons defined in your Git catalog. See deployment coverage, health, and version per addon.'
-            : 'Browse addons you could add to your catalog.'}
-        </p>
-        {/* The two-surface sentence (v4 wave 2.5, decision 8) — said once,
-            plainly, wherever Catalog and Marketplace meet. */}
-        <p className="mt-2 text-sm text-[#3a6a8a] dark:text-gray-500">
-          The Marketplace is what you could run. The Catalog is what your
-          org allows. Your clusters run only what&rsquo;s enabled from the
-          Catalog.
+            ? 'Addons in your Git catalog, with deployment coverage, health, and version.'
+            : 'Browse addons to add to your catalog.'}
         </p>
       </div>
       <AddonsTabBar tab={tab} onChange={switchTab} />

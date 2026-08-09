@@ -111,8 +111,7 @@ function RecommendedVersions({
     const currentMajor = isNaN(currentMajorRaw) ? -1 : currentMajorRaw
     return (
       <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
-        <h3 className="mb-1 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Recommended Upgrades</h3>
-        <p className="mb-3 text-xs text-[#3a6a8a] dark:text-gray-400">Smart suggestions based on your current version</p>
+        <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Recommended Upgrades</h3>
         <div className={cardGridClass(cards.length)}>
           {cards.map((card) => (
             <div
@@ -202,8 +201,7 @@ function RecommendedVersions({
 
   return (
     <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
-      <h3 className="mb-1 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Recommended Upgrades</h3>
-      <p className="mb-3 text-xs text-[#3a6a8a] dark:text-gray-400">Smart suggestions based on your current version</p>
+      <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Recommended Upgrades</h3>
       <div className="grid gap-3 sm:grid-cols-3">
         {items.map((item) => (
           <div
