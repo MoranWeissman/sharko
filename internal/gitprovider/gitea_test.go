@@ -155,6 +155,78 @@ func TestGiteaProviderListDirectory(t *testing.T) {
 	}
 }
 
+// TestGiteaProviderListDirectory_NotFound_404 — task #147 acceptance-walk
+// finding. A directory that genuinely does not exist (e.g. a cluster that
+// never had a values file written) must come back as
+// gitprovider.ErrFileNotFound, the same sentinel GetFileContent already
+// uses for a missing file, so fail-closed callers (unadopt_v4.go,
+// remove.go, catalog_delete.go, migration_v3v4.go) treat it as "nothing
+// there" rather than a genuine listing failure.
+func TestGiteaProviderListDirectory_NotFound_404(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	_, err = provider.ListDirectory(context.Background(), "values/clusters/spoke-us", "main")
+	if err == nil {
+		t.Fatal("expected error for a missing directory, got nil")
+	}
+	if !errors.Is(err, ErrFileNotFound) {
+		t.Errorf("expected errors.Is(err, ErrFileNotFound), got: %v", err)
+	}
+}
+
+// TestGiteaProviderListDirectory_ServerError_NotSentinel — only a definitive
+// 404 maps to the sentinel; a 500 must not, so fail-closed callers still
+// abort instead of treating the directory as empty.
+func TestGiteaProviderListDirectory_ServerError_NotSentinel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		w.WriteHeader(500)
+		w.Write([]byte(`{"message":"Internal Server Error"}`))
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	_, err = provider.ListDirectory(context.Background(), "values/clusters/spoke-us", "main")
+	if err == nil {
+		t.Fatal("expected error for a 500, got nil")
+	}
+	if errors.Is(err, ErrFileNotFound) {
+		t.Errorf("a genuine server error must not match ErrFileNotFound, got: %v", err)
+	}
+}
+
 // TestGiteaProviderListPullRequests tests the ListPullRequests method.
 func TestGiteaProviderListPullRequests(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

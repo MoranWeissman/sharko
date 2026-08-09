@@ -126,13 +126,25 @@ func (g *GiteaProvider) GetFileContent(ctx context.Context, filePath, ref string
 }
 
 // ListDirectory returns the names of entries in a directory at the given ref.
+//
+// When the directory does not exist at all Gitea returns 404, the same as
+// GetFileContent does for a missing file. That is wrapped with
+// gitprovider.ErrFileNotFound so callers can use errors.Is to tell "nothing
+// here" apart from a genuine listing failure (task #147 acceptance-walk
+// finding).
 func (g *GiteaProvider) ListDirectory(ctx context.Context, dirPath, ref string) ([]string, error) {
 	contents, resp, err := g.client.ListContents(g.owner, g.repo, ref, dirPath)
 	if err != nil {
+		if resp != nil && resp.StatusCode == 404 {
+			return nil, fmt.Errorf("list directory: path %q at ref %q: %w", dirPath, ref, ErrFileNotFound)
+		}
 		return nil, fmt.Errorf("list directory: %w", err)
 	}
 	if resp == nil {
 		return nil, fmt.Errorf("list directory: nil response")
+	}
+	if resp.StatusCode == 404 {
+		return nil, fmt.Errorf("list directory: path %q at ref %q: %w", dirPath, ref, ErrFileNotFound)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("list directory: unexpected status %d", resp.StatusCode)

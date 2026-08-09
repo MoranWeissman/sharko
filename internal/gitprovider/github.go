@@ -100,12 +100,29 @@ func (g *GitHubProvider) GetFileContent(ctx context.Context, path, ref string) (
 }
 
 // ListDirectory returns the names of entries in a directory at the given ref.
+//
+// When the directory does not exist at all (a cluster that never had a
+// values file written, an addon that never had an override) GitHub returns
+// 404, the same as GetFileContent does for a missing file. That is wrapped
+// with gitprovider.ErrFileNotFound so callers can use errors.Is to tell
+// "nothing here" apart from a genuine listing failure (task #147
+// acceptance-walk finding — this used to come back as a bare error that
+// fail-closed callers like RemoveCluster/UnadoptCluster could not
+// distinguish from a real outage, so they refused to remove a cluster that
+// simply never had a values directory).
 func (g *GitHubProvider) ListDirectory(ctx context.Context, path, ref string) ([]string, error) {
 	opts := &github.RepositoryContentGetOptions{Ref: ref}
 
 	_, dirContents, resp, err := g.client.Repositories.GetContents(ctx, g.owner, g.repo, path, opts)
 	if err != nil {
+		var ghErr *github.ErrorResponse
+		if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("list directory: path %q at ref %q: %w", path, ref, ErrFileNotFound)
+		}
 		return nil, fmt.Errorf("list directory: %w", err)
+	}
+	if resp != nil && resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("list directory: path %q at ref %q: %w", path, ref, ErrFileNotFound)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("list directory: unexpected status %d", resp.StatusCode)
