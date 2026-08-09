@@ -27,6 +27,15 @@
 // history. Expanded groups and scroll position aren't part of the URL;
 // ManagedSecrets.tsx saves and restores those itself, in sessionStorage,
 // keyed by that same query string.
+//
+// SSF-11 (release correction): the route/data flow above was accepted as
+// shipped — this story only fixed the LAYOUT. The container used to be
+// `mx-auto max-w-3xl` (768px, an article-sized column) on all three
+// states below, which sat the whole page in a narrow strip in the middle
+// of an otherwise-empty workspace. It's `mx-auto max-w-screen-2xl` now —
+// the same 1536px rule Dashboard.tsx already uses — and the actual title
+// moved into SecretDetailContent so it can share a header row with the
+// Check now / Sync actions instead of floating alone above them.
 
 import { useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
@@ -39,7 +48,6 @@ import { showToast } from '@/components/ToastNotification'
 import {
   buildUnifiedRows,
   deleteConfirmDescription,
-  secretTitleFor,
   SecretDetailContent,
   syncConfirmDescription,
   useManagedSecretsData,
@@ -134,7 +142,7 @@ export function SecretDetailPage() {
 
   if (loading) {
     return (
-      <div className="mx-auto max-w-3xl space-y-4">
+      <div className="mx-auto max-w-screen-2xl space-y-4" data-testid="secret-detail-container">
         {backLink}
         <LoadingState message="Loading secret..." />
       </div>
@@ -143,7 +151,7 @@ export function SecretDetailPage() {
 
   if (!row) {
     return (
-      <div className="mx-auto max-w-3xl space-y-4">
+      <div className="mx-auto max-w-screen-2xl space-y-4" data-testid="secret-detail-container">
         {backLink}
         <EmptyState
           title="This secret isn't in the current list"
@@ -165,10 +173,12 @@ export function SecretDetailPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
+    <div className="mx-auto max-w-screen-2xl space-y-4" data-testid="secret-detail-container">
       {backLink}
-      <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{secretTitleFor(row)}</h1>
 
+      {/* SSF-11: the title moved into SecretDetailContent itself, in the
+          same header row as its Check now / Sync actions — see
+          secretTitleFor in ManagedSecrets.tsx. */}
       <SecretDetailContent
         row={row}
         onRequestSync={(r) => setSyncTarget(r)}
