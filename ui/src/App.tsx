@@ -22,6 +22,7 @@ const AddonDetail = lazy(() => import('@/views/AddonDetail'))
 const Observability = lazy(() => import('@/views/Observability'))
 const SystemView = lazy(() => import('@/views/SystemView'))
 const ManagedSecrets = lazy(() => import('@/views/ManagedSecrets'))
+const SecretDetailPage = lazy(() => import('@/views/SecretDetailPage'))
 const Dashboards = lazy(() => import('@/views/Dashboards'))
 const Settings = lazy(() => import('@/views/Settings'))
 const UserInfo = lazy(() => import('@/views/UserInfo'))
@@ -265,6 +266,12 @@ export function ConnectedApp() {
           <Route path="observability" element={<Observability />} />
           <Route path="system" element={<SystemView />} />
           <Route path="secret-sync" element={<ManagedSecrets />} />
+          {/* SSF-9 (Secret Sync finish pass): the row detail drawer became
+              a full page at a stable child route — direct load, browser
+              refresh, and a shared link all render this route directly.
+              The list's own `?row=` redirect (ManagedSecrets.tsx) sends
+              old bookmarks/links here too. */}
+          <Route path="secret-sync/:rowKey" element={<SecretDetailPage />} />
           {/* gitops-proud P4-I (D1): the page was renamed "Secret Sync" —
               /secrets keeps working as a plain alias (bookmarks and old
               links must not break), same RedirectPreservingQuery pattern

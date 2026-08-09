@@ -124,7 +124,7 @@
 // header, state and actions, the diff, the keys, then everything else —
 // and the diff itself is two cards with ONE sentence between them: what
 // this secret should be, what is actually on the cluster, and how the two
-// relate. See SecretDetailPanel and diffVerdictFor.
+// relate. See SecretDetailContent and diffVerdictFor.
 //
 // The rule that decided every call in that rebuild, and the one to hold
 // on to if it is ever extended: Sharko may describe the DELIVERY, never
@@ -298,6 +298,26 @@
 //   and states "Secret values are hidden." up top. "Orphaned"/"Foreign" as
 //   status words become "Not in config"/"Managed elsewhere" — the internal
 //   state keys are unchanged.
+//
+//   SSF-9 + SSF-10 (drawer becomes a full page + balanced columns, PM's
+//   approved correction after the SSF-8 screenshot review, 2026-08-09) —
+//   the side drawer is retired: it held a complete task (state, actions, a
+//   two-column comparison, a YAML view) and stayed crowded even at 640px.
+//   Clicking a row or tile now navigates to a full page at
+//   /secret-sync/<row key> (SecretDetailPage.tsx) instead of opening a
+//   sheet over the list — same content, same testids (SecretDetailContent,
+//   exported from this file, is what moved), just its own page with a
+//   "Back to Secret Sync" link. `?row=<key>` still works as a compat
+//   redirect to that page (see the effect near the top of ManagedSecrets).
+//   The list's own filters/search/sort/group/view carry over to the
+//   detail page as router state and back again via the Back link or
+//   browser Back; expanded groups and scroll position ride in
+//   sessionStorage, keyed by the list's query string (openRowDetail).
+//   SSF-10: the table's NAME column no longer absorbs 100% of any extra
+//   width on a wide screen (the bug that made SOURCE/CLUSTER/etc. look
+//   pinned in a sea of blank space past 1280px) — every column, NAME
+//   included, now carries a percentage width instead of a fixed pixel
+//   one, so the whole table grows together.
 // ─────────────────────────────────────────────────────────────────────────
 
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -351,7 +371,6 @@ import { ConfirmationModal } from '@/components/ConfirmationModal'
 import { showToast } from '@/components/ToastNotification'
 import { StatusDot, StatusMark, statusLabel, statusSortRank, statusStripClassName, toResourceStatus, type ResourceStatus } from '@/components/resource/StatusMark'
 import { TimeChip } from '@/components/resource/TimeChip'
-import { ResourceDetailSheet } from '@/components/resource/ResourceDetailSheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SecretTiles } from './SecretTiles'
@@ -378,7 +397,7 @@ export const CHIP_ORDER: ResourceStatus[] = ['missing', 'out_of_sync', 'orphaned
  * says plainly this is Sharko's own past write with nothing in git asking
  * for it anymore, and that it cannot be undone.
  */
-function deleteConfirmDescription(row: UnifiedRow | null): string {
+export function deleteConfirmDescription(row: UnifiedRow | null): string {
   if (!row) return ''
   const ns = row.secretNamespace ?? ''
   const name = row.secretName ?? ''
@@ -475,7 +494,7 @@ export interface UnifiedRow {
   driftSource?: 'git' | 'cluster'
 }
 
-function buildUnifiedRows(
+export function buildUnifiedRows(
   connectionRows: ConnectionSecretRow[],
   addonRows: AddonValuesSecretRow[],
   orphanedRows: OrphanedSecretRow[],
@@ -764,7 +783,7 @@ function compareRows(a: UnifiedRow, b: UnifiedRow, key: SortKey): number {
 // syncGateFor is the one place that decides whether Sync makes sense for a
 // row right now, and why not when it doesn't — shared by the row's ⋯ menu
 // and the detail panel's own Sync button so the two never disagree.
-function syncGateFor(row: UnifiedRow): { disabled: boolean; reason?: string } {
+export function syncGateFor(row: UnifiedRow): { disabled: boolean; reason?: string } {
   // leftover-secrets S1.2: an orphaned row has no source left to sync
   // FROM — Delete is the only action it offers. actionsForRow and the
   // panel both branch on row.state === 'orphaned' before ever reaching
@@ -794,7 +813,7 @@ function syncGateFor(row: UnifiedRow): { disabled: boolean; reason?: string } {
  * this writes, right now, and there is no pull request to review first —
  * then says what gets written, in one more plain sentence.
  */
-function syncConfirmDescription(row: UnifiedRow | null): string {
+export function syncConfirmDescription(row: UnifiedRow | null): string {
   if (!row) return ''
   const opening = `This writes the secret on cluster "${row.cluster}" now. No pull request.`
   if (row.kind === 'connection') {
@@ -1748,7 +1767,7 @@ function RecentActivity({ row }: { row: UnifiedRow }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Detail side panel — rebuilt around the RESOURCE (P3-F2), the way ArgoCD
+// Detail content — rebuilt around the RESOURCE (P3-F2), the way ArgoCD
 // lays out one, top to bottom:
 //
 //   1. the resource header: kind, the secret's own name, its cluster, its age
@@ -1763,19 +1782,37 @@ function RecentActivity({ row }: { row: UnifiedRow }) {
 // below the Diff, outside the role guard (so a viewer got a permission
 // error where a sentence belonged), fired a doomed read on rows already
 // known to be missing, and had no way back from a failed read.
+//
+// SSF-9 (Secret Sync finish pass, stories 9+10): this used to render inside
+// a ResourceDetailSheet side drawer (SecretDetailPanel). The PM's
+// post-SSF-8 correction retired the drawer — it held a complete task and
+// stayed crowded even at 640px — in favour of a full page
+// (SecretDetailPage.tsx) at /secret-sync/<row key>. Everything below is
+// UNCHANGED content, just no longer wrapped in a Sheet: SecretDetailPage
+// renders this directly, with its own title above it (see secretTitleFor)
+// and its own Back link. The testid stays "secret-detail-panel" on
+// purpose — most of the existing detail tests only needed their render
+// harness updated, not their assertions, because of it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function SecretDetailPanel({
+/**
+ * The plain-words title SecretDetailPage puts above this content — the
+ * same sentence SSF-8 put in the drawer's own title bar. A connection row
+ * is "{cluster} connection"; a values row is "{addon} values on
+ * {cluster}"; an orphaned row with no addon on record falls back to a
+ * cluster-only sentence rather than printing "undefined".
+ */
+export function secretTitleFor(row: UnifiedRow): string {
+  return row.kind === 'connection' ? `${row.cluster} connection` : row.addon ? `${row.addon} values on ${row.cluster}` : `Secret on ${row.cluster}`
+}
+
+export function SecretDetailContent({
   row,
-  open,
-  onOpenChange,
   onRequestSync,
   onRequestDelete,
   onChanged,
 }: {
-  row: UnifiedRow | null
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  row: UnifiedRow
   onRequestSync: (row: UnifiedRow) => void
   /** leftover-secrets S1.2 — opens the page-level Delete confirm for an orphaned row. */
   onRequestDelete: (row: UnifiedRow) => void
@@ -1836,8 +1873,6 @@ function SecretDetailPanel({
   const auth = useContext(AuthContext)
   const canReadLive = auth?.role === 'admin' || auth?.role === 'operator'
   const { live, retry } = useLiveSecret(row, canReadLive)
-
-  if (!row) return null
 
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -1959,36 +1994,17 @@ function SecretDetailPanel({
   // connection row, where it's accurate.
   const comparisonHeading = row.kind === 'connection' ? 'Diff' : 'Comparison'
 
-  // SSF-8 (drawer calm-down): the sheet's title now says what the row IS,
-  // in plain words, instead of its raw namespace/name identity — a
-  // connection row is "{cluster} connection", a values row is "{addon}
-  // values on {cluster}". The old namespace/name fact (the identity const
-  // above) still exists — it moved into the collapsed Resource details
-  // section below instead of leading the panel. An orphaned row's addon is
-  // best-effort and can be absent (see the view-page link below); the
-  // fallback keeps the title honest rather than printing "undefined".
-  const drawerTitle =
-    row.kind === 'connection' ? `${row.cluster} connection` : row.addon ? `${row.addon} values on ${row.cluster}` : `Secret on ${row.cluster}`
-
   return (
-    <ResourceDetailSheet
-      open={open}
-      onOpenChange={onOpenChange}
-      title={drawerTitle}
-      testId="secret-detail-panel"
-      // The comparison zone can still put two cards side by side (open by
-      // default for every verdict except a match); every other user of
-      // this sheet keeps the narrow default.
-      wide
-    >
-      {/* ── First screen (SSF-8, drawer calm-down) — this answers exactly
-          five questions and nothing else: what is this, is it okay, what
-          was it checked against, when, and what can I do. Everything past
-          that is a disclosure section further down, closed by default, or
-          sits behind "View comparison". The sheet's own title already
-          states the identity in plain words (SSF-8) and the kind (SSF-4) —
-          this paragraph adds the one fact the title can't: the specific
-          purpose. */}
+    <div data-testid="secret-detail-panel" className="space-y-4">
+      {/* ── First screen (SSF-8, drawer calm-down; SSF-9 moved this content
+          onto a full page) — this answers exactly five questions and
+          nothing else: what is this, is it okay, what was it checked
+          against, when, and what can I do. Everything past that is a
+          disclosure section further down, closed by default, or sits
+          behind "View comparison". The page's own title (secretTitleFor)
+          already states the identity in plain words (SSF-8) and the kind
+          (SSF-4) — this paragraph adds the one fact the title can't: the
+          specific purpose. */}
       <p className="text-sm text-[#2a5a7a] dark:text-gray-300">{purposeSentence}</p>
 
       {/* SSF-5 (Secret Sync finish pass) — Overview vs the new read-only
@@ -2296,7 +2312,7 @@ function SecretDetailPanel({
           </button>
         </>
       )}
-    </ResourceDetailSheet>
+    </div>
   )
 }
 
@@ -2513,14 +2529,114 @@ function GroupHeaderRow({ group, expanded, onToggle }: { group: RowGroup; expand
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The shared data fetch — the list page (ManagedSecrets, below) and the
+// full detail page (SecretDetailPage.tsx, SSF-9) both need the exact same
+// managed-secrets read to build their rows from: the list shows every row,
+// the detail page finds its own row in the same set. Hoisted here (and
+// exported) so both call the SAME load()/30-second-refresh/
+// pause-while-hidden logic instead of each growing its own copy — a direct
+// load or refresh of the detail page gets the same "check every 30s while
+// the tab is visible" behaviour the list always had, and there is exactly
+// one place that owns the polling rule.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function useManagedSecretsData() {
+  const [data, setData] = useState<ManagedSecretsResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  // L13 (code review): latest-wins request sequencing. Two load() calls can
+  // be in flight at the same time — the 30-second background tick and an
+  // explicit post-Sync/post-Refresh-all reload a click just triggered are
+  // the real case — and nothing guarantees responses arrive in the order
+  // the requests were sent. loadSeqRef is bumped on every call; a response
+  // only gets applied if it's still the most recently STARTED one when it
+  // resolves.
+  const loadSeqRef = useRef(0)
+  const load = useCallback(() => {
+    const seq = ++loadSeqRef.current
+    return getManagedSecrets()
+      .then((res) => {
+        if (loadSeqRef.current === seq) setData(res)
+      })
+      .catch(() => {
+        if (loadSeqRef.current === seq) setData(null)
+      })
+      .finally(() => {
+        if (loadSeqRef.current === seq) setLoading(false)
+      })
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  // I2 — keeps itself fresh: re-reads every 30 seconds while the tab is
+  // actually visible, and pauses the moment it isn't.
+  useEffect(() => {
+    const REFRESH_INTERVAL_MS = 30_000
+    let intervalId: ReturnType<typeof setInterval> | undefined
+
+    const stop = () => {
+      if (intervalId !== undefined) {
+        clearInterval(intervalId)
+        intervalId = undefined
+      }
+    }
+    const start = () => {
+      if (intervalId !== undefined) return
+      intervalId = setInterval(load, REFRESH_INTERVAL_MS)
+    }
+
+    if (document.visibilityState !== 'hidden') start()
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') stop()
+      else start()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [load])
+
+  return { data, loading, load }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The page
 // ─────────────────────────────────────────────────────────────────────────────
 
 const VALID_STATES: string[] = [...CHIP_ORDER]
+const VALID_SORT_KEYS: string[] = ['name', 'namespace', 'addon', 'cluster', 'source', 'state']
+
+/**
+ * SSF-9 — expanded groups and scroll position aren't URL-backed (a Record
+ * of group-key booleans and a pixel offset don't belong in a shareable
+ * link the way a filter does), so they ride in sessionStorage instead,
+ * keyed by the list's OWN query string — the same string carried to the
+ * detail page as location.state.listSearch. Saved right before navigating
+ * to a row's detail page (openRowDetail below), restored on mount if the
+ * page comes back with that exact same query string. Best-effort only:
+ * sessionStorage can be unavailable (private browsing) or full, and losing
+ * a scroll position is a nicety missed, never a broken page.
+ */
+function secretSyncScrollKey(query: string): string {
+  return `sharko:secret-sync:scroll:${query}`
+}
+function secretSyncGroupsKey(query: string): string {
+  return `sharko:secret-sync:groups:${query}`
+}
 
 export function ManagedSecrets() {
-  const [data, setData] = useState<ManagedSecretsResponse | null>(null)
-  const [loading, setLoading] = useState(true)
+  const navigate = useNavigate()
+  const { data, loading, load } = useManagedSecretsData()
+  // SSF-9 — the table's own scroll container (see the "max-h-[65vh]
+  // overflow-y-auto" wrapper below), so openRowDetail can read its current
+  // scrollTop before navigating away and the restore effect further down
+  // can write it back on return.
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [refreshingAll, setRefreshingAll] = useState(false)
   const [busyRows, setBusyRows] = useState<Record<string, boolean>>({})
   const [syncTarget, setSyncTarget] = useState<UnifiedRow | null>(null)
@@ -2531,12 +2647,17 @@ export function ManagedSecrets() {
   const [deleteTarget, setDeleteTarget] = useState<UnifiedRow | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  // B3 — the active chip filter, the search text, and the selected row all
-  // live in the URL (?state=, ?q=, ?row=) so the page can be reloaded,
-  // bookmarked, shared, and reached from elsewhere (the engine error below
-  // deep-links into a filtered view of one cluster) without losing state,
-  // and so the back button actually goes back to the previous filter
-  // instead of out of the page.
+  // B3 — the active chip filter, the search text, the sort, and the group
+  // choice all live in the URL (?state=, ?q=, ?sort=, ?dir=, ?group=) so
+  // the page can be reloaded, bookmarked, shared, and reached from
+  // elsewhere (the engine error below deep-links into a filtered view of
+  // one cluster) without losing state, and so the back button actually
+  // goes back to the previous filter instead of out of the page. SSF-9:
+  // the SELECTED row is no longer one of these — clicking a row now
+  // navigates to its own full page (/secret-sync/<key>) instead of
+  // writing ?row= and opening a drawer here; carrying this exact query
+  // string forward (openRowDetail below) is what lets that page's "Back
+  // to Secret Sync" link restore every one of these params.
   const [searchParams, setSearchParams] = useSearchParams()
   // design-secret-sync-visual-pass bug fix: a handler that changes TWO
   // params at once (e.g. clear one filter while setting another) used to
@@ -2588,17 +2709,23 @@ export function ManagedSecrets() {
     [updateParams],
   )
 
-  const [selectedRowKey, setSelectedRowKeyState] = useState<string | null>(() => searchParams.get('row'))
-  const selectRow = useCallback(
-    (key: string | null) => {
-      setSelectedRowKeyState(key)
-      updateParams((p) => {
-        if (key) p.set('row', key)
-        else p.delete('row')
-      })
-    },
-    [updateParams],
-  )
+  // SSF-9 `?row=` compatibility: a row used to be selected by writing
+  // ?row=<key> to THIS page's own URL and opening a drawer over the list.
+  // Now it's a full page at /secret-sync/<key> — an old bookmark or shared
+  // link carrying ?row= must still land somewhere real, so this redirects
+  // it there on mount (replace, so it doesn't leave the dead ?row= URL in
+  // history) rather than silently ignoring the param. Runs once: this
+  // page's own code never writes ?row= anymore, so there is nothing to
+  // react to on later renders.
+  useEffect(() => {
+    const legacyRow = searchParams.get('row')
+    if (!legacyRow) return
+    const rest = new URLSearchParams(searchParams)
+    rest.delete('row')
+    const qs = rest.toString()
+    navigate(`/secret-sync/${encodeURIComponent(legacyRow)}`, { replace: true, state: { listSearch: qs } })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // G2 — "Group by" lives in the URL too (?group=addon|cluster), for the
   // same reasons the chip filter and the search text do: reloadable,
@@ -2624,7 +2751,18 @@ export function ManagedSecrets() {
   // default for that one group key for the rest of the session — the
   // user's own choice always wins over the computed default, in either
   // direction (an auto-open group can be collapsed, a quiet one opened).
-  const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>({})
+  // SSF-9: seeded from sessionStorage on mount so returning from a row's
+  // detail page (via the Back link or browser Back, both of which remount
+  // this component) comes back with whichever groups were open, not reset
+  // to the computed default.
+  const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = window.sessionStorage.getItem(secretSyncGroupsKey(searchParams.toString()))
+      return raw ? (JSON.parse(raw) as Record<string, boolean>) : {}
+    } catch {
+      return {}
+    }
+  })
   const isGroupExpanded = useCallback(
     (group: RowGroup) => (group.key in groupOverrides ? groupOverrides[group.key] : groupHasIssues(group)),
     [groupOverrides],
@@ -2706,76 +2844,37 @@ export function ManagedSecrets() {
     [updateParams],
   )
 
-  const [sortKey, setSortKey] = useState<SortKey>('state')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
-
-  // L13 (code review): latest-wins request sequencing. Two load() calls can
-  // be in flight at the same time — the 30-second background tick and an
-  // explicit post-Sync/post-Refresh-all reload a click just triggered are
-  // the real case — and nothing guarantees responses arrive in the order
-  // the requests were sent. Without this, a slow background tick started
-  // BEFORE a Sync click could still resolve AFTER the post-Sync reload and
-  // paint the page back to pre-Sync state, right after the user watched it
-  // update. loadSeqRef is bumped on every call; a response only gets
-  // applied if it's still the most recently STARTED one when it resolves.
-  const loadSeqRef = useRef(0)
-  const load = useCallback(() => {
-    const seq = ++loadSeqRef.current
-    return getManagedSecrets()
-      .then((res) => {
-        if (loadSeqRef.current === seq) setData(res)
+  // SSF-9: sort joins the URL-backed params above — it used to be plain
+  // component state, which meant navigating to a row's detail page and
+  // back (an unmount/remount, not an in-place drawer close) lost whatever
+  // sort the reader had picked. 'state' (worst-first, the default sort)
+  // and 'asc' are never written to the URL, matching every other filter's
+  // "default stays out of the URL" convention.
+  const [sortKey, setSortKeyState] = useState<SortKey>(() => {
+    const v = searchParams.get('sort')
+    return v && VALID_SORT_KEYS.includes(v) ? (v as SortKey) : 'state'
+  })
+  const setSortKey = useCallback(
+    (next: SortKey) => {
+      setSortKeyState(next)
+      updateParams((p) => {
+        if (next === 'state') p.delete('sort')
+        else p.set('sort', next)
       })
-      .catch(() => {
-        if (loadSeqRef.current === seq) setData(null)
+    },
+    [updateParams],
+  )
+  const [sortDir, setSortDirState] = useState<'asc' | 'desc'>(() => (searchParams.get('dir') === 'desc' ? 'desc' : 'asc'))
+  const setSortDir = useCallback(
+    (next: 'asc' | 'desc') => {
+      setSortDirState(next)
+      updateParams((p) => {
+        if (next === 'asc') p.delete('dir')
+        else p.set('dir', next)
       })
-      .finally(() => {
-        if (loadSeqRef.current === seq) setLoading(false)
-      })
-  }, [])
-
-  useEffect(() => {
-    load()
-  }, [load])
-
-  // I2 — the page keeps itself fresh: re-reads every 30 seconds while the
-  // tab is actually visible, and pauses the moment it isn't (a background
-  // tab nobody is looking at has no reason to keep hitting the API every
-  // 30s). This calls the exact same `load()` every other re-read on this
-  // page already calls (the manual "Check all now" button, a row's
-  // Refresh/Sync) — so it carries the same guarantee those already have:
-  // it can never clobber an open detail panel. useLiveSecret above keys its
-  // fetch on the row's stable key, not on the row object `load()` hands
-  // down each time, which is the exact mechanism that keeps a 30-second
-  // re-read here from turning into a flicker on the open panel's live
-  // card (see that hook's own comment).
-  useEffect(() => {
-    const REFRESH_INTERVAL_MS = 30_000
-    let intervalId: ReturnType<typeof setInterval> | undefined
-
-    const stop = () => {
-      if (intervalId !== undefined) {
-        clearInterval(intervalId)
-        intervalId = undefined
-      }
-    }
-    const start = () => {
-      if (intervalId !== undefined) return
-      intervalId = setInterval(load, REFRESH_INTERVAL_MS)
-    }
-
-    if (document.visibilityState !== 'hidden') start()
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') stop()
-      else start()
-    }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-
-    return () => {
-      stop()
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-    }
-  }, [load])
+    },
+    [updateParams],
+  )
 
   const valuesSourceLabel = data?.addon_values_secret_source || 'secrets store'
   // connectionRows/addonRows/orphanedRows are read straight off `data`
@@ -2792,17 +2891,6 @@ export function ManagedSecrets() {
       ),
     [data, valuesSourceLabel],
   )
-
-  const selectedRow = useMemo(() => unifiedRows.find((r) => r.key === selectedRowKey) ?? null, [unifiedRows, selectedRowKey])
-  // Keeps the last-opened row visible while the sheet's close animation
-  // plays — the row itself is cleared immediately on close, but the panel
-  // shouldn't visibly go blank mid-slide-out. State (not a ref) on
-  // purpose: React disallows reading/writing a ref during render, and this
-  // value feeds directly into what gets rendered below.
-  const [lastRow, setLastRow] = useState<UnifiedRow | null>(null)
-  useEffect(() => {
-    if (selectedRow) setLastRow(selectedRow)
-  }, [selectedRow])
 
   // B1 fix: search narrows the rows chip COUNTS are computed over — the
   // chip filter itself must NOT be part of that computation, or selecting
@@ -2891,7 +2979,7 @@ export function ManagedSecrets() {
 
   const handleSort = (key: SortKey) => {
     if (key === sortKey) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
     } else {
       setSortKey(key)
       setSortDir('asc')
@@ -2983,17 +3071,17 @@ export function ManagedSecrets() {
 
   // leftover-secrets S1.2 — the orphaned-row Delete, confirmed. Deletion is
   // never automatic: this only ever runs after the ConfirmationModal's
-  // explicit confirm, naming the exact secret being deleted. Closes the
-  // panel first if it's showing the row just deleted (a panel open on a
-  // secret that no longer exists is a dead end), then refetches the list —
-  // the same `load()` every other write on this page already calls.
+  // explicit confirm, naming the exact secret being deleted. Refetches the
+  // list afterwards — the same `load()` every other write on this page
+  // already calls. SSF-9: deleting from a row's own ⋯ menu happens right
+  // here on the list, so there's no detail page open on the deleted row to
+  // navigate away from — that case lives in SecretDetailPage.tsx instead.
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return
     setDeleting(true)
     try {
       const result = await deleteOrphanedSecret(deleteTarget.cluster, deleteTarget.secretNamespace ?? '', deleteTarget.secretName ?? '')
       showToast(result.message || 'Secret deleted.', 'success')
-      if (selectedRowKey === deleteTarget.key) selectRow(null)
       setDeleteTarget(null)
       load()
     } catch (err) {
@@ -3003,7 +3091,51 @@ export function ManagedSecrets() {
     }
   }
 
-  const displayRow = selectedRow ?? lastRow
+  // SSF-9 — clicking a row (or a tile) now navigates to its own full page
+  // instead of opening a drawer in place. Two things ride along:
+  //   - the list's OWN query string, as router location.state.listSearch —
+  //     the detail page's "Back to Secret Sync" link (and its own header)
+  //     use it to land back on exactly this filtered/sorted/grouped view;
+  //     browser Back needs no help (it's just history).
+  //   - a best-effort save of the two things that are NOT in the URL —
+  //     scroll position and which groups are expanded — into sessionStorage
+  //     under that same query string, restored on the way back (the
+  //     groupOverrides initializer above, and the effect below).
+  const openRowDetail = useCallback(
+    (row: UnifiedRow) => {
+      const query = searchParams.toString()
+      try {
+        if (scrollContainerRef.current) {
+          window.sessionStorage.setItem(secretSyncScrollKey(query), String(scrollContainerRef.current.scrollTop))
+        }
+        window.sessionStorage.setItem(secretSyncGroupsKey(query), JSON.stringify(groupOverrides))
+      } catch {
+        // sessionStorage can be unavailable (private browsing) — losing the
+        // scroll/group restore is a nicety missed, never a broken page.
+      }
+      navigate(`/secret-sync/${encodeURIComponent(row.key)}`, { state: { listSearch: query } })
+    },
+    [navigate, searchParams, groupOverrides],
+  )
+
+  // SSF-9 — restores the scroll position openRowDetail saved, once the
+  // rows this same query string produces are actually on screen to scroll
+  // to (there's nothing to scroll while `loading` is still true). Runs
+  // once per mount — this page's own filtering/sorting never changes the
+  // query string without a full navigate, so there is no later moment this
+  // needs to re-fire.
+  useEffect(() => {
+    if (loading) return
+    try {
+      const saved = window.sessionStorage.getItem(secretSyncScrollKey(searchParams.toString()))
+      if (saved && scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = Number(saved)
+      }
+    } catch {
+      // sessionStorage can be unavailable — nothing to restore, nothing broken.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading])
 
   return (
     <div className="space-y-5">
@@ -3266,9 +3398,9 @@ export function ManagedSecrets() {
         </div>
       ) : view === 'tiles' ? (
         // Secret tiles v2 — the SAME `sorted` rows and `groups` list view
-        // reads, and the SAME open-panel handler list rows call
-        // (selectRow). Zero new panel code, no navigation, no filter jump.
-        <SecretTiles rows={sorted} groups={groups} onRowClick={(row) => selectRow(row.key)} />
+        // reads. SSF-9: a box now navigates to the row's own full page,
+        // same as a list row does — see openRowDetail.
+        <SecretTiles rows={sorted} groups={groups} onRowClick={openRowDetail} />
       ) : (
         // H1 word/face pass (gitops-proud P4-H) gave the table frame a
         // two-width Sharko-blue ring; SSF-2 (Secret Sync finish pass)
@@ -3285,16 +3417,31 @@ export function ManagedSecrets() {
         // overflow-hidden frame, and the header inside is `sticky top-0` so
         // it stays put while the rows underneath it scroll. Every filtered
         // row is in the DOM at once; the chips/filters above narrow which
-        // rows exist, scrolling browses the rest.
-        <div className="max-h-[65vh] overflow-y-auto overflow-x-auto rounded-xl border border-border bg-card shadow-sm">
-          {/* design-secret-sync-visual-pass, section 1/5: the table is
-              table-fixed with explicit column widths on every column except
-              NAME, which absorbs all remaining width — the only way the
-              longest demo secret name (kube-prometheus-stack-grafana-admin,
-              35 chars, 295px) renders uncut at 1280px instead of truncating
-              on every wide row. min-w-[1000px] keeps sub-1280 windows
-              scrolling (the frame's own overflow-x-auto) instead of
-              crushing the fixed columns below their measured widths. */}
+        // rows exist, scrolling browses the rest. SSF-9: the ref lets
+        // openRowDetail save the scroll position before navigating to a
+        // row's detail page, and the restore effect above puts it back.
+        <div
+          ref={scrollContainerRef}
+          className="max-h-[65vh] overflow-y-auto overflow-x-auto rounded-xl border border-border bg-card shadow-sm"
+        >
+          {/* design-secret-sync-visual-pass, section 1/5: the table used to
+              be table-fixed with explicit PIXEL widths on every column
+              except NAME, which absorbed all remaining width — the only
+              way the longest demo secret name
+              (kube-prometheus-stack-grafana-admin, 35 chars, 295px)
+              rendered uncut at 1280px. SSF-10: that "absorb all remaining
+              width" habit was the bug, not the fix — on a wide screen every
+              OTHER column stayed pinned at its measured px width while NAME
+              kept ballooning, so the table read as one huge blank column
+              next to five narrow ones. Every column (including NAME) now
+              carries a PERCENTAGE width instead, so they all grow together
+              as the table widens — NAME keeps ~25-30% of the table at any
+              width, same as its old measured share at 1000px, instead of
+              claiming 100% of anything extra. min-w-[1000px] still keeps
+              sub-1280 windows scrolling (the frame's own overflow-x-auto)
+              rather than crushing the columns below readable widths; NAME's
+              own `truncate` + front-truncate trick + title attribute below
+              still carries a long name's full text when it does clip. */}
           <Table className="table-fixed min-w-[1000px]">
             <TableHeader className="sticky top-0 z-10 border-b border-border bg-muted">
               <TableRow className="hover:bg-transparent">
@@ -3305,15 +3452,17 @@ export function ManagedSecrets() {
                     right after Name. design-secret-sync-visual-pass: the
                     LAST CHECKED column is gone (the fact lives in the
                     engine strip above and the panel's Zone D); SOURCE
-                    became CHECKED AGAINST (section 2); every column but
-                    NAME carries an explicit width (section 1). */}
-                <SortableTh label="Name" sortKeyName="name" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="px-1.5" />
-                <SortableTh label="Namespace" sortKeyName="namespace" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[124px] px-1.5" />
-                <SortableTh label="Status" sortKeyName="state" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[140px] px-1.5" />
-                <SortableTh label="Addon" sortKeyName="addon" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[124px] px-1.5" />
-                <SortableTh label="Cluster" sortKeyName="cluster" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[150px] px-1.5" />
-                <SortableTh label="Compared with" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[180px] px-1.5" />
-                <TableHead className="w-9 px-1.5" />
+                    became CHECKED AGAINST (section 2). SSF-10: every column
+                    (Name included) carries a percentage width that sums to
+                    100%, so the table stays balanced instead of one column
+                    absorbing all growth. */}
+                <SortableTh label="Name" sortKeyName="name" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[27%] px-1.5" />
+                <SortableTh label="Namespace" sortKeyName="namespace" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[12%] px-1.5" />
+                <SortableTh label="Status" sortKeyName="state" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[12%] px-1.5" />
+                <SortableTh label="Addon" sortKeyName="addon" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[12%] px-1.5" />
+                <SortableTh label="Cluster" sortKeyName="cluster" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[13%] px-1.5" />
+                <SortableTh label="Compared with" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[20%] px-1.5" />
+                <TableHead className="w-[4%] px-1.5" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -3332,7 +3481,7 @@ export function ManagedSecrets() {
                             row={row}
                             indented
                             busy={!!busyRows[row.key]}
-                            onSelect={() => selectRow(row.key)}
+                            onSelect={() => openRowDetail(row)}
                             onRefresh={() => handleRefreshRow(row)}
                             onRequestSync={() => setSyncTarget(row)}
                             onRequestDelete={() => setDeleteTarget(row)}
@@ -3345,14 +3494,19 @@ export function ManagedSecrets() {
                       key={row.key}
                       row={row}
                       busy={!!busyRows[row.key]}
-                      onSelect={() => selectRow(row.key)}
                       // `row` here is a plain element of `sorted` (a
                       // useMemo'd array, no ref involved); the identical
                       // grouped branch above (group.rows.map, same
                       // handler, same shape) isn't flagged, so this reads
                       // as a rule false-positive tied to the ternary/JSX
-                      // shape here.
+                      // shape here. SSF-9: openRowDetail reads
+                      // scrollContainerRef.current, but only inside the
+                      // click handler it returns — never during this
+                      // render — which is exactly the shape the rule can't
+                      // statically tell apart from a genuine render-time
+                      // ref read.
                       // eslint-disable-next-line react-hooks/refs -- see comment above
+                      onSelect={() => openRowDetail(row)}
                       onRefresh={() => handleRefreshRow(row)}
                       onRequestSync={() => setSyncTarget(row)}
                       onRequestDelete={() => setDeleteTarget(row)}
@@ -3368,17 +3522,6 @@ export function ManagedSecrets() {
           {secretsSummary}
         </span>
       </div>
-
-      <SecretDetailPanel
-        row={displayRow}
-        open={selectedRow !== null}
-        onOpenChange={(open) => {
-          if (!open) selectRow(null)
-        }}
-        onRequestSync={(row) => setSyncTarget(row)}
-        onRequestDelete={(row) => setDeleteTarget(row)}
-        onChanged={load}
-      />
 
       <ConfirmationModal
         open={syncTarget !== null}

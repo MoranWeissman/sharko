@@ -17,16 +17,16 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { ManagedSecrets } from '@/views/ManagedSecrets'
+import { SecretDetailPage } from '@/views/SecretDetailPage'
 import { AuthContext } from '@/hooks/useAuth'
 import type { ManagedSecretsResponse } from '@/services/models'
 
-const mockNavigate = vi.fn()
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual('react-router-dom')
-  return { ...actual, useNavigate: () => mockNavigate }
-})
+// SSF-9: react-router-dom is used for real here — a row click now
+// navigates to its own full page (SecretDetailPage, at
+// /secret-sync/<key>) rather than opening a drawer in place, so the test
+// harness follows it there through the actual router. See renderPage.
 
 const mockShowToast = vi.fn()
 vi.mock('@/components/ToastNotification', async () => {
@@ -71,11 +71,14 @@ function authFor(role: string) {
   }
 }
 
-function renderPage(role = 'operator') {
+function renderPage(role = 'operator', initialEntries: string[] = ['/secret-sync']) {
   return render(
     <AuthContext.Provider value={authFor(role)}>
-      <MemoryRouter initialEntries={['/secret-sync']}>
-        <ManagedSecrets />
+      <MemoryRouter initialEntries={initialEntries}>
+        <Routes>
+          <Route path="/secret-sync" element={<ManagedSecrets />} />
+          <Route path="/secret-sync/:rowKey" element={<SecretDetailPage />} />
+        </Routes>
       </MemoryRouter>
     </AuthContext.Provider>,
   )
@@ -431,12 +434,18 @@ describe('the open panel is independent of the list', () => {
     expect(within(panel).getByTestId('diff-live-card')).toHaveTextContent('type Opaque')
   })
 
-  it('opening a DIFFERENT row does read that row', async () => {
-    renderPage()
-    await openRow('values-prod-eu-datadog')
+  // SSF-9: a different row is now a different PAGE (its own URL, its own
+  // mount) rather than a still-open drawer swapping rows underneath
+  // itself — this proves each page's read is scoped to its own row key,
+  // never carrying over a stale fetch from whichever row a reader looked
+  // at previously.
+  it('a different row\'s page reads that row, not the previous one', async () => {
+    const firstRender = renderPage('operator', ['/secret-sync/values-prod-eu-datadog'])
     await waitFor(() => expect(mockGetAddonValuesSecretResource).toHaveBeenCalledTimes(1))
+    expect(mockGetAddonValuesSecretResource).toHaveBeenLastCalledWith('prod-eu', 'datadog')
+    firstRender.unmount()
 
-    fireEvent.click(screen.getByTestId('secret-row-values-staging-us-datadog'))
+    renderPage('operator', ['/secret-sync/values-staging-us-datadog'])
     await waitFor(() => expect(mockGetAddonValuesSecretResource).toHaveBeenCalledTimes(2))
     expect(mockGetAddonValuesSecretResource).toHaveBeenLastCalledWith('staging-us', 'datadog')
   })
@@ -524,7 +533,7 @@ describe('the page keeps itself fresh every 30 seconds while visible', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('rows are reachable from the keyboard', () => {
-  it('a row is focusable, announced as a button, and opens on Enter and on Space', async () => {
+  it('a row is focusable, announced as a button, and opens its own page on Enter', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByTestId('secret-row-values-prod-eu-datadog')).toBeInTheDocument())
     const row = screen.getByTestId('secret-row-values-prod-eu-datadog')
@@ -535,10 +544,14 @@ describe('rows are reachable from the keyboard', () => {
 
     fireEvent.keyDown(row, { key: 'Enter' })
     const panel = await screen.findByTestId('secret-detail-panel')
-    // SSF-4: the identity prints once now, in the sheet's own title — not
-    // repeated inside detail-resource-header.
+    // SSF-4/SSF-9: the identity prints once now, in the page's own title —
+    // not repeated inside detail-resource-header.
     expect(panel).toHaveTextContent('datadog/datadog-secrets')
+  })
 
+  it('Space also opens a row\'s own page', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('secret-row-values-staging-us-datadog')).toBeInTheDocument())
     fireEvent.keyDown(screen.getByTestId('secret-row-values-staging-us-datadog'), { key: ' ' })
     await waitFor(() => expect(mockGetAddonValuesSecretResource).toHaveBeenLastCalledWith('staging-us', 'datadog'))
   })
@@ -627,17 +640,19 @@ describe('SSF-4 — comparison heading, action naming, and Sync strength', () =>
 // SSF-8 — drawer calm-down: title, comparison on demand, disclosure sections
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('SSF-8 — the drawer title says what the row is, in plain words', () => {
+describe('SSF-8/SSF-9 — the page title says what the row is, in plain words', () => {
   it('titles a connection row "{cluster} connection"', async () => {
     renderPage()
-    const panel = await openRow('connection-prod-eu')
-    expect(within(panel).getByText('prod-eu connection')).toBeInTheDocument()
+    await openRow('connection-prod-eu')
+    // SSF-9: the title moved from the drawer's own header onto the page,
+    // above (not inside) the "secret-detail-panel" content div.
+    expect(screen.getByRole('heading', { name: 'prod-eu connection' })).toBeInTheDocument()
   })
 
   it('titles a values row "{addon} values on {cluster}"', async () => {
     renderPage()
-    const panel = await openRow('values-prod-eu-datadog')
-    expect(within(panel).getByText('datadog values on prod-eu')).toBeInTheDocument()
+    await openRow('values-prod-eu-datadog')
+    expect(screen.getByRole('heading', { name: 'datadog values on prod-eu' })).toBeInTheDocument()
   })
 })
 
@@ -675,18 +690,21 @@ describe('SSF-8 — comparison on demand', () => {
     expect(within(panel).queryByTestId('view-comparison-toggle')).not.toBeInTheDocument()
   })
 
-  it('opening a different row resets the reveal — a second matching row opens collapsed again', async () => {
-    renderPage()
-    const first = await openRow('values-prod-eu-datadog') // match
+  // SSF-9: a different row is its own page/mount now, so "the reveal
+  // doesn't carry over" is proven by rendering a SECOND matching row's page
+  // fresh (rather than clicking within a still-open drawer) and finding it
+  // collapsed, same as the first row was before its own toggle was clicked.
+  it('a second matching row\'s page opens collapsed — the "View comparison" reveal never carries over between rows', async () => {
+    const firstRender = renderPage('operator', ['/secret-sync/values-prod-eu-datadog'])
+    const first = await screen.findByTestId('secret-detail-panel') // match
     fireEvent.click(within(first).getByTestId('view-comparison-toggle'))
     expect(within(first).getByTestId('diff-intent-card')).toBeInTheDocument()
+    firstRender.unmount()
 
-    // A different row (still a match, once opened) starts collapsed again —
-    // the reveal is per-open, not sticky across rows.
-    fireEvent.click(screen.getByTestId('secret-row-connection-prod-eu'))
-    const panel = await screen.findByTestId('secret-detail-panel')
-    expect(within(panel).getByTestId('view-comparison-toggle')).toBeInTheDocument()
-    expect(within(panel).queryByTestId('diff-intent-card')).not.toBeInTheDocument()
+    renderPage('operator', ['/secret-sync/connection-prod-eu']) // also a match
+    const second = await screen.findByTestId('secret-detail-panel')
+    expect(within(second).getByTestId('view-comparison-toggle')).toBeInTheDocument()
+    expect(within(second).queryByTestId('diff-intent-card')).not.toBeInTheDocument()
   })
 })
 

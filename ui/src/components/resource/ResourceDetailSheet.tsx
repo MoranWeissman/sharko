@@ -9,6 +9,13 @@
 // The row itself never grows to show this — clicking a row opens this
 // panel instead of expanding the row in place (that was the old
 // per-row-expandable-diff pattern this replaces).
+//
+// SSF-9 (Secret Sync finish pass): the `wide` variant (introduced in P3-F2,
+// widened to 760px in SSF-4, back to 640px in SSF-8) was removed here —
+// Secret Sync was its only consumer, and SSF-9 retired that panel entirely
+// in favour of a full page (SecretDetailPage.tsx). If a future panel needs
+// more room than the default again, that's a new named variant to add
+// back, not a reason to leave this one unused.
 
 import type { ReactNode } from 'react'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
@@ -20,7 +27,6 @@ export function ResourceDetailSheet({
   subtitle,
   children,
   testId,
-  wide,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -28,31 +34,10 @@ export function ResourceDetailSheet({
   subtitle?: ReactNode
   children: ReactNode
   testId?: string
-  /**
-   * Opt-in wider panel (P3-F2; widened to 760px in SSF-4, then back down to
-   * 640px in the SSF-8 drawer calm-down — the panel now opens on one plain
-   * sentence with everything else collapsed, so it no longer needs the
-   * extra room a side-by-side diff used to justify; the comparison zone
-   * that still wants width shows on demand instead of by default). The
-   * default stays `sm:max-w-lg` (512px) so nothing that already uses this
-   * sheet changes width; a panel that puts two things SIDE BY SIDE — the
-   * Managed Secrets diff, which shows what a secret should be next to what
-   * is actually on the cluster — asks for `sm:max-w-[640px]` instead. Below
-   * that breakpoint the sheet is full-width either way and the caller's own
-   * grid stacks.
-   *
-   * A prop rather than a per-page override so the two sizes stay a short,
-   * named list instead of every page inventing its own width.
-   */
-  wide?: boolean
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className={`flex w-full flex-col ${wide ? 'sm:max-w-[640px]' : 'sm:max-w-lg'}`}
-        data-testid={testId}
-      >
+      <SheetContent side="right" className="flex w-full flex-col sm:max-w-lg" data-testid={testId}>
         <SheetHeader>
           <SheetTitle>{title}</SheetTitle>
           {subtitle && <SheetDescription>{subtitle}</SheetDescription>}
