@@ -1,0 +1,46 @@
+# .dockerignore — keeps `docker build .` fast by not shipping the whole
+# working directory into the build context. Both root Dockerfiles are built
+# with the repo root as context (see Makefile's build-gitfake-image target),
+# so this one file covers both. Only exclude things neither Dockerfile
+# COPYs — verified against the COPY lines in Dockerfile and
+# tests/e2e/harness/gitfake/Dockerfile before adding anything here.
+
+# Git history. Not needed to build anything, and on a lived-in checkout
+# this alone can be tens to hundreds of MB.
+.git/
+
+# Local Go build cache. The Docker build does its own module download and
+# compile inside the container, so this is pure dead weight — and it's the
+# single biggest offender on a dev machine (multiple GB).
+.gocache/
+
+# Claude Code's own session data — agent worktrees, job state. Has nothing
+# to do with the app and can grow to multiple GB from old agent runs.
+.claude/
+
+# BMAD planning docs and the BMAD engine install. Planning artifacts, not
+# app source.
+.bmad/
+_bmad/
+
+# Editor and tooling caches/config that never get read by either build.
+.cursor/
+.serena/
+.superpowers/
+.claire/
+.clone/
+.local/
+.workflow-playbook/
+
+# Local build output. The Dockerfile produces its own binary and static
+# bundle inside the image, so anything already sitting in these dirs on
+# the host is irrelevant.
+bin/
+_dist/
+
+# UI dependencies and any locally-built UI bundle. The Dockerfile's
+# ui-build stage runs its own `npm ci` and `npm run build` inside the
+# container, so a host-side node_modules or dist would only be dead
+# weight in the context (node_modules alone commonly runs 200MB+).
+ui/node_modules/
+ui/dist/
