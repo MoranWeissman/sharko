@@ -1441,6 +1441,100 @@ function ComparisonProvenance({ row }: { row: UnifiedRow }) {
 }
 
 /**
+ * The label-key namespace the reconciler stamps onto a v4 repo's ArgoCD
+ * cluster Secret for each currently-ENABLED addon (mirrors
+ * internal/models.V4AddonLabelPrefix — `addons.sharko.dev/<addon>:
+ * enabled`). Only enabled addons ever get a key here (internal/
+ * clusterreconciler.v4LabelsFor never writes a `disabled` key); a v3 repo's
+ * cluster Secret instead carries the BARE `<addon>` key for the same
+ * purpose (the two vocabularies deliberately never mix — see
+ * V4AddonLabelPrefix's own doc comment). The match table below checks
+ * both, since the frontend has no reliable signal for which repo layout is
+ * active.
+ */
+const V4_ADDON_LABEL_PREFIX = 'addons.sharko.dev/'
+
+/**
+ * SSF-14 walkthrough follow-up: opening "View comparison" on a healthy row
+ * used to show only the same one-line claim the conclusion already made
+ * ("Every addon label on the cluster matches what git expects.") — no new
+ * evidence, which defeated the point of the control. This renders the
+ * evidence: every addon git says is enabled for this cluster, and whether
+ * its label is actually on the cluster right now (mirrors
+ * internal/service.v4ClusterLabels, the source of diffData.cluster.labels
+ * — a bare `<addon>: enabled|disabled` map, plus an unrelated
+ * `<addon>-version` pseudo-key on a version override, both excluded here).
+ * A disabled addon gets no row: it has no label on the cluster Secret
+ * either way (that is the correct, expected state, not a comparable
+ * field), so a row for it would invent a pairing that doesn't exist.
+ *
+ * Only reached once the backend's own label_drift already reports nothing
+ * differs (see ConnectionLabelComparison below) — every row here should
+ * read Match. The per-row Missing/differs fallback is a defensive read of
+ * the SAME raw label data, in case the two ever momentarily disagree; it
+ * never contradicts the backend's own verdict, only restates it evidence
+ * by evidence.
+ */
+function ConnectionLabelMatchTable({ diffData, live }: { diffData: ClusterComparisonResponse | null; live: LiveSecretState }) {
+  const gitLabels = diffData?.cluster?.labels ?? {}
+  const enabledAddons = Object.entries(gitLabels)
+    .filter(([key, value]) => value === 'enabled' && !key.endsWith('-version'))
+    .map(([key]) => key)
+
+  // Nothing to show evidence for (no enabled addons), or the cluster side
+  // can't be proven yet (live read still loading/failed/skipped) — an
+  // honest sentence, never a fabricated table.
+  if (enabledAddons.length === 0 || live.status !== 'ready') {
+    return (
+      <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="comparison-no-drift">
+        Every addon label on the cluster matches what git expects.
+      </p>
+    )
+  }
+
+  const liveLabelMap = new Map(live.resource.labels.map((l) => [l.key, l.value]))
+
+  return (
+    <table className="w-full text-left text-sm" data-testid="comparison-label-match">
+      <thead>
+        <tr className="text-[11px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">
+          <th className="py-1 pr-3 font-medium">Field</th>
+          <th className="py-1 pr-3 font-medium">Expected in Git</th>
+          <th className="py-1 pr-3 font-medium">On the cluster</th>
+          <th className="py-1 font-medium">Result</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-border">
+        {enabledAddons.map((addon) => {
+          const prefixedKey = `${V4_ADDON_LABEL_PREFIX}${addon}`
+          const onClusterPrefixed = liveLabelMap.get(prefixedKey)
+          const onClusterBare = liveLabelMap.get(addon)
+          // Show whichever key convention actually turned up on the
+          // cluster; when neither did, fall back to the v4-canonical form
+          // as the honest "this is the key git's convention expects" label
+          // for a row that turned out missing.
+          const field = onClusterPrefixed !== undefined ? prefixedKey : onClusterBare !== undefined ? addon : prefixedKey
+          const onCluster = onClusterPrefixed ?? onClusterBare
+          const matches = onCluster === 'enabled'
+          return (
+            <tr key={addon}>
+              <td className="break-all py-1.5 pr-3 font-mono text-[#2a5a7a] dark:text-gray-300">{field}</td>
+              <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">enabled</td>
+              <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">{onCluster ?? 'missing'}</td>
+              <td
+                className={`py-1.5 font-medium ${matches ? 'text-[#3a6a8a] dark:text-gray-400' : 'text-amber-700 dark:text-amber-400'}`}
+              >
+                {matches ? 'Match' : onCluster ? 'Value differs' : 'Missing on cluster'}
+              </td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+}
+
+/**
  * SSF-12 honesty rule (verified against the live API responses), now a real
  * table (SSF-14 item 3: Field | Expected in Git | On the cluster | Result)
  * instead of a loose grid: a connection secret's ONLY genuinely comparable
@@ -1449,18 +1543,22 @@ function ComparisonProvenance({ row }: { row: UnifiedRow }) {
  * the row list's own getClusterComparison fetch already carries
  * (added/removed/changed label NAMES; the server never sends per-label
  * values, so "a different value" is as specific as this can honestly get).
- * There is no backend field for the FULL set of matching labels, only the
- * drift — so a healthy row states that plainly instead of a table with
- * nothing (real) to put in it.
+ *
+ * SSF-14 walkthrough follow-up: when the backend reports no drift at all
+ * (a healthy row), this now renders the full evidence table
+ * (ConnectionLabelMatchTable) instead of a bare summary sentence — opening
+ * the comparison must show something new, not repeat the conclusion.
  */
 function ConnectionLabelComparison({
   diffLoading,
   diffError,
   diffData,
+  live,
 }: {
   diffLoading: boolean
   diffError: string | null
   diffData: ClusterComparisonResponse | null
+  live: LiveSecretState
 }) {
   if (diffError) {
     return (
@@ -1479,11 +1577,7 @@ function ConnectionLabelComparison({
     ...(drift?.changed ?? []).map((l) => ({ field: l, expected: 'A different value', onCluster: 'A different value', result: 'Value differs' })),
   ]
   if (rows.length === 0) {
-    return (
-      <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="comparison-no-drift">
-        Every addon label on the cluster matches what git expects.
-      </p>
-    )
+    return <ConnectionLabelMatchTable diffData={diffData} live={live} />
   }
   return (
     <table className="w-full text-left text-sm" data-testid="comparison-label-drift">
@@ -2172,7 +2266,7 @@ export function SecretDetailContent({
                     }
                   >
                     {row.kind === 'connection' ? (
-                      <ConnectionLabelComparison diffLoading={diffLoading} diffError={diffError} diffData={diffData} />
+                      <ConnectionLabelComparison diffLoading={diffLoading} diffError={diffError} diffData={diffData} live={live} />
                     ) : (
                       <ValuesKeyComparison live={live} onRetry={retry} />
                     )}

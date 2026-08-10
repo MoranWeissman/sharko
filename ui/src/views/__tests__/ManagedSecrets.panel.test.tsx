@@ -398,6 +398,95 @@ describe('the comparison: provenance above, a real field table inside', () => {
     expect(presence).not.toHaveTextContent('Opaque')
     expect(screen.queryByTestId('detail-resource-disclosure')).not.toBeInTheDocument()
   })
+
+  // Walkthrough follow-up on SSF-14 item 3: opening the comparison on a
+  // HEALTHY row used to show only the same claim the conclusion already
+  // made ("Every addon label on the cluster matches what git expects.") —
+  // no new evidence. It now renders the full field-by-field table, built
+  // from data already fetched: git's per-cluster label map
+  // (getClusterComparison's cluster.labels) vs the live connection
+  // secret's own labels (getConnectionSecretResource). A disabled addon
+  // never gets a row — it has no corresponding label on the cluster
+  // Secret either way, so there is nothing to compare.
+  it('a healthy connection row\'s opened comparison lists its matching addon labels as evidence, not just a repeated claim', async () => {
+    mockGetClusterComparison.mockResolvedValue({
+      cluster: {
+        name: 'prod-eu',
+        labels: { 'metrics-server': 'enabled', 'cert-manager': 'disabled' },
+        last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded' },
+      },
+    })
+    mockGetConnectionSecretResource.mockResolvedValue({
+      kind: 'Secret',
+      api_version: 'v1',
+      name: 'prod-eu',
+      namespace: 'argocd',
+      secret_type: 'Opaque',
+      created_at: '2026-07-01T00:00:00Z',
+      labels: [
+        { key: 'app.kubernetes.io/managed-by', value: 'sharko' },
+        { key: 'addons.sharko.dev/metrics-server', value: 'enabled' },
+      ],
+      annotations: [],
+      data_keys: [],
+      read_from: 'cluster "prod-eu"',
+      values_blanked: true,
+    })
+    renderPage()
+    const panel = await openRow('connection-prod-eu') // in_sync -> match
+    fireEvent.click(within(panel).getByTestId('view-comparison-toggle'))
+
+    const table = await within(panel).findByTestId('comparison-label-match')
+    expect(within(table).getByText('Field')).toBeInTheDocument()
+    expect(within(table).getByText('Expected in Git')).toBeInTheDocument()
+    expect(within(table).getByText('On the cluster')).toBeInTheDocument()
+    expect(within(table).getByText('addons.sharko.dev/metrics-server')).toBeInTheDocument()
+    // Expected in Git and On the cluster both read "enabled" for this row.
+    expect(within(table).getAllByText('enabled')).toHaveLength(2)
+    expect(within(table).getByText('Match')).toBeInTheDocument()
+    // The disabled addon never gets a row — no comparable cluster-side label.
+    expect(within(table).queryByText(/cert-manager/)).not.toBeInTheDocument()
+    // The old bare summary sentence no longer stands in for the table.
+    expect(within(panel).queryByTestId('comparison-no-drift')).not.toBeInTheDocument()
+  })
+
+  it('falls back to the honest summary sentence for a healthy connection row when the live cluster labels are not provable yet', async () => {
+    mockGetClusterComparison.mockResolvedValue({
+      cluster: {
+        name: 'prod-eu',
+        labels: { 'metrics-server': 'enabled' },
+        last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded' },
+      },
+    })
+    // The live read never settles — the cluster side can't be proven.
+    mockGetConnectionSecretResource.mockReturnValue(new Promise(() => {}))
+    renderPage()
+    const panel = await openRow('connection-prod-eu') // in_sync -> match
+    fireEvent.click(within(panel).getByTestId('view-comparison-toggle'))
+
+    expect(await within(panel).findByTestId('comparison-no-drift')).toHaveTextContent(
+      'Every addon label on the cluster matches what git expects.',
+    )
+    expect(within(panel).queryByTestId('comparison-label-match')).not.toBeInTheDocument()
+  })
+
+  // Walkthrough follow-up on SSF-14 item 3, values-row half: a healthy
+  // values row's comparison already lists every expected key (present and
+  // missing alike, via ValuesKeyComparison) — this pins that a row where
+  // EVERY key is actually present reads "Match" for all of them, not just
+  // a claim.
+  it('a healthy addon-values row\'s opened comparison lists its keys as present, not just a summary sentence', async () => {
+    mockGetAddonValuesSecretResource.mockResolvedValue({ ...blankedResource, data_keys: blankedResource.data_keys.map((k) => ({ ...k, present: true })) })
+    renderPage()
+    const panel = await openRow('values-prod-eu-datadog') // in_sync -> match
+    fireEvent.click(within(panel).getByTestId('view-comparison-toggle'))
+
+    const table = await within(panel).findByTestId('comparison-key-presence')
+    expect(within(table).getByText('api-key')).toBeInTheDocument()
+    expect(within(table).getByText('app-key')).toBeInTheDocument()
+    expect(within(table).getAllByText('Match')).toHaveLength(2)
+    expect(within(table).queryByText('Missing')).not.toBeInTheDocument()
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
