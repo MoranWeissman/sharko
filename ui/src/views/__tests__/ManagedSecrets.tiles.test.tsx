@@ -290,7 +290,9 @@ describe('clicking a box opens that secret\'s own page (SSF-9) — no filter cha
     await waitFor(() => expect(screen.getByTestId('location-probe')).toHaveAttribute('data-pathname', '/secret-sync/values-prod-eu-datadog'))
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(panel).toBeInTheDocument()
-    expect(panel).toHaveTextContent('datadog-secrets')
+    // SSF-14: the raw secretName/namespace identity lives on the YAML tab
+    // only now — Overview states what the row is via its plain-words title.
+    expect(within(panel).getByRole('heading', { name: 'datadog values on prod-eu' })).toBeInTheDocument()
     // The click opened that secret's own page — it never touched the
     // list's own addon/kind filters on the way there (openRowDetail reads
     // the query string, it doesn't mutate it).

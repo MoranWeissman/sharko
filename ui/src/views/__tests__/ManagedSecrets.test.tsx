@@ -924,11 +924,11 @@ describe('ManagedSecrets', () => {
     expect(drift).toHaveTextContent('Missing')
   })
 
-  // P2-C1/C3/C6: the out-of-sync connection row (staging-us in baseResponse)
-  // carries a known compared revision, a compared path, an applied
-  // revision that DISAGREES with it (drift blame "git"), and
-  // self_heals: false — the panel must show all three facts, verbatim.
-  it('the connection panel shows which commit it was compared against, the self-heal promise, and drift blame — verbatim', async () => {
+  // P2-C1 (kept) / SSF-14 item 3: the out-of-sync connection row (staging-us
+  // in baseResponse) carries a known compared revision and compared path —
+  // PROVENANCE, now stated once above the comparison table, in plain
+  // sentence form (short SHA + full path; full SHA on hover via title).
+  it('the connection panel states which commit and file it was compared against, above the comparison table', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     mockGetClusterComparison.mockResolvedValue({
       cluster: {
@@ -944,22 +944,59 @@ describe('ManagedSecrets', () => {
 
     const panel = await screen.findByTestId('secret-detail-panel')
 
-    // C1: short SHA (7 chars) + full path shown; full SHA on hover (title).
-    const revisionLine = within(panel).getByTestId('detail-compared-revision')
-    expect(revisionLine).toHaveTextContent('Compared with git abcdef1 · configuration/managed-clusters.yaml')
-    expect(revisionLine.title).toBe('Full commit: abcdef1234567890abcdef1234567890abcdef12')
+    const provenance = within(panel).getByTestId('comparison-provenance')
+    expect(within(provenance).getByText('configuration/managed-clusters.yaml')).toBeInTheDocument()
+    expect(within(provenance).getByText('abcdef1')).toBeInTheDocument()
+    expect(within(provenance).getByText('abcdef1').title).toBe('Full commit: abcdef1234567890abcdef1234567890abcdef12')
+  })
 
-    // C3: self_heals: false on an out_of_sync row -> "Waiting for Sync."
-    expect(within(panel).getByTestId('detail-self-heals')).toHaveTextContent('Waiting for Sync.')
+  // SSF-14 item 4 removed the Resource details accordion these two
+  // sentences (P2-C3's self-heal promise, P2-C6's drift blame) used to
+  // live in — but the PM's rules require diagnostic information stay
+  // visible and the main result keep showing anything that needs action,
+  // so a walkthrough follow-up restored both directly into the ONE health
+  // conclusion block (never a new accordion, never back into a deleted
+  // Resource details, never inside the comparison table). Wording and the
+  // conditions that decide whether they show are byte-for-byte the same
+  // as before — only the place changed.
+  it('shows the drift-blame sentence and the self-heal promise inside the health conclusion, for a broken connection row', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    mockGetClusterComparison.mockResolvedValue({
+      cluster: {
+        name: 'staging-us',
+        labels: {},
+        last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded', label_drift: { added: [], removed: [], changed: [] } },
+      },
+    })
+    renderPage()
 
-    // C6: compared_revision != applied_revision -> "git moved" sentence.
-    expect(within(panel).getByTestId('detail-drift-source')).toHaveTextContent(
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('secret-row-connection-staging-us'))
+
+    const panel = await screen.findByTestId('secret-detail-panel')
+    const conclusion = within(panel).getByTestId('detail-health-conclusion')
+
+    // C6: compared_revision != applied_revision, drift_source: 'git' -> "git moved" sentence.
+    expect(within(conclusion).getByTestId('detail-drift-source')).toHaveTextContent(
       'Git moved — a newer commit changed what this secret should be.',
     )
+    // C3: self_heals: false on an out_of_sync row -> "Waiting for Sync."
+    expect(within(conclusion).getByTestId('detail-self-heals')).toHaveTextContent('Waiting for Sync.')
+
+    // Never back inside a Resource details accordion or any other
+    // disclosure — that section stays deleted, and neither sentence lives
+    // in the comparison area (provenance or the safe-field table) either.
+    expect(screen.queryByTestId('detail-resource-disclosure')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('detail-keys-disclosure')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('detail-activity-disclosure')).not.toBeInTheDocument()
+    const provenance = await within(panel).findByTestId('comparison-provenance')
+    expect(within(provenance).queryByText(/Waiting for Sync|Git moved/)).not.toBeInTheDocument()
   })
 
   // P2-C3: the in-sync row (prod-eu) must show neither the drift sentence
-  // nor the self-heal promise — both are scoped to out_of_sync/missing rows.
+  // nor the self-heal promise — the old condition never covered a healthy
+  // row, and restoring the sentences into the conclusion didn't change
+  // that condition.
   it('an in-sync connection row shows no self-heal promise and no drift blame', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
@@ -969,6 +1006,40 @@ describe('ManagedSecrets', () => {
 
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).queryByTestId('detail-self-heals')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-drift-source')).not.toBeInTheDocument()
+  })
+
+  // The self-heal condition also covers 'missing' (either row kind), not
+  // just out-of-sync connection rows — pinned here with the values-secret
+  // fixture used elsewhere in this file (spoke-asia, state: 'missing').
+  it('shows the self-heal promise for a missing addon-values row too, with no drift sentence (values rows never carry drift_source)', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      cluster_connection_secrets: [],
+      addon_values_secrets: [
+        {
+          cluster: 'spoke-asia',
+          addon: 'datadog',
+          secret_name: 'datadog-secrets',
+          secret_namespace: 'datadog',
+          state: 'missing',
+          source: 'AWS Secrets Manager',
+          self_heals: true,
+        },
+      ],
+      engines: {
+        cluster_connection: { wired: true, enabled: true, interval_seconds: 30 },
+        addon_values: { wired: true, enabled: true, interval_seconds: 300 },
+      },
+      addon_values_secret_source: 'AWS Secrets Manager',
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-values-spoke-asia-datadog')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('secret-row-values-spoke-asia-datadog'))
+
+    const panel = await screen.findByTestId('secret-detail-panel')
+    const conclusion = within(panel).getByTestId('detail-health-conclusion')
+    expect(within(conclusion).getByTestId('detail-self-heals')).toHaveTextContent('Sharko will fix this on the next pass.')
     expect(within(panel).queryByTestId('detail-drift-source')).not.toBeInTheDocument()
   })
 
@@ -1426,74 +1497,27 @@ describe('ManagedSecrets', () => {
     )
   })
 
-  // H4-3: "Sharko's record" — a short list of this row's own recent
-  // actions, scoped to its exact resource key so a different cluster's
-  // history never leaks in.
-  it('lists recent activity for the row under "Sharko\'s record", scoped to just that row', async () => {
+  // SSF-14 item 6: the old "Sharko's record"/"Recent activity" accordion (a
+  // short list of this row's own audit entries, fetched right here) is
+  // gone — replaced by one quiet link into the EXISTING audit log page,
+  // pre-filtered to this row's cluster via a URL param AuditViewer now
+  // reads on mount. No fetch happens on this panel at all anymore.
+  it('offers a "View related events" link into the audit log, scoped to this row\'s cluster, instead of its own activity list', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
-    mockFetchAuditLog.mockResolvedValue({
-      entries: [
-        {
-          id: '1',
-          timestamp: '2026-08-05T00:00:00Z',
-          level: 'info',
-          event: 'secret.sync',
-          user: 'admin',
-          action: 'sync',
-          resource: 'cluster:staging-us',
-          source: 'api',
-          result: 'success',
-          duration_ms: 12,
-          detail: 'Synced the connection secret',
-        },
-        {
-          id: '2',
-          timestamp: '2026-08-04T23:00:00Z',
-          level: 'info',
-          event: 'secret.reconcile',
-          user: 'admin',
-          action: 'reconcile',
-          resource: 'cluster:staging-us',
-          source: 'reconciler',
-          result: 'success',
-          duration_ms: 8,
-          detail: 'Reconciled the connection labels',
-        },
-        {
-          id: '3',
-          timestamp: '2026-08-04T22:00:00Z',
-          level: 'info',
-          event: 'secret.sync',
-          user: 'admin',
-          action: 'sync',
-          resource: 'cluster:prod-eu',
-          source: 'api',
-          result: 'success',
-          duration_ms: 9,
-          detail: 'Synced a different cluster entirely',
-        },
-      ],
-    })
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
     fireEvent.click(screen.getByTestId('secret-row-connection-staging-us'))
 
     const panel = await screen.findByTestId('secret-detail-panel')
-    await waitFor(() => expect(mockFetchAuditLog).toHaveBeenCalledWith({ cluster: 'staging-us', limit: 50 }))
+    const link = await within(panel).findByTestId('detail-related-events-link')
+    expect(link).toHaveTextContent('View related events')
+    expect(link).toHaveAttribute('href', '/audit?cluster=staging-us')
 
-    // SSF-12: "Sharko's record" is renamed "Recent activity" everywhere in this path.
-    expect(within(panel).getByText('Recent activity')).toBeInTheDocument()
+    // The old accordion and its own fetch are gone.
+    expect(within(panel).queryByText('Recent activity')).not.toBeInTheDocument()
     expect(within(panel).queryByText("Sharko's record")).not.toBeInTheDocument()
-    const list = await within(panel).findByTestId('detail-recent-activity')
-    expect(within(list).getByText('Synced the connection secret')).toBeInTheDocument()
-    expect(within(list).getByText('Reconciled the connection labels')).toBeInTheDocument()
-    // Scoped to this row's own resource key — a different cluster's entry
-    // (which the server's own substring-matching filter would have let
-    // through) must not leak in.
-    expect(within(list).queryByText('Synced a different cluster entirely')).not.toBeInTheDocument()
-    // The honest scope note is visible, not buried.
-    expect(within(panel).getByText(/since Sharko last started/)).toBeInTheDocument()
+    expect(mockFetchAuditLog).not.toHaveBeenCalled()
   })
 })
 

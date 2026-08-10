@@ -321,7 +321,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   CheckCircle,
   ChevronDown,
@@ -343,7 +343,6 @@ import {
 import {
   api,
   deleteOrphanedSecret,
-  fetchAuditLog,
   getAddonValuesSecretResource,
   getConnectionSecretResource,
   getManagedSecrets,
@@ -355,7 +354,6 @@ import {
 } from '@/services/api'
 import type {
   AddonValuesSecretRow,
-  AuditEntry,
   ClusterComparisonResponse,
   ConnectionSecretRow,
   ManagedSecretsEngineInfo,
@@ -1109,7 +1107,8 @@ function EngineStat({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Resource section (G4) — the live Secret, the way ArgoCD shows one.
+// The live read (P3-F2) — one hook, so the Comparison zone and the YAML tab
+// below it read the SAME fetch instead of firing two.
 //
 // EVERY VALUE HERE WAS BLANKED BY THE SERVER. The response carries key
 // NAMES paired with a fixed mask the server put in; there is no field a
@@ -1120,70 +1119,6 @@ function EngineStat({
 // COST: one live read per opened row, fired by the click that opened the
 // panel. Not on a timer, not prefetched, not fanned out across rows. The
 // server handler says the same thing in its own header.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function KeyValueList({
-  items,
-  empty,
-  testId,
-}: {
-  items: { key: string; value: string; blanked?: boolean }[]
-  empty: string
-  testId: string
-}) {
-  if (items.length === 0) {
-    return <p className="text-xs text-[#5a8aaa] dark:text-gray-500">{empty}</p>
-  }
-  return (
-    <dl className="space-y-0.5" data-testid={testId}>
-      {items.map((item) => (
-        <div key={item.key} className="flex items-baseline justify-between gap-3">
-          <dt className="truncate font-mono text-xs text-[#2a5a7a] dark:text-gray-400" title={item.key}>
-            {item.key}
-          </dt>
-          <dd
-            className={`shrink-0 font-mono text-xs ${item.blanked ? 'text-[#5a8aaa] dark:text-gray-500' : 'text-[#0a2a4a] dark:text-gray-200'}`}
-            title={item.blanked ? 'Sharko blanks this on the server — only its own provenance notes are shown as written.' : undefined}
-          >
-            {item.value}
-          </dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
-/**
- * SSF-12 — one field in the Resource details responsive grid: label above
- * value, both compact. Every field in that section uses this so the grid
- * never drifts into a mix of label-left and label-above layouts.
- */
-function ResourceField({
-  label,
-  value,
-  mono,
-  testId,
-  title,
-}: {
-  label: string
-  value: ReactNode
-  mono?: boolean
-  testId?: string
-  title?: string
-}) {
-  return (
-    <div>
-      <div className="text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">{label}</div>
-      <div className={`text-xs text-[#2a5a7a] dark:text-gray-400 ${mono ? 'break-all font-mono' : ''}`} data-testid={testId} title={title}>
-        {value}
-      </div>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The live read (P3-F2) — one hook, so the right-hand card and the key
-// table below it read the SAME fetch instead of firing two.
 //
 // Four rules this hook exists to hold:
 //
@@ -1462,79 +1397,168 @@ function hasCheckedBefore(row: UnifiedRow): boolean {
   return Boolean(row.lastChecked)
 }
 
-// design-secret-sync-visual-pass, section 4/item 21 — DiffCard used to be
-// its own boxed ring card; now it's a plain pane inside the ONE ring
-// container Zone B builds around the pair (an interior hairline divides
-// them instead of two separate rings). The label + testid stay exactly as
-// they were — only the box is gone.
-function DiffCard({ title, children, testId }: { title: string; children: ReactNode; testId: string }) {
-  return (
-    <div className="p-3" data-testid={testId}>
-      <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">{title}</div>
-      {children}
-    </div>
-  )
-}
-
 /**
- * The left card — what this secret should be. It paints the instant the
- * panel opens, from the row the list already has: no request, nothing to
- * wait for. That is the point of splitting the two cards apart.
+ * SSF-14 item 3: provenance is not one side of the comparison — it sits
+ * ABOVE it. This paints the instant the panel opens, from the row the list
+ * already has (no request, nothing to wait for): which file/commit a
+ * connection row was checked against, or which store a values row's
+ * pointers resolve through. Never a value, and a values row never claims
+ * git is what it was compared to — git only ever holds a pointer for that
+ * kind of row.
  *
  * SSF-12: an orphaned row never reaches this component at all — the
- * Comparison zone doesn't render for one (there's nothing left to compare;
- * see ComparisonZone below), so the old orphaned branch that used to live
- * here is gone rather than becoming dead code.
+ * Comparison zone doesn't render for one (there's nothing left to compare).
  */
-function IntentCard({ row }: { row: UnifiedRow }) {
-  if (row.kind === 'connection') {
+function ComparisonProvenance({ row }: { row: UnifiedRow }) {
+  if (row.kind !== 'connection') {
     return (
-      <DiffCard title="What it should be" testId="diff-intent-card">
-        {row.comparedPath ? (
-          <p className="break-all font-mono text-xs text-[#0a2a4a] dark:text-gray-200">{row.comparedPath}</p>
-        ) : (
-          <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Sharko hasn't compared this secret against git yet.</p>
-        )}
-        {row.comparedRevision && (
-          <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-500" title={`Full commit: ${row.comparedRevision}`}>
-            at commit <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
-          </p>
-        )}
-        <p className="mt-2 text-xs text-[#3a6a8a] dark:text-gray-500">
-          The addon labels in this file are what this secret is built from.
-        </p>
-      </DiffCard>
+      <p className="text-sm text-[#3a6a8a] dark:text-gray-400" data-testid="comparison-provenance">
+        Compared with {row.sourceLabel}. Git holds a pointer to where each value lives, never the value itself.
+      </p>
+    )
+  }
+  if (!row.comparedPath) {
+    return (
+      <p className="text-sm text-[#3a6a8a] dark:text-gray-400" data-testid="comparison-provenance">
+        Sharko hasn't compared this secret against git yet.
+      </p>
     )
   }
   return (
-    <DiffCard title="What it should be" testId="diff-intent-card">
-      <p className="text-sm text-[#0a2a4a] dark:text-gray-200">The values come from {row.sourceLabel}.</p>
-      <p className="mt-2 text-xs text-[#3a6a8a] dark:text-gray-500">
-        Git holds a pointer to where each value lives, never the value itself. Each key's pointer is in the key list below.
-      </p>
-    </DiffCard>
+    <p className="text-sm text-[#3a6a8a] dark:text-gray-400" data-testid="comparison-provenance">
+      Compared with git · <span className="font-mono text-[13px]">{row.comparedPath}</span>
+      {row.comparedRevision && (
+        <>
+          {' '}
+          · commit{' '}
+          <span className="font-mono text-[13px]" title={`Full commit: ${row.comparedRevision}`}>
+            {row.comparedRevision.slice(0, 7)}
+          </span>
+        </>
+      )}
+    </p>
   )
 }
 
 /**
- * SSF-12 honesty rule (verified against the live API responses): a
- * connection secret's ONLY genuinely comparable field pair is the addon
- * labels git expects vs the addon labels on the cluster, at the commit
- * Sharko last checked — the SAME label-drift facts the row list's own
- * getClusterComparison fetch already carries (added/removed/changed
- * label NAMES; the server never sends per-label values, so "a different
- * value" is as specific as this can honestly get). Name, namespace, type,
- * created-at and key names are LIVE-ONLY facts, not a diff — see Resource
- * details below, which is where they live now.
+ * The label-key namespace the reconciler stamps onto a v4 repo's ArgoCD
+ * cluster Secret for each currently-ENABLED addon (mirrors
+ * internal/models.V4AddonLabelPrefix — `addons.sharko.dev/<addon>:
+ * enabled`). Only enabled addons ever get a key here (internal/
+ * clusterreconciler.v4LabelsFor never writes a `disabled` key); a v3 repo's
+ * cluster Secret instead carries the BARE `<addon>` key for the same
+ * purpose (the two vocabularies deliberately never mix — see
+ * V4AddonLabelPrefix's own doc comment). The match table below checks
+ * both, since the frontend has no reliable signal for which repo layout is
+ * active.
+ */
+const V4_ADDON_LABEL_PREFIX = 'addons.sharko.dev/'
+
+/**
+ * SSF-14 walkthrough follow-up: opening "View comparison" on a healthy row
+ * used to show only the same one-line claim the conclusion already made
+ * ("Every addon label on the cluster matches what git expects.") — no new
+ * evidence, which defeated the point of the control. This renders the
+ * evidence: every addon git says is enabled for this cluster, and whether
+ * its label is actually on the cluster right now (mirrors
+ * internal/service.v4ClusterLabels, the source of diffData.cluster.labels
+ * — a bare `<addon>: enabled|disabled` map, plus an unrelated
+ * `<addon>-version` pseudo-key on a version override, both excluded here).
+ * A disabled addon gets no row: it has no label on the cluster Secret
+ * either way (that is the correct, expected state, not a comparable
+ * field), so a row for it would invent a pairing that doesn't exist.
+ *
+ * Only reached once the backend's own label_drift already reports nothing
+ * differs (see ConnectionLabelComparison below) — every row here should
+ * read Match. The per-row Missing/differs fallback is a defensive read of
+ * the SAME raw label data, in case the two ever momentarily disagree; it
+ * never contradicts the backend's own verdict, only restates it evidence
+ * by evidence.
+ */
+function ConnectionLabelMatchTable({ diffData, live }: { diffData: ClusterComparisonResponse | null; live: LiveSecretState }) {
+  const gitLabels = diffData?.cluster?.labels ?? {}
+  const enabledAddons = Object.entries(gitLabels)
+    .filter(([key, value]) => value === 'enabled' && !key.endsWith('-version'))
+    .map(([key]) => key)
+
+  // Nothing to show evidence for (no enabled addons), or the cluster side
+  // can't be proven yet (live read still loading/failed/skipped) — an
+  // honest sentence, never a fabricated table.
+  if (enabledAddons.length === 0 || live.status !== 'ready') {
+    return (
+      <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="comparison-no-drift">
+        Every addon label on the cluster matches what git expects.
+      </p>
+    )
+  }
+
+  const liveLabelMap = new Map(live.resource.labels.map((l) => [l.key, l.value]))
+
+  return (
+    <table className="w-full text-left text-sm" data-testid="comparison-label-match">
+      <thead>
+        <tr className="text-[11px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">
+          <th className="py-1 pr-3 font-medium">Field</th>
+          <th className="py-1 pr-3 font-medium">Expected in Git</th>
+          <th className="py-1 pr-3 font-medium">On the cluster</th>
+          <th className="py-1 font-medium">Result</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-border">
+        {enabledAddons.map((addon) => {
+          const prefixedKey = `${V4_ADDON_LABEL_PREFIX}${addon}`
+          const onClusterPrefixed = liveLabelMap.get(prefixedKey)
+          const onClusterBare = liveLabelMap.get(addon)
+          // Show whichever key convention actually turned up on the
+          // cluster; when neither did, fall back to the v4-canonical form
+          // as the honest "this is the key git's convention expects" label
+          // for a row that turned out missing.
+          const field = onClusterPrefixed !== undefined ? prefixedKey : onClusterBare !== undefined ? addon : prefixedKey
+          const onCluster = onClusterPrefixed ?? onClusterBare
+          const matches = onCluster === 'enabled'
+          return (
+            <tr key={addon}>
+              <td className="break-all py-1.5 pr-3 font-mono text-[#2a5a7a] dark:text-gray-300">{field}</td>
+              <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">enabled</td>
+              <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">{onCluster ?? 'missing'}</td>
+              <td
+                className={`py-1.5 font-medium ${matches ? 'text-[#3a6a8a] dark:text-gray-400' : 'text-amber-700 dark:text-amber-400'}`}
+              >
+                {matches ? 'Match' : onCluster ? 'Value differs' : 'Missing on cluster'}
+              </td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+}
+
+/**
+ * SSF-12 honesty rule (verified against the live API responses), now a real
+ * table (SSF-14 item 3: Field | Expected in Git | On the cluster | Result)
+ * instead of a loose grid: a connection secret's ONLY genuinely comparable
+ * field pair is the addon labels git expects vs the addon labels on the
+ * cluster, at the commit Sharko last checked — the SAME label-drift facts
+ * the row list's own getClusterComparison fetch already carries
+ * (added/removed/changed label NAMES; the server never sends per-label
+ * values, so "a different value" is as specific as this can honestly get).
+ *
+ * SSF-14 walkthrough follow-up: when the backend reports no drift at all
+ * (a healthy row), this now renders the full evidence table
+ * (ConnectionLabelMatchTable) instead of a bare summary sentence — opening
+ * the comparison must show something new, not repeat the conclusion.
  */
 function ConnectionLabelComparison({
   diffLoading,
   diffError,
   diffData,
+  live,
 }: {
   diffLoading: boolean
   diffError: string | null
   diffData: ClusterComparisonResponse | null
+  live: LiveSecretState
 }) {
   if (diffError) {
     return (
@@ -1547,34 +1571,35 @@ function ConnectionLabelComparison({
     return <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Loading…</p>
   }
   const drift = diffData?.cluster?.last_reconcile?.label_drift
-  const rows: { label: string; expected: string; live: string }[] = [
-    ...(drift?.added ?? []).map((l) => ({ label: l, expected: 'Expected', live: 'Missing' })),
-    ...(drift?.removed ?? []).map((l) => ({ label: l, expected: 'Not expected', live: 'Present' })),
-    ...(drift?.changed ?? []).map((l) => ({ label: l, expected: 'A different value', live: 'A different value' })),
+  const rows: { field: string; expected: string; onCluster: string; result: string }[] = [
+    ...(drift?.added ?? []).map((l) => ({ field: l, expected: 'Present', onCluster: 'Missing', result: 'Missing on cluster' })),
+    ...(drift?.removed ?? []).map((l) => ({ field: l, expected: 'Not present', onCluster: 'Present', result: 'Extra on cluster' })),
+    ...(drift?.changed ?? []).map((l) => ({ field: l, expected: 'A different value', onCluster: 'A different value', result: 'Value differs' })),
   ]
   if (rows.length === 0) {
-    return (
-      <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="comparison-no-drift">
-        Every addon label on the cluster matches what git expects.
-      </p>
-    )
+    return <ConnectionLabelMatchTable diffData={diffData} live={live} />
   }
   return (
-    <div className="space-y-2" data-testid="comparison-label-drift">
-      {rows.map((r) => (
-        <div key={r.label} className="grid gap-x-3 gap-y-0.5 sm:grid-cols-[1fr_auto_auto] sm:items-baseline">
-          <span className="break-all font-mono text-xs text-[#2a5a7a] dark:text-gray-300">{r.label}</span>
-          <span className="text-xs text-[#0a2a4a] dark:text-gray-200">
-            <span className="text-[#5a8aaa] dark:text-gray-500">Expected: </span>
-            {r.expected}
-          </span>
-          <span className="text-xs text-[#0a2a4a] dark:text-gray-200">
-            <span className="text-[#5a8aaa] dark:text-gray-500">On cluster: </span>
-            {r.live}
-          </span>
-        </div>
-      ))}
-    </div>
+    <table className="w-full text-left text-sm" data-testid="comparison-label-drift">
+      <thead>
+        <tr className="text-[11px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">
+          <th className="py-1 pr-3 font-medium">Field</th>
+          <th className="py-1 pr-3 font-medium">Expected in Git</th>
+          <th className="py-1 pr-3 font-medium">On the cluster</th>
+          <th className="py-1 font-medium">Result</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-border">
+        {rows.map((r) => (
+          <tr key={r.field}>
+            <td className="break-all py-1.5 pr-3 font-mono text-[#2a5a7a] dark:text-gray-300">{r.field}</td>
+            <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">{r.expected}</td>
+            <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">{r.onCluster}</td>
+            <td className="py-1.5 font-medium text-amber-700 dark:text-amber-400">{r.result}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   )
 }
 
@@ -1583,10 +1608,10 @@ function ConnectionLabelComparison({
  * field is key PRESENCE — the key names Sharko expects vs which of them the
  * server saw on the cluster. Never a value, a hash, a length, or an
  * encoding — the server response never carries one, so nothing here can
- * derive one either. Reuses the SAME live read the Keys section reads (see
- * useLiveSecret's own header for the no-second-request rule); this pane
- * carries its loading/error states because it's the first place on the
- * page that actually needs the read to land.
+ * derive one either. SSF-14 item 3: a real table (Key name | Expected |
+ * Present on cluster | Result), listing every expected key — present and
+ * missing alike, with a present (matching) key rendered quieter than a
+ * missing one so a real gap still stands out.
  */
 function ValuesKeyComparison({ live, onRetry }: { live: LiveSecretState; onRetry: () => void }) {
   if (live.status === 'skipped') {
@@ -1622,97 +1647,36 @@ function ValuesKeyComparison({ live, onRetry }: { live: LiveSecretState; onRetry
     return <p className="text-sm text-[#2a5a7a] dark:text-gray-400">This secret has no keys to compare.</p>
   }
   return (
-    <div className="space-y-1.5" data-testid="comparison-key-presence">
-      {keys.map((k) => (
-        <div key={k.key} className="grid gap-x-3 gap-y-0.5 sm:grid-cols-[1fr_auto] sm:items-baseline">
-          <span className="break-all font-mono text-xs text-[#2a5a7a] dark:text-gray-300">{k.key}</span>
-          <span className={`text-xs ${k.present === false ? 'text-amber-700 dark:text-amber-400' : 'text-[#0a2a4a] dark:text-gray-200'}`}>
-            {k.present === false ? 'Expected — not on the cluster' : 'Expected — present on the cluster'}
-          </span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-/**
- * The right card — the actual comparison, honest per row kind (see the two
- * components above). EVERY VALUE ANYWHERE ON THIS PAGE WAS BLANKED BY THE
- * SERVER, and nothing here un-hides one — do not "improve" this with a
- * reveal toggle, a copy button, or a request for real content.
- */
-function LiveCard({
-  row,
-  live,
-  onRetry,
-  diffData,
-  diffLoading,
-  diffError,
-}: {
-  row: UnifiedRow
-  live: LiveSecretState
-  onRetry: () => void
-  diffData: ClusterComparisonResponse | null
-  diffLoading: boolean
-  diffError: string | null
-}) {
-  return (
-    <DiffCard title="What is on the cluster" testId="diff-live-card">
-      {row.kind === 'connection' ? (
-        <ConnectionLabelComparison diffLoading={diffLoading} diffError={diffError} diffData={diffData} />
-      ) : (
-        <ValuesKeyComparison live={live} onRetry={onRetry} />
-      )}
-    </DiffCard>
+    <table className="w-full text-left text-sm" data-testid="comparison-key-presence">
+      <thead>
+        <tr className="text-[11px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">
+          <th className="py-1 pr-3 font-medium">Key name</th>
+          <th className="py-1 pr-3 font-medium">Expected</th>
+          <th className="py-1 pr-3 font-medium">Present on cluster</th>
+          <th className="py-1 font-medium">Result</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-border">
+        {keys.map((k) => {
+          const present = k.present !== false
+          return (
+            <tr key={k.key}>
+              <td className="break-all py-1.5 pr-3 font-mono text-[#2a5a7a] dark:text-gray-300">{k.key}</td>
+              <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">Yes</td>
+              <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">{present ? 'Yes' : 'No'}</td>
+              <td className={`py-1.5 font-medium ${present ? 'text-[#3a6a8a] dark:text-gray-400' : 'text-amber-700 dark:text-amber-400'}`}>
+                {present ? 'Match' : 'Missing'}
+              </td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
   )
 }
 
 /** The sentence a reader who cannot open live secrets sees where the right card would be. Calm, and about access — not an error. */
 const LIVE_READ_NEEDS_OPERATOR = 'Reading the live secret needs operator access. What Sharko already knows about it is on the left.'
-
-/**
- * The key table — each key, where its value comes from, and whether the
- * cluster has it. Read off the same live read the right card uses.
- *
- * NO PER-KEY MATCH VERDICT. See the block comment above diffVerdictFor.
- */
-function KeyTable({ live }: { live: LiveSecretState }) {
-  if (live.status !== 'ready') return null
-  const keys = live.resource.data_keys
-  return (
-    <div data-testid="detail-key-table">
-      {/* SSF-8: no heading of its own — the "Keys" <summary> that wraps this
-          component now carries that label. */}
-      <div className="rounded-md border border-border bg-card p-3">
-        {keys.length === 0 ? (
-          <p className="text-xs text-[#5a8aaa] dark:text-gray-500">This secret has no keys.</p>
-        ) : (
-          <dl className="space-y-1" data-testid="resource-data-keys">
-            {keys.map((k) => (
-              <div key={k.key} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                <dt className="break-all font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
-                  {k.key}
-                  {/* P2-C2: the store pointer this key's value comes from — a location, not a value. */}
-                  {k.path && <span className="text-[#5a8aaa] dark:text-gray-500"> ← {k.path}</span>}
-                </dt>
-                <dd className="shrink-0 text-xs">
-                  {k.present === false ? (
-                    <span className="text-amber-700 dark:text-amber-400">not on the cluster</span>
-                  ) : (
-                    <span className="font-mono text-[#5a8aaa] dark:text-gray-500">••••••••</span>
-                  )}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        )}
-        <p className="mt-2 text-xs text-[#3a6a8a] dark:text-gray-500">
-          Sharko blanks every value on the server. The values never leave the cluster.
-        </p>
-      </div>
-    </div>
-  )
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Redacted YAML (SSF-5, Secret Sync finish pass) — a second, read-only view
@@ -1818,85 +1782,26 @@ function RedactedYamlSection({ row, live, onRetry }: { row: UnifiedRow; live: Li
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sharko's record (H4-3, gitops-proud P4-H) — a short list of this row's
-// own recent actions, replacing the single "Last repaired" line the panel
-// used to show. Reads the SAME audit log AuditViewer already shows
-// (GET /api/v1/audit), scoped to this one row by its resource key — no new
-// endpoint, no server change.
-//
-// The scope note is the honest part: the audit log only holds what's
-// happened since this server process last started (an in-memory log, not a
-// database), so the list says that plainly instead of implying it goes
-// back further than it does.
+// SSF-14 item 6 — the old "Sharko's record"/"Recent activity" accordion (a
+// short list of this row's own past audit entries, fetched from the SAME
+// audit log AuditViewer shows) is gone: it listed read-only checks, added
+// low value in this spot, and duplicated a screen that already exists. In
+// its place: one quiet link into that same audit log, pre-filtered to this
+// row's cluster via the URL — AuditViewer.tsx reads its existing Cluster
+// filter from `?cluster=` on mount (no new filter type, no server change).
+// The row's own CURRENT problem is never hidden by this — row.lastCheckError
+// and the health conclusion above still render regardless of this link.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** How many recent entries the panel shows — enough to see a pattern, short enough to stay a glance. */
-const RECENT_ACTIVITY_LIMIT = 5
-
-function useRecentActivity(row: UnifiedRow | null) {
-  const [entries, setEntries] = useState<AuditEntry[]>([])
-  const [loading, setLoading] = useState(false)
-  const rowKey = row?.key ?? ''
-
-  useEffect(() => {
-    if (!row) {
-      setEntries([])
-      return
-    }
-    let cancelled = false
-    setLoading(true)
-    // The server's own filter only matches "cluster:NAME" as a substring of
-    // the audit entry's resource field (see internal/audit/log.go), which
-    // for a values row would also catch every OTHER addon on the same
-    // cluster — so the exact resource key is matched again here, client
-    // side, against the wider set the server hands back.
-    const wantedResource = row.kind === 'connection' ? `cluster:${row.cluster}` : `cluster:${row.cluster}/addon:${row.addon}`
-    fetchAuditLog({ cluster: row.cluster, limit: 50 })
-      .then((res) => {
-        if (cancelled) return
-        setEntries(res.entries.filter((e) => e.resource === wantedResource).slice(0, RECENT_ACTIVITY_LIMIT))
-      })
-      .catch(() => {
-        if (!cancelled) setEntries([])
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rowKey])
-
-  return { entries, loading }
-}
-
-function RecentActivity({ row }: { row: UnifiedRow }) {
-  const { entries, loading } = useRecentActivity(row)
+function RelatedEventsLink({ row }: { row: UnifiedRow }) {
   return (
-    <div>
-      {/* SSF-8: no heading of its own — the "Sharko's record" <summary> that
-          wraps this component now carries that label. */}
-      <p className="mb-1.5 text-xs text-[#5a8aaa] dark:text-gray-500">
-        Only what's happened since Sharko last started — older activity isn't kept.
-      </p>
-      {loading ? (
-        <p className="text-xs text-[#3a6a8a] dark:text-gray-400">Loading…</p>
-      ) : entries.length === 0 ? (
-        <p className="text-xs text-[#3a6a8a] dark:text-gray-400">Nothing recorded yet.</p>
-      ) : (
-        <ul className="space-y-1" data-testid="detail-recent-activity">
-          {entries.map((entry) => (
-            <li key={entry.id} className="flex items-baseline justify-between gap-3 text-xs">
-              <span className={entry.result === 'failure' ? 'text-red-700 dark:text-red-400' : 'text-[#2a5a7a] dark:text-gray-300'}>
-                {entry.detail || entry.action}
-              </span>
-              <TimeChip iso={entry.timestamp} className="shrink-0" />
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <Link
+      to={`/audit?cluster=${encodeURIComponent(row.cluster)}`}
+      data-testid="detail-related-events-link"
+      className="inline-block text-sm text-teal-700 hover:underline dark:text-teal-400"
+    >
+      View related events
+    </Link>
   )
 }
 
@@ -1904,18 +1809,16 @@ function RecentActivity({ row }: { row: UnifiedRow }) {
 // Detail content — rebuilt around the RESOURCE (P3-F2), the way ArgoCD
 // lays out one, top to bottom:
 //
-//   1. the resource header: kind, the secret's own name, its cluster, its age
-//   2. state, with Refresh and Sync right next to it — the two things a
-//      reader who just opened this panel is most likely to want
-//   3. the diff: two cards and one sentence (see diffVerdictFor)
-//   4. the key table: key, where its value comes from, on the cluster or not
-//   5. everything else the panel already carried — purpose, source,
-//      timestamps, repair detail, the warnings, the link out
+//   1. identity + actions, with Check now/again and Sync right next to the
+//      title — the two things a reader who just opened this page is most
+//      likely to want
+//   2. the ONE health conclusion (SSF-12)
+//   3. the comparison: provenance, then the safe field table (SSF-14 item 3)
+//   4. a quiet link into the audit log, scoped to this row's cluster
 //
-// Before this, the live "On the cluster right now" view was second-to-last,
-// below the Diff, outside the role guard (so a viewer got a permission
-// error where a sentence belonged), fired a doomed read on rows already
-// known to be missing, and had no way back from a failed read.
+// The full live Secret (labels, annotations, type, key names) lives in the
+// YAML tab now (SSF-14 item 4) — Overview no longer carries a second,
+// YAML-shaped block of the same facts.
 //
 // SSF-9 (Secret Sync finish pass, stories 9+10): this used to render inside
 // a ResourceDetailSheet side drawer (SecretDetailPanel). The PM's
@@ -1942,6 +1845,14 @@ function RecentActivity({ row }: { row: UnifiedRow }) {
 // promise of what Sync actually does about it. "Checked …" sits right next
 // to it, because "when was it checked" is one of the five questions this
 // page exists to answer and it shouldn't need its own row.
+//
+// Walkthrough follow-up on SSF-14: this block also carries the drift-blame
+// sentence (which side moved) and the self-heal promise (does the reader
+// need to press Sync themselves, or will Sharko fix it on its own) — both
+// restored here after SSF-14 first deleted their old home (the Resource
+// details accordion) without giving them a new one. Wording and the
+// conditions that decide whether they show are UNCHANGED from before;
+// only the place changed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function HealthConclusion({ row, verdict }: { row: UnifiedRow; verdict: DiffVerdict }) {
@@ -1965,6 +1876,20 @@ function HealthConclusion({ row, verdict }: { row: UnifiedRow; verdict: DiffVerd
       <p className="text-base text-[#2a5a7a] dark:text-gray-300" data-testid="diff-verdict">
         {diffVerdictSentence(verdict, row)}
       </p>
+      {/* P2-C6 (restored — walkthrough follow-up on SSF-14): which side
+          moved, the WHY behind the "does not match" sentence above. Same
+          condition as when this lived in the now-deleted Resource details
+          accordion (connection rows, out-of-sync only, only when both
+          revisions are known) — only the PLACE changed, not the content or
+          the condition. Sits right under the problem statement it
+          explains, ahead of the repair promise. */}
+      {row.kind === 'connection' && row.state === 'out_of_sync' && row.driftSource && (
+        <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="detail-drift-source">
+          {row.driftSource === 'git'
+            ? 'Git moved — a newer commit changed what this secret should be.'
+            : 'The cluster moved — something changed this secret outside git.'}
+        </p>
+      )}
       {/* The repair promise — only where Sync is really the fix (a real
           drift to push). A values row's own "never created" sentence
           already says "Sync creates it" inline, so it doesn't need this
@@ -1974,7 +1899,22 @@ function HealthConclusion({ row, verdict }: { row: UnifiedRow; verdict: DiffVerd
           {repairNoteFor(row)}
         </p>
       )}
-      <p className="text-xs text-[#5a8aaa] dark:text-gray-500" data-testid="detail-checked-line">
+      {/* P2-C3 (restored — walkthrough follow-up on SSF-14): does the
+          reader need to press Sync themselves, or will Sharko fix this on
+          its own pass — the single most important sentence on a broken
+          secret for an on-call reader. Same condition as the deleted
+          Resource details field (out_of_sync or missing, either row
+          kind) — never shown for a healthy/match row, exactly as before.
+          Sits right after the repair promise so "what Sync does" and
+          "do I actually need to click it" read together. */}
+      {(row.state === 'out_of_sync' || row.state === 'missing') && (
+        <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="detail-self-heals">
+          {row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
+        </p>
+      )}
+      {/* SSF-14 item 7: a timestamp, so it stays at least 13px — was 12px
+          (text-xs) here before. */}
+      <p className="text-[13px] text-[#5a8aaa] dark:text-gray-500" data-testid="detail-checked-line">
         Checked <TimeChip iso={row.lastChecked} />
       </p>
     </div>
@@ -2013,15 +1953,12 @@ export function SecretDetailContent({
   // reopens on Overview for whichever row the panel is now showing; a tab
   // choice made on one row must not carry over to the next one it opens.
   const [detailTab, setDetailTabState] = useState<'overview' | 'yaml'>('overview')
-  // SSF-8 (drawer calm-down): a matching row's comparison box starts closed
-  // behind "View comparison" — this remembers whether THIS OPEN has been
-  // expanded. Resets alongside the tab choice whenever a different row
-  // opens, same rule as detailTab just above: nothing carries over.
+  // SSF-8/SSF-14 — whether the comparison box is expanded. Item 2 (SSF-14):
+  // this now SURVIVES a Check again — a reader who opened it stays opened,
+  // and one who closed a healthy result stays closed — UNLESS the result
+  // just flipped healthy -> broken, which forces it open so a new problem
+  // is never hidden behind a closed toggle. See the effect below.
   const [comparisonOpen, setComparisonOpen] = useState(false)
-  useEffect(() => {
-    setDetailTabState('overview')
-    setComparisonOpen(false)
-  }, [row?.key])
 
   // Connection-secret Diff keeps its existing getClusterComparison fetch
   // (labels only, never credentials) — fired once per row the panel opens
@@ -2060,6 +1997,37 @@ export function SecretDetailContent({
   const canReadLive = auth?.role === 'admin' || auth?.role === 'operator'
   const { live, retry } = useLiveSecret(row, canReadLive)
 
+  // SSF-12's verdict, needed here (not just below, where the old code first
+  // computed it) because the comparisonOpen effect right after this needs
+  // it too.
+  const verdict = diffVerdictFor(row, live)
+
+  // SSF-14 item 2 — tracks the PREVIOUS row key and verdict this component
+  // last saw, purely to decide comparisonOpen; nothing here reads back out
+  // except that one state:
+  //   - a different row opened (including first mount): always resets to
+  //     Overview, and starts the comparison closed for a match, open for
+  //     everything else — an unread row's first look must never hide a
+  //     real problem behind a closed toggle.
+  //   - the SAME row, but its verdict just flipped from match to anything
+  //     else (a Check again just found a new problem): force the
+  //     comparison open, overriding whatever the reader had chosen.
+  //   - the SAME row, verdict unchanged or already broken before and still
+  //     broken/matching after: leave comparisonOpen exactly as the reader
+  //     left it.
+  const prevRowKeyRef = useRef<string | undefined>(undefined)
+  const prevVerdictRef = useRef<DiffVerdict | null>(null)
+  useEffect(() => {
+    if (prevRowKeyRef.current !== row?.key) {
+      setDetailTabState('overview')
+      setComparisonOpen(verdict !== 'match')
+      prevRowKeyRef.current = row?.key
+    } else if (prevVerdictRef.current === 'match' && verdict !== 'match') {
+      setComparisonOpen(true)
+    }
+    prevVerdictRef.current = verdict
+  }, [row?.key, verdict])
+
   const handleRefresh = async () => {
     setRefreshing(true)
     try {
@@ -2079,7 +2047,6 @@ export function SecretDetailContent({
   }
 
   const gate = syncGateFor(row)
-  const identity = row.secretNamespace && row.secretName ? `${row.secretNamespace}/${row.secretName}` : '—'
 
   const purposeSentence: ReactNode =
     row.state === 'orphaned' ? (
@@ -2103,8 +2070,6 @@ export function SecretDetailContent({
         <span className="font-medium">{row.cluster}</span>.
       </>
     )
-
-  const verdict = diffVerdictFor(row, live)
 
   // SSF-12: "Differences" only when there really are some (the "differ"
   // verdict) — every other state (including the four boundary/unknown
@@ -2132,6 +2097,17 @@ export function SecretDetailContent({
         <div className="min-w-0 space-y-1">
           <h1 className="text-2xl font-semibold leading-tight text-[#0a2a4a] dark:text-gray-100 sm:text-[28px]">{secretTitleFor(row)}</h1>
           <p className="text-base text-[#2a5a7a] dark:text-gray-300">{purposeSentence}</p>
+          {/* SSF-14 item 5: "View cluster"/"View addon" moves up here, next
+              to the description, as a normal secondary link — it used to
+              live inside the removed Resource details section. */}
+          <button
+            type="button"
+            onClick={() => navigate(viewPageHref)}
+            data-testid="detail-view-page-link"
+            className="text-sm text-teal-700 hover:underline dark:text-teal-400"
+          >
+            {viewPageLabel}
+          </button>
         </div>
         <RoleGuard roles={['admin', 'operator']}>
           <div className="flex flex-wrap items-center gap-2">
@@ -2248,177 +2224,66 @@ export function SecretDetailContent({
             </p>
           )}
 
-          {/* ── Comparison, only when useful (SSF-12) ─────────────────────
+          {/* ── Comparison, only when useful (SSF-12/SSF-14) ───────────────
               An orphaned row has nothing left to compare (its source in
               git is gone — the conclusion above already says so), so no
-              Comparison zone renders for it at all. Every other row: a
-              match opens on just the one-line result behind "View
-              comparison"; every other verdict shows the box straight
-              away — those are exactly the states where the comparison IS
-              the answer to "is it okay". */}
+              Comparison zone renders for it at all. Every other row: the
+              toggle button is always there (SSF-14 item 2 — it never
+              disappears, so it can always be pressed the other way), a
+              match starts closed behind it, and every other verdict starts
+              open — those are exactly the states where the comparison IS
+              the answer to "is it okay". Provenance (what file/commit/store
+              this was checked against) sits ABOVE the table, never as one
+              side of it (item 3). */}
           {row.state !== 'orphaned' && (
             <div>
-              <h2 className="mb-2 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">{comparisonHeading}</h2>
-              {verdict === 'match' && !comparisonOpen ? (
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">{comparisonHeading}</h2>
                 <button
                   type="button"
-                  onClick={() => setComparisonOpen(true)}
+                  onClick={() => setComparisonOpen((open) => !open)}
+                  aria-expanded={comparisonOpen}
                   data-testid="view-comparison-toggle"
-                  className="text-xs font-medium text-teal-700 hover:underline dark:text-teal-400"
+                  className="inline-flex items-center rounded-md px-2 py-1 text-sm font-medium text-teal-700 hover:bg-teal-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:text-teal-400 dark:hover:bg-teal-950/40"
                 >
-                  View comparison
+                  {comparisonOpen ? 'Hide comparison' : 'View comparison'}
                 </button>
-              ) : (
-                <div className="rounded-md border border-border bg-card">
-                  <div className="grid sm:grid-cols-2 sm:divide-x divide-border max-sm:divide-y">
-                    <IntentCard row={row} />
-                    {/* The live half sits INSIDE the role guard, so a viewer sees a
-                        sentence about access rather than a permission error where a
-                        card should be — and the read is never fired for them either
-                        (useLiveSecret's `allowed`). */}
-                    <RoleGuard
-                      roles={['admin', 'operator']}
-                      fallback={
-                        <DiffCard title="What is on the cluster" testId="diff-live-card">
-                          <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="live-needs-operator">
-                            {LIVE_READ_NEEDS_OPERATOR}
-                          </p>
-                        </DiffCard>
-                      }
-                    >
-                      <LiveCard row={row} live={live} onRetry={retry} diffData={diffData} diffLoading={diffLoading} diffError={diffError} />
-                    </RoleGuard>
-                  </div>
+              </div>
+              {comparisonOpen && (
+                <div className="space-y-3 rounded-md border border-border bg-card p-3">
+                  <ComparisonProvenance row={row} />
+                  {/* The table sits INSIDE the role guard, so a viewer sees a
+                      sentence about access rather than a permission error
+                      where the safe fields should be — and the read is
+                      never fired for them either (useLiveSecret's
+                      `allowed`). */}
+                  <RoleGuard
+                    roles={['admin', 'operator']}
+                    fallback={
+                      <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="live-needs-operator">
+                        {LIVE_READ_NEEDS_OPERATOR}
+                      </p>
+                    }
+                  >
+                    {row.kind === 'connection' ? (
+                      <ConnectionLabelComparison diffLoading={diffLoading} diffError={diffError} diffData={diffData} live={live} />
+                    ) : (
+                      <ValuesKeyComparison live={live} onRetry={retry} />
+                    )}
+                  </RoleGuard>
                 </div>
               )}
             </div>
           )}
 
-          {/* ── Resource details (collapsed, SSF-12) ──────────────────────
-              Everything that's a fact about the RESOURCE, not a comparison:
-              identity, live type/age, the full label/annotation set, the
-              commit this was checked against, the self-heal promise, drift
-              blame, and — moved in from the page's own bottom, so it sits
-              in its resource context rather than floating alone — the link
-              to the cluster/addon page. Closed by default; a reader who
-              wants it opens it, nobody else pays for it. */}
-          <details className="border-t border-border pt-3" data-testid="detail-resource-disclosure">
-            <summary className="cursor-pointer text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Resource details</summary>
-            <div className="mt-3 space-y-4">
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1" data-testid="detail-resource-header">
-                <span className="rounded-full bg-[#d0e8f8] px-2 py-0.5 text-[11px] font-medium text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-300">
-                  Secret
-                </span>
-                <span className="text-xs text-[#3a6a8a] dark:text-gray-500">on {row.cluster}</span>
-              </div>
-
-              {/* Responsive field grid — label above value, 3-4 compact
-                  fields per row on wide desktop, 2 on tablet, 1 on mobile. */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4" data-testid="detail-resource-fields">
-                <ResourceField label="Namespace / name" value={identity} mono testId="detail-identity" />
-                {/* The type and age are live-read facts, so they appear
-                    once the read lands and stay absent otherwise — never
-                    an invented one. */}
-                {live.status === 'ready' && live.resource.secret_type && (
-                  <ResourceField label="Type" value={live.resource.secret_type} testId="detail-resource-type" />
-                )}
-                {live.status === 'ready' && live.resource.created_at && (
-                  <ResourceField label="Created" value={<TimeChip iso={live.resource.created_at} />} testId="detail-resource-created" />
-                )}
-                {/* P2-C1: which commit and which file this row was compared
-                    against — short SHA here, full SHA on hover. Connection
-                    rows only; values rows have no commit to point at. */}
-                {row.kind === 'connection' && row.comparedRevision && (
-                  <ResourceField
-                    label="Commit"
-                    testId="detail-compared-revision"
-                    title={`Full commit: ${row.comparedRevision}`}
-                    value={
-                      <>
-                        Compared with git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
-                        {row.comparedPath && (
-                          <>
-                            {' '}
-                            · <span className="font-mono">{row.comparedPath}</span>
-                          </>
-                        )}
-                      </>
-                    }
-                  />
-                )}
-                {/* P2-C3: the one-line self-heal promise — only where it
-                    changes what the reader should do. */}
-                {(row.state === 'out_of_sync' || row.state === 'missing') && (
-                  <ResourceField
-                    label="Self-heal"
-                    testId="detail-self-heals"
-                    value={row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
-                  />
-                )}
-                {/* P2-C6: drift blame — which side moved. Connection rows,
-                    out-of-sync only, and only when both revisions are known. */}
-                {row.kind === 'connection' && row.state === 'out_of_sync' && row.driftSource && (
-                  <ResourceField
-                    label="Drift"
-                    testId="detail-drift-source"
-                    value={
-                      row.driftSource === 'git'
-                        ? 'Git moved — a newer commit changed what this secret should be.'
-                        : 'The cluster moved — something changed this secret outside git.'
-                    }
-                  />
-                )}
-              </div>
-
-              {live.status === 'ready' && (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div>
-                    <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Labels</div>
-                    <KeyValueList items={live.resource.labels} empty="No labels." testId="resource-labels" />
-                  </div>
-                  <div>
-                    <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Annotations</div>
-                    <KeyValueList items={live.resource.annotations} empty="No annotations." testId="resource-annotations" />
-                  </div>
-                </div>
-              )}
-
-              {/* leftover-secrets S1.2: an orphaned row's addon is best-effort
-                  (read off its provenance annotation) and can be absent —
-                  falls back to the cluster page rather than a broken
-                  /addons/undefined link. SSF-12: moved in from the bottom of
-                  the page, into the resource context it's actually about. */}
-              <button
-                type="button"
-                onClick={() => navigate(viewPageHref)}
-                data-testid="detail-view-page-link"
-                className="text-sm text-teal-700 hover:underline dark:text-teal-400"
-              >
-                {viewPageLabel}
-              </button>
-            </div>
-          </details>
-
-          {/* ── Keys (collapsed) ────────────────────────────────────────
-              Unchanged content, the no-per-key-verdict rule, and the
-              blanking sentence — verbatim, just closed by default. */}
-          <RoleGuard roles={['admin', 'operator']}>
-            <details className="border-t border-border pt-3" data-testid="detail-keys-disclosure">
-              <summary className="cursor-pointer text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Keys</summary>
-              <div className="mt-2">
-                <KeyTable live={live} />
-              </div>
-            </details>
-          </RoleGuard>
-
-          {/* ── Recent activity (collapsed, SSF-12 renames "Sharko's
-              record" everywhere in this path) ─────────────────────────── */}
-          <details className="border-t border-border pt-3" data-testid="detail-activity-disclosure">
-            <summary className="cursor-pointer text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Recent activity</summary>
-            <div className="mt-2">
-              <RecentActivity row={row} />
-            </div>
-          </details>
+          {/* ── Related events (SSF-14 item 6) — replaces the old "Recent
+              activity" accordion. No new history: this is one quiet link
+              into the SAME audit log AuditViewer already shows, scoped to
+              this row's cluster via a URL param it now reads on mount. Any
+              CURRENT problem is still visible above (the health conclusion
+              and, for connection rows, the last-check-error line) — this
+              link never has to be opened to see an active failure. */}
+          <RelatedEventsLink row={row} />
         </>
       )}
     </div>

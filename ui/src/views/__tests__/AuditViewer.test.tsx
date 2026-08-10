@@ -1,7 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { AuditViewer } from '@/views/AuditViewer';
 import type { AuditEntry } from '@/services/models';
+
+// SSF-14 item 6: AuditViewer now reads its Cluster (and other) filters from
+// the URL via useSearchParams, which needs a Router in scope — every render
+// in this file goes through a MemoryRouter now. initialEntries defaults to
+// a plain "/audit" (no pre-fill), matching the page's ordinary entry point;
+// pass a query string to exercise the deep-link pre-fill itself.
+function renderAuditViewer(initialEntries: string[] = ['/audit']) {
+  return render(
+    <MemoryRouter initialEntries={initialEntries}>
+      <AuditViewer />
+    </MemoryRouter>,
+  );
+}
 
 const mockFetchAuditLog = vi.fn();
 
@@ -69,7 +83,7 @@ describe('AuditViewer', () => {
   });
 
   it('shows the friendly default columns (Time / Who / Action / Result)', async () => {
-    render(<AuditViewer />);
+    renderAuditViewer();
     await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     // Column headers live in the table's <thead>.
@@ -82,7 +96,7 @@ describe('AuditViewer', () => {
   });
 
   it('renders a known event code as a friendly action sentence', async () => {
-    render(<AuditViewer />);
+    renderAuditViewer();
     await waitFor(() => {
       expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument();
       expect(screen.getByText(/cert-manager on prod-eu/i)).toBeInTheDocument();
@@ -90,14 +104,14 @@ describe('AuditViewer', () => {
   });
 
   it('falls back to de-snake-cased text for an UNKNOWN event code (never blank)', async () => {
-    render(<AuditViewer />);
+    renderAuditViewer();
     await waitFor(() => expect(screen.getByText(/Mystery thing happened/i)).toBeInTheDocument());
     // The raw snake_case code is not shown as the action.
     expect(screen.queryByText('mystery_thing_happened')).not.toBeInTheDocument();
   });
 
   it('reveals Detail and Error in the expanded row, including the failure error', async () => {
-    render(<AuditViewer />);
+    renderAuditViewer();
     await waitFor(() => expect(screen.getByText(/upgraded an addon/i)).toBeInTheDocument());
 
     // Expand the failure row (the addon_upgraded entry, second row).
@@ -115,7 +129,7 @@ describe('AuditViewer', () => {
   });
 
   it('offers exactly success / partial / rejected / failure in the Result filter', async () => {
-    render(<AuditViewer />);
+    renderAuditViewer();
     await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     const select = screen.getByLabelText('Result') as HTMLSelectElement;
@@ -125,7 +139,7 @@ describe('AuditViewer', () => {
   });
 
   it('shows plain-English words (not raw codes) in the Result filter and badges', async () => {
-    render(<AuditViewer />);
+    renderAuditViewer();
     await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     const select = screen.getByLabelText('Result') as HTMLSelectElement;
@@ -141,7 +155,7 @@ describe('AuditViewer', () => {
   });
 
   it('offers only the action values the backend actually records — no dead options', async () => {
-    render(<AuditViewer />);
+    renderAuditViewer();
     await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     const select = screen.getByLabelText('Action') as HTMLSelectElement;
@@ -155,7 +169,7 @@ describe('AuditViewer', () => {
   });
 
   it('debounces filter typing into a single fetch, not one per keystroke', async () => {
-    render(<AuditViewer />);
+    renderAuditViewer();
     await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     const callsAfterInitial = mockFetchAuditLog.mock.calls.length;
@@ -184,7 +198,7 @@ describe('AuditViewer', () => {
   it('"Load more" re-fetches with a larger limit (beyond 200)', async () => {
     const fullPage = Array.from({ length: 200 }, (_, i) => ({ ...sampleEntries[0], id: `e${i}` }));
     mockFetchAuditLog.mockResolvedValue({ entries: fullPage });
-    render(<AuditViewer />);
+    renderAuditViewer();
 
     const loadMore = await screen.findByRole('button', { name: /Load more/i });
     expect(mockFetchAuditLog.mock.calls[0][0]).toMatchObject({ limit: 200 });
@@ -198,7 +212,7 @@ describe('AuditViewer', () => {
   });
 
   it('live stream prepends a new entry to the list', async () => {
-    render(<AuditViewer />);
+    renderAuditViewer();
     await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /Live Tail/i }));
@@ -226,7 +240,7 @@ describe('AuditViewer', () => {
   });
 
   it('search filters the loaded entries client-side (no server fetch)', async () => {
-    render(<AuditViewer />);
+    renderAuditViewer();
     await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
 
     const searchBox = screen.getByPlaceholderText('Filter loaded entries…');
@@ -244,7 +258,43 @@ describe('AuditViewer', () => {
 
   it('shows empty state when no events', async () => {
     mockFetchAuditLog.mockResolvedValue({ entries: [] });
-    render(<AuditViewer />);
+    renderAuditViewer();
     await waitFor(() => expect(screen.getByText('No audit entries found.')).toBeInTheDocument());
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSF-14 item 6 (Secret Sync finish pass) — a deep link like
+// /audit?cluster=spoke-eu (the "View related events" link on a Secret Sync
+// detail page) pre-fills the EXISTING Cluster filter. Frontend only: no new
+// filter type, no server change, and the value only seeds the input once —
+// it doesn't keep the URL and the input in lockstep afterward.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('AuditViewer — deep-link pre-fill from the URL (SSF-14)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    lastSource = null;
+    mockFetchAuditLog.mockResolvedValue({ entries: sampleEntries });
+  });
+
+  it('pre-fills the Cluster filter from ?cluster= and fetches that cluster on first load', async () => {
+    renderAuditViewer(['/audit?cluster=spoke-eu']);
+
+    const clusterInput = screen.getByLabelText('Cluster') as HTMLInputElement;
+    expect(clusterInput.value).toBe('spoke-eu');
+
+    await waitFor(() => {
+      const last = mockFetchAuditLog.mock.calls.at(-1)?.[0] as { cluster?: string } | undefined;
+      expect(last?.cluster).toBe('spoke-eu');
+    });
+  });
+
+  it('leaves the Cluster filter empty when the page is opened with no query string', async () => {
+    renderAuditViewer(['/audit']);
+    await waitFor(() => expect(screen.getByText(/enabled an addon on a cluster/i)).toBeInTheDocument());
+
+    const clusterInput = screen.getByLabelText('Cluster') as HTMLInputElement;
+    expect(clusterInput.value).toBe('');
   });
 });
