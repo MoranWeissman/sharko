@@ -54,21 +54,40 @@ import {
   type UnifiedRow,
 } from './ManagedSecrets'
 
-function backHrefFor(listSearch: string): string {
-  return `/secret-sync${listSearch ? `?${listSearch}` : ''}`
-}
-
 export function SecretDetailPage() {
-  const { rowKey = '' } = useParams<{ rowKey: string }>()
+  // Secrets-area rename (SN-4): this page is mounted on three route
+  // shapes, and works out which one it's on from the params alone:
+  //
+  //   /secrets/connections/:cluster       → one cluster connection Secret
+  //   /secrets/addons/:cluster/:addon     → one addon Secret (the :addon
+  //     segment is the addon name, or "namespace/name" for a leftover
+  //     Secret that has no addon of its own — see the row lookup below)
+  //   /secret-sync/:rowKey                → the pre-split shape; the app
+  //     itself redirects it away (LegacySecretRedirect.tsx), but the
+  //     existing test suites still mount it directly, and keeping it
+  //     costs one branch.
+  //
+  // react-router-dom decodes dynamic segments already (same convention
+  // every other detail page in this app relies on — see ClusterDetail.tsx /
+  // AddonDetail.tsx's own useParams() usage — none of them
+  // decodeURIComponent a second time), so an encoded "%2F" in the leftover
+  // form arrives here as a plain "/".
+  const { rowKey, cluster, addon } = useParams<{ rowKey?: string; cluster?: string; addon?: string }>()
+  const area: 'connections' | 'addons' | null =
+    rowKey !== undefined ? null : addon !== undefined ? 'addons' : 'connections'
   const navigate = useNavigate()
   const location = useLocation()
-  // react-router-dom decodes the dynamic :rowKey segment already (same
-  // convention every other detail page in this app relies on — see
-  // ClusterDetail.tsx / AddonDetail.tsx's own useParams() usage — none of
-  // them decodeURIComponent a second time), so this is the exact key
-  // UnifiedRow.key produced before openRowDetail's encodeURIComponent.
   const listSearch = (location.state as { listSearch?: string } | null)?.listSearch ?? ''
-  const backHref = backHrefFor(listSearch)
+  // Back goes to the matching inventory, keeping the saved list query
+  // string so the list comes back exactly as it was left.
+  const backBase = area ? `/secrets/${area}` : '/secret-sync'
+  const backHref = `${backBase}${listSearch ? `?${listSearch}` : ''}`
+  const backLabel =
+    area === 'connections'
+      ? 'Back to Cluster connections'
+      : area === 'addons'
+        ? 'Back to Addon secrets'
+        : 'Back to Secrets'
 
   const { data, loading, load } = useManagedSecretsData()
   const [syncTarget, setSyncTarget] = useState<UnifiedRow | null>(null)
@@ -87,7 +106,29 @@ export function SecretDetailPage() {
       ),
     [data, valuesSourceLabel],
   )
-  const row = useMemo(() => unifiedRows.find((r) => r.key === rowKey) ?? null, [unifiedRows, rowKey])
+  // SN-4: the row lookup, split by route instead of by row key.
+  //   - legacy: exact key match, as before.
+  //   - connections: the row whose key is `connection-<cluster>`.
+  //   - addons: `values-<cluster>-<addon>` first; when there is no such
+  //     row, a leftover ("orphaned") Secret on the same cluster whose
+  //     `namespace/name` equals the decoded :addon segment — that keeps
+  //     the URL shape without inventing a new identifier.
+  const row = useMemo(() => {
+    if (rowKey !== undefined) return unifiedRows.find((r) => r.key === rowKey) ?? null
+    const c = cluster ?? ''
+    if (area === 'connections') return unifiedRows.find((r) => r.key === `connection-${c}`) ?? null
+    const a = addon ?? ''
+    return (
+      unifiedRows.find((r) => r.key === `values-${c}-${a}`) ??
+      unifiedRows.find(
+        (r) =>
+          r.key.startsWith('orphaned-') &&
+          r.cluster === c &&
+          `${r.secretNamespace ?? ''}/${r.secretName ?? ''}` === a,
+      ) ??
+      null
+    )
+  }, [unifiedRows, rowKey, cluster, addon, area])
 
   const handleConfirmSync = async () => {
     if (!syncTarget) return
@@ -136,7 +177,7 @@ export function SecretDetailPage() {
       className="inline-flex items-center gap-1.5 text-sm font-medium text-teal-700 hover:underline dark:text-teal-400"
     >
       <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-      Back to Secret Sync
+      {backLabel}
     </Link>
   )
 
@@ -164,7 +205,7 @@ export function SecretDetailPage() {
               className="inline-flex items-center gap-2 rounded-md bg-[#0a2a4a] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
             >
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-              Back to Secret Sync
+              {backLabel}
             </button>
           }
         />

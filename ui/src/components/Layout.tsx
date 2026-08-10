@@ -44,6 +44,13 @@ interface NavItem {
   to: string
   label: string
   icon: typeof LayoutDashboard
+  /**
+   * Secrets-area rename (SN-2): when set, the item shows as active for
+   * every path under this prefix, not just paths under `to`. The Secrets
+   * item points at /secrets/connections but must light up on
+   * /secrets/addons and both detail routes too.
+   */
+  activePrefix?: string
 }
 
 interface NavSection {
@@ -68,7 +75,10 @@ const navSections: NavSection[] = [
     label: 'Monitor',
     items: [
       { to: '/system', label: 'System', icon: Network },
-      { to: '/secret-sync', label: 'Secret Sync', icon: KeyRound },
+      // Secrets-area rename (SN-2): one item for the whole area. It lands
+      // on Cluster connections; the page's own subnav reaches Addon
+      // secrets; activePrefix keeps it lit on every /secrets/* path.
+      { to: '/secrets/connections', label: 'Secrets', icon: KeyRound, activePrefix: '/secrets' },
       { to: '/observability', label: 'Observability', icon: Activity },
       // A4: "Dashboards" read as a sibling/typo of "Dashboard" above.
       { to: '/dashboards', label: 'External Dashboards', icon: BarChart3 },
@@ -99,11 +109,7 @@ const routeLabels: Record<string, string> = {
   clusters: 'Managed Clusters',
   addons: 'Addons',
   system: 'System',
-  // gitops-proud P4-I (D1): the page is "Secret Sync" now; 'secrets' stays
-  // mapped too so a not-yet-redirected breadcrumb frame never shows a raw
-  // path segment instead of a name.
-  'secret-sync': 'Secret Sync',
-  secrets: 'Secret Sync',
+  secrets: 'Secrets',
   observability: 'Observability',
   dashboards: 'External Dashboards',
   audit: 'Audit Log',
@@ -121,9 +127,22 @@ function Breadcrumbs() {
 
   const crumbs: { label: string; path: string }[] = []
   let path = ''
-  for (const seg of segments) {
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]
     path += '/' + seg
-    crumbs.push({ label: routeLabels[seg] || decodeURIComponent(seg), path })
+    // Secrets-area rename (SN-2): the two subpage segments only mean
+    // "Cluster connections"/"Addon secrets" directly under /secrets — a
+    // cluster or addon that happens to be NAMED "connections" or "addons"
+    // is a deeper segment and still falls through to its decoded raw name.
+    let label: string
+    if (i === 1 && segments[0] === 'secrets' && seg === 'connections') {
+      label = 'Cluster connections'
+    } else if (i === 1 && segments[0] === 'secrets' && seg === 'addons') {
+      label = 'Addon secrets'
+    } else {
+      label = routeLabels[seg] || decodeURIComponent(seg)
+    }
+    crumbs.push({ label, path })
   }
 
   return (
@@ -150,8 +169,8 @@ function getAIPageContext(pathname: string): string | undefined {
     '/clusters': 'the Managed Clusters page',
     '/addons': 'the Addons page (Catalog + Marketplace)',
     '/system': 'the System page (Sharko/ArgoCD → repo/clusters chain)',
-    '/secret-sync': 'the Secret Sync page (every secret Sharko manages)',
-    '/secrets': 'the Secret Sync page (every secret Sharko manages)',
+    '/secrets/connections': 'the Cluster connections page (Secrets Sharko uses to register clusters with Argo CD)',
+    '/secrets/addons': 'the Addon secrets page (Secrets Sharko delivers from configured backends to addons on remote clusters)',
     '/observability': 'the Observability page',
     '/dashboards': 'the External Dashboards page (external dashboard links)',
     '/audit': 'the Audit Log page',
@@ -334,13 +353,20 @@ export function Layout() {
                     to={item.to}
                     end={item.to === '/'}
                     onClick={() => setMobileOpen(false)}
-                    className={({ isActive }) =>
-                      `relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                        isActive
+                    className={({ isActive }) => {
+                      // SN-2: an item with an activePrefix is active for
+                      // every path under that prefix (the Secrets item
+                      // covers both subpages and both detail routes).
+                      const active = item.activePrefix
+                        ? location.pathname === item.activePrefix ||
+                          location.pathname.startsWith(`${item.activePrefix}/`)
+                        : isActive
+                      return `relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                        active
                           ? 'border-l-[3px] border-[#9fcffb] bg-[#14466e] text-white'
                           : 'border-l-[3px] border-transparent text-[#7ab0d8] hover:bg-[#14466e] hover:text-white'
                       } ${collapsed && !mobileOpen ? 'justify-center px-0' : ''}`
-                    }
+                    }}
                     title={collapsed && !mobileOpen ? item.label : undefined}
                   >
                     <item.icon className="h-5 w-5 shrink-0" />

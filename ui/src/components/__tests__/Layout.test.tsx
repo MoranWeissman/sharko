@@ -103,13 +103,73 @@ describe('Layout', () => {
     expect(screen.getByText('Settings')).toBeInTheDocument()
   })
 
-  // S1 — the managed-secrets page gets its own page and its own nav item
-  // under Monitor, matching "Managed Clusters"' naming under Overview.
-  // Renamed "Secret Sync" in gitops-proud P4-I (D1) — the route moved to
-  // /secret-sync, with /secrets kept as a redirect alias.
-  it('shows the Secret Sync nav item under Monitor', () => {
+  // Secrets-area rename (SN-2/SN-7): one sidebar item for the whole
+  // area, named "Secrets", pointing at the Cluster connections subpage.
+  // The retired names must not come back as nav labels.
+  it('shows the Secrets nav item under Monitor, pointing at /secrets/connections', () => {
     renderLayout()
-    expect(screen.getByText('Secret Sync')).toBeInTheDocument()
+    const link = screen.getByRole('link', { name: 'Secrets' })
+    expect(link).toHaveAttribute('href', '/secrets/connections')
+  })
+
+  it('never renders "Secret Sync" or "Managed Secrets" as a navigation label', () => {
+    renderLayout()
+    expect(screen.queryByText('Secret Sync')).not.toBeInTheDocument()
+    expect(screen.queryByText('Managed Secrets')).not.toBeInTheDocument()
+  })
+
+  // SN-2: the Secrets item is active for EVERY path under /secrets —
+  // both inventories and both detail routes — and inactive elsewhere.
+  it.each([
+    '/secrets/connections',
+    '/secrets/addons',
+    '/secrets/connections/prod-eu',
+    '/secrets/addons/prod-eu/datadog',
+  ])('marks the Secrets item active at %s', (path) => {
+    render(
+      <MemoryRouter initialEntries={[path]}>
+        <AddonStatesProvider>
+          <Layout />
+        </AddonStatesProvider>
+      </MemoryRouter>,
+    )
+    // On /secrets/* the breadcrumb renders its own "Secrets" link (to
+    // /secrets) — the SIDEBAR item is the one pointing at
+    // /secrets/connections.
+    const link = screen
+      .getAllByRole('link', { name: 'Secrets' })
+      .find((l) => l.getAttribute('href') === '/secrets/connections')
+    expect(link).toBeDefined()
+    expect(link!.className).toContain('bg-[#14466e]')
+    expect(link!.className).toContain('border-[#9fcffb]')
+  })
+
+  // SN-2: breadcrumb labels for the area — and a cluster/addon segment
+  // still falls through to its decoded raw name.
+  it('renders Secrets-area breadcrumbs with the approved subpage names', () => {
+    render(
+      <MemoryRouter initialEntries={['/secrets/addons/prod-eu/datadog']}>
+        <AddonStatesProvider>
+          <Layout />
+        </AddonStatesProvider>
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('link', { name: 'Addon secrets' })).toHaveAttribute('href', '/secrets/addons')
+    expect(screen.getByText('prod-eu')).toBeInTheDocument()
+    expect(screen.getByText('datadog')).toBeInTheDocument()
+    expect(screen.queryByText('Secret Sync')).not.toBeInTheDocument()
+  })
+
+  it('does not mark the Secrets item active on an unrelated page', () => {
+    render(
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <AddonStatesProvider>
+          <Layout />
+        </AddonStatesProvider>
+      </MemoryRouter>,
+    )
+    const link = screen.getByRole('link', { name: 'Secrets' })
+    expect(link.className).not.toContain('border-[#9fcffb]')
   })
 
   it('collapses sidebar when toggle button is clicked', () => {

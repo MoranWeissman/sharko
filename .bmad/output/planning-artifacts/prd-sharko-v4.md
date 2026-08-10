@@ -1,6 +1,6 @@
 ---
 stepsCompleted: ['step-01-init', 'step-02-discovery', 'step-02b-vision', 'step-02c-executive-summary', 'step-03-success', 'step-04-journeys', 'step-05-domain', 'step-06-innovation', 'step-07-project-type', 'step-08-scoping', 'step-09-functional', 'step-10-nonfunctional', 'step-11-polish', 'step-12-complete']
-status: COMPLETE (2026-07-29) · AMENDED 2026-08-08 (catalog model + secret ownership — see the two Amendment notes under the title)
+status: COMPLETE (2026-07-29) · AMENDED 2026-08-08 (catalog model + secret ownership — see the two Amendment notes under the title) · AMENDED 2026-08-10 (the Secrets area — names, navigation, routes; see the amendment at the end)
 inputDocuments:
   - .bmad/output/architecture/2026-07-25-sharko-oss-professional-design.md
   - .bmad/output/brainstorming/2026-07-24-blind-vs-biased-diff.md
@@ -468,3 +468,58 @@ What v4 actually changes, on one page.
 
 **Unchanged and re-affirmed:**
 - The three reconcile loops (cluster secrets, assignment labels, addon secrets), drift detection with opt-in self-heal, the validate → preview → PR pipeline on every door, the version matrix with upgrade intelligence, git as the only source of truth, and the kill-Sharko guarantee.
+
+---
+
+## Amendment (2026-08-10) — the Secrets area: names, navigation, and routes
+
+This amendment records a naming and information-architecture decision only. It does not touch
+FR34–FR43 and introduces no product behaviour. What Sharko compares, how Secret health is
+decided, and the failure model are exactly as specified above.
+
+**The area.** One sidebar item, **Secrets**, with two real subpages inside it. These are
+different kinds of thing with different purposes and each gets its own page:
+
+- **Cluster connections** — *Secrets Sharko uses to register clusters with Argo CD.*
+- **Addon secrets** — *Secrets Sharko delivers from configured backends to addons on remote
+  clusters.* Leftover ("orphaned") Secrets show here too.
+
+**Retired names.** *Secret Sync* is retired as the name of the page or area — it describes an
+action, not everything in there. *Managed Secrets* is retired too — Sharko shows Secrets it
+does not own. Lowercase "secret sync" may still describe the actual synchronising process in a
+technical explanation; it may not name a page or the area. Nothing in the area may suggest
+Sharko lists every Kubernetes Secret in a cluster.
+
+**Canonical words.**
+
+| Word | Means |
+|---|---|
+| Secrets | the product area |
+| Cluster connections | the cluster connection inventory |
+| Cluster connection Secret | one Argo CD cluster connection resource |
+| Addon secrets | the addon Secret inventory |
+| Addon Secret | one Secret Sharko delivers to a remote cluster |
+| Repair | restore a cluster connection Secret — recorded as terminology only; NOT shipped as a button label (see note below) |
+| Sync / Sync now | deliver an addon Secret from its backend |
+| Managed by Sharko | an ownership badge, nothing else |
+
+*Note on Repair:* the connection action in the shipped code re-applies only Sharko's own addon
+label keys — it does not restore `config`, `server` or `name`. Labelling that button "Repair"
+would promise something the code does not do, so the button keeps its current label until
+either the action is widened or the label and its description are narrowed to labels only.
+Both are separate decisions with real work behind them.
+
+**Routes.**
+
+| Route | Behaviour |
+|---|---|
+| `/secrets` | redirect to `/secrets/connections` |
+| `/secrets/connections` | Cluster connections inventory |
+| `/secrets/connections/:cluster` | one cluster connection Secret |
+| `/secrets/addons` | Addon secrets inventory |
+| `/secrets/addons/:cluster/:addon` | one addon Secret |
+| `/secret-sync` | backward-compatible redirect (query string kept; an old `?kind=values` link lands on Addon secrets) |
+| `/secret-sync/:rowKey` | backward-compatible redirect, resolved to the right subpage from the old row key |
+
+Below the UI nothing is renamed: REST endpoints, CLI commands, internal Go packages, metrics
+and stored fields keep their current names.

@@ -615,12 +615,13 @@ describe('SystemView', () => {
 // detected ARN, method, and the expandable "how it works" explainer.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// S1 — Managed Secrets moved off this page onto its own page (now named
-// "Secret Sync", /secret-sync — gitops-proud P4-I D1; /secrets still works
-// as a redirect alias). This page keeps ONE quiet summary line with a
-// link, never the two tables the old ManagedSecretsSection rendered here.
-describe('SystemView — Managed secrets summary line (S1)', () => {
-  it('shows the one-line summary and a link to Secret Sync, never a table', async () => {
+// S1 — the secrets tables moved off this page into their own area (the
+// Secrets area: /secrets/connections + /secrets/addons — Secrets-area
+// rename; the old /secret-sync URL still works as a redirect). This page
+// keeps ONE quiet summary line with a link, never the two tables the old
+// ManagedSecretsSection rendered here.
+describe('SystemView — secrets summary line (S1)', () => {
+  it('shows the one-line summary and a link into the Secrets area, never a table', async () => {
     mockAll()
     mockGetManagedSecrets.mockResolvedValue({
       cluster_connection_secrets: [{ cluster: 'prod-eu', state: 'in_sync' }],
@@ -632,7 +633,7 @@ describe('SystemView — Managed secrets summary line (S1)', () => {
     await waitFor(() =>
       expect(screen.getByText(/Sharko manages 1 secret — all in sync\./)).toBeInTheDocument(),
     )
-    expect(screen.getByRole('link', { name: 'View Secret Sync' })).toHaveAttribute('href', '/secret-sync')
+    expect(screen.getByRole('link', { name: 'View Secrets' })).toHaveAttribute('href', '/secrets/connections')
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 })

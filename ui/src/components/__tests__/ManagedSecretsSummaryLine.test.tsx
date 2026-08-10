@@ -35,7 +35,9 @@ describe('ManagedSecretsSummaryLine', () => {
     renderLine()
 
     await waitFor(() => expect(screen.getByText(/Sharko manages 2 secrets — all in sync\./)).toBeInTheDocument())
-    expect(screen.getByRole('link', { name: 'View Secret Sync' })).toHaveAttribute('href', '/secret-sync')
+    // Secrets-area rename (SN-5): the link goes into the Secrets area and
+    // the button says "View Secrets" — "Secret Sync" is retired as a name.
+    expect(screen.getByRole('link', { name: 'View Secrets' })).toHaveAttribute('href', '/secrets/connections')
   })
 
   it('counts out_of_sync and missing rows together as "out of sync"', async () => {

@@ -23,6 +23,7 @@ const Observability = lazy(() => import('@/views/Observability'))
 const SystemView = lazy(() => import('@/views/SystemView'))
 const ManagedSecrets = lazy(() => import('@/views/ManagedSecrets'))
 const SecretDetailPage = lazy(() => import('@/views/SecretDetailPage'))
+const LegacySecretDetailRedirect = lazy(() => import('@/views/LegacySecretRedirect'))
 const Dashboards = lazy(() => import('@/views/Dashboards'))
 const Settings = lazy(() => import('@/views/Settings'))
 const UserInfo = lazy(() => import('@/views/UserInfo'))
@@ -36,6 +37,24 @@ const AuditViewer = lazy(() => import('@/views/AuditViewer'))
 function RedirectPreservingQuery({ to }: { to: string }) {
   const location = useLocation()
   return <Navigate to={`${to}${location.search}`} replace />
+}
+
+/**
+ * Secrets-area rename (SN-1): the old /secret-sync list URL keeps working as
+ * a redirect into the new Secrets area. The old page could be narrowed with
+ * `?kind=connection|values`; the route says that now, so the param is
+ * dropped and only used to pick which subpage the old link lands on. The
+ * rest of the query string (filters, search, sort, view) is carried across
+ * unchanged, same as RedirectPreservingQuery.
+ */
+function LegacySecretSyncRedirect() {
+  const location = useLocation()
+  const params = new URLSearchParams(location.search)
+  const kind = params.get('kind')
+  params.delete('kind')
+  const qs = params.toString()
+  const dest = kind === 'values' ? '/secrets/addons' : '/secrets/connections'
+  return <Navigate to={`${dest}${qs ? `?${qs}` : ''}`} replace state={location.state} />
 }
 
 function PageLoader() {
@@ -265,18 +284,22 @@ export function ConnectedApp() {
           <Route path="version-matrix" element={<RedirectPreservingQuery to="/addons" />} />
           <Route path="observability" element={<Observability />} />
           <Route path="system" element={<SystemView />} />
-          <Route path="secret-sync" element={<ManagedSecrets />} />
-          {/* SSF-9 (Secret Sync finish pass): the row detail drawer became
-              a full page at a stable child route — direct load, browser
-              refresh, and a shared link all render this route directly.
-              The list's own `?row=` redirect (ManagedSecrets.tsx) sends
-              old bookmarks/links here too. */}
-          <Route path="secret-sync/:rowKey" element={<SecretDetailPage />} />
-          {/* gitops-proud P4-I (D1): the page was renamed "Secret Sync" —
-              /secrets keeps working as a plain alias (bookmarks and old
-              links must not break), same RedirectPreservingQuery pattern
-              /version-matrix and /upgrade already use below. */}
-          <Route path="secrets" element={<RedirectPreservingQuery to="/secret-sync" />} />
+          {/* Secrets-area rename (SN-1): one area, two real subpages. Each
+              inventory and each detail view has its own URL — direct load,
+              refresh, Back/Forward and shared links all work. /secrets
+              itself only redirects; there is no third overview page. */}
+          <Route path="secrets" element={<RedirectPreservingQuery to="/secrets/connections" />} />
+          <Route path="secrets/connections" element={<ManagedSecrets area="connections" />} />
+          <Route path="secrets/connections/:cluster" element={<SecretDetailPage />} />
+          <Route path="secrets/addons" element={<ManagedSecrets area="addons" />} />
+          <Route path="secrets/addons/:cluster/:addon" element={<SecretDetailPage />} />
+          {/* The old Secret Sync URLs stay as backward-compatible
+              redirects — bookmarks and old links must not break. The list
+              redirect resolves ?kind= to the right subpage; the detail
+              redirect works the subpage out from the old row key (see
+              LegacySecretRedirect.tsx). */}
+          <Route path="secret-sync" element={<LegacySecretSyncRedirect />} />
+          <Route path="secret-sync/:rowKey" element={<LegacySecretDetailRedirect />} />
           {/* V2-cleanup-61.4 (F2): the standalone Upgrade Checker page
               duplicated AddonDetail's Upgrade tab (per-addon analysis,
               conflicts, AI summary, downgrade guard, per-cluster upgrade —
