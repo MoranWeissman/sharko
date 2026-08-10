@@ -294,13 +294,16 @@ describe('SSF-11 — the page uses the workspace, not a narrow column', () => {
   })
 
   it('Check now and Sync sit in the header, next to the title — visible on the YAML tab too, not only on Overview', async () => {
-    renderApp(['/secret-sync/connection-prod-eu'])
+    // staging-us is out_of_sync — SSF-12 hides Sync entirely once a row is
+    // healthy, so a row that still needs repair is the one that proves
+    // both actions render in the header and survive a tab switch.
+    renderApp(['/secret-sync/connection-staging-us'])
     const panel = await screen.findByTestId('secret-detail-panel')
 
     // The title and the actions are both reachable before ever touching a
     // tab — proving they render in the always-visible header, not inside
     // the Overview-only body below the tab strip.
-    expect(within(panel).getByRole('heading', { name: 'prod-eu connection' })).toBeInTheDocument()
+    expect(within(panel).getByRole('heading', { name: 'staging-us connection' })).toBeInTheDocument()
     expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
     expect(within(panel).getByTestId('detail-sync')).toBeInTheDocument()
 
@@ -310,6 +313,13 @@ describe('SSF-11 — the page uses the workspace, not a narrow column', () => {
     // Still there on the YAML tab — the header doesn't belong to Overview.
     expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
     expect(within(panel).getByTestId('detail-sync')).toBeInTheDocument()
+  })
+
+  it('SSF-12: Sync is hidden entirely (not disabled) for a healthy row — only Check now stays', async () => {
+    renderApp(['/secret-sync/connection-prod-eu']) // in_sync -> match
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-sync')).not.toBeInTheDocument()
   })
 
   it('the status/compared-with/last-checked row is visible on both tabs, not hidden behind Overview', async () => {
