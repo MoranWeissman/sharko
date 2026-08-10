@@ -950,15 +950,16 @@ describe('ManagedSecrets', () => {
     expect(within(provenance).getByText('abcdef1').title).toBe('Full commit: abcdef1234567890abcdef1234567890abcdef12')
   })
 
-  // SSF-14 item 4 removed the Resource details accordion those two
+  // SSF-14 item 4 removed the Resource details accordion these two
   // sentences (P2-C3's self-heal promise, P2-C6's drift blame) used to
-  // live in, per the story's explicit instruction, and neither has a
-  // replacement home in the comparison or the YAML tab (the YAML tab only
-  // carries the SAFE API resource fields — self-heal/drift are row-level
-  // facts the server never puts in that response). Reported as a finding,
-  // not invented a new spot for: both sentences are simply gone from the
-  // UI now, for every row state.
-  it('no longer shows the self-heal promise or drift-blame sentence anywhere on the page (Resource details is gone)', async () => {
+  // live in — but the PM's rules require diagnostic information stay
+  // visible and the main result keep showing anything that needs action,
+  // so a walkthrough follow-up restored both directly into the ONE health
+  // conclusion block (never a new accordion, never back into a deleted
+  // Resource details, never inside the comparison table). Wording and the
+  // conditions that decide whether they show are byte-for-byte the same
+  // as before — only the place changed.
+  it('shows the drift-blame sentence and the self-heal promise inside the health conclusion, for a broken connection row', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     mockGetClusterComparison.mockResolvedValue({
       cluster: {
@@ -973,9 +974,72 @@ describe('ManagedSecrets', () => {
     fireEvent.click(screen.getByTestId('secret-row-connection-staging-us'))
 
     const panel = await screen.findByTestId('secret-detail-panel')
-    expect(within(panel).queryByText('Waiting for Sync.')).not.toBeInTheDocument()
-    expect(within(panel).queryByText(/Git moved — a newer commit/)).not.toBeInTheDocument()
+    const conclusion = within(panel).getByTestId('detail-health-conclusion')
+
+    // C6: compared_revision != applied_revision, drift_source: 'git' -> "git moved" sentence.
+    expect(within(conclusion).getByTestId('detail-drift-source')).toHaveTextContent(
+      'Git moved — a newer commit changed what this secret should be.',
+    )
+    // C3: self_heals: false on an out_of_sync row -> "Waiting for Sync."
+    expect(within(conclusion).getByTestId('detail-self-heals')).toHaveTextContent('Waiting for Sync.')
+
+    // Never back inside a Resource details accordion or any other
+    // disclosure — that section stays deleted, and neither sentence lives
+    // in the comparison area (provenance or the safe-field table) either.
+    expect(screen.queryByTestId('detail-resource-disclosure')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('detail-keys-disclosure')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('detail-activity-disclosure')).not.toBeInTheDocument()
+    const provenance = await within(panel).findByTestId('comparison-provenance')
+    expect(within(provenance).queryByText(/Waiting for Sync|Git moved/)).not.toBeInTheDocument()
+  })
+
+  // P2-C3: the in-sync row (prod-eu) must show neither the drift sentence
+  // nor the self-heal promise — the old condition never covered a healthy
+  // row, and restoring the sentences into the conclusion didn't change
+  // that condition.
+  it('an in-sync connection row shows no self-heal promise and no drift blame', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('secret-row-connection-prod-eu'))
+
+    const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).queryByTestId('detail-self-heals')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-drift-source')).not.toBeInTheDocument()
+  })
+
+  // The self-heal condition also covers 'missing' (either row kind), not
+  // just out-of-sync connection rows — pinned here with the values-secret
+  // fixture used elsewhere in this file (spoke-asia, state: 'missing').
+  it('shows the self-heal promise for a missing addon-values row too, with no drift sentence (values rows never carry drift_source)', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      cluster_connection_secrets: [],
+      addon_values_secrets: [
+        {
+          cluster: 'spoke-asia',
+          addon: 'datadog',
+          secret_name: 'datadog-secrets',
+          secret_namespace: 'datadog',
+          state: 'missing',
+          source: 'AWS Secrets Manager',
+          self_heals: true,
+        },
+      ],
+      engines: {
+        cluster_connection: { wired: true, enabled: true, interval_seconds: 30 },
+        addon_values: { wired: true, enabled: true, interval_seconds: 300 },
+      },
+      addon_values_secret_source: 'AWS Secrets Manager',
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('secret-row-values-spoke-asia-datadog')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('secret-row-values-spoke-asia-datadog'))
+
+    const panel = await screen.findByTestId('secret-detail-panel')
+    const conclusion = within(panel).getByTestId('detail-health-conclusion')
+    expect(within(conclusion).getByTestId('detail-self-heals')).toHaveTextContent('Sharko will fix this on the next pass.')
     expect(within(panel).queryByTestId('detail-drift-source')).not.toBeInTheDocument()
   })
 

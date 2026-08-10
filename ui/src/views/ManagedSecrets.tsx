@@ -1751,6 +1751,14 @@ function RelatedEventsLink({ row }: { row: UnifiedRow }) {
 // promise of what Sync actually does about it. "Checked …" sits right next
 // to it, because "when was it checked" is one of the five questions this
 // page exists to answer and it shouldn't need its own row.
+//
+// Walkthrough follow-up on SSF-14: this block also carries the drift-blame
+// sentence (which side moved) and the self-heal promise (does the reader
+// need to press Sync themselves, or will Sharko fix it on its own) — both
+// restored here after SSF-14 first deleted their old home (the Resource
+// details accordion) without giving them a new one. Wording and the
+// conditions that decide whether they show are UNCHANGED from before;
+// only the place changed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function HealthConclusion({ row, verdict }: { row: UnifiedRow; verdict: DiffVerdict }) {
@@ -1774,6 +1782,20 @@ function HealthConclusion({ row, verdict }: { row: UnifiedRow; verdict: DiffVerd
       <p className="text-base text-[#2a5a7a] dark:text-gray-300" data-testid="diff-verdict">
         {diffVerdictSentence(verdict, row)}
       </p>
+      {/* P2-C6 (restored — walkthrough follow-up on SSF-14): which side
+          moved, the WHY behind the "does not match" sentence above. Same
+          condition as when this lived in the now-deleted Resource details
+          accordion (connection rows, out-of-sync only, only when both
+          revisions are known) — only the PLACE changed, not the content or
+          the condition. Sits right under the problem statement it
+          explains, ahead of the repair promise. */}
+      {row.kind === 'connection' && row.state === 'out_of_sync' && row.driftSource && (
+        <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="detail-drift-source">
+          {row.driftSource === 'git'
+            ? 'Git moved — a newer commit changed what this secret should be.'
+            : 'The cluster moved — something changed this secret outside git.'}
+        </p>
+      )}
       {/* The repair promise — only where Sync is really the fix (a real
           drift to push). A values row's own "never created" sentence
           already says "Sync creates it" inline, so it doesn't need this
@@ -1781,6 +1803,19 @@ function HealthConclusion({ row, verdict }: { row: UnifiedRow; verdict: DiffVerd
       {verdict === 'differ' && (
         <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="detail-repair-note">
           {repairNoteFor(row)}
+        </p>
+      )}
+      {/* P2-C3 (restored — walkthrough follow-up on SSF-14): does the
+          reader need to press Sync themselves, or will Sharko fix this on
+          its own pass — the single most important sentence on a broken
+          secret for an on-call reader. Same condition as the deleted
+          Resource details field (out_of_sync or missing, either row
+          kind) — never shown for a healthy/match row, exactly as before.
+          Sits right after the repair promise so "what Sync does" and
+          "do I actually need to click it" read together. */}
+      {(row.state === 'out_of_sync' || row.state === 'missing') && (
+        <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="detail-self-heals">
+          {row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
         </p>
       )}
       {/* SSF-14 item 7: a timestamp, so it stays at least 13px — was 12px
