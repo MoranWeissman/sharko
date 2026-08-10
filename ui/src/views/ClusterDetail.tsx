@@ -1699,11 +1699,15 @@ export function ClusterDetail() {
                   className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
-                  Sync
+                  {/* HL-1 (honest labels): this action re-applies only
+                      Sharko's own addon label keys — it does not rebuild
+                      config, server or name — so it is not called "Sync"
+                      anymore. testid stays secret-sync-sync on purpose. */}
+                  Re-apply addon labels
                 </button>
                 <InfoHint
                   text={hasDrift ? "Applies git's addon labels to this cluster's secret now." : 'Nothing to apply — this secret already matches git.'}
-                  label="What does Sync do?"
+                  label="What does Re-apply addon labels do?"
                 />
               </RoleGuard>
               <button
@@ -1789,7 +1793,12 @@ export function ClusterDetail() {
                       </div>
                     )}
                     <RoleGuard roles={['admin', 'operator']}>
-                      <p className="text-xs text-[#5a8aaa] dark:text-gray-500">Click Sync above to apply git's version to this secret.</p>
+                      {/* HL-1: names the renamed button, and only promises
+                          the labels — the old "apply git's version" read
+                          wider than what the action writes. */}
+                      <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
+                        Click Re-apply addon labels above to put git's addon labels back on this secret.
+                      </p>
                     </RoleGuard>
                   </div>
                 )}
@@ -1803,9 +1812,11 @@ export function ClusterDetail() {
         open={resyncModalOpen}
         onClose={() => setResyncModalOpen(false)}
         onConfirm={handleResyncNow}
-        title={`Sync cluster "${name}"?`}
+        // HL-1: same per-kind treatment as the Secrets pages — this is a
+        // cluster connection, so the confirm carries the action's real name.
+        title={`Re-apply addon labels on "${name}"?`}
         description="Applies git's addon labels to this cluster's ArgoCD secret — one time; the self-heal setting is not changed"
-        confirmText="Sync"
+        confirmText="Re-apply labels"
         loading={resyncing}
       />
 

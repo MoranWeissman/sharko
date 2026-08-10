@@ -3006,7 +3006,9 @@ describe('ClusterDetail', () => {
         ),
       ).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^Refresh$/ })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^Sync$/ })).toBeInTheDocument();
+      // HL-1: the action is named for what it does — re-apply Sharko's own
+      // addon labels — not "Sync".
+      expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^Diff$/ })).toBeInTheDocument();
     });
 
@@ -3017,7 +3019,7 @@ describe('ClusterDetail', () => {
       expect(screen.queryByText(/—\s*argocd\//)).not.toBeInTheDocument();
     });
 
-    it('disables Sync when there is nothing to apply (no drift)', async () => {
+    it('disables Re-apply addon labels when there is nothing to apply (no drift)', async () => {
       mockGetClusterComparison.mockResolvedValueOnce({
         ...comparisonResponse,
         cluster: {
@@ -3027,11 +3029,11 @@ describe('ClusterDetail', () => {
       });
       renderView();
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
-      expect(screen.getByRole('button', { name: /^Sync$/ })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeDisabled();
       expect(screen.getByText('Synced')).toBeInTheDocument();
     });
 
-    it('enables Sync and shows the "Out of sync — N addon differences" status once the secret has drifted from git', async () => {
+    it('enables Re-apply addon labels and shows the "Out of sync — N addon differences" status once the secret has drifted from git', async () => {
       mockGetClusterComparison.mockResolvedValueOnce({
         ...comparisonResponse,
         cluster: {
@@ -3045,7 +3047,7 @@ describe('ClusterDetail', () => {
       });
       renderView();
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
-      expect(screen.getByRole('button', { name: /^Sync$/ })).toBeEnabled();
+      expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeEnabled();
       expect(screen.getByText('Out of sync — 2 addon differences')).toBeInTheDocument();
     });
 

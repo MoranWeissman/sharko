@@ -824,6 +824,26 @@ export function syncGateFor(row: UnifiedRow): { disabled: boolean; reason?: stri
 }
 
 /**
+ * Honest-labels epic (HL-1): the one place the action's NAME comes from,
+ * shared by the row's ⋯ menu, the detail panel's button, and both confirm
+ * boxes so they can never disagree. A connection row's action calls
+ * resyncClusterLabels, which re-applies ONLY Sharko's own addon label keys —
+ * it does not rebuild config, server or name — so calling it "Sync" promised
+ * more than it does. An addon Secret's value really is delivered from its
+ * backend, so that one keeps "Sync". The word "Repair" is reserved for a
+ * later action that would genuinely rebuild the connection Secret; nothing
+ * here may use it.
+ */
+export function syncActionLabel(kind: 'connection' | 'values'): string {
+  return kind === 'connection' ? 'Re-apply addon labels' : 'Sync'
+}
+
+/** HL-1: the confirm button's shorter form of the same name — "Re-apply labels" fits a button; the addon side stays "Sync". */
+export function syncConfirmButtonText(kind: 'connection' | 'values' | undefined): string {
+  return kind === 'connection' ? 'Re-apply labels' : 'Sync'
+}
+
+/**
  * The Sync confirm box's description (H3 word pass, gitops-proud P4-H) —
  * used to read like two clauses stitched together with an em dash, closer
  * to a log line than a sentence someone would say out loud. It now opens
@@ -871,7 +891,9 @@ function actionsForRow(
       loading: opts.busy,
     },
     {
-      label: 'Sync',
+      // HL-1: per kind — a connection row's action only re-applies Sharko's
+      // own addon labels, and its name says so. See syncActionLabel.
+      label: syncActionLabel(row.kind),
       icon: <RotateCcw className="h-3.5 w-3.5" />,
       onSelect: opts.onRequestSync,
       disabled: gate.disabled,
@@ -1364,9 +1386,17 @@ function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
   }
 }
 
-/** SSF-12: the one-line repair promise under a "differ" conclusion — the same honesty rule as the verdict sentence above: never "Git" for a values row. */
+/**
+ * SSF-12: the one-line promise under a "differ" conclusion — the same
+ * honesty rule as the verdict sentence above: never "Git" for a values row.
+ * HL-1: the connection sentence used to say "Sync will update the cluster
+ * copy to match Git", which was untrue — the action re-applies only
+ * Sharko's own addon label keys. It now promises exactly that and no more.
+ */
 function repairNoteFor(row: UnifiedRow): string {
-  return row.kind === 'connection' ? 'Sync will update the cluster copy to match Git.' : `Sync will update the cluster copy to match ${row.sourceLabel}.`
+  return row.kind === 'connection'
+    ? "Re-apply addon labels puts git's addon labels back on this secret. Nothing else on it changes."
+    : `Sync will update the cluster copy to match ${row.sourceLabel}.`
 }
 
 /**
@@ -1929,7 +1959,9 @@ function HealthConclusion({ row, verdict }: { row: UnifiedRow; verdict: DiffVerd
           "do I actually need to click it" read together. */}
       {(row.state === 'out_of_sync' || row.state === 'missing') && (
         <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="detail-self-heals">
-          {row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
+          {/* HL-1: the button is named per kind now, so this points at the
+              right name — see syncActionLabel. */}
+          {row.selfHeals ? 'Sharko will fix this on the next pass.' : `Waiting for ${syncActionLabel(row.kind)}.`}
         </p>
       )}
       {/* SSF-14 item 7: a timestamp, so it stays at least 13px — was 12px
@@ -2162,7 +2194,9 @@ export function SecretDetailContent({
                     onClick={() => onRequestSync(row)}
                     disabled={gate.disabled}
                     icon={RotateCcw}
-                    label="Sync"
+                    // HL-1: per kind — see syncActionLabel. The testid
+                    // stays detail-sync on purpose; only the words change.
+                    label={syncActionLabel(row.kind)}
                     reason={gate.reason}
                     testId="detail-sync"
                     strong={!gate.disabled}
@@ -2850,10 +2884,21 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
   // for. Applied in the `filtered` memo below, same as addonFilter/
   // sourceFilter. Reached via a bookmarked/shared ?kind= link (secret
   // tiles v2 removed the box click-through that used to set it).
+  // HL-2: on the canonical subpages the route itself already says which
+  // kind shows, so a leftover ?kind= from an old link is ignored completely
+  // — it used to fight the route (/secrets/connections?kind=values rendered
+  // an empty list). The effect below also removes it from the URL. Only the
+  // /secret-sync compatibility redirect (App.tsx) reads it, to pick which
+  // subpage an old link lands on. Legacy unified mode (no area) keeps the
+  // filter as before.
   const [kindFilter, setKindFilterState] = useState<'' | 'connection' | 'values'>(() => {
+    if (area) return ''
     const v = searchParams.get('kind')
     return v === 'connection' || v === 'values' ? v : ''
   })
+  useEffect(() => {
+    if (area && searchParams.get('kind') !== null) updateParams((p) => p.delete('kind'))
+  }, [area, searchParams, updateParams])
   const setKindFilter = useCallback(
     (next: '' | 'connection' | 'values') => {
       setKindFilterState(next)
@@ -3605,14 +3650,15 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
         onClose={() => setSyncTarget(null)}
         onConfirm={handleConfirmSync}
         title={
+          // HL-1: the connection confirm carries the action's real name.
           syncTarget?.kind === 'connection'
-            ? `Sync cluster "${syncTarget.cluster}"?`
+            ? `Re-apply addon labels on "${syncTarget.cluster}"?`
             : syncTarget?.kind === 'values'
               ? `Sync secret for cluster "${syncTarget.cluster}", addon "${syncTarget.addon}"?`
               : 'Sync?'
         }
         description={syncConfirmDescription(syncTarget)}
-        confirmText="Sync"
+        confirmText={syncConfirmButtonText(syncTarget?.kind)}
         loading={syncing}
       />
 
