@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   ClipboardList,
   RefreshCw,
@@ -97,14 +98,22 @@ export function AuditViewer() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  // SSF-14 item 6 (Secret Sync finish pass): a deep link like
+  // /audit?cluster=spoke-eu pre-fills the existing Cluster filter — read
+  // once, on mount, from whatever query string the page was opened with.
+  // This is a ONE-TIME read (the lazy useState initializer runs exactly
+  // once): the filters below don't keep syncing to the URL as the reader
+  // types, same as every other filter on this page.
+  const [initialSearchParams] = useSearchParams();
+
   // Raw filter inputs (update on every keystroke).
-  const [filterUser, setFilterUser] = useState('');
-  const [filterAction, setFilterAction] = useState('');
-  const [filterSource, setFilterSource] = useState('');
-  const [filterResult, setFilterResult] = useState('');
-  const [filterCluster, setFilterCluster] = useState('');
-  const [filterSince, setFilterSince] = useState(''); // datetime-local value (local time)
-  const [search, setSearch] = useState(''); // client-side free-text over loaded entries
+  const [filterUser, setFilterUser] = useState(() => initialSearchParams.get('user') ?? '');
+  const [filterAction, setFilterAction] = useState(() => initialSearchParams.get('action') ?? '');
+  const [filterSource, setFilterSource] = useState(() => initialSearchParams.get('source') ?? '');
+  const [filterResult, setFilterResult] = useState(() => initialSearchParams.get('result') ?? '');
+  const [filterCluster, setFilterCluster] = useState(() => initialSearchParams.get('cluster') ?? '');
+  const [filterSince, setFilterSince] = useState(() => initialSearchParams.get('since') ?? ''); // datetime-local value (local time)
+  const [search, setSearch] = useState(() => initialSearchParams.get('q') ?? ''); // client-side free-text over loaded entries
 
   // Debounced copies — these are what actually drive the fetch (item 3.4).
   const dUser = useDebouncedValue(filterUser, 300);

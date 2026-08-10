@@ -389,35 +389,31 @@ describe('ManagedSecrets — the live resource, read-only (G4)', () => {
     await waitFor(() => expect(mockGetAddonValuesSecretResource).toHaveBeenCalledTimes(1))
     expect(mockGetAddonValuesSecretResource).toHaveBeenCalledWith('prod-eu', 'datadog')
 
-    // SSF-8/SSF-12: this row is in_sync (a match) — the comparison box
-    // opens behind "View comparison".
+    // SSF-8/SSF-12/SSF-14: this row is in_sync (a match) — the comparison
+    // box opens behind "View comparison".
     await user.click(await screen.findByTestId('view-comparison-toggle'))
 
-    // SSF-12 honesty rule: the comparison itself shows key PRESENCE, never
-    // a value and never the resource facts (type/labels) that moved out —
-    // see Resource details below.
-    const liveCard = await screen.findByTestId('diff-live-card')
-    const presence = within(liveCard).getByTestId('comparison-key-presence')
+    // SSF-12/SSF-14 honesty rule: the comparison itself shows key
+    // PRESENCE, never a value and never a resource fact (type/labels) —
+    // those now live on the YAML tab only, the one remaining technical
+    // representation (SSF-14 item 4 — Resource details/Keys are gone from
+    // Overview).
+    const presence = await screen.findByTestId('comparison-key-presence')
     expect(within(presence).getByText('api-key')).toBeInTheDocument()
     expect(within(presence).getByText('app-key')).toBeInTheDocument()
+    expect(within(presence).getAllByText('Match')).toHaveLength(2)
 
-    // P3-F2: the FULL key list — pointer + the server's fixed mask — is its
-    // own Keys section, unchanged by SSF-12.
-    const keys = within(await screen.findByTestId('detail-key-table')).getByTestId('resource-data-keys')
-    expect(within(keys).getByText('api-key')).toBeInTheDocument()
-    expect(within(keys).getByText('app-key')).toBeInTheDocument()
-    expect(within(keys).getAllByText('••••••••')).toHaveLength(2)
+    expect(screen.queryByTestId('detail-resource-disclosure')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('detail-keys-disclosure')).not.toBeInTheDocument()
 
-    // P2-C2: each key shows the store pointer it comes from — a location,
-    // never a value.
-    expect(within(keys).getByText('← secrets/datadog/api-key')).toBeInTheDocument()
-    expect(within(keys).getByText('← secrets/datadog/app-key')).toBeInTheDocument()
-
-    // SSF-12: type and the full label set are live RESOURCE facts, not a
-    // diff — they live in the collapsed Resource details section now.
-    const resourceDetails = screen.getByTestId('detail-resource-disclosure')
-    await waitFor(() => expect(within(resourceDetails).getByTestId('detail-resource-type')).toHaveTextContent('Opaque'))
-    expect(within(within(resourceDetails).getByTestId('resource-labels')).getByText('sharko')).toBeInTheDocument()
+    // The same facts are still reachable — on the YAML tab.
+    const panel = screen.getByTestId('secret-detail-panel')
+    await user.click(within(panel).getByTestId('detail-tab-yaml'))
+    const yaml = await within(panel).findByTestId('detail-yaml-content')
+    expect(yaml).toHaveTextContent('api-key: ••••••••')
+    expect(yaml).toHaveTextContent('app-key: ••••••••')
+    expect(yaml).toHaveTextContent('type: Opaque')
+    expect(yaml.textContent ?? '').toMatch(/sharko/)
   })
 
   it('a failed read says so plainly and shows no resource content at all', async () => {
