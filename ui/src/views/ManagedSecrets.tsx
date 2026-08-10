@@ -1,9 +1,28 @@
-// ManagedSecrets — the page now named "Secret Sync" (gitops-proud P4-I D1;
-// lives at /secret-sync, with /secrets kept as a redirect alias so old
-// links and bookmarks keep working — see App.tsx), a dense resource list
-// built to look like ArgoCD's own Application list. Every secret Sharko
-// manages — connection secrets AND addon-values secrets — is one row in
-// one table: a small kind glyph, the identity, a small grey "kind · follows source"
+// ManagedSecrets — the Secrets area's inventory page (the component/file
+// name is not user-visible and deliberately keeps its history).
+//
+// Secrets-area rename (SN-3): the area has one sidebar item ("Secrets")
+// and two real subpages, each with its own URL —
+//
+//   /secrets/connections  →  <ManagedSecrets area="connections">
+//   /secrets/addons       →  <ManagedSecrets area="addons">
+//
+// The `area` prop scopes this page to one kind of Secret: its own title
+// and description, only its own rows, only its own engine in the strip,
+// and a links-that-look-like-tabs subnav (SecretsSubnav) between the two.
+// Without `area` the page renders the pre-split unified list — that mode
+// is unreachable from the app (every old route redirects into the area,
+// see App.tsx) and exists so the existing test suites keep exercising the
+// exact behavior both subpages share. Everything below the header —
+// search, chips, grouping, sort, tiles/table, sessionStorage restore, row
+// actions, the leftover-secret Delete flow — is one implementation either
+// way.
+//
+// Before the split this was the page named "Secret Sync" (gitops-proud
+// P4-I D1), a dense resource list built to look like ArgoCD's own
+// Application list. Every secret Sharko manages — connection secrets AND
+// addon-values secrets — was one row in one table: a small kind glyph,
+// the identity, a small grey "kind · follows source"
 // line under the identity, a cluster (when it isn't already the identity),
 // a time, a status dot + word, and a row menu. Click a row to open the
 // detail side panel; the row itself never grows.
@@ -371,6 +390,7 @@ import { StatusDot, StatusMark, statusLabel, statusSortRank, statusStripClassNam
 import { TimeChip } from '@/components/resource/TimeChip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { SecretsSubnav } from '@/components/SecretsSubnav'
 import { SecretTiles } from './SecretTiles'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2596,15 +2616,37 @@ const VALID_SORT_KEYS: string[] = ['name', 'namespace', 'addon', 'cluster', 'sou
  * sessionStorage can be unavailable (private browsing) or full, and losing
  * a scroll position is a nicety missed, never a broken page.
  */
-function secretSyncScrollKey(query: string): string {
-  return `sharko:secret-sync:scroll:${query}`
+function secretSyncScrollKey(areaScope: string, query: string): string {
+  return `sharko:secret-sync:scroll:${areaScope}${query}`
 }
-function secretSyncGroupsKey(query: string): string {
-  return `sharko:secret-sync:groups:${query}`
+function secretSyncGroupsKey(areaScope: string, query: string): string {
+  return `sharko:secret-sync:groups:${areaScope}${query}`
 }
 
-export function ManagedSecrets() {
+/** Which Secrets subpage this page is rendering (Secrets-area rename, SN-3). */
+export type SecretsArea = 'connections' | 'addons'
+
+// The subpages' own words — the approved names and one-sentence
+// descriptions, exactly as decided. Nothing here may suggest Sharko lists
+// every Kubernetes Secret in a cluster.
+const AREA_HEADER: Record<SecretsArea, { title: string; description: string }> = {
+  connections: {
+    title: 'Cluster connections',
+    description: 'Secrets Sharko uses to register clusters with Argo CD.',
+  },
+  addons: {
+    title: 'Addon secrets',
+    description: 'Secrets Sharko delivers from configured backends to addons on remote clusters.',
+  },
+}
+
+export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
   const navigate = useNavigate()
+  // sessionStorage scope for this page's saved scroll/groups — the two
+  // subpages must not restore each other's state when their query strings
+  // happen to match (both empty is the common case). The legacy unified
+  // mode keeps the pre-split key shape.
+  const areaScope = area ? `${area}:` : ''
   const { data, loading, load } = useManagedSecretsData()
   // SSF-9 — the table's own scroll container (see the "max-h-[65vh]
   // overflow-y-auto" wrapper below), so openRowDetail can read its current
@@ -2707,6 +2749,11 @@ export function ManagedSecrets() {
   // written to the URL.
   const [groupBy, setGroupByState] = useState<GroupBy>(() => {
     const v = searchParams.get('group')
+    // SN-3: on the Cluster connections subpage nothing is an addon, so
+    // grouping by addon would only ever produce the old "not an addon"
+    // bucket — the control below doesn't offer it there, and a stale
+    // ?group=addon link falls back to the flat list.
+    if (v === 'addon' && area === 'connections') return 'none'
     return v === 'addon' || v === 'cluster' ? v : 'none'
   })
   const setGroupBy = useCallback(
@@ -2731,7 +2778,7 @@ export function ManagedSecrets() {
   // to the computed default.
   const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>(() => {
     try {
-      const raw = window.sessionStorage.getItem(secretSyncGroupsKey(searchParams.toString()))
+      const raw = window.sessionStorage.getItem(secretSyncGroupsKey(areaScope, searchParams.toString()))
       return raw ? (JSON.parse(raw) as Record<string, boolean>) : {}
     } catch {
       return {}
@@ -2866,15 +2913,28 @@ export function ManagedSecrets() {
     [data, valuesSourceLabel],
   )
 
+  // SN-3: the subpage's own rows. Cluster connections shows kind
+  // 'connection'; Addon secrets shows kind 'values' — which includes the
+  // leftover ("orphaned") rows, folded in as 'values' on purpose exactly
+  // as before (see buildUnifiedRows). Everything downstream — chips,
+  // counts, filter options, the empty state, the honest footer count —
+  // reads this scoped set, so nothing on one subpage counts or mentions
+  // the other's rows. Legacy unified mode (no area) scopes nothing.
+  const areaRows = useMemo(() => {
+    if (!area) return unifiedRows
+    const kind = area === 'connections' ? 'connection' : 'values'
+    return unifiedRows.filter((r) => r.kind === kind)
+  }, [unifiedRows, area])
+
   // B1 fix: search narrows the rows chip COUNTS are computed over — the
   // chip filter itself must NOT be part of that computation, or selecting
   // a chip would make every other chip (and itself, after a search) read
   // 0.
   const searchFiltered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return unifiedRows
-    return unifiedRows.filter((r) => matchesSearch(r, q))
-  }, [unifiedRows, search])
+    if (!q) return areaRows
+    return areaRows.filter((r) => matchesSearch(r, q))
+  }, [areaRows, search])
 
   const counts = useMemo(() => {
     const c: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, orphaned: 0, foreign: 0, unknown: 0 }
@@ -2888,14 +2948,14 @@ export function ManagedSecrets() {
   // typing temporarily excluded every row of that addon.
   const addonOptions = useMemo(() => {
     const set = new Set<string>()
-    for (const r of unifiedRows) if (r.addon) set.add(r.addon)
+    for (const r of areaRows) if (r.addon) set.add(r.addon)
     return [...set].sort()
-  }, [unifiedRows])
+  }, [areaRows])
   const sourceOptions = useMemo(() => {
     const set = new Set<string>()
-    for (const r of unifiedRows) set.add(r.sourceLabel)
+    for (const r of areaRows) set.add(r.sourceLabel)
     return [...set].sort()
-  }, [unifiedRows])
+  }, [areaRows])
 
   const filtered = useMemo(() => {
     let rows = searchFiltered
@@ -2941,14 +3001,14 @@ export function ManagedSecrets() {
   const secretsSummary =
     sorted.length === 0
       ? hasActiveFilter
-        ? `No secrets match this filter (${unifiedRows.length} total)`
+        ? `No secrets match this filter (${areaRows.length} total)`
         : 'No secrets'
       : summaryGrouped
         ? hasActiveFilter
-          ? `${summaryGroupCount} ${unit}, ${sorted.length} ${secretWord} (filtered from ${unifiedRows.length})`
+          ? `${summaryGroupCount} ${unit}, ${sorted.length} ${secretWord} (filtered from ${areaRows.length})`
           : `${summaryGroupCount} ${unit}, ${sorted.length} ${secretWord}`
         : hasActiveFilter
-          ? `${sorted.length} ${secretWord} (filtered from ${unifiedRows.length})`
+          ? `${sorted.length} ${secretWord} (filtered from ${areaRows.length})`
           : `${sorted.length} ${secretWord}`
 
   const handleSort = (key: SortKey) => {
@@ -3080,16 +3140,33 @@ export function ManagedSecrets() {
       const query = searchParams.toString()
       try {
         if (scrollContainerRef.current) {
-          window.sessionStorage.setItem(secretSyncScrollKey(query), String(scrollContainerRef.current.scrollTop))
+          window.sessionStorage.setItem(secretSyncScrollKey(areaScope, query), String(scrollContainerRef.current.scrollTop))
         }
-        window.sessionStorage.setItem(secretSyncGroupsKey(query), JSON.stringify(groupOverrides))
+        window.sessionStorage.setItem(secretSyncGroupsKey(areaScope, query), JSON.stringify(groupOverrides))
       } catch {
         // sessionStorage can be unavailable (private browsing) — losing the
         // scroll/group restore is a nicety missed, never a broken page.
       }
-      navigate(`/secret-sync/${encodeURIComponent(row.key)}`, { state: { listSearch: query } })
+      // SN-3/SN-4: on a subpage a row opens its own per-kind detail route.
+      // A leftover ("orphaned") row has no addon of its own to name, so its
+      // detail URL carries `namespace/name` as the last segment instead —
+      // SecretDetailPage matches it back the same way. Legacy unified mode
+      // keeps the old /secret-sync/<key> shape the tests pin.
+      let detailHref: string
+      if (!area) {
+        detailHref = `/secret-sync/${encodeURIComponent(row.key)}`
+      } else if (row.kind === 'connection') {
+        detailHref = `/secrets/connections/${encodeURIComponent(row.cluster)}`
+      } else if (row.key.startsWith('orphaned-')) {
+        detailHref = `/secrets/addons/${encodeURIComponent(row.cluster)}/${encodeURIComponent(
+          `${row.secretNamespace ?? ''}/${row.secretName ?? ''}`,
+        )}`
+      } else {
+        detailHref = `/secrets/addons/${encodeURIComponent(row.cluster)}/${encodeURIComponent(row.addon ?? '')}`
+      }
+      navigate(detailHref, { state: { listSearch: query } })
     },
-    [navigate, searchParams, groupOverrides],
+    [navigate, searchParams, groupOverrides, area, areaScope],
   )
 
   // SSF-9 — restores the scroll position openRowDetail saved, once the
@@ -3101,7 +3178,7 @@ export function ManagedSecrets() {
   useEffect(() => {
     if (loading) return
     try {
-      const saved = window.sessionStorage.getItem(secretSyncScrollKey(searchParams.toString()))
+      const saved = window.sessionStorage.getItem(secretSyncScrollKey(areaScope, searchParams.toString()))
       if (saved && scrollContainerRef.current) {
         scrollContainerRef.current.scrollTop = Number(saved)
       }
@@ -3122,25 +3199,37 @@ export function ManagedSecrets() {
           worried would go stale) but a fact about what Sharko does here,
           which doesn't change when the table's columns do. */}
       <div>
-        {/* gitops-proud P4-I (D1): renamed "Secret Sync" — the nav entry,
-            page title, and breadcrumb all say the same name now. */}
-        <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Secret Sync</h1>
-        {/* SSF-2 (Secret Sync finish pass): shortened from a two-line
-            list-of-everything intro to the one line that actually matters —
-            the security boundary, in the maintainer's own locked wording.
-            Everything else this page says (errors, ownership, orphans,
-            cadence, repair) still says it, just not up here. */}
+        {/* SN-3: each subpage carries its own approved name and its own
+            one-sentence description — never a rolled-up area intro. The
+            legacy unified mode (test-only, unreachable from the app) keeps
+            the pre-split security line under the plain area name. */}
+        <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">
+          {area ? AREA_HEADER[area].title : 'Secrets'}
+        </h1>
         <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">
-          Sharko keeps these secrets in sync automatically. Git defines what should exist. Values come from your
-          secret store.
+          {area
+            ? AREA_HEADER[area].description
+            : 'Sharko keeps these secrets in sync automatically. Git defines what should exist. Values come from your secret store.'}
         </p>
       </div>
+
+      {/* SN-3: the navigation between the two subpages — real links that
+          look like tabs, directly under the title, above the page's own
+          controls. */}
+      {area && <SecretsSubnav />}
 
       {/* Engines quiet strip — see the block comment on EngineStat above. */}
       <div className="flex flex-wrap items-start justify-between gap-3 border-y border-[#6aade0] py-2 dark:border-gray-800">
         <div className="flex flex-wrap divide-x divide-[#6aade0] dark:divide-gray-800">
-          <EngineStat label="Cluster connections" kind="connection" info={data?.engines.cluster_connection} onErrorClick={filterToCluster} />
-          <EngineStat label="Addon values" kind="values" info={data?.engines.addon_values} onErrorClick={filterToCluster} />
+          {/* SN-3: each subpage shows only its own engine — the other
+              engine's stats belong to the other subpage now. Legacy
+              unified mode shows both, as before. */}
+          {(!area || area === 'connections') && (
+            <EngineStat label="Cluster connections" kind="connection" info={data?.engines.cluster_connection} onErrorClick={filterToCluster} />
+          )}
+          {(!area || area === 'addons') && (
+            <EngineStat label="Addon values" kind="values" info={data?.engines.addon_values} onErrorClick={filterToCluster} />
+          )}
         </div>
         <RoleGuard roles={['admin', 'operator']}>
           <div className="flex items-center gap-1.5">
@@ -3300,7 +3389,12 @@ export function ManagedSecrets() {
             {(
               [
                 ['none', 'Flat list'],
-                ['addon', 'Addon'],
+                // SN-3: on Cluster connections nothing is an addon —
+                // grouping by addon there could only produce the old
+                // "not an addon" bucket, which the split retires, so the
+                // option isn't offered. Addon secrets and legacy unified
+                // mode keep all three.
+                ...(area === 'connections' ? [] : ([['addon', 'Addon']] as [GroupBy, string][])),
                 ['cluster', 'Cluster'],
               ] as [GroupBy, string][]
             ).map(([value, label]) => (
@@ -3368,7 +3462,16 @@ export function ManagedSecrets() {
         </div>
       ) : sorted.length === 0 ? (
         <div className="rounded-xl border border-border bg-card p-6 text-center text-sm text-[#3a6a8a] shadow-sm dark:text-gray-500">
-          {unifiedRows.length === 0 ? 'Sharko is not managing any secrets yet.' : 'No secrets match this filter.'}
+          {/* SN-3: the empty line is scoped to the subpage — with the other
+              subpage possibly holding rows, "not managing any secrets yet"
+              would be untrue here, so each area names its own kind. */}
+          {areaRows.length === 0
+            ? area === 'connections'
+              ? 'No cluster connection Secrets yet.'
+              : area === 'addons'
+                ? 'No addon Secrets yet.'
+                : 'Sharko is not managing any secrets yet.'
+            : 'No secrets match this filter.'}
         </div>
       ) : view === 'tiles' ? (
         // Secret tiles v2 — the SAME `sorted` rows and `groups` list view

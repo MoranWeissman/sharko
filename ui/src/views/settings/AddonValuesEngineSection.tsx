@@ -117,7 +117,7 @@ export function AddonValuesEngineSection() {
             <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">
               {enabled
                 ? 'Sharko checks and applies addon secret values on its normal schedule.'
-                : 'Sharko is not checking or applying addon secret values. Rows on Secret Sync keep showing their last-known facts.'}
+                : 'Sharko is not checking or applying addon secret values. Rows on Addon secrets keep showing their last-known facts.'}
             </p>
           </div>
           <label className="flex shrink-0 cursor-pointer items-center gap-2">

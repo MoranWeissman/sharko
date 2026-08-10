@@ -28,7 +28,7 @@ Tools like [Kargo](https://kargo.io/) manage **promotion** — moving a validate
 
 [External Secrets Operator](https://external-secrets.io/) and similar tools run an in-cluster controller that continuously pulls secret values from a secrets store (AWS Secrets Manager, Vault, and others) and keeps a Kubernetes `Secret` in sync with it. This is a general-purpose job — any workload's secrets, not just addon credentials.
 
-Sharko's own secret sync overlaps with this category, but narrower: it delivers **addon credentials specifically** — the values an addon in Sharko's catalog needs to run — by reading from your secrets store and pushing the value into the cluster itself, on a schedule. It does not manage arbitrary application secrets, and it was built as an option for teams that don't already run ESO, not as a replacement for it. If you already run ESO, you can leave Sharko's addon-secret delivery switched off and keep using ESO for that job — see [Secret Sync](secret-sync.md) for the on/off switch and exactly what Sharko's version does and doesn't do.
+Sharko's own secret sync overlaps with this category, but narrower: it delivers **addon credentials specifically** — the values an addon in Sharko's catalog needs to run — by reading from your secrets store and pushing the value into the cluster itself, on a schedule. It does not manage arbitrary application secrets, and it was built as an option for teams that don't already run ESO, not as a replacement for it. If you already run ESO, you can leave Sharko's addon-secret delivery switched off and keep using ESO for that job — see [Secrets](secret-sync.md) for the on/off switch and exactly what Sharko's version does and doesn't do.
 
 ### Cluster-fleet managers (for example, Sveltos, Rancher Fleet)
 
