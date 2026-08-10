@@ -1938,6 +1938,11 @@ func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, 
 		return
 	}
 
+	// Deliberately NOT argosecrets.BuildClusterSecret: this is a
+	// metadata-only write (clear two annotations, re-apply the ownership
+	// label) on a DeepCopy of the live object — Data/StringData and every
+	// other field must come through untouched, which a from-scratch build
+	// cannot guarantee.
 	updated := fresh.DeepCopy()
 	delete(updated.Annotations, models.AnnotationRegistrationPending)
 	// A registration that was in flight across the V2-cleanup-59 upgrade
@@ -2153,7 +2158,13 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		Labels:   clusterLabels,
 	}
 
-	secret, buildErr := buildClusterSecret(spec, r.namespace)
+	// The canonical builder in internal/argosecrets is the ONE place a full
+	// connection Secret is assembled from a spec — the same function
+	// Manager.Ensure's create/update paths use, so the Secret shape is
+	// byte-identical regardless of which writer mutated it (we still avoid
+	// Ensure itself: its adoption path is deliberately not for this
+	// reconciler per the §9 ownership policy).
+	secret, buildErr := argosecrets.BuildClusterSecret(spec, r.namespace)
 	if buildErr != nil {
 		stats.Errors++
 		log.Error("[clusterreconciler] building Secret payload failed — skipping cluster",
@@ -2175,7 +2186,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		return
 	}
 
-	// Defense-in-depth: re-apply the label even though buildClusterSecret
+	// Defense-in-depth: re-apply the label even though the canonical builder
 	// already set it. Cheap, idempotent, and lock-in for the invariant
 	// "every Secret this reconciler writes carries the sharko label".
 	ApplyManagedBySharkoLabel(secret)
@@ -2404,34 +2415,9 @@ func normalizeLabels(raw interface{}) map[string]string {
 	}
 }
 
-// buildClusterSecret constructs the corev1.Secret payload that
-// argosecrets.Manager.Ensure would have built — but as a standalone
-// helper so the reconciler can call Create directly without going
-// through Ensure's adoption path (which is deliberately avoided per
-// the §9 ownership policy).
-//
-// The Secret shape (labels, stringData keys, execProviderConfig JSON)
-// MUST stay byte-identical to argosecrets.Manager's output (the Manager
-// is still used for the kubeconfig direct-write path by adopt/remove/
-// providers/API handlers), so ArgoCD's auth code path works identically.
-func buildClusterSecret(spec argosecrets.ClusterSecretSpec, namespace string) (*corev1.Secret, error) {
-	configJSON, err := argosecrets.BuildSecretConfigJSON(spec)
-	if err != nil {
-		return nil, fmt.Errorf("building exec-provider config for cluster %q: %w", spec.Name, err)
-	}
-	labels := argosecrets.BuildClusterSecretLabels(spec)
-	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        spec.Name,
-			Namespace:   namespace,
-			Labels:      labels,
-			Annotations: spec.Annotations,
-		},
-		Type: corev1.SecretTypeOpaque,
-		StringData: map[string]string{
-			"name":   spec.Name,
-			"server": spec.Server,
-			"config": configJSON,
-		},
-	}, nil
-}
+// The local buildClusterSecret helper that used to live here was the one
+// genuinely duplicated piece of the connection-Secret writers: it assembled
+// its own corev1.Secret literal from the shared BuildSecretConfigJSON /
+// BuildClusterSecretLabels wrappers. createOne now calls
+// argosecrets.BuildClusterSecret — the ONE canonical builder — directly, so
+// there is a single place the finished Secret object comes from.
