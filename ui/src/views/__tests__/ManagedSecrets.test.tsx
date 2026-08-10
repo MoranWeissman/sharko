@@ -980,8 +980,9 @@ describe('ManagedSecrets', () => {
     expect(within(conclusion).getByTestId('detail-drift-source')).toHaveTextContent(
       'Git moved — a newer commit changed what this secret should be.',
     )
-    // C3: self_heals: false on an out_of_sync row -> "Waiting for Sync."
-    expect(within(conclusion).getByTestId('detail-self-heals')).toHaveTextContent('Waiting for Sync.')
+    // C3: self_heals: false on an out_of_sync row -> waiting for the
+    // action. HL-1: a connection row points at the action's real name.
+    expect(within(conclusion).getByTestId('detail-self-heals')).toHaveTextContent('Waiting for Re-apply addon labels.')
 
     // Never back inside a Resource details accordion or any other
     // disclosure — that section stays deleted, and neither sentence lives
@@ -990,7 +991,7 @@ describe('ManagedSecrets', () => {
     expect(screen.queryByTestId('detail-keys-disclosure')).not.toBeInTheDocument()
     expect(screen.queryByTestId('detail-activity-disclosure')).not.toBeInTheDocument()
     const provenance = await within(panel).findByTestId('comparison-provenance')
-    expect(within(provenance).queryByText(/Waiting for Sync|Git moved/)).not.toBeInTheDocument()
+    expect(within(provenance).queryByText(/Waiting for Re-apply addon labels|Git moved/)).not.toBeInTheDocument()
   })
 
   // P2-C3: the in-sync row (prod-eu) must show neither the drift sentence
@@ -1088,26 +1089,27 @@ describe('ManagedSecrets', () => {
     expect(mockGetClusterComparison).not.toHaveBeenCalled()
   })
 
-  it('shows an info hint next to Sync ONLY when it is genuinely disabled, with the correct accessible label (S7.1)', async () => {
+  it('shows an info hint next to the action ONLY when it is genuinely disabled, with the correct accessible label (S7.1)', async () => {
     const user = userEvent.setup()
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
 
-    // prod-eu is in_sync — Sync is disabled and carries a hint.
+    // prod-eu is in_sync — the action is disabled and carries a hint.
+    // HL-1: on a connection row the action reads "Re-apply addon labels".
     await user.click(screen.getByRole('button', { name: 'Actions for prod-eu' }))
-    const syncItemDisabled = await screen.findByRole('menuitem', { name: /Sync/ })
-    expect(within(syncItemDisabled).getByLabelText('Why is Sync unavailable?')).toBeInTheDocument()
+    const syncItemDisabled = await screen.findByRole('menuitem', { name: /Re-apply addon labels/ })
+    expect(within(syncItemDisabled).getByLabelText('Why is Re-apply addon labels unavailable?')).toBeInTheDocument()
     // Check now is always enabled here — it must carry NO hint at all.
     const refreshItem = screen.getByRole('menuitem', { name: /Check now/ })
     expect(within(refreshItem).queryByLabelText(/Why is Check now unavailable\?/)).not.toBeInTheDocument()
     await user.keyboard('{Escape}')
 
-    // staging-us is out_of_sync — Sync is enabled and must carry NO hint.
+    // staging-us is out_of_sync — the action is enabled and must carry NO hint.
     await user.click(screen.getByRole('button', { name: 'Actions for staging-us' }))
-    const syncItemEnabled = await screen.findByRole('menuitem', { name: /Sync/ })
-    expect(within(syncItemEnabled).queryByLabelText(/Why is Sync unavailable\?/)).not.toBeInTheDocument()
+    const syncItemEnabled = await screen.findByRole('menuitem', { name: /Re-apply addon labels/ })
+    expect(within(syncItemEnabled).queryByLabelText(/Why is Re-apply addon labels unavailable\?/)).not.toBeInTheDocument()
   })
 
   // ───────────────────────────────────────────────────────────────────────
@@ -1486,7 +1488,8 @@ describe('ManagedSecrets', () => {
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
     await user.click(screen.getByRole('button', { name: 'Actions for staging-us' }))
-    await user.click(await screen.findByRole('menuitem', { name: /Sync/ }))
+    // HL-1: on a connection row the action reads "Re-apply addon labels".
+    await user.click(await screen.findByRole('menuitem', { name: /Re-apply addon labels/ }))
 
     await waitFor(() =>
       expect(

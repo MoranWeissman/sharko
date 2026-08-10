@@ -926,13 +926,18 @@ describe('SSF-12 — the one health conclusion', () => {
     )
   })
 
-  it('a broken connection row says "Needs attention" and explains what Sync will do — never "Git" softened, never a values source', async () => {
+  it('a broken connection row says "Needs attention" and promises only the labels — never that the copy will match Git (HL-1)', async () => {
     renderPage()
     const panel = await openRow('connection-drifted-eu') // out_of_sync -> differ
     const conclusion = within(panel).getByTestId('detail-health-conclusion')
     expect(within(conclusion).getByTestId('detail-conclusion-label')).toHaveTextContent('Needs attention')
     expect(within(conclusion).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy does not match Git.')
-    expect(within(conclusion).getByTestId('detail-repair-note')).toHaveTextContent('Sync will update the cluster copy to match Git.')
+    // HL-1: the old sentence here ("Sync will update the cluster copy to
+    // match Git.") was untrue — the action re-applies only Sharko's own
+    // addon label keys. The note now promises exactly that.
+    expect(within(conclusion).getByTestId('detail-repair-note')).toHaveTextContent(
+      "Re-apply addon labels puts git's addon labels back on this secret. Nothing else on it changes.",
+    )
   })
 
   it('a broken addon-values row says "Needs attention", names the real store, and promises what Sync repairs', async () => {

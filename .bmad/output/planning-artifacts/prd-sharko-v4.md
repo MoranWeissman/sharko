@@ -384,7 +384,7 @@ The addon layer ArgoCD fleets simply have — possibly under argoproj-labs one d
 ### Watching: Drift, Diagnostics, Events
 
 - FR34: Sharko detects drift between git and live cluster state within its stated window and shows a read-only diff.
-- FR35: From the drift view, a user can trigger a one-time re-sync — make the cluster match git now — without enabling self-heal.
+- FR35: From the drift view, a user can trigger a one-time re-apply of Sharko's own addon labels — the same keys FR36 names, and nothing else — without enabling self-heal. *(Wording narrowed 2026-08-10: the earlier "make the cluster match git now" promised more than the action does.)*
 - FR36: A user can opt in to self-heal; when on, Sharko re-applies only its own addon-label keys — never anything else.
 - FR37: When something breaks, diagnostics say what, where, and why in plain words — including parser errors with file and line.
 - FR38: Sharko emits Kubernetes events for failures and important transitions, never including secret values.
@@ -457,7 +457,7 @@ What v4 actually changes, on one page.
 - Takeover: the preflight (4 checks) and takeover registration (same name/address, legacy labels preserved by default) — the brownfield migration features (FR13–FR16).
 - Catalog approved-list model *(amended 2026-08-08 — replaced the delta model)*: the org's file is the full approved list; the curated list is a display-only discovery window. Plus extended entry fields + internal addons as first-class citizens (FR17–FR19).
 - Deployment-settings-as-data with catalog quirk defaults (FR24).
-- API token lifecycle: expiry by default, renew, revoke (FR11). One-time re-sync from the drift view (FR35). Unregister with warn-and-confirm (FR16).
+- API token lifecycle: expiry by default, renew, revoke (FR11). One-time re-apply of Sharko's own addon labels from the drift view (FR35, wording narrowed 2026-08-10). Unregister with warn-and-confirm (FR16).
 - The honesty pass: SBOM real or claim dropped, threat model surfaced, arm64 images, docs lead with Kubernetes Secrets, stated limits (multi-tenancy, single replica, coarse roles).
 - The migration playbook with the honest downtime statement (docs).
 

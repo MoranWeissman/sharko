@@ -6,7 +6,9 @@ import { AuthContext } from '@/hooks/useAuth';
 
 // v4-8-5 — "Re-sync now" in the drift view, renamed to "Sync" as part of the
 // Managed cluster secret panel's ArgoCD-vocabulary toolbar (walk day 4 /
-// S1). Pins:
+// S1), and renamed again to "Re-apply addon labels" by the honest-labels
+// epic (HL-1) — the action re-applies only Sharko's own addon label keys,
+// so its name says exactly that now. Pins:
 //  1. The button always renders, but stays DISABLED when there is nothing
 //     to apply (no drift) — not hidden, unlike the old always-conditional
 //     "Re-sync now".
@@ -123,7 +125,7 @@ describe('ClusterDetail — Re-sync now (v4-8-5)', () => {
     });
   });
 
-  it('renders "Sync" disabled when labels are in sync (nothing to apply)', async () => {
+  it('renders "Re-apply addon labels" disabled when labels are in sync (nothing to apply)', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse());
     renderView();
 
@@ -131,37 +133,37 @@ describe('ClusterDetail — Re-sync now (v4-8-5)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
     expect(screen.getByText('Synced')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Sync$/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeDisabled();
   });
 
-  it('renders "Sync" enabled when drift is present', async () => {
+  it('renders "Re-apply addon labels" enabled when drift is present', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse({ added: ['addon-foo'] }));
     renderView();
 
     await waitFor(() => {
       expect(screen.getByText(/Out of sync/)).toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: /^Sync$/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeEnabled();
   });
 
-  it('a viewer never sees "Sync", even with drift present', async () => {
+  it('a viewer never sees "Re-apply addon labels", even with drift present', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse({ added: ['addon-foo'] }));
     renderView(viewerAuth);
 
     await waitFor(() => {
       expect(screen.getByText(/Out of sync/)).toBeInTheDocument();
     });
-    expect(screen.queryByRole('button', { name: /^Sync$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Re-apply addon labels$/ })).not.toBeInTheDocument();
   });
 
-  it('clicking "Sync" opens a confirm dialog naming exactly what it does', async () => {
+  it('clicking "Re-apply addon labels" opens a confirm dialog naming exactly what it does', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse({ added: ['addon-foo'] }));
     renderView();
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^Sync$/ })).toBeEnabled();
+      expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeEnabled();
     });
-    fireEvent.click(screen.getByRole('button', { name: /^Sync$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Re-apply addon labels$/ }));
 
     await waitFor(() => {
       expect(
@@ -176,20 +178,19 @@ describe('ClusterDetail — Re-sync now (v4-8-5)', () => {
     renderView();
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^Sync$/ })).toBeEnabled();
+      expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeEnabled();
     });
-    fireEvent.click(screen.getByRole('button', { name: /^Sync$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Re-apply addon labels$/ }));
 
     // Wait for the dialog to actually render before looking for its confirm
-    // button — the modal's confirm button shares the same accessible name
-    // as the toolbar's Sync button, so we grab the last one.
+    // button. HL-1: the modal's confirm button reads "Re-apply labels" — a
+    // different name from the toolbar button, so no getAllByRole hack.
     await waitFor(() => {
       expect(screen.getByText(/one time; the self-heal setting is not changed/i)).toBeInTheDocument();
     });
 
     const callCountBefore = mockGetClusterComparison.mock.calls.length;
-    const buttons = screen.getAllByRole('button', { name: /^Sync$/ });
-    fireEvent.click(buttons[buttons.length - 1]);
+    fireEvent.click(screen.getByRole('button', { name: /^Re-apply labels$/ }));
 
     await waitFor(() => {
       expect(mockResyncClusterLabels).toHaveBeenCalledWith('prod-eu');

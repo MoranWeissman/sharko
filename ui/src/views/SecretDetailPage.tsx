@@ -49,6 +49,7 @@ import {
   buildUnifiedRows,
   deleteConfirmDescription,
   SecretDetailContent,
+  syncConfirmButtonText,
   syncConfirmDescription,
   useManagedSecretsData,
   type UnifiedRow,
@@ -232,14 +233,16 @@ export function SecretDetailPage() {
         onClose={() => setSyncTarget(null)}
         onConfirm={handleConfirmSync}
         title={
+          // HL-1: the connection confirm carries the action's real name —
+          // same per-kind treatment as the list page's own confirm.
           syncTarget?.kind === 'connection'
-            ? `Sync cluster "${syncTarget.cluster}"?`
+            ? `Re-apply addon labels on "${syncTarget.cluster}"?`
             : syncTarget?.kind === 'values'
               ? `Sync secret for cluster "${syncTarget.cluster}", addon "${syncTarget.addon}"?`
               : 'Sync?'
         }
         description={syncConfirmDescription(syncTarget)}
-        confirmText="Sync"
+        confirmText={syncConfirmButtonText(syncTarget?.kind)}
         loading={syncing}
       />
 
