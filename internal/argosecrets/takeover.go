@@ -280,6 +280,11 @@ func (m *Manager) TakeOverClusterSecret(ctx context.Context, name string, preser
 		delete(updated.Annotations, AnnotationTakeoverPreservedLabels)
 	}
 
+	// Deliberately NOT BuildClusterSecret: the takeover is a metadata-only
+	// mutation of the LIVE object — the previous owner's Data/StringData
+	// (name, server, credentials) come through byte-for-byte because no code
+	// path here assigns to them. A from-scratch build would need credential
+	// material Sharko does not have for a taken-over cluster.
 	if _, updErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updErr != nil {
 		return res, fmt.Errorf("taking over secret %q in namespace %q: %w", name, m.namespace, updErr)
 	}
@@ -333,6 +338,8 @@ func (m *Manager) repairPreservedLabelsRecord(ctx context.Context, existing *cor
 	}
 	updated.Annotations[AnnotationTakeoverPreservedLabels] = EncodePreservedLabelKeys(keys)
 
+	// Deliberately NOT BuildClusterSecret — annotation-only repair on a
+	// DeepCopy of the live object; everything else must survive untouched.
 	if _, updErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updErr != nil {
 		return nil, fmt.Errorf("recording the carried-over labels on secret %q in namespace %q: %w", existing.Name, m.namespace, updErr)
 	}
@@ -414,6 +421,8 @@ func (m *Manager) DropLabels(ctx context.Context, name string, keys []string) (r
 
 	// Data/StringData are never touched — this is a metadata-only update
 	// on a DeepCopy, the same idiom Ensure's adopted branch uses.
+	// Deliberately NOT BuildClusterSecret for the same reason: only label
+	// removal happens here, everything else comes through verbatim.
 	if _, updErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updErr != nil {
 		return nil, true, fmt.Errorf("removing labels from secret %q in namespace %q: %w", name, m.namespace, updErr)
 	}

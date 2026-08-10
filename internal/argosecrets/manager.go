@@ -528,17 +528,17 @@ func hashSecretState(labels map[string]string, data map[string][]byte) string {
 // Returns (changed bool, err error): changed is true on create, adopt, or update paths;
 // false on the skip path.
 func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, error) {
-	configJSON, err := buildSecretConfig(spec)
+	// The canonical builder (BuildClusterSecret) produces the complete
+	// desired Secret once; the create path writes that object verbatim and
+	// the full-update path copies its Labels/StringData onto the live
+	// object — both paths emit the builder's exact bytes.
+	desired, err := BuildClusterSecret(spec, m.namespace)
 	if err != nil {
-		return false, fmt.Errorf("building secret config for cluster %q: %w", spec.Name, err)
+		return false, err
 	}
 
-	desiredLabels := buildLabels(spec)
-	desiredStringData := map[string]string{
-		"name":   spec.Name,
-		"server": spec.Server,
-		"config": configJSON,
-	}
+	desiredLabels := desired.Labels
+	desiredStringData := desired.StringData
 	// Convert to []byte for hashing — mirrors what K8s returns in secret.Data.
 	desiredData := make(map[string][]byte, len(desiredStringData))
 	for k, v := range desiredStringData {
@@ -552,18 +552,8 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 	}
 
 	if apierrors.IsNotFound(err) {
-		// Secret does not exist — create it.
-		secret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:        spec.Name,
-				Namespace:   m.namespace,
-				Labels:      desiredLabels,
-				Annotations: spec.Annotations,
-			},
-			Type:       corev1.SecretTypeOpaque,
-			StringData: desiredStringData,
-		}
-		if _, createErr := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{}); createErr != nil {
+		// Secret does not exist — create the canonical builder's object as-is.
+		if _, createErr := m.client.CoreV1().Secrets(m.namespace).Create(ctx, desired, metav1.CreateOptions{}); createErr != nil {
 			return false, fmt.Errorf("creating secret %q in namespace %q: %w", spec.Name, m.namespace, createErr)
 		}
 		slog.Info("[argosecrets] cluster secret created",
@@ -595,6 +585,11 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 		// stamp the adopted annotation, and preserve the existing Data/StringData
 		// so we do not wipe connection config we do not model.
 		// Always write — adoption is itself a meaningful state change.
+		//
+		// Deliberately NOT BuildClusterSecret: this path mutates a DeepCopy
+		// of the LIVE object because it must preserve Data/StringData and
+		// foreign labels the builder cannot know about. Only labels and
+		// annotations change here.
 		adopted := existing.DeepCopy()
 		// Merge desired labels into existing labels; desired labels win on conflict,
 		// but existing foreign labels not in the desired set are kept (guest semantics).
@@ -645,6 +640,9 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 
 	if isAdopted {
 		// Adopted secret — converge LABELS only. Never touch Data/StringData.
+		// Deliberately NOT BuildClusterSecret: adopted Secrets are guests —
+		// the existing connection Data is preserved verbatim, so a
+		// from-scratch build has nothing to contribute here.
 		// "Labels match" means all desired labels are present in the current
 		// labels with the correct values. Foreign labels (not in desired) are
 		// always kept, so they do not trigger a write.
@@ -700,7 +698,10 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 		return false, nil
 	}
 
-	// Hashes differ — update in place, preserving any fields we did not set.
+	// Hashes differ — update in place, preserving any fields we did not set
+	// (resourceVersion, existing annotations). Labels and StringData come
+	// straight off the canonical builder's object, so the payload is
+	// byte-identical to what the create path writes.
 	updated := existing.DeepCopy()
 	updated.Labels = desiredLabels
 	if spec.Annotations != nil {
