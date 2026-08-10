@@ -2166,6 +2166,17 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	// reconciler per the §9 ownership policy).
 	secret, buildErr := argosecrets.BuildClusterSecret(spec, r.namespace)
 	if buildErr != nil {
+		// Re-word, don't just relay: BuildClusterSecret's own error already
+		// says "building secret config for cluster %q" (Ensure's original
+		// wording — correct there, must not change). Before this reconciler
+		// called the canonical builder, its own local buildClusterSecret said
+		// "building exec-provider config for cluster %q" for the same
+		// failure. Re-wrapping here keeps that original sentence intact for
+		// this package's own callers/logs, so the refactor stays a pure
+		// internal-plumbing change with no visible wording change. Don't
+		// simplify this away — it's the only thing standing between "no
+		// behaviour change" being true and being a lie.
+		buildErr = fmt.Errorf("building exec-provider config for cluster %q: %w", spec.Name, buildErr)
 		stats.Errors++
 		log.Error("[clusterreconciler] building Secret payload failed — skipping cluster",
 			"cluster", entry.Name, "error", buildErr,
