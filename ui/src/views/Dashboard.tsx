@@ -460,7 +460,7 @@ export function Dashboard() {
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-muted-foreground" />
-              <h3 className="text-base font-semibold text-card-foreground">Recent Activity</h3>
+              <h3 className="section-heading">Recent Activity</h3>
             </div>
             <button onClick={() => navigate('/observability')} className="text-sm text-teal-600 hover:text-teal-700 dark:text-teal-400">
               View all
@@ -505,7 +505,7 @@ export function Dashboard() {
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <div className="mb-3 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-            <h3 className="text-base font-semibold text-card-foreground">Issues</h3>
+            <h3 className="section-heading">Issues</h3>
           </div>
           {confirmedProblemCount > 0 ? (
             <div className="space-y-2">

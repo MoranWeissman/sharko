@@ -295,7 +295,7 @@ function MigrationPlanView({ plan }: { plan: MigrationPlan }) {
 
   return (
     <div className="space-y-3">
-      <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+      <p className="text-sm font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
         Files this pull request would touch ({rows.length})
       </p>
       <ul className="max-h-64 space-y-1 overflow-y-auto text-sm">
@@ -304,7 +304,7 @@ function MigrationPlanView({ plan }: { plan: MigrationPlan }) {
             {row.kind === 'add' && <FilePlus className="h-3.5 w-3.5 shrink-0 text-green-600 dark:text-green-400" />}
             {row.kind === 'convert' && <FileEdit className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />}
             {row.kind === 'remove' && <FileMinus className="h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" />}
-            <span className="font-mono text-xs">
+            <span className="font-mono text-sm">
               {row.kind === 'convert' && row.fromPath ? `${row.fromPath} → ${row.path}` : row.path}
             </span>
           </li>
@@ -312,7 +312,7 @@ function MigrationPlanView({ plan }: { plan: MigrationPlan }) {
       </ul>
       {plan.notes.length > 0 && (
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+          <p className="text-sm font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
             Worth reading before you merge
           </p>
           <ul className="mt-1 list-disc space-y-1 pl-4 text-sm text-amber-800 dark:text-amber-300">

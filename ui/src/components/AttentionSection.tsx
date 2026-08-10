@@ -47,7 +47,7 @@ export function AttentionRowView({ row }: { row: AttentionRow }) {
       ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
       : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
   return (
-    <div className="flex items-start gap-3 rounded-lg bg-card px-3 py-2 text-xs">
+    <div className="flex items-start gap-3 rounded-lg bg-card px-3 py-2 text-sm">
       <div className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${dot}`} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">

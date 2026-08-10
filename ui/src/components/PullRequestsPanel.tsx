@@ -318,7 +318,7 @@ function FilterControls({
               type="button"
               onClick={() => onCategoryChange(b.key)}
               aria-pressed={active}
-              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
+              className={`rounded-full px-2.5 py-0.5 text-sm font-medium transition-colors ${
                 active
                   ? 'bg-teal-600 text-white shadow-sm'
                   : 'bg-muted text-card-foreground hover:bg-muted/70'
@@ -342,7 +342,7 @@ function FilterControls({
           )
         })}
       </div>
-      <div className="ml-auto flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-xs">
+      <div className="ml-auto flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-sm">
         <Search className="h-3 w-3 text-muted-foreground" />
         <input
           type="search"
@@ -489,7 +489,7 @@ function PendingTabBody({
     return (
       <div className="flex items-center justify-center py-6 text-muted-foreground">
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        <span className="text-xs">Loading PRs…</span>
+        <span className="text-sm">Loading PRs…</span>
       </div>
     )
   }
@@ -526,7 +526,7 @@ function PendingTabBody({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-baseline justify-between text-xs text-muted-foreground">
+      <div className="flex items-baseline justify-between text-sm text-muted-foreground">
         <span>
           Showing {visiblePrs.length} of {prs.length} open PR{prs.length === 1 ? '' : 's'}
           {atCap ? ` (server cap)` : ''}
@@ -536,7 +536,7 @@ function PendingTabBody({
         )}
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs">
+        <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-border">
               <th className="pb-2 pr-3 font-semibold text-card-foreground">Title</th>
@@ -703,7 +703,7 @@ function MergedTabBody({
     return (
       <div className="flex items-center justify-center py-6 text-muted-foreground">
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        <span className="text-xs">Loading merged PRs…</span>
+        <span className="text-sm">Loading merged PRs…</span>
       </div>
     )
   }
@@ -737,14 +737,14 @@ function MergedTabBody({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-baseline justify-between text-xs text-muted-foreground">
+      <div className="flex items-baseline justify-between text-sm text-muted-foreground">
         <span>
           Showing {visiblePrs.length} of {prs.length} merged PR{prs.length === 1 ? '' : 's'}
         </span>
         <EscapeHatchLink repoIdentifier={repoIdentifier} gitProvider={gitProvider} state="closed" />
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs">
+        <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-border">
               <th className="pb-2 pr-3 font-semibold text-card-foreground">Title</th>
@@ -948,7 +948,7 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <GitPullRequest className="h-4 w-4 text-teal-500" />
-          <h3 className="text-base font-semibold text-card-foreground">
+          <h3 className="section-heading">
             {cluster ? 'Cluster PRs' : 'Pull Requests'}
           </h3>
         </div>
@@ -956,7 +956,7 @@ export function PullRequestsPanel({ cluster, onMergeDetected }: PullRequestsPane
           role="tablist"
           aria-label="PR state filter"
           onKeyDown={onKeyDown}
-          className="inline-flex rounded-lg border border-border bg-background p-0.5 text-xs"
+          className="inline-flex rounded-lg border border-border bg-background p-0.5 text-sm"
         >
           <button
             role="tab"
