@@ -26,7 +26,7 @@ export function ErrorState({ message, detail, action, onRetry }: ErrorStateProps
       />
       <p className="text-sm text-[#0a3a5a] dark:text-gray-300">{message}</p>
       {detail && (
-        <p className="max-w-md font-mono text-xs text-[#5a8aaa] dark:text-gray-500">{detail}</p>
+        <p className="max-w-md font-mono text-sm text-[#5a8aaa] dark:text-gray-500">{detail}</p>
       )}
       {(onRetry || action) && (
         <div className="flex items-center gap-3">

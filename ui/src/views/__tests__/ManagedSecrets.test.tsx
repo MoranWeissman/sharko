@@ -441,11 +441,12 @@ describe('ManagedSecrets', () => {
     expect(screen.queryByText('In sync')).not.toBeInTheDocument()
     expect(screen.queryByText('Not on the cluster')).not.toBeInTheDocument()
 
-    // The panel's status chip reads the same word, and the plain-English
-    // sentence underneath it is exactly what it was before this pass.
+    // SSF-12: the row's own status chip and the panel's ONE health
+    // conclusion read the same word, and the plain-English sentence
+    // underneath it is exactly what it was before this pass.
     fireEvent.click(missingRow)
     const panel = await screen.findByTestId('secret-detail-panel')
-    expect(within(panel).getByTestId('status-mark')).toHaveTextContent('Missing')
+    expect(within(panel).getByTestId('detail-conclusion-label')).toHaveTextContent('Missing')
     expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('This secret was never created on the cluster — Sync creates it.')
   })
 
@@ -892,7 +893,7 @@ describe('ManagedSecrets', () => {
     expect(unknownDot).toHaveAttribute('data-hollow', 'true')
   })
 
-  it('clicking a connection-secret row opens the detail panel with identity, purpose, source, state, and a Diff that fetches labels only', async () => {
+  it('clicking a connection-secret row opens the detail panel with identity, purpose, the ONE conclusion, and a comparison that fetches labels only', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
     mockGetClusterComparison.mockResolvedValue({
       cluster: {
@@ -912,11 +913,15 @@ describe('ManagedSecrets', () => {
 
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).getByText(/Connects/)).toBeInTheDocument()
-    expect(within(panel).getByText('Compared with git.')).toBeInTheDocument()
+    // SSF-12: the ONE conclusion states the source once — out_of_sync ->
+    // "Needs attention" / "does not match Git.", comparison auto-open.
+    expect(within(panel).getByTestId('detail-conclusion-label')).toHaveTextContent('Needs attention')
+    expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy does not match Git.')
 
     await waitFor(() => expect(mockGetClusterComparison).toHaveBeenCalledWith('staging-us'))
-    await waitFor(() => expect(within(panel).getByText(/Missing 1 addon label/)).toBeInTheDocument())
-    expect(within(panel).getByText('datadog')).toBeInTheDocument()
+    const drift = await within(panel).findByTestId('comparison-label-drift')
+    expect(within(drift).getByText('datadog')).toBeInTheDocument()
+    expect(drift).toHaveTextContent('Missing')
   })
 
   // P2-C1/C3/C6: the out-of-sync connection row (staging-us in baseResponse)
@@ -976,10 +981,11 @@ describe('ManagedSecrets', () => {
 
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).getByText(/Carries values for addon/)).toBeInTheDocument()
-    expect(within(panel).getByText('Compared with AWS Secrets Manager — git only holds a pointer to it.')).toBeInTheDocument()
-    // P3-F2: the verdict is one of the five edge sentences.
-    expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent(
-      "These differ — Sync writes the source's version onto the cluster.",
+    // SSF-12: the ONE health conclusion states the source once, inside the
+    // verdict sentence itself — never "Git" for a values row.
+    expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy does not match AWS Secrets Manager.')
+    expect(within(panel).getByTestId('detail-repair-note')).toHaveTextContent(
+      'Sync will update the cluster copy to match AWS Secrets Manager.',
     )
 
     // S8: the mapped canned sentence shows, plainly labeled as a failed
@@ -1005,7 +1011,9 @@ describe('ManagedSecrets', () => {
     renderPage(['/secret-sync/values-prod-eu-datadog'])
 
     const panel = await screen.findByTestId('secret-detail-panel')
-    await waitFor(() => expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('Matches AWS Secrets Manager.'))
+    await waitFor(() =>
+      expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy matches AWS Secrets Manager. No action is needed.'),
+    )
     expect(mockGetClusterComparison).not.toHaveBeenCalled()
   })
 
@@ -1474,7 +1482,9 @@ describe('ManagedSecrets', () => {
     const panel = await screen.findByTestId('secret-detail-panel')
     await waitFor(() => expect(mockFetchAuditLog).toHaveBeenCalledWith({ cluster: 'staging-us', limit: 50 }))
 
-    expect(within(panel).getByText("Sharko's record")).toBeInTheDocument()
+    // SSF-12: "Sharko's record" is renamed "Recent activity" everywhere in this path.
+    expect(within(panel).getByText('Recent activity')).toBeInTheDocument()
+    expect(within(panel).queryByText("Sharko's record")).not.toBeInTheDocument()
     const list = await within(panel).findByTestId('detail-recent-activity')
     expect(within(list).getByText('Synced the connection secret')).toBeInTheDocument()
     expect(within(list).getByText('Reconciled the connection labels')).toBeInTheDocument()

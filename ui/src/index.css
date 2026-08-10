@@ -153,3 +153,26 @@ body {
     margin: 0;
   }
 }
+
+@layer components {
+  /* Story SSF-13 (typography correction) — one page-title style shared by
+     Dashboard, AddonCatalog and Settings so they stop drifting. Measured
+     before this change: Dashboard's title rendered 24px on mobile / 30px
+     desktop (bold), AddonCatalog and Settings both rendered a flat 24px
+     (bold), with no shared rule tying the three together. This sets one
+     scale — 24px on small screens, 28px from `sm:` up, semibold — and
+     leaves text color to each caller. */
+  .page-title {
+    @apply text-2xl font-semibold tracking-tight sm:text-[1.75rem];
+  }
+
+  /* Story SSF-13 — the same "16px semibold, card-foreground" panel-heading
+     string (Recent Activity / Issues / Pull Requests / GitOps corrections)
+     was already byte-identical in 6 places across Dashboard.tsx,
+     PullRequestsPanel.tsx and DriftAlertsPanel.tsx before this pass, and
+     already matched the approved 16px section-heading target — this is a
+     pure de-duplication, not a size or color change. */
+  .section-heading {
+    @apply text-base font-semibold text-card-foreground;
+  }
+}

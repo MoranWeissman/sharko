@@ -389,19 +389,20 @@ describe('ManagedSecrets — the live resource, read-only (G4)', () => {
     await waitFor(() => expect(mockGetAddonValuesSecretResource).toHaveBeenCalledTimes(1))
     expect(mockGetAddonValuesSecretResource).toHaveBeenCalledWith('prod-eu', 'datadog')
 
-    // SSF-8: this row is in_sync (a match) — the comparison box (which
-    // holds detail-resource-panel) opens behind "View comparison".
+    // SSF-8/SSF-12: this row is in_sync (a match) — the comparison box
+    // opens behind "View comparison".
     await user.click(await screen.findByTestId('view-comparison-toggle'))
 
-    const panel = await screen.findByTestId('detail-resource-panel')
-    // design-secret-sync-visual-pass item 22: the live card no longer
-    // repeats the {namespace}/{name} identity — the resource header above
-    // it already says that. The header assertion covers identity; this
-    // scope is about the live card's own content.
-    expect(within(panel).getByText('type Opaque')).toBeInTheDocument()
+    // SSF-12 honesty rule: the comparison itself shows key PRESENCE, never
+    // a value and never the resource facts (type/labels) that moved out —
+    // see Resource details below.
+    const liveCard = await screen.findByTestId('diff-live-card')
+    const presence = within(liveCard).getByTestId('comparison-key-presence')
+    expect(within(presence).getByText('api-key')).toBeInTheDocument()
+    expect(within(presence).getByText('app-key')).toBeInTheDocument()
 
-    // P3-F2: the key list is its own section under the two diff cards, no
-    // longer buried inside the live card.
+    // P3-F2: the FULL key list — pointer + the server's fixed mask — is its
+    // own Keys section, unchanged by SSF-12.
     const keys = within(await screen.findByTestId('detail-key-table')).getByTestId('resource-data-keys')
     expect(within(keys).getByText('api-key')).toBeInTheDocument()
     expect(within(keys).getByText('app-key')).toBeInTheDocument()
@@ -412,8 +413,11 @@ describe('ManagedSecrets — the live resource, read-only (G4)', () => {
     expect(within(keys).getByText('← secrets/datadog/api-key')).toBeInTheDocument()
     expect(within(keys).getByText('← secrets/datadog/app-key')).toBeInTheDocument()
 
-    // The label is shown in full — labels are not secret.
-    expect(within(within(panel).getByTestId('resource-labels')).getByText('sharko')).toBeInTheDocument()
+    // SSF-12: type and the full label set are live RESOURCE facts, not a
+    // diff — they live in the collapsed Resource details section now.
+    const resourceDetails = screen.getByTestId('detail-resource-disclosure')
+    await waitFor(() => expect(within(resourceDetails).getByTestId('detail-resource-type')).toHaveTextContent('Opaque'))
+    expect(within(within(resourceDetails).getByTestId('resource-labels')).getByText('sharko')).toBeInTheDocument()
   })
 
   it('a failed read says so plainly and shows no resource content at all', async () => {

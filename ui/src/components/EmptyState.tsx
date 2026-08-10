@@ -21,9 +21,9 @@ export function EmptyState({ title, description, action, compact = false, icon }
     return (
       <div className="flex flex-col items-center justify-center gap-1 py-3.5 text-center">
         <span className="text-muted-foreground">{icon ?? <Inbox className="h-5 w-5" />}</span>
-        <p className="text-xs font-medium text-card-foreground">{title}</p>
+        <p className="text-sm font-medium text-card-foreground">{title}</p>
         {description && (
-          <p className="text-xs text-muted-foreground">{description}</p>
+          <p className="text-sm text-muted-foreground">{description}</p>
         )}
         {action}
       </div>

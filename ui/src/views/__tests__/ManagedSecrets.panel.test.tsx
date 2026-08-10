@@ -17,6 +17,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { ManagedSecrets } from '@/views/ManagedSecrets'
 import { SecretDetailPage } from '@/views/SecretDetailPage'
@@ -105,6 +106,16 @@ const response: ManagedSecretsResponse = {
       state: 'unknown',
       source: 'git',
       self_heals: false,
+    },
+    {
+      cluster: 'drifted-eu',
+      secret_namespace: 'argocd',
+      secret_name: 'drifted-eu',
+      state: 'out_of_sync',
+      source: 'git',
+      self_heals: true,
+      compared_revision: 'abcdef1234567890abcdef1234567890abcdef12',
+      compared_path: 'configuration/managed-clusters.yaml',
     },
   ],
   addon_values_secrets: [
@@ -204,19 +215,24 @@ async function openRow(key: string) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the diff verdict — five sentences, one per state', () => {
-  it('says "matches" for an in-sync row (SSF-8: a values row names its real source, never "Git")', async () => {
+  it('says "matches" for an in-sync row (SSF-8/SSF-12: a values row names its real source, never "Git")', async () => {
     renderPage()
     const panel = await openRow('values-prod-eu-datadog')
-    await waitFor(() => expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('Matches AWS Secrets Manager.'))
+    await waitFor(() =>
+      expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent(
+        'The cluster copy matches AWS Secrets Manager. No action is needed.',
+      ),
+    )
   })
 
-  it('says "these differ" for an out-of-sync row', async () => {
+  it('says the copies do not match for an out-of-sync row, with the repair promise alongside it', async () => {
     renderPage()
     const panel = await openRow('values-staging-us-datadog')
     await waitFor(() =>
-      expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent(
-        "These differ — Sync writes the source's version onto the cluster.",
-      ),
+      expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy does not match AWS Secrets Manager.'),
+    )
+    expect(within(panel).getByTestId('detail-repair-note')).toHaveTextContent(
+      'Sync will update the cluster copy to match AWS Secrets Manager.',
     )
   })
 
@@ -266,7 +282,11 @@ describe('the diff verdict — five sentences, one per state', () => {
     mockGetAddonValuesSecretResource.mockResolvedValue(blankedResource)
     fireEvent.click(within(panel).getByTestId('resource-retry'))
     await waitFor(() => expect(mockGetAddonValuesSecretResource).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('Matches AWS Secrets Manager.'))
+    await waitFor(() =>
+      expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent(
+        'The cluster copy matches AWS Secrets Manager. No action is needed.',
+      ),
+    )
   })
 
   it('a live read that comes back 404 says "never created", not "could not look"', async () => {
@@ -288,9 +308,11 @@ describe('the diff verdict — five sentences, one per state', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the two cards', () => {
-  it('the left card paints from row data alone — the git file and commit are there before any read resolves', async () => {
-    // A read that never settles: the left card must still be complete.
-    mockGetConnectionSecretResource.mockReturnValue(new Promise(() => {}))
+  it('the left card paints from row data alone — the git file and commit are there before the label-drift fetch resolves', async () => {
+    // SSF-12: a connection row's comparison reads getClusterComparison
+    // (diffData), never the live secret read — so THAT is the fetch that
+    // must stay pending for this to prove anything.
+    mockGetClusterComparison.mockReturnValue(new Promise(() => {}))
     renderPage()
     const panel = await openRow('connection-prod-eu')
     // SSF-8: prod-eu is in_sync (a match) — the comparison box opens behind
@@ -301,8 +323,8 @@ describe('the two cards', () => {
     expect(within(intent).getByText('configuration/managed-clusters.yaml')).toBeInTheDocument()
     expect(within(intent).getByText('abcdef1')).toBeInTheDocument()
 
-    // ...while the right card is still waiting.
-    expect(within(panel).getByTestId('diff-live-card')).toHaveTextContent('Reading it from the cluster')
+    // ...while the right card is still waiting on the label-drift fetch.
+    expect(within(panel).getByTestId('diff-live-card')).toHaveTextContent('Loading…')
   })
 
   it('a connection row with no compared commit says so instead of showing a blank card', async () => {
@@ -323,21 +345,52 @@ describe('the two cards', () => {
     expect(intent).toHaveTextContent('Git holds a pointer to where each value lives, never the value itself.')
   })
 
-  it('the right card shows the live object with the server blanks, and never a value', async () => {
+  // SSF-12 honesty rule: a connection row's ONLY comparable field is the
+  // addon-label drift git vs cluster — never a value, and never the
+  // resource facts (type, labels, annotations) that moved to Resource
+  // details below.
+  it('a connection row\'s comparison shows the addon-label drift, never a value', async () => {
+    mockGetClusterComparison.mockResolvedValue({
+      cluster: {
+        name: 'no-commit',
+        labels: {},
+        last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded', label_drift: { added: ['datadog'], removed: ['old-addon'] } },
+      },
+    })
+    renderPage()
+    // no-commit's connection is 'unknown' -> could_not_look (not a match) — comparison auto-shows.
+    const panel = await openRow('connection-no-commit')
+    const liveCard = await within(panel).findByTestId('diff-live-card')
+    const drift = await within(liveCard).findByTestId('comparison-label-drift')
+    expect(drift).toHaveTextContent('datadog')
+    expect(drift).toHaveTextContent('old-addon')
+    expect(drift).toHaveTextContent('Missing')
+    expect(drift).toHaveTextContent('Present')
+  })
+
+  // SSF-12 honesty rule: a values row's ONLY comparable field is key
+  // presence — expected keys vs which of them the server saw. Never a
+  // value; the mask is fixed-length so it leaks no length either.
+  it('a values row\'s comparison shows key presence, and its Resource details show the live labels/annotations with the server blanks', async () => {
     renderPage()
     const panel = await openRow('values-prod-eu-datadog')
     // SSF-8: this row is in_sync (a match) — open the comparison first.
     fireEvent.click(within(panel).getByTestId('view-comparison-toggle'))
     const liveCard = await within(panel).findByTestId('diff-live-card')
 
-    // design-secret-sync-visual-pass item 22: the live card no longer
-    // repeats the {namespace}/{name} identity (the resource header above
-    // it already says that) — "type Opaque" is the first fact that's
-    // genuinely live-read-only, so it's what proves the card loaded.
-    await waitFor(() => expect(liveCard).toHaveTextContent('type Opaque'))
-    // The allow-listed provenance annotation shows as written; the
-    // self-copying one shows as the server's mask.
-    const annotations = within(liveCard).getByTestId('resource-annotations')
+    const presence = await within(liveCard).findByTestId('comparison-key-presence')
+    expect(presence).toHaveTextContent('api-key')
+    expect(presence).toHaveTextContent('app-key')
+    expect(presence).toHaveTextContent('Expected — present on the cluster')
+    expect(presence).toHaveTextContent('Expected — not on the cluster')
+    // Never a value, and never the resource facts that moved to Resource
+    // details — type/labels/annotations don't belong in the comparison.
+    expect(liveCard).not.toHaveTextContent('type Opaque')
+
+    // The moved facts live in the collapsed Resource details section now.
+    const resourceDetails = within(panel).getByTestId('detail-resource-disclosure')
+    await waitFor(() => expect(within(resourceDetails).getByTestId('detail-resource-type')).toHaveTextContent('Opaque'))
+    const annotations = within(resourceDetails).getByTestId('resource-annotations')
     expect(annotations).toHaveTextContent('sharko.dev/source')
     expect(annotations).toHaveTextContent('AWS Secrets Manager')
     expect(annotations).toHaveTextContent('kubectl.kubernetes.io/last-applied-configuration')
@@ -428,10 +481,11 @@ describe('the open panel is independent of the list', () => {
     await waitFor(() => expect(mockGetManagedSecrets.mock.calls.length).toBeGreaterThan(before))
 
     expect(mockGetAddonValuesSecretResource).toHaveBeenCalledTimes(1)
-    // The live card's content survived untouched — proven by "type Opaque"
-    // (the {namespace}/{name} identity line was removed from the live card
-    // in the visual pass; the resource header still carries identity).
-    expect(within(panel).getByTestId('diff-live-card')).toHaveTextContent('type Opaque')
+    // The live card's content survived untouched — proven by its
+    // key-presence comparison content (SSF-12: a values row's comparison
+    // pane shows key presence, not the resource facts that moved to
+    // Resource details).
+    expect(within(panel).getByTestId('diff-live-card')).toHaveTextContent('api-key')
   })
 
   // SSF-9: a different row is now a different PAGE (its own URL, its own
@@ -493,10 +547,11 @@ describe('the page keeps itself fresh every 30 seconds while visible', () => {
     // for a manual Refresh, now proven for the automatic 30s one too.
     expect(screen.getByTestId('secret-detail-panel')).toBeInTheDocument()
     expect(mockGetAddonValuesSecretResource).toHaveBeenCalledTimes(1)
-    // The live card's content survived untouched — proven by "type Opaque"
-    // (the {namespace}/{name} identity line was removed from the live card
-    // in the visual pass; the resource header still carries identity).
-    expect(within(panel).getByTestId('diff-live-card')).toHaveTextContent('type Opaque')
+    // The live card's content survived untouched — proven by its
+    // key-presence comparison content (SSF-12: a values row's comparison
+    // pane shows key presence, not the resource facts that moved to
+    // Resource details).
+    expect(within(panel).getByTestId('diff-live-card')).toHaveTextContent('api-key')
   })
 
   it('does not re-read while the tab is hidden', async () => {
@@ -562,25 +617,26 @@ describe('rows are reachable from the keyboard', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the resource header', () => {
-  it('names the kind, the secret, its cluster, and its age once the read lands', async () => {
+  it('names the kind and cluster in the header, and shows the live age once the read lands, in Resource details', async () => {
     renderPage()
     const panel = await openRow('values-prod-eu-datadog')
     const header = within(panel).getByTestId('detail-resource-header')
 
-    // SSF-4: the identity (name) is stated once — in the sheet's own
+    // SSF-4/SSF-12: the identity (name) is stated once — in the page's own
     // title, not repeated in this row — so it's checked at the panel
-    // level; kind/cluster/age still live in detail-resource-header.
+    // level; kind/cluster still live in detail-resource-header. The age is
+    // a live-read fact and moved into the Resource details field grid.
     expect(panel).toHaveTextContent('datadog/datadog-secrets')
     expect(header).toHaveTextContent('Secret')
     expect(header).toHaveTextContent('on prod-eu')
-    await waitFor(() => expect(header).toHaveTextContent('created'))
+    await waitFor(() => expect(within(panel).getByTestId('detail-resource-created')).toBeInTheDocument())
   })
 
   it('shows no age at all when the live read never lands — never an invented one', async () => {
     mockGetAddonValuesSecretResource.mockReturnValue(new Promise(() => {}))
     renderPage()
     const panel = await openRow('values-prod-eu-datadog')
-    expect(within(panel).getByTestId('detail-resource-header')).not.toHaveTextContent('created')
+    expect(within(panel).queryByTestId('detail-resource-created')).not.toBeInTheDocument()
   })
 
   // SSF-4 — the identity used to print once in the sheet's own title and
@@ -597,22 +653,24 @@ describe('the resource header', () => {
 // SSF-4 — Comparison naming, Check now, and the strong Sync button
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('SSF-4 — comparison heading, action naming, and Sync strength', () => {
-  it('calls the comparison "Diff" for a connection row', async () => {
+describe('SSF-12 — comparison heading, action naming, and Sync visibility', () => {
+  it('calls the comparison "Comparison" when the row matches its source — row kind no longer decides this word', async () => {
     renderPage()
-    const panel = await openRow('connection-prod-eu')
-    expect(within(panel).getByRole('heading', { name: 'Diff' })).toBeInTheDocument()
+    const panel = await openRow('connection-prod-eu') // in_sync -> match
+    expect(within(panel).getByRole('heading', { name: 'Comparison' })).toBeInTheDocument()
+    expect(within(panel).queryByRole('heading', { name: 'Diff' })).not.toBeInTheDocument()
+    expect(within(panel).queryByRole('heading', { name: 'Differences' })).not.toBeInTheDocument()
+  })
+
+  it('calls the comparison "Differences" when the row does not match — never "Diff", which would claim a git-only check', async () => {
+    renderPage()
+    const panel = await openRow('values-staging-us-datadog') // out_of_sync -> differ
+    expect(within(panel).getByRole('heading', { name: 'Differences' })).toBeInTheDocument()
+    expect(within(panel).queryByRole('heading', { name: 'Diff' })).not.toBeInTheDocument()
     expect(within(panel).queryByRole('heading', { name: 'Comparison' })).not.toBeInTheDocument()
   })
 
-  it('calls the comparison "Comparison" for a values row — never "Diff", which would claim a git check it does not make', async () => {
-    renderPage()
-    const panel = await openRow('values-prod-eu-datadog')
-    expect(within(panel).getByRole('heading', { name: 'Comparison' })).toBeInTheDocument()
-    expect(within(panel).queryByRole('heading', { name: 'Diff' })).not.toBeInTheDocument()
-  })
-
-  it('labels the check button "Check now", never "Refresh" (testid unchanged)', async () => {
+  it('labels the check button "Check now" before any check has run (testid unchanged)', async () => {
     renderPage()
     const panel = await openRow('values-prod-eu-datadog')
     expect(within(panel).getByTestId('detail-refresh')).toHaveTextContent('Check now')
@@ -627,12 +685,12 @@ describe('SSF-4 — comparison heading, action naming, and Sync strength', () =>
     expect(syncButton.className).toMatch(/bg-teal-600/)
   })
 
-  it('keeps Sync quiet and disabled — never strong — when the row is already in sync', async () => {
+  it('hides Sync entirely — no disabled button at all — when the row already matches its source', async () => {
     renderPage()
-    const panel = await openRow('values-prod-eu-datadog') // in_sync
-    const syncButton = within(panel).getByTestId('detail-sync')
-    expect(syncButton).toBeDisabled()
-    expect(syncButton.className).not.toMatch(/bg-teal-600/)
+    const panel = await openRow('values-prod-eu-datadog') // in_sync -> match
+    expect(within(panel).queryByTestId('detail-sync')).not.toBeInTheDocument()
+    // Check now stays — it's read-only and always useful.
+    expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
   })
 })
 
@@ -661,7 +719,7 @@ describe('SSF-8 — comparison on demand', () => {
     renderPage()
     const panel = await openRow('values-prod-eu-datadog') // in_sync -> match
     // The one-line result is up front...
-    expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('Matches AWS Secrets Manager.')
+    expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy matches AWS Secrets Manager. No action is needed.')
     // ...but the two-column box is not rendered until asked for.
     expect(within(panel).queryByTestId('diff-intent-card')).not.toBeInTheDocument()
     expect(within(panel).queryByTestId('diff-live-card')).not.toBeInTheDocument()
@@ -709,7 +767,7 @@ describe('SSF-8 — comparison on demand', () => {
 })
 
 describe('SSF-8 — disclosure sections are closed by default', () => {
-  it('keeps Resource details, Keys, and Sharko\'s record collapsed until opened', async () => {
+  it('keeps Resource details, Keys, and Recent activity collapsed until opened', async () => {
     renderPage()
     const panel = await openRow('values-prod-eu-datadog')
     await waitFor(() => expect(within(panel).getByTestId('detail-resource-disclosure')).toBeInTheDocument())
@@ -721,8 +779,83 @@ describe('SSF-8 — disclosure sections are closed by default', () => {
     expect(keys).not.toHaveAttribute('open')
     expect(activity).not.toHaveAttribute('open')
 
+    // SSF-12: "Sharko's record" is renamed "Recent activity" everywhere in
+    // this path.
+    expect(within(activity).getByText('Recent activity')).toBeInTheDocument()
+    expect(within(activity).queryByText("Sharko's record")).not.toBeInTheDocument()
+
     // The namespace/name identity still exists — it just lives in the
     // collapsed Resource details section now, not the sheet's own title.
     expect(within(resourceDetails).getByTestId('detail-identity')).toHaveTextContent('datadog/datadog-secrets')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSF-12 — the ONE health conclusion
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SSF-12 — the one health conclusion', () => {
+  it('a healthy connection row says "In sync" with the exact source-named sentence, no repair note', async () => {
+    renderPage()
+    const panel = await openRow('connection-prod-eu') // in_sync -> match
+    const conclusion = within(panel).getByTestId('detail-health-conclusion')
+    expect(within(conclusion).getByTestId('detail-conclusion-label')).toHaveTextContent('In sync')
+    expect(within(conclusion).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy matches Git. No action is needed.')
+    expect(within(conclusion).queryByTestId('detail-repair-note')).not.toBeInTheDocument()
+  })
+
+  it('a healthy addon-values row names the real configured store, never "Git"', async () => {
+    renderPage()
+    const panel = await openRow('values-prod-eu-datadog') // in_sync -> match
+    const conclusion = within(panel).getByTestId('detail-health-conclusion')
+    expect(within(conclusion).getByTestId('detail-conclusion-label')).toHaveTextContent('In sync')
+    expect(within(conclusion).getByTestId('diff-verdict')).toHaveTextContent(
+      'The cluster copy matches AWS Secrets Manager. No action is needed.',
+    )
+  })
+
+  it('a broken connection row says "Needs attention" and explains what Sync will do — never "Git" softened, never a values source', async () => {
+    renderPage()
+    const panel = await openRow('connection-drifted-eu') // out_of_sync -> differ
+    const conclusion = within(panel).getByTestId('detail-health-conclusion')
+    expect(within(conclusion).getByTestId('detail-conclusion-label')).toHaveTextContent('Needs attention')
+    expect(within(conclusion).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy does not match Git.')
+    expect(within(conclusion).getByTestId('detail-repair-note')).toHaveTextContent('Sync will update the cluster copy to match Git.')
+  })
+
+  it('a broken addon-values row says "Needs attention", names the real store, and promises what Sync repairs', async () => {
+    renderPage()
+    const panel = await openRow('values-staging-us-datadog') // out_of_sync -> differ
+    const conclusion = within(panel).getByTestId('detail-health-conclusion')
+    expect(within(conclusion).getByTestId('detail-conclusion-label')).toHaveTextContent('Needs attention')
+    expect(within(conclusion).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy does not match AWS Secrets Manager.')
+    expect(within(conclusion).getByTestId('detail-repair-note')).toHaveTextContent(
+      'Sync will update the cluster copy to match AWS Secrets Manager.',
+    )
+  })
+
+  it('shows freshness ("Checked …") in the conclusion on both tabs', async () => {
+    renderPage()
+    const panel = await openRow('connection-prod-eu')
+    expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
+    fireEvent.click(within(panel).getByTestId('detail-tab-yaml'))
+    await screen.findByTestId('detail-yaml-hidden')
+    expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
+  })
+
+  it('explains why Sync is unavailable for a foreign row instead of leaving an unexplained disabled button', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const panel = await openRow('values-byo-cluster-datadog') // foreign
+    const syncButton = within(panel).getByTestId('detail-sync')
+    expect(syncButton).toBeDisabled()
+    await user.click(within(panel).getByLabelText('Why is Sync unavailable?'))
+    expect(await screen.findByText(/Someone else created this one/)).toBeInTheDocument()
+  })
+
+  it('the conclusion is an accessible status region a screen reader announces on change', async () => {
+    renderPage()
+    const panel = await openRow('connection-prod-eu')
+    expect(within(panel).getByTestId('detail-health-conclusion')).toHaveAttribute('role', 'status')
   })
 })

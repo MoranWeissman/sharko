@@ -448,7 +448,7 @@ export function Layout() {
                     openAiPanel()
                   }
                 }}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors ${
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors ${
                   aiPanelOpen
                     ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
                     : 'ring-2 ring-[#6aade0] bg-[#e8f4ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
@@ -465,7 +465,7 @@ export function Layout() {
             {/* Search trigger */}
             <button
               onClick={() => { const e = new KeyboardEvent('keydown', { key: 'k', metaKey: true }); window.dispatchEvent(e) }}
-              className="hidden items-center gap-1.5 rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] px-3 py-1.5 text-xs text-[#3a6a8a] transition-colors hover:bg-[#d6eeff] sm:flex dark:ring-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
+              className="hidden items-center gap-1.5 rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] px-3 py-1.5 text-sm text-[#3a6a8a] transition-colors hover:bg-[#d6eeff] sm:flex dark:ring-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
             >
               <Search className="h-3.5 w-3.5" />
               <span>Search...</span>

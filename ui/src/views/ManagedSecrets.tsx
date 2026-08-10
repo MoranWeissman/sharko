@@ -1153,6 +1153,34 @@ function KeyValueList({
   )
 }
 
+/**
+ * SSF-12 — one field in the Resource details responsive grid: label above
+ * value, both compact. Every field in that section uses this so the grid
+ * never drifts into a mix of label-left and label-above layouts.
+ */
+function ResourceField({
+  label,
+  value,
+  mono,
+  testId,
+  title,
+}: {
+  label: string
+  value: ReactNode
+  mono?: boolean
+  testId?: string
+  title?: string
+}) {
+  return (
+    <div>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">{label}</div>
+      <div className={`text-xs text-[#2a5a7a] dark:text-gray-400 ${mono ? 'break-all font-mono' : ''}`} data-testid={testId} title={title}>
+        {value}
+      </div>
+    </div>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The live read (P3-F2) — one hook, so the right-hand card and the key
 // table below it read the SAME fetch instead of firing two.
@@ -1349,17 +1377,25 @@ function diffVerdictFor(row: UnifiedRow, live: LiveSecretState): DiffVerdict {
  * (there is nothing to sync onto yet) — promising it there would send a
  * reader to a button that refuses. Who fixes it is answered one line below
  * by the self-heal promise, which already knows.
+ *
+ * SSF-12 (PM's final UX correction): "match" and "differ" carry the fuller
+ * sentence the ONE health conclusion needs — the old short forms ("Matches
+ * Git." / "These differ — …") collapsed into this, so there is nowhere else
+ * on the page that repeats the same fact in different words. The other four
+ * sentences already say everything the conclusion needs; they're unchanged.
  */
 function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
   switch (verdict) {
     case 'match':
-      // SSF-8 binding honesty rule: a values row's source is NEVER called
-      // "Git" here — git only ever holds a pointer for a values row, the
-      // real source is row.sourceLabel (e.g. an AWS Secrets Manager path).
-      // A connection row's source really is git, so it says "Git" plainly.
-      return row.kind === 'connection' ? 'Matches Git.' : `Matches ${row.sourceLabel}.`
+      // SSF-8 binding honesty rule, still true here: a values row's source
+      // is NEVER called "Git" — git only ever holds a pointer for a values
+      // row, the real source is row.sourceLabel (e.g. an AWS Secrets
+      // Manager path). A connection row's source really is git.
+      return row.kind === 'connection'
+        ? 'The cluster copy matches Git. No action is needed.'
+        : `The cluster copy matches ${row.sourceLabel}. No action is needed.`
     case 'differ':
-      return "These differ — Sync writes the source's version onto the cluster."
+      return row.kind === 'connection' ? 'The cluster copy does not match Git.' : `The cluster copy does not match ${row.sourceLabel}.`
     case 'never_created':
       return row.kind === 'values'
         ? 'This secret was never created on the cluster — Sync creates it.'
@@ -1371,6 +1407,59 @@ function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
     case 'orphaned':
       return ORPHANED_PANEL_SENTENCE
   }
+}
+
+/** SSF-12: the one-line repair promise under a "differ" conclusion — the same honesty rule as the verdict sentence above: never "Git" for a values row. */
+function repairNoteFor(row: UnifiedRow): string {
+  return row.kind === 'connection' ? 'Sync will update the cluster copy to match Git.' : `Sync will update the cluster copy to match ${row.sourceLabel}.`
+}
+
+/**
+ * SSF-12: which StatusDot fill (and, via statusLabel, which WORD) the
+ * conclusion uses — reads off the verdict, never off row.state directly.
+ * They usually agree, but not always: a live-read 404 produces
+ * verdict='never_created' on a row whose own `state` field hasn't caught up
+ * yet (still says the last known reconcile outcome), and a failed live read
+ * produces verdict='could_not_look' on a row that reconciled fine. Deriving
+ * from the verdict keeps the conclusion's word, its colour, and its
+ * sentence — all three — telling the same story, always.
+ */
+function conclusionStatus(verdict: DiffVerdict): ResourceStatus {
+  switch (verdict) {
+    case 'match':
+      return 'in_sync'
+    case 'differ':
+      return 'out_of_sync'
+    case 'never_created':
+      return 'missing'
+    case 'foreign':
+      return 'foreign'
+    case 'could_not_look':
+      return 'unknown'
+    case 'orphaned':
+      return 'orphaned'
+  }
+}
+
+/**
+ * SSF-12: the plain word the ONE health conclusion leads with. Only "match"
+ * and "differ" get the urgent/calm words the epic spells out verbatim ("In
+ * sync" / "Needs attention") — every other state reuses the exact word
+ * StatusMark already uses for the SAME status on the row list (walk finding
+ * #140: the row chip and this conclusion must never disagree about what a
+ * state is called — one vocabulary, not two). The sentence right underneath
+ * still carries the actionable detail (e.g. a values row's "Sync creates
+ * it.").
+ */
+function conclusionLabel(verdict: DiffVerdict): string {
+  if (verdict === 'match') return 'In sync'
+  if (verdict === 'differ') return 'Needs attention'
+  return statusLabel(conclusionStatus(verdict))
+}
+
+/** SSF-12: "Check again" once a check has actually produced a result; "Check now" only before the very first one. */
+function hasCheckedBefore(row: UnifiedRow): boolean {
+  return Boolean(row.lastChecked)
 }
 
 // design-secret-sync-visual-pass, section 4/item 21 — DiffCard used to be
@@ -1391,23 +1480,13 @@ function DiffCard({ title, children, testId }: { title: string; children: ReactN
  * The left card — what this secret should be. It paints the instant the
  * panel opens, from the row the list already has: no request, nothing to
  * wait for. That is the point of splitting the two cards apart.
+ *
+ * SSF-12: an orphaned row never reaches this component at all — the
+ * Comparison zone doesn't render for one (there's nothing left to compare;
+ * see ComparisonZone below), so the old orphaned branch that used to live
+ * here is gone rather than becoming dead code.
  */
 function IntentCard({ row }: { row: UnifiedRow }) {
-  // leftover-secrets S1.2 — an orphaned row's "should be" is nothing: its
-  // source definition is the thing that's gone. Checked before the
-  // kind-based branches below, since an orphaned row is kind 'values' but
-  // must never say "the values come from X" — that source no longer
-  // exists to compare against.
-  if (row.state === 'orphaned') {
-    return (
-      <DiffCard title="What it should be" testId="diff-intent-card">
-        <p className="text-sm text-[#0a2a4a] dark:text-gray-200">Nothing — its source in git is gone.</p>
-        <p className="mt-2 text-xs text-[#3a6a8a] dark:text-gray-500">
-          Sharko wrote this secret once, but nothing in git asks for it anymore.
-        </p>
-      </DiffCard>
-    )
-  }
   if (row.kind === 'connection') {
     return (
       <DiffCard title="What it should be" testId="diff-intent-card">
@@ -1438,97 +1517,152 @@ function IntentCard({ row }: { row: UnifiedRow }) {
 }
 
 /**
- * The right card — what is on the cluster right now.
- *
- * EVERY VALUE HERE WAS BLANKED BY THE SERVER. The response carries key
- * NAMES paired with a fixed mask the server put in; there is no field a
- * real value could arrive in, and nothing below un-hides anything. Do not
- * "improve" this by adding a reveal toggle, a copy button, or a request for
- * the real content — that is a new design decision, not a refactor.
+ * SSF-12 honesty rule (verified against the live API responses): a
+ * connection secret's ONLY genuinely comparable field pair is the addon
+ * labels git expects vs the addon labels on the cluster, at the commit
+ * Sharko last checked — the SAME label-drift facts the row list's own
+ * getClusterComparison fetch already carries (added/removed/changed
+ * label NAMES; the server never sends per-label values, so "a different
+ * value" is as specific as this can honestly get). Name, namespace, type,
+ * created-at and key names are LIVE-ONLY facts, not a diff — see Resource
+ * details below, which is where they live now.
+ */
+function ConnectionLabelComparison({
+  diffLoading,
+  diffError,
+  diffData,
+}: {
+  diffLoading: boolean
+  diffError: string | null
+  diffData: ClusterComparisonResponse | null
+}) {
+  if (diffError) {
+    return (
+      <p className="text-sm text-red-600 dark:text-red-400" data-testid="comparison-error">
+        {diffError}
+      </p>
+    )
+  }
+  if (diffLoading) {
+    return <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Loading…</p>
+  }
+  const drift = diffData?.cluster?.last_reconcile?.label_drift
+  const rows: { label: string; expected: string; live: string }[] = [
+    ...(drift?.added ?? []).map((l) => ({ label: l, expected: 'Expected', live: 'Missing' })),
+    ...(drift?.removed ?? []).map((l) => ({ label: l, expected: 'Not expected', live: 'Present' })),
+    ...(drift?.changed ?? []).map((l) => ({ label: l, expected: 'A different value', live: 'A different value' })),
+  ]
+  if (rows.length === 0) {
+    return (
+      <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="comparison-no-drift">
+        Every addon label on the cluster matches what git expects.
+      </p>
+    )
+  }
+  return (
+    <div className="space-y-2" data-testid="comparison-label-drift">
+      {rows.map((r) => (
+        <div key={r.label} className="grid gap-x-3 gap-y-0.5 sm:grid-cols-[1fr_auto_auto] sm:items-baseline">
+          <span className="break-all font-mono text-xs text-[#2a5a7a] dark:text-gray-300">{r.label}</span>
+          <span className="text-xs text-[#0a2a4a] dark:text-gray-200">
+            <span className="text-[#5a8aaa] dark:text-gray-500">Expected: </span>
+            {r.expected}
+          </span>
+          <span className="text-xs text-[#0a2a4a] dark:text-gray-200">
+            <span className="text-[#5a8aaa] dark:text-gray-500">On cluster: </span>
+            {r.live}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * SSF-12 honesty rule: an addon-values secret's ONLY genuinely comparable
+ * field is key PRESENCE — the key names Sharko expects vs which of them the
+ * server saw on the cluster. Never a value, a hash, a length, or an
+ * encoding — the server response never carries one, so nothing here can
+ * derive one either. Reuses the SAME live read the Keys section reads (see
+ * useLiveSecret's own header for the no-second-request rule); this pane
+ * carries its loading/error states because it's the first place on the
+ * page that actually needs the read to land.
+ */
+function ValuesKeyComparison({ live, onRetry }: { live: LiveSecretState; onRetry: () => void }) {
+  if (live.status === 'skipped') {
+    return (
+      <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="resource-not-there">
+        Nothing is there — this secret has not been created yet.
+      </p>
+    )
+  }
+  if (live.status === 'loading') {
+    return <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Reading it from the cluster…</p>
+  }
+  if (live.status === 'error') {
+    return (
+      <>
+        <p className="text-sm text-red-700 dark:text-red-400" data-testid="resource-error">
+          {live.message}
+        </p>
+        <button
+          type="button"
+          onClick={onRetry}
+          data-testid="resource-retry"
+          className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[#6aade0] bg-white px-2.5 py-1 text-xs font-medium text-[#0a3a5a] hover:bg-[#e0f0ff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+        >
+          <RefreshCw className="h-3 w-3" />
+          Retry
+        </button>
+      </>
+    )
+  }
+  const keys = live.resource.data_keys
+  if (keys.length === 0) {
+    return <p className="text-sm text-[#2a5a7a] dark:text-gray-400">This secret has no keys to compare.</p>
+  }
+  return (
+    <div className="space-y-1.5" data-testid="comparison-key-presence">
+      {keys.map((k) => (
+        <div key={k.key} className="grid gap-x-3 gap-y-0.5 sm:grid-cols-[1fr_auto] sm:items-baseline">
+          <span className="break-all font-mono text-xs text-[#2a5a7a] dark:text-gray-300">{k.key}</span>
+          <span className={`text-xs ${k.present === false ? 'text-amber-700 dark:text-amber-400' : 'text-[#0a2a4a] dark:text-gray-200'}`}>
+            {k.present === false ? 'Expected — not on the cluster' : 'Expected — present on the cluster'}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The right card — the actual comparison, honest per row kind (see the two
+ * components above). EVERY VALUE ANYWHERE ON THIS PAGE WAS BLANKED BY THE
+ * SERVER, and nothing here un-hides one — do not "improve" this with a
+ * reveal toggle, a copy button, or a request for real content.
  */
 function LiveCard({
   row,
   live,
   onRetry,
-  driftDetail,
+  diffData,
+  diffLoading,
+  diffError,
 }: {
   row: UnifiedRow
   live: LiveSecretState
   onRetry: () => void
-  /** design-secret-sync-visual-pass item 23: the connection-drift detail
-   *  used to have its own standalone ring box below the two cards; it's
-   *  part of the comparison, not a sibling of it, so it renders here now —
-   *  inside the cluster pane, under Annotations. */
-  driftDetail?: ReactNode
+  diffData: ClusterComparisonResponse | null
+  diffLoading: boolean
+  diffError: string | null
 }) {
   return (
     <DiffCard title="What is on the cluster" testId="diff-live-card">
-      <div className="space-y-3" data-testid="detail-resource-panel">
-        {live.status === 'skipped' && row.state === 'missing' && (
-          <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="resource-not-there">
-            Nothing is there — this secret has not been created yet.
-          </p>
-        )}
-        {/* leftover-secrets S1.2 — the calm sentence where the live card
-            would be for an orphaned row. No read was fired (useLiveSecret's
-            skip rule): the live-read endpoint is keyed by a registered
-            addon definition an orphan no longer has, so this is a stated
-            fact, not a failed lookup. */}
-        {live.status === 'skipped' && row.state === 'orphaned' && (
-          <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="resource-orphaned-live">
-            Sharko still sees it on the cluster.
-          </p>
-        )}
-        {live.status === 'loading' && <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Reading it from the cluster…</p>}
-        {live.status === 'error' && (
-          // A failed read says so and shows nothing else. It never falls
-          // back to the last thing we saw, or to anything made up.
-          <>
-            <p className="text-sm text-red-700 dark:text-red-400" data-testid="resource-error">
-              {live.message}
-            </p>
-            <button
-              type="button"
-              onClick={onRetry}
-              data-testid="resource-retry"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#6aade0] bg-white px-2.5 py-1 text-xs font-medium text-[#0a3a5a] hover:bg-[#e0f0ff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-            >
-              <RefreshCw className="h-3 w-3" />
-              Retry
-            </button>
-          </>
-        )}
-        {live.status === 'ready' && (
-          <>
-            {/* design-secret-sync-visual-pass item 22: the {namespace}/{name}
-                identity line is gone — Zone A's header above already says
-                it, and repeating it here was the panel stating the same
-                fact twice. */}
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-[#3a6a8a] dark:text-gray-500">
-              {live.resource.secret_type && <span>type {live.resource.secret_type}</span>}
-            </div>
-            <p className="text-xs text-[#3a6a8a] dark:text-gray-500">Read from {live.resource.read_from}.</p>
-
-            <div>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Labels</div>
-              <KeyValueList items={live.resource.labels} empty="No labels." testId="resource-labels" />
-            </div>
-
-            <div>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Annotations</div>
-              <KeyValueList items={live.resource.annotations} empty="No annotations." testId="resource-annotations" />
-            </div>
-          </>
-        )}
-        {/* design-secret-sync-visual-pass item 23: the connection-drift
-            detail, part of the comparison rather than a sibling of it. */}
-        {driftDetail && (
-          <div data-testid="detail-diff-panel">
-            <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Differences</div>
-            {driftDetail}
-          </div>
-        )}
-      </div>
+      {row.kind === 'connection' ? (
+        <ConnectionLabelComparison diffLoading={diffLoading} diffError={diffError} diffData={diffData} />
+      ) : (
+        <ValuesKeyComparison live={live} onRetry={onRetry} />
+      )}
     </DiffCard>
   )
 }
@@ -1674,7 +1808,7 @@ function RedactedYamlSection({ row, live, onRetry }: { row: UnifiedRow; live: Li
               {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
-          <pre className="overflow-x-auto whitespace-pre font-mono text-xs text-[#0a2a4a] dark:text-gray-200" data-testid="detail-yaml-content">
+          <pre className="overflow-x-auto whitespace-pre font-mono text-[13px] text-[#0a2a4a] dark:text-gray-200" data-testid="detail-yaml-content">
             {buildRedactedYaml(live.resource)}
           </pre>
         </div>
@@ -1796,6 +1930,56 @@ function RecentActivity({ row }: { row: UnifiedRow }) {
 // Check now / Sync actions, so the two sit in one header row instead of
 // the title floating alone above a narrow column. See secretTitleFor.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The ONE health conclusion (SSF-12, PM's final UX correction) — the page
+// used to say the same thing three times on the way in: the row's status
+// chip ("Synced"), a one-line verdict ("Matches Git."), and a separate
+// "Compared with git." sentence right under it. A reader had to read all
+// three to be sure they were the same fact. This is that fact, once: one
+// word ("In sync" / "Needs attention" / …), one full sentence naming the
+// real source, and — only when something needs fixing — the one-line
+// promise of what Sync actually does about it. "Checked …" sits right next
+// to it, because "when was it checked" is one of the five questions this
+// page exists to answer and it shouldn't need its own row.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function HealthConclusion({ row, verdict }: { row: UnifiedRow; verdict: DiffVerdict }) {
+  const isMatch = verdict === 'match'
+  return (
+    // role="status" (an implicit aria-live="polite" region): a reader using
+    // a screen reader gets told when Check now/Sync flips this conclusion
+    // to a different word — not just a sighted reader watching the text
+    // repaint.
+    <div className="space-y-1.5 border-b border-border pb-4" data-testid="detail-health-conclusion" role="status">
+      <div className="flex items-center gap-2">
+        {isMatch ? (
+          <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-500" aria-hidden="true" />
+        ) : (
+          <StatusDot status={conclusionStatus(verdict)} className="h-4 w-4" />
+        )}
+        <span className="text-xl font-semibold text-[#0a2a4a] dark:text-gray-100" data-testid="detail-conclusion-label">
+          {conclusionLabel(verdict)}
+        </span>
+      </div>
+      <p className="text-base text-[#2a5a7a] dark:text-gray-300" data-testid="diff-verdict">
+        {diffVerdictSentence(verdict, row)}
+      </p>
+      {/* The repair promise — only where Sync is really the fix (a real
+          drift to push). A values row's own "never created" sentence
+          already says "Sync creates it" inline, so it doesn't need this
+          second line too. */}
+      {verdict === 'differ' && (
+        <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="detail-repair-note">
+          {repairNoteFor(row)}
+        </p>
+      )}
+      <p className="text-xs text-[#5a8aaa] dark:text-gray-500" data-testid="detail-checked-line">
+        Checked <TimeChip iso={row.lastChecked} />
+      </p>
+    </div>
+  )
+}
 
 /**
  * The plain-words title this panel puts at the top of its own header row —
@@ -1920,97 +2104,34 @@ export function SecretDetailContent({
       </>
     )
 
-  // S3 honesty lock, panel copy: row.sourceLabel is the real backend name
-  // (or the "secrets store" fallback) resolved once server-side — never a
-  // hardcoded "the vault". H3: "compared with" everywhere this fact shows
-  // up (the SOURCE column, this sentence, the revision line below) — one
-  // phrase, not several near-synonyms for the same fact. SSF-8 item 3
-  // renamed the phrase from "checked against" to "compared with" — same
-  // rule, same single-phrase discipline, new words.
-  //
-  // leftover-secrets S1.2: an orphaned row gets its own sentence instead —
-  // "compared with X" would contradict the verdict line right above it,
-  // which already says the source in git is gone.
-  const sourceSentence =
-    row.state === 'orphaned'
-      ? 'No source in git anymore — Sharko is not comparing this against anything.'
-      : row.kind === 'connection'
-        ? 'Compared with git.'
-        : `Compared with ${row.sourceLabel} — git only holds a pointer to it.`
-
-  // The connection-secret label drift — WHICH labels differ, under the
-  // verdict sentence that already said THAT they differ. Kept as its own
-  // fetch (getClusterComparison: labels only, never credentials).
-  //
-  // Values rows have no equivalent and must never grow one: a values
-  // secret's content must never reach the browser, so "what differs" for
-  // one of those rows is answered by the row's own state field and nothing
-  // more. If that ever needs a server call, it is a new design decision,
-  // not a refactor.
-  let driftDetail: ReactNode = null
-  if (row.kind === 'connection') {
-    const drift = diffData?.cluster?.last_reconcile?.label_drift
-    const added = drift?.added ?? []
-    const removed = drift?.removed ?? []
-    const changed = drift?.changed ?? []
-    if (diffError) {
-      driftDetail = <p className="text-sm text-red-600 dark:text-red-400">{diffError}</p>
-    } else if (diffLoading && row.state === 'out_of_sync') {
-      // The waiting line only shows where content is actually expected. On
-      // an in-sync row this box has nothing to say once it loads, and a
-      // "Loading…" that appears and then vanishes is just a flicker.
-      driftDetail = <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Loading…</p>
-    } else if (added.length > 0 || removed.length > 0 || changed.length > 0) {
-      driftDetail = (
-        <div className="space-y-2">
-          {added.length > 0 && (
-            <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
-              Missing {added.length} addon label{added.length === 1 ? '' : 's'} that git expects:{' '}
-              <span className="font-mono text-xs text-[#3a6a8a] dark:text-gray-500">{added.join(', ')}</span>
-            </p>
-          )}
-          {removed.length > 0 && (
-            <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
-              Has {removed.length} addon label{removed.length === 1 ? '' : 's'} git doesn't expect:{' '}
-              <span className="font-mono text-xs text-[#3a6a8a] dark:text-gray-500">{removed.join(', ')}</span>
-            </p>
-          )}
-          {changed.length > 0 && (
-            <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
-              {changed.length} addon label{changed.length === 1 ? '' : 's'} {changed.length === 1 ? 'has' : 'have'} a different
-              value than git:{' '}
-              <span className="font-mono text-xs text-[#3a6a8a] dark:text-gray-500">{changed.join(', ')}</span>
-            </p>
-          )}
-        </div>
-      )
-    }
-  }
-
   const verdict = diffVerdictFor(row, live)
 
-  // SSF-4 (Secret Sync finish pass): "Diff" always read as a claim that
-  // this row is checked against git — true for a connection row, never
-  // true for a values row (its comparison is against the secrets store).
-  // "Comparison" is the honest word for a values row; "Diff" stays for a
-  // connection row, where it's accurate.
-  const comparisonHeading = row.kind === 'connection' ? 'Diff' : 'Comparison'
+  // SSF-12: "Differences" only when there really are some (the "differ"
+  // verdict) — every other state (including the four boundary/unknown
+  // verdicts that used to borrow "Diff"/"Comparison" from row kind) gets
+  // the calmer, generic "Comparison" heading. Row kind no longer decides
+  // this word at all — "Diff" is gone; it always read as a claim that a
+  // values row is checked against git, which was never true.
+  const comparisonHeading = verdict === 'differ' ? 'Differences' : 'Comparison'
+
+  // SSF-12: "Check again" once a check has actually produced a result;
+  // "Check now" only before the very first one.
+  const checkLabel = hasCheckedBefore(row) ? 'Check again' : 'Check now'
+
+  const viewPageLabel = row.kind === 'connection' || !row.addon ? 'View cluster page' : 'View addon page'
+  const viewPageHref =
+    row.kind === 'connection' || !row.addon ? `/clusters/${encodeURIComponent(row.cluster)}` : `/addons/${encodeURIComponent(row.addon)}`
 
   return (
     <div data-testid="secret-detail-panel" className="space-y-4">
-      {/* ── Header (SSF-11, release correction) — the title and its one-line
-          purpose sit LEFT; Check now / Sync (or, for an orphaned row, the
-          single Delete action) sit RIGHT, in the same row. flex-wrap alone
-          stacks this safely once the row runs out of room — no separate
-          mobile layout to keep in sync with the desktop one. This used to
-          be a bare title floating above a 768px-capped column with the
-          actions buried further down; the workspace is wide now, so the
-          two things a reader wants first — what is this, and what can I do
-          about it — belong on one line. */}
+      {/* ── Identity + actions (SSF-11/SSF-12) — the title and its one-line
+          purpose sit LEFT; Check now/again / Sync (or, for an orphaned row,
+          the single Delete action) sit RIGHT, in the same row. flex-wrap
+          alone stacks this safely once the row runs out of room. */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 space-y-1">
-          <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{secretTitleFor(row)}</h1>
-          <p className="text-sm text-[#2a5a7a] dark:text-gray-300">{purposeSentence}</p>
+          <h1 className="text-2xl font-semibold leading-tight text-[#0a2a4a] dark:text-gray-100 sm:text-[28px]">{secretTitleFor(row)}</h1>
+          <p className="text-base text-[#2a5a7a] dark:text-gray-300">{purposeSentence}</p>
         </div>
         <RoleGuard roles={['admin', 'operator']}>
           <div className="flex flex-wrap items-center gap-2">
@@ -2028,70 +2149,52 @@ export function SecretDetailContent({
               />
             ) : (
               <>
-                {/* SSF-4: "Refresh" → "Check now" (testid unchanged) — it's
-                    been a read-only check since P1-A; the word finally
-                    matches "Check all now" above the table. */}
-                <PanelActionButton onClick={handleRefresh} loading={refreshing} icon={RefreshCw} label="Check now" testId="detail-refresh" />
-                {/* SSF-4: Sync is the strong teal action only when there's
-                    real drift to push (!gate.disabled) — an in-sync row's
-                    Sync stays exactly as quiet/disabled as it always has. */}
-                <PanelActionButton
-                  onClick={() => onRequestSync(row)}
-                  disabled={gate.disabled}
-                  icon={RotateCcw}
-                  label="Sync"
-                  reason={gate.reason}
-                  testId="detail-sync"
-                  strong={!gate.disabled}
-                />
+                {/* SSF-12: "Check now" only before the first result ever
+                    lands; "Check again" every time after — testid
+                    unchanged. */}
+                <PanelActionButton onClick={handleRefresh} loading={refreshing} icon={RefreshCw} label={checkLabel} testId="detail-refresh" />
+                {/* SSF-12: Sync is HIDDEN entirely — not just disabled —
+                    once the conclusion is "In sync". There is nothing to
+                    apply, so there is no button to grey out. Every other
+                    verdict keeps it, strong only when there's real drift to
+                    push (!gate.disabled); when it's genuinely unavailable
+                    (foreign, not checked yet, …) PanelActionButton's own
+                    InfoHint says why — never an unexplained disabled
+                    button. */}
+                {verdict !== 'match' && (
+                  <PanelActionButton
+                    onClick={() => onRequestSync(row)}
+                    disabled={gate.disabled}
+                    icon={RotateCcw}
+                    label="Sync"
+                    reason={gate.reason}
+                    testId="detail-sync"
+                    strong={!gate.disabled}
+                  />
+                )}
               </>
             )}
           </div>
         </RoleGuard>
       </div>
 
-      {/* ── Status row (SSF-11) — status, what it was compared with, and
-          when, together in one balanced row that wraps on its own when
-          narrow. This is visible on BOTH tabs (unlike the rest of the
-          Overview body below): "is it okay" and "when was it checked"
-          shouldn't disappear just because a reader is looking at the YAML
-          tab. The ring box is gone (design-secret-sync-visual-pass item
-          19) — a hairline under the row is enough now. */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-3">
-        <StatusMark status={row.state} />
-        {/* SSF-8: "what was it checked against" and "when" — two of the
-            five first-screen questions — stated once, plainly, right next
-            to status. This is the old Zone D dl's "Checked against" and
-            "Last checked" rows, promoted out of the collapsed section: the
-            rest of that dl still collapses below. */}
-        <p className="flex flex-wrap items-baseline gap-x-2 text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="detail-checked-line">
-          <span
-            title={
-              row.kind === 'values' && row.state !== 'orphaned'
-                ? `Git only holds a pointer to it — the value itself lives in ${row.sourceLabel}.`
-                : undefined
-            }
-          >
-            {sourceSentence}
-          </span>
-          <span className="text-xs text-[#5a8aaa] dark:text-gray-500">
-            · last checked <TimeChip iso={row.lastChecked} />
-          </span>
-        </p>
-      </div>
+      {/* ── ONE health conclusion (SSF-12) — replaces the old three-line
+          Synced / Matches Git / Compared with git trio. Visible on both
+          tabs, same as before: "is it okay" and "when was it checked"
+          shouldn't disappear just because a reader is looking at YAML. */}
+      <HealthConclusion row={row} verdict={verdict} />
 
-      {/* SSF-5 (Secret Sync finish pass) — Overview vs the new read-only
-          YAML view, same segmented-pill pattern the page's own
-          Group by / List-Tiles controls already use. Resets to Overview
-          whenever a different row opens (the effect above). Full content
-          width now that the page isn't capped at an article width. */}
+      {/* SSF-5 (Secret Sync finish pass) — Overview vs the read-only YAML
+          view, same segmented-pill pattern the page's own Group by /
+          List-Tiles controls already use. Resets to Overview whenever a
+          different row opens (the effect above). */}
       <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
         <button
           type="button"
           onClick={() => setDetailTabState('overview')}
           aria-pressed={detailTab === 'overview'}
           data-testid="detail-tab-overview"
-          className={`px-2.5 py-1 text-xs font-medium ${
+          className={`px-3 py-1.5 text-sm font-medium ${
             detailTab === 'overview'
               ? 'bg-[#1a3d5c] text-white'
               : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
@@ -2104,7 +2207,7 @@ export function SecretDetailContent({
           onClick={() => setDetailTabState('yaml')}
           aria-pressed={detailTab === 'yaml'}
           data-testid="detail-tab-yaml"
-          className={`px-2.5 py-1 text-xs font-medium ${
+          className={`px-3 py-1.5 text-sm font-medium ${
             detailTab === 'yaml'
               ? 'bg-[#1a3d5c] text-white'
               : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
@@ -2127,10 +2230,8 @@ export function SecretDetailContent({
         </RoleGuard>
       ) : (
         <>
-          {/* design-secret-sync-visual-pass item 20: the most actionable lines
-              in the old panel were buried at the bottom — they sit right under
-              the status row now, where a reader who just opened the panel
-              actually looks first. */}
+          {/* The most actionable lines sit right under the conclusion —
+              where a reader who just opened the page actually looks. */}
           {row.lastCheckError && (
             <p className="text-sm text-red-700 dark:text-red-400" data-testid="last-check-error">
               The last check failed: {row.lastCheckError}
@@ -2147,180 +2248,177 @@ export function SecretDetailContent({
             </p>
           )}
 
-          {/* ── Comparison (one box, two panes) ───────────────────────────
-              design-secret-sync-visual-pass, section 4. The two separate ring
-              cards became one container with an interior hairline — same
-              content, same testids. SSF-8: a row that already MATCHES its
-              source opens on just the one-line result — the box itself sits
-              behind "View comparison" instead of rendering automatically,
-              since there's nothing wrong to show. Every other verdict
-              (differ, never created, could not look, foreign, not in
-              config) still shows the box straight away — those are exactly
-              the states where the comparison IS the answer to "is it
-              okay". */}
-          <div>
-            <h3 className="mb-1 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{comparisonHeading}</h3>
-            <p
-              className={`mb-2 text-sm ${verdict === 'match' ? 'text-green-700 dark:text-green-400' : 'text-[#0a2a4a] dark:text-gray-200'}`}
-              data-testid="diff-verdict"
-            >
-              {verdict === 'match' && <CheckCircle className="mr-1.5 inline h-4 w-4 align-text-bottom" aria-hidden="true" />}
-              {diffVerdictSentence(verdict, row)}
-            </p>
-            {verdict === 'match' && !comparisonOpen ? (
-              <button
-                type="button"
-                onClick={() => setComparisonOpen(true)}
-                data-testid="view-comparison-toggle"
-                className="text-xs font-medium text-teal-700 hover:underline dark:text-teal-400"
-              >
-                View comparison
-              </button>
-            ) : (
-              <div className="rounded-md border border-border bg-card">
-                <div className="grid sm:grid-cols-2 sm:divide-x divide-border max-sm:divide-y">
-                  <IntentCard row={row} />
-                  {/* The live half sits INSIDE the role guard, so a viewer sees a
-                      sentence about access rather than a permission error where a
-                      card should be — and the read is never fired for them either
-                      (useLiveSecret's `allowed`). */}
-                  <RoleGuard
-                    roles={['admin', 'operator']}
-                    fallback={
-                      <DiffCard title="What is on the cluster" testId="diff-live-card">
-                        <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="live-needs-operator">
-                          {LIVE_READ_NEEDS_OPERATOR}
-                        </p>
-                      </DiffCard>
-                    }
-                  >
-                    <LiveCard row={row} live={live} onRetry={retry} driftDetail={driftDetail} />
-                  </RoleGuard>
+          {/* ── Comparison, only when useful (SSF-12) ─────────────────────
+              An orphaned row has nothing left to compare (its source in
+              git is gone — the conclusion above already says so), so no
+              Comparison zone renders for it at all. Every other row: a
+              match opens on just the one-line result behind "View
+              comparison"; every other verdict shows the box straight
+              away — those are exactly the states where the comparison IS
+              the answer to "is it okay". */}
+          {row.state !== 'orphaned' && (
+            <div>
+              <h2 className="mb-2 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">{comparisonHeading}</h2>
+              {verdict === 'match' && !comparisonOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setComparisonOpen(true)}
+                  data-testid="view-comparison-toggle"
+                  className="text-xs font-medium text-teal-700 hover:underline dark:text-teal-400"
+                >
+                  View comparison
+                </button>
+              ) : (
+                <div className="rounded-md border border-border bg-card">
+                  <div className="grid sm:grid-cols-2 sm:divide-x divide-border max-sm:divide-y">
+                    <IntentCard row={row} />
+                    {/* The live half sits INSIDE the role guard, so a viewer sees a
+                        sentence about access rather than a permission error where a
+                        card should be — and the read is never fired for them either
+                        (useLiveSecret's `allowed`). */}
+                    <RoleGuard
+                      roles={['admin', 'operator']}
+                      fallback={
+                        <DiffCard title="What is on the cluster" testId="diff-live-card">
+                          <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="live-needs-operator">
+                            {LIVE_READ_NEEDS_OPERATOR}
+                          </p>
+                        </DiffCard>
+                      }
+                    >
+                      <LiveCard row={row} live={live} onRetry={retry} diffData={diffData} diffLoading={diffLoading} diffError={diffError} />
+                    </RoleGuard>
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
-          {/* ── Resource details (collapsed, SSF-8) ───────────────────────
-              Everything the old Zone A header said (kind, cluster, age) plus
-              the namespace/name identity that used to be the sheet's own
-              title, plus the rest of the old Zone D dl (commit, self-heal,
-              drift) that isn't one of the five first-screen answers. Closed
-              by default — a reader who wants it opens it; nobody else pays
-              for it. */}
+          {/* ── Resource details (collapsed, SSF-12) ──────────────────────
+              Everything that's a fact about the RESOURCE, not a comparison:
+              identity, live type/age, the full label/annotation set, the
+              commit this was checked against, the self-heal promise, drift
+              blame, and — moved in from the page's own bottom, so it sits
+              in its resource context rather than floating alone — the link
+              to the cluster/addon page. Closed by default; a reader who
+              wants it opens it, nobody else pays for it. */}
           <details className="border-t border-border pt-3" data-testid="detail-resource-disclosure">
-            <summary className="cursor-pointer text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Resource details</summary>
-            <div className="mt-2 space-y-3">
+            <summary className="cursor-pointer text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Resource details</summary>
+            <div className="mt-3 space-y-4">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1" data-testid="detail-resource-header">
                 <span className="rounded-full bg-[#d0e8f8] px-2 py-0.5 text-[11px] font-medium text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-300">
                   Secret
                 </span>
                 <span className="text-xs text-[#3a6a8a] dark:text-gray-500">on {row.cluster}</span>
-                {/* The age is a live-read fact, so it appears once the read lands
-                    and stays absent otherwise — never an invented one. */}
-                {live.status === 'ready' && live.resource.created_at && (
-                  <span className="text-xs text-[#3a6a8a] dark:text-gray-500">
-                    created <TimeChip iso={live.resource.created_at} />
-                  </span>
-                )}
               </div>
-              <dl className="space-y-1.5 text-xs">
-                <div className="flex justify-between gap-3">
-                  <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Namespace / name</dt>
-                  <dd className="text-right font-mono text-[#2a5a7a] dark:text-gray-400" data-testid="detail-identity">
-                    {identity}
-                  </dd>
-                </div>
-                {/* P2-C1: which commit and which file this row was compared
-                    against — short SHA here, full SHA on hover. Connection rows
-                    only; values rows have no commit to point at (their intent is
-                    the store, C2 covers that instead). */}
-                {row.kind === 'connection' && row.comparedRevision && (
-                  <div className="flex justify-between gap-3">
-                    <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Commit</dt>
-                    <dd
-                      className="text-right text-[#2a5a7a] dark:text-gray-400"
-                      title={`Full commit: ${row.comparedRevision}`}
-                      data-testid="detail-compared-revision"
-                    >
-                      Compared with git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
-                      {row.comparedPath && (
-                        <>
-                          {' '}
-                          · <span className="font-mono">{row.comparedPath}</span>
-                        </>
-                      )}
-                    </dd>
-                  </div>
+
+              {/* Responsive field grid — label above value, 3-4 compact
+                  fields per row on wide desktop, 2 on tablet, 1 on mobile. */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4" data-testid="detail-resource-fields">
+                <ResourceField label="Namespace / name" value={identity} mono testId="detail-identity" />
+                {/* The type and age are live-read facts, so they appear
+                    once the read lands and stay absent otherwise — never
+                    an invented one. */}
+                {live.status === 'ready' && live.resource.secret_type && (
+                  <ResourceField label="Type" value={live.resource.secret_type} testId="detail-resource-type" />
                 )}
-                {/* P2-C3: the one-line self-heal promise — only where it changes
-                    what the reader should do (an out-of-sync or missing row). */}
+                {live.status === 'ready' && live.resource.created_at && (
+                  <ResourceField label="Created" value={<TimeChip iso={live.resource.created_at} />} testId="detail-resource-created" />
+                )}
+                {/* P2-C1: which commit and which file this row was compared
+                    against — short SHA here, full SHA on hover. Connection
+                    rows only; values rows have no commit to point at. */}
+                {row.kind === 'connection' && row.comparedRevision && (
+                  <ResourceField
+                    label="Commit"
+                    testId="detail-compared-revision"
+                    title={`Full commit: ${row.comparedRevision}`}
+                    value={
+                      <>
+                        Compared with git <span className="font-mono">{row.comparedRevision.slice(0, 7)}</span>
+                        {row.comparedPath && (
+                          <>
+                            {' '}
+                            · <span className="font-mono">{row.comparedPath}</span>
+                          </>
+                        )}
+                      </>
+                    }
+                  />
+                )}
+                {/* P2-C3: the one-line self-heal promise — only where it
+                    changes what the reader should do. */}
                 {(row.state === 'out_of_sync' || row.state === 'missing') && (
-                  <div className="flex justify-between gap-3">
-                    <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Self-heal</dt>
-                    <dd className="text-right text-[#2a5a7a] dark:text-gray-400" data-testid="detail-self-heals">
-                      {row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
-                    </dd>
-                  </div>
+                  <ResourceField
+                    label="Self-heal"
+                    testId="detail-self-heals"
+                    value={row.selfHeals ? 'Sharko will fix this on the next pass.' : 'Waiting for Sync.'}
+                  />
                 )}
                 {/* P2-C6: drift blame — which side moved. Connection rows,
                     out-of-sync only, and only when both revisions are known. */}
                 {row.kind === 'connection' && row.state === 'out_of_sync' && row.driftSource && (
-                  <div className="flex justify-between gap-3">
-                    <dt className="shrink-0 text-[#5a8aaa] dark:text-gray-500">Drift</dt>
-                    <dd className="text-right text-[#2a5a7a] dark:text-gray-400" data-testid="detail-drift-source">
-                      {row.driftSource === 'git'
+                  <ResourceField
+                    label="Drift"
+                    testId="detail-drift-source"
+                    value={
+                      row.driftSource === 'git'
                         ? 'Git moved — a newer commit changed what this secret should be.'
-                        : 'The cluster moved — something changed this secret outside git.'}
-                    </dd>
-                  </div>
+                        : 'The cluster moved — something changed this secret outside git.'
+                    }
+                  />
                 )}
-              </dl>
+              </div>
+
+              {live.status === 'ready' && (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Labels</div>
+                    <KeyValueList items={live.resource.labels} empty="No labels." testId="resource-labels" />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Annotations</div>
+                    <KeyValueList items={live.resource.annotations} empty="No annotations." testId="resource-annotations" />
+                  </div>
+                </div>
+              )}
+
+              {/* leftover-secrets S1.2: an orphaned row's addon is best-effort
+                  (read off its provenance annotation) and can be absent —
+                  falls back to the cluster page rather than a broken
+                  /addons/undefined link. SSF-12: moved in from the bottom of
+                  the page, into the resource context it's actually about. */}
+              <button
+                type="button"
+                onClick={() => navigate(viewPageHref)}
+                data-testid="detail-view-page-link"
+                className="text-sm text-teal-700 hover:underline dark:text-teal-400"
+              >
+                {viewPageLabel}
+              </button>
             </div>
           </details>
 
-          {/* ── Keys (collapsed, SSF-8) ────────────────────────────────────
-              design-secret-sync-visual-pass, section 4: unchanged content, the
-              no-per-key-verdict rule, and the blanking sentence — verbatim,
-              just closed by default now. */}
+          {/* ── Keys (collapsed) ────────────────────────────────────────
+              Unchanged content, the no-per-key-verdict rule, and the
+              blanking sentence — verbatim, just closed by default. */}
           <RoleGuard roles={['admin', 'operator']}>
             <details className="border-t border-border pt-3" data-testid="detail-keys-disclosure">
-              <summary className="cursor-pointer text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Keys</summary>
+              <summary className="cursor-pointer text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Keys</summary>
               <div className="mt-2">
                 <KeyTable live={live} />
               </div>
             </details>
           </RoleGuard>
 
-          {/* ── Activity (collapsed, SSF-8) ── H4-3: "Last repaired" — a
-              single timestamp — became this short list, so a reader who
-              opens it sees the pattern (repeated repairs, a repair that
-              stopped happening) instead of only the most recent one. */}
+          {/* ── Recent activity (collapsed, SSF-12 renames "Sharko's
+              record" everywhere in this path) ─────────────────────────── */}
           <details className="border-t border-border pt-3" data-testid="detail-activity-disclosure">
-            <summary className="cursor-pointer text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Sharko's record</summary>
+            <summary className="cursor-pointer text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Recent activity</summary>
             <div className="mt-2">
               <RecentActivity row={row} />
             </div>
           </details>
-
-          {/* leftover-secrets S1.2: an orphaned row's addon is best-effort (read
-              off its provenance annotation) and can be absent — falls back to
-              the cluster page rather than building a broken /addons/undefined
-              link. */}
-          <button
-            type="button"
-            onClick={() =>
-              navigate(
-                row.kind === 'connection' || !row.addon
-                  ? `/clusters/${encodeURIComponent(row.cluster)}`
-                  : `/addons/${encodeURIComponent(row.addon)}`,
-              )
-            }
-            data-testid="detail-view-page-link"
-            className="text-sm text-teal-700 hover:underline dark:text-teal-400"
-          >
-            {row.kind === 'connection' || !row.addon ? 'View cluster page' : 'View addon page'}
-          </button>
         </>
       )}
     </div>

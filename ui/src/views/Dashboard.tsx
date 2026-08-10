@@ -107,7 +107,7 @@ function BootstrapHealthBanner({ health, sync }: BootstrapHealthBannerProps) {
         <ShieldAlert className={`h-5 w-5 shrink-0 mt-0.5 ${iconClass}`} />
         <div>
           <p className="font-semibold">Sharko Engine Issue</p>
-          <p className="mt-0.5 text-xs opacity-90">
+          <p className="mt-0.5 text-sm opacity-90">
             The <code className="rounded bg-black/10 px-1 dark:bg-white/10">sharko-engine</code> application
             is the foundation of all addon deployments. An unhealthy engine app may prevent addons from syncing.
           </p>
@@ -333,7 +333,7 @@ export function Dashboard() {
     <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-teal-700 to-blue-800 px-8 py-8 text-white shadow-lg dark:from-teal-900 dark:to-blue-950">
       <div className="flex items-center gap-6">
         <div className="flex-1">
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+          <h1 className="page-title">
             Managed clusters
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-teal-100 sm:text-base">
@@ -346,7 +346,7 @@ export function Dashboard() {
           disabled={isRefreshing}
           title="Refresh"
           data-testid="dashboard-refresh"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isRefreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
           Refresh
@@ -460,9 +460,9 @@ export function Dashboard() {
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-muted-foreground" />
-              <h3 className="text-base font-semibold text-card-foreground">Recent Activity</h3>
+              <h3 className="section-heading">Recent Activity</h3>
             </div>
-            <button onClick={() => navigate('/observability')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
+            <button onClick={() => navigate('/observability')} className="text-sm text-teal-600 hover:text-teal-700 dark:text-teal-400">
               View all
             </button>
           </div>
@@ -471,7 +471,7 @@ export function Dashboard() {
           ) : (
             <div className="space-y-2">
               {recentSyncs.map((sync, i) => (
-                <div key={i} className="flex items-center gap-3 text-xs">
+                <div key={i} className="flex items-center gap-3 text-sm">
                   <div className="min-w-0 flex-1 truncate">
                     <span className="text-muted-foreground">{activityVerb(sync.action)}</span>
                     <span className="font-medium text-card-foreground">{sync.addon_name}</span>
@@ -480,7 +480,7 @@ export function Dashboard() {
                       <span className="text-muted-foreground"> · rev {sync.revision.slice(0, 7)}</span>
                     )}
                   </div>
-                  <span className="shrink-0 text-muted-foreground flex items-center gap-1">
+                  <span className="shrink-0 text-muted-foreground flex items-center gap-1 text-xs">
                     <Clock className="h-3 w-3" />
                     {timeAgo(sync.timestamp)}
                   </span>
@@ -505,7 +505,7 @@ export function Dashboard() {
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <div className="mb-3 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-            <h3 className="text-base font-semibold text-card-foreground">Issues</h3>
+            <h3 className="section-heading">Issues</h3>
           </div>
           {confirmedProblemCount > 0 ? (
             <div className="space-y-2">
