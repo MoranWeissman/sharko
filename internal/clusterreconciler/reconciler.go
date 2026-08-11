@@ -719,6 +719,22 @@ func (e *desiredStateReadError) Unwrap() error { return e.Err }
 // that as "zero clusters desired". A non-nil error is always a
 // *desiredStateReadError.
 func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitProvider) (spec *models.ManagedClustersSpec, v4 *v4Assignments, fileNonEmpty bool, readPath string, err error) {
+	return r.readDesiredStateAtRef(ctx, gp, r.branch)
+}
+
+// readDesiredStateAtRef is readDesiredState with the git ref spelled out.
+//
+// Every existing caller goes through readDesiredState and passes the
+// configured branch, so their behaviour is byte-identical. The read-only
+// connection comparison (P2 step 2) passes a resolved commit SHA instead, so
+// that every file it reads — the managed-clusters file AND each
+// cluster-addons/<name>.yaml — comes from the SAME commit. Reading them at a
+// branch name means a commit landing mid-read can give a mixed picture of two
+// different desired states, and a comparison is exactly the thing that must
+// not report a difference it invented itself. Every real git provider passes
+// the ref straight through to its file API, so a SHA works wherever a branch
+// name does.
+func (r *Reconciler) readDesiredStateAtRef(ctx context.Context, gp gitprovider.GitProvider, ref string) (spec *models.ManagedClustersSpec, v4 *v4Assignments, fileNonEmpty bool, readPath string, err error) {
 	log := logging.LoggerFromContext(ctx)
 
 	// Step 1: read the managed-clusters file from git. Tries the configured
@@ -734,9 +750,9 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 	// That is what lets recordReconcile's ComparedPath field say "here is
 	// where Sharko looked" even when the read itself failed.
 	readPath = r.managedClustersPath
-	body, readErr := gp.GetFileContent(ctx, readPath, r.branch)
+	body, readErr := gp.GetFileContent(ctx, readPath, ref)
 	if readErr != nil && errors.Is(readErr, gitprovider.ErrFileNotFound) {
-		if v4Body, v4Err := gp.GetFileContent(ctx, V4ManagedClustersPath, r.branch); v4Err == nil {
+		if v4Body, v4Err := gp.GetFileContent(ctx, V4ManagedClustersPath, ref); v4Err == nil {
 			body, readErr, readPath = v4Body, nil, V4ManagedClustersPath
 			log.Debug("[clusterreconciler] configured managed-clusters path absent — found the v4 managed-clusters.yaml instead",
 				"v3_path", r.managedClustersPath, "v4_path", V4ManagedClustersPath)
@@ -771,7 +787,7 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 	// it can never use, and so the v3 desired-label computation stays
 	// byte-identical.
 	if readPath == V4ManagedClustersPath {
-		v4 = readV4AddonLabels(ctx, gp, r.branch)
+		v4 = readV4AddonLabels(ctx, gp, ref)
 	}
 
 	// fileNonEmpty feeds the orphan-sweep sanity guard (V2-cleanup-60.2):
