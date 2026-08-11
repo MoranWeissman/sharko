@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
@@ -689,10 +690,19 @@ func (r *Reconciler) reconcile() {
 		}
 
 		if err != nil {
-			rec.Error = err.Error()
+			// credsafe.Sentence is the only thing that changes here. When this
+			// error came from a credentials backend (recognised by TYPE — the
+			// marker travels through the %w chain, so "getting credentials: %w"
+			// is still caught) its text is replaced by one fixed sentence, in
+			// the record, in the errs list, and in the log line. Every other
+			// error — a Kubernetes write failure, a git read, a secrets-store
+			// fetch — keeps its full text exactly as before, because those are a
+			// different risk and gutting them would empty out the diagnostics.
+			safeText := credsafe.Sentence(err)
+			rec.Error = safeText
 			stats.Errors++
-			errs = append(errs, fmt.Sprintf("cluster=%s addon=%s secret=%s: %v",
-				w.clusterName, w.addon, w.push.SecretName, err))
+			errs = append(errs, fmt.Sprintf("cluster=%s addon=%s secret=%s: %s",
+				w.clusterName, w.addon, w.push.SecretName, safeText))
 			if errCluster == "" {
 				errCluster = w.clusterName
 			}
@@ -700,7 +710,7 @@ func (r *Reconciler) reconcile() {
 				"cluster", w.clusterName,
 				"addon", w.addon,
 				"secret", w.push.SecretName,
-				"error", err,
+				"error", safeText,
 			)
 			// P2-D D2: the stuck-loop counter's failure half — a SMALL fixed
 			// reason set, never the raw error text.
@@ -1543,6 +1553,10 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 
 	creds, err := r.credProvider.GetCredentials(w.credLookup)
 	if err != nil {
+		// The %w wrap stays, so itemFailureReason still buckets this as
+		// "credentials" and the caller still sees the typed cause. What
+		// recordItemCheck stores is the SAFE sentence — that string reaches
+		// the Managed Secrets rows.
 		checkErr := fmt.Errorf("getting credentials for cluster %q: %w", clusterName, err)
 		// H2 (code review): every failure path below used to return before
 		// recordItemCheck ever ran — CheckAll counted the failure locally and
@@ -1551,7 +1565,7 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 		// found. recordItemCheck(..., ItemOutcomeError, ...) is what makes
 		// this failure visible on the page and to LastItemConsecutiveFailures
 		// (L10), same as a periodic-pass failure already is.
-		r.recordItemCheck(clusterName, addonName, ItemOutcomeError, checkErr.Error())
+		r.recordItemCheck(clusterName, addonName, ItemOutcomeError, credsafe.Sentence(checkErr))
 		return "", checkErr
 	}
 

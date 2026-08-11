@@ -7,6 +7,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // testKubeconfig returns a minimal kubeconfig YAML for testing.
@@ -107,8 +109,24 @@ func TestGetCredentials_ExplicitSecretPath(t *testing.T) {
 	}
 }
 
-// TestGetCredentials_SuggestsSimilar verifies that when a secret is not found,
-// similar secret names are included in the error message.
+// TestGetCredentials_SuggestsSimilar verifies that when a Secret is not found,
+// similar Secret names are included in the error this provider builds.
+//
+// THIS TEST NOW READS THE CAUSE, NOT Error(), and that needs saying plainly.
+//
+// GetCredentials marks its errors, so the error it hands back SAYS the one fixed
+// safe sentence. That is the point of the mark: a boundary cannot leak a
+// credentials backend's text by forgetting to ask. So the provider's own
+// sentence — Sharko's words, listing Secret names from the operator's own
+// namespace — is now reachable only through credsafe.Cause, which is the
+// classification-only accessor.
+//
+// The operator has not lost anything. The suggestions they actually SEE come
+// from the cluster-test handler, which calls SearchSecrets separately once
+// credsafe.IsNotFound says the Secret really is missing (see
+// internal/api/cred_not_found_suggestions_test.go). This test still exists
+// because the provider's sentence is what a developer reads while debugging, and
+// silently dropping the names from it would be a real loss.
 func TestGetCredentials_SuggestsSimilar(t *testing.T) {
 	kubeconfig := testKubeconfig("https://api.cluster-1.example.com:6443")
 
@@ -130,12 +148,24 @@ func TestGetCredentials_SuggestsSimilar(t *testing.T) {
 		t.Fatal("expected error for missing secret, got nil")
 	}
 
-	errMsg := err.Error()
+	// What crosses the boundary is the fixed safe sentence, always.
+	if err.Error() != credsafe.Message {
+		t.Errorf("GetCredentials' error says %q, want the fixed safe sentence — the mark is missing from the boundary", err.Error())
+	}
+	// And underneath, Sharko's own sentence still names the similar Secrets.
+	errMsg := credsafe.Cause(err).Error()
 	if !contains(errMsg, "k8s-prod-eu-eks") {
-		t.Errorf("expected error to suggest %q, got: %v", "k8s-prod-eu-eks", errMsg)
+		t.Errorf("expected the underlying error to suggest %q, got: %v", "k8s-prod-eu-eks", errMsg)
 	}
 	if !contains(errMsg, "Similar secrets") {
-		t.Errorf("expected error to mention similar secrets, got: %v", errMsg)
+		t.Errorf("expected the underlying error to mention similar secrets, got: %v", errMsg)
+	}
+	// A missing Secret is a real absence, so the marker that drives the
+	// operator-facing suggestion list must be there.
+	if !credsafe.IsNotFound(err) {
+		t.Error(`a genuinely missing Secret did not carry the not-found marker.
+
+That marker is what lets the cluster-test handler offer secret-name suggestions without reading any error text.`)
 	}
 }
 

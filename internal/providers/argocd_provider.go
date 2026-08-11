@@ -18,6 +18,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // ArgoCDProvider reads cluster credentials from the ArgoCD-format Secret
@@ -169,8 +171,28 @@ type ArgoCDProviderError struct {
 	// Server is the cluster's API server URL from data["server"].
 	Server string
 	// Detail is a human-readable detail string. Returned by Error().
+	//
+	// PUBLIC. internal/api hands this straight to an API response body via
+	// writeStructuredError, and the connection doctor puts it in a check's
+	// Detail. So it must only ever hold Sharko's own words — never an
+	// underlying AWS or Kubernetes error's text.
 	Detail string
+
+	// Cause is the underlying error, kept reachable INSIDE the process so
+	// errors.Is / errors.As / a developer reading a stack still get it. It is
+	// never part of Error(), so it can never reach a response body or a log
+	// line by accident — the only way to see it is to ask for it deliberately.
+	//
+	// This is the split the mint-failure branch needs: Detail says Sharko's
+	// fixed sentence, Cause keeps the real reason, and nothing has to choose
+	// between being safe and being debuggable.
+	Cause error
 }
+
+// Unwrap exposes Cause to errors.Is / errors.As without putting it into
+// Error(). credsafe's marker travels through this hop, so a mint failure stays
+// recognisable as a credentials-backend failure.
+func (e *ArgoCDProviderError) Unwrap() error { return e.Cause }
 
 // Error returns the human-readable detail. Use errors.Is(err, ErrArgoCDProvider*)
 // to test for the routing branch in callers.
@@ -230,10 +252,17 @@ type argoCDTLSClientConfig struct {
 
 // listClusterSecrets returns all cluster-typed Secrets in the configured
 // namespace. The list is filtered server-side by the ArgoCD secret-type label.
+// credsafe.Mark is applied HERE rather than in each caller, because this is the
+// one read every credential-serving method on this provider goes through:
+// GetCredentials, ListClusters, SearchSecrets and ResolveRoleARN all call it.
+// Marking at the shared read means a new method cannot be added without
+// inheriting the mark. The Secrets it lists hold cluster sign-in details, so a
+// failure's text can quote them back.
 func (p *ArgoCDProvider) listClusterSecrets(ctx context.Context) (*corev1.SecretList, error) {
-	return p.client.CoreV1().Secrets(p.namespace).List(ctx, metav1.ListOptions{
+	list, err := p.client.CoreV1().Secrets(p.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: argoCDClusterTypeSelector,
 	})
+	return list, credsafe.Mark(err)
 }
 
 // findClusterSecret returns the ArgoCD cluster Secret whose data["name"]
@@ -261,10 +290,17 @@ func (p *ArgoCDProvider) findClusterSecret(ctx context.Context, clusterName stri
 
 	// Mirror the existing not-found shape: wrap a k8s NotFound so callers
 	// (and apierrors.IsNotFound) can recognise it.
-	return nil, apierrors.NewNotFound(
+	//
+	// credsafe.MarkNotFound is added on top because THIS is where "there is no
+	// cluster Secret for that name" is actually KNOWN — the list succeeded and
+	// nothing in it matched. The listing failure above deliberately does not
+	// get the marker: a failed list means Sharko could not look, which is a
+	// different answer. The apierrors.NewNotFound stays reachable through
+	// Unwrap, so apierrors.IsNotFound keeps working for existing callers.
+	return nil, credsafe.MarkNotFound(apierrors.NewNotFound(
 		corev1.Resource("secrets"),
 		clusterName,
-	)
+	))
 }
 
 // GetCredentials fetches credentials for the named cluster from the ArgoCD
@@ -290,12 +326,26 @@ func (p *ArgoCDProvider) findClusterSecret(ctx context.Context, clusterName stri
 //
 // The caller can dispatch via errors.Is(err, ErrArgoCDProvider*) and pull the
 // stable Code from *ArgoCDProviderError via errors.As for API/UI surfacing.
+// credsafe.Mark is applied to EVERY error this method returns, at the one
+// place they all pass through, rather than at each individual return. Marking
+// at the boundary is what makes it impossible to add a new failure branch in
+// getCredentials and forget the mark. Mark does not change what Error() says,
+// so callers, %w chains and errors.As on *ArgoCDProviderError are unaffected.
 func (p *ArgoCDProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
+	kc, err := p.getCredentials(clusterName)
+	return kc, credsafe.Mark(err)
+}
+
+func (p *ArgoCDProvider) getCredentials(clusterName string) (*Kubeconfig, error) {
 	slog.Info("[provider] GetCredentials called (argocd)", "cluster", clusterName, "namespace", p.namespace)
 
 	secret, err := p.findClusterSecret(context.Background(), clusterName)
 	if err != nil {
-		slog.Error("[provider] argocd cluster secret not found", "cluster", clusterName, "namespace", p.namespace, "error", err)
+		// The Kubernetes error's own value is no longer logged: this is a
+		// credential-fetch failure, and this whole path exists to read a
+		// Secret whose contents are sign-in details. The cluster, the
+		// namespace and the step are what a person needs.
+		slog.Error("[provider] argocd cluster secret not found", "cluster", clusterName, "namespace", p.namespace, "step", "find-cluster-secret")
 		return nil, fmt.Errorf("argocd cluster secret for %q not found in namespace %q: %w", clusterName, p.namespace, err)
 	}
 
@@ -685,14 +735,32 @@ func (p *ArgoCDProvider) resolveExecProviderConfig(ctx context.Context, name, se
 func (p *ArgoCDProvider) mintTokenKubeconfig(ctx context.Context, name, server string, tls argoCDTLSClientConfig, eksClusterName, region, roleARN string) (*Kubeconfig, error) {
 	token, err := p.eksTokenFn(ctx, eksClusterName, region, roleARN)
 	if err != nil {
+		// Two things used to leak here and both are gone.
+		//
+		// The log line carried the mint error's own value. An AWS SDK error can
+		// carry credential material in its text, so the line now carries the
+		// cluster, the server, the EKS cluster name, the region and the step —
+		// everything a person needs to find this in the log — and no error text.
+		//
+		// The Detail field carried the same error text via %v, and Detail is
+		// PUBLIC: internal/api hands it straight to the API response through
+		// writeStructuredError, and the connection doctor puts it in a check's
+		// Detail. It now says only Sharko's own words. The typed Code is
+		// unchanged, so the UI's dispatch on argocd_provider_iam_required and
+		// the doctor's fix text both behave exactly as before.
 		slog.Error("[provider] EKS token mint failed for argocd cluster — Sharko has no usable AWS identity for this cluster",
-			"cluster", name, "server", server, "eksClusterName", eksClusterName, "region", region, "error", err)
+			"cluster", name, "server", server, "eksClusterName", eksClusterName, "region", region, "step", "mint-eks-token")
 		return nil, &ArgoCDProviderError{
 			Code:        ArgoCDProviderCodeIAMRequired,
 			ClusterName: name,
 			Server:      server,
-			Detail: fmt.Sprintf("cluster %q needs Sharko's own AWS identity (IRSA/Pod Identity) to use this "+
-				"cluster's IAM-based connection, and minting an EKS token failed: %v", name, err),
+			Detail: fmt.Sprintf("Cluster %q needs Sharko's own AWS identity (IRSA / EKS Pod Identity) to use this "+
+				"cluster's IAM-based connection, and minting an EKS sign-in token failed. The server log for this "+
+				"request id says which step failed.", name),
+			// The real reason, kept inside the process. Not in Detail, so it
+			// cannot reach a response; reachable via errors.Is / errors.As, so a
+			// developer and credsafe both still find it.
+			Cause: credsafe.Mark(err),
 		}
 	}
 	return p.buildTokenKubeconfig(name, server, token, tls)
@@ -897,7 +965,7 @@ func (p *ArgoCDProvider) HealthCheck(ctx context.Context) error {
 		Limit:         limit,
 	})
 	if err != nil {
-		return fmt.Errorf("argocd provider health check failed: %w", err)
+		return credsafe.Mark(fmt.Errorf("argocd provider health check failed: %w", err))
 	}
 	return nil
 }

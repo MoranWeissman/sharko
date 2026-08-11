@@ -2,16 +2,29 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The error
-> message `"secret for cluster %q not found in AWS Secrets Manager.
-> Tried: %s. Set secret_path on the cluster to specify the exact
-> name"` is verified against `internal/providers/aws_sm.go:150-152`
-> in `GetCredentials`. The provider tries two paths: (1) the
-> configured `prefix + clusterName`, and (2) the bare cluster name as
-> an exact secret name. If both fail, this error returns with the
-> `tried` list rendered for operator diagnostic clarity. Re-verify
-> when the lookup loop (steps 1-2 in GetCredentials) changes order
-> or introduces new fallback prefixes.
+> **Verified:** Re-authored 2026-08-11 against `fix/provider-error-leaks`
+> after the provider-error hotfix. `internal/providers/aws_sm.go`'s
+> `GetCredentials` still tries the configured `prefix + clusterName`
+> first and the bare cluster name second, and still logs
+> `step=all-lookups` with the `tried` list.
+>
+> What changed: the error it returns is marked as a credentials-backend
+> failure (`internal/credsafe`), and a marked error SAYS the fixed safe
+> sentence. So the API response — and anything else that prints the error
+> — carries that sentence, never the "Tried: ..." text. The `tried` list
+> is still in the log line, which is where you read it.
+>
+> The secret-name suggestions still appear, and they are now decided by a
+> TYPE rather than by searching the error text for the words "not found".
+> The provider sets `credsafe.MarkNotFound` where AWS returned
+> `ResourceNotFoundException`, and the handler asks
+> `credsafe.IsNotFound`. One behaviour change that is deliberate and an
+> improvement: an **AccessDenied no longer produces suggestions**, even
+> when its message happens to contain the words. See the AccessDenied
+> runbook — that failure needs an IAM fix, not a name to pick from a list.
+>
+> Re-verify when the lookup order, the credsafe boundary, or the
+> not-found marker's placement changes.
 
 A single cluster's credential fetch failed because the AWS Secrets
 Manager provider could not find the cluster's secret at any of the
@@ -34,8 +47,8 @@ This is distinct from the **AccessDenied on Search** failure mode
 (see [`aws-sm-search-access-denied.md`](aws-sm-search-access-denied.md))
 — that's an IAM permission issue degrading the `searchSimilar` /
 `ListSecrets` helper that returns suggestions, not the primary
-`GetSecretValue` lookup. If your error mentions "Tried: " with two
-paths and no suggestions, this is the right runbook.
+`GetSecretValue` lookup. If the log line for your request says
+`step: "all-lookups"`, this is the right runbook.
 
 ---
 
@@ -44,34 +57,49 @@ paths and no suggestions, this is the right runbook.
 What an operator sees when this fires:
 
 - **API: `POST /api/v1/clusters/{name}/test`** (or any
-  cluster-credential-needing operation) returns 502 / 500 with the
-  exact error from `internal/providers/aws_sm.go:150`:
+  cluster-credential-needing operation) reports the failure with
+  Sharko's fixed safe sentence:
 
   ```
-  HTTP/1.1 502 Bad Gateway
-  {"error":"secret for cluster \"prod-eu\" not found in AWS Secrets Manager. Tried: clusters/prod-eu, prod-eu. Set secret_path on the cluster to specify the exact name"}
+  HTTP/1.1 200 OK
+  {"name":"prod-eu","reachable":false,"stage":"credentials","error_code":"ERR_AUTH",
+   "error_message":"Sharko could not read this cluster's sign-in details from the configured credentials source. The server log for this request id says which step failed."}
   ```
 
-- **Sharko logs the failure at error level**:
+  **The response no longer lists the paths it tried.** It used to say
+  `Tried: clusters/prod-eu, prod-eu`, and that text came from the
+  credentials backend's error path — the same path an AWS SDK error's
+  text travels down, and an SDK error can carry credential material in
+  its own message. Rather than decide case by case which
+  credentials-backend errors are safe to echo, none are.
+
+  **The `tried` list is not lost — it is in the log line**, which is the
+  next bullet, and it is the thing this runbook's diagnosis needs.
+
+- **Sharko logs the failure at error level, WITH the paths it tried**:
 
   ```
   {"time":"...","level":"ERROR","msg":"[provider] GetCredentials failed","request_id":"req-...","cluster":"prod-eu","step":"all-lookups","tried":"clusters/prod-eu, prod-eu"}
   ```
 
-  The `tried` field renders the two paths the provider attempted, in
-  order. If the configured prefix is empty, only one path appears.
+  This is your primary diagnostic, and everything you need is on it:
+  the **request id** to correlate, the **cluster**, the **step**
+  (`all-lookups` — both lookups failed, as opposed to `sts`, which is a
+  token-mint failure), and **`tried`**, the exact paths in order. If the
+  configured prefix is empty, only one path appears.
+
+- **Suggestions still work.** When `ListSecrets` permission is intact,
+  the response includes a `suggestions` list of similarly-named secrets
+  from your configured prefix — those are secret NAMES from your own
+  account, not error text, and they are often the whole answer. The
+  handler still finds them: it matches on the provider error's own text
+  internally, which `credsafe.Mark` leaves untouched on purpose. If
+  suggestions are empty, see
+  [`aws-sm-search-access-denied.md`](aws-sm-search-access-denied.md).
 
 - **The cluster row** in the dashboard shows **Test failed** with the
-  not-found error in the tooltip. Other clusters whose secrets exist
+  safe sentence in the tooltip. Other clusters whose secrets exist
   at expected paths show **Healthy** — this is per-cluster.
-
-- **If `SearchSecrets` permissions are intact**, the API response
-  might also include suggestions surfaced by
-  `internal/providers/aws_sm.go:179-202` (`searchSimilar`). The
-  handler (`handleTestCluster`) calls `SearchSecrets` separately
-  after `GetCredentials` fails and renders the suggestions in the
-  body. Suggestions are useful — they show similarly-named secrets
-  in the SM account that might be the actual one for this cluster.
 
 - **No specific Prometheus alert fires** for a single missing secret.
   Fleet-wide misconfiguration (every cluster's secret-path is wrong)
@@ -85,7 +113,8 @@ likely a Helm misconfiguration (wrong `secrets.prefix` value, wrong
 the `SharkoClusterRegistrationFastBurn` alert. Single-cluster failure
 stays in this runbook.
 
-If the error mentions "AccessDenied" instead of "not found," see
+If the `suggestions` list is empty and you expected one, IAM is missing
+`secretsmanager:ListSecrets` — see
 [`aws-sm-search-access-denied.md`](aws-sm-search-access-denied.md).
 
 ---
@@ -105,34 +134,67 @@ curl -sS http://sharko/api/v1/fleet/status \
   | jq '.clusters[] | {name, test_status, test_error}'
 ```
 
-Expected: one cluster shows the not-found error; others are healthy
-or have different errors. If many clusters show "secret not found"
-all at once, the issue is Helm-side (Mitigation step 4 catches that
-shape).
+Expected: one cluster shows the safe "could not read this cluster's
+sign-in details" sentence; others are healthy or failing differently.
+Every credentials-backend failure now reads the same on this surface, so
+to tell "secret not found" from a token-mint failure, use the `step`
+field on the log line in Diagnosis step 2 — that is what distinguishes
+them.
 
-### 2. Read off the exact paths Sharko tried
+If MANY clusters report the credentials sentence at once, the issue is
+Helm-side (Mitigation step 4 catches that shape).
 
-The error message includes the two paths in the `Tried:` field. Note
-both for the next step. If you don't have the response in front of
-you, re-trigger and capture:
+### 2. Read the exact paths Sharko tried, from the log
 
-```sh
-CLUSTER=<failing-cluster-name>
-curl -sS -X POST "http://sharko/api/v1/clusters/$CLUSTER/test" \
-  -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  -H "Content-Type: application/json" -d '{}' \
-  | jq '.'
-```
+The `tried` list is in the **log line**, not the response — see Symptoms
+for why. This is the step everything else depends on, so it is worth
+being precise about the two ways to get there.
 
-Or pull from logs via `request_id` correlation (see
-[`../developer-guide/logging.md`](../developer-guide/logging.md#correlation-ids)):
+**With a request id** (the response's `request_id`, or the
+`X-Request-Id` response header):
 
 ```sh
-REQ_ID=req-<id-from-failed-response>
+REQ_ID=req-<id-from-the-failed-response>
 kubectl -n <sharko-ns> logs -l app=sharko --since=15m \
   | jq -c --arg id "$REQ_ID" \
     'select(.request_id == $id and .msg == "[provider] GetCredentials failed")' \
-  | jq -c '{cluster, tried, step}'
+  | jq -r '"cluster=\(.cluster)  step=\(.step)  tried=\(.tried)"'
+```
+
+**Without one** — filter by cluster and step instead. Every one of these
+lines names both:
+
+```sh
+CLUSTER=<failing-cluster-name>
+kubectl -n <sharko-ns> logs -l app=sharko --since=30m \
+  | jq -c --arg c "$CLUSTER" \
+    'select(.cluster == $c and .step == "all-lookups")' \
+  | jq -r '"\(.time)  tried=\(.tried)"'
+```
+
+Expected output — the two paths, in the order the provider tried them:
+
+```
+2026-08-11T09:14:02Z  tried=clusters/prod-eu, prod-eu
+```
+
+Two things to note on that line before moving on:
+
+- **`step` tells you this is the right runbook.** `all-lookups` means
+  both secret lookups came back empty. `sts` would mean the secret was
+  found and the token mint failed — that is
+  [`eks-token-generation-failed.md`](eks-token-generation-failed.md)
+  instead.
+- **The response's `suggestions` list is worth a look too**, if it is
+  not empty. Those are real secret names from your configured prefix,
+  and one of them is often the answer — which makes Diagnosis step 3
+  a confirmation rather than a search:
+
+```sh
+curl -sS -X POST "http://sharko/api/v1/clusters/$CLUSTER/test" \
+  -H "Authorization: Bearer ${SHARKO_TOKEN}" \
+  -H "Content-Type: application/json" -d '{}' \
+  | jq '{error_message, suggestions}'
 ```
 
 ### 3. Find the actual secret in AWS-SM
@@ -154,7 +216,7 @@ kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
 Four outcomes:
 
 - **One match at the expected path** — the path matches Diagnosis
-  step 2's `Tried` list. The fix is operator-side cache / timing —
+  step 2's `tried` list. The fix is operator-side cache / timing —
   check `kubectl -n <sharko-ns> logs --since=1m` for a successful
   fetch since you last triggered, OR force a retry by deleting the
   cached failure (Mitigation step 1).
@@ -224,7 +286,7 @@ the cause; either move the secret or change the Helm prefix
    200.
 
 3. **If the secret genuinely doesn't exist, create it.** Mint at the
-   expected path (the first entry in `Tried:`, i.e.
+   expected path (the first entry in the log line's `tried` list, i.e.
    `<prefix><cluster-name>`):
 
    For a raw kubeconfig:
@@ -434,7 +496,8 @@ AND the cluster is on the critical path, email the maintainer:
 `moran.weissman@gmail.com`. Include:
 
 - This runbook URL
-- The cluster name and the `Tried:` paths from Diagnosis step 2
+- The cluster name, the request id, and the `tried` paths from the log
+  line in Diagnosis step 2
 - The output of Diagnosis step 3 (similar secrets in SM)
 - The output of Diagnosis step 4 (configured prefix)
 - The Sharko version
@@ -446,7 +509,7 @@ escalation is rare.
 <!-- Style-guide compliance checklist (V2-4.1):
 - [x] Title matches `# <Failure name>`
 - [x] Severity line present (P1)
-- [x] Verified-by-execution header + date current
+- [x] Verified-by-execution header + date current (re-authored 2026-08-11, provider-error hotfix)
 - [x] Symptoms section appears BEFORE Diagnosis
 - [x] Symptoms include exact log lines / error messages
 - [x] Diagnosis has 3+ concrete checks (4 named) with exact commands

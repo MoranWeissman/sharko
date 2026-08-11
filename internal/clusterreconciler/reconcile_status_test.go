@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
@@ -169,10 +170,22 @@ func TestPollOnce_LastReconcile_AlreadyInSyncStaysSucceeded(t *testing.T) {
 	}
 }
 
-// TestPollOnce_LastReconcile_RecordsFailedOnVaultError — a vault fetch
-// failure for one cluster must record Failed with a plain-English message
-// that STILL includes the real error text (not just a generic string),
+// TestPollOnce_LastReconcile_RecordsFailedOnVaultError — a credentials fetch
+// failure for one cluster must record Failed with a plain-English message,
 // while leaving the other clusters unaffected.
+//
+// THIS TEST'S EXPECTATION CHANGED, on purpose. It used to require the recorded
+// Message to CONTAIN the underlying error's own text. That is the leak this
+// hotfix closes: a credentials backend's error text can carry credential
+// material, and this Message reaches the API (LastReconcile.Message and the
+// managed-secrets rows) where anyone who can read a cluster can see it.
+//
+// What is asserted instead: the message is Sharko's own fixed lead-in plus the
+// one fixed safe sentence, it does NOT carry the underlying text, and — this is
+// the part the old assertion was really protecting — the fixed prefix survives,
+// so FailureSentence still classifies it as a credentials failure instead of
+// collapsing to its generic fallback. The underlying error is not lost; it is
+// still what the function RETURNS to its internal callers.
 func TestPollOnce_LastReconcile_RecordsFailedOnVaultError(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -198,11 +211,19 @@ func TestPollOnce_LastReconcile_RecordsFailedOnVaultError(t *testing.T) {
 	if rec.Outcome != OutcomeFailed {
 		t.Fatalf("Outcome = %q, want %q", rec.Outcome, OutcomeFailed)
 	}
-	if !strings.Contains(rec.Message, underlying.Error()) {
-		t.Fatalf("Message = %q, want it to contain the underlying error %q", rec.Message, underlying.Error())
+	if strings.Contains(rec.Message, underlying.Error()) {
+		t.Fatalf(`Message = %q — it carries the credentials backend's own error text.
+
+That text can hold credential material, and this Message reaches the API through LastReconcile.Message and the managed-secrets rows. It must be Sharko's own words.`, rec.Message)
 	}
-	if rec.Message == underlying.Error() {
-		t.Fatalf("Message = %q, want a plain-English lead-in before the raw error, not the raw error alone", rec.Message)
+	if !strings.Contains(rec.Message, credsafe.Message) {
+		t.Fatalf("Message = %q, want it to carry the fixed safe sentence %q", rec.Message, credsafe.Message)
+	}
+	// The fixed English prefix must survive — it is what FailureSentence matches
+	// on, and losing it would collapse every credentials failure into the
+	// generic "the last check didn't finish" sentence on the page.
+	if !strings.Contains(FailureSentence(rec.Message), "credentials") {
+		t.Fatalf("FailureSentence(%q) no longer classifies this as a credentials failure (got %q)", rec.Message, FailureSentence(rec.Message))
 	}
 
 	// c1 must be unaffected — per-cluster error isolation.

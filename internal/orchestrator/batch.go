@@ -1,6 +1,10 @@
 package orchestrator
 
-import "context"
+import (
+	"context"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
+)
 
 // MaxBatchSize is the maximum number of clusters that can be registered in a single batch.
 const MaxBatchSize = 10
@@ -21,10 +25,13 @@ func (o *Orchestrator) RegisterClusterBatch(ctx context.Context, requests []Regi
 		clusterResult, err := o.RegisterCluster(ctx, req)
 		if err != nil {
 			result.Failed++
+			// PUBLIC BOUNDARY. RegisterClusterResult.Error goes into the batch
+			// response body. A credentials-backend failure gets the fixed
+			// sentence; a git or ArgoCD failure keeps its text.
 			result.Results = append(result.Results, RegisterClusterResult{
 				Status:  "failed",
 				Cluster: ClusterResult{Name: req.Name},
-				Error:   err.Error(),
+				Error:   credsafe.Sentence(err),
 			})
 			continue
 		}

@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // ErrorCode classifies a connectivity test failure.
@@ -39,6 +41,18 @@ const (
 //     message "the server has asked for the client to provide credentials"
 //     and a case-insensitive "unauthorized" so a stringified 401 is still
 //     classified as auth rather than ERR_UNKNOWN.
+//
+// # Why it unwraps the credentials marker first
+//
+// A credentials-backend error's Error() is the one fixed safe sentence, so the
+// string arms below would see that sentence and classify every credential
+// failure the same way. credsafe.Cause steps past the marker to the real error
+// underneath, which is what the arms were written against.
+//
+// That is safe HERE and only here: this function reads the words to pick one of
+// a fixed set of codes and echoes not one character of them. The same is true of
+// AssumeRoleHint below, which chooses between Sharko-written hints. Anything
+// that builds a MESSAGE must call credsafe.Sentence instead.
 func ClassifyError(err error) ErrorCode {
 	if err == nil {
 		return ERR_UNKNOWN
@@ -53,7 +67,7 @@ func ClassifyError(err error) ErrorCode {
 	}
 
 	// Fallback: string match for non-typed / wrapped errors.
-	msg := err.Error()
+	msg := credsafe.Cause(err).Error()
 	lower := strings.ToLower(msg)
 	switch {
 	case strings.Contains(msg, "connection refused") || strings.Contains(msg, "no such host") || strings.Contains(msg, "dial tcp"):
@@ -136,11 +150,16 @@ func FriendlyMessage(r Result) string {
 // trust policy rejection, missing sts:AssumeRole permission, and missing
 // sts:TagSession permission. When the failure doesn't clearly match any
 // sub-type, it falls back to the combined generic hint from Hint(ERR_AWS_ASSUME).
+//
+// Like ClassifyError, it steps past the credentials marker with credsafe.Cause
+// so it reads the real AWS message rather than the fixed safe sentence. Every
+// string it can RETURN is written here in this file — no part of the AWS
+// message is ever echoed — which is what makes reading it acceptable.
 func AssumeRoleHint(err error) string {
 	if err == nil {
 		return ""
 	}
-	msg := err.Error()
+	msg := credsafe.Cause(err).Error()
 	lower := strings.ToLower(msg)
 
 	// sts:TagSession denial — EKS Pod Identity sessions require session tags

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -227,7 +228,11 @@ func (r *ClusterCredsRouter) Fetch(name, lookupKey, credsSource, roleARN string)
 	case models.CredsSourceInlineKubeconfig:
 		reader, err := r.ArgoCDReaderFn()
 		if err != nil {
-			return nil, fmt.Errorf("cluster %q was registered with an inline kubeconfig (credentials live in the ArgoCD cluster Secret, not the configured secrets backend) but the ArgoCD reader is unavailable: %w", name, err)
+			// The reader-construction error is on the credential-fetch path, so
+			// it is marked. The %w wrap stays — internal callers and errors.As
+			// keep working — and the boundary swaps the text for a fixed
+			// sentence.
+			return nil, credsafe.Mark(fmt.Errorf("cluster %q was registered with an inline kubeconfig (credentials live in the ArgoCD cluster Secret, not the configured secrets backend) but the ArgoCD reader is unavailable: %w", name, err))
 		}
 		slog.Info("[creds-router] inline-registered cluster — reading credentials from the ArgoCD cluster Secret",
 			"cluster", name)
@@ -252,14 +257,22 @@ func (r *ClusterCredsRouter) Fetch(name, lookupKey, credsSource, roleARN string)
 		}
 		if reader, readerErr := r.ArgoCDReaderFn(); readerErr == nil {
 			if argoCreds, argoErr := reader.GetCredentials(name); argoErr == nil {
+				// The backend error's own value is no longer logged. It came
+				// from a credentials backend, and this is the healing path — the
+				// fetch SUCCEEDED via the other route, so nobody is debugging a
+				// failure here anyway. The cluster and the lookup key are Git /
+				// config metadata and stay.
 				slog.Warn("[creds-router] backend lookup failed but the ArgoCD cluster Secret has credentials — the cluster was likely registered with an inline kubeconfig before creds_source was recorded; using the ArgoCD read path",
-					"cluster", name, "lookupKey", lookupKey, "backendError", backendErr)
+					"cluster", name, "lookupKey", lookupKey)
 				return argoCreds, nil
 			}
 		}
 		// Both routes failed — surface the ORIGINAL backend error so
-		// backend-registered clusters keep their existing failure surface
-		// (typed errors, "not found" substring for the suggestion search).
+		// backend-registered clusters keep their existing failure surface: the
+		// typed provider errors, and the credsafe not-found marker the
+		// cluster-test handler reads to decide whether to offer secret-name
+		// suggestions. Returning the ArgoCD reader's error instead would drop
+		// both, because the backend is the route that was actually meant to work.
 		return nil, backendErr
 	}
 }

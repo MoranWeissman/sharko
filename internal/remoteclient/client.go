@@ -6,6 +6,8 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // defaultRequestTimeout caps every K8s API call made through clients built
@@ -26,9 +28,19 @@ const defaultRequestTimeout = 30 * time.Second
 // returned client is bounded by defaultRequestTimeout (30s) so an
 // unreachable cluster cannot wedge the calling goroutine indefinitely.
 func NewClientFromKubeconfig(kubeconfig []byte) (kubernetes.Interface, error) {
+	// The kubeconfig bytes handed in here ARE the cluster's sign-in details, so
+	// an error built out of them can quote part of them back. Both failures
+	// below are marked as credentials-backend failures — same class as a
+	// token-mint failure — so the error's own Error() is the fixed safe
+	// sentence and no boundary can leak client-go's text by forgetting to ask.
+	//
+	// %w chains and errors.As still reach everything underneath, and
+	// verify.ClassifyError still picks the right code: it steps past the mark
+	// with credsafe.Cause to read the real message, and returns one of its own
+	// fixed codes.
 	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
 	if err != nil {
-		return nil, fmt.Errorf("parsing kubeconfig: %w", err)
+		return nil, credsafe.Mark(fmt.Errorf("parsing kubeconfig: %w", err))
 	}
 
 	// Per-call ceiling applied to every HTTP request issued by the
@@ -41,7 +53,7 @@ func NewClientFromKubeconfig(kubeconfig []byte) (kubernetes.Interface, error) {
 
 	client, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
-		return nil, fmt.Errorf("creating kubernetes client: %w", err)
+		return nil, credsafe.Mark(fmt.Errorf("creating kubernetes client: %w", err))
 	}
 
 	// Unverified-destination mark (tlsguard.go). A kubeconfig that says

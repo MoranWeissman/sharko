@@ -6,10 +6,13 @@ import (
 	"log/slog"
 	"strings"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // KubernetesSecretProvider reads kubeconfigs from Kubernetes Secrets.
@@ -135,7 +138,17 @@ func (p *KubernetesSecretProvider) fetchK8sSecret(secretName string) (*Kubeconfi
 	slog.Debug("[provider] fetching k8s secret", "namespace", p.namespace, "name", secretName)
 	secret, err := p.client.CoreV1().Secrets(p.namespace).Get(context.Background(), secretName, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("getting secret %q in namespace %q: %w", secretName, p.namespace, err)
+		wrapped := fmt.Errorf("getting secret %q in namespace %q: %w", secretName, p.namespace, err)
+		// THIS is where "the Secret is not there" is actually KNOWN — the
+		// Kubernetes API said so and apierrors reads its typed Status, not its
+		// words. Recorded as a marker so the cluster-test handler can offer
+		// secret-name suggestions without any substring matching. A Forbidden,
+		// a timeout or an unreachable API server deliberately does NOT get the
+		// marker: Sharko could not look, which is not the same as absent.
+		if apierrors.IsNotFound(err) {
+			return nil, credsafe.MarkNotFound(wrapped)
+		}
+		return nil, wrapped
 	}
 
 	raw, ok := secret.Data["kubeconfig"]
@@ -168,26 +181,51 @@ func (p *KubernetesSecretProvider) fetchK8sSecret(secretName string) (*Kubeconfi
 // GetCredentials fetches credentials for the named cluster. It tries the exact
 // secret name first; if not found it searches for secrets whose name contains
 // the cluster name as a substring and returns them as suggestions.
+// credsafe.Mark is applied at the boundary — see the ArgoCDProvider's
+// GetCredentials for why every return goes through one place. After Mark the
+// error's Error() is the fixed safe sentence; the one thing a caller can still
+// learn from it is credsafe.IsNotFound, set only when the Kubernetes API
+// actually said the Secret does not exist.
 func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
+	kc, err := p.getCredentials(clusterName)
+	return kc, credsafe.Mark(err)
+}
+
+func (p *KubernetesSecretProvider) getCredentials(clusterName string) (*Kubeconfig, error) {
 	slog.Info("[provider] GetCredentials called (k8s)", "cluster", clusterName)
 
 	// Step 1: Try exact name.
-	if kc, err := p.fetchK8sSecret(clusterName); err == nil {
+	kc, fetchErr := p.fetchK8sSecret(clusterName)
+	if fetchErr == nil {
 		return kc, nil
 	}
+	// fetchK8sSecret already marked a genuine Kubernetes NotFound. Anything
+	// else — Forbidden, a timeout, a Secret that exists but has no kubeconfig
+	// key, an unparseable kubeconfig — is NOT "missing", and must not end up
+	// offering the operator a list of names to pick from.
+	missing := credsafe.IsNotFound(fetchErr)
 
 	// Step 2: Search for similar names and include them in the error.
 	suggestions, searchErr := p.searchSimilarK8s(clusterName)
 	if searchErr == nil && len(suggestions) > 0 {
 		slog.Info("[provider] found similar secrets", "query", clusterName, "found", len(suggestions))
-		return nil, fmt.Errorf("secret for cluster %q not found in namespace %q. Similar secrets: %s. "+
+		withSuggestions := fmt.Errorf("secret for cluster %q not found in namespace %q. Similar secrets: %s. "+
 			"Set --secret-path to specify the exact secret name",
 			clusterName, p.namespace, strings.Join(suggestions, ", "))
+		if missing {
+			return nil, credsafe.MarkNotFound(withSuggestions)
+		}
+		return nil, withSuggestions
 	}
 
-	slog.Error("[provider] GetCredentials failed (k8s)", "cluster", clusterName, "step", "fetch", "error", "secret not found in namespace "+p.namespace)
-	return nil, fmt.Errorf("secret for cluster %q not found in namespace %q. "+
+	slog.Error("[provider] GetCredentials failed (k8s)", "cluster", clusterName, "namespace", p.namespace,
+		"step", "fetch", "missing", missing)
+	failure := fmt.Errorf("secret for cluster %q not found in namespace %q. "+
 		"Set --secret-path to specify the exact secret name", clusterName, p.namespace)
+	if missing {
+		return nil, credsafe.MarkNotFound(failure)
+	}
+	return nil, failure
 }
 
 // StoredConnectionFacts reports what this backend has stored for the named
@@ -202,7 +240,7 @@ func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconf
 func (p *KubernetesSecretProvider) StoredConnectionFacts(lookupKey string) (*StoredConnectionFacts, error) {
 	kc, err := p.fetchK8sSecret(lookupKey)
 	if err != nil {
-		return nil, err
+		return nil, credsafe.Mark(err)
 	}
 	return &StoredConnectionFacts{
 		Server:   kc.Server,
@@ -247,7 +285,7 @@ func (p *KubernetesSecretProvider) HealthCheck(ctx context.Context) error {
 		Limit:         limit,
 	})
 	if err != nil {
-		return fmt.Errorf("Kubernetes Secrets health check failed: %w", err)
+		return credsafe.Mark(fmt.Errorf("Kubernetes Secrets health check failed: %w", err))
 	}
 	return nil
 }

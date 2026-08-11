@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
@@ -58,9 +58,14 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get all clusters from the credentials provider.
+	//
+	// PUBLIC BOUNDARY. This used to concatenate the backend's raw error onto the
+	// response. A credentials-backend error gets the fixed sentence instead;
+	// anything else keeps its text.
 	providerClusters, err := s.credProvider().ListClusters()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to list provider clusters: "+err.Error())
+		slog.Error("[cluster-discover] listing provider clusters failed", "step", "list-provider-clusters")
+		writeError(w, http.StatusBadGateway, "failed to list provider clusters: "+credsafe.Sentence(err))
 		return
 	}
 
@@ -219,14 +224,20 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 			writeStructuredError(w, http.StatusServiceUnavailable, argoErr.Code, argoErr.Detail)
 			return
 		}
-		slog.Error("[cluster-test] failed", "name", name, "step", "fetch-credentials", "error", err)
+		// PUBLIC BOUNDARY. err came from a credentials backend, so neither the
+		// log line nor the response body carries its text: credsafe.Sentence
+		// returns the one fixed sentence for a credentials-backend failure
+		// (recognised by TYPE, through the %w chain) and leaves every other
+		// error's text alone.
+		safeMsg := credsafe.Sentence(err)
+		slog.Error("[cluster-test] failed", "name", name, "step", "fetch-credentials", "error", safeMsg)
 		result := verify.Result{
 			Success:      false,
 			Stage:        "credentials",
 			ErrorCode:    "ERR_AUTH",
-			ErrorMessage: err.Error(),
+			ErrorMessage: safeMsg,
 			Steps: []verify.Step{
-				{Name: "Fetch credentials", Status: "fail", Detail: err.Error()},
+				{Name: "Fetch credentials", Status: "fail", Detail: safeMsg},
 				{Name: "Fetch server version", Status: "skipped"},
 				{Name: "Ensure namespace", Status: "skipped"},
 				{Name: "Create test secret", Status: "skipped"},
@@ -236,12 +247,27 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		}
 		resp := newTestClusterResponse(name, result)
 
-		// If credential fetch failed with "not found", search for similar secrets
-		// and include them as suggestions so the UI can offer one-click correction.
-		if strings.Contains(err.Error(), "not found") {
+		// If the credentials are genuinely MISSING, search for similarly-named
+		// secrets and offer them, so the operator can fix a typo in one click.
+		//
+		// This asks credsafe.IsNotFound, which is errors.Is against a marker the
+		// PROVIDER set at the point it actually knew: the AWS SDK returned
+		// ResourceNotFoundException, or the Kubernetes read was a real NotFound.
+		//
+		// It used to be strings.Contains(err.Error(), "not found"), and that was
+		// wrong in both directions. It could not survive a backend rephrasing
+		// itself, and it fired on any failure whose text happened to contain the
+		// words — an AccessDenied that mentions a missing permission got offered
+		// a list of secret names, sending the operator to fix a typo that was
+		// never there. Now "we were not allowed to look" and "it is not there"
+		// give different answers, which is what they always were.
+		//
+		// Nothing from err reaches the response — only the suggestion list,
+		// which is secret NAMES from the operator's own configured prefix.
+		if credsafe.IsNotFound(err) {
 			suggestions, searchErr := s.credProvider().SearchSecrets(name)
 			if searchErr != nil {
-				slog.Warn("[cluster-test] SearchSecrets failed", "name", name, "error", searchErr)
+				slog.Warn("[cluster-test] SearchSecrets failed", "name", name, "error", credsafe.Sentence(searchErr))
 			}
 			if len(suggestions) > 0 {
 				resp.Suggestions = suggestions
@@ -257,15 +283,20 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	slog.Info("[cluster-test] building k8s client", "name", name)
 	client, err := remoteclient.NewClientFromKubeconfig(creds.Raw)
 	if err != nil {
-		slog.Error("[cluster-test] failed", "name", name, "step", "build-client", "error", err)
+		// PUBLIC BOUNDARY. The client is built FROM the credential material, so
+		// the parse error can quote part of it. ErrorCode still comes from
+		// verify.ClassifyError, which reads the real error to pick one of a
+		// fixed set of codes and echoes nothing.
+		safeMsg := "failed to build client: " + credsafe.Sentence(err)
+		slog.Error("[cluster-test] failed", "name", name, "step", "build-client", "error", safeMsg)
 		result := verify.Result{
 			Success:      false,
 			Stage:        "client",
 			ErrorCode:    verify.ClassifyError(err),
-			ErrorMessage: "failed to build client: " + err.Error(),
+			ErrorMessage: safeMsg,
 			Steps: []verify.Step{
 				{Name: "Fetch credentials", Status: "pass"},
-				{Name: "Fetch server version", Status: "fail", Detail: "failed to build client: " + err.Error()},
+				{Name: "Fetch server version", Status: "fail", Detail: safeMsg},
 				{Name: "Ensure namespace", Status: "skipped"},
 				{Name: "Create test secret", Status: "skipped"},
 				{Name: "Read back test secret", Status: "skipped"},

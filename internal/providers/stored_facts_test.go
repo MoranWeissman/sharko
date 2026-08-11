@@ -310,20 +310,117 @@ BOTH must go through storedFactsReader and nothing else. If you added a conditio
 // the log-line shapes are asserted against the source, which is the thing that
 // would regress.
 func TestGetEKSToken_LogsCarryNoPresignedURLAndNoLength(t *testing.T) {
+	assertNoLeakyLogCalls(t, "aws_auth.go")
+
 	body := readOwnSource(t, "aws_auth.go")
 
-	// Only the LOG calls are searched, and that is what keeps this guard from
-	// firing on things that are correct:
+	// And the genuinely safe, useful things are still there.
 	//
-	//   - req.URL legitimately appears elsewhere in this file — it is the thing
-	//     being encoded into the token — so a whole-file grep would fire on the
-	//     encoding line and teach everyone to ignore this test.
-	//   - the RETURN path's fmt.Errorf(... %w, err) wrapping is correct and must
-	//     stay. It is not a slog call, so it is never examined here. Removing a
-	//     log value must not change what the function returns.
+	// The bool: was the cluster-name header attached. It carries no part of the
+	// URL, and it is the setting that stops a token for one cluster being
+	// replayed against another.
+	if !strings.Contains(body, `"hasClusterHeader"`) {
+		t.Error("the hasClusterHeader bool was removed; it is the one diagnostic here that is genuinely useful and carries no credential material")
+	}
+
+	// The step names: taking the error value out of a failure log is only an
+	// improvement if what replaces it still says which failure it was. There are
+	// two different failures in getEKSToken and they need telling apart without
+	// the error text.
+	steps := strings.Count(body, `"step"`)
+	if steps < 2 {
+		t.Errorf(`found %d "step" log field(s) in aws_auth.go, want at least 2 (one per failure branch).
+
+The error value was removed from both failure logs. Without a step name a person reading the log cannot tell the load-AWS-config failure from the presigning failure — the two lines would be identical. Do not put the error value back; name the step.`, steps)
+	}
+	for _, step := range []string{`"load-aws-config"`, `"presign-get-caller-identity"`} {
+		if !strings.Contains(body, step) {
+			t.Errorf("the %s step name is gone; each failure branch must say which one it is", step)
+		}
+	}
+
+	// And the RETURN path still wraps the cause. This is the half that must NOT
+	// change: only the log line lost the error, the caller keeps it.
+	if strings.Count(body, `%w`) < 2 {
+		t.Errorf(`found fewer than two %%w wraps in aws_auth.go's returns.
+
+Removing the error from a LOG line must not change what the function RETURNS. Both failure branches still return an error wrapping the underlying cause, so callers behave exactly as before.`)
+	}
+}
+
+// TestAWSSMProvider_LogsCarryNoRawErrorAndNoTokenPrefix extends the SAME log-source
+// guard mechanism to aws_sm.go — the file that RECEIVES what getEKSToken returns.
+//
+// Two things used to leak here and the guard now covers both:
+//
+//   - the raw mint error value, on the STS-failure branch, at Error. It came
+//     straight from the token mint, and an AWS SDK error can carry credential
+//     material in its own message.
+//   - "tokenPrefix", the first 20 characters of a freshly minted token, at Info
+//     — on by default in production. A long comment argued those characters were
+//     provably the constant "k8s-aws-v1.aHR0cHM6L". The argument was careful and
+//     it did not matter: if the value really is a constant then logging it tells
+//     an operator nothing, and if the assumption ever quietly stopped holding it
+//     would leak with a comment vouching for it.
+//
+// Deliberately the same assertNoLeakyLogCalls mechanism as aws_auth.go rather
+// than a parallel test: one banned list, one place to add to, and both files are
+// held to the identical rule. It still allows the correct fmt.Errorf(... %w ...)
+// in the return paths, because only slog calls are examined.
+func TestAWSSMProvider_LogsCarryNoRawErrorAndNoTokenPrefix(t *testing.T) {
+	assertNoLeakyLogCalls(t, "aws_sm.go")
+
+	body := readOwnSource(t, "aws_sm.go")
+
+	// The STS failure branch still says WHICH step failed — that is what makes
+	// removing the error value an improvement rather than a loss.
+	if !strings.Contains(body, `"sts"`) {
+		t.Error(`the "sts" step name is gone from aws_sm.go's mint-failure log; without it the line cannot be told apart from the other GetCredentials failure`)
+	}
+	if !strings.Contains(body, `"all-lookups"`) {
+		t.Error(`the "all-lookups" step name is gone; the two GetCredentials failure logs must stay tellable apart without the error text`)
+	}
+
+	// The RETURN paths still wrap their causes. Only the log lines changed.
+	if strings.Count(body, `%w`) < 2 {
+		t.Error("aws_sm.go's returns no longer wrap their causes with %w — removing a value from a LOG line must not change what a function RETURNS")
+	}
+}
+
+// TestArgoCDProvider_LogsCarryNoRawError holds the third credential-fetching
+// provider to the same rule. Its mint-failure log used to carry the error value
+// too, and its typed ArgoCDProviderError.Detail — which internal/api hands
+// straight to an API response — used to carry the same text via %v.
+func TestArgoCDProvider_LogsCarryNoRawError(t *testing.T) {
+	assertNoLeakyLogCalls(t, "argocd_provider.go")
+
+	body := readOwnSource(t, "argocd_provider.go")
+	// The Detail field is a PUBLIC string. It must not interpolate an error.
+	if strings.Contains(body, "token failed: %v") {
+		t.Error("ArgoCDProviderError.Detail interpolates the mint error again — Detail is returned to API callers verbatim by writeStructuredError")
+	}
+}
+
+// assertNoLeakyLogCalls is the shared log-source guard.
+//
+// It extracts every slog.* call from one of this package's own files and sweeps
+// each for the fragments that mean a credential, or a summary of one, or a raw
+// provider error, reached a log line. Only the LOG calls are searched, and that
+// is what keeps the guard from firing on things that are correct:
+//
+//   - req.URL legitimately appears elsewhere in aws_auth.go — it is the thing
+//     being encoded into the token — so a whole-file grep would fire on the
+//     encoding line and teach everyone to ignore this test.
+//   - the RETURN paths' fmt.Errorf(... %w, err) wrapping is correct and must
+//     stay. It is not a slog call, so it is never examined here. Removing a log
+//     value must not change what a function returns.
+func assertNoLeakyLogCalls(t *testing.T, filename string) {
+	t.Helper()
+	body := readOwnSource(t, filename)
+
 	logCalls := slogCallsIn(body)
 	if len(logCalls) == 0 {
-		t.Fatal("found no slog calls in aws_auth.go — this test can no longer see what it is guarding, so fix the extraction rather than deleting the test")
+		t.Fatalf("found no slog calls in %s — this test can no longer see what it is guarding, so fix the extraction rather than deleting the test", filename)
 	}
 
 	banned := []struct {
@@ -363,42 +460,9 @@ func TestGetEKSToken_LogsCarryNoPresignedURLAndNoLength(t *testing.T) {
 				haystack, needle = strings.ToLower(call), strings.ToLower(b.fragment)
 			}
 			if strings.Contains(haystack, needle) {
-				t.Errorf("a log call in aws_auth.go contains %q — %s\n\nthe call: %s", b.fragment, b.why, call)
+				t.Errorf("a log call in %s contains %q — %s\n\nthe call: %s", filename, b.fragment, b.why, call)
 			}
 		}
-	}
-
-	// And the genuinely safe, useful things are still there.
-	//
-	// The bool: was the cluster-name header attached. It carries no part of the
-	// URL, and it is the setting that stops a token for one cluster being
-	// replayed against another.
-	if !strings.Contains(body, `"hasClusterHeader"`) {
-		t.Error("the hasClusterHeader bool was removed; it is the one diagnostic here that is genuinely useful and carries no credential material")
-	}
-
-	// The step names: taking the error value out of a failure log is only an
-	// improvement if what replaces it still says which failure it was. There are
-	// two different failures in getEKSToken and they need telling apart without
-	// the error text.
-	steps := strings.Count(body, `"step"`)
-	if steps < 2 {
-		t.Errorf(`found %d "step" log field(s) in aws_auth.go, want at least 2 (one per failure branch).
-
-The error value was removed from both failure logs. Without a step name a person reading the log cannot tell the load-AWS-config failure from the presigning failure — the two lines would be identical. Do not put the error value back; name the step.`, steps)
-	}
-	for _, step := range []string{`"load-aws-config"`, `"presign-get-caller-identity"`} {
-		if !strings.Contains(body, step) {
-			t.Errorf("the %s step name is gone; each failure branch must say which one it is", step)
-		}
-	}
-
-	// And the RETURN path still wraps the cause. This is the half that must NOT
-	// change: only the log line lost the error, the caller keeps it.
-	if strings.Count(body, `%w`) < 2 {
-		t.Errorf(`found fewer than two %%w wraps in aws_auth.go's returns.
-
-Removing the error from a LOG line must not change what the function RETURNS. Both failure branches still return an error wrapping the underlying cause, so callers behave exactly as before.`)
 	}
 }
 

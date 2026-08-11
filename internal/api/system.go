@@ -10,6 +10,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
@@ -45,9 +46,11 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 		if err := s.credProvider().HealthCheck(hctx); err == nil {
 			status = "connected"
 		} else {
+			// PUBLIC BOUNDARY. statusError lands in the GET /providers response
+			// body and the log line was writing the same text into the pod log.
 			status = "error"
-			statusError = err.Error()
-			slog.Warn("[provider] HealthCheck failed", "type", displayType, "region", displayRegion, "prefix", displayPrefix, "error", err)
+			statusError = credsafe.Sentence(err)
+			slog.Warn("[provider] HealthCheck failed", "type", displayType, "region", displayRegion, "prefix", displayPrefix, "error", statusError)
 		}
 	}
 

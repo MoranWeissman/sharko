@@ -18,6 +18,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/capabilities"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
@@ -246,10 +247,12 @@ func (s *Server) doctorCheckCredentials(ctx context.Context, name string) (docto
 				Fix:    doctorFixForArgoCDError(argoErr),
 			}, nil
 		}
+		// PUBLIC BOUNDARY. A doctor check's Detail goes straight into the API
+		// response, so a credentials-backend error gets the fixed sentence.
 		return doctorCheck{
 			ID:     doctorCheckConnectionCredentials,
 			Status: doctorStatusFail,
-			Detail: fmt.Sprintf("Sharko could not read connection credentials for cluster %q: %s", name, err.Error()),
+			Detail: fmt.Sprintf("Sharko could not read connection credentials for cluster %q: %s", name, credsafe.Sentence(err)),
 			Fix:    "Check that the cluster is registered and its credentials still exist at the configured source (secret path or ArgoCD cluster Secret), then try again.",
 		}, nil
 	}
@@ -484,10 +487,14 @@ func (s *Server) doctorCheckAssumeRole(ctx context.Context, clusterName string) 
 		// an AWS account id) and never the raw error string.
 		s.emitWarning(events.ReasonAWSAssumeRoleFailed,
 			fmt.Sprintf("AWS assume-role failed while checking cluster %q: Sharko's identity could not assume the cluster's IAM role.", clusterName))
+		// PUBLIC BOUNDARY. Detail no longer carries the AWS error's own text.
+		// Fix still comes from verify.AssumeRoleHint, which reads the real
+		// message to CHOOSE between Sharko's own pre-written hints and never
+		// echoes any part of it — so the operator keeps the useful advice.
 		return doctorCheck{
 			ID:     doctorCheckAssumeRole,
 			Status: doctorStatusFail,
-			Detail: fmt.Sprintf("Sharko could not assume role %q: %s", roleARN, err.Error()),
+			Detail: fmt.Sprintf("Sharko could not assume role %q: %s", roleARN, credsafe.Sentence(err)),
 			Fix:    verify.AssumeRoleHint(err),
 		}
 	}
@@ -591,7 +598,9 @@ func (s *Server) doctorCheckClusterAccess(ctx context.Context, clusterName strin
 		return doctorCheck{
 			ID:     doctorCheckClusterAccess,
 			Status: doctorStatusFail,
-			Detail: "Sharko could not build a Kubernetes client from this cluster's credentials: " + err.Error(),
+			// PUBLIC BOUNDARY. client-go builds this error FROM the credential
+			// material it was handed, so its text can quote part of it back.
+			Detail: "Sharko could not build a Kubernetes client from this cluster's credentials: " + credsafe.Sentence(err),
 			Fix:    "Check that the cluster's stored credentials still point at a reachable API server.",
 		}
 	}

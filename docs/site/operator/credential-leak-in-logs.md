@@ -13,6 +13,15 @@
 > the V2-2.3 logging audit.
 > Re-verify when handler-chain order changes or new auth init call sites
 > appear in `internal/auth/`.
+>
+> **Updated 2026-08-11 (provider-error hotfix,
+> `fix/provider-error-leaks`):** a third failure mode was added below —
+> a credentials backend's own ERROR TEXT reaching a log line, a response,
+> or the audit log. That is a different problem from the two here: the
+> value is not an attribute the `RedactHandler` can inspect, it is prose
+> inside an error string. It is now handled structurally by
+> `internal/credsafe`, which marks credentials-backend errors by TYPE and
+> gives every public boundary one fixed safe sentence to say instead.
 
 A credential — admin password, kubeconfig bearer token, JWT, base64-
 encoded vault secret, GitHub PAT — appeared verbatim in Sharko's
@@ -388,6 +397,73 @@ Why it happens: Go error formatting is naive; developers write
 Fix: wrap errors with explicit message control. Replace
 `fmt.Errorf("failed: %v", req)` with `fmt.Errorf("failed: %s", req.SafeString())`
 where `SafeString()` redacts credential fields.
+
+### A credentials backend's own error text is logged or returned
+
+This is the variant the 2026-08-11 hotfix closed, and it is worth telling
+apart from the one above. Nothing Sharko formatted was wrong: the code
+simply logged `err`, and `err` came from AWS or Kubernetes, and THAT
+error's message happened to carry credential material — a wrapped
+presigned URL, a token fragment, a credential a provider chain put into
+its own text.
+
+Diagnostic signature: a log line, an API response body, an audit entry's
+`error` or `detail` field, a reconcile record's message, or a Kubernetes
+event carrying an AWS or Kubernetes SDK message from a credential path.
+
+Why the `RedactHandler` does not catch it: the wrapper inspects
+attribute NAMES and value SHAPES. Here the attribute is named `error`
+and the value is a sentence — it looks exactly like every other error
+log in the process.
+
+Why a "redact anything that looks credential-shaped in error text" filter
+was NOT the fix: it would have to guess, it would mangle useful git and
+Kubernetes diagnostics, and it would silently stop matching the day a
+backend rephrased its errors.
+
+The fix, structurally:
+
+- `internal/credsafe` marks every error returned from a credentials
+  backend, and a marked error's `Error()` **is** the one fixed safe
+  sentence. So the default answer is already the safe one: a `%v`, a log
+  line, a string concatenation, or a boundary that forgets to ask all get
+  the sentence rather than the backend's text.
+- Nothing is lost. The real cause stays reachable through `Unwrap`, so
+  `%w` chains and `errors.As` on typed provider errors keep working. What
+  is gone is getting at the original WORDS by accident.
+- Classification is `errors.Is` against a sentinel — **by type, never by
+  reading the error's words**. A git or Kubernetes error that WRAPS a
+  credentials error is therefore caught too, because the marker travels
+  through the `%w` chain.
+- When a caller genuinely needs to know WHY the fetch failed, the
+  provider says so with a type. `credsafe.MarkNotFound` /
+  `credsafe.IsNotFound` is the one case today: the cluster-test page
+  offers similarly-named secrets when the secret really is absent, and
+  the provider sets that marker only where it knows — the AWS SDK
+  returned `ResourceNotFoundException`, or the Kubernetes read was a real
+  `apierrors.IsNotFound`. An access denial, a throttle and a timeout all
+  say no, so the operator is not sent hunting a typo that never existed.
+- The two error CLASSIFIERS (`verify.ClassifyError`,
+  `verify.AssumeRoleHint`) still read the real message, via
+  `credsafe.Cause`. That is the only sanctioned read: each returns one of
+  its own pre-written outcomes and echoes no part of what it read.
+- Every public boundary — API responses, log lines, audit entries,
+  reconcile records, Kubernetes events, CLI output — says one fixed
+  sentence instead of the text. Errors that did NOT come from a
+  credentials backend keep their text, so the audit trail stays useful.
+- `audit.Log.Add` sanitizes before storing AND before fanning out to SSE
+  subscribers, so nothing unsafe is ever held in memory. `GET
+  /api/v1/audit` is open to the **viewer** role, which is why the write
+  side is the only correct place for that fix.
+
+Operator consequence, and it is the point of the runbook rewrites: **you
+will not find an AWS or Kubernetes error message anywhere in Sharko's
+output for a credential failure.** Work from **request id, cluster,
+region and `step`**, then probe the provider directly from the pod for
+its own current reason. See
+[`eks-token-generation-failed.md`](eks-token-generation-failed.md) and
+[`single-cluster-credential-fetch-failed.md`](single-cluster-credential-fetch-failed.md)
+for what that looks like in practice.
 
 ### RedactHandler wired AFTER the JSON handler
 

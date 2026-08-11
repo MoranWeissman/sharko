@@ -2,17 +2,27 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The
-> graceful-degradation pattern at
-> `internal/providers/aws_sm.go:168-175` is verified against the
-> source: `SearchSecrets` calls `searchSimilar`, and if `ListSecrets`
-> fails (typically `AccessDeniedException`), the Warn log line
-> `"[provider] SearchSecrets failed (likely AccessDenied,
-> returning empty)"` fires (line 171) and the function returns an
-> empty result set with nil error. The `searchSimilar` helper at
-> line 179 wraps `secretsmanager:ListSecrets` with a per-page
-> name-filter. Re-verify when SearchSecrets degradation behavior or
-> the underlying paginator usage changes.
+> **Verified:** Re-authored 2026-08-11 against `fix/provider-error-leaks`
+> after the provider-error hotfix. `internal/providers/aws_sm.go`'s
+> `SearchSecrets` still degrades gracefully — `searchSimilar` fails,
+> the Warn line fires, and the function returns an empty result set
+> with a nil error, so the primary fetch path is untouched. What
+> changed: that Warn line no longer logs the AWS SDK error's value.
+> It now carries `query`, `prefix` and `step=list-secrets`. This was
+> a real leak found by extending the log-source guard
+> (`TestAWSSMProvider_LogsCarryNoRawErrorAndNoTokenPrefix`) to this
+> file — it was not in the original hotfix's file:line list.
+>
+> One more change worth knowing about on this page: the suggestions are
+> now offered only when the secret is genuinely ABSENT, decided by the
+> `credsafe.MarkNotFound` marker the provider sets where AWS returned
+> `ResourceNotFoundException`. Before, the handler searched the error text
+> for the words "not found", so an **AccessDenied whose message happened
+> to contain those words offered suggestions too** — sending the operator
+> to hunt a typo when the real problem was the missing IAM permission this
+> page is about. That no longer happens, and it is an improvement.
+>
+> Re-verify when SearchSecrets degradation or the log line changes.
 
 A single IAM role for the Sharko pod is missing the
 `secretsmanager:ListSecrets` permission. Sharko's AWS-SM provider
@@ -50,13 +60,23 @@ What an operator sees when this fires:
   SearchSecrets**:
 
   ```
-  {"time":"...","level":"WARN","msg":"[provider] SearchSecrets failed (likely AccessDenied, returning empty)","query":"<cluster-name-or-prefix>","error":"operation error Secrets Manager: ListSecrets, https response error StatusCode: 400, RequestID: ..., AccessDeniedException: User: arn:aws:sts::<account>:assumed-role/SharkoIRSARole/i-... is not authorized to perform: secretsmanager:ListSecrets on resource: *"}
+  {"time":"...","level":"WARN","msg":"[provider] SearchSecrets failed (likely AccessDenied, returning empty)","query":"<cluster-name-or-prefix>","prefix":"clusters/","step":"list-secrets"}
   ```
 
-  The `error` field carries the AWS SDK's full message, including
-  the IAM role ARN and the specific action denied. The warning fires
-  on every SearchSecrets invocation; if many GetCredentials calls
-  fail in a window, this log line repeats frequently.
+  **The `error` field is gone, and that is the fix.** This line used to
+  carry the AWS SDK's full message — which meant it also carried
+  whatever else that message happened to contain, and an AWS SDK error
+  can carry credential material in its own text. What you get instead
+  is the `query` (a cluster name you already sent), the configured
+  `prefix`, and `step=list-secrets`.
+
+  The role ARN used to be read out of that error field. Diagnosis step 2
+  below gets it from the pod itself instead, which is a better source
+  anyway: it reports the identity Sharko is using RIGHT NOW, not the one
+  in whichever log line you happened to grep.
+
+  The warning fires on every SearchSecrets invocation; if many
+  GetCredentials calls fail in a window, this line repeats.
 
 - **`POST /api/v1/clusters/{name}/test`** for a not-found cluster
   returns the not-found error but WITHOUT the "Similar secrets:"
@@ -109,43 +129,79 @@ curl -sS -X POST http://sharko/api/v1/clusters/typo-cluster-name/test \
 # In another shell:
 kubectl -n <sharko-ns> logs -l app=sharko --since=2m \
   | jq -c 'select(.msg | test("SearchSecrets|GetCredentials|ListSecrets|GetSecretValue"; "i"))' \
-  | jq -c '{time, level, msg, error}'
+  | jq -c '{time, level, msg, cluster, query, prefix, step}'
 ```
+
+(There is no `error` field on these lines any more — see Symptoms. The
+fields above are what Sharko actually carries.)
 
 Expected pattern:
 
 - A `WARN` line for `SearchSecrets failed (likely AccessDenied,
-  returning empty)` — confirms this runbook applies.
-- No corresponding `ERROR` for `GetSecretValue` (the primary
-  fetch path is healthy).
+  returning empty)` with `step: "list-secrets"` — confirms this runbook
+  applies.
+- No corresponding `ERROR` for the credential fetch itself (the primary
+  path is healthy). A credential-fetch failure would show up as
+  `[provider] GetCredentials failed` with its own `step`.
 
-If you ALSO see `GetSecretValue` failing with AccessDenied, the IAM
-gap is broader; see
+If the credential fetch is ALSO failing, the IAM gap is broader; see
 [`secrets-provider-unreachable.md`](secrets-provider-unreachable.md).
 
-### 2. Read off the IAM role ARN from the error
+### 2. Get the IAM role ARN from the pod, not from a log line
 
-The Warn log's `error` field carries the AWS SDK's full AccessDenied
-message, including the role ARN that was denied:
-
-```sh
-kubectl -n <sharko-ns> logs -l app=sharko --since=15m \
-  | jq -c 'select(.msg | test("SearchSecrets failed"))' \
-  | jq -r '.error' \
-  | head -1 \
-  | grep -oE 'arn:aws:[^:]+:[^:]*:[0-9]+:[^ ]+'
-```
-
-You should see the role ARN like
-`arn:aws:sts::123456789012:assumed-role/SharkoIRSARole/i-...`. Extract
-just the role name (between `assumed-role/` and the next `/`):
+This step used to grep the role ARN out of the Warn line's `error`
+field. That field is gone (see Symptoms), so ask the pod who it is —
+which is a better answer anyway, because it is the identity Sharko is
+using right now:
 
 ```sh
-ROLE_NAME=SharkoIRSARole  # the role between "assumed-role/" and "/i-..."
+SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
+kubectl -n <sharko-ns> exec "$SHARKO_POD" -- aws sts get-caller-identity
 ```
 
-This is the IAM role assumed by the Sharko pod via IRSA — the role
-that needs the policy update.
+Expected output names the assumed role:
+
+```json
+{
+  "UserId": "AROAEXAMPLEID:botocore-session-1234567890",
+  "Account": "123456789012",
+  "Arn": "arn:aws:sts::123456789012:assumed-role/SharkoIRSARole/botocore-session-1234567890"
+}
+```
+
+Take the role name from between `assumed-role/` and the next `/`:
+
+```sh
+ROLE_NAME=$(kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
+  aws sts get-caller-identity --query Arn --output text \
+  | sed -E 's#.*assumed-role/([^/]+)/.*#\1#')
+echo "$ROLE_NAME"
+```
+
+Cross-check against the Service Account annotation, which is where the
+role is actually configured:
+
+```sh
+SA=$(kubectl -n <sharko-ns> get pod -l app=sharko \
+  -o jsonpath='{.items[0].spec.serviceAccountName}')
+kubectl -n <sharko-ns> get sa "$SA" \
+  -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}'
+```
+
+These two should name the same role. If they disagree, the pod has not
+been restarted since the annotation changed — restart it before
+spending time on IAM policy.
+
+You can also confirm the denial yourself, and get AWS's own reason
+first-hand rather than through Sharko:
+
+```sh
+kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
+  aws secretsmanager list-secrets --max-results 1
+```
+
+An `AccessDeniedException` naming `secretsmanager:ListSecrets` confirms
+this runbook applies, and it names the role in AWS's own words.
 
 ### 3. Inspect the role's policies to confirm `ListSecrets` is missing
 
@@ -322,9 +378,9 @@ account-B role from account A (Sharko's IRSA role assumes
 trust permits AssumeRole, but the `AccountBRole`'s policy in
 account B doesn't include `ListSecrets`.
 
-Diagnostic signature: Diagnosis step 2's ARN shows
-`assumed-role/AccountBRole/...` — a different role from the
-Sharko pod's IRSA role. Diagnosis step 3 against AccountBRole
+Diagnostic signature: Diagnosis step 2's `sts get-caller-identity`
+shows `assumed-role/AccountBRole/...` — a different role from the one on
+the pod's Service Account annotation. Diagnosis step 3 against AccountBRole
 confirms the missing action.
 
 Fix is Mitigation step 1, applied to AccountBRole in account B (not
@@ -338,8 +394,10 @@ the Sharko IRSA role in account A).
   V2-3.x follow-up metric
   `sharko_provider_search_errors_total{provider="aws-sm",
   reason="access_denied"}` would let operators see at a glance that
-  IAM is degraded. Today, the only signal is the Warn log line,
-  which silently fires on every call.
+  IAM is degraded. Today the only signal is the Warn log line, which
+  silently fires on every call. Note the label set has no dimension
+  taken from the AWS error text — a metric label built from provider
+  error text is both unbounded cardinality and a leak.
 
 - **Gating — startup IAM-check probe.** At startup, Sharko could
   call `ListSecrets` once and emit a startup log warning if the
@@ -393,6 +451,8 @@ when SearchSecrets fails): `moran.weissman@gmail.com`. Include:
 
 - This runbook URL
 - The role ARN and the IAM policy you propose to apply
+- The output of Diagnosis step 2's `sts get-caller-identity` and the
+  `list-secrets` probe — that is AWS's own reason, first-hand
 - Whether GetCredentials (the primary path) is also failing
 - The Sharko version
 
@@ -402,7 +462,7 @@ mode is operator-correctable in nearly all cases; escalation is rare.
 <!-- Style-guide compliance checklist (V2-4.1):
 - [x] Title matches `# <Failure name>`
 - [x] Severity line present (P1)
-- [x] Verified-by-execution header + date current
+- [x] Verified-by-execution header + date current (re-authored 2026-08-11, provider-error hotfix)
 - [x] Symptoms section appears BEFORE Diagnosis
 - [x] Symptoms include exact log lines / error messages
 - [x] Diagnosis has 3+ concrete checks (3 named) with exact commands
