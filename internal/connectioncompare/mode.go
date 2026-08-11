@@ -38,13 +38,18 @@ const (
 	// Secret without reading the live one, so everything is checkable.
 	ModeBackendStoredCredentials Mode = "backend_stored_credentials"
 
-	// ModeEKSExec — structured EKS metadata in the secrets backend
+	// ModeEKSToken — structured EKS metadata in the secrets backend
 	// (credsSource eks-token), same conditions. The metadata is re-readable,
-	// but the bearer token is minted fresh on every fetch, so the credential
+	// but the sign-in token is minted fresh on every fetch, so the credential
 	// blob itself can never be compared. Scope is limited for that one
 	// reason; a repair is still offered, because rewriting the connection from
 	// the backend is exactly the fix.
-	ModeEKSExec Mode = "eks_exec"
+	//
+	// The name says token and not exec on purpose. The writer for this source
+	// supplies a minted bearer token, so BuildClusterSecret emits the
+	// bearerToken shape — not an execProviderConfig. Calling this mode "exec"
+	// would describe a shape Sharko does not write here.
+	ModeEKSToken Mode = "eks_token"
 
 	// ModeInlineKubeconfig — the cluster was registered with a pasted
 	// kubeconfig (credsSource inline-kubeconfig). Those credentials were
@@ -116,6 +121,15 @@ const (
 	// LimitReasonSourceNotUnderstood — the record has a credential source and
 	// this version of Sharko does not know what it means.
 	LimitReasonSourceNotUnderstood = "Sharko does not recognise what this cluster's record says about where its credentials are kept, so it will not assume anything. It checks the labels and the plain connection facts only. Check the cluster's entry in git, or update Sharko if the entry was written by a newer version."
+
+	// LimitReasonEKSTokenChangesEveryTime is the EKS answer, and it is exact
+	// wording the product owner signed off character for character. It names
+	// what WAS checked instead of claiming "everything else" — the old sentence
+	// said everything else was checked, which was not true, because a
+	// deliberately empty annotation set and the guest-scope rules mean "the
+	// rest" is a specific list and not all of it. It is pinned by
+	// TestClassify_EKSTokenLimitReasonIsExact so nobody paraphrases it later.
+	LimitReasonEKSTokenChangesEveryTime = "Sharko checked the Secret identity, type, server, and owned labels. It did not compare `data.config`, because the EKS sign-in token changes every time it is created."
 )
 
 // Scope is how much of the connection Sharko can honestly check for a mode.
@@ -333,10 +347,10 @@ func Classify(in ClassifyInput) Policy {
 		// state it was in. "I cannot prove this is right, but I can make it
 		// right" is a useful thing to be able to say.
 		return Policy{
-			Mode:        ModeEKSExec,
+			Mode:        ModeEKSToken,
 			Scope:       ScopeLimited,
 			RepairScope: RepairScopeFullConnection,
-			LimitReason: "This cluster signs in with a short-lived token that is issued fresh every time, so the stored sign-in details are never the same twice and Sharko cannot compare them. Everything else about the connection is checked.",
+			LimitReason: LimitReasonEKSTokenChangesEveryTime,
 		}
 	}
 
@@ -369,7 +383,7 @@ func Classify(in ClassifyInput) Policy {
 // rather than merely hoped for.
 func backendMode(credsSource string) Mode {
 	if credsSource == models.CredsSourceEKSToken {
-		return ModeEKSExec
+		return ModeEKSToken
 	}
 	return ModeBackendStoredCredentials
 }

@@ -437,7 +437,7 @@ func compareConnectionData(req Request, expectedSecret *corev1.Secret, checked *
 	}
 
 	// data.config, the credential blob.
-	if req.Policy.Mode == ModeEKSExec {
+	if req.Policy.Mode == ModeEKSToken {
 		// The stored details mint a brand-new short-lived token on every
 		// fetch, so the rebuilt blob differs from the live one every time
 		// with nothing having drifted. Comparing it would report drift that

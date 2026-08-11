@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
@@ -39,7 +40,7 @@ func TestClassify_SevenModes(t *testing.T) {
 				LiveSecretFound:   true,
 				LiveManagedBy:     argosecrets.ManagedByValue,
 			},
-			wantMode:        ModeEKSExec,
+			wantMode:        ModeEKSToken,
 			wantScope:       ScopeLimited,
 			wantRepair:      RepairScopeFullConnection,
 			wantLimitReason: true,
@@ -229,6 +230,59 @@ func TestClassify_UnknownSourceNeverFullNeverFullRepair(t *testing.T) {
 				t.Errorf("backend=%v found=%v: unknown source got a full-connection repair offer", backend, found)
 			}
 		}
+	}
+}
+
+// TestClassify_EKSModeIsCalledTokenNotExec pins the wire string and the Go
+// identifier together.
+//
+// The mode used to be called eks_exec, and that was not true: the writer for
+// this source supplies a minted bearer token, so BuildClusterSecret emits the
+// bearerToken shape, not an execProviderConfig. The name now says what the code
+// actually produces, and the wire value and the Go name agree.
+func TestClassify_EKSModeIsCalledTokenNotExec(t *testing.T) {
+	if got := string(ModeEKSToken); got != "eks_token" {
+		t.Errorf("the EKS mode's wire value = %q, want %q", got, "eks_token")
+	}
+	p := Classify(ClassifyInput{
+		CredsSource:       models.CredsSourceEKSToken,
+		BackendConfigured: true,
+		LiveSecretFound:   true,
+		LiveManagedBy:     argosecrets.ManagedByValue,
+	})
+	if p.Mode != ModeEKSToken {
+		t.Fatalf("Mode = %q, want %q", p.Mode, ModeEKSToken)
+	}
+	if string(p.Mode) == "eks_exec" {
+		t.Error("the mode is still called exec, which describes a Secret shape Sharko does not write for this source")
+	}
+}
+
+// TestClassify_EKSTokenLimitReasonIsExact pins the EKS sentence character for
+// character. The product owner signed off this exact wording; a paraphrase is a
+// change to the product, not a tidy-up.
+//
+// The old sentence ended "Everything else about the connection is checked",
+// which was not true — the annotation set is deliberately empty and the guest
+// rules narrow the label set, so "everything else" was a claim wider than the
+// code. The new one names what was actually checked.
+func TestClassify_EKSTokenLimitReasonIsExact(t *testing.T) {
+	const want = "Sharko checked the Secret identity, type, server, and owned labels. It did not compare `data.config`, because the EKS sign-in token changes every time it is created."
+
+	p := Classify(ClassifyInput{
+		CredsSource:       models.CredsSourceEKSToken,
+		BackendConfigured: true,
+		LiveSecretFound:   true,
+		LiveManagedBy:     argosecrets.ManagedByValue,
+	})
+	if p.LimitReason != want {
+		t.Errorf("the EKS limit reason was changed.\n got: %q\nwant: %q\n\nThis wording was signed off exactly as it is. If it really needs to change, change it with the product owner and update this test in the same commit.", p.LimitReason, want)
+	}
+	if LimitReasonEKSTokenChangesEveryTime != want {
+		t.Errorf("the constant no longer holds the signed-off sentence: %q", LimitReasonEKSTokenChangesEveryTime)
+	}
+	if strings.Contains(p.LimitReason, "Everything else about the connection is checked") {
+		t.Error("the old, untrue \"everything else\" claim is back")
 	}
 }
 
