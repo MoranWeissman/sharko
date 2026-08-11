@@ -1375,6 +1375,295 @@ func TestConnectionComparison_ForeignOwnershipThroughTheEndpoint(t *testing.T) {
 	assertNoSentinel(t, "response body", w.Body.String())
 }
 
+// --- the scope must never be wider than the answer ------------------------
+//
+// One boolean used to answer two different questions here. The handler asked "is
+// any credentials provider configured", handed that to BOTH the mode policy and
+// the rebuild predicate, and the router then applied a NARROWER rule to the
+// actual read. For a secret-kubeconfig cluster whose backend was an ArgoCD
+// fallback provider, or a backend with no read-only stored-facts capability, the
+// policy said full scope with a full-connection repair while the read was
+// refused — so the response came back "limited" next to "full", and step 3 would
+// have inherited a full-repair offer it must not have.
+//
+// The tests below drive both of those backend shapes end to end through the
+// endpoint, and assertScopeNotWiderThanTheAnswer is the invariant that catches
+// the whole class rather than just the two known cases.
+
+// mintOnlyBackendForAPI is a cluster-credentials backend with NO read-only
+// stored-facts capability — it can only hand out credentials, which for a real
+// EKS backend means minting one. The router must treat it as having no
+// independent copy at all, so the endpoint's scope must stay limited.
+//
+// It deliberately does NOT implement StoredConnectionFacts. Adding that method
+// here would silently turn this test into a copy of the happy path.
+type mintOnlyBackendForAPI struct {
+	getCredentialsCalls int
+}
+
+func (b *mintOnlyBackendForAPI) GetCredentials(name string) (*providers.Kubeconfig, error) {
+	b.getCredentialsCalls++
+	return &providers.Kubeconfig{
+		Server: "https://" + name + ".invalid",
+		CAData: []byte("not-a-real-ca-just-test-bytes"),
+		Token:  comparisonSentinel,
+	}, nil
+}
+func (b *mintOnlyBackendForAPI) ListClusters() ([]providers.ClusterInfo, error) { return nil, nil }
+func (b *mintOnlyBackendForAPI) SearchSecrets(_ string) ([]string, error)       { return nil, nil }
+func (b *mintOnlyBackendForAPI) HealthCheck(_ context.Context) error            { return nil }
+
+// assertScopeNotWiderThanTheAnswer is the anti-drift invariant.
+//
+// It catches the SYMPTOM of the policy-vs-enforcement bug rather than one
+// instance of it: a response whose scope claims more than its status delivered.
+// Any future change that lets the policy and the read disagree again shows up
+// here, whatever the cause.
+//
+// Three rules, all of them about the same thing — never claim you checked
+// something you did not:
+//
+//  1. status limited with scope full is a contradiction. "limited" means at
+//     least one thing Sharko owns was not checked; "full" means everything was.
+//  2. scope full with anything in not_checked is the same contradiction spelled
+//     out field by field.
+//  3. a limited status may not carry a full_connection repair offer — step 3
+//     would rewrite a whole connection off a check that was refused. The EKS
+//     mode is the ONE named exception, and it is a deliberate product decision,
+//     not an oversight: its token cannot be compared (a fresh one differs every
+//     time with nothing having drifted) so it is limited by design, while
+//     rewriting the connection from the backend is still exactly the right fix.
+//     "I cannot prove this is right, but I can make it right." Every OTHER mode
+//     that lands on limited got there because Sharko could not read the
+//     connection's details at all, and has nothing to rewrite them from.
+func assertScopeNotWiderThanTheAnswer(t *testing.T, where string, view connectionComparisonView) {
+	t.Helper()
+
+	if view.Status == "limited" && view.Scope == "full" {
+		t.Errorf(`%s: status is %q and scope is %q at the same time, which cannot both be true.
+
+WHAT IT MEANS: "limited" says at least one thing Sharko owns was not checked. "full" says everything was. The response is claiming a wider check than it actually performed.
+
+WHERE THIS COMES FROM: the mode policy and the actual backend read were given DIFFERENT answers to "can Sharko read this cluster's stored details without reading the live Secret". The policy said yes, the router said no. Both must come from the one shared answer — providers.ClusterCredsRouter.CanReadStoredFactsIndependentOfArgoCDSecret — passed to Classify AND to ExpectedCredentialsRebuildableWithoutLiveSecret.
+
+WHY IT IS NOT COSMETIC: step 3 reads repair_scope off this policy. A full-connection repair offered on a check that was refused would rewrite a whole connection on no evidence.`,
+			where, view.Status, view.Scope)
+	}
+
+	if view.Scope == "full" && len(view.NotChecked) > 0 {
+		t.Errorf("%s: scope is full but %d field(s) are reported as not checked (%+v) — full scope means every field Sharko owns WAS checked, so these two disagree",
+			where, len(view.NotChecked), view.NotChecked)
+	}
+
+	// The EKS mode is the one signed-off exception, named explicitly so that
+	// exempting anything else has to be an argued decision rather than a quiet
+	// widening of this check.
+	if view.Status == "limited" && view.RepairScope == "full_connection" && view.OwnershipMode != "eks_token" {
+		t.Errorf("%s: a limited answer with ownership_mode %q offered a full_connection repair. A repair that rewrites the whole connection must not be offered off a check that could not read the connection's details at all.\n\nThe one exception is ownership_mode eks_token, which is limited by design (its token changes every time) while a rewrite from the backend is still the right fix. Every other limited mode got there because Sharko has nothing independent to rewrite from.",
+			where, view.OwnershipMode)
+	}
+}
+
+// TestConnectionComparison_ArgoCDBackendNeverGetsFullScope: the configured
+// backend IS the ArgoCD cluster-Secret reader — the in-cluster auto-default, and
+// what a "type: argocd" connection gets.
+//
+// "The backend" and "the live Secret" are then the same place. Reading it to
+// build the expected side would compare the Secret with itself, agree every
+// time, and report a clobbered connection as fine. The router already refuses
+// that read; this proves the ANSWER refuses it too, instead of promising full
+// scope and a full repair on top of a refusal.
+func TestConnectionComparison_ArgoCDBackendNeverGetsFullScope(t *testing.T) {
+	// A real ArgoCDProvider over a fake ArgoCD secret-list API, exactly as the
+	// doctor test builds one. It is a genuinely configured, genuinely working
+	// credentials provider — that is the point: "configured" was never the
+	// right question.
+	restCfg := startFakeArgoSecretListAPI(t, *liveConnectionSecret(
+		map[string]string{"datadog": "enabled"},
+		map[string]string{
+			"name":   comparisonCluster,
+			"server": "https://" + comparisonCluster + ".invalid",
+			"config": `{"bearerToken":"` + comparisonSentinel + `"}`,
+		}, nil))
+	argoBackend, err := providers.NewArgoCDProviderWithRESTConfigFromConfig(
+		providers.ClusterTestProviderConfig{ArgoCDNamespace: "argocd"}, restCfg)
+	if err != nil {
+		t.Fatalf("construct ArgoCDProvider: %v", err)
+	}
+
+	live := liveConnectionSecret(map[string]string{"datadog": "enabled"}, map[string]string{
+		"name":   comparisonCluster,
+		"server": "https://" + comparisonCluster + ".invalid",
+		"config": `{"bearerToken":"` + comparisonSentinel + `"}`,
+	}, nil)
+	_, router, _ := comparisonFixture(t, backendManagedYAML, live, argoBackend)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, comparisonReq(comparisonCluster))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var view connectionComparisonView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+
+	if view.Scope == "full" {
+		t.Errorf(`scope = full, want limited.
+
+The only backend Sharko has here is the ArgoCD cluster-Secret reader, so the only thing it could rebuild the expected connection from is the live connection. Full scope would mean Sharko compared the Secret with itself and called the agreement proof.`)
+	}
+	if view.Scope != "limited" {
+		t.Errorf("scope = %q, want limited", view.Scope)
+	}
+	if view.RepairScope == "full_connection" {
+		t.Errorf(`repair_scope = full_connection, want addon_labels_only.
+
+A full repair rewrites the whole connection from the backend. The backend here IS the connection, so there is nothing independent to rewrite it from — and step 3 reads this field to decide what it may offer.`)
+	}
+	if view.RepairScope != "addon_labels_only" {
+		t.Errorf("repair_scope = %q, want addon_labels_only — re-applying the addon labels is still safe and still useful", view.RepairScope)
+	}
+	if view.Status == "synced" {
+		t.Error("status = synced, and it must never be: Sharko never read this connection's details from anywhere but the connection")
+	}
+	if view.LimitReason == "" {
+		t.Error("a narrower scope must explain itself in plain words")
+	}
+	assertScopeNotWiderThanTheAnswer(t, "ArgoCD-reader backend", view)
+	assertNoSentinel(t, "response body", w.Body.String())
+}
+
+// TestConnectionComparison_BackendWithoutStoredFactsNeverGetsFullScope: the
+// backend is configured and works, but it has no read-only stored-facts
+// capability — all it can do is hand out credentials.
+//
+// The router refuses that backend rather than falling back to GetCredentials,
+// because for a real EKS backend that fallback mints a live sign-in token during
+// a read-only check. So the answer must be limited, no full repair, and the
+// credential fetch must never have been called.
+func TestConnectionComparison_BackendWithoutStoredFactsNeverGetsFullScope(t *testing.T) {
+	backend := &mintOnlyBackendForAPI{}
+
+	live := liveConnectionSecret(map[string]string{"datadog": "enabled"}, map[string]string{
+		"name":   comparisonCluster,
+		"server": "https://" + comparisonCluster + ".invalid",
+		"config": `{"bearerToken":"` + comparisonSentinel + `"}`,
+	}, nil)
+	_, router, _ := comparisonFixture(t, backendManagedYAML, live, backend)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, comparisonReq(comparisonCluster))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var view connectionComparisonView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+
+	if view.Scope == "full" {
+		t.Errorf(`scope = full, want limited.
+
+This backend cannot be read without asking it for credentials, and asking a real EKS backend for credentials mints a live sign-in token. The router refuses it for that reason, so the answer must not claim the credential half was checked.`)
+	}
+	if view.Scope != "limited" {
+		t.Errorf("scope = %q, want limited", view.Scope)
+	}
+	if view.RepairScope == "full_connection" {
+		t.Error("repair_scope = full_connection on a backend Sharko cannot read — step 3 would rewrite the whole connection off nothing")
+	}
+	if view.RepairScope != "addon_labels_only" {
+		t.Errorf("repair_scope = %q, want addon_labels_only", view.RepairScope)
+	}
+	if view.Status == "synced" {
+		t.Error("status = synced, and it must never be: the credential half was never read")
+	}
+	if backend.getCredentialsCalls != 0 {
+		t.Errorf(`the comparison called GetCredentials %d time(s) on a read-only check.
+
+That is the route the EKS token mint lives on. A read must not create a credential as a side effect of checking. The router refuses a backend with no read-only capability precisely so this stays at zero — do not add a fallback.`, backend.getCredentialsCalls)
+	}
+	assertScopeNotWiderThanTheAnswer(t, "backend with no read-only capability", view)
+	assertNoSentinel(t, "response body", w.Body.String())
+}
+
+// TestConnectionComparison_ScopeNeverWiderThanTheAnswer sweeps the invariant
+// across every backend shape at once, including the ones that are supposed to
+// reach full scope.
+//
+// It is the test that would fail if the policy and the enforcement ever drift
+// apart again for a reason nobody has thought of yet — the two tests above cover
+// the two shapes we know about; this one covers the combination.
+func TestConnectionComparison_ScopeNeverWiderThanTheAnswer(t *testing.T) {
+	argoRestCfg := startFakeArgoSecretListAPI(t)
+	argoBackend, err := providers.NewArgoCDProviderWithRESTConfigFromConfig(
+		providers.ClusterTestProviderConfig{ArgoCDNamespace: "argocd"}, argoRestCfg)
+	if err != nil {
+		t.Fatalf("construct ArgoCDProvider: %v", err)
+	}
+
+	backends := []struct {
+		name    string
+		backend providers.ClusterCredentialsProvider
+	}{
+		{"a backend that answers read-only", comparisonFakeVault{}},
+		{"the ArgoCD cluster-Secret reader", argoBackend},
+		{"a backend with no read-only capability", &mintOnlyBackendForAPI{}},
+		{"no backend at all", nil},
+	}
+	// Every recorded credential source, so a shape that only misbehaves for one
+	// of them is still caught.
+	sources := []struct {
+		name string
+		yaml string
+	}{
+		{"secret-kubeconfig", backendManagedYAML},
+		{"eks-token", eksManagedYAML},
+		{"inline-kubeconfig", "clusters:\n- name: " + comparisonCluster + "\n  credsSource: inline-kubeconfig\n  labels:\n    datadog: enabled\n"},
+		{"no recorded source", "clusters:\n- name: " + comparisonCluster + "\n  labels:\n    datadog: enabled\n"},
+	}
+
+	for _, b := range backends {
+		for _, s := range sources {
+			t.Run(b.name+" + "+s.name, func(t *testing.T) {
+				live := liveConnectionSecret(map[string]string{"datadog": "enabled"}, map[string]string{
+					"name":   comparisonCluster,
+					"server": "https://" + comparisonCluster + ".invalid",
+					"config": `{"bearerToken":"` + comparisonSentinel + `"}`,
+				}, nil)
+				_, router, _ := comparisonFixture(t, s.yaml, live, b.backend)
+
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, comparisonReq(comparisonCluster))
+				if w.Code != http.StatusOK {
+					t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+				}
+				var view connectionComparisonView
+				if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+					t.Fatalf("decoding: %v", err)
+				}
+				assertScopeNotWiderThanTheAnswer(t, b.name+" + "+s.name, view)
+
+				// Full scope is only ever allowed to come out of a backend that
+				// can genuinely be read independently of the live Secret. This
+				// is the same rule as the invariant above, stated from the other
+				// direction: not "is the response self-consistent" but "was this
+				// cluster ever entitled to the widest answer".
+				if view.Scope == "full" {
+					if b.name != "a backend that answers read-only" {
+						t.Errorf("scope = full for %q, which cannot be read independently of the live connection", b.name)
+					}
+					if s.name != "secret-kubeconfig" {
+						t.Errorf("scope = full for credential source %q, which only ever reaches limited", s.name)
+					}
+				}
+				assertNoSentinel(t, "response body", w.Body.String())
+			})
+		}
+	}
+}
+
 // TestConnectionComparison_SelfManagedThroughTheEndpoint: a connection the
 // person maintains. Only the addon labels are checked, and the deliberately
 // wrong API address is not reported, because it is not Sharko's.

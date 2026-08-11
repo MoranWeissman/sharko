@@ -32,8 +32,9 @@ type Mode string
 
 const (
 	// ModeBackendStoredCredentials — the cluster's kubeconfig lives in the
-	// secrets backend (credsSource secret-kubeconfig), a backend is wired up,
-	// the connection is Sharko's to manage, and Sharko owns the live Secret.
+	// secrets backend (credsSource secret-kubeconfig), that backend can be read
+	// independently of the live Secret, the connection is Sharko's to manage,
+	// and Sharko owns the live Secret.
 	// Sharko can re-fetch the stored kubeconfig and rebuild the whole expected
 	// Secret without reading the live one, so everything is checkable.
 	ModeBackendStoredCredentials Mode = "backend_stored_credentials"
@@ -208,10 +209,26 @@ type ClassifyInput struct {
 	// ConnectionManagedBy is the cluster's recorded connectionManagedBy.
 	ConnectionManagedBy string
 
-	// BackendConfigured reports whether a secrets-provider backend is wired
-	// up at the connection level. A backend-stored source can only be
-	// re-read when there is a backend to ask.
-	BackendConfigured bool
+	// BackendCanProvideStoredFacts reports whether the configured secrets
+	// backend can tell Sharko what a cluster's connection should look like
+	// WITHOUT reading the live ArgoCD Secret.
+	//
+	// It is NOT "a secrets provider is configured". That was the earlier,
+	// wider question and it was wrong here: an ArgoCD fallback provider is
+	// configured, and reading it reads the live Secret; a backend with no
+	// read-only stored-facts capability is configured, and it cannot be read
+	// at all without a credential fetch that mints an EKS token. Either of
+	// those given a true here produced a policy that said full scope and
+	// offered a full repair for a read that was then refused — the answer
+	// came back limited while the policy still said full.
+	//
+	// The caller must pass
+	// providers.ClusterCredsRouter.CanReadStoredFactsIndependentOfArgoCDSecret,
+	// which is the same code the read itself goes through, and must pass the
+	// SAME value to models.ExpectedCredentialsRebuildableWithoutLiveSecret.
+	// When it is false the scope stays limited, no full repair is offered, and
+	// synced is never reported.
+	BackendCanProvideStoredFacts bool
 
 	// LiveSecretFound reports whether an ArgoCD cluster Secret exists for
 	// this cluster right now. When false the live-only signals below are
@@ -242,8 +259,9 @@ type ClassifyInput struct {
 //     so an unrecognised value can never fall through into a wider scope.
 //  4. Inline kubeconfig is "no independent copy of the credentials" —
 //     limited.
-//  5. Only a backend-stored source with a backend actually wired up, on a
-//     connection Sharko owns, reaches the checkable end of the table.
+//  5. Only a backend-stored source whose backend can be read INDEPENDENTLY of
+//     the live Secret, on a connection Sharko owns, reaches the checkable end
+//     of the table.
 //
 // It never returns a zero Policy: every path assigns a mode, a scope and a
 // repair scope.
@@ -316,18 +334,21 @@ func Classify(in ClassifyInput) Policy {
 		}
 	}
 
-	// 5. A backend-stored source. Checkable only when there is a backend to
-	// re-read from; without one Sharko has no independent copy after all.
+	// 5. A backend-stored source. Checkable only when the backend can be read
+	// independently of the live Secret; when it cannot, Sharko has no
+	// independent copy after all — whether that is because nothing is
+	// connected, because what is connected reads the live Secret itself, or
+	// because it cannot be read without minting a credential.
 	//
 	// Only secret-kubeconfig and eks-token can reach this point: the allowlist
 	// gate above already turned everything else away, so backendMode below is
 	// only ever asked about one of those two.
-	if !in.BackendConfigured {
+	if !in.BackendCanProvideStoredFacts {
 		return Policy{
 			Mode:        backendMode(in.CredsSource),
 			Scope:       ScopeLimited,
 			RepairScope: RepairScopeAddonLabelsOnly,
-			LimitReason: "This cluster's credentials are kept in a secrets backend, but no secrets backend is connected right now, so Sharko cannot check the connection details against it.",
+			LimitReason: "This cluster's credentials are kept in a secrets backend, but Sharko cannot read them from there right now, so it cannot check the connection details against them.",
 		}
 	}
 

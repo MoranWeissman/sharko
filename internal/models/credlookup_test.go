@@ -177,32 +177,36 @@ func TestClusterCredentialsResolvable(t *testing.T) {
 // time, and tell the user a badly drifted connection is in sync. That is the
 // exact bug this pair of functions is shaped to prevent.
 func TestCredentialPredicates_DisagreeOnInlineSharkoManaged(t *testing.T) {
-	// The disagreement holds whether or not a backend is configured — an
-	// inline cluster's credentials are not in the backend either way.
-	for _, backendConfigured := range []bool{false, true} {
+	// The disagreement holds whichever way the backend answer goes — an inline
+	// cluster's credentials are not in the backend either way. The two
+	// predicates take DIFFERENT booleans (one "a backend is configured", the
+	// other "the backend can be read independently of the live Secret"), and
+	// this loop feeds both the same value on purpose: even then they must
+	// disagree, so the disagreement cannot be an artefact of the input.
+	for _, backendAnswer := range []bool{false, true} {
 		c := Cluster{
 			CredsSource:         CredsSourceInlineKubeconfig,
 			ConnectionManagedBy: ConnectionManagedBySharko,
 		}
-		resolvable := c.CredentialsResolvable(backendConfigured)
-		rebuildable := c.ExpectedCredentialsRebuildableWithoutLiveSecret(backendConfigured)
+		resolvable := c.CredentialsResolvable(backendAnswer)
+		rebuildable := c.ExpectedCredentialsRebuildableWithoutLiveSecret(backendAnswer)
 
 		if !resolvable {
-			t.Fatalf("backendConfigured=%v: CredentialsResolvable = false, want true — "+
+			t.Fatalf("backendAnswer=%v: CredentialsResolvable = false, want true — "+
 				"Sharko CAN read an inline cluster's credentials back out of the ArgoCD Secret it wrote",
-				backendConfigured)
+				backendAnswer)
 		}
 		if rebuildable {
-			t.Fatalf("backendConfigured=%v: ExpectedCredentialsRebuildableWithoutLiveSecret = true, want false — "+
+			t.Fatalf("backendAnswer=%v: ExpectedCredentialsRebuildableWithoutLiveSecret = true, want false — "+
 				"an inline kubeconfig has no copy outside the live ArgoCD Secret, so there is nothing to rebuild an "+
 				"EXPECTED Secret from. Returning true here makes the comparison compare the Secret with itself and "+
 				"report a false in-sync. Do not merge these two predicates.",
-				backendConfigured)
+				backendAnswer)
 		}
 		if resolvable == rebuildable {
-			t.Fatalf("backendConfigured=%v: the two predicates agreed (%v) on inline-kubeconfig + Sharko-managed. "+
+			t.Fatalf("backendAnswer=%v: the two predicates agreed (%v) on inline-kubeconfig + Sharko-managed. "+
 				"They answer different questions and MUST disagree here — see the doc comments on both.",
-				backendConfigured, resolvable)
+				backendAnswer, resolvable)
 		}
 
 		// Same for the ManagedClusterEntry twins, so a change to only one
@@ -211,81 +215,81 @@ func TestCredentialPredicates_DisagreeOnInlineSharkoManaged(t *testing.T) {
 			CredsSource:         CredsSourceInlineKubeconfig,
 			ConnectionManagedBy: ConnectionManagedBySharko,
 		}
-		if e.CredentialsResolvable(backendConfigured) == e.ExpectedCredentialsRebuildableWithoutLiveSecret(backendConfigured) {
-			t.Fatalf("backendConfigured=%v: ManagedClusterEntry twins agreed on inline-kubeconfig + Sharko-managed; they must disagree",
-				backendConfigured)
+		if e.CredentialsResolvable(backendAnswer) == e.ExpectedCredentialsRebuildableWithoutLiveSecret(backendAnswer) {
+			t.Fatalf("backendAnswer=%v: ManagedClusterEntry twins agreed on inline-kubeconfig + Sharko-managed; they must disagree",
+				backendAnswer)
 		}
 	}
 }
 
 func TestExpectedCredentialsRebuildableWithoutLiveSecret(t *testing.T) {
 	tests := []struct {
-		name                string
-		credsSource         string
-		connectionManagedBy string
-		backendConfigured   bool
-		want                bool
+		name                         string
+		credsSource                  string
+		connectionManagedBy          string
+		backendCanProvideStoredFacts bool
+		want                         bool
 	}{
 		{
 			name:        "secret-kubeconfig + backend configured -> true (re-fetch from the backend)",
-			credsSource: CredsSourceSecretKubeconfig, backendConfigured: true,
+			credsSource: CredsSourceSecretKubeconfig, backendCanProvideStoredFacts: true,
 			want: true,
 		},
 		{
 			name:        "secret-kubeconfig + no backend -> false (nothing to ask)",
-			credsSource: CredsSourceSecretKubeconfig, backendConfigured: false,
+			credsSource: CredsSourceSecretKubeconfig, backendCanProvideStoredFacts: false,
 			want: false,
 		},
 		{
 			name:        "eks-token + backend configured -> true (metadata re-readable; the token itself is not comparable)",
-			credsSource: CredsSourceEKSToken, backendConfigured: true,
+			credsSource: CredsSourceEKSToken, backendCanProvideStoredFacts: true,
 			want: true,
 		},
 		{
 			name:        "eks-token + no backend -> false",
-			credsSource: CredsSourceEKSToken, backendConfigured: false,
+			credsSource: CredsSourceEKSToken, backendCanProvideStoredFacts: false,
 			want: false,
 		},
 		{
 			name:        "inline-kubeconfig + Sharko-managed -> false even with a backend (only copy is the live Secret)",
-			credsSource: CredsSourceInlineKubeconfig, connectionManagedBy: ConnectionManagedBySharko, backendConfigured: true,
+			credsSource: CredsSourceInlineKubeconfig, connectionManagedBy: ConnectionManagedBySharko, backendCanProvideStoredFacts: true,
 			want: false,
 		},
 		{
 			name:        "inline-kubeconfig + self-managed -> false",
-			credsSource: CredsSourceInlineKubeconfig, connectionManagedBy: ConnectionManagedByUser, backendConfigured: true,
+			credsSource: CredsSourceInlineKubeconfig, connectionManagedBy: ConnectionManagedByUser, backendCanProvideStoredFacts: true,
 			want: false,
 		},
 		{
 			name:        "unknown/pre-field source + backend configured -> false (never guessed, unlike CredentialsResolvable)",
-			credsSource: "", backendConfigured: true,
+			credsSource: "", backendCanProvideStoredFacts: true,
 			want: false,
 		},
 		{
 			name:        "unknown/pre-field source + no backend -> false",
-			credsSource: "", backendConfigured: false,
+			credsSource: "", backendCanProvideStoredFacts: false,
 			want: false,
 		},
 		{
 			name:        "secret-kubeconfig + self-managed -> false (Sharko never writes that Secret's credentials)",
-			credsSource: CredsSourceSecretKubeconfig, connectionManagedBy: ConnectionManagedByUser, backendConfigured: true,
+			credsSource: CredsSourceSecretKubeconfig, connectionManagedBy: ConnectionManagedByUser, backendCanProvideStoredFacts: true,
 			want: false,
 		},
 		{
 			name:        "eks-token + self-managed -> false",
-			credsSource: CredsSourceEKSToken, connectionManagedBy: ConnectionManagedByUser, backendConfigured: true,
+			credsSource: CredsSourceEKSToken, connectionManagedBy: ConnectionManagedByUser, backendCanProvideStoredFacts: true,
 			want: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := Cluster{CredsSource: tt.credsSource, ConnectionManagedBy: tt.connectionManagedBy}
-			if got := c.ExpectedCredentialsRebuildableWithoutLiveSecret(tt.backendConfigured); got != tt.want {
-				t.Errorf("Cluster.ExpectedCredentialsRebuildableWithoutLiveSecret(%v) = %v, want %v", tt.backendConfigured, got, tt.want)
+			if got := c.ExpectedCredentialsRebuildableWithoutLiveSecret(tt.backendCanProvideStoredFacts); got != tt.want {
+				t.Errorf("Cluster.ExpectedCredentialsRebuildableWithoutLiveSecret(%v) = %v, want %v", tt.backendCanProvideStoredFacts, got, tt.want)
 			}
 			e := ManagedClusterEntry{CredsSource: tt.credsSource, ConnectionManagedBy: tt.connectionManagedBy}
-			if got := e.ExpectedCredentialsRebuildableWithoutLiveSecret(tt.backendConfigured); got != tt.want {
-				t.Errorf("ManagedClusterEntry.ExpectedCredentialsRebuildableWithoutLiveSecret(%v) = %v, want %v", tt.backendConfigured, got, tt.want)
+			if got := e.ExpectedCredentialsRebuildableWithoutLiveSecret(tt.backendCanProvideStoredFacts); got != tt.want {
+				t.Errorf("ManagedClusterEntry.ExpectedCredentialsRebuildableWithoutLiveSecret(%v) = %v, want %v", tt.backendCanProvideStoredFacts, got, tt.want)
 			}
 		})
 	}

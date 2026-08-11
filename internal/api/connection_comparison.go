@@ -295,14 +295,29 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	backendConfigured := s.credProvider() != nil
+	// ONE ANSWER, ASKED ONCE, USED TWICE.
+	//
+	// "Can this backend tell Sharko what the connection should look like without
+	// reading the live ArgoCD Secret?" The router owns that answer, because the
+	// router is what performs the read — so the policy below and the read further
+	// down cannot disagree about whether the credential half was checkable.
+	//
+	// This used to be `s.credProvider() != nil`, which is a WIDER question: an
+	// ArgoCD fallback provider is a configured provider, and so is a backend with
+	// no read-only stored-facts capability. Both of those made Classify hand a
+	// secret-kubeconfig cluster full scope and a full-connection repair, while the
+	// router then refused the read — so the response carried status limited next
+	// to scope full, and step 3 would have inherited a full-repair offer it must
+	// not have. TestConnectionComparison_ScopeNeverWiderThanTheAnswer pins that
+	// combination as a failure.
+	backendCanProvideStoredFacts := s.credsRouter().CanReadStoredFactsIndependentOfArgoCDSecret()
 	policy := connectioncompare.Classify(connectioncompare.ClassifyInput{
-		CredsSource:         desired.Entry.CredsSource,
-		ConnectionManagedBy: desired.Entry.ConnectionManagedBy,
-		BackendConfigured:   backendConfigured,
-		LiveSecretFound:     liveFound,
-		LiveManagedBy:       liveManagedBy(live),
-		LiveAdopted:         live != nil && argosecrets.IsAdopted(live.Annotations),
+		CredsSource:                  desired.Entry.CredsSource,
+		ConnectionManagedBy:          desired.Entry.ConnectionManagedBy,
+		BackendCanProvideStoredFacts: backendCanProvideStoredFacts,
+		LiveSecretFound:              liveFound,
+		LiveManagedBy:                liveManagedBy(live),
+		LiveAdopted:                  live != nil && argosecrets.IsAdopted(live.Annotations),
 	})
 
 	req := connectioncompare.Request{
@@ -327,7 +342,11 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 	// read-only capability with no path to the EKS token mint and no fallback
 	// to the live Secret, so neither a wrong answer from the predicate nor a
 	// future edit here can produce a self-comparison or a minted credential.
-	if desired.Entry.ExpectedCredentialsRebuildableWithoutLiveSecret(backendConfigured) {
+	//
+	// It is handed the SAME backendCanProvideStoredFacts the policy above was
+	// given, from the same router call — that is the whole fix. Two different
+	// answers here is exactly how the policy and the enforcement drifted apart.
+	if desired.Entry.ExpectedCredentialsRebuildableWithoutLiveSecret(backendCanProvideStoredFacts) {
 		spec, credFailure := s.expectedConnectionSpec(desired.Entry)
 		if credFailure != "" {
 			req.CheckFailure = credFailure

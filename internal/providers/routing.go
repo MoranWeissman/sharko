@@ -86,6 +86,67 @@ func DefaultArgoCDReaderFn(base ClusterTestProviderConfig) func() (ClusterCreden
 // which refuses with this error instead of falling back.
 var ErrNoIndependentCredentialSource = errors.New("this cluster's credentials are only available from the ArgoCD cluster Secret itself, so there is no independent copy to compare against")
 
+// storedFactsReader returns the backend's read-only stored-facts reader when
+// this backend genuinely has one AND that reader is somewhere other than the
+// live ArgoCD cluster Secret. Otherwise nil.
+//
+// THIS IS THE ONE IMPLEMENTATION OF THE RULE. Both the refusal in
+// StoredFactsIndependentOfArgoCDSecret and the yes/no answer in
+// CanReadStoredFactsIndependentOfArgoCDSecret go through this function and
+// nothing else, so the question "may Sharko say it checked the credential half"
+// and the question "will the read actually happen" cannot give different
+// answers. They used to be decided in two places — the handler asked
+// "is any credentials provider configured at all", which said yes for an ArgoCD
+// fallback provider and for a backend with no read-only capability, while this
+// file refused both. The result was a response that claimed full scope and
+// offered a full repair on a check that had actually been refused.
+//
+// The three ways a backend fails the rule:
+//
+//   - there is no backend at all;
+//   - the backend IS the ArgoCD cluster-Secret reader (connection type argocd,
+//     or the in-cluster auto-default), in which case "the backend" and "the
+//     live Secret" are the same place, so reading it would compare the Secret
+//     with itself;
+//   - the backend cannot answer read-only (no StoredConnectionFacts method).
+//     Falling back to GetCredentials would reintroduce the EKS token mint
+//     through the back door, so a backend that cannot answer read-only counts
+//     as having no independent copy at all.
+//
+// credsSource is deliberately NOT a parameter: this is a fact about the
+// BACKEND, not about one cluster. The per-cluster half of the question lives
+// with the cluster record — see
+// models.ManagedClusterEntry.ExpectedCredentialsRebuildableWithoutLiveSecret,
+// which takes this function's answer as its argument.
+func (r *ClusterCredsRouter) storedFactsReader() StoredConnectionFactsProvider {
+	if r == nil || r.Backend == nil {
+		return nil
+	}
+	if _, backendIsArgo := r.Backend.(*ArgoCDProvider); backendIsArgo {
+		return nil
+	}
+	reader, ok := r.Backend.(StoredConnectionFactsProvider)
+	if !ok {
+		return nil
+	}
+	return reader
+}
+
+// CanReadStoredFactsIndependentOfArgoCDSecret answers, for the configured
+// backend, "can Sharko be told what a cluster's connection should look like
+// WITHOUT reading the live ArgoCD Secret?"
+//
+// It is the answer the read-only connection comparison must key BOTH its policy
+// and its read off. When it is false the comparison's scope stays limited, a
+// full repair is not available, and the connection is never reported in sync —
+// because a claim about the credential half would be a claim about something
+// that was never read.
+//
+// Nil-safe: a nil router answers false, which is the safe answer.
+func (r *ClusterCredsRouter) CanReadStoredFactsIndependentOfArgoCDSecret() bool {
+	return r.storedFactsReader() != nil
+}
+
 // StoredFactsIndependentOfArgoCDSecret reports what the secrets BACKEND has
 // STORED for the named cluster — never the ArgoCD cluster Secret, and never
 // anything freshly created.
@@ -109,11 +170,12 @@ var ErrNoIndependentCredentialSource = errors.New("this cluster's credentials ar
 //
 // It refuses, with ErrNoIndependentCredentialSource, when:
 //
-//   - there is no backend at all;
-//   - the backend IS the ArgoCD cluster-Secret reader (connection type argocd,
-//     or the in-cluster auto-default), in which case "the backend" and "the
-//     live Secret" are the same place;
-//   - the backend cannot answer read-only (no StoredConnectionFacts method);
+//   - the backend fails the rule in storedFactsReader — no backend at all, the
+//     backend IS the ArgoCD cluster-Secret reader, or the backend cannot answer
+//     read-only. That check and the yes/no answer
+//     CanReadStoredFactsIndependentOfArgoCDSecret hands the comparison are the
+//     SAME code, so a caller can never be told full scope for a read this
+//     function then refuses;
 //   - credsSource is anything other than secret-kubeconfig or eks-token —
 //     inline means the pasted kubeconfig only lives in the ArgoCD Secret, and
 //     any other value means Sharko does not know, and never guesses.
@@ -125,19 +187,13 @@ var ErrNoIndependentCredentialSource = errors.New("this cluster's credentials ar
 // roleARN is deliberately NOT a parameter. A role is something you assume in
 // order to mint; there is nothing here to assume it for.
 func (r *ClusterCredsRouter) StoredFactsIndependentOfArgoCDSecret(lookupKey, credsSource string) (*StoredConnectionFacts, error) {
-	if r == nil || r.Backend == nil {
-		return nil, ErrNoIndependentCredentialSource
-	}
-	if _, backendIsArgo := r.Backend.(*ArgoCDProvider); backendIsArgo {
-		return nil, ErrNoIndependentCredentialSource
-	}
 	switch credsSource {
 	case models.CredsSourceSecretKubeconfig, models.CredsSourceEKSToken:
 	default:
 		return nil, ErrNoIndependentCredentialSource
 	}
-	reader, ok := r.Backend.(StoredConnectionFactsProvider)
-	if !ok {
+	reader := r.storedFactsReader()
+	if reader == nil {
 		return nil, ErrNoIndependentCredentialSource
 	}
 	return reader.StoredConnectionFacts(lookupKey)

@@ -61,10 +61,10 @@ func liveFrom(built *corev1.Secret) *corev1.Secret {
 func ownedRequest(t *testing.T, spec argosecrets.ClusterSecretSpec, addonLabels map[string]string) (Request, *corev1.Secret) {
 	t.Helper()
 	policy := Classify(ClassifyInput{
-		CredsSource:       models.CredsSourceSecretKubeconfig,
-		BackendConfigured: true,
-		LiveSecretFound:   true,
-		LiveManagedBy:     argosecrets.ManagedByValue,
+		CredsSource:                  models.CredsSourceSecretKubeconfig,
+		BackendCanProvideStoredFacts: true,
+		LiveSecretFound:              true,
+		LiveManagedBy:                argosecrets.ManagedByValue,
 	})
 	if policy.Scope != ScopeFull {
 		t.Fatalf("fixture expected full scope, got %q", policy.Scope)
@@ -488,10 +488,10 @@ func TestCompare_NoLiveSecretIsMissingNotOutOfSync(t *testing.T) {
 // synced no matter how perfect everything looks.
 func TestCompare_InlineKubeconfigIsLimitedAndNeverFullySynced(t *testing.T) {
 	policy := Classify(ClassifyInput{
-		CredsSource:       models.CredsSourceInlineKubeconfig,
-		BackendConfigured: true,
-		LiveSecretFound:   true,
-		LiveManagedBy:     argosecrets.ManagedByValue,
+		CredsSource:                  models.CredsSourceInlineKubeconfig,
+		BackendCanProvideStoredFacts: true,
+		LiveSecretFound:              true,
+		LiveManagedBy:                argosecrets.ManagedByValue,
 	})
 
 	labels := map[string]string{"datadog": models.LabelEnabled}
@@ -540,21 +540,21 @@ func TestCompare_InlineKubeconfigIsLimitedAndNeverFullySynced(t *testing.T) {
 
 func TestCompare_SelfManagedStaysLabelOnly(t *testing.T) {
 	policy := Classify(ClassifyInput{
-		CredsSource:         models.CredsSourceSecretKubeconfig,
-		ConnectionManagedBy: models.ConnectionManagedByUser,
-		BackendConfigured:   true,
-		LiveSecretFound:     true,
+		CredsSource:                  models.CredsSourceSecretKubeconfig,
+		ConnectionManagedBy:          models.ConnectionManagedByUser,
+		BackendCanProvideStoredFacts: true,
+		LiveSecretFound:              true,
 	})
 	assertLabelOnly(t, policy)
 }
 
 func TestCompare_AdoptedStaysLabelOnly(t *testing.T) {
 	policy := Classify(ClassifyInput{
-		CredsSource:       models.CredsSourceSecretKubeconfig,
-		BackendConfigured: true,
-		LiveSecretFound:   true,
-		LiveManagedBy:     argosecrets.ManagedByValue,
-		LiveAdopted:       true,
+		CredsSource:                  models.CredsSourceSecretKubeconfig,
+		BackendCanProvideStoredFacts: true,
+		LiveSecretFound:              true,
+		LiveManagedBy:                argosecrets.ManagedByValue,
+		LiveAdopted:                  true,
 	})
 	assertLabelOnly(t, policy)
 }
@@ -630,10 +630,10 @@ func assertLabelOnly(t *testing.T, policy Policy) {
 
 func TestCompare_UnknownSourceIsLimitedNeverSyncedNeverFullRepair(t *testing.T) {
 	policy := Classify(ClassifyInput{
-		CredsSource:       "",
-		BackendConfigured: true,
-		LiveSecretFound:   true,
-		LiveManagedBy:     argosecrets.ManagedByValue,
+		CredsSource:                  "",
+		BackendCanProvideStoredFacts: true,
+		LiveSecretFound:              true,
+		LiveManagedBy:                argosecrets.ManagedByValue,
 	})
 	labels := map[string]string{"datadog": models.LabelEnabled}
 	expectedLabels := argosecrets.BuildClusterSecretLabels(argosecrets.ClusterSecretSpec{Labels: labels})
@@ -663,10 +663,10 @@ func TestCompare_UnknownSourceIsLimitedNeverSyncedNeverFullRepair(t *testing.T) 
 
 func TestCompare_ForeignOwnershipComparesNothing(t *testing.T) {
 	policy := Classify(ClassifyInput{
-		CredsSource:       models.CredsSourceSecretKubeconfig,
-		BackendConfigured: true,
-		LiveSecretFound:   true,
-		LiveManagedBy:     "another-tool",
+		CredsSource:                  models.CredsSourceSecretKubeconfig,
+		BackendCanProvideStoredFacts: true,
+		LiveSecretFound:              true,
+		LiveManagedBy:                "another-tool",
 	})
 	res := Compare(Request{
 		ClusterName: testCluster, Namespace: testNamespace, Policy: policy,
@@ -698,10 +698,10 @@ func TestCompare_ForeignOwnershipComparesNothing(t *testing.T) {
 // rewriting the connection from the backend does fix it.
 func TestCompare_EKSTokenNeverSyncedAndBlobNotChecked(t *testing.T) {
 	policy := Classify(ClassifyInput{
-		CredsSource:       models.CredsSourceEKSToken,
-		BackendConfigured: true,
-		LiveSecretFound:   true,
-		LiveManagedBy:     argosecrets.ManagedByValue,
+		CredsSource:                  models.CredsSourceEKSToken,
+		BackendCanProvideStoredFacts: true,
+		LiveSecretFound:              true,
+		LiveManagedBy:                argosecrets.ManagedByValue,
 	})
 	spec := argosecrets.ClusterSecretSpec{Server: testServer, Token: "a-token-that-was-just-minted", CAData: fakeCA}
 	specLabels := map[string]string{}

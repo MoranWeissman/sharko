@@ -21,6 +21,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // eksMetadataSentinel is a made-up value that appears nowhere else in this
@@ -237,6 +239,55 @@ func TestStoredFactsRouter_ArgoCDBackendIsRefused(t *testing.T) {
 		if _, err := r.StoredFactsIndependentOfArgoCDSecret("prod-eu", source); !errors.Is(err, ErrNoIndependentCredentialSource) {
 			t.Errorf("credsSource=%q: err = %v, want ErrNoIndependentCredentialSource", source, err)
 		}
+	}
+}
+
+// TestCanReadStoredFacts_AgreesWithTheRefusalOnEveryBackendShape is the
+// anti-drift guard for Point 1.
+//
+// The comparison asks CanReadStoredFactsIndependentOfArgoCDSecret to decide what
+// it may CLAIM (full scope, a full repair, "in sync"), and it calls
+// StoredFactsIndependentOfArgoCDSecret to actually DO the read. If those two ever
+// disagree, the endpoint says it checked something it never read — which is the
+// bug this whole pass exists to close.
+//
+// So this walks every backend shape there is and asserts the yes/no answer and
+// the real read land on the same side, for both backend-stored sources.
+func TestCanReadStoredFacts_AgreesWithTheRefusalOnEveryBackendShape(t *testing.T) {
+	shapes := []struct {
+		name    string
+		router  *ClusterCredsRouter
+		wantCan bool
+	}{
+		{"nil router", nil, false},
+		{"no backend at all", &ClusterCredsRouter{}, false},
+		{"the backend IS the ArgoCD cluster-Secret reader", &ClusterCredsRouter{Backend: &ArgoCDProvider{}}, false},
+		{"a backend that can only mint, with no read-only capability", &ClusterCredsRouter{Backend: &mintingOnlyBackend{mint: &mintCounter{}}}, false},
+		{"a backend that answers read-only", &ClusterCredsRouter{Backend: &factsBackend{mint: &mintCounter{}}}, true},
+	}
+
+	for _, shape := range shapes {
+		t.Run(shape.name, func(t *testing.T) {
+			gotCan := shape.router.CanReadStoredFactsIndependentOfArgoCDSecret()
+			if gotCan != shape.wantCan {
+				t.Errorf("CanReadStoredFactsIndependentOfArgoCDSecret() = %v, want %v", gotCan, shape.wantCan)
+			}
+
+			for _, source := range []string{models.CredsSourceSecretKubeconfig, models.CredsSourceEKSToken} {
+				_, err := shape.router.StoredFactsIndependentOfArgoCDSecret("prod-eu", source)
+				refused := errors.Is(err, ErrNoIndependentCredentialSource)
+				if refused == gotCan {
+					t.Errorf(`credsSource=%q: the ANSWER and the READ disagree.
+
+CanReadStoredFactsIndependentOfArgoCDSecret said %v, and StoredFactsIndependentOfArgoCDSecret %s.
+
+WHY THIS MATTERS: the connection comparison uses the first one to decide what it may claim — full scope, a full-connection repair offer, "in sync" — and the second one to actually read. When they disagree the endpoint claims it checked the credential half of a connection it never read, and step 3 inherits a repair offer it must not have.
+
+BOTH must go through storedFactsReader and nothing else. If you added a condition to one of them, move it into storedFactsReader so the other one gets it too.`,
+						source, gotCan, map[bool]string{true: "refused", false: "went ahead with the read"}[refused])
+				}
+			}
+		})
 	}
 }
 

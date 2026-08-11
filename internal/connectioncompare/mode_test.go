@@ -23,10 +23,10 @@ func TestClassify_SevenModes(t *testing.T) {
 		{
 			name: "backend-stored kubeconfig, backend wired, Sharko owns -> full, full repair",
 			in: ClassifyInput{
-				CredsSource:       models.CredsSourceSecretKubeconfig,
-				BackendConfigured: true,
-				LiveSecretFound:   true,
-				LiveManagedBy:     argosecrets.ManagedByValue,
+				CredsSource:                  models.CredsSourceSecretKubeconfig,
+				BackendCanProvideStoredFacts: true,
+				LiveSecretFound:              true,
+				LiveManagedBy:                argosecrets.ManagedByValue,
 			},
 			wantMode:   ModeBackendStoredCredentials,
 			wantScope:  ScopeFull,
@@ -35,10 +35,10 @@ func TestClassify_SevenModes(t *testing.T) {
 		{
 			name: "EKS token -> limited (fresh token every fetch) but full repair",
 			in: ClassifyInput{
-				CredsSource:       models.CredsSourceEKSToken,
-				BackendConfigured: true,
-				LiveSecretFound:   true,
-				LiveManagedBy:     argosecrets.ManagedByValue,
+				CredsSource:                  models.CredsSourceEKSToken,
+				BackendCanProvideStoredFacts: true,
+				LiveSecretFound:              true,
+				LiveManagedBy:                argosecrets.ManagedByValue,
 			},
 			wantMode:        ModeEKSToken,
 			wantScope:       ScopeLimited,
@@ -48,10 +48,10 @@ func TestClassify_SevenModes(t *testing.T) {
 		{
 			name: "inline kubeconfig -> limited, labels-only repair",
 			in: ClassifyInput{
-				CredsSource:       models.CredsSourceInlineKubeconfig,
-				BackendConfigured: true,
-				LiveSecretFound:   true,
-				LiveManagedBy:     argosecrets.ManagedByValue,
+				CredsSource:                  models.CredsSourceInlineKubeconfig,
+				BackendCanProvideStoredFacts: true,
+				LiveSecretFound:              true,
+				LiveManagedBy:                argosecrets.ManagedByValue,
 			},
 			wantMode:        ModeInlineKubeconfig,
 			wantScope:       ScopeLimited,
@@ -61,10 +61,10 @@ func TestClassify_SevenModes(t *testing.T) {
 		{
 			name: "self-managed -> addon labels only",
 			in: ClassifyInput{
-				CredsSource:         models.CredsSourceSecretKubeconfig,
-				ConnectionManagedBy: models.ConnectionManagedByUser,
-				BackendConfigured:   true,
-				LiveSecretFound:     true,
+				CredsSource:                  models.CredsSourceSecretKubeconfig,
+				ConnectionManagedBy:          models.ConnectionManagedByUser,
+				BackendCanProvideStoredFacts: true,
+				LiveSecretFound:              true,
 			},
 			wantMode:        ModeSelfManaged,
 			wantScope:       ScopeAddonLabelsOnly,
@@ -74,11 +74,11 @@ func TestClassify_SevenModes(t *testing.T) {
 		{
 			name: "adopted -> addon labels only",
 			in: ClassifyInput{
-				CredsSource:       models.CredsSourceSecretKubeconfig,
-				BackendConfigured: true,
-				LiveSecretFound:   true,
-				LiveManagedBy:     argosecrets.ManagedByValue,
-				LiveAdopted:       true,
+				CredsSource:                  models.CredsSourceSecretKubeconfig,
+				BackendCanProvideStoredFacts: true,
+				LiveSecretFound:              true,
+				LiveManagedBy:                argosecrets.ManagedByValue,
+				LiveAdopted:                  true,
 			},
 			wantMode:        ModeAdopted,
 			wantScope:       ScopeAddonLabelsOnly,
@@ -88,10 +88,10 @@ func TestClassify_SevenModes(t *testing.T) {
 		{
 			name: "another tool's ownership marker -> ownership conflict, no repair",
 			in: ClassifyInput{
-				CredsSource:       models.CredsSourceSecretKubeconfig,
-				BackendConfigured: true,
-				LiveSecretFound:   true,
-				LiveManagedBy:     "some-other-tool",
+				CredsSource:                  models.CredsSourceSecretKubeconfig,
+				BackendCanProvideStoredFacts: true,
+				LiveSecretFound:              true,
+				LiveManagedBy:                "some-other-tool",
 			},
 			wantMode:        ModeForeignOwned,
 			wantScope:       ScopeOwnershipConflict,
@@ -101,10 +101,10 @@ func TestClassify_SevenModes(t *testing.T) {
 		{
 			name: "empty credsSource -> unknown source, limited, labels-only repair",
 			in: ClassifyInput{
-				CredsSource:       "",
-				BackendConfigured: true,
-				LiveSecretFound:   true,
-				LiveManagedBy:     argosecrets.ManagedByValue,
+				CredsSource:                  "",
+				BackendCanProvideStoredFacts: true,
+				LiveSecretFound:              true,
+				LiveManagedBy:                argosecrets.ManagedByValue,
 			},
 			wantMode:        ModeUnknownSource,
 			wantScope:       ScopeLimited,
@@ -148,12 +148,12 @@ func TestClassify_OwnershipConflictBeatsEverything(t *testing.T) {
 	} {
 		for _, managedBy := range []string{"", models.ConnectionManagedByUser, models.ConnectionManagedBySharko} {
 			got := Classify(ClassifyInput{
-				CredsSource:         credsSource,
-				ConnectionManagedBy: managedBy,
-				BackendConfigured:   true,
-				LiveSecretFound:     true,
-				LiveManagedBy:       "rival-tool",
-				LiveAdopted:         true,
+				CredsSource:                  credsSource,
+				ConnectionManagedBy:          managedBy,
+				BackendCanProvideStoredFacts: true,
+				LiveSecretFound:              true,
+				LiveManagedBy:                "rival-tool",
+				LiveAdopted:                  true,
 			})
 			if got.Mode != ModeForeignOwned {
 				t.Errorf("credsSource=%q managedBy=%q: Mode = %q, want %q", credsSource, managedBy, got.Mode, ModeForeignOwned)
@@ -184,12 +184,12 @@ func TestClassify_OnlyBackendStoredIsEverFullyCheckable(t *testing.T) {
 					for _, adopted := range []bool{false, true} {
 						for _, live := range []string{"", argosecrets.ManagedByValue, "rival"} {
 							p := Classify(ClassifyInput{
-								CredsSource:         credsSource,
-								ConnectionManagedBy: managedBy,
-								BackendConfigured:   backend,
-								LiveSecretFound:     found,
-								LiveManagedBy:       live,
-								LiveAdopted:         adopted,
+								CredsSource:                  credsSource,
+								ConnectionManagedBy:          managedBy,
+								BackendCanProvideStoredFacts: backend,
+								LiveSecretFound:              found,
+								LiveManagedBy:                live,
+								LiveAdopted:                  adopted,
 							})
 							if p.Mode == "" || p.Scope == "" || p.RepairScope == "" {
 								t.Fatalf("Classify returned an incomplete policy %+v for credsSource=%q managedBy=%q backend=%v found=%v adopted=%v live=%q",
@@ -215,10 +215,10 @@ func TestClassify_UnknownSourceNeverFullNeverFullRepair(t *testing.T) {
 	for _, backend := range []bool{false, true} {
 		for _, found := range []bool{false, true} {
 			p := Classify(ClassifyInput{
-				CredsSource:       "",
-				BackendConfigured: backend,
-				LiveSecretFound:   found,
-				LiveManagedBy:     argosecrets.ManagedByValue,
+				CredsSource:                  "",
+				BackendCanProvideStoredFacts: backend,
+				LiveSecretFound:              found,
+				LiveManagedBy:                argosecrets.ManagedByValue,
 			})
 			if p.Mode != ModeUnknownSource {
 				t.Fatalf("backend=%v found=%v: Mode = %q, want %q", backend, found, p.Mode, ModeUnknownSource)
@@ -245,10 +245,10 @@ func TestClassify_EKSModeIsCalledTokenNotExec(t *testing.T) {
 		t.Errorf("the EKS mode's wire value = %q, want %q", got, "eks_token")
 	}
 	p := Classify(ClassifyInput{
-		CredsSource:       models.CredsSourceEKSToken,
-		BackendConfigured: true,
-		LiveSecretFound:   true,
-		LiveManagedBy:     argosecrets.ManagedByValue,
+		CredsSource:                  models.CredsSourceEKSToken,
+		BackendCanProvideStoredFacts: true,
+		LiveSecretFound:              true,
+		LiveManagedBy:                argosecrets.ManagedByValue,
 	})
 	if p.Mode != ModeEKSToken {
 		t.Fatalf("Mode = %q, want %q", p.Mode, ModeEKSToken)
@@ -270,10 +270,10 @@ func TestClassify_EKSTokenLimitReasonIsExact(t *testing.T) {
 	const want = "Sharko checked the Secret identity, type, server, and owned labels. It did not compare `data.config`, because the EKS sign-in token changes every time it is created."
 
 	p := Classify(ClassifyInput{
-		CredsSource:       models.CredsSourceEKSToken,
-		BackendConfigured: true,
-		LiveSecretFound:   true,
-		LiveManagedBy:     argosecrets.ManagedByValue,
+		CredsSource:                  models.CredsSourceEKSToken,
+		BackendCanProvideStoredFacts: true,
+		LiveSecretFound:              true,
+		LiveManagedBy:                argosecrets.ManagedByValue,
 	})
 	if p.LimitReason != want {
 		t.Errorf("the EKS limit reason was changed.\n got: %q\nwant: %q\n\nThis wording was signed off exactly as it is. If it really needs to change, change it with the product owner and update this test in the same commit.", p.LimitReason, want)
@@ -321,10 +321,10 @@ func TestClassify_UnrecognisedSourceIsNeverTrusted(t *testing.T) {
 			// is, so the only thing under test is the unrecognised source.
 			for _, backend := range []bool{false, true} {
 				p := Classify(ClassifyInput{
-					CredsSource:       v.value,
-					BackendConfigured: backend,
-					LiveSecretFound:   true,
-					LiveManagedBy:     argosecrets.ManagedByValue,
+					CredsSource:                  v.value,
+					BackendCanProvideStoredFacts: backend,
+					LiveSecretFound:              true,
+					LiveManagedBy:                argosecrets.ManagedByValue,
 				})
 				if p.Mode != ModeUnknownSource {
 					t.Errorf("backend=%v: Mode = %q, want %q — an unrecognised credentials source must never be given a recognised mode", backend, p.Mode, ModeUnknownSource)
@@ -354,9 +354,9 @@ func TestClassify_UnrecognisedSourceIsNeverTrusted(t *testing.T) {
 // looking in the wrong place.
 func TestClassify_EmptyAndUnrecognisedSayDifferentThings(t *testing.T) {
 	base := ClassifyInput{
-		BackendConfigured: true,
-		LiveSecretFound:   true,
-		LiveManagedBy:     argosecrets.ManagedByValue,
+		BackendCanProvideStoredFacts: true,
+		LiveSecretFound:              true,
+		LiveManagedBy:                argosecrets.ManagedByValue,
 	}
 
 	empty := base
@@ -466,11 +466,11 @@ Do not "fix" this by deleting the test.`, constName, value, value, constName, va
 func TestClassify_CaseFoldedUserValueStaysSelfManaged(t *testing.T) {
 	for _, v := range []string{"user", "User", "USER"} {
 		p := Classify(ClassifyInput{
-			CredsSource:         models.CredsSourceSecretKubeconfig,
-			ConnectionManagedBy: v,
-			BackendConfigured:   true,
-			LiveSecretFound:     true,
-			LiveManagedBy:       argosecrets.ManagedByValue,
+			CredsSource:                  models.CredsSourceSecretKubeconfig,
+			ConnectionManagedBy:          v,
+			BackendCanProvideStoredFacts: true,
+			LiveSecretFound:              true,
+			LiveManagedBy:                argosecrets.ManagedByValue,
 		})
 		if p.Mode != ModeSelfManaged {
 			t.Errorf("connectionManagedBy=%q: Mode = %q, want %q", v, p.Mode, ModeSelfManaged)

@@ -179,7 +179,9 @@ func credentialsResolvable(credsSource, connectionManagedBy string, backendConfi
 // this predicate exists, narrower on purpose, and the comparison uses it.
 //
 // TRUE only for the two sources whose credential material lives somewhere
-// Sharko can read independently — the secrets backend:
+// Sharko can read independently — the secrets backend — AND only when that
+// backend can actually be read independently (see backendCanProvideStoredFacts
+// below):
 //
 //   - secret-kubeconfig: a kubeconfig stored in the backend. Fetch it again,
 //     rebuild, compare. The live Secret contributes nothing to the expected
@@ -204,9 +206,25 @@ func credentialsResolvable(credsSource, connectionManagedBy string, backendConfi
 //     writes this Secret's credential material at all, so it has no expected
 //     value to compare against — there is nothing Sharko intends it to be.
 //
-// backendConfigured reports whether a secrets-provider backend is wired up at
-// the connection level, same meaning as in CredentialsResolvable: a backend
-// source can only be re-read when a backend exists to ask.
+// backendCanProvideStoredFacts is NARROWER than CredentialsResolvable's
+// backendConfigured, and the difference is the whole point of the parameter's
+// name.
+//
+// "A backend is configured" is not enough here. A configured backend that is
+// itself the ArgoCD cluster-Secret reader reads the live Secret — the very thing
+// this predicate exists to stay away from. A configured backend with no
+// read-only stored-facts capability cannot be read at all without falling back
+// to a credential fetch, which for an EKS cluster mints a real sign-in token. In
+// both of those cases there is no independent copy after all, so this parameter
+// must be FALSE for them even though a provider is wired up.
+//
+// The answer is not computed here and must not be. It comes from the one place
+// that knows what the backend actually is:
+// providers.ClusterCredsRouter.CanReadStoredFactsIndependentOfArgoCDSecret,
+// which is the same code the read itself goes through. Passing anything else —
+// in particular a bare "is a provider configured" boolean — makes this predicate
+// say yes to a read that will then be refused, and the caller ends up claiming
+// it checked the credential half of a connection it never read.
 //
 // # The honest limit on eks-token
 //
@@ -220,17 +238,17 @@ func credentialsResolvable(credsSource, connectionManagedBy string, backendConfi
 // having drifted. The comparison treats that token as a field it cannot
 // honestly compare rather than as drift — see the connection-mode policy in
 // internal/connectioncompare.
-func (c Cluster) ExpectedCredentialsRebuildableWithoutLiveSecret(backendConfigured bool) bool {
-	return expectedCredentialsRebuildableWithoutLiveSecret(c.CredsSource, c.ConnectionManagedBy, backendConfigured)
+func (c Cluster) ExpectedCredentialsRebuildableWithoutLiveSecret(backendCanProvideStoredFacts bool) bool {
+	return expectedCredentialsRebuildableWithoutLiveSecret(c.CredsSource, c.ConnectionManagedBy, backendCanProvideStoredFacts)
 }
 
 // ExpectedCredentialsRebuildableWithoutLiveSecret is the ManagedClusterEntry
 // twin of Cluster.ExpectedCredentialsRebuildableWithoutLiveSecret.
-func (e ManagedClusterEntry) ExpectedCredentialsRebuildableWithoutLiveSecret(backendConfigured bool) bool {
-	return expectedCredentialsRebuildableWithoutLiveSecret(e.CredsSource, e.ConnectionManagedBy, backendConfigured)
+func (e ManagedClusterEntry) ExpectedCredentialsRebuildableWithoutLiveSecret(backendCanProvideStoredFacts bool) bool {
+	return expectedCredentialsRebuildableWithoutLiveSecret(e.CredsSource, e.ConnectionManagedBy, backendCanProvideStoredFacts)
 }
 
-func expectedCredentialsRebuildableWithoutLiveSecret(credsSource, connectionManagedBy string, backendConfigured bool) bool {
+func expectedCredentialsRebuildableWithoutLiveSecret(credsSource, connectionManagedBy string, backendCanProvideStoredFacts bool) bool {
 	// Sharko never writes a self-managed connection's credential material,
 	// so it holds no expectation about it, whatever the recorded source says.
 	if IsUserManagedConnection(connectionManagedBy) {
@@ -238,7 +256,7 @@ func expectedCredentialsRebuildableWithoutLiveSecret(credsSource, connectionMana
 	}
 	switch credsSource {
 	case CredsSourceSecretKubeconfig, CredsSourceEKSToken:
-		return backendConfigured
+		return backendCanProvideStoredFacts
 	default:
 		// inline-kubeconfig (only copy is the live Secret) and "" (source
 		// unknown — never guessed) both land here.
