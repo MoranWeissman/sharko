@@ -55,17 +55,26 @@ What an operator sees when this fires:
   `InvalidClientTokenId`, or a config-load failure.
 
 - **Sharko logs two related error lines** (one from each `slog.Error`
-  in `aws_auth.go`):
+  in `aws_auth.go`). Neither carries the AWS SDK's error text: an SDK
+  error can carry credential material in its own message — a wrapped
+  presigned URL, a token fragment, a credential from a provider chain
+  — so the log line says which STEP failed and the error itself only
+  goes back to the caller in the API response above. Read the `step`
+  field to tell the two apart:
 
-  Config load failure (line 40):
+  Config load failure:
   ```
-  {"time":"...","level":"ERROR","msg":"[auth] EKS token generation failed","request_id":"req-...","cluster":"prod-eu","region":"us-east-1","error":"loading AWS config for EKS token: ..."}
+  {"time":"...","level":"ERROR","msg":"[auth] EKS token generation failed","request_id":"req-...","cluster":"prod-eu","region":"us-east-1","step":"load-aws-config"}
   ```
 
-  Presign failure (line 72):
+  Presign failure:
   ```
-  {"time":"...","level":"ERROR","msg":"[auth] EKS token generation failed","request_id":"req-...","cluster":"prod-eu","region":"us-east-1","error":"presigning GetCallerIdentity for cluster \"prod-eu\": operation error STS: GetCallerIdentity, AccessDenied: User: arn:aws:sts::<account>:assumed-role/SharkoIRSARole/i-... is not authorized to perform: sts:GetCallerIdentity..."}
+  {"time":"...","level":"ERROR","msg":"[auth] EKS token generation failed","request_id":"req-...","cluster":"prod-eu","region":"us-east-1","step":"presign-get-caller-identity"}
   ```
+
+  The AWS detail (`AccessDenied`, `RegionDisabled`,
+  `InvalidClientTokenId`, and so on) is in the API response body, not
+  in the log.
 
 - **The cluster row in the dashboard** shows status **Test failed**
   with the wrapped error in the tooltip; other EKS and non-EKS
@@ -117,25 +126,31 @@ roleArn), the Sharko pod's IRSA itself is broken (escalate to
 ### 2. Distinguish config-load vs presign failure
 
 The two error-emission sites in `aws_auth.go` map to different
-mitigation lanes:
+mitigation lanes, and the log line names which one fired in its
+`step` field:
 
 ```sh
 REQ_ID=req-<id-from-failed-response>
 kubectl -n <sharko-ns> logs -l app=sharko --since=15m \
   | jq -c --arg id "$REQ_ID" \
     'select(.request_id == $id and .msg == "[auth] EKS token generation failed")' \
-  | jq -r '.error'
+  | jq -r '.step'
 ```
 
-If the error starts with `loading AWS config for EKS token:` — line
-40 fired. The SDK couldn't even load credentials. This is almost
-always a Sharko-pod IRSA failure (Mitigation step 1).
+If `step` is `load-aws-config`, the SDK couldn't even load
+credentials. This is almost always a Sharko-pod IRSA failure
+(Mitigation step 1).
 
-If the error starts with `presigning GetCallerIdentity for cluster`
-— line 72 fired. The SDK loaded credentials fine but the STS call
-itself was denied or routed wrong. This is either a `roleArn`
-trust-policy issue (Mitigation step 3) or a region-routing issue
-(Mitigation step 4).
+If `step` is `presign-get-caller-identity`, the SDK loaded credentials
+fine but the STS call itself was denied or routed wrong. This is
+either a `roleArn` trust-policy issue (Mitigation step 3) or a
+region-routing issue (Mitigation step 4).
+
+The AWS SDK's own message is deliberately not in the log — it can
+carry credential material. For the AWS detail, read the wrapped error
+in the API response body (Symptoms, first bullet); the two prefixes
+there (`loading AWS config for EKS token:` and `presigning
+GetCallerIdentity for cluster`) match the two step names above.
 
 ### 3. Inspect the AWS-SM secret structure to confirm the chain
 

@@ -190,6 +190,29 @@ func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconf
 		"Set --secret-path to specify the exact secret name", clusterName, p.namespace)
 }
 
+// StoredConnectionFacts reports what this backend has stored for the named
+// cluster, without minting anything.
+//
+// Nothing in this provider ever mints: a Kubernetes Secret holds a whole
+// kubeconfig with a fixed credential in it, so reading and parsing it is the
+// whole job. The method exists so this backend can serve the read-only
+// connection comparison through the same never-minting capability the AWS
+// Secrets Manager backend does, instead of the comparison having to know which
+// backend it is talking to.
+func (p *KubernetesSecretProvider) StoredConnectionFacts(lookupKey string) (*StoredConnectionFacts, error) {
+	kc, err := p.fetchK8sSecret(lookupKey)
+	if err != nil {
+		return nil, err
+	}
+	return &StoredConnectionFacts{
+		Server:   kc.Server,
+		CAData:   kc.CAData,
+		Token:    kc.Token,
+		CertData: kc.CertData,
+		KeyData:  kc.KeyData,
+	}, nil
+}
+
 // searchSimilarK8s returns secret names in the provider namespace that contain
 // query as a substring and have a 'kubeconfig' data key.
 func (p *KubernetesSecretProvider) searchSimilarK8s(query string) ([]string, error) {
