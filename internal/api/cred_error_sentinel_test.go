@@ -43,10 +43,12 @@ package api
 // entry back — if the text were only hidden at render time, the stored entry
 // would still carry it and TestCredErrorSentinel_StoredAuditEntry would fail.
 //
-// It also proves the typed cause does not linger: audit.Entry.Cause carries the
-// real error only as far as Add, and Add clears it. A cause left hanging on a
-// stored entry is a leak waiting for the next person who prints it with %+v, so
-// the assertion uses %+v and reflection rather than JSON, which would hide it.
+// It also proves nothing live lingers on a stored entry. audit.Entry carries no
+// error at all: the classification runs at the credential boundary, where the
+// typed error still exists, and only the ANSWER travels to Add as a bool that Add
+// then clears. The assertions use %+v and reflection rather than JSON, because a
+// field hidden by json:"-" would be invisible to a JSON check — which is exactly
+// how the first version of this fix carried a live error.
 
 import (
 	"bytes"
@@ -64,6 +66,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -494,6 +497,45 @@ func TestCredErrorSentinel_AuditListEndpoint(t *testing.T) {
 	}
 }
 
+// lockedRecorder is an http.ResponseWriter whose captured body is safe to read
+// while the handler is still writing.
+//
+// The streaming handler runs on its own goroutine and writes for as long as the
+// request is open, so a test that polls httptest.ResponseRecorder.Body while
+// that happens is reading a bytes.Buffer another goroutine is growing. That is a
+// real data race and -race says so — the test's own bug, not the handler's, but
+// a failing gate either way. This wraps every write and every read in one mutex.
+type lockedRecorder struct {
+	mu     sync.Mutex
+	body   strings.Builder
+	header http.Header
+	code   int
+}
+
+func newLockedRecorder() *lockedRecorder {
+	return &lockedRecorder{header: make(http.Header), code: http.StatusOK}
+}
+
+func (r *lockedRecorder) Header() http.Header { return r.header }
+
+func (r *lockedRecorder) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.body.Write(p)
+}
+
+func (r *lockedRecorder) WriteHeader(code int) { r.code = code }
+
+// Flush makes the recorder an http.Flusher, which the stream handler requires
+// before it will stream at all.
+func (r *lockedRecorder) Flush() {}
+
+func (r *lockedRecorder) String() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.body.String()
+}
+
 // TestCredErrorSentinel_AuditStreamEndpoint sweeps GET /api/v1/audit/stream.
 //
 // This is the surface a read-side fix would have missed: the stream handler
@@ -510,7 +552,7 @@ func TestCredErrorSentinel_AuditStreamEndpoint(t *testing.T) {
 	// A cancellable request so the streaming handler returns instead of hanging.
 	ctx, cancel := context.WithCancel(context.Background())
 	req := withRole(httptest.NewRequest(http.MethodGet, "/api/v1/audit/stream", nil), "viewer").WithContext(ctx)
-	w := httptest.NewRecorder()
+	w := newLockedRecorder()
 
 	done := make(chan struct{})
 	go func() {
@@ -527,7 +569,7 @@ func TestCredErrorSentinel_AuditStreamEndpoint(t *testing.T) {
 			Result: "failure",
 			Error:  raw, Detail: raw, CredentialFailure: credsafe.Is(credErr),
 		})
-		if strings.Contains(w.Body.String(), "cluster:prod-eu") {
+		if strings.Contains(w.String(), "cluster:prod-eu") {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -535,10 +577,16 @@ func TestCredErrorSentinel_AuditStreamEndpoint(t *testing.T) {
 	cancel()
 	<-done
 
-	streamed := w.Body.String()
+	streamed := w.String()
 	assertNoCredSentinel(t, "the GET /api/v1/audit/stream output", streamed)
 	if !strings.Contains(streamed, "cluster:prod-eu") {
 		t.Errorf("nothing reached the stream, so this test proved nothing; body = %q", streamed)
+	}
+	// And the flag never serializes into the stream, whatever the entry carried.
+	for _, spelling := range []string{"CredentialFailure", "credential_failure"} {
+		if strings.Contains(streamed, spelling) {
+			t.Errorf("the stream carries the internal credential-failure flag as %q", spelling)
+		}
 	}
 }
 

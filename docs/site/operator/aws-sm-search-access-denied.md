@@ -12,6 +12,16 @@
 > a real leak found by extending the log-source guard
 > (`TestAWSSMProvider_LogsCarryNoRawErrorAndNoTokenPrefix`) to this
 > file — it was not in the original hotfix's file:line list.
+>
+> One more change worth knowing about on this page: the suggestions are
+> now offered only when the secret is genuinely ABSENT, decided by the
+> `credsafe.MarkNotFound` marker the provider sets where AWS returned
+> `ResourceNotFoundException`. Before, the handler searched the error text
+> for the words "not found", so an **AccessDenied whose message happened
+> to contain those words offered suggestions too** — sending the operator
+> to hunt a typo when the real problem was the missing IAM permission this
+> page is about. That no longer happens, and it is an improvement.
+>
 > Re-verify when SearchSecrets degradation or the log line changes.
 
 A single IAM role for the Sharko pod is missing the

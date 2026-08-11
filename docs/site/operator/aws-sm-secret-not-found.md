@@ -6,14 +6,25 @@
 > after the provider-error hotfix. `internal/providers/aws_sm.go`'s
 > `GetCredentials` still tries the configured `prefix + clusterName`
 > first and the bare cluster name second, and still logs
-> `step=all-lookups` with the `tried` list. What changed: the error it
-> returns is now marked as a credentials-backend failure
-> (`internal/credsafe`), so the API RESPONSE carries Sharko's fixed safe
-> sentence instead of the "Tried: ..." text. The `tried` list is still in
-> the log line, which is where you read it. The handler's "not found"
-> suggestion lookup is unchanged — it reads the error's own text, which
-> `credsafe.Mark` deliberately leaves alone. Re-verify when the lookup
-> order or the credsafe boundary changes.
+> `step=all-lookups` with the `tried` list.
+>
+> What changed: the error it returns is marked as a credentials-backend
+> failure (`internal/credsafe`), and a marked error SAYS the fixed safe
+> sentence. So the API response — and anything else that prints the error
+> — carries that sentence, never the "Tried: ..." text. The `tried` list
+> is still in the log line, which is where you read it.
+>
+> The secret-name suggestions still appear, and they are now decided by a
+> TYPE rather than by searching the error text for the words "not found".
+> The provider sets `credsafe.MarkNotFound` where AWS returned
+> `ResourceNotFoundException`, and the handler asks
+> `credsafe.IsNotFound`. One behaviour change that is deliberate and an
+> improvement: an **AccessDenied no longer produces suggestions**, even
+> when its message happens to contain the words. See the AccessDenied
+> runbook — that failure needs an IAM fix, not a name to pick from a list.
+>
+> Re-verify when the lookup order, the credsafe boundary, or the
+> not-found marker's placement changes.
 
 A single cluster's credential fetch failed because the AWS Secrets
 Manager provider could not find the cluster's secret at any of the

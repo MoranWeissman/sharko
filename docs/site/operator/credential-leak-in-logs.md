@@ -424,13 +424,29 @@ backend rephrased its errors.
 The fix, structurally:
 
 - `internal/credsafe` marks every error returned from a credentials
-  backend. The mark does not change what `Error()` says, so internal
-  callers, `%w` chains and `errors.As` on typed provider errors are
-  unaffected.
+  backend, and a marked error's `Error()` **is** the one fixed safe
+  sentence. So the default answer is already the safe one: a `%v`, a log
+  line, a string concatenation, or a boundary that forgets to ask all get
+  the sentence rather than the backend's text.
+- Nothing is lost. The real cause stays reachable through `Unwrap`, so
+  `%w` chains and `errors.As` on typed provider errors keep working. What
+  is gone is getting at the original WORDS by accident.
 - Classification is `errors.Is` against a sentinel — **by type, never by
   reading the error's words**. A git or Kubernetes error that WRAPS a
   credentials error is therefore caught too, because the marker travels
   through the `%w` chain.
+- When a caller genuinely needs to know WHY the fetch failed, the
+  provider says so with a type. `credsafe.MarkNotFound` /
+  `credsafe.IsNotFound` is the one case today: the cluster-test page
+  offers similarly-named secrets when the secret really is absent, and
+  the provider sets that marker only where it knows — the AWS SDK
+  returned `ResourceNotFoundException`, or the Kubernetes read was a real
+  `apierrors.IsNotFound`. An access denial, a throttle and a timeout all
+  say no, so the operator is not sent hunting a typo that never existed.
+- The two error CLASSIFIERS (`verify.ClassifyError`,
+  `verify.AssumeRoleHint`) still read the real message, via
+  `credsafe.Cause`. That is the only sanctioned read: each returns one of
+  its own pre-written outcomes and echoes no part of what it read.
 - Every public boundary — API responses, log lines, audit entries,
   reconcile records, Kubernetes events, CLI output — says one fixed
   sentence instead of the text. Errors that did NOT come from a

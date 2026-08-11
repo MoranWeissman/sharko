@@ -240,3 +240,31 @@ func TestEntry_CredentialFailureNeverSerializes(t *testing.T) {
 		}
 	}
 }
+
+// TestEntry_HasNoErrorTypedFieldAtAll is the structural guard, and it is
+// deliberately stronger than the reflection walks above.
+//
+// Those walks look at a stored VALUE, so they only catch a field somebody
+// actually filled. This looks at the TYPE, so a raw error field added back to
+// audit.Entry fails immediately — before any call site starts filling it, and
+// whether or not it is hidden behind json:"-".
+//
+// That matters because json:"-" is exactly how the first version of this fix
+// carried a live error, and json:"-" hides a field from ONE reader while leaving
+// it there for the next person who prints the entry with %+v or reflects over it.
+// The classification belongs at the credential boundary, where the typed error
+// still exists; what travels here is a bool.
+func TestEntry_HasNoErrorTypedFieldAtAll(t *testing.T) {
+	errType := reflect.TypeOf((*error)(nil)).Elem()
+	entryType := reflect.TypeOf(Entry{})
+
+	for i := 0; i < entryType.NumField(); i++ {
+		f := entryType.Field(i)
+		if f.Type == errType || f.Type.Implements(errType) ||
+			(f.Type.Kind() == reflect.Ptr && f.Type.Implements(errType)) {
+			t.Errorf(`audit.Entry has an error-typed field %q (%s).
+
+An audit entry must not carry an error, hidden by json:"-" or otherwise. Run credsafe.Is at the credential boundary — where the typed error is still alive — and send the ANSWER here as a bool. An error on this struct is a leak waiting for the next %%+v.`, f.Name, f.Type)
+		}
+	}
+}
