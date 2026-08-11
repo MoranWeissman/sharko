@@ -37,7 +37,17 @@ func getEKSToken(ctx context.Context, clusterName, region, roleARN string) (stri
 
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
-		slog.Error("[auth] EKS token generation failed", "cluster", clusterName, "region", region, "error", err)
+		// THE ERROR VALUE IS NOT LOGGED. An AWS SDK error can carry credential
+		// material in its own text — a wrapped presigned URL, a token fragment,
+		// a credential a provider chain put into its message. So the log line
+		// carries the cluster, the region, and WHICH step failed, and nothing
+		// else. The step name is what makes the two failures in this function
+		// tellable apart without the error text.
+		//
+		// The returned error still wraps the cause with %w, which is correct and
+		// unchanged: the caller decides what to do with it, and the API layer
+		// already refuses to pass provider error text out to a user or into a log.
+		slog.Error("[auth] EKS token generation failed", "cluster", clusterName, "region", region, "step", "load-aws-config")
 		return "", fmt.Errorf("loading AWS config for EKS token: %w", err)
 	}
 
@@ -69,7 +79,13 @@ func getEKSToken(ctx context.Context, clusterName, region, roleARN string) (stri
 		},
 	)
 	if err != nil {
-		slog.Error("[auth] EKS token generation failed", "cluster", clusterName, "region", region, "error", err)
+		// Same rule as the load-config failure above, and this one is the more
+		// dangerous of the two: a presigning error comes from the code path that
+		// builds the credential itself, so its text is the likeliest place for a
+		// signed URL or a signature fragment to turn up. The step name is
+		// different from the one above so a person reading the log knows which
+		// half of the function gave up. The returned error still wraps the cause.
+		slog.Error("[auth] EKS token generation failed", "cluster", clusterName, "region", region, "step", "presign-get-caller-identity")
 		return "", fmt.Errorf("presigning GetCallerIdentity for cluster %q: %w", clusterName, err)
 	}
 

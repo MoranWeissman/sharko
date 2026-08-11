@@ -73,9 +73,12 @@ What an operator sees when this fires:
   {"time":"...","level":"ERROR","msg":"GetSecretValue failed","cluster":"...","error":"..."}
   ```
 
-  For EKS STS (AWS auth chain):
+  For EKS STS (AWS auth chain) — this one carries no error text on
+  purpose, because an AWS SDK error can carry credential material in
+  its message; `step` is `load-aws-config` or
+  `presign-get-caller-identity`:
   ```
-  {"time":"...","level":"ERROR","msg":"[auth] EKS token generation failed","cluster":"...","error":"..."}
+  {"time":"...","level":"ERROR","msg":"[auth] EKS token generation failed","cluster":"...","region":"...","step":"..."}
   ```
 
 - **Reconciler tick failures** — the reconciler attempts to mint

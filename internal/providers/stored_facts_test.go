@@ -294,12 +294,17 @@ BOTH must go through storedFactsReader and nothing else. If you added a conditio
 // TestGetEKSToken_LogsCarryNoPresignedURLAndNoLength is the log-leak guard on
 // the minting function itself.
 //
-// Two things used to be logged here and both are gone:
+// Three kinds of thing used to be logged here and all of them are gone:
 //
 //   - the FULL presigned STS URL, at Debug. That URL IS the credential — anyone
 //     holding it can sign in as Sharko for its lifetime.
 //   - the token's LENGTH, at Info, so on by default in production. A length
 //     narrows a guess.
+//   - the raw provider ERROR VALUE, on both failure branches, at Error. An AWS
+//     SDK error can carry credential material in its own message: a wrapped
+//     presigned URL, a token fragment, a credential a provider chain put into
+//     its text. The two branches now log which STEP failed instead, which is
+//     what a person actually needs to tell them apart.
 //
 // The function is not called here (it would need real AWS credentials). Instead
 // the log-line shapes are asserted against the source, which is the thing that
@@ -307,10 +312,15 @@ BOTH must go through storedFactsReader and nothing else. If you added a conditio
 func TestGetEKSToken_LogsCarryNoPresignedURLAndNoLength(t *testing.T) {
 	body := readOwnSource(t, "aws_auth.go")
 
-	// Only the LOG calls are searched. req.URL legitimately appears elsewhere
-	// in this file — it is the thing being encoded into the token — so a
-	// whole-file grep for it would fire on the encoding line and teach everyone
-	// to ignore this test.
+	// Only the LOG calls are searched, and that is what keeps this guard from
+	// firing on things that are correct:
+	//
+	//   - req.URL legitimately appears elsewhere in this file — it is the thing
+	//     being encoded into the token — so a whole-file grep would fire on the
+	//     encoding line and teach everyone to ignore this test.
+	//   - the RETURN path's fmt.Errorf(... %w, err) wrapping is correct and must
+	//     stay. It is not a slog call, so it is never examined here. Removing a
+	//     log value must not change what the function returns.
 	logCalls := slogCallsIn(body)
 	if len(logCalls) == 0 {
 		t.Fatal("found no slog calls in aws_auth.go — this test can no longer see what it is guarding, so fix the extraction rather than deleting the test")
@@ -319,32 +329,76 @@ func TestGetEKSToken_LogsCarryNoPresignedURLAndNoLength(t *testing.T) {
 	banned := []struct {
 		fragment string
 		why      string
+		// anyCase makes the sweep case-insensitive. Used for the error-value
+		// fragments, so a renamed variable (loadErr, presignErr, awsErr) is
+		// caught just as well as a plain err — the leak is the same either way,
+		// and a rename is exactly how this would come back.
+		anyCase bool
 	}{
-		{`fullURL`, "the presigned STS URL IS the credential; logging it hands out a working sign-in"},
-		{`req.URL`, "any log argument carrying the presigned URL is the credential in full"},
-		{`tokenLength`, "a credential's length narrows a guess at it, and this line runs at Info"},
-		{`len(token)`, "the token's length must not reach a log line in any labelled shape"},
-		{`len(req.URL)`, "the presigned URL's length narrows a guess at what is inside it"},
-		{`tokenPrefix`, "a prefix of a minted token is a prefix of a credential"},
-		{`token[`, "a slice of a minted token is part of a credential"},
-		{`sha256`, "a hash of a credential is not a safe summary of it — a guessable value is recovered from one"},
-		{`", token)`, "the whole token must never be a log argument"},
+		{fragment: `fullURL`, why: "the presigned STS URL IS the credential; logging it hands out a working sign-in"},
+		{fragment: `req.URL`, why: "any log argument carrying the presigned URL is the credential in full"},
+		{fragment: `tokenLength`, why: "a credential's length narrows a guess at it, and this line runs at Info"},
+		{fragment: `len(token)`, why: "the token's length must not reach a log line in any labelled shape"},
+		{fragment: `len(req.URL)`, why: "the presigned URL's length narrows a guess at what is inside it"},
+		{fragment: `tokenPrefix`, why: "a prefix of a minted token is a prefix of a credential"},
+		{fragment: `token[`, why: "a slice of a minted token is part of a credential"},
+		{fragment: `sha256`, why: "a hash of a credential is not a safe summary of it — a guessable value is recovered from one"},
+		{fragment: `", token)`, why: "the whole token must never be a log argument"},
+
+		// The raw-error case. A provider error's text is the easiest place for
+		// credential material to travel, and it travels wearing a label that
+		// looks harmless.
+		{fragment: `"error"`, why: `an AWS SDK error can carry credential material in its own text — a wrapped presigned URL, a token fragment, a credential from a provider chain. Log "step" and the cluster instead; the returned error still wraps the cause for the caller`, anyCase: true},
+		{fragment: `err)`, why: "an error value passed as the last log argument is that error's whole text in the log", anyCase: true},
+		{fragment: `err,`, why: "an error value passed as a log argument is that error's whole text in the log", anyCase: true},
+		{fragment: `.Error()`, why: "an error's own message string must not reach a log line, whatever key it is filed under", anyCase: true},
+		{fragment: `%v`, why: "a formatted value inside a log call is usually an error being smuggled in; log fixed keys and safe values instead", anyCase: true},
+		{fragment: `%w`, why: "error wrapping belongs in the RETURN path (fmt.Errorf), never in a log call", anyCase: true},
 	}
 	for _, call := range logCalls {
 		call = withoutBoolTests(call)
 		for _, b := range banned {
-			if strings.Contains(call, b.fragment) {
+			haystack, needle := call, b.fragment
+			if b.anyCase {
+				haystack, needle = strings.ToLower(call), strings.ToLower(b.fragment)
+			}
+			if strings.Contains(haystack, needle) {
 				t.Errorf("a log call in aws_auth.go contains %q — %s\n\nthe call: %s", b.fragment, b.why, call)
 			}
 		}
 	}
 
-	// And the useful, value-free diagnostic is still there: was the
-	// cluster-name header attached. That is a bool, it carries no part of the
+	// And the genuinely safe, useful things are still there.
+	//
+	// The bool: was the cluster-name header attached. It carries no part of the
 	// URL, and it is the setting that stops a token for one cluster being
 	// replayed against another.
 	if !strings.Contains(body, `"hasClusterHeader"`) {
 		t.Error("the hasClusterHeader bool was removed; it is the one diagnostic here that is genuinely useful and carries no credential material")
+	}
+
+	// The step names: taking the error value out of a failure log is only an
+	// improvement if what replaces it still says which failure it was. There are
+	// two different failures in getEKSToken and they need telling apart without
+	// the error text.
+	steps := strings.Count(body, `"step"`)
+	if steps < 2 {
+		t.Errorf(`found %d "step" log field(s) in aws_auth.go, want at least 2 (one per failure branch).
+
+The error value was removed from both failure logs. Without a step name a person reading the log cannot tell the load-AWS-config failure from the presigning failure — the two lines would be identical. Do not put the error value back; name the step.`, steps)
+	}
+	for _, step := range []string{`"load-aws-config"`, `"presign-get-caller-identity"`} {
+		if !strings.Contains(body, step) {
+			t.Errorf("the %s step name is gone; each failure branch must say which one it is", step)
+		}
+	}
+
+	// And the RETURN path still wraps the cause. This is the half that must NOT
+	// change: only the log line lost the error, the caller keeps it.
+	if strings.Count(body, `%w`) < 2 {
+		t.Errorf(`found fewer than two %%w wraps in aws_auth.go's returns.
+
+Removing the error from a LOG line must not change what the function RETURNS. Both failure branches still return an error wrapping the underlying cause, so callers behave exactly as before.`)
 	}
 }
 
