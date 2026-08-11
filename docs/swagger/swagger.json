@@ -3836,6 +3836,75 @@
                 }
             }
         },
+        "/clusters/{name}/connection-comparison": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Read-only. Works out what the named cluster's ArgoCD connection Secret should look like — from git plus, where one exists, an independently stored copy of the cluster's sign-in details — and compares it with the connection that is actually there. Writes nothing. The answer says how much of the connection could honestly be checked: a cluster whose sign-in details only exist inside the connection itself, or whose record does not say where they are kept, is reported with a narrower scope rather than being compared against itself. Sign-in details are compared in memory and neither side is ever returned: a sensitive field comes back with its path, one of same/different/missing/unexpected, and sensitive true, with no expected value and no live value present at all. The request identifies a cluster and nothing else — no candidate value, no expected manifest, no hash, no backend path, no namespace.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Compare a cluster's ArgoCD connection with what Sharko intends",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The comparison result",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.connectionComparisonView"
+                        }
+                    },
+                    "400": {
+                        "description": "Cluster name is required",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — requires operator role or higher",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "This cluster is not in the git-managed cluster list",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Sharko is missing something it needs to run the check",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/clusters/{name}/diagnose": {
             "post": {
                 "security": [
@@ -12626,6 +12695,121 @@
                     "items": {
                         "$ref": "#/definitions/internal_api.catalogVersionEntry"
                     }
+                }
+            }
+        },
+        "internal_api.connectionComparisonDifference": {
+            "type": "object",
+            "properties": {
+                "expected": {
+                    "description": "Expected is what Sharko means the field to be. Absent on a sensitive\nfield, always.",
+                    "type": "string"
+                },
+                "live": {
+                    "description": "Live is what the connection carries. Absent on a sensitive field,\nalways.",
+                    "type": "string"
+                },
+                "path": {
+                    "description": "Path is the field, e.g. \"data.server\" or\n\"metadata.labels[addons.sharko.dev/datadog]\".",
+                    "type": "string"
+                },
+                "sensitive": {
+                    "description": "Sensitive marks a field holding sign-in details. When true there is no\nexpected value and no live value in this object at all.",
+                    "type": "boolean"
+                },
+                "status": {
+                    "description": "Status is same, different, missing, or unexpected.",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.connectionComparisonNotChecked": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.connectionComparisonView": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "description": "Branch is the configured git branch. Sharko does not discover a default\nbranch.",
+                    "type": "string"
+                },
+                "checked_at": {
+                    "description": "CheckedAt is when this check ran, RFC3339.",
+                    "type": "string"
+                },
+                "checked_field_count": {
+                    "description": "CheckedFieldCount is how many fields were compared. A count of FIELDS —\nnot of bytes, characters or anything else measured off a value.",
+                    "type": "integer"
+                },
+                "cluster": {
+                    "description": "Cluster is the cluster this answer is about.",
+                    "type": "string"
+                },
+                "compared_commit": {
+                    "description": "ComparedCommit is the commit every file in this check was read at.\nEmpty when the git provider cannot report a commit — an empty value\nsays \"Sharko does not know\", never a guessed or stale commit.",
+                    "type": "string"
+                },
+                "compared_path": {
+                    "description": "ComparedPath is the git file the desired state was read from.",
+                    "type": "string"
+                },
+                "credential_source_type": {
+                    "description": "CredentialSourceType is where this cluster's sign-in details are kept:\ninline-kubeconfig, secret-kubeconfig, eks-token, or empty when the\nrecord predates the field. It is a KIND, never a path into a store and\nnever a value.",
+                    "type": "string"
+                },
+                "differences": {
+                    "description": "Differences are the fields that did not match, in a fixed order.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.connectionComparisonDifference"
+                    }
+                },
+                "failure_reason": {
+                    "description": "FailureReason explains a check_failed answer. Empty otherwise.",
+                    "type": "string"
+                },
+                "limit_reason": {
+                    "description": "LimitReason explains a scope narrower than full, in plain words. Empty\nat full scope.",
+                    "type": "string"
+                },
+                "not_checked": {
+                    "description": "NotChecked are fields inside the nominal scope Sharko deliberately did\nnot check, each with a reason.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.connectionComparisonNotChecked"
+                    }
+                },
+                "ownership_mode": {
+                    "description": "OwnershipMode is which of the seven kinds of connection this is.",
+                    "type": "string"
+                },
+                "repair_available": {
+                    "description": "RepairAvailable says whether a repair could be offered for this kind of\nconnection. This endpoint never repairs anything.",
+                    "type": "boolean"
+                },
+                "repair_scope": {
+                    "description": "RepairScope is exactly what a repair would be allowed to touch: none,\naddon_labels_only, or full_connection.",
+                    "type": "string"
+                },
+                "scope": {
+                    "description": "Scope is how much of the connection was checked: full, limited,\naddon_labels_only, or ownership_conflict.",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status is synced, out_of_sync, missing, check_failed, ownership_conflict\nor limited. synced means every field inside the scope was checked\nsuccessfully AND matched; it is only ever possible at full scope.\ncheck_failed means Sharko could not finish, and is never turned into\nout_of_sync or synced.",
+                    "type": "string"
+                },
+                "values_never_returned": {
+                    "description": "ValuesNeverReturned is always true. It is in the body so the promise is\nvisible to anyone reading the API, not only to anyone reading this file.",
+                    "type": "boolean"
                 }
             }
         },

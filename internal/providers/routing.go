@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -71,6 +72,49 @@ func DefaultArgoCDReaderFn(base ClusterTestProviderConfig) func() (ClusterCreden
 		cfg := ClusterTestProviderConfig{Type: "argocd", ArgoCDNamespace: base.ArgoCDNamespace}
 		return NewArgoCDProviderFromConfig(cfg)
 	})
+}
+
+// ErrNoIndependentCredentialSource means the only place these credentials
+// could be read from is the ArgoCD cluster Secret itself.
+//
+// It exists for the read-only connection comparison. Fetch (below) is allowed
+// to fall back to reading the ArgoCD Secret, and should be — its callers want
+// credentials that work and do not care where they came from. A comparison
+// cannot use that route: building the expected Secret out of the live Secret
+// compares the Secret with itself, matches every time, and reports a broken
+// connection as fine. So the comparison calls FetchIndependentOfArgoCDSecret,
+// which refuses with this error instead of falling back.
+var ErrNoIndependentCredentialSource = errors.New("this cluster's credentials are only available from the ArgoCD cluster Secret itself, so there is no independent copy to compare against")
+
+// FetchIndependentOfArgoCDSecret fetches credentials for the named cluster
+// from the secrets BACKEND ONLY, never from the ArgoCD cluster Secret.
+//
+// It refuses, with ErrNoIndependentCredentialSource, when:
+//
+//   - there is no backend at all;
+//   - the backend IS the ArgoCD cluster-Secret reader (connection type argocd,
+//     or the in-cluster auto-default), in which case "the backend" and "the
+//     live Secret" are the same place;
+//   - credsSource is anything other than secret-kubeconfig or eks-token —
+//     inline means the pasted kubeconfig only lives in the ArgoCD Secret, and
+//     an empty source means Sharko does not know, and never guesses.
+//
+// Unlike Fetch there is no healing fallback and no second attempt. A refusal
+// is the right answer: the caller reports a narrower comparison scope rather
+// than a comparison built on a guess.
+func (r *ClusterCredsRouter) FetchIndependentOfArgoCDSecret(lookupKey, credsSource, roleARN string) (*Kubeconfig, error) {
+	if r == nil || r.Backend == nil {
+		return nil, ErrNoIndependentCredentialSource
+	}
+	if _, backendIsArgo := r.Backend.(*ArgoCDProvider); backendIsArgo {
+		return nil, ErrNoIndependentCredentialSource
+	}
+	switch credsSource {
+	case models.CredsSourceSecretKubeconfig, models.CredsSourceEKSToken:
+		return GetCredentialsWithOptionalRole(r.Backend, lookupKey, roleARN)
+	default:
+		return nil, ErrNoIndependentCredentialSource
+	}
 }
 
 // Fetch fetches credentials for the named cluster, routing by credsSource

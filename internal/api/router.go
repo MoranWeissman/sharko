@@ -1161,6 +1161,13 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/clusters/{name}/values", srv.handleGetClusterValues)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/config-diff", srv.handleGetConfigDiff)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/comparison", srv.handleGetClusterComparison)
+	// "Does this cluster's ArgoCD connection look the way Sharko means it
+	// to look?" — read-only, writes nothing, and a separate route from
+	// /comparison above on purpose: that one returns an untyped map, and
+	// widening it would put new keys in front of its existing callers with
+	// nothing type-checking them. See connection_comparison.go's header for
+	// why the request carries a cluster name and nothing else.
+	mux.HandleFunc("GET /api/v1/clusters/{name}/connection-comparison", srv.handleGetConnectionComparison)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/history", srv.handleGetClusterHistory)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/changes", srv.handleGetClusterChanges)
 	mux.HandleFunc("GET /api/v1/clusters/{name}", srv.handleGetCluster)
